@@ -1502,6 +1502,19 @@ mod tests {
             Some("Close pane p2  unavailable")
         );
         assert_eq!(node(&tree, zoom).label(), Some("Zoom pane p1  unavailable"));
+        assert!(scene.panes[0].visible_actions().is_none());
+        for action in PaneHeaderAction::ALL {
+            let hidden = snapshot.pane_action_ids[action.index()]["p1"];
+            assert!(node(&tree, hidden).supports_action(Action::Click));
+            assert_eq!(
+                snapshot.action_target(hidden, Action::Click),
+                Some(AccessibilityTarget::PaneAction {
+                    pane: "p1".into(),
+                    action,
+                    activate: true,
+                })
+            );
+        }
         assert_eq!(
             snapshot.action_target(close, Action::Click),
             Some(AccessibilityTarget::PaneAction {

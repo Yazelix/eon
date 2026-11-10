@@ -2060,6 +2060,7 @@ impl Renderer {
                 .column_panes()
                 .flat_map(|(panes, _)| panes)
                 .find(|pane| pane.id == *id)?;
+            pane.visible_actions()?;
             let mut label = action.label(pane.label(), workspace.zoomed_pane().is_some());
             if !enabled {
                 label.push_str(" — unavailable in a one-pane tab");
@@ -3176,7 +3177,7 @@ impl Renderer {
                     } else {
                         empty_gap
                     },
-                    pane.actions,
+                    pane.visible_actions(),
                     notch.is_some(),
                 );
                 rectangles.clip = Some(rect);
@@ -3197,7 +3198,7 @@ impl Renderer {
                     }
                 }
                 rectangles.clip = Some(rect);
-                if let Some(actions) = pane.actions {
+                if let Some(actions) = pane.visible_actions() {
                     for action in crate::PaneHeaderAction::ALL {
                         let target = actions[action.index()];
                         let enabled = action != crate::PaneHeaderAction::Zoom || pane.zoom_enabled;
@@ -5517,7 +5518,12 @@ mod tests {
                             .collect::<Vec<_>>()
                     };
                     let rule_y = (pane.rect.top + pane.rect.height / 2.0).floor() + 0.5;
-                    let rule = colors_at(pane.rect.right() - 20.0, rule_y);
+                    let band_y = pane_tabs
+                        .first()
+                        .and_then(|tabs| tabs.first())
+                        .and_then(Option::as_ref)
+                        .map_or(rule_y, |tab| tab.tab.top + 0.5);
+                    let rule = colors_at(pane.rect.right() - 20.0, band_y);
                     assert_eq!(
                         rule,
                         if frames { vec![[178, 7, 251]] } else { vec![] },
@@ -5532,7 +5538,10 @@ mod tests {
                         "extra top stroke"
                     );
                     assert_eq!(
-                        colors_at(label.left + line.line_w / 2.0, pane.rect.top + 1.5),
+                        colors_at(
+                            label.left + line.line_w / 2.0,
+                            if frames { band_y } else { pane.rect.top + 1.5 }
+                        ),
                         vec![[126, 231, 185]],
                         "focus stays local to the label"
                     );
@@ -5545,6 +5554,73 @@ mod tests {
                         vec![[40, 54, 70]],
                         "hover pill remains visible in both modes"
                     );
+                }
+                // Keyboard selection can move while the pointer rests on the old Close button.
+                let mut changed = snapshot.clone();
+                changed.tabs[1].selected_pane = Some("p3".into());
+                changed.tabs[1].columns[0].expanded = "p3".into();
+                let changed = WorkspaceScene::from_snapshot(
+                    &changed,
+                    PhysicalSize::new(900, 600),
+                    renderer.metrics(),
+                    0.0,
+                    0.0,
+                    |_, label| renderer.fit_tab_text(label, false),
+                );
+                for frames in [true, false] {
+                    renderer.pane_frames = frames;
+                    for (scene, visible) in [(&workspace, true), (&changed, false)] {
+                        renderer.text.clear();
+                        renderer.text_overlay = None;
+                        renderer.set_hovered_header(Some((
+                            WorkspaceFocus::PaneAction(crate::PaneHeaderAction::Close),
+                            "p2".into(),
+                        )));
+                        let title_tabs = renderer.workspace_title_tabs(scene);
+                        let pane_tabs = renderer.workspace_pane_tabs(scene);
+                        let mut hovered = RectangleBatch::new(900, 600);
+                        renderer.build_workspace(
+                            scene,
+                            WorkspaceFocus::Terminal,
+                            &mut hovered,
+                            &[],
+                            &[],
+                            &title_tabs,
+                            &pane_tabs,
+                        );
+                        assert_eq!(
+                            renderer
+                                .text
+                                .iter()
+                                .filter(|text| {
+                                    text.top >= scene.header_viewport.top
+                                        && matches!(text.buffer.lines[0].text(), "□" | "×")
+                                })
+                                .count(),
+                            2,
+                            "only the selected pane emits button glyphs"
+                        );
+                        renderer.build_header_tooltip(scene, &mut hovered);
+                        assert_eq!(renderer.text_overlay.is_some(), visible);
+                        if !visible {
+                            renderer.text.clear();
+                            renderer.set_hovered_header(None);
+                            let mut resting = RectangleBatch::new(900, 600);
+                            renderer.build_workspace(
+                                scene,
+                                WorkspaceFocus::Terminal,
+                                &mut resting,
+                                &[],
+                                &[],
+                                &title_tabs,
+                                &pane_tabs,
+                            );
+                            assert_eq!(
+                                hovered.bytes, resting.bytes,
+                                "a hidden button retains neither hover fill nor tooltip"
+                            );
+                        }
+                    }
                 }
                 renderer.pane_frames = false;
                 renderer.set_hovered_header(None);

@@ -2969,6 +2969,99 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
             self.checked = true;
             let app = &mut self.app;
             let device_id = DeviceId::dummy();
+            for focus in [WorkspaceFocus::Terminal, WorkspaceFocus::Sidebar] {
+                app.set_workspace_focus(focus);
+                for focused in [false, true] {
+                    app.window_event(event_loop, id, WindowEvent::Focused(focused));
+                    let scene = app.workspace_scene().unwrap();
+                    for pane in &scene.panes {
+                        let (target, _) = scene
+                            .pane_action(&pane.id, PaneHeaderAction::Close)
+                            .unwrap();
+                        assert_eq!(
+                            scene.hit_test(
+                                target.left + target.width / 2.0,
+                                target.top + target.height / 2.0,
+                            ),
+                            Some(if pane.selected {
+                                WorkspaceHit::PaneAction(&pane.id, PaneHeaderAction::Close)
+                            } else {
+                                WorkspaceHit::Pane(&pane.id)
+                            })
+                        );
+                    }
+                }
+            }
+            app.set_workspace_focus(WorkspaceFocus::Terminal);
+            app.render();
+            let (button, _) = app
+                .workspace_scene()
+                .unwrap()
+                .pane_action("p2", PaneHeaderAction::Close)
+                .unwrap();
+            app.window_event(
+                event_loop,
+                id,
+                WindowEvent::CursorMoved {
+                    device_id,
+                    position: PhysicalPosition::new(
+                        f64::from(button.left + button.width / 2.0),
+                        f64::from(button.top + button.height / 2.0),
+                    ),
+                },
+            );
+            app.window_event(
+                event_loop,
+                id,
+                WindowEvent::MouseInput {
+                    device_id,
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                },
+            );
+            assert!(app.header_press.is_none());
+            assert_eq!(
+                self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
+                WorkspaceAction::Workspace(CommonAction::FocusId("p2".into()))
+            );
+            let mut selected = self.snapshot.clone();
+            selected.tabs[0].selected_pane = Some("p2".into());
+            selected.tabs[0].columns[0].expanded = "p2".into();
+            app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+                selected,
+            )));
+            app.render();
+            let click = |app: &mut Application, state| {
+                app.window_event(
+                    event_loop,
+                    id,
+                    WindowEvent::MouseInput {
+                        device_id,
+                        state,
+                        button: MouseButton::Left,
+                    },
+                );
+            };
+            click(app, ElementState::Released);
+            assert!(
+                self.actions.try_recv().is_err(),
+                "the first release cannot close"
+            );
+            let (button, _) = app
+                .workspace_scene()
+                .unwrap()
+                .pane_action("p2", PaneHeaderAction::Close)
+                .unwrap();
+            app.cursor = PhysicalPosition::new(
+                f64::from(button.left + button.width / 2.0),
+                f64::from(button.top + button.height / 2.0),
+            );
+            click(app, ElementState::Pressed);
+            click(app, ElementState::Released);
+            assert_eq!(
+                self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
+                WorkspaceAction::ClosePane { pane: "p2".into() }
+            );
             // The real transport queues FocusId; replies are delivered explicitly in wire order.
             for cancel in 0..5 {
                 app.set_shortcut_viewer(false);
@@ -2979,45 +3072,8 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                     self.snapshot.clone(),
                 )));
                 app.render();
-                let (button, _) = app
-                    .workspace_scene()
-                    .unwrap()
-                    .pane_action("p2", PaneHeaderAction::Zoom)
-                    .unwrap();
-                app.window_event(
-                    event_loop,
-                    id,
-                    WindowEvent::CursorMoved {
-                        device_id,
-                        position: PhysicalPosition::new(
-                            f64::from(button.left + button.width / 2.0),
-                            f64::from(button.top + button.height / 2.0),
-                        ),
-                    },
-                );
-                app.window_event(
-                    event_loop,
-                    id,
-                    WindowEvent::MouseInput {
-                        device_id,
-                        state: ElementState::Pressed,
-                        button: MouseButton::Left,
-                    },
-                );
-                assert!(
-                    app.pending_pane.is_none(),
-                    "press alone cannot select or zoom"
-                );
-                app.render();
-                app.window_event(
-                    event_loop,
-                    id,
-                    WindowEvent::MouseInput {
-                        device_id,
-                        state: ElementState::Released,
-                        button: MouseButton::Left,
-                    },
-                );
+                // AccessKit can still activate Zoom on a pane whose mouse buttons are hidden.
+                app.pane_button("p2", PaneHeaderAction::Zoom, true);
                 assert_eq!(
                     self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
                     WorkspaceAction::Workspace(CommonAction::FocusId("p2".into()))
@@ -3025,7 +3081,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 let ticket = app
                     .pending_pane
                     .as_ref()
-                    .expect("release queues delayed zoom")
+                    .expect("semantic activation queues delayed zoom")
                     .ticket;
                 assert!(!app.zoomed());
                 match cancel {
@@ -3175,7 +3231,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
         workspace::encode_response(&workspace::Response::Snapshot(snapshot.clone())).unwrap();
     let (sender, actions) = mpsc::channel();
     let server = thread::spawn(move || {
-        for _ in 0..6 {
+        for _ in 0..8 {
             loop {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut header = [0; workspace::HEADER_BYTES];

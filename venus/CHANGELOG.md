@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C8: pane Zoom/Restore and Close draw and accept clicks only on the tab's
+  selected pane, except for one-pane Stacks. Hidden controls keep their title
+  space reserved; keyboard and AccessKit actions retain their availability.
+  No wire change (`eon-vzf2k`).
+
 - Consume EONW v39; the Agents Hide button sets the sidebar closed through
   `SetSidebar { open: false }` (`eon-cq38r`).
 

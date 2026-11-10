@@ -434,6 +434,7 @@ pub struct WorkspacePane {
     pub rect: SceneRect,
     /// Full button targets, ordered Zoom then Close; omitted together when clipped or too narrow.
     pub actions: Option<[SceneRect; 2]>,
+    show_actions: bool,
     pub zoom_enabled: bool,
     label: String,
 }
@@ -486,6 +487,11 @@ pub struct WorkspaceColumn {
 }
 
 impl WorkspacePane {
+    /// Paint and pointer targets; hidden buttons still reserve their semantic bounds.
+    pub(crate) fn visible_actions(&self) -> Option<[SceneRect; 2]> {
+        self.actions.filter(|_| self.show_actions)
+    }
+
     /// Title and scrollback stop before the action notch's return curve.
     pub(crate) fn header_content(&self, metrics: CellMetrics) -> SceneRect {
         let right = self.actions.map_or(self.rect.right(), |actions| {
@@ -4134,6 +4140,7 @@ impl WorkspaceScene {
                         selected: position == expanded,
                         rect,
                         actions,
+                        show_actions: pane.id == *selected || column.panes.len() == 1,
                         zoom_enabled: active.panes().nth(1).is_some(),
                         label,
                     }
@@ -4343,7 +4350,7 @@ impl WorkspaceScene {
         self.card_radius
     }
 
-    /// A visible header action and whether it can be activated.
+    /// A laid-out header's semantic action and whether it can be activated.
     #[must_use]
     pub fn pane_action(&self, id: &str, action: PaneHeaderAction) -> Option<(SceneRect, bool)> {
         if self.popup_label.is_some() {
@@ -4506,7 +4513,7 @@ impl WorkspaceScene {
                     .intersection(self.header_viewport)
                     .is_some_and(|rect| rect.contains(x, y))
                 {
-                    if let Some(actions) = pane.actions {
+                    if let Some(actions) = pane.visible_actions() {
                         for action in PaneHeaderAction::ALL {
                             if actions[action.index()].contains(x, y) {
                                 return Some(WorkspaceHit::PaneAction(&pane.id, action));

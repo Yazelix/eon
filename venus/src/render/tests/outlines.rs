@@ -4030,7 +4030,7 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                                     &mut fonts.font_system,
                                     metrics,
                                     pane.label(),
-                                    pane.rect.width - 2.0 * metrics.padding,
+                                    pane.header_content(metrics).width - 2.0 * metrics.padding,
                                 )
                             });
                         let (buffer, _) = super::super::chrome::status_glyph_ink(
@@ -4061,7 +4061,12 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                         }
                         (
                             outline,
-                            [title.border_gap(row, metrics), SceneRect::default()],
+                            super::super::chrome::pane_rule_gaps(
+                                title.border_gap(row, metrics),
+                                SceneRect::default(),
+                                pane.visible_actions(),
+                                tabs[index].is_some(),
+                            ),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -4077,6 +4082,19 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                     focus,
                 );
                 let strokes = painted_rects(&batch).collect::<Vec<_>>();
+                for ((outline, _), pane) in rules.iter().zip(&workspace.panes) {
+                    if pane.visible_actions().is_none() {
+                        let target = pane.actions.unwrap()[0];
+                        assert!(
+                            strokes.iter().any(|rect| rect.contains(
+                                target.left + target.width / 2.0,
+                                outline.title_y.unwrap() + 0.5,
+                            )),
+                            "hidden button gap: scale={scale}, font={font_size}, selected={selected}, pane={}",
+                            pane.id
+                        );
+                    }
+                }
                 for rect in &strokes {
                     // Decoding NDC vertices can move an exact raster boundary by a few ulps.
                     let collision = ink

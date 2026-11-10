@@ -281,11 +281,17 @@ width, even while that pane is selected. Headers scroll below the band. On a
 window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
 
-Each pane header has a right action group: Zoom (`□`, Restore `▣` while zoomed)
-and Close (`×`). The expanded pane's framed header keeps both in its band and a
-collapsed row keeps them in a gap in its line; frameless headers keep the
-controls inline. The title and scrollback indicator fit to its
-left. Both controls disappear together if two full targets cannot fit; tight
+Each pane header reserves a right action group: Zoom (`□`, Restore `▣` while
+zoomed) and Close (`×`). Only the tab's selected pane draws the buttons and
+accepts clicks on them, except that a one-pane Stack always retains its
+buttons when they fit. Moving keyboard focus to the Agents sidebar or away
+from the window keeps that selection. A click in a hidden button's reserved
+space selects the pane; a second click can activate its button. The title and
+scrollback indicator still fit to the left of the reserved space, so hiding
+buttons never shifts the title. The expanded pane's framed header keeps
+visible controls in its band; collapsed rows use gaps in their lines only
+for visible controls, and frameless headers keep them inline.
+Both controls disappear together if two full targets cannot fit; tight
 clearances retain a compact gap. Stack, Agents, popup and
 dialog headings have no pane actions, and a popup covers the underlying headers.
 Popup and Agents headings have a Hide button of their own, described below.
@@ -301,6 +307,8 @@ selection. Close targets its own pane exactly as Alt+W does, with the same
 final-pane confirmation. After a keyboard Close, focus returns to the selected
 pane's title. Escape cancels that prompt; Enter closes its held target.
 Agents can use `eon pane close PANE`; zoom is window-local view state.
+AccessKit retains both actions on every laid-out pane header whose targets
+fit, including headers whose mouse buttons are hidden.
 
 Popup and Agents headings also carry a second notch at the right, mirroring the
 title's, with one Hide button (`–`); the name fits to its left. The popup's

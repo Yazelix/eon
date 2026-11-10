@@ -671,6 +671,10 @@ re-proved when that platform or feature is next touched.
   standing rule (Lucca: "D plus the gap fix"): the band only on the expanded,
   lone or zoomed pane, collapsed titles as compact gaps in their row's line,
   and one tab rise of space between a collapsed title and the band below it.
+  Amended on 2026-11-10 by `eon-vzf2k`, approved by eon-overseer under Lucca's
+  standing rule: pane buttons draw and accept pointer actions only on the
+  selected pane or a one-pane Stack; reserved geometry and semantic actions
+  stay unchanged.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -752,18 +756,24 @@ re-proved when that platform or feature is next touched.
     between its rounded outside corners over the title, empty middle and right action group, without inward returns
     or a lower middle rule. Title and scrollback fitting, header rows and
     button targets keep their existing geometry. A collapsed pane has no band:
-    its title and buttons are compact gaps in its row's line, and the final
+    its title and any visible buttons are compact gaps in its row's line, and the final
     collapsed title stays a compact gap in the column's bottom edge. Below a
     collapsed title the band starts one tab rise lower, which keeps its edge out
     of that title's row; with no collapsed title above it, that space follows
     the expanded terminal, so a column's terminal height does not depend on
     which of its panes is expanded; on a window too short for that space it
     yields before a terminal cell does. Insufficient text/stroke clearance also
-    leaves the expanded title in a compact gap. Each pane header carries Zoom (Restore while zoomed)
-    and Close at the right; the title and scrollback pill fit to their left.
-    Where both buttons cannot fit at full size the header shows neither. Stack,
-    Agents, popup and dialog headings carry no pane actions, nor does a header
-    a popup covers. Decorative pixels outside a header row add no hit or
+    leaves the expanded title in a compact gap. Each pane header reserves room
+    for Zoom (Restore while zoomed) and Close at the right; the title and
+    scrollback pill fit to their left even while the buttons are hidden. The
+    buttons are drawn and accept pointer actions only on the active tab's
+    selected pane, except that a Stack containing one pane retains that pane's
+    buttons, subject to the same fit requirement. This selection is retained
+    while keyboard focus is in the Agents sidebar. Where both buttons cannot
+    fit at full size the header shows neither. Stack, Agents, popup and dialog
+    headings carry no pane actions, nor does a header a popup covers.
+    Pane-header keyboard actions and AccessKit actions retain their existing
+    availability for every laid-out pane header. Decorative pixels outside a header row add no hit or
     accessibility area, and header decoration consumes no terminal rows; the
     space before the expanded pane's band is reserved and can cost a column one
     terminal row. Each column card's top line

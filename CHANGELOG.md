@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Pane Zoom/Restore and Close buttons show only on the tab's selected pane,
+  except for one-pane Stacks. Hidden buttons keep their space reserved, so
+  titles stay put. Keyboard, CLI and accessibility actions stay available
+  (`eon-vzf2k`).
+
 - `eon column close PANE --yes [--json]` closes the pane's Stack through
   EONW v39. Without `--yes`, it lists every terminal it would stop and
   refuses, including idle and one-pane Stacks. Consent binds the generation,

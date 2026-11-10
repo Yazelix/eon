@@ -3503,7 +3503,11 @@ fn pane_actions_have_disjoint_exact_targets_and_yield_together() {
                                 target.left + target.width / 2.0,
                                 target.top + target.height / 2.0
                             ),
-                            Some(WorkspaceHit::PaneAction(&pane.id, action))
+                            Some(if pane.selected {
+                                WorkspaceHit::PaneAction(&pane.id, action)
+                            } else {
+                                WorkspaceHit::Pane(&pane.id)
+                            })
                         );
                         assert!(scene.pane_action(&pane.id, action).unwrap().1);
                     }
@@ -3517,5 +3521,91 @@ fn pane_actions_have_disjoint_exact_targets_and_yield_together() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn pane_buttons_follow_tab_selection_and_keep_every_reserved_target() {
+    let mut snapshot = one_pane_snapshot();
+    snapshot.sidebar = eon_workspace_protocol::v39::Sidebar::Off;
+    let template = snapshot.tabs[0].columns[0].panes[0].clone();
+    let pane = |id: &str| {
+        let mut pane = template.clone();
+        pane.id = id.into();
+        pane.label = format!("{id}  a long pane title");
+        pane
+    };
+    snapshot.tabs[0].columns = vec![
+        eon_workspace_protocol::v39::Column {
+            panes: vec![pane("p1"), pane("p2"), pane("p3")],
+            expanded: "p2".into(),
+        },
+        eon_workspace_protocol::v39::Column {
+            panes: vec![pane("p4"), pane("p5")],
+            expanded: "p4".into(),
+        },
+    ];
+    let project = |snapshot: &Snapshot, scale| {
+        WorkspaceScene::from_snapshot(
+            snapshot,
+            PhysicalSize::new(2400, 1200),
+            CellMetrics::for_scale(scale),
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * 10.0),
+        )
+    };
+    for scale in [1.0, 1.3, 2.0] {
+        snapshot.tabs[0].selected_pane = Some("p2".into());
+        let first = project(&snapshot, scale);
+        snapshot.tabs[0].selected_pane = Some("p4".into());
+        let second = project(&snapshot, scale);
+        for (scene, selected) in [(&first, "p2"), (&second, "p4")] {
+            for (panes, _) in scene.column_panes() {
+                for pane in panes {
+                    let before = first
+                        .column_panes()
+                        .flat_map(|(panes, _)| panes)
+                        .find(|before| before.id == pane.id)
+                        .unwrap();
+                    assert_eq!(pane.actions, before.actions);
+                    assert_eq!(
+                        pane.header_content(CellMetrics::for_scale(scale)),
+                        before.header_content(CellMetrics::for_scale(scale)),
+                        "focus must not change title fitting"
+                    );
+                    for action in PaneHeaderAction::ALL {
+                        let (target, enabled) = scene.pane_action(&pane.id, action).unwrap();
+                        assert!(enabled, "semantic actions remain available on every pane");
+                        assert_eq!(
+                            scene.hit_test(
+                                target.left + target.width / 2.0,
+                                target.top + target.height / 2.0,
+                            ),
+                            Some(if pane.id == selected {
+                                WorkspaceHit::PaneAction(&pane.id, action)
+                            } else {
+                                WorkspaceHit::Pane(&pane.id)
+                            }),
+                            "{} at scale {scale}",
+                            pane.id
+                        );
+                    }
+                }
+            }
+        }
+        snapshot.tabs[0].selected_pane = Some("p2".into());
+        snapshot.tabs[0].columns[1].panes.truncate(1);
+        let lone = project(&snapshot, scale);
+        let (close, _) = lone.pane_action("p4", PaneHeaderAction::Close).unwrap();
+        assert_eq!(
+            lone.hit_test(
+                close.left + close.width / 2.0,
+                close.top + close.height / 2.0
+            ),
+            Some(WorkspaceHit::PaneAction("p4", PaneHeaderAction::Close)),
+            "a one-pane Stack retains its controls in an unselected column"
+        );
+        snapshot.tabs[0].columns[1].panes.push(pane("p5"));
     }
 }
