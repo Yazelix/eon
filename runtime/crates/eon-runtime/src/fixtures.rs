@@ -11,6 +11,7 @@ pub(crate) fn inputs() -> Inputs {
         version: "fixture-product",
         skill: "fixture-skill",
         component_report: Ok("fixture-components".into()),
+        composed_components: Ok("fixture-components".into()),
         codexbar: "missing-fixture-codexbar".into(),
         assembly: b"fixture-assembly",
         defaults: Defaults {
@@ -132,7 +133,7 @@ pub(crate) fn inputs() -> Inputs {
             },
             ansi_palette: "111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111",
             custom_popup_keep_alive: true,
-            editor: &["fixture-editor"],
+            editor: Some(&["fixture-editor"]),
             agent_commands: &[],
         },
         orbit: "fixture-orbit".into(),
@@ -142,7 +143,7 @@ pub(crate) fn inputs() -> Inputs {
         managed: ManagedPrograms {
             nu: "fixture-nu".into(),
             bash: "fixture-bash".into(),
-            helix: "fixture-editor".into(),
+            helix: Some("fixture-editor".into()),
             yazi: "fixture-files".into(),
             ya: "fixture-file-helper".into(),
             lazygit: "fixture-git".into(),

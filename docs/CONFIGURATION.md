@@ -693,7 +693,8 @@ private per-user fallbacks.
 
 `eon edit FILE`, and Enter on a text file in Files, open the file in a new pane
 running `[editor] command` with the file's absolute path appended. The default,
-`["hx"]`, is Eon's packaged Helix. Any terminal editor works:
+`["hx"]`, is Eon's packaged Helix. The Eon package without Helix (`no-helix`)
+has no default (see below). Any terminal editor works:
 
 ```toml
 [editor]
@@ -707,6 +708,16 @@ against the tab's directory. Each edit reads the setting again, so a
 change applies to the next file you open without restarting the window. When
 the editor is not on the terminal PATH, the edit fails with `edit-command` and
 opens no pane; Eon does not fall back to Helix.
+
+In the package without Helix, while `command` is unset each edit runs
+`$VISUAL`, or else `$EDITOR`, as they were set when the window started. Eon
+splits the value on ASCII whitespace and runs no shell, so `nvim -p` works, and
+an editor whose path has a space, or that needs quoting, goes in `command`.
+The first nonblank value decides; a blank value falls through to the next. If
+the editor it names is not on the terminal PATH, the edit fails rather than
+trying the other. With neither naming an editor, the edit fails with
+`edit-command` and names this setting; Eon picks no editor for you.
+`eon config defaults` shows `command` as unset there.
 
 The Scrollback popup (Alt+Shift+E, or `eon pane history TARGET --edit`) opens
 its snapshot file with the same command, in a popup instead of a pane. When
@@ -754,6 +765,8 @@ If no desktop clipboard is available, Nushell reports the error.
 
 The profile also exposes `eon-hx`, `eon-yazi`, `eon-ya`, `eon-lazygit`, and
 `eon-lg`. Inside terminals their unprefixed names resolve to the pinned tools.
+The package without Helix has no `eon-hx`, and `hx` in its terminals is
+whatever your PATH holds.
 Eon's Helix reads its configuration from `$(eon config dir)/helix/`. It is
 built without Steel, so it never runs `helix.scm` or `init.scm`, whether they
 are in that directory or in a repository's `.helix` directory.

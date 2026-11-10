@@ -1049,7 +1049,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   replace `config-path` and `config-dir`. Amended on 2026-11-10 (approved by
   Lucca, relayed by eon-overseer) by `eon-xodrj.3`: Eon's packaged Helix is
   built without Steel, and a configuration root whose path is not valid UTF-8
-  no longer fails Helix launch.
+  no longer fails Helix launch. Amended on 2026-11-10 (approved by Lucca,
+  relayed by eon-overseer) by `eon-igae.17.1`: the `no-helix` product package
+  selects no Helix.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
   paths, Eon terminals launched under Nushell or Bash, and every terminal,
   popup, Venus and quota reader the supervisor starts.
@@ -1074,7 +1076,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     still exits 0 with no stderr output. `eon --help` names `config.toml`
     beside `config path` and `config defaults`.
   - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
-    Helix, Yazi, and LazyGit artifacts.
+    Helix, Yazi, and LazyGit artifacts. The `no-helix` product package selects
+    the same artifacts without Helix. It provides no `hx` or `eon-hx`, and
+    `hx` in its terminals is whatever the person's PATH holds.
   - Eon's packaged Helix is built without Steel, so no Steel file runs in it,
     whether from Eon's Helix config directory or from a repository's `.helix`
     directory.
@@ -1226,6 +1230,15 @@ names its socket. CLI JSON names a session `session` and a terminal
     `managed_commands_use_exact_programs_and_private_configuration` and
     `helix_does_not_start_under_a_configuration_root_that_is_not_utf8` went
     with the behavior they checked.
+  - **No Helix:** `eon-igae.17.1`, automated tier on x86_64 Linux, before the
+    `no-helix` package exists (`eon-igae.17.3`): an `eon` whose composition
+    supplies no Helix. `a_build_without_helix_refuses_its_names` and
+    `a_build_without_helix_omits_it_from_versions_and_defaults_and_refuses_its_names`
+    cover `hx` and `eon-hx` refusing with one line and exit 1 before anything
+    is prepared, `eon versions` without exactly the Helix line, and
+    `eon config defaults` printing `[editor] command` as unset;
+    `config_defaults_roundtrip_through_the_resolver_and_json` covers those
+    printed defaults loading as an empty configuration does.
   - **Note:** `eon-8olu` removed the managed Zsh and Fish shells. The
     `shell-environment` check went with them; its Zsh and Fish evidence above
     no longer applies. The remaining checks cover Nushell and Bash launch
@@ -1344,6 +1357,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
   rule) by `eon-5g0e5`: `eon sidebar show|hide|toggle`, best effort under a
   concurrent visibility change.
+  Amended on 2026-11-10 (approved by Lucca, relayed by eon-overseer) by
+  `eon-igae.17.1`: `[editor] command` has no default in the `no-helix`
+  package, where an unset command resolves from `$VISUAL`, then `$EDITOR`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1818,10 +1834,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   `tab create --dir DIR -- COMMAND`. Bare executables resolve
   through the terminal PATH; relative executable paths resolve against the
   owning tab's launch directory.
-  `[editor] command` is a direct argv, by default `["hx"]`, the packaged
-  Helix, with the bounds of a popup command; each `eon edit` rereads it. An
-  editor executable that is unavailable on the terminal PATH refuses the
-  edit with `edit-command` and opens no pane; Eon never falls back to Helix.
+  `[editor] command` is a direct argv with the bounds of a popup command; each
+  `eon edit` rereads it. Its default is `["hx"]`, the packaged Helix. In the
+  `no-helix` package it has no default: an unset command resolves at each
+  edit to `$VISUAL`, then `$EDITOR`, from the supervisor's environment, split
+  on ASCII whitespace. With no editor configured or resolved, or an editor
+  executable that is unavailable on the terminal PATH, the edit refuses with
+  `edit-command` and opens no pane; Eon never falls back to Helix.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
   distinct. Dismissal requires the exact live instance;
@@ -2077,6 +2096,23 @@ names its socket. CLI JSON names a session `session` and a terminal
 
     In the first two, t2, its popup and the compositor focus stayed. Each
     close ended exactly its target's processes.
+  - **Editor without Helix (`eon-igae.17.1`, automated tier on x86_64 Linux,
+    before the `no-helix` package exists):** with a real supervisor whose
+    composition supplies no Helix, a fake Orbit and an unset
+    `[editor] command`:
+    `without_helix_an_unset_editor_is_visual_and_a_configured_one_overrides_it`
+    (an unavailable `$VISUAL` refuses with `edit-command` although `$EDITOR`
+    is valid; `$VISUAL` runs first with its arguments; a configured command
+    wins over both),
+    `without_helix_an_unset_editor_falls_to_editor_with_its_arguments`, and
+    `without_helix_and_without_an_editor_the_edit_names_the_setting` (the
+    refusal changes nothing and the named setting applies to the next edit).
+    `an_unset_editor_comes_from_visual_then_editor_split_on_ascii_whitespace`
+    covers the split. The first test, and
+    `commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing`
+    in the other direction, also show that an `eon` with Helix and one
+    without, of one build, report the same build and component graph and
+    present each other's window.
 - **Open proof:** Re-proof of EON-C10 on the beta candidate is pending under
   eon-igae.7.5, after the remote-chain amendments.
 
@@ -3569,6 +3605,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's 2026-11-06
   rule) by `eon-7cf0y.17`: older 1.x generations are stopped with the Reserved
   Stop, whose bytes and the EONW prefix no 1.x release changes.
+  Amended on 2026-11-10 (approved by Lucca, relayed by eon-overseer) by
+  `eon-igae.17.1`: `eon-hx` exists only in packages that include Helix.
 - **Consumer:** People, scripts and agents that use Eon 1.0 on x86_64 Linux on
   native Wayland and upgrade within 1.x.
 - **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
@@ -3577,7 +3615,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     [Using Eon](USAGE.md) lists at 1.0 keeps its name, arguments and meaning.
     Every `eon-` managed command name that [Configuration](CONFIGURATION.md)
     documents, such as `eon-nu`, `eon-bash`, `eon-hx`, `eon-yazi` and
-    `eon-lazygit`, keeps its name. Later releases may add commands and flags.
+    `eon-lazygit`, keeps its name. `eon-hx` exists only in packages that
+    include Helix. Later releases may add commands and flags.
   - **Exit statuses:** success stays 0, and each documented failure status
     (`eon-8mnr.1`) keeps its meaning, the same with and without `--json`.
   - **JSON output:** every field that a listed command's `--json` output

@@ -6,10 +6,19 @@ use eon_workspace_protocol::v38::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut}
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");
+    // The composition supplies its Helix here; without it, this build has none.
+    let helix = nonempty_environment_path("EON_HX");
+    let omitted: &[&str] = if helix.is_some() { &[] } else { &["helix"] };
+    let (component_report, composed_components) =
+        match eon_manifest::version_reports(MANIFEST, omitted) {
+            Ok((whole, composed)) => (Ok(whole), Ok(composed)),
+            Err(error) => (Err(error.to_string()), Err(error.to_string())),
+        };
     Inputs {
         version: env!("CARGO_PKG_VERSION"),
         skill: include_str!("../../../skills/eon/SKILL.md"),
-        component_report: eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string()),
+        component_report,
+        composed_components,
         assembly: env!("EON_WORKSPACE_DIGEST").as_bytes(),
         defaults: Defaults {
             bar_widgets: &[
@@ -171,8 +180,8 @@ pub(crate) fn inputs() -> Inputs {
             },
             ansi_palette: "000000,cd0000,00cd00,cdcd00,1093f5,cd00cd,00cdcd,faebd7,404040,ff0000,00ff00,ffff00,11b5f6,ff00ff,00ffff,ffffff",
             custom_popup_keep_alive: true,
-            // The packaged Helix on Eon's terminal PATH.
-            editor: &["hx"],
+            // The packaged Helix on Eon's terminal PATH; none in a build without Helix.
+            editor: helix.as_ref().map(|_| &["hx"][..]),
             agent_commands: &[
                 // Codex's shared daemon would run this terminal's eon commands as another terminal.
                 &["codex", "resume", "--no-daemon"],
@@ -190,7 +199,7 @@ pub(crate) fn inputs() -> Inputs {
         managed: ManagedPrograms {
             nu: configured_program("EON_NU", "nu"),
             bash: configured_program("EON_BASH", "bash"),
-            helix: configured_program("EON_HX", "hx"),
+            helix,
             yazi: configured_program("EON_YAZI", "yazi"),
             ya: configured_program("EON_YA", "ya"),
             lazygit: configured_program("EON_LAZYGIT", "lazygit"),

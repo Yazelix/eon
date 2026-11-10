@@ -49,7 +49,11 @@ pub struct Inputs {
     pub version: &'static str,
     /// The agent skill this build ships, which `eon --skill` prints.
     pub skill: &'static str,
+    /// This build's whole component graph, which supervisors report and launches compare.
     pub component_report: Result<String, String>,
+    /// The components this composition includes, which `eon versions` prints:
+    /// `component_report` without the tools the package leaves out.
+    pub composed_components: Result<String, String>,
     pub assembly: &'static [u8],
     pub defaults: managed_environment::Defaults,
     pub orbit: PathBuf,
@@ -587,6 +591,8 @@ fn launch_managed(
     tool: managed_environment::Tool,
     arguments: Vec<OsString>,
 ) -> Result<i32, String> {
+    // A name this build cannot run refuses before anything is prepared.
+    managed_environment::program(tool, &inputs.managed)?;
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
     let mut arguments = arguments;
@@ -859,7 +865,10 @@ pub(super) fn versions(inputs: &Inputs) -> Result<String, String> {
         inputs.version,
         current_generation(inputs)?,
         VERSION,
-        inputs.component_report()?
+        inputs
+            .composed_components
+            .as_deref()
+            .map_err(Clone::clone)?
     ))
 }
 

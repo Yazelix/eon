@@ -8,7 +8,7 @@ use std::{
     io::{self, Read, Write},
     os::{
         fd::AsRawFd,
-        unix::{fs::PermissionsExt, process::CommandExt},
+        unix::{ffi::OsStrExt, fs::PermissionsExt, process::CommandExt},
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -160,8 +160,10 @@ pub struct Defaults {
     /// Quiet interval after attached-client typing before an unforced send (EON-C36).
     pub send_typing_quiet_ms: u16,
     pub popups: PopupCatalog,
-    /// The editor's argv, before the file, while `[editor] command` is unset.
-    pub editor: &'static [&'static str],
+    /// The editor's argv, before the file, while `[editor] command` is unset. None in a
+    /// build without Helix, where an unset command resolves from the environment at each
+    /// edit (EON-C10).
+    pub editor: Option<&'static [&'static str]>,
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
     pub agent_commands: &'static [&'static [&'static str]],
@@ -747,10 +749,12 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     });
     if json {
         config.as_object_mut().unwrap().remove("updates");
-        config["terminal"]
-            .as_object_mut()
-            .unwrap()
-            .retain(|_, value| !value.is_null());
+        for section in ["terminal", "editor"] {
+            config[section]
+                .as_object_mut()
+                .unwrap()
+                .retain(|_, value| !value.is_null());
+        }
         return serde_json::to_string_pretty(&config)
             .map(|text| text + "\n")
             .map_err(|error| error.to_string());
@@ -828,6 +832,9 @@ fn defaults_table(
             "command" if section == "shell" => {
                 "Direct argv for terminals without an explicit command."
             }
+            "command" if section == "editor" && value.is_null() => {
+                "Direct argv that `eon edit` and Files run with the file appended. Unset, each edit runs $VISUAL, then $EDITOR."
+            }
             "command" if section == "editor" => {
                 "Direct argv that `eon edit` and Files run with the file appended."
             }
@@ -883,7 +890,8 @@ impl TerminalConfig {
 pub struct ManagedPrograms {
     pub nu: PathBuf,
     pub bash: PathBuf,
-    pub helix: PathBuf,
+    /// The packaged Helix; none in a build without it.
+    pub helix: Option<PathBuf>,
     pub yazi: PathBuf,
     pub ya: PathBuf,
     pub lazygit: PathBuf,
@@ -926,18 +934,34 @@ pub(crate) fn shell_command(
     Ok(read_shell_config(root, defaults, log)?.command)
 }
 
-/// The editor's argv before the file (`[editor] command`), reread for each edit.
-pub(crate) fn editor_command(
+/// The program `tool` runs. A build without Helix refuses its names rather than
+/// running an `hx` from PATH, which inside a terminal would be this same name.
+pub(crate) fn program(tool: Tool, programs: &ManagedPrograms) -> Result<&Path, String> {
+    Ok(match tool {
+        Tool::Nu => &programs.nu,
+        Tool::Bash => &programs.bash,
+        Tool::Helix => programs
+            .helix
+            .as_deref()
+            .ok_or("this Eon package includes no Helix, so it provides no hx or eon-hx")?,
+        Tool::Yazi | Tool::Files => &programs.yazi,
+        Tool::Ya => &programs.ya,
+        Tool::LazyGit => &programs.lazygit,
+    })
+}
+
+/// `[editor] command`, or this build's default while it is unset: the editor's argv
+/// before the file. None when it is unset in a build without a default.
+pub(crate) fn editor_setting(
     root: &Path,
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
-) -> Result<Vec<OsString>, String> {
+) -> Result<Option<Vec<String>>, String> {
     let argv = match read_config(root, defaults, log)?.editor.command {
-        None => defaults
-            .editor
-            .iter()
-            .map(|&argument| argument.into())
-            .collect(),
+        None => match defaults.editor {
+            Some(argv) => argv.iter().map(|&argument| argument.into()).collect(),
+            None => return Ok(None),
+        },
         Some(PopupCommandSetting::Argv(argv)) => argv,
         Some(PopupCommandSetting::Named(_)) => {
             return Err(
@@ -946,7 +970,46 @@ pub(crate) fn editor_command(
         }
     };
     validate_argv("editor.command", &argv)?;
-    Ok(argv.into_iter().map(Into::into).collect())
+    Ok(Some(argv))
+}
+
+/// The editor's argv before the file, reread for each edit: `editor_setting`, else
+/// `$VISUAL`, then `$EDITOR`, from this process's environment, which for an edit is the
+/// supervisor's (EON-C10).
+pub(crate) fn editor_command(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<Vec<OsString>, String> {
+    if let Some(argv) = editor_setting(root, defaults, log)? {
+        return Ok(argv.into_iter().map(Into::into).collect());
+    }
+    let (variable, argv) = environment_editor(env::var_os("VISUAL"), env::var_os("EDITOR")).ok_or(
+        "no editor: this Eon package has no Helix, and neither VISUAL nor EDITOR named an \
+             editor when this window started; set [editor] command in config.toml, such as \
+             command = [\"nvim\"]",
+    )?;
+    validate_argv(variable, &argv)?;
+    Ok(argv)
+}
+
+/// The first of `$VISUAL` and `$EDITOR` that names an editor, with its name: the value
+/// split on ASCII whitespace, with no shell. A blank value names none.
+fn environment_editor(
+    visual: Option<OsString>,
+    editor: Option<OsString>,
+) -> Option<(&'static str, Vec<OsString>)> {
+    [("$VISUAL", visual), ("$EDITOR", editor)]
+        .into_iter()
+        .find_map(|(variable, value)| {
+            let argv: Vec<OsString> = value?
+                .as_bytes()
+                .split(u8::is_ascii_whitespace)
+                .filter(|word| !word.is_empty())
+                .map(|word| OsStr::from_bytes(word).to_owned())
+                .collect();
+            (!argv.is_empty()).then_some((variable, argv))
+        })
 }
 
 pub(crate) fn zoxide_enabled(
@@ -1279,17 +1342,25 @@ fn configured_popup_command(
     }
 }
 
-fn validate_argv(key: &str, argv: &[String]) -> Result<(), String> {
-    if argv.is_empty() || argv[0].is_empty() {
+fn validate_argv<S: AsRef<OsStr>>(key: &str, argv: &[S]) -> Result<(), String> {
+    fn bytes(argument: &impl AsRef<OsStr>) -> &[u8] {
+        argument.as_ref().as_bytes()
+    }
+    if argv.first().is_none_or(|program| bytes(program).is_empty()) {
         return Err(format!("{key} requires a nonempty executable"));
     }
     if argv.len() > 128 {
         return Err(format!("{key} accepts at most 128 arguments"));
     }
-    if argv.iter().any(|argument| argument.contains('\0')) {
+    if argv.iter().any(|argument| bytes(argument).contains(&0)) {
         return Err(format!("{key} must not contain NUL"));
     }
-    if argv.iter().map(String::len).sum::<usize>() > 64 * 1024 {
+    if argv
+        .iter()
+        .map(|argument| bytes(argument).len())
+        .sum::<usize>()
+        > 64 * 1024
+    {
         return Err(format!("{key} exceeds 64 KiB"));
     }
     Ok(())
@@ -1465,7 +1536,7 @@ pub(crate) fn prepare_popup_command(
             return Err("this popup has no command".into());
         }
         PopupCommand::Argv(argv) => argv.clone(),
-        // An unavailable editor fails the edit rather than falling back to Helix.
+        // An unavailable or unresolved editor fails the edit; nothing falls back to Helix.
         PopupCommand::Edit(file) => {
             let mut argv = editor_command(config, defaults, log)?;
             argv.push(file.clone());
@@ -1782,15 +1853,7 @@ pub(crate) fn command(
         Tool::Nu | Tool::Bash => Some(read_shell_config(config, defaults, None)?),
         _ => None,
     };
-    let program = match tool {
-        Tool::Nu => &programs.nu,
-        Tool::Bash => &programs.bash,
-        Tool::Helix => &programs.helix,
-        Tool::Yazi | Tool::Files => &programs.yazi,
-        Tool::Ya => &programs.ya,
-        Tool::LazyGit => &programs.lazygit,
-    };
-    let mut command = Command::new(program);
+    let mut command = Command::new(program(tool, programs)?);
     // Nothing started inside the terminal inherits the one-shot marker, or
     // the delegation and routing markers, which name one delegated attach or
     // routed command (EON-C11).
@@ -2430,6 +2493,8 @@ mod tests {
                 defaults.terminal_access = super::TerminalAccess::None;
                 defaults.send_enter_delay_ms = 0;
                 defaults.send_typing_quiet_ms = 0;
+                // A build without Helix has no default editor.
+                defaults.editor = None;
                 defaults.popups.entries[1].command = PopupCommand::Argv(vec![
                     "fixture-git".into(),
                     "quote\"and\\slash".into(),
@@ -2452,6 +2517,14 @@ mod tests {
             assert!(json["popups"]["anima"].get("command").is_none());
             assert!(json["popups"]["anima"].get("keep_alive").is_none());
             assert_eq!(json["terminal"].get("font_family").is_some(), explicit);
+            assert_eq!(json["editor"].get("command").is_none(), explicit);
+            assert_eq!(
+                toml.contains(
+                    "\n[editor]\n# command: unset. Direct argv that `eon edit` and Files run \
+                     with the file appended. Unset, each edit runs $VISUAL, then $EDITOR.\n"
+                ),
+                explicit
+            );
             fs::write(printed.join("config.toml"), toml).unwrap();
             assert!(
                 super::read_config(&printed, &defaults, None)
@@ -2471,7 +2544,7 @@ mod tests {
                     number_keys(root, &defaults, None).unwrap(),
                     sidebar_enabled(root, &defaults, None).unwrap(),
                     super::agents(root, &defaults, None).unwrap(),
-                    super::editor_command(root, &defaults, None).unwrap(),
+                    super::editor_setting(root, &defaults, None).unwrap(),
                 )
             };
             assert_eq!(policy(&empty), policy(&printed));
@@ -2516,12 +2589,13 @@ mod tests {
             send_enter_delay_ms: agents.send_enter_delay_ms,
             send_typing_quiet_ms: agents.send_typing_quiet_ms,
             popups: popup_catalog(root, defaults, None)?,
-            editor: Box::leak(
-                super::editor_command(root, defaults, None)?
-                    .into_iter()
-                    .map(|argument| &*argument.into_string().unwrap().leak())
-                    .collect(),
-            ),
+            editor: super::editor_setting(root, defaults, None)?.map(|argv| {
+                &*Box::leak(
+                    argv.into_iter()
+                        .map(|argument| &*argument.leak())
+                        .collect::<Box<[_]>>(),
+                )
+            }),
             custom_popup_keep_alive: defaults.custom_popup_keep_alive,
             ansi_palette: defaults.ansi_palette,
             agent_commands: defaults.agent_commands,
@@ -4007,7 +4081,7 @@ label = "Browse"
         let programs = ManagedPrograms {
             nu: "/managed/nu".into(),
             bash: "/managed/bash".into(),
-            helix: "/managed/hx".into(),
+            helix: Some("/managed/hx".into()),
             yazi: "/managed/yazi".into(),
             ya: "/managed/ya".into(),
             lazygit: "/managed/lazygit".into(),
@@ -4106,6 +4180,66 @@ label = "Browse"
     }
 
     #[test]
+    fn a_build_without_helix_refuses_its_names() {
+        // Running a bare `hx` instead would find this same name on the terminal PATH.
+        let inputs = crate::fixtures::inputs();
+        let programs = ManagedPrograms {
+            helix: None,
+            ..inputs.managed
+        };
+        let config = Path::new("/private/eon");
+        let error =
+            managed_command(Tool::Helix, &programs, config, &[], &inputs.defaults).unwrap_err();
+        assert_eq!(
+            error,
+            "this Eon package includes no Helix, so it provides no hx or eon-hx"
+        );
+        assert!(managed_command(Tool::Yazi, &programs, config, &[], &inputs.defaults).is_ok());
+    }
+
+    #[test]
+    fn an_unset_editor_comes_from_visual_then_editor_split_on_ascii_whitespace() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let resolve = |visual: Option<&str>, editor: Option<&str>| {
+            super::environment_editor(visual.map(Into::into), editor.map(Into::into))
+        };
+        let argv = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
+        assert_eq!(
+            resolve(Some("vis --flag"), Some("ed")),
+            Some(("$VISUAL", argv(&["vis", "--flag"])))
+        );
+        assert_eq!(resolve(None, Some("ed")), Some(("$EDITOR", argv(&["ed"]))));
+        // No shell reads the value: only ASCII whitespace separates words.
+        assert_eq!(
+            resolve(None, Some(" my-editor  --wait\t-x\n")),
+            Some(("$EDITOR", argv(&["my-editor", "--wait", "-x"])))
+        );
+        assert_eq!(
+            resolve(None, Some("'my editor'\u{a0}-w")),
+            Some(("$EDITOR", argv(&["'my", "editor'\u{a0}-w"])))
+        );
+        // A blank value names no editor.
+        assert_eq!(
+            resolve(Some(" \t"), Some("ed")),
+            Some(("$EDITOR", argv(&["ed"])))
+        );
+        assert_eq!(resolve(Some(""), Some(" ")), None);
+        assert_eq!(resolve(None, None), None);
+        // A path that is not UTF-8 keeps its bytes.
+        assert_eq!(
+            super::environment_editor(
+                None,
+                Some(OsString::from_vec(b"/opt/\xffed --wait".to_vec()))
+            ),
+            Some((
+                "$EDITOR",
+                vec![OsString::from_vec(b"/opt/\xffed".to_vec()), "--wait".into()]
+            ))
+        );
+    }
+
+    #[test]
     fn managed_commands_never_pass_on_a_delegation_marker() {
         // `eon-bash -c 'eon window stop ID'` with an inherited marker would
         // narrow that Stop to one generation.
@@ -4113,7 +4247,7 @@ label = "Browse"
         let programs = ManagedPrograms {
             nu: "/managed/nu".into(),
             bash: "/managed/bash".into(),
-            helix: "/managed/hx".into(),
+            helix: Some("/managed/hx".into()),
             yazi: "/managed/yazi".into(),
             ya: "/managed/ya".into(),
             lazygit: "/managed/lazygit".into(),

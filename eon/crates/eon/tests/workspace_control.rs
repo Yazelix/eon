@@ -5019,12 +5019,341 @@ fn eon_command(binary: &Path) -> Command {
         )
         .collect::<Vec<_>>();
     let mut command = Command::new(binary);
+    // The full product: its composition supplies Helix. Nothing here runs it, and a
+    // test of a build without Helix removes `EON_HX`.
     command
         .env("HOME", std::env::temp_dir())
         .env("XDG_STATE_HOME", test_state_directory())
         .env_remove("EON_SESSION_BIN")
+        .env("EON_HX", "/eon-test-absent/hx")
+        .env_remove("VISUAL")
+        .env_remove("EDITOR")
         .env("PATH", std::env::join_paths(path).unwrap());
     command
+}
+
+/// The window `eon window ls --json` lists first, as this build's `eon` sees it from
+/// `command`'s composition.
+fn listed_window(mut command: Command, runtime: &Path, config: &Path) -> serde_json::Value {
+    let output = command
+        .args(["window", "ls", "--json"])
+        .env("EON_RUNTIME_DIR", runtime)
+        .env("EON_CONFIG_HOME", config)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    listed["windows"][0].clone()
+}
+
+/// A window of a build without Helix: its supervisor and every `eon` it runs have no
+/// `EON_HX`. Stubs in `editor` are on the supervisor's PATH.
+struct WindowWithoutHelix {
+    root: PathBuf,
+    runtime: PathBuf,
+    config: PathBuf,
+    editor: PathBuf,
+    control: PathBuf,
+    caller: String,
+    supervisor: TestProcess,
+}
+
+impl WindowWithoutHelix {
+    fn start(environment: &[(&str, &str)]) -> Self {
+        let root = temporary_directory();
+        let runtime = root.join("runtime");
+        let config = root.join("config");
+        configure_mock_desktop(&config);
+        let stop = root.join("stop");
+        let orbit = root.join("orbit");
+        let venus = root.join("venus");
+        managed_orbit_executable(&orbit);
+        executable(&venus, "#!/bin/sh\nexit 0\n");
+        let editor = root.join("editor");
+        fs::create_dir(&editor).unwrap();
+
+        let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+        let path = command
+            .get_envs()
+            .find_map(|(name, value)| (name == "PATH").then_some(value))
+            .flatten()
+            .unwrap()
+            .to_owned();
+        let path = std::iter::once(editor.clone()).chain(std::env::split_paths(&path));
+        let child = command
+            .env("PATH", std::env::join_paths(path).unwrap())
+            .arg("run")
+            .env_remove("EON_HX")
+            .envs(environment.iter().copied())
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let supervisor = TestProcess { child, stop };
+        let generation = generation_runtime(&runtime);
+        let control = generation.join("eon.sock");
+        wait_for(&control);
+        let first = generation.join("orbit.sock");
+        wait_for(&first);
+        let environment = process::environ(live_identity(&first).process_id);
+        let caller = environment
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+            .map(|value| String::from_utf8(value.to_vec()).unwrap())
+            .expect("terminal environment names its terminal");
+        Self {
+            root,
+            runtime,
+            config,
+            editor,
+            control,
+            caller,
+            supervisor,
+        }
+    }
+
+    /// An `eon` of the same build without Helix, run from the window's first terminal.
+    fn command(&self) -> Command {
+        let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+        command
+            .env_remove("EON_HX")
+            .current_dir(&self.root)
+            .env("EON_RUNTIME_DIR", &self.runtime)
+            .env("EON_CONFIG_HOME", &self.config)
+            .env("EON_TERMINAL", &self.caller);
+        command
+    }
+
+    fn edit(&self) -> Output {
+        self.command()
+            .args(["edit", "--json", "--", "notes.txt"])
+            .output()
+            .unwrap()
+    }
+
+    fn tabs(&self) -> Vec<Tab> {
+        // Each request to a supervisor needs its own ID.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = format!("inspect-{}", NEXT.fetch_add(1, Ordering::Relaxed));
+        match workspace_action(&self.control, &id, Action::Inspect) {
+            Response::Snapshot(snapshot) => stable_tabs(&snapshot.tabs),
+            response => panic!("cannot inspect workspace: {response:?}"),
+        }
+    }
+
+    /// Asserts that the last edit started `editor` on notes.txt in the selected pane.
+    fn assert_editing(&self, edited: &Output, editor: &[u8]) {
+        assert!(edited.status.success(), "{}", stdout(edited));
+        let tabs = self.tabs();
+        let pane = tabs[0]
+            .panes()
+            .find(|pane| Some(pane.id.as_str()) == tabs[0].selected_pane.as_deref())
+            .unwrap();
+        let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+        let arguments = process::cmdline(live_identity(endpoint).process_id);
+        let file = fs::canonicalize(&self.root).unwrap().join("notes.txt");
+        assert!(
+            arguments.ends_with(&[editor, file.as_os_str().as_bytes(), b"\0"].concat()),
+            "{}",
+            String::from_utf8_lossy(&arguments)
+        );
+    }
+
+    /// Asserts that the last edit was refused with `edit-command`, said each of
+    /// `detail`, and left the tabs as `before`.
+    fn assert_refused(&self, refused: &Output, detail: &[&str], before: &[Tab]) {
+        assert_eq!(refused.status.code(), Some(1), "{}", stdout(refused));
+        for text in [&["\"code\":\"edit-command\""], detail].concat() {
+            assert!(stdout(refused).contains(text), "{}", stdout(refused));
+        }
+        assert_eq!(self.tabs(), before);
+    }
+
+    fn configure_editor(&self, argv: &str) {
+        let settings = fs::read_to_string(self.config.join("config.toml")).unwrap();
+        fs::write(
+            self.config.join("config.toml"),
+            format!("{settings}\n[editor]\ncommand = {argv}\n"),
+        )
+        .unwrap();
+    }
+
+    fn stop(mut self) {
+        fs::write(&self.supervisor.stop, "").unwrap();
+        wait_for_successful_exit(&mut self.supervisor.child);
+        fs::remove_dir_all(&self.root).unwrap();
+    }
+}
+
+#[test]
+fn a_build_without_helix_omits_it_from_versions_and_defaults_and_refuses_its_names() {
+    let root = temporary_directory();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let run = |helix: bool, arguments: &[&str]| {
+        let mut command = eon_command(binary);
+        if !helix {
+            command.env_remove("EON_HX");
+        }
+        let output = command
+            .args(arguments)
+            .env("EON_CONFIG_HOME", root.join("absent-config"))
+            .env("EON_RUNTIME_DIR", root.join("absent-runtime"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        stdout(&output).to_owned()
+    };
+
+    // `eon versions` leaves out exactly the Helix line: the build identity on its
+    // first line and every other component stay.
+    let full = run(true, &["versions"]);
+    let helix: Vec<_> = full
+        .lines()
+        .filter(|line| line.starts_with("helix "))
+        .collect();
+    assert_eq!(helix.len(), 1, "{full}");
+    let without = run(false, &["versions"]);
+    assert_eq!(
+        without.lines().collect::<Vec<_>>(),
+        full.lines()
+            .filter(|line| *line != helix[0])
+            .collect::<Vec<_>>()
+    );
+
+    // `[editor] command` has no default.
+    assert!(run(true, &["config", "defaults"]).contains("\n[editor]\ncommand = [\"hx\"] #"));
+    assert!(run(false, &["config", "defaults"]).contains(
+        "\n[editor]\n# command: unset. Direct argv that `eon edit` and Files run with the \
+         file appended. Unset, each edit runs $VISUAL, then $EDITOR.\n"
+    ));
+    let json = |helix| -> serde_json::Value {
+        serde_json::from_str(&run(helix, &["config", "defaults", "--json"])).unwrap()
+    };
+    assert_eq!(json(true)["editor"]["command"], serde_json::json!(["hx"]));
+    assert_eq!(json(false)["editor"], serde_json::json!({}));
+
+    // The Helix names refuse with one line, before anything is prepared. Running an
+    // `hx` from PATH instead would find the same name again inside a terminal.
+    let names = root.join("names");
+    fs::create_dir(&names).unwrap();
+    for name in ["hx", "eon-hx"] {
+        symlink(binary, names.join(name)).unwrap();
+        let refused = eon_command(&names.join(name))
+            .env_remove("EON_HX")
+            .arg("notes.txt")
+            .env("EON_CONFIG_HOME", root.join("absent-config"))
+            .env("EON_RUNTIME_DIR", root.join("absent-runtime"))
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(1), "{name}: {refused:?}");
+        assert!(refused.stdout.is_empty(), "{name}: {refused:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&refused.stderr),
+            "eon: this Eon package includes no Helix, so it provides no hx or eon-hx\n",
+            "{name}"
+        );
+    }
+    assert!(!root.join("absent-config").exists());
+    assert!(!root.join("absent-runtime").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn without_helix_an_unset_editor_is_visual_and_a_configured_one_overrides_it() {
+    let window =
+        WindowWithoutHelix::start(&[("VISUAL", "vis-editor --flag"), ("EDITOR", "other-editor")]);
+    executable(&window.editor.join("other-editor"), "#!/bin/sh\nexit 0\n");
+
+    // An unavailable $VISUAL refuses the edit; a valid $EDITOR does not stand in.
+    let before = window.tabs();
+    window.assert_refused(
+        &window.edit(),
+        &["vis-editor", "is unavailable on Eon's terminal PATH"],
+        &before,
+    );
+
+    // $VISUAL comes first, split into its arguments.
+    executable(&window.editor.join("vis-editor"), "#!/bin/sh\nexit 0\n");
+    window.assert_editing(&window.edit(), b"vis-editor\0--flag\0");
+
+    // The configured editor wins over both variables, from the next edit.
+    executable(&window.editor.join("my-editor"), "#!/bin/sh\nexit 0\n");
+    window.configure_editor("[\"my-editor\", \"--wait\"]");
+    window.assert_editing(&window.edit(), b"my-editor\0--wait\0");
+
+    // The full product's `eon` of this build sees the same build and component graph,
+    // so it lists this window as its own and presents it.
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let build = |command: &mut Command| {
+        let output = command.arg("versions").output().unwrap();
+        stdout(&output).lines().next().unwrap().to_owned()
+    };
+    assert_eq!(
+        build(&mut eon_command(binary)),
+        build(&mut window.command())
+    );
+    // A bare launch compares the supervisor's component graph with its own before
+    // it presents the running window.
+    let launched = eon_command(binary)
+        .env("EON_RUNTIME_DIR", &window.runtime)
+        .env("EON_CONFIG_HOME", &window.config)
+        .env("EON_ORBIT", window.root.join("orbit"))
+        .env("EON_VENUS", window.root.join("venus"))
+        .output()
+        .unwrap();
+    assert!(launched.status.success(), "{launched:?}");
+    let full = listed_window(eon_command(binary), &window.runtime, &window.config);
+    let own = listed_window(window.command(), &window.runtime, &window.config);
+    assert_eq!(full["attach"]["available"], true, "{full}");
+    assert_eq!(full, own);
+    assert!(
+        full["component_report"]
+            .as_str()
+            .unwrap()
+            .contains("\nhelix "),
+        "{full}"
+    );
+    let attached = eon_command(binary)
+        .args(["window", "attach", "default"])
+        .env("EON_RUNTIME_DIR", &window.runtime)
+        .env("EON_CONFIG_HOME", &window.config)
+        .output()
+        .unwrap();
+    assert!(attached.status.success(), "{attached:?}");
+    window.stop();
+}
+
+#[test]
+fn without_helix_an_unset_editor_falls_to_editor_with_its_arguments() {
+    let window = WindowWithoutHelix::start(&[("EDITOR", "my-editor --wait")]);
+    executable(&window.editor.join("my-editor"), "#!/bin/sh\nexit 0\n");
+    window.assert_editing(&window.edit(), b"my-editor\0--wait\0");
+    window.stop();
+}
+
+#[test]
+fn without_helix_and_without_an_editor_the_edit_names_the_setting() {
+    let window = WindowWithoutHelix::start(&[]);
+    let before = window.tabs();
+    window.assert_refused(
+        &window.edit(),
+        &[
+            "neither VISUAL nor EDITOR",
+            "set [editor] command in config.toml",
+        ],
+        &before,
+    );
+
+    // The setting the message names applies to the next edit, without a restart.
+    executable(&window.editor.join("my-editor"), "#!/bin/sh\nexit 0\n");
+    window.configure_editor("[\"my-editor\"]");
+    window.assert_editing(&window.edit(), b"my-editor\0");
+    window.stop();
 }
 
 fn test_state_directory() -> PathBuf {
@@ -8351,6 +8680,52 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         "{}",
         String::from_utf8_lossy(&orbit_arguments)
     );
+
+    // An `eon` of this build composed without Helix sees the same build and component
+    // graph, so it lists this window as its own and presents it.
+    let without_helix = || {
+        let mut command = eon_command(&binary);
+        command.env_remove("EON_HX");
+        command
+    };
+    let build = |command: &mut Command| {
+        let output = command.arg("versions").output().unwrap();
+        stdout(&output).lines().next().unwrap().to_owned()
+    };
+    assert_eq!(
+        build(&mut eon_command(&binary)),
+        build(&mut without_helix())
+    );
+    // A bare launch compares the supervisor's component graph with its own before
+    // it presents the running window.
+    let launched = without_helix()
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .output()
+        .unwrap();
+    assert!(launched.status.success(), "{launched:?}");
+    let other = listed_window(without_helix(), &runtime, &config);
+    assert_eq!(other["attach"]["available"], true, "{other}");
+    assert_eq!(
+        other,
+        listed_window(eon_command(&binary), &runtime, &config)
+    );
+    assert!(
+        other["component_report"]
+            .as_str()
+            .unwrap()
+            .contains("\nhelix "),
+        "{other}"
+    );
+    let attached = without_helix()
+        .args(["window", "attach", "default"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .output()
+        .unwrap();
+    assert!(attached.status.success(), "{attached:?}");
 
     // `eon pane create -- COMMAND` runs its exact argv beside the caller, and
     // is refused outside an Eon terminal.

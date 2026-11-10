@@ -133,35 +133,47 @@ pub fn target() -> Option<&'static str> {
         .map(|(name, ..)| *name)
 }
 
-/// Reports the product and the components this build's target carries.
-pub fn version_report(input: &str) -> Result<String, Error> {
+/// Reports the product and the components this build's target carries: first the whole
+/// graph, then the same without the composed tools in `omitted`, which a product
+/// package may leave out.
+pub fn version_reports(input: &str, omitted: &[&str]) -> Result<(String, String), Error> {
     let target = target().ok_or_else(|| Error("unsupported build target".into()))?;
-    report(input, target)
+    target_reports(input, target, omitted)
 }
 
-fn report(input: &str, target: &str) -> Result<String, Error> {
+fn target_reports(input: &str, target: &str, omitted: &[&str]) -> Result<(String, String), Error> {
     let manifest = parse(input)?;
     validate(&manifest)?;
     required(
         manifest.product.targets.iter().any(|name| name == target),
         "unsupported build target",
     )?;
-    let mut lines = vec![format!("{} {target}", manifest.product.id)];
-    lines.extend(
-        manifest
-            .components
+    required(
+        omitted
             .iter()
-            .filter(|component| component.targets.iter().any(|name| name == target))
-            .map(|component| {
-                format!(
-                    "{} {} {} {target}",
-                    component.id,
-                    component.version,
-                    component.revision.as_deref().unwrap_or("workspace"),
-                )
-            }),
-    );
-    Ok(lines.join("\n"))
+            .all(|id| manifest.composition.tools.iter().any(|tool| tool == id)),
+        "an omitted component is not a composed tool",
+    )?;
+    let report = |omitted: &[&str]| {
+        let mut lines = vec![format!("{} {target}", manifest.product.id)];
+        lines.extend(
+            manifest
+                .components
+                .iter()
+                .filter(|component| component.targets.iter().any(|name| name == target))
+                .filter(|component| !omitted.contains(&component.id.as_str()))
+                .map(|component| {
+                    format!(
+                        "{} {} {} {target}",
+                        component.id,
+                        component.version,
+                        component.revision.as_deref().unwrap_or("workspace"),
+                    )
+                }),
+        );
+        lines.join("\n")
+    };
+    Ok((report(&[]), report(omitted)))
 }
 
 fn parse(input: &str) -> Result<Manifest, Error> {
@@ -482,7 +494,7 @@ fn token(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_and_validate, report, version_report};
+    use super::{parse_and_validate, target_reports, version_reports};
     use serde_json::Value;
 
     const CANONICAL: &str = include_str!("../../../../components/eon-v5.json");
@@ -538,7 +550,9 @@ mod tests {
 
         let mut reports = Vec::new();
         for target in targets.iter().map(|target| target.as_str().unwrap()) {
-            let report = report(&input, target).unwrap();
+            // Nothing left out: both reports are the whole graph.
+            let (report, composed) = target_reports(&input, target, &[]).unwrap();
+            assert_eq!(report, composed);
             let mut lines = report.lines();
             assert_eq!(
                 lines.next().unwrap(),
@@ -565,11 +579,39 @@ mod tests {
         }
         assert!(reports[0].contains("\ncodexbar "));
         assert!(!reports[1].contains("\ncodexbar "));
-        assert!(reports.contains(&version_report(&input).unwrap()));
+        assert!(reports.contains(&version_reports(&input, &[]).unwrap().0));
         assert_eq!(
-            report(&input, "aarch64-linux").unwrap_err().to_string(),
+            target_reports(&input, "aarch64-linux", &[])
+                .unwrap_err()
+                .to_string(),
             "unsupported build target"
         );
+
+        // A package that leaves a tool out reports the rest unchanged; only a
+        // composed tool can be left out.
+        let (whole, without_helix) = target_reports(&input, "x86_64-linux", &["helix"]).unwrap();
+        assert_eq!(whole, reports[0]);
+        let helix: Vec<_> = reports[0]
+            .lines()
+            .filter(|line| line.starts_with("helix "))
+            .collect();
+        assert_eq!(helix.len(), 1);
+        assert_eq!(
+            without_helix.lines().collect::<Vec<_>>(),
+            reports[0]
+                .lines()
+                .filter(|line| *line != helix[0])
+                .collect::<Vec<_>>()
+        );
+        for id in ["orbit", "eon-runtime", "nope"] {
+            assert_eq!(
+                target_reports(&input, "x86_64-linux", &[id])
+                    .unwrap_err()
+                    .to_string(),
+                "an omitted component is not a composed tool",
+                "{id}"
+            );
+        }
     }
 
     #[test]

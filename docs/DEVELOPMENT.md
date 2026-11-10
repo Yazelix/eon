@@ -18,6 +18,13 @@ and defaults; `runtime/` owns the runtime mechanisms behind `run(Inputs)` and
 the canonical EONW package. `eon/crates/eon/tests/workspace_control.rs`
 exercises the real Eon binary, aliases and self-launches.
 
+The package's wrapper supplies each component's path in an `EON_*` variable.
+An `eon` started without `EON_HX`, such as a `cargo run` or the unwrapped
+executable outside an Eon terminal (Eon terminals inherit the variable), runs
+as the build without Helix: `[editor] command` has no default, and `hx` and
+`eon-hx` refuse. The integration tests' `eon_command` sets `EON_HX`, so a test
+means the full product unless it removes the variable.
+
 Run the test suites with `nix develop -c eon-test`. It fetches locked crates,
 then runs `cargo nextest run --locked --offline --no-fail-fast` in the bubblewrap
 sandbox that `nix/test-sandbox.nix` defines, so it is safe from inside a live Eon terminal.

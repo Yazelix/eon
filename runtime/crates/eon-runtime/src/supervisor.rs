@@ -1007,8 +1007,9 @@ fn supervise(
     let number_keys = managed_environment::number_keys(config, &inputs.defaults, Some(log))?;
     let agents = managed_environment::agents(config, &inputs.defaults, Some(log))?;
     // Each edit rereads `[editor]`; a malformed one fails the start as other settings do.
+    // An editor that resolves to nothing fails only the edit.
     if mode == LaunchMode::Workspace {
-        managed_environment::editor_command(config, &inputs.defaults, Some(log))?;
+        managed_environment::editor_setting(config, &inputs.defaults, Some(log))?;
         managed_environment::shell_command(config, &inputs.defaults, Some(log))?;
     }
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
