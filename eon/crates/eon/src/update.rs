@@ -2779,21 +2779,22 @@ mod tests {
     fn confirmation_interrupt_before_read_does_not_wait_for_input() {
         use std::os::unix::net::UnixStream;
         let _signals = SIGNAL_TEST.lock().unwrap();
-        let (input, mut output) = UnixStream::pair().unwrap();
+        let (input, output) = UnixStream::pair().unwrap();
         input.set_nonblocking(true).unwrap();
         let flags = unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) };
-        let writer = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
-            output.write_all(b"\n").unwrap();
-        });
+        let (sender, receiver) = std::sync::mpsc::channel();
         INTERRUPTED.store(true, Ordering::Relaxed);
-        let start = Instant::now();
-        let result = confirmation(input.as_raw_fd());
-        let elapsed = start.elapsed();
-        INTERRUPTED.store(false, Ordering::Relaxed);
-        writer.join().unwrap();
-        assert!(elapsed < Duration::from_millis(200), "{elapsed:?}");
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+        let result = thread::scope(|scope| {
+            scope.spawn(|| sender.send(confirmation(input.as_raw_fd())).unwrap());
+            let result = receiver.recv_timeout(Duration::from_secs(10));
+            INTERRUPTED.store(false, Ordering::Relaxed);
+            output.shutdown(std::net::Shutdown::Both).unwrap();
+            result
+        });
+        assert_eq!(
+            result.unwrap().unwrap_err().kind(),
+            std::io::ErrorKind::Interrupted
+        );
         assert_eq!(
             unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
             flags
@@ -2816,23 +2817,18 @@ mod tests {
         assert_eq!(unsafe { libc::poll(&mut polled, 1, 0) }, 1);
         // Reproduce a terminal flushing its line after poll reported readiness.
         input.read_exact(&mut [0; 2]).unwrap();
-        let writer = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
-            output.write_all(b"n\n").unwrap();
-        });
+        assert_ne!(flags & libc::O_NONBLOCK, 0);
         let mut byte = 0u8;
-        let start = Instant::now();
         let count = unsafe { libc::read(input.as_raw_fd(), (&mut byte as *mut u8).cast(), 1) };
         let error = std::io::Error::last_os_error();
-        let elapsed = start.elapsed();
-        writer.join().unwrap();
-        assert!(elapsed < Duration::from_millis(200), "{elapsed:?}");
         assert_eq!(count, -1);
         assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
         assert_eq!(
             unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
             flags
         );
+        output.write_all(b"n\n").unwrap();
+        output.shutdown(std::net::Shutdown::Write).unwrap();
         assert!(!confirmation(input.as_raw_fd()).unwrap());
         assert_eq!(
             unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },

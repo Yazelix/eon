@@ -2446,6 +2446,10 @@ pub(crate) mod tests {
                     expected.uid = expected.uid.wrapping_add(1);
                 }
                 peer.write_all(bytes).unwrap();
+                // A concurrent fork can retain the peer after this test drops it.
+                #[cfg(target_os = "linux")]
+                let _inherited_peer = peer.try_clone().unwrap();
+                peer.shutdown(std::net::Shutdown::Both).unwrap();
                 drop(peer);
                 let error = super::acquire_management_lease(
                     &mut stream,
