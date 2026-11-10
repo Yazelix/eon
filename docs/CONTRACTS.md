@@ -5134,79 +5134,150 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C38 — Persistent workspace identity and host registry
 
-- **Status:** Planned (`eon-remote-workspaces-52i4.4`, text by Yu Sun in
-  PR #3, approved by Lucca 2026-11-03). Slice 2a
-  (`eon-remote-workspaces-52i4.5`) implements it; the plan and acceptance
-  matrix are in [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md).
+- **Status:** Candidate (`eon-remote-workspaces-52i4.5`; text by Yu Sun in
+  PR #3, approved by Lucca 2026-11-03 on `eon-remote-workspaces-52i4.4`).
+  Slice 2a (`eon-remote-workspaces-52i4.5`, Yu Sun's PR #6) implemented it in
+  Eon 0.1.22. The remote plan and acceptance matrix are in
+  [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md).
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): session IDs `sN`.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
-  Quoted amendment direction approved on 2026-11-08 by Lucca
-  ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
-  recovery remains usable through a registry failure, and registry work does
-  not hold the supervisor's control loop.
-- **Consumer:** Local and remote Eon session clients and the host's
-  ID-targeted session operations.
-- **Trigger:** Create or rename a session, list/read its registration, resolve
-  a target, detach/reattach, or restart the supervisor.
+  Amended on 2026-11-08 (approved by Lucca, "2 we fix and push" and "ok",
+  relayed by eon-overseer) by `eon-remote-workspaces-52i4.5`: recovery stays
+  usable through a registry failure, registry work does not hold the
+  supervisor's control loop, and startup and recovery registration retry a
+  busy registry for up to two seconds.
+  Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-remote-workspaces-52i4.4`: restated as current behavior after
+  slice 2a landed, naming the registry's format, the outcomes of a mutation
+  and the limits that remain. No behavior changed.
+- **Consumer:** Local Eon session clients and the host's ID-targeted session
+  operations: the `eon session` commands and JSON (EON-C10), event
+  subscribers (EON-C39) and Venus. Remote clients are planned under the
+  reserved EON-C34.
+- **Trigger:** Creating or renaming a session, including a new window's first
+  session; listing or reading registrations; resolving a target by ID;
+  detaching and reattaching; a supervisor restart that recovers live
+  terminals.
 - **Result:**
-  - The host owns a durable, opaque session ID and a versioned registry.
-    An ID identifies the same registered session across client and supervisor
-    lifetimes. A window's `sN` is a local handle, not durable identity. A remote
-    target includes its host and session ID; one window still uses one host.
-  - Names and directories are attributes. Renaming keeps the ID; names need
-    not be unique. Separate sessions may use the same directory, and one
-    session may contain multiple directories. A stale/deleted ID is never
-    rebound to a different session merely because its name/path matches.
-  - Registry inspection can find registered identities independently of the
-    current window's members. Registration is metadata, not proof that any
-    terminal is running or that a recorded process may be signalled.
-  - Concurrent registry mutations are serialized. A successful durable mutation
-    is acknowledged only after atomic persistence; failure does not publish a
-    successful new identity or partly committed registration. IDs are not reused.
-    Version changes preserve the old durable file as the repository's durable
-    format policy requires; no unknown version is silently overwritten.
-  - New sessions obtain a confirmed durable registration before any terminal
-    starts. Recovery of already-live terminals under EON-C15 does not wait for
-    registry availability. A recovered member without confirmed registration
-    has no persistent ID; it remains usable by its window-local handle, and its
-    registration error is visible to the person and the CLI. No transient value
-    is presented as a persistent identity. Corrupt or unknown registry state
-    remains available for diagnosis.
-  - Registry work does not hold the supervisor's control loop: unrelated
-    inspection, attention processing and Stop remain serviceable while a
-    registry operation is pending. Contention gives an explicit busy result
-    without allocating an ID or publishing a record.
-  - Runtime uses this user's configured state directory for the registry:
-    `$XDG_STATE_HOME/eon/sessions`, with the documented HOME fallback. Clients
-    intended to share registrations must use the same state-directory setting.
-  - Amendment approved on 2026-11-08 by Lucca
-    ("ok", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`: startup and
-    recovered registrations retry only definitive busy results on the registry
-    worker for up to two seconds, with bounded backoff. Interactive create and
-    rename still return busy immediately. Registry list/lookup use shared locks;
-    mutations use exclusive locks. Setup failure remains a recovered member's
-    visible registration error and does not block recovery or control binding.
-- **Important failures:** Unknown/stale/ambiguous targets, corrupt or unknown
-  registry versions and persistence failures give explicit diagnostics rather
-  than guessed targets or a replacement with the same name. Malformed state
-  remains available for diagnosis. Registry failure authorizes no terminal
-  stop, destructive cleanup, duplicate process launch or fallback local creation.
+  - **Identity.** The host owns a durable, opaque session ID and a versioned
+    registry, one for each user and state directory. An ID identifies the
+    same registration across client and supervisor lifetimes. A registry
+    never issues an ID twice, including after a failed or interrupted
+    creation. An ID is 48 lowercase hexadecimal characters. A window's `sN`
+    is a local handle, not durable identity; each window maps its handles to
+    persistent IDs explicitly.
+  - **Attributes.** Names and directories are attributes. Renaming keeps the
+    ID; names need not be unique. Separate sessions may use the same
+    directory, and one session may contain multiple directories. A stale or
+    deleted ID is never rebound to a different session merely because its
+    name or path matches.
+  - **Registration first.** A new session, including a new window's first,
+    obtains a confirmed durable registration before any of its terminals
+    starts.
+  - **Inspection.** Registry inspection can find registered identities
+    independently of the current window's members. Registration is metadata,
+    not proof that any terminal is running or that a recorded process may be
+    signalled.
+  - **Mutation.** Registry mutations are serialized across every supervisor
+    and CLI process that uses the registry. A mutation succeeds only after
+    its record is durably and atomically published; a reader sees the earlier
+    record or the new one, never part of one. A mutation that does not
+    succeed ends in exactly one of:
+    - a definitive failure: no registration change was published; a durable
+      allocator reservation may remain. A creation that fails after reserving
+      its ID reports that ID, which is never issued again;
+    - busy: the registry lock or this supervisor's registry worker is busy.
+      No ID was allocated and no record was published for that request;
+    - an uncertain result: a record was replaced, but its durability was not
+      confirmed. Nothing is rolled back, retried or started on its strength.
+  - **Durable format.** The registry is `$XDG_STATE_HOME/eon/sessions`, or
+    `~/.local/state/eon/sessions` without it. Clients intended to share
+    registrations must use the same state directory; another state directory
+    is an independent registry. Format 1 is a directory of mode 0700 owned by
+    the user that holds `registry.lock`, `allocator.json` and one `ID.json`
+    per registration; `registry.lock`, `allocator.json` and registration
+    files are regular files of mode 0600, and each JSON file is at most 8192
+    bytes and carries its format number. Format 1 allocator fields are
+    `format`, `namespace` and `sequence`; registration fields are `format`,
+    `id` and optional `name`. Unknown fields are rejected. Supervisors and
+    CLIs of different Eon builds use one registry at the same time, so a
+    format changes only under a new format number. Version changes preserve
+    the old durable file as the repository's durable format policy requires;
+    no unknown version is silently overwritten.
+  - **Recovery.** Recovery of already-live terminals under EON-C15 does not
+    wait for registry availability. A recovered member without confirmed
+    registration has no persistent ID; it remains usable by its window-local
+    handle, and its registration error is visible to the person and the CLI.
+    No transient value is presented as a persistent identity. Once the
+    registry confirms it, the recovered member is registered under a new ID;
+    this window's earlier registrations remain readable but are not rebound
+    to its recovered member.
+  - **Availability.** Registry work does not hold the supervisor's control
+    loop: unrelated inspection, attention processing and Stop remain
+    serviceable while a registry operation is pending. Interactive create and
+    rename return busy immediately. A new window's first registration and a
+    recovered member's registration retry only definitive busy results on the
+    registry worker for up to two seconds, with bounded backoff. Registry
+    list and lookup use shared locks; mutations use exclusive locks. A
+    registry that cannot be set up is a recovered member's visible
+    registration error and blocks neither recovery nor control binding.
+- **Important failures:**
+  - Unknown, stale or ambiguous targets, corrupt or unknown registry
+    versions, unsafe ownership, modes or links, and persistence failures give
+    explicit diagnostics rather than guessed targets or a replacement with
+    the same name.
+  - Malformed state remains in place for diagnosis. Every read validates the
+    whole registry, and Eon never repairs, replaces or removes what fails.
+  - Registry failure authorizes no terminal stop, destructive cleanup,
+    duplicate process launch or fallback local creation. An invalid
+    non-temporary registry entry refuses registry operations: no new session
+    or fresh launch without recoverable terminals succeeds until corrected.
+    Running terminals, their recovery and eonbase are unaffected.
 - **Owner:** Eon Runtime owns persistent IDs, registry state and target
-  resolution. Eon projects that authority through its existing command/picker
-  boundaries. Orbit remains the authority for terminal/run state and lifecycle.
-- **Boundary:** Identity and registry only. Slice 2a does not promise original
-  membership/layout recovery, SSH transport, takeover, terminal stop/Forget
-  behavior, reboot process restoration or moving live work across hosts. Any
-  CLI/schema changes introduced with 2a amend EON-C10 in that slice; this text
-  allocates no separate CLI contract. Existing window-local handles may remain
-  adapters, with an explicit mapping to persistent IDs.
-- **Proof:** None yet.
-- **Open proof:** I1–I3 in the acceptance matrix of
-  [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md), run by slice 2a. Original
-  groups/layout and verified run recovery belong to slice 2b and amendments
-  to EON-C15/C33, not this proof.
+  resolution. Eon projects that authority through its existing command and
+  picker boundaries. Orbit remains the authority for terminal and run state
+  and lifecycle.
+- **Boundary:** Identity and registry only.
+  - The commands, JSON fields, failure codes and exit statuses are EON-C10's,
+    the registration events EON-C39's, a window's members and `sN` handles
+    EON-C33's, and recovery EON-C15's.
+  - The registry holds no membership, layout, directory, process or liveness
+    state. Restoring original membership and layout after a supervisor
+    restart belongs to slice 2b (`eon-remote-workspaces-52i4.6`) and its
+    amendments to EON-C15 and EON-C33.
+  - Nothing removes a registration or a reserved ID, and a temporary file
+    left by an interrupted write is ignored, not cleaned. Forget is row I4 of
+    the acceptance matrix.
+  - No command repairs or sets aside a registry that fails validation.
+  - No remote target, SSH transport, takeover or moving live work across
+    hosts. A remote target will name its host and session ID, and one window
+    uses one host (reserved EON-C34).
+  - No terminal stop behavior and no process restoration after a reboot.
+  - eonbase has no sessions and no registry.
+- **Proof:** Candidate evidence from `eon-remote-workspaces-52i4.5`, on
+  x86_64 Linux, for the change landed as `a20504d` and `c5f40f0`:
+  - Source checks on reviewed tree
+    `e7a0f31932edde03091f7e68c1607f559648eeb1` (code tree
+    `4eaa722ad0b5532e0fef5127417da688d2302fd4`): fmt and locked all-target
+    clippy passed, and the whole-workspace `eon-test` passed 1075 tests with
+    68 ignored. They include the registry's suite, and the supervisor,
+    session-set, EONW codec and CLI integration tests named `c38_*`.
+  - Installed observation of
+    `/nix/store/b7hsww5x7bdslfzl2yb965h50ahaz8ih-eon-0.1.22` (EONW v38,
+    built from that code tree) under a private headless Sway with an isolated
+    Eon root: with a corrupt allocator, a mode-0755 registry, a held lock and
+    an unresolved state directory in turn, a recovered terminal stayed alive
+    and readable with a null `persistent_id` and a `registration_error`, a
+    fresh creation exited 1, and a healthy restart registered a new ID.
+  - The landed change built with `nix build .#default`, package suites
+    included: `/nix/store/a9qf9fc46mc28fgjklk1b11sajjwlcyj-eon-0.1.22`.
+- **Open proof:** One installed observation of rows I1–I3 of the acceptance
+  matrix in [`REMOTE-WORKSPACES.md`](REMOTE-WORKSPACES.md) on the beta
+  candidate (`eon-igae.7`). Interrupted writes and lost replies stay proved
+  by the fault-injecting tests, which an installed build cannot reproduce.
+  Darwin is not claimed.
 
 ## EON-C39 — Session events from the CLI
 
