@@ -192,9 +192,11 @@ mod tests {
     /// text starts at the earliest retained line.
     #[test]
     fn eviction_starts_the_text_at_the_earliest_retained_line() {
-        let mut terminal = Terminal::new(20, 4).unwrap();
+        // A page holds fewer rows the wider the screen (115 at 400 columns),
+        // so 1000 lines evict several pages; every line costs a write.
+        let mut terminal = Terminal::new(400, 4).unwrap();
         terminal.set_scrollback_max_bytes(Some(1)).unwrap();
-        let lines: Vec<String> = (0..50_000).map(|n| format!("line {n}")).collect();
+        let lines: Vec<String> = (0..1000).map(|n| format!("line {n}")).collect();
         terminal.vt_write(lines.join("\r\n").as_bytes());
         let history = text(&terminal);
         let first = history.text.lines().next().unwrap();
