@@ -35,8 +35,10 @@
   (`eon-chip-grade-60-21mnn`). New launch flags, no wire change.
 
 - VEN-C30: popup-source sidebar and attention inbox rows in the shown session
-  take a readable, opaque focus-colour tint and retain their inline marker and
-  focus outlines (`eon-sidebar-popup-mark-fmn4v`). No wire change.
+  share pane-row fills, with a larger window mark at the padded right edge and
+  text clipped before it. Resting row text and marks adapt to light terminal
+  backgrounds; focus outlines and accessible names stay intact (`eon-x8d5x`).
+  No wire change.
 - VEN-C21: the leading Eon icon opens the accessible Window menu and stays
   reachable while tabs overflow. The session pill keeps its Sessions picker
   (`eon-7cf0y.6`).

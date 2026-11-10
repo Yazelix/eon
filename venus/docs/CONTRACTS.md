@@ -2154,7 +2154,9 @@ re-proved when that platform or feature is next touched.
   on 2026-10-23; after installed dogfood the same day, Lucca replaced its
   first tint with an outline. Amended on 2026-11-09 by `eon-whjhd`, approved by
   Lucca (delegated: 'auto-decide'): Agents shares its tab clearance with the
-  Stack tabs.
+  Stack tabs. Amended on 2026-11-10 by `eon-x8d5x`, approved by Lucca
+  (option 2, relayed through eon-overseer): popup rows share pane-row fills
+  and carry a larger popup marker at the right edge.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2180,8 +2182,8 @@ re-proved when that platform or feature is next touched.
       background and
       decorations](PRESENTATION.md#window-background-and-decorations)), so it
       reads like the panes and compositor blur shows through it as through them.
-      Focused and hovered rows take an opaque highlight; popup rows take their
-      opaque tint, as Contents describes. Without pane frames,
+      Keyboard-focused and hovered rows take an opaque highlight, equally for
+      popup and pane rows. Without pane frames,
       where pane cards have no outline either, that column's background reaches
       across the sidebar's area.
     - It pushes the tab columns, so opening or closing it resizes the visible
@@ -2234,13 +2236,15 @@ re-proved when that platform or feature is next touched.
     - Within a tab, a row whose source terminal is a popup comes first; pane
       rows follow in pane order.
     - **Popup marker.** In the shown session, a row whose source terminal is a
-      popup always shows the popup marker glyph after its catalog label, and
-      its accessible label adds "popup". In both the sidebar and attention
-      inbox, the row also takes
-      an opaque tint of the terminal focus colour, retained under hover or
-      keyboard focus, with readable labels and a visible hover step for every
-      focus colour. The current-row and keyboard-focus outlines draw above it
-      (`eon-sidebar-popup-mark-fmn4v`). Tab headers carry no marker.
+      popup always shows a window glyph at the row's right edge, inside its
+      padding and vertically centered across the row, larger than the label
+      text. In both the sidebar and attention inbox, every text line stops
+      before the marker, and the accessible label adds "popup". The marker
+      takes the title color, dimmed with a stale record; resting row text and
+      marks adapt for contrast against the terminal background. Popup and pane rows
+      use the same fill in resting, hover, current and keyboard-focus states;
+      the current-row and keyboard-focus outlines retain their normal order
+      (`eon-x8d5x`). Tab headers carry no marker.
     - **Current row.** The row whose source terminal is the active tab's
       focused terminal (its shown popup, else its selected pane) takes a
       one-pixel outline in the pane cards' outline color. It draws over the
@@ -2321,10 +2325,17 @@ re-proved when that platform or feature is next touched.
     `configured_popups_take_fixed_bindings_except_reserved_keys` to Alt+G and
     Alt+Shift+G. `eon-agent-sidebar-yx8.16` extends
     `agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row`
-    to the shown-popup marker: which heading and row carry it, where it falls
-    in the row's detail line, and the "popup shown" names, and adds
-    `sidebar_marker_follows_the_shaped_ink_of_either_direction` for its
-    placement after right-to-left text. `eon-popup-marker-always-52rk`
+    to the shown-popup marker and its accessible names. `eon-x8d5x`
+    replaces inline placement with a larger right-edge marker:
+    `popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll`
+    covers its geometry, text reservation, stale/RTL detail and scrolling;
+    `popup_detail_keeps_metadata_ltr_after_an_rtl_catalog_label` covers the
+    shaped label and metadata ordering.
+    `popup_and_pane_rows_share_surfaces_in_every_state` covers shared row
+    fills, badge backing and text colors. The isolated native
+    `long_workspace_labels_stay_on_the_visible_line` also checks popup text
+    clipping in both text directions and at minimum text widths.
+    `eon-popup-marker-always-52rk`
     changes the first test so a popup's row comes before its tab's pane rows,
     a hidden popup's row keeps the marker, and every popup row's name adds
     "popup". `eon-sidebar-you-are-here-3743` changes it so no heading carries

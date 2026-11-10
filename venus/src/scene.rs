@@ -348,13 +348,14 @@ pub struct SidebarRow {
     pub(crate) icon: Option<(QuotaProvider, SceneRect)>,
     /// Where the row's text lines start, after the glyph and any icon.
     pub(crate) text_left: f32,
+    /// Where every text line stops, clear of the popup marker.
+    pub(crate) text_right: f32,
     /// The pane's pinned name, else Claude's session name, the record title or app name.
     pub(crate) title: String,
     /// The age, the source terminal, "+N" for other records and "status stale".
     pub(crate) detail: String,
-    /// Where in `detail` the popup marker follows the source's catalog label, when the row's
-    /// source is a popup.
-    pub(crate) popup_marker: Option<usize>,
+    /// The popup window glyph at the padded right edge, centered across the row.
+    pub(crate) popup_marker: Option<SceneRect>,
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,
     pub(crate) focused: bool,
@@ -370,6 +371,9 @@ impl SidebarRow {
     fn shift(&mut self, delta: f32) {
         self.rect.top += delta;
         self.glyph.rect.top += delta;
+        if let Some(rect) = &mut self.popup_marker {
+            rect.top += delta;
+        }
         if let Some((_, rect)) = &mut self.icon {
             rect.top += delta;
         }
@@ -2529,7 +2533,10 @@ fn attention_row(
         let _ = write!(detail, "{heading} · ");
     }
     detail.push_str(source);
-    let popup_marker = popup.then_some(detail.len());
+    if popup {
+        // Keep following metadata left-to-right after an RTL catalog label.
+        detail.push('\u{200e}');
+    }
     if others > 0 {
         let _ = write!(detail, " · +{others}");
     }
@@ -2604,21 +2611,34 @@ fn attention_row(
             },
         )
     });
+    let rect = SceneRect {
+        height: line * lines + row_gap,
+        ..rect
+    };
+    let right = (rect.right() - metrics.padding / 2.0).max(rect.left);
+    let popup_marker = popup.then(|| {
+        let size = (metrics.font_size * 1.25)
+            .round()
+            .max(1.0)
+            .min(right - rect.left);
+        SceneRect {
+            left: right - size,
+            top: rect.top + (rect.height - size) / 2.0,
+            width: size,
+            height: size,
+        }
+    });
     SidebarRow {
         tab: tab.to_owned(),
         target: target.to_owned(),
-        rect: SceneRect {
-            left: rect.left,
-            top,
-            width: rect.width,
-            height: line * lines + row_gap,
-        },
+        rect,
         glyph: TabBadge {
             state: attention.state,
             dimmed: stale,
             rect: glyph,
         },
         text_left: icon.map_or(glyph.right(), |(_, rect)| rect.right()) + spacing,
+        text_right: popup_marker.map_or(right, |marker| marker.left - spacing),
         icon,
         title,
         detail,

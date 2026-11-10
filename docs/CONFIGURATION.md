@@ -287,7 +287,7 @@ attention badges on tabs and in the agent sidebar. Where the colour would
 read below 3:1 contrast on what lies under the dots, such as a dark custom
 colour on the bar or a white one on a white terminal background, the dots
 blend it toward black or white just enough to reach 3:1. Under a translucent
-terminal background (`background_opacity` below 1), untinted sidebar rows
+terminal background (`background_opacity` below 1), resting sidebar rows
 depend on the desktop behind the window, so their dots sit on the bar's dark
 disc, as on a tab. The 3:1 holds for a current agent's badge; a stale agent's
 badge is dimmed on purpose and reads below it. The other badges keep their
@@ -297,15 +297,6 @@ invalid. The setting is omitted by default, leaving Venus's built-in focus
 colour in use. The example selects `custom:#b207fb`. F6 keyboard focus in the chrome keeps
 its mint pill outline. This setting applies to full-Eon surfaces;
 eonbase has no pane outline.
-
-Popup rows from the shown session in the Agents sidebar and attention inbox
-also take a tint of `focus_color`. Their fill stays opaque, including under
-hover or keyboard focus. The resting tint stays distinct from the dark chrome
-reference and gets lighter on hover, including with light focus colours. Popup
-labels brighten as needed to keep at least 4.5:1 contrast with their fill.
-The inline popup mark and the current-row and keyboard-focus outlines remain.
-Tint intensity is fixed; the existing
-`focus_color` controls its hue.
 
 `border_width` sizes neutral pane-card, agent-sidebar-card, popup and native dialog outlines,
 including their title edges, and the Eon Bar widget outlines. `focus_border_width` sizes the selected pane's
@@ -392,11 +383,11 @@ when a window opens or reopens.
 
 `background_opacity` sets how opaque each terminal's default background is, in
 Eon and eonbase alike. It also covers the terminal padding, the title rows and
-gaps that share that background (above), and the agent sidebar card. Popup-row
-tints stay opaque. Explicit cell backgrounds, selection, text and the cursor
-keep their own colours, and the Eon Bar stays the opaque bar colour. With pane
-frames on, so do the gaps and
-footer outside the cards; with them off, the frameless terminal-background
+gaps that share that background (above), and the agent sidebar card. Hovered and
+keyboard-focused agent rows stay opaque. Explicit cell backgrounds, selection,
+text and the cursor keep their own colours, and the Eon Bar stays the opaque
+bar colour. With pane frames on, so do the gaps and footer outside the cards;
+with them off, the frameless terminal-background
 strips below the bar, sidebar and footer included, take this opacity.
 See-through areas still take clicks. `background_blur` asks the compositor to
 blur what shows through. It is independent of opacity, so a fully opaque

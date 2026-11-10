@@ -149,9 +149,11 @@ installation, and proven contract changes.
   CPU temperature still uses the stronger level
   (`eon-chip-grade-60-21mnn`).
 
-- Popup rows from the shown session in the Agents sidebar and attention inbox
-  have a background tint from the focus colour, keeping their window mark and
-  readable labels under hover and keyboard focus (`eon-sidebar-popup-mark-fmn4v`).
+- Popup agent rows in the Agents sidebar and attention inbox use the same fill
+  as pane rows, with a larger window mark at the padded right edge. Text stops
+  before the mark; `+N` and `status stale` follow the source label directly.
+  Resting agent-row text and marks adapt to light terminal backgrounds
+  (`eon-x8d5x`).
 - The leading Eon icon opens a Window menu with this window's terminal count,
   other running windows, Detach and Quit. Pointer, keyboard and accessibility
   activation work with hints and the sidebar off and while tabs overflow; the

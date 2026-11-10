@@ -350,8 +350,9 @@ default background, including later default-background changes from the program,
 to terminal padding, to the title rows and card gaps that share that background
 (Panes and popups, above), and to the agent sidebar card, which takes the
 background of the terminal in the leftmost visible column. A bare Venus launch
-is opaque. Popup-row tints stay opaque. Explicit cell backgrounds, selection,
-inverse video, notices, focus outlines, text and the cursor keep their own
+is opaque. Hovered and keyboard-focused agent rows stay opaque. Explicit cell
+backgrounds, selection, inverse video, notices, focus outlines, text and the
+cursor keep their own
 colours, and the Eon Bar stays the opaque bar colour. With pane frames on,
 so do the gaps and footer outside the
 cards; with them off, the frameless terminal-background strips below the bar,
@@ -381,13 +382,15 @@ carries no pane pin. Popup agents have no pane pin and keep that fallback too.
 Rows retain their state, app icon, age, source pane ID or popup label and
 needs-input message; their accessible names include the pin when present.
 
-Popup-source rows from the shown session in the sidebar and attention inbox have
-an opaque tint of the terminal focus colour, including while hovered or
-keyboard-focused. The resting tint leaves a visible step for hover, including
-with light focus colours. The tint keeps the row's labels readable over light
-or dark terminal backgrounds; the
-current-row and keyboard-focus outlines draw above it. The inline window mark
-after the popup's catalog label remains, as does its accessible "popup" name.
+Popup-source rows from the shown session in the sidebar and attention inbox use
+the same fill as pane rows. A window mark larger than the label text sits at
+the padded right edge, vertically centered across the row; title, detail and
+message text stop before it. The mark takes the title color and the stale-row
+palette. Row text retains at least 4.5:1 contrast against the terminal or
+highlight background, including stale text. Resting row text and marks darken when the terminal
+background needs contrast, as Stack labels do. The mark's size scales with the
+sidebar font. Current-row and keyboard-focus outlines retain their normal
+behavior, and accessible names include "popup".
 
 ## Ownership
 

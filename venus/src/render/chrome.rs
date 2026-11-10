@@ -882,16 +882,6 @@ fn badge_inside(badge: TabBadge, clip: Option<SceneRect>) -> bool {
     })
 }
 
-/// Where a shaped buffer's ink ends, from its left edge. Unlike a run's `line_w`, this counts the
-/// offset that right-aligns a right-to-left line, such as a Hebrew directory name.
-fn shaped_end(buffer: &Buffer) -> f32 {
-    buffer
-        .layout_runs()
-        .flat_map(|run| run.glyphs.iter())
-        .map(|glyph| glyph.x + glyph.w)
-        .fold(0.0, f32::max)
-}
-
 /// Draws the agent sidebar's popup marker, a small window: an outlined square with a filled
 /// title bar, distinct from every attention glyph. Quads keep it independent of fonts.
 fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: SceneColor) {
@@ -901,52 +891,17 @@ fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: Sc
     rectangles.push(rect.left, rect.top, rect.width, bar, color, 1.0);
 }
 
-/// Popup rows keep an opaque focus-colour tint over either terminal background or wallpaper.
-fn attention_row_fill(popup: bool, highlighted: bool, focus: SceneColor) -> Option<SceneColor> {
-    if !popup {
-        return highlighted.then_some(palette::CHROME_HIGHLIGHT);
-    }
-    let mix =
-        |base: u8, focus: u8| (f32::from(base) * 0.84 + f32::from(focus) * 0.16).round() as u8;
-    let base = palette::BAR_BACKGROUND;
-    let fill = blend_to_contrast(
-        SceneColor {
-            r: mix(base.r, focus.r),
-            g: mix(base.g, focus.g),
-            b: mix(base.b, focus.b),
-        },
-        base,
-        1.4,
-    );
-    Some(if highlighted {
-        blend_to_contrast(fill, fill, 1.5)
-    } else {
-        fill
-    })
-}
-
-fn attention_row_text(fill: Option<SceneColor>, dimmed: bool) -> (SceneColor, SceneColor) {
-    let (title, detail) = if dimmed {
-        (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
-    } else {
-        (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
-    };
-    // Lighter popup fills need brighter labels to keep both row and hover contrast.
-    let readable = |color| fill.map_or(color, |fill| blend_to_contrast(color, fill, 4.5));
-    (readable(title), readable(detail))
-}
-
 /// Paint the row and badge together, returning text colours readable on that surface.
 fn push_attention_row_surface(
     row: &crate::SidebarRow,
     hovered: bool,
     radius: f32,
     surface: Backing,
+    background: SceneColor,
     spinners: &mut Spinners,
     rectangles: &mut RectangleBatch,
 ) -> (SceneColor, SceneColor) {
-    let popup = row.popup_marker.is_some();
-    let fill = attention_row_fill(popup, row.focused || hovered, spinners.focus);
+    let fill = (row.focused || hovered).then_some(palette::CHROME_HIGHLIGHT);
     if let Some(fill) = fill {
         rectangles.push_rounded(row.rect, radius, fill);
     }
@@ -958,12 +913,21 @@ fn push_attention_row_surface(
         rectangles.push_rounded_outline(row.rect, radius, palette::ACCENT);
     }
     let backing = match fill {
-        Some(fill) if popup => Backing::Surface(fill),
         Some(fill) => Backing::Disc(fill),
         None => surface,
     };
     spinners.push_badge(row.glyph, backing, rectangles);
-    attention_row_text(fill.filter(|_| popup), row.glyph.dimmed)
+    let (title, detail) = if row.glyph.dimmed {
+        (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
+    } else {
+        (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+    };
+    // Like Stack labels, resting rows follow the terminal color rather than guessing wallpaper.
+    let background = fill.unwrap_or(background);
+    (
+        blend_to_contrast(title, background, 4.5),
+        blend_to_contrast(detail, background, 4.5),
+    )
 }
 
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
@@ -1643,6 +1607,7 @@ impl Renderer {
         list: SceneRect,
         hovered: bool,
         surface: Backing,
+        background: SceneColor,
         rectangles: &mut RectangleBatch,
     ) {
         let padding = self.metrics.padding;
@@ -1655,18 +1620,22 @@ impl Renderer {
             hovered,
             padding / 2.0,
             surface,
+            background,
             &mut self.spinners,
             rectangles,
         );
         if let Some((provider, rect)) = row.icon {
             self.push_quota_icon(provider, rect, Some(list));
         }
-        let text_width = (row.rect.right() - padding / 2.0 - row.text_left).max(0.0);
+        if let Some(marker) = row.popup_marker {
+            push_popup_marker(rectangles, marker, title);
+        }
+        let text_width = (row.text_right - row.text_left).max(0.0);
         let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
-        for (index, (text, marker, color)) in [
-            (Some(row.title.as_str()), None, title),
-            (Some(row.detail.as_str()), row.popup_marker, detail),
-            (row.message.as_deref(), None, title),
+        for (index, (text, color)) in [
+            (Some(row.title.as_str()), title),
+            (Some(row.detail.as_str()), detail),
+            (row.message.as_deref(), title),
         ]
         .into_iter()
         .enumerate()
@@ -1674,13 +1643,11 @@ impl Renderer {
             let Some(text) = text else { continue };
             self.push_sidebar_line(
                 text,
-                marker,
                 row.text_left,
                 text_top + line * index as f32,
                 text_width,
                 color,
                 list,
-                rectangles,
             );
         }
     }
@@ -1725,58 +1692,32 @@ impl Renderer {
         }
     }
 
-    /// One line of agent sidebar text. With `marker`, the popup marker follows the text before
-    /// that byte offset, at the end of the line if that text overflows, and the rest of the text
-    /// follows the marker.
+    /// One line of agent sidebar text within the scene's reserved text area.
     #[allow(clippy::too_many_arguments)]
     fn push_sidebar_line(
         &mut self,
         text: &str,
-        marker: Option<usize>,
         left: f32,
         top: f32,
         width: f32,
         color: SceneColor,
         clip: SceneRect,
-        rectangles: &mut RectangleBatch,
     ) {
-        let height = chrome_title_metrics(self.metrics).text_height;
-        let style = DrawStyleKind::Status(Wrap::None);
-        let Some(marker) = marker else {
-            self.push_text_clipped(text, left, top, width, width, height, color, style, clip);
+        if width <= 0.0 {
             return;
-        };
-        let (before, after) = text.split_at(marker);
-        // The marker is as large as a row's state glyph, half a cell from the text before it.
-        let size = (self.metrics.font_size * 0.75).round().max(1.0);
-        let spacing = (self.metrics.width / 2.0).round();
-        let ink = (width - size - spacing).max(0.0);
-        let pushed = self.text.len();
-        self.push_text_clipped(before, left, top, ink, ink, height, color, style, clip);
-        let end = self.text[pushed..]
-            .first()
-            .map_or(0.0, |text| shaped_end(&text.buffer));
-        let marker = SceneRect {
-            left: (left + end + spacing).min(left + width - size).max(left),
-            top: top + (self.metrics.height - size) / 2.0,
-            width: size,
-            height: size,
-        };
-        push_popup_marker(rectangles, marker, color);
-        let rest = left + width - marker.right();
-        if rest > 0.0 {
-            self.push_text_clipped(
-                after,
-                marker.right(),
-                top,
-                rest,
-                rest,
-                height,
-                color,
-                style,
-                clip,
-            );
         }
+        let height = chrome_title_metrics(self.metrics).text_height;
+        self.push_text_clipped(
+            text,
+            left,
+            top,
+            width,
+            width,
+            height,
+            color,
+            DrawStyleKind::Status(Wrap::None),
+            clip,
+        );
     }
 
     /// Measure an exact, non-truncated Eon Bar fact label with header typography.
@@ -2203,6 +2144,7 @@ impl Renderer {
                 viewer.content,
                 false,
                 Backing::Surface(palette::DIALOG_BACKGROUND),
+                palette::DIALOG_BACKGROUND,
                 rectangles,
             );
         }
@@ -2378,26 +2320,22 @@ impl Renderer {
             for heading in &workspace.sidebar_headings {
                 self.push_sidebar_line(
                     &heading.label,
-                    None,
                     heading.rect.left,
                     heading.rect.top,
                     heading.rect.width,
                     palette::ACCENT,
                     list,
-                    rectangles,
                 );
             }
             // `card_backdrops` lists the sidebar's card last.
-            let card = Backing::card(
-                backgrounds
-                    .last()
-                    .copied()
-                    .unwrap_or(palette::TERMINAL_FALLBACK),
-                self.background_opacity,
-            );
+            let background = backgrounds
+                .last()
+                .copied()
+                .unwrap_or(palette::TERMINAL_FALLBACK);
+            let card = Backing::card(background, self.background_opacity);
             for row in workspace.sidebar_rows() {
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
-                self.push_attention_row(row, list, hovered, card, rectangles);
+                self.push_attention_row(row, list, hovered, card, background, rectangles);
             }
             rectangles.clip = None;
         }
@@ -4128,61 +4066,7 @@ mod tests {
     }
 
     #[test]
-    fn popup_rows_keep_their_tint_and_readable_labels_under_highlighting() {
-        assert_eq!(
-            attention_row_text(None, false),
-            (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
-        );
-        assert_eq!(
-            attention_row_text(None, true),
-            (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
-        );
-        for highlighted in [false, true] {
-            assert_eq!(
-                attention_row_fill(false, highlighted, DEFAULT_FOCUS),
-                highlighted.then_some(palette::CHROME_HIGHLIGHT)
-            );
-            let fills =
-                FOCUS_COLORS.map(|focus| attention_row_fill(true, highlighted, focus).unwrap());
-            for (index, focus) in FOCUS_COLORS.into_iter().enumerate() {
-                for other in &fills[..index] {
-                    assert_ne!(fills[index], *other, "focus colour must affect the tint");
-                }
-                let fill = fills[index];
-                if !highlighted {
-                    assert!(
-                        contrast_ratio(fill, palette::BAR_BACKGROUND) >= 1.4,
-                        "resting popup must stand out for {focus:?}: {fill:?}"
-                    );
-                }
-                for dimmed in [false, true] {
-                    let (title, detail) = attention_row_text(Some(fill), dimmed);
-                    for text in [title, detail] {
-                        assert!(
-                            contrast_ratio(text, fill) >= 4.5,
-                            "{focus:?}, highlighted={highlighted}, dimmed={dimmed}, text={text:?} on {fill:?}"
-                        );
-                    }
-                }
-            }
-        }
-        for focus in FOCUS_COLORS {
-            let resting = attention_row_fill(true, false, focus).unwrap();
-            let highlighted = attention_row_fill(true, true, focus).unwrap();
-            assert!(
-                contrast_ratio(resting, highlighted) >= 1.5,
-                "hover must remain visible for {focus:?}: {resting:?} -> {highlighted:?}"
-            );
-            assert!(
-                contrast_ratio(highlighted, palette::BAR_BACKGROUND)
-                    > contrast_ratio(resting, palette::BAR_BACKGROUND),
-                "hover must lighten the resting tint"
-            );
-        }
-    }
-
-    #[test]
-    fn scene_popup_rows_paint_a_rounded_tint_and_use_it_as_the_badge_surface() {
+    fn popup_and_pane_rows_share_surfaces_in_every_state() {
         use eon_workspace_protocol::v38::{
             Attention, AttentionRecord, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Snapshot, Tab,
@@ -4271,56 +4155,60 @@ mod tests {
             |_, text| (text.into(), text.len() as f32 * metrics.width),
         );
         assert_eq!(scene.sidebar_rows().len(), 2);
-        for row in scene.sidebar_rows() {
-            assert!(!row.current && !row.focused);
-            for (focus, hovered) in FOCUS_COLORS
-                .into_iter()
-                .flat_map(|focus| [false, true].map(|hovered| (focus, hovered)))
+        let mut row = scene.sidebar_rows()[0].clone();
+        assert!(row.popup_marker.is_some());
+        for focus in FOCUS_COLORS {
+            for (focused, current, hovered, dimmed) in
+                (0..16).map(|bits| (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0))
             {
-                for surface in [
-                    Backing::Translucent,
-                    Backing::Surface(palette::TERMINAL_FALLBACK),
+                row.focused = focused;
+                row.current = current;
+                row.glyph.dimmed = dimmed;
+                let white = SceneColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                };
+                for (surface, background) in [
+                    (Backing::Translucent, palette::TERMINAL_FALLBACK),
+                    (Backing::Translucent, white),
+                    (
+                        Backing::Surface(palette::TERMINAL_FALLBACK),
+                        palette::TERMINAL_FALLBACK,
+                    ),
+                    (Backing::Surface(white), white),
                 ] {
-                    let mut actual = RectangleBatch::new(1600, 900);
-                    let (title, detail) = push_attention_row_surface(
-                        row,
-                        hovered,
-                        metrics.padding / 2.0,
-                        surface,
-                        &mut Spinners::new(false, focus),
-                        &mut actual,
-                    );
-                    let mut expected = RectangleBatch::new(1600, 900);
-                    let fill = match row.target.as_str() {
-                        "u1" => attention_row_fill(true, hovered, focus),
-                        "p1" => hovered.then_some(palette::CHROME_HIGHLIGHT),
-                        target => panic!("unexpected row {target}"),
+                    let paint = |row: &crate::SidebarRow| {
+                        let mut rectangles = RectangleBatch::new(1600, 900);
+                        let colors = push_attention_row_surface(
+                            row,
+                            hovered,
+                            metrics.padding / 2.0,
+                            surface,
+                            background,
+                            &mut Spinners::new(false, focus),
+                            &mut rectangles,
+                        );
+                        (colors, rectangles.bytes)
                     };
-                    if let Some(fill) = fill {
-                        expected.push_rounded(row.rect, metrics.padding / 2.0, fill);
-                        if row.target == "u1" {
-                            for text in [title, detail] {
-                                assert!(contrast_ratio(text, fill) >= 4.5);
-                            }
+                    let popup = paint(&row);
+                    let mut pane = row.clone();
+                    pane.popup_marker = None;
+                    assert_eq!(popup, paint(&pane));
+                    if background == white && !focused && !hovered {
+                        for text in [popup.0.0, popup.0.1] {
+                            assert!(contrast_ratio(text, background) >= 4.5);
                         }
-                    }
-                    if row.target == "p1" {
+                    } else {
                         assert_eq!(
-                            (title, detail),
-                            (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+                            popup.0,
+                            if dimmed {
+                                (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
+                            } else {
+                                (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+                            }
                         );
                     }
-                    let backing = match (row.target.as_str(), fill) {
-                        ("u1", Some(fill)) => Backing::Surface(fill),
-                        (_, Some(fill)) => Backing::Disc(fill),
-                        (_, None) => surface,
-                    };
-                    Spinners::new(false, focus).push_badge(row.glyph, backing, &mut expected);
-                    assert_eq!(
-                        actual.bytes, expected.bytes,
-                        "{} {focus:?} hovered={hovered} {surface:?}",
-                        row.target
-                    );
                 }
             }
         }
@@ -4632,37 +4520,6 @@ mod tests {
             };
             assert_eq!(quota(Some(&image)), quota(None));
         }
-    }
-
-    #[test]
-    fn sidebar_marker_follows_the_shaped_ink_of_either_direction() {
-        let mut fonts = FontSystem::new();
-        let metrics = CellMetrics::for_scale(1.0);
-        let width = 200.0;
-        let mut end = |text: &str| {
-            let mut buffer =
-                Buffer::new(&mut fonts, Metrics::new(metrics.font_size, metrics.height));
-            buffer.set_size(Some(width), Some(metrics.height));
-            buffer.set_wrap(Wrap::None);
-            buffer.set_text(
-                text,
-                &Attrs::new().family(Family::SansSerif),
-                shaping(text),
-                None,
-            );
-            buffer.shape_until_scroll(&mut fonts, false);
-            let line = buffer
-                .layout_runs()
-                .map(|run| run.line_w)
-                .fold(0.0, f32::max);
-            (shaped_end(&buffer), line)
-        };
-        // A left-to-right label ends where its shaped width does.
-        let (ltr, line) = end("2  site");
-        assert!(ltr > 0.0 && (ltr - line).abs() < 0.5 && ltr < width / 2.0);
-        // A right-to-left label is right-aligned, so its ink ends at the line's end, not its width.
-        let (rtl, line) = end("2  שלום");
-        assert!((rtl - width).abs() < 1.0 && line < width / 2.0);
     }
 
     #[test]
@@ -5394,6 +5251,75 @@ mod tests {
                     }
                 }
                 self.0 = true;
+                // Popup text must stay clear of its marker, including RTL and zero-width lines.
+                use eon_workspace_protocol::v38::{
+                    Attention, AttentionRecord, Popup, PopupEntry, PopupKey,
+                };
+                let attention = Attention {
+                    state: AttentionState::NeedsInput,
+                    record: Some(AttentionRecord {
+                        kind: None,
+                        progress: None,
+                        app: "codex".into(),
+                        name: String::new(),
+                        title: "Long popup agent title ".repeat(20),
+                        message: "Long question ".repeat(20),
+                        changed_at: 1,
+                        stale: true,
+                        others: 2,
+                    }),
+                };
+                snapshot.entries.push(PopupEntry {
+                    id: "agent".into(),
+                    label: "חלון ".repeat(40),
+                    shortcut: PopupKey::Unbound,
+                });
+                snapshot.tabs[1].popups.push(Popup {
+                    id: "u2".into(),
+                    entry: "agent".into(),
+                    session: "popup".into(),
+                    endpoint: b"/tmp/popup.sock".to_vec(),
+                    attention: Some(attention),
+                });
+                snapshot.tabs[1].attention_rollup = Some(AttentionState::NeedsInput);
+                let workspace = WorkspaceScene::from_snapshot(
+                    &snapshot,
+                    PhysicalSize::new(1600, 900),
+                    renderer.metrics(),
+                    0.0,
+                    0.0,
+                    |_, label| renderer.fit_tab_text(label, false),
+                );
+                let row = workspace.sidebar_row("u2").unwrap();
+                let marker = row.popup_marker.unwrap();
+                for width in [0.0, 1.0, row.text_right - row.text_left] {
+                    let mut row = row.clone();
+                    row.text_left = row.text_right - width;
+                    renderer.text.clear();
+                    renderer.push_attention_row(
+                        &row,
+                        workspace.sidebar_list,
+                        false,
+                        Backing::Translucent,
+                        palette::TERMINAL_FALLBACK,
+                        &mut RectangleBatch::new(1600, 900),
+                    );
+                    let lines: Vec<_> = renderer
+                        .text
+                        .iter()
+                        .filter(|text| text.custom_glyph.is_none())
+                        .collect();
+                    if width == 0.0 {
+                        assert!(lines.is_empty());
+                    } else {
+                        assert_eq!(lines.len(), 3);
+                        for text in lines {
+                            assert!(text.right as f32 <= row.text_right.ceil());
+                            assert!((text.right as f32) < marker.left);
+                            assert_eq!(text.buffer.layout_runs().count(), 1);
+                        }
+                    }
+                }
                 event_loop.exit();
             }
 

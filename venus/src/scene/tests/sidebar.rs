@@ -345,7 +345,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 false,
                 None,
                 "status unavailable",
-                "Agent popup",
+                "Agent popup\u{200e}",
                 None,
             ),
             (
@@ -507,20 +507,21 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
             .title,
         "eon-overseer"
     );
-    assert_eq!(
-        DialogScene::attention_inbox(
-            &renamed,
-            AttentionFilter::All,
-            None,
-            PhysicalSize::new(1400, 800),
-            metrics,
-            0.0,
-            NOW,
-        )
-        .attention_rows[0]
-            .title,
-        "eon-overseer"
+    let inbox = DialogScene::attention_inbox(
+        &renamed,
+        AttentionFilter::All,
+        None,
+        PhysicalSize::new(1400, 800),
+        metrics,
+        0.0,
+        NOW,
     );
+    let row = &inbox.attention_rows[0];
+    assert_eq!(row.title, "eon-overseer");
+    let marker = row.popup_marker.unwrap();
+    assert_eq!(marker.right(), row.rect.right() - metrics.padding / 2.0);
+    assert!(row.text_right < marker.left);
+    assert!(row.accessible_label.contains(", popup"));
     renamed.tabs[1].columns[0].panes[0].attention = Some(Attention {
         state: AttentionState::Unavailable,
         record: None,
@@ -599,6 +600,16 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     let offset = short.sidebar_rows()[3].rect.top - focused.rect.top;
     assert!(offset > 0.0);
     assert_eq!(
+        short.sidebar_row("u2").unwrap().popup_marker.unwrap().top
+            - revealed
+                .sidebar_row("u2")
+                .unwrap()
+                .popup_marker
+                .unwrap()
+                .top,
+        offset
+    );
+    assert_eq!(
         revealed.sidebar_headings[0].rect.top,
         short.sidebar_headings[0].rect.top - offset
     );
@@ -614,7 +625,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         Some(WorkspaceHit::SidebarRow(cut.target.as_str()))
     );
 
-    // A popup's row carries the marker after the catalog label whether or not the popup is
+    // A popup's row carries the right-edge marker whether or not the popup is
     // shown, and no pane's row does; headings never carry it.
     let marked = |scene: &WorkspaceScene| {
         (
@@ -627,10 +638,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 .sidebar_rows()
                 .iter()
                 .filter(|row| row.popup_marker.is_some())
-                .map(|row| {
-                    let (before, after) = row.detail.split_at(row.popup_marker.unwrap());
-                    (row.target.clone(), before.to_owned(), after.to_owned())
-                })
+                .map(|row| (row.target.clone(), row.detail.clone()))
                 .collect::<Vec<_>>(),
         )
     };
@@ -638,7 +646,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         marked(&scene),
         (
             vec!["2  site".into(), "3  api".into()],
-            vec![("u2".into(), "Agent popup".into(), String::new())]
+            vec![("u2".into(), "Agent popup\u{200e}".into())]
         )
     );
     let mut shown = snapshot.clone();
@@ -655,7 +663,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         marked(&scene),
         (
             vec!["2  site".into(), "3  api".into()],
-            vec![("u2".into(), "4m · Agent popup".into(), " · +1".into())]
+            vec![("u2".into(), "4m · Agent popup\u{200e} · +1".into())]
         )
     );
     assert_eq!(
@@ -717,4 +725,143 @@ fn agent_sidebar_ages_count_whole_minutes_hours_and_days() {
     assert_eq!(age_wait(MINUTE_MS + 1), MINUTE_MS - 1);
     assert_eq!(age_wait(HOUR_MS + MINUTE_MS), HOUR_MS - MINUTE_MS);
     assert_eq!(age_wait(DAY_MS), DAY_MS);
+}
+
+#[test]
+fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
+    use eon_workspace_protocol::v38::{Attention, AttentionRecord, AttentionState};
+
+    for scale in [0.75, 1.0, 1.25, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        for message in ["", "A long question that occupies the third line"] {
+            for width in [0.0, metrics.font_size, 28.0 * metrics.width] {
+                let attention = Attention {
+                    state: AttentionState::NeedsInput,
+                    record: Some(AttentionRecord {
+                        kind: None,
+                        progress: None,
+                        app: "codex".into(),
+                        name: String::new(),
+                        title: "Long popup label".repeat(20),
+                        message: message.into(),
+                        changed_at: 1,
+                        stale: true,
+                        others: 2,
+                    }),
+                };
+                let mut row = attention_row(
+                    &attention,
+                    None,
+                    "t1",
+                    "u1",
+                    "חלון",
+                    true,
+                    None,
+                    None,
+                    false,
+                    false,
+                    60_001,
+                    metrics,
+                    SceneRect {
+                        left: 10.0,
+                        top: 30.0,
+                        width,
+                        height: 800.0,
+                    },
+                );
+                let marker = row.popup_marker.unwrap();
+                assert!(marker.left >= row.rect.left && marker.right() <= row.rect.right());
+                assert!(marker.top >= row.rect.top && marker.bottom() <= row.rect.bottom());
+                assert_eq!(
+                    marker.top + marker.height / 2.0,
+                    row.rect.top + row.rect.height / 2.0
+                );
+                assert_eq!(marker.width, marker.height);
+                assert!(row.text_right < marker.left);
+                if width == 28.0 * metrics.width {
+                    assert!(marker.width > metrics.font_size);
+                    assert_eq!(marker.right(), row.rect.right() - metrics.padding / 2.0);
+                    assert!(row.text_right > row.text_left);
+                } else {
+                    assert!(row.text_right <= row.text_left);
+                }
+                assert_eq!(row.detail, "1m · חלון\u{200e} · +2 · status stale");
+                assert!(row.glyph.dimmed && row.accessible_label.contains(", popup"));
+                let top = row.rect.top;
+                row.shift(-13.0);
+                assert_eq!(row.rect.top, top - 13.0);
+                assert_eq!(row.popup_marker.unwrap().top, marker.top - 13.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn popup_detail_keeps_metadata_ltr_after_an_rtl_catalog_label() {
+    use eon_workspace_protocol::v38::{Attention, AttentionRecord, AttentionState};
+    use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Wrap};
+
+    let metrics = CellMetrics::for_scale(1.0);
+    let row = attention_row(
+        &Attention {
+            state: AttentionState::Working,
+            record: Some(AttentionRecord {
+                kind: None,
+                progress: None,
+                app: "codex".into(),
+                name: String::new(),
+                title: String::new(),
+                message: String::new(),
+                changed_at: 1,
+                stale: true,
+                others: 2,
+            }),
+        },
+        None,
+        "t1",
+        "u1",
+        "שלום",
+        true,
+        None,
+        None,
+        false,
+        false,
+        60_001,
+        metrics,
+        SceneRect {
+            width: 1000.0,
+            height: 100.0,
+            ..SceneRect::default()
+        },
+    );
+    let mut fonts = FontSystem::new();
+    let mut buffer = Buffer::new(&mut fonts, Metrics::new(metrics.font_size, metrics.height));
+    buffer.set_size(Some(1000.0), Some(metrics.height));
+    buffer.set_wrap(Wrap::None);
+    buffer.set_text(
+        &row.detail,
+        &Attrs::new().family(Family::SansSerif),
+        Shaping::Advanced,
+        None,
+    );
+    buffer.shape_until_scroll(&mut fonts, false);
+    let line = buffer.layout_runs().next().unwrap();
+    let x = |offset| {
+        line.glyphs
+            .iter()
+            .find(|glyph| glyph.start == offset)
+            .unwrap()
+            .x
+    };
+    let plus = row.detail.find("+2").unwrap();
+    let source = row.detail.find("שלום").unwrap();
+    let source_end = line
+        .glyphs
+        .iter()
+        .filter(|glyph| (source..source + "שלום".len()).contains(&glyph.start))
+        .map(|glyph| glyph.x + glyph.w)
+        .fold(0.0, f32::max);
+    assert!(source_end < x(plus), "metadata must follow the RTL label");
+    assert!(x(plus) < x(plus + 1), "+2 must read left to right");
+    assert!(x(plus + 1) < x(row.detail.find("status stale").unwrap()));
 }
