@@ -2446,11 +2446,11 @@ pub(crate) mod tests {
                     expected.uid = expected.uid.wrapping_add(1);
                 }
                 peer.write_all(bytes).unwrap();
-                // A concurrent fork can retain the peer after this test drops it.
-                #[cfg(target_os = "linux")]
-                let _inherited_peer = peer.try_clone().unwrap();
-                peer.shutdown(std::net::Shutdown::Both).unwrap();
-                drop(peer);
+                // Keep the peer alive: inherited descriptors cannot undo local send shutdown.
+                // This gives up Darwin's queued-Lease/ENOTCONN case, which requires
+                // a real disconnect that concurrent forks can prevent.
+                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                stream.set_nonblocking(true).unwrap();
                 let error = super::acquire_management_lease(
                     &mut stream,
                     &expected,
@@ -2458,13 +2458,17 @@ pub(crate) mod tests {
                     Instant::now() + Duration::from_secs(1),
                 )
                 .unwrap_err();
-                assert!(
-                    error.starts_with("cannot send terminal lease request:")
-                        || error == "cannot validate terminal management peer credentials"
-                        || error
-                            == "terminal management peer differs from its Ready process identity",
-                    "{error}",
-                );
+                if valid_peer {
+                    assert!(
+                        error.starts_with("cannot send terminal lease request:"),
+                        "{error}",
+                    );
+                } else {
+                    assert_eq!(
+                        error,
+                        "terminal management peer differs from its Ready process identity",
+                    );
+                }
             }
         }
         fs::remove_dir_all(root).unwrap();
