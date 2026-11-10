@@ -20,6 +20,7 @@ use crate::{
     environment,
     json::Value,
     launcher::{BusPolicy, Headless, WindowMode, live_identity},
+    pressure::{self, Pressure, Settings},
     result::utc_timestamp,
     sha256::Sha256,
     stats::Summary,
@@ -37,14 +38,22 @@ PATH. Never connects to the ambient display or Eon runtime. Linux only.
   --samples N       repetitions per case (default 100; 1..1000)
   --bound-ms N      warm input-to-visible budget (default 250; 1..10000)
   --sensitivity S   normal (default), drop, missing, delay or invalid: typing controls
+  --pressure P            none (default), cpu-half, cpu-all, disk or memory
+  --pressure-seconds N    window per warm case, 5 s warm-up included (default 60; 10..120)
+  --pressure-workers N    disk: sequential writers and fsync workers, each (default 1; 1..2)
+  --pressure-memory-mib N memory, required: MiB one worker keeps touching; needs a
+                          cgroup with memory.max and memory.swap.max (systemd-run --scope)
+  --guard-available-mib N abort pressure at host MemAvailable <= N MiB (default 6144)
 
 Cases: tab click/key, pane click/key, popup open, Shortcuts button, inbox
 filter click and typing. A raw terminal fixture supplies a visible identity
 and response counter. Local dialogs use calibrated opposite-state image
 regions. Captures bracket visibility; model/present timestamps alone never
-pass. Writes DIR/result.json, trace.tsv, logs and PPM captures, including
-failed samples. DIR must not exist. No stress, builds or installed-profile
-changes. Exit 0: all attempted inputs pass; 1: failure/inconclusive; 2: usage.
+pass. Writes DIR/result.json, trace.tsv, telemetry.tsv (1 Hz PSI, swap,
+writeback and owned-process counters), logs and PPM captures, including
+failed samples. DIR must not exist. Pressure, if chosen, runs only during
+warm cases, each in its own bounded window; it never builds or changes an
+installed profile. Exit 0: all attempted inputs pass; 1: failure/inconclusive; 2: usage.
 Sensitivity runs are expected to exit 1: drop explicitly discards one key;
 missing omits its effect without refusal;
 delay holds its response for twice the budget; invalid suppresses one driver
@@ -57,6 +66,7 @@ pub struct Options {
     samples: usize,
     bound: Duration,
     sensitivity: String,
+    pressure: Settings,
 }
 
 pub fn options(arguments: &[String]) -> Result<Options> {
@@ -70,7 +80,8 @@ pub fn options(arguments: &[String]) -> Result<Options> {
         if !matches!(
             flag.as_str(),
             "--eon" | "--out" | "--samples" | "--bound-ms" | "--sensitivity"
-        ) {
+        ) && !pressure::FLAGS.contains(&flag.as_str())
+        {
             return Err(format!("unknown argument {flag}\n{HELP}"));
         }
         let value = arguments.next().ok_or(format!("{flag} needs a value"))?;
@@ -101,6 +112,7 @@ pub fn options(arguments: &[String]) -> Result<Options> {
         samples: number("--samples", "100", 1000)?,
         bound: Duration::from_millis(number("--bound-ms", "250", 10000)? as u64),
         sensitivity: sensitivity.into(),
+        pressure: Settings::parse(&values)?,
     })
 }
 
@@ -502,6 +514,7 @@ impl Drop for Collector {
 struct Session {
     launch: Headless,
     collector: Collector,
+    pressure: Pressure,
     deadline: Instant,
     events: Vec<Event>,
     targets: HashMap<String, Rect>,
@@ -516,7 +529,9 @@ impl Session {
             return Err("response run cancelled".into());
         }
         if Instant::now() >= self.deadline {
-            return Err("idle response run exceeded 15 minutes".into());
+            return Err(
+                "response run exceeded its deadline (15 minutes plus pressure windows)".into(),
+            );
         }
         let mut command = self.command("timeout");
         let result = command
@@ -571,6 +586,7 @@ impl Session {
             // Retain private instrumented descendants before their parent can exit.
             if !self.launch.processes.known.contains_key(&event.pid) {
                 self.launch.processes.remember(event.pid);
+                self.pressure.track(&self.launch.processes.known);
             }
             self.events.push(event);
         }
@@ -791,13 +807,16 @@ fn start(options: &Options) -> Result<Session> {
     launch
         .env
         .insert("EON_BENCH_TRACE".into(), socket_path.display().to_string());
+    let pressure = Pressure::start(&options.pressure, &out, &bench)?;
     let mut session = Session {
         launch,
+        pressure,
         collector: Collector::start(
             socket,
             File::create(out.join("trace.tsv")).map_err(failure)?,
         )?,
-        deadline: Instant::now() + Duration::from_secs(15 * 60),
+        // Every warm case's pressure window is bounded, so pressure adds at most its total.
+        deadline: Instant::now() + Duration::from_secs(15 * 60) + options.pressure.total(),
         events: Vec::new(),
         targets: HashMap::new(),
         grid: None,
@@ -808,6 +827,7 @@ fn start(options: &Options) -> Result<Session> {
     session.launch.start_compositor(BusPolicy::Session)?;
     session.launch.spawn("wdotool", &["prime"], "prime.log")?;
     session.launch.start_eon()?;
+    session.pressure.track(&session.launch.processes.known);
     session.wait(0, "popup=+")?;
     // Escape is the documented startup-picker dismissal; no shell/zoxide timing dependency.
     session.key("Escape")?;
@@ -1366,9 +1386,18 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
         .get("dialog")
         .ok_or("missing viewer rectangle")?;
     // The static title band, clear of scrolling contents and the terminal behind it.
+    // A notched dialog title rises into the top bar, whose live chips (CPU, RAM)
+    // would change the band between captures, so the band starts below the bar.
+    let bar = session
+        .targets
+        .iter()
+        .filter(|(name, _)| name.starts_with("control-"))
+        .map(|(_, control)| control.y + control.h)
+        .max()
+        .unwrap_or(0);
     let region = Rect {
         x: rect.x + 10,
-        y: rect.y + 10,
+        y: (rect.y + 10).max(bar + 4),
         w: rect.w.saturating_sub(20),
         h: 30,
     };
@@ -1508,62 +1537,70 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
     });
     for mut case in cases {
         let initial_failures = timing_failures;
-        for ordinal in 0..options.samples {
-            session.focus(&case.initial)?;
-            session.key("Escape")?;
-            if case.name == "menu-click" {
-                session.key("alt+q")?;
-                session.wait(0, "inbox=true")?;
-                session.wait(0, "filter=All")?;
-            }
-            if let Oracle::Terminal {
-                pid, ref mut count, ..
-            } = case.oracle
-            {
-                *count = latest_count(session, pid)
-                    + match case.stimulus {
-                        Stimulus::Burst(n) => n as u32,
-                        _ => u32::from(case.name == "typing"),
-                    };
-            }
-            let verdict = attempt(session, options, &case, ordinal, samples)?;
-            count_verdict(verdict, &mut timing_failures, case.name, ordinal)?;
-            let routing = match case.name {
-                "tab-click" => Some(("tab-click-route", p3)),
-                "tab-key" => Some(("tab-key-route", p3)),
-                "pane-click" => Some(("pane-click-route", p2)),
-                "pane-key" => Some(("pane-key-route", p2)),
-                "popup" => Some(("popup-route", popup)),
-                _ => None,
-            };
-            if let Some((name, pid)) = routing {
-                let verdict = route_after_switch(
-                    session,
-                    options,
-                    name,
-                    &case.expected,
-                    pid,
-                    ordinal,
-                    samples,
-                )?;
-                count_verdict(verdict, &mut timing_failures, name, ordinal)?;
-            }
-            match case.name {
-                "popup" => {
-                    session.key("alt+shift+j")?;
-                    session.wait(0, "popup=-")?;
+        let window = session.pressure.begin(case.name)?;
+        let measured = (|| -> Result {
+            for ordinal in 0..options.samples {
+                session.pressure.check(&window)?;
+                session.focus(&case.initial)?;
+                session.key("Escape")?;
+                if case.name == "menu-click" {
+                    session.key("alt+q")?;
+                    session.wait(0, "inbox=true")?;
+                    session.wait(0, "filter=All")?;
                 }
-                "shortcuts-click" | "shortcuts-key" => {
-                    session.key("Escape")?;
-                    session.wait(0, "viewer=false")?;
+                if let Oracle::Terminal {
+                    pid, ref mut count, ..
+                } = case.oracle
+                {
+                    *count = latest_count(session, pid)
+                        + match case.stimulus {
+                            Stimulus::Burst(n) => n as u32,
+                            _ => u32::from(case.name == "typing"),
+                        };
                 }
-                "menu-click" => {
-                    session.key("Escape")?;
-                    session.wait(0, "inbox=false")?;
+                let verdict = attempt(session, options, &case, ordinal, samples)?;
+                count_verdict(verdict, &mut timing_failures, case.name, ordinal)?;
+                let routing = match case.name {
+                    "tab-click" => Some(("tab-click-route", p3)),
+                    "tab-key" => Some(("tab-key-route", p3)),
+                    "pane-click" => Some(("pane-click-route", p2)),
+                    "pane-key" => Some(("pane-key-route", p2)),
+                    "popup" => Some(("popup-route", popup)),
+                    _ => None,
+                };
+                if let Some((name, pid)) = routing {
+                    let verdict = route_after_switch(
+                        session,
+                        options,
+                        name,
+                        &case.expected,
+                        pid,
+                        ordinal,
+                        samples,
+                    )?;
+                    count_verdict(verdict, &mut timing_failures, name, ordinal)?;
                 }
-                _ => {}
+                match case.name {
+                    "popup" => {
+                        session.key("alt+shift+j")?;
+                        session.wait(0, "popup=-")?;
+                    }
+                    "shortcuts-click" | "shortcuts-key" => {
+                        session.key("Escape")?;
+                        session.wait(0, "viewer=false")?;
+                    }
+                    "menu-click" => {
+                        session.key("Escape")?;
+                        session.wait(0, "inbox=false")?;
+                    }
+                    _ => {}
+                }
             }
-        }
+            Ok(())
+        })();
+        let ended = session.pressure.end(window);
+        measured?;
+        ended?;
         println!(
             "{}: {} samples, {} timing failures",
             case.name,
@@ -1606,20 +1643,35 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
                 pixels: reference.clone(),
             },
         };
-        for ordinal in 0..options.samples {
-            session.focus("p1")?;
-            session.key("Escape")?;
-            let verdict = attempt(session, options, &case, ordinal, samples)?;
-            count_verdict(verdict, &mut timing_failures, case.name, ordinal)?;
-            let name = if case.name == "column-click" {
-                "column-click-route"
-            } else {
-                "column-key-route"
-            };
-            let verdict =
-                route_after_switch(session, options, name, &case.expected, p2, ordinal, samples)?;
-            count_verdict(verdict, &mut timing_failures, name, ordinal)?;
-        }
+        let window = session.pressure.begin(case.name)?;
+        let measured = (|| -> Result {
+            for ordinal in 0..options.samples {
+                session.pressure.check(&window)?;
+                session.focus("p1")?;
+                session.key("Escape")?;
+                let verdict = attempt(session, options, &case, ordinal, samples)?;
+                count_verdict(verdict, &mut timing_failures, case.name, ordinal)?;
+                let name = if case.name == "column-click" {
+                    "column-click-route"
+                } else {
+                    "column-key-route"
+                };
+                let verdict = route_after_switch(
+                    session,
+                    options,
+                    name,
+                    &case.expected,
+                    p2,
+                    ordinal,
+                    samples,
+                )?;
+                count_verdict(verdict, &mut timing_failures, name, ordinal)?;
+            }
+            Ok(())
+        })();
+        let ended = session.pressure.end(window);
+        measured?;
+        ended?;
     }
     if timing_failures == 0 {
         Ok(())
@@ -1683,6 +1735,7 @@ pub fn run(options: &Options) -> Result {
     let load = environment::load()?;
     let mut samples = Vec::new();
     let mut events = Vec::new();
+    let mut pressure_cases = Vec::new();
     let outcome = (|| {
         let mut session = start(options)?;
         let outcome = cases(&mut session, options, &mut samples);
@@ -1690,6 +1743,8 @@ pub fn run(options: &Options) -> Result {
             // Explicitly stop only the private root. The Child/PID cleanup guard handles failure.
             // Teardown must still run after cancellation or the measurement deadline.
             let fixtures_finished = session.finish_fixtures();
+            let telemetry = session.pressure.finish();
+            pressure_cases = std::mem::take(&mut session.pressure.cases);
             let stopped = session.launch.stop_eon();
             if !session.launch.processes.cleanup() {
                 return Err(
@@ -1703,6 +1758,7 @@ pub fn run(options: &Options) -> Result {
             trace_complete(&events)?;
             fixtures_finished?;
             stopped?;
+            telemetry?;
             Ok(())
         })();
         match (outcome, teardown) {
@@ -1784,10 +1840,18 @@ pub fn run(options: &Options) -> Result {
         })
         .collect();
     let result = object([
-        ("schema", 1u64.into()),
+        ("schema", 2u64.into()),
         ("tool", "eon-bench-response".into()),
         ("tool_version", env!("CARGO_PKG_VERSION").into()),
-        ("suite", "idle-response".into()),
+        (
+            "suite",
+            if options.pressure.profile == pressure::Profile::None {
+                "idle-response"
+            } else {
+                "pressure-response"
+            }
+            .into(),
+        ),
         ("started_at", started.into()),
         ("finished_at", utc_timestamp(SystemTime::now()).into()),
         (
@@ -1798,6 +1862,7 @@ pub fn run(options: &Options) -> Result {
                 ("sensitivity", options.sensitivity.as_str().into()),
                 ("compositor_renderer", "headless-pixman".into()),
                 ("warm_capture", "response region only".into()),
+                ("pressure", options.pressure.value()),
             ]),
         ),
         (
@@ -1863,6 +1928,7 @@ pub fn run(options: &Options) -> Result {
         ),
         ("error", outcome.as_ref().err().map(String::as_str).into()),
         ("cells", Value::Array(cells)),
+        ("pressure_cases", Value::Array(pressure_cases)),
         ("samples", Value::Array(samples)),
         ("trace_records", (events.len() as u64).into()),
         (

@@ -13,6 +13,7 @@ mod kitten;
 mod launcher;
 pub mod memory;
 pub mod orbit;
+pub mod pressure;
 pub mod pty;
 pub mod response;
 mod result;

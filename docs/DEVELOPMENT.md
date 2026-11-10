@@ -646,7 +646,8 @@ keyboard/pointer primer, D-Bus, HOME, configuration, state and two short runtime
 roots. It never uses the calling desktop's display, seat, D-Bus or Eon root.
 The candidate must be a Nix store executable; build it with an out-link so GC
 cannot remove it between build and observation. The probe does not build,
-install, refresh a profile or create machine stress.
+install or refresh a profile, and creates machine pressure only when
+`--pressure` asks for it (see Pressure and telemetry below).
 
 The bench wrapper supplies the Nix-pinned D-Bus session configuration;
 the private response bus uses it without depending on `/etc/dbus-1/session.conf`.
@@ -703,7 +704,7 @@ its upper bound covers every key in that burst. A missing response gets a
 ten-second observation and thirty-second drain, then
 fails with its last observed stages; absence alone does not prove permanent loss.
 
-`DIR/result.json` uses the separate `eon-bench-response` schema 1. It records
+`DIR/result.json` uses the separate `eon-bench-response` schema 2. It records
 settings, environment and artifact identities, every attempted sample and its
 stage/capture timestamps, outcomes and median/nearest-rank p95/min/max visible
 upper bounds. Absolute monotonic nanoseconds are strings to preserve precision.
@@ -753,6 +754,55 @@ validation keeps those sequences separate even when the PID stays the same.
 Disabled hooks retain ordinary behavior. Instrumented idle measurements do not
 establish tracing overhead or a performance improvement; stress profiles and
 mitigations need separate scheduled proof.
+
+#### Pressure and telemetry
+
+Every response run writes `DIR/telemetry.tsv`: once a second, and at each warm
+case's `begin` and `end`, the host's CPU/IO/memory PSI totals, `pswpin`,
+`pswpout`, `pgmajfault`, `MemAvailable`, `Dirty`, `Writeback`, `SwapFree`,
+the bench's own cgroup memory, swap and OOM events, free space on the pressure
+filesystem, and per command name the CPU ticks, major faults, RSS, swap and
+written bytes of the processes the probe owns: those it launched and every
+private process that sent a trace record (Venus, the supervisor, Orbit hosts,
+Sway, D-Bus and fixtures), each checked against its recorded start time. It
+reads no terminal contents and no other process's memory or environment.
+`result.json` `pressure_cases` gives each warm case its stall time and share
+per PSI line, swap-in/out pages, major faults, peak dirty/writeback and
+minimum available memory from its begin to its end, OOM events, owned-process
+deltas (per process, so one that exits mid-case keeps its share) and peaks,
+and each worker's report.
+
+`--pressure` runs each warm case's samples inside its own pressure window; the
+cold popup and dialog controls are not under pressure. Workers are separate
+`eon-bench pressure-worker` processes that start with the window, warm up for
+5 s, stop on SIGTERM at the case end (2 s grace, then SIGKILL) and stop by
+themselves at the window deadline. A case whose samples outlast its window,
+or whose worker ends early, fails rather than measuring without pressure. The
+disk writer's file never has a name, so a killed run leaves at most one 4 KiB
+metadata file per worker behind.
+
+| Profile | Load | Bounds |
+| --- | --- | --- |
+| `cpu-half`, `cpu-all` | spinning threads, half or all of the allowed CPUs | `--pressure-seconds` 10..120 (default 60) per case |
+| `disk` | per worker pair: one buffered writer rewriting one file of at most 512 MiB, and one loop of 4 KiB file create, write, fsync, rename, directory fsync and removal | `--pressure-workers` 1..2 pairs, at most 2 GiB allocated; `DIR/pressure` must be on a real filesystem (not tmpfs) with 15 GiB free |
+| `memory` | one process keeping `--pressure-memory-mib` of pages resident | refuses unless the bench's cgroup sets `memory.max` and `memory.swap.max`, the request plus the cgroup's current use and 512 MiB stays within `memory.max`, and host `MemAvailable` covers the request plus the guard and 512 MiB |
+
+Run memory pressure inside a delegated scope so the hog, the driver and Eon
+share one bounded hierarchy, for example
+`systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=4G eon-bench response ...`.
+The driver and capture then share that limit; record it with the result.
+A window does not start when a guard already holds. While it runs, the
+telemetry thread kills its workers at once, whatever the measurement is
+doing, and the case and run fail with the reason (teardown continues), when
+host `MemAvailable` falls to `--guard-available-mib` (default 6144; lower it
+only inside a disposable VM), when the pressure filesystem drops below 10 GiB
+free, on any new OOM event in the bench's cgroup, when a counter a guard
+needs becomes unreadable, or when telemetry falls more than 5 s behind or
+cannot be written. A failed telemetry write fails a run without pressure
+too. The tool
+needs no root, IO controller, sysctl, swap or scheduler change, and does not
+use `ionice`, which has no effect under kyber. Pressure runs share the
+machine: schedule them through the coordinator's quiet window or a VM.
 
 ## Sources of truth
 

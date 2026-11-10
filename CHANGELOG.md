@@ -17,6 +17,10 @@ installation, and proven contract changes.
   it does, from any tab and without moving desktop focus; a tab that is not live
   exits 3 (`unknown-tab`). `eon focus` takes a pane and directions only; a tab
   ID there exits 2 and names `eon tab switch` (`eon-cglv2.1`).
+- `eon-bench response --pressure cpu-half|cpu-all|disk|memory` runs each warm
+  case under one bounded CPU, buffered-write plus fsync, or contained memory
+  load, and every run writes 1 Hz PSI, swap, writeback and Eon-process
+  telemetry with a per-case attainment record (`eon-stress-responsive-ap1j6.1.1`).
 - `eon-bench terminals` measures tmux and Zellij inside foot against a
   same-cohort bare-foot baseline, plus fresh-window PSS/RSS/anonymous PSS for
   Eon, foot and Ghostty with separate Venus attribution, using its existing

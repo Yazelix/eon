@@ -2,7 +2,9 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use eon_bench::{child, corpus, floor, gate, headless, memory, orbit, response, terminals, writer};
+use eon_bench::{
+    child, corpus, floor, gate, headless, memory, orbit, pressure, response, terminals, writer,
+};
 
 const USAGE: &str = "\
 usage: eon-bench corpus --out DIR [--only ID]...
@@ -39,6 +41,7 @@ enum Command {
     Write(PathBuf, PathBuf),
     Response(response::Options),
     Fixture(Vec<String>),
+    PressureWorker(Vec<String>),
     Headless(headless::Options, bool),
     Terminals(terminals::Options, bool),
     TerminalWorkload(Vec<String>),
@@ -116,6 +119,7 @@ fn main() -> ExitCode {
             .map(|options| Command::Terminals(options, arguments[0] == "terminals-inner")),
         Some("terminal-workload") => Ok(Command::TerminalWorkload(rest.to_vec())),
         Some("response-fixture") if rest.len() == 4 => Ok(Command::Fixture(rest.to_vec())),
+        Some("pressure-worker") if rest.len() == 5 => Ok(Command::PressureWorker(rest.to_vec())),
         Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
         Some("--help" | "-h") => {
             println!("{USAGE}");
@@ -148,6 +152,7 @@ fn main() -> ExitCode {
         Command::Headless(options, false) => headless::run(rest, &options),
         Command::Headless(options, true) => headless::run_inner(&options),
         Command::Fixture(arguments) => response::fixture(&arguments),
+        Command::PressureWorker(arguments) => pressure::worker(&arguments),
         Command::Terminals(options, false) => terminals::run(rest, &options),
         Command::Terminals(options, true) => terminals::run_inner(&options),
         Command::TerminalWorkload(arguments) => terminals::workload(&arguments),
