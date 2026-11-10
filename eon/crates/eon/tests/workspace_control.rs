@@ -87,13 +87,73 @@ struct ManagedChild(Child);
 
 impl Drop for ManagedChild {
     fn drop(&mut self) {
-        if self.0.try_wait().unwrap().is_some() {
-            return;
+        match self.0.try_wait() {
+            Ok(None) => {}
+            Ok(Some(status)) => return unwound(self.0.id(), status),
+            // Its PID may no longer be its own, so it is not signalled.
+            Err(error) => {
+                if !thread::panicking() {
+                    panic!("{error}");
+                }
+                return;
+            }
         }
         // SAFETY: this still-unreaped child was spawned as its own group leader.
         let result = unsafe { libc::kill(-i32::try_from(self.0.id()).unwrap(), libc::SIGKILL) };
-        assert!(result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH));
+        let error = std::io::Error::last_os_error();
+        // A second panic while unwinding aborts the test binary, and then no other
+        // test's guard stops its supervisor.
+        if thread::panicking() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match self.0.try_wait() {
+                    Ok(Some(status)) => return unwound(self.0.id(), status),
+                    Ok(None) => thread::sleep(Duration::from_millis(10)),
+                    Err(_) => return,
+                }
+            }
+            return;
+        }
+        // macOS reports EPERM, not ESRCH, for a group with no member left to signal.
+        assert!(
+            result == 0
+                || error.raw_os_error() == Some(libc::ESRCH)
+                || cfg!(target_vendor = "apple") && error.raw_os_error() == Some(libc::EPERM),
+            "{error}"
+        );
         wait_for_exit(&mut self.0);
+    }
+}
+
+/// How each child that a guard reaped while its test was failing ended, by PID.
+static UNWOUND: Mutex<Vec<(u32, ExitStatus)>> = Mutex::new(Vec::new());
+
+fn unwound(pid: u32, status: ExitStatus) {
+    if thread::panicking() {
+        UNWOUND
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((pid, status));
+    }
+}
+
+/// A child on private terminals. A macOS session leader drains its controlling
+/// terminal's output, such as echoed input, before it can exit, so the masters
+/// close first (fields drop in order) and only then does the guard reap it.
+struct TerminalChild {
+    terminals: Vec<fs::File>,
+    guard: ManagedChild,
+}
+
+impl TerminalChild {
+    fn spawn(command: &mut Command, terminals: Vec<fs::File>) -> Self {
+        let guard = ManagedChild(command.spawn().unwrap());
+        Self { terminals, guard }
+    }
+
+    /// Waits until `deadline` for the child, reading its terminals meanwhile.
+    fn exit(&mut self, deadline: Instant) -> Option<ExitStatus> {
+        exit_reading_terminals(&mut self.guard.0, &mut self.terminals, deadline)
     }
 }
 
@@ -2191,6 +2251,49 @@ fn wait_for_exit(child: &mut Child) -> ExitStatus {
     }
 }
 
+/// Waits until `deadline` for `child` while reading its terminals, as a terminal
+/// does. On macOS a session leader drains its controlling terminal's output, such
+/// as echoed input, before it can exit.
+fn exit_reading_terminals(
+    child: &mut Child,
+    terminals: &mut [fs::File],
+    deadline: Instant,
+) -> Option<ExitStatus> {
+    let mut polled = terminals
+        .iter()
+        .map(|terminal| libc::pollfd {
+            fd: terminal.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        })
+        .collect::<Vec<_>>();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        // SAFETY: the descriptors stay open for the call; poll skips negative ones.
+        if unsafe { libc::poll(polled.as_mut_ptr(), polled.len() as _, 10) } > 0 {
+            for (terminal, polled) in terminals.iter_mut().zip(&mut polled) {
+                if polled.revents == 0 {
+                    continue;
+                }
+                // A terminal that ends, fails or reports anything but input is done.
+                let done = polled.revents & libc::POLLIN == 0
+                    || match terminal.read(&mut [0; 256]) {
+                        Ok(count) => count == 0,
+                        Err(error) => error.kind() != std::io::ErrorKind::Interrupted,
+                    };
+                if done {
+                    polled.fd = -1;
+                }
+            }
+        }
+    }
+}
+
 fn wait_for_successful_exit(child: &mut Child) {
     let status = wait_for_exit(child);
     assert!(status.success(), "process exited with {status}");
@@ -3479,6 +3582,69 @@ fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
 }
 
 #[test]
+fn a_failing_test_closes_its_terminals_before_reaping_their_child() {
+    let fail_once = || {
+        let (leader, device) = pseudo_terminal();
+        let mut command = Command::new("sleep");
+        command
+            .arg("30")
+            .stdin(Stdio::from(device))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // SAFETY: only the child acquires this fresh private controlling terminal, and
+        // a hangup ends it whatever this process ignores.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::signal(libc::SIGHUP, libc::SIG_DFL) == libc::SIG_ERR
+                    || libc::setsid() == -1
+                    || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = TerminalChild::spawn(&mut command, vec![leader]);
+        let pid = child.guard.0.id();
+        // Unread echo, which macOS drains before the killed session leader can exit.
+        child.terminals[0].write_all(b"unread\n").unwrap();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _child = child;
+            panic!("failing test");
+        }));
+        let reaped = UNWOUND
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(reaped, _)| *reaped == pid)
+            .map(|(_, status)| *status);
+        let pid = i32::try_from(pid).unwrap();
+        // SAFETY: WNOHANG only reports, and a child still waiting here keeps its PID.
+        if unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) } == 0 {
+            // SAFETY: the child is still unreaped, so its PID and group are its own.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+        }
+        assert_eq!(
+            unwound.unwrap_err().downcast_ref::<&str>(),
+            Some(&"failing test")
+        );
+        reaped.expect("the guard did not reap the child")
+    };
+    // Linux hangs the session up as the last master closes, so a child the guard
+    // kills only afterwards has already ended by that hangup. Another thread's
+    // spawn can hold a copy of the master between its fork and exec, which delays
+    // the hangup past the kill, so one hangup in a few tries is enough.
+    let statuses = (0..20)
+        .map(|_| fail_once())
+        .take_while(|status| cfg!(target_os = "linux") && status.signal() != Some(libc::SIGHUP))
+        .collect::<Vec<_>>();
+    assert!(statuses.len() < 20, "{statuses:?}");
+}
+
+#[test]
 fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
@@ -3762,7 +3928,7 @@ esac
         "different-terminal",
         "unreadable-terminal",
     ] {
-        let (mut leader, device) = pseudo_terminal();
+        let (leader, device) = pseudo_terminal();
         if ending == "unreadable-terminal" {
             assert_eq!(unsafe { libc::fchmod(device.as_raw_fd(), 0) }, 0);
         }
@@ -3800,8 +3966,10 @@ esac
                 Ok(())
             });
         }
-        let mut child = ManagedChild(command.spawn().unwrap());
-        let mut err = child.0.stderr.take().unwrap();
+        let (other, _other_device) = other.unzip();
+        let terminals = std::iter::once(leader).chain(other).collect();
+        let mut child = TerminalChild::spawn(&mut command, terminals);
+        let mut err = child.guard.0.stderr.take().unwrap();
         let mut diagnostics = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(10);
         if !matches!(ending, "no-controlling-terminal" | "different-terminal") {
@@ -3821,7 +3989,7 @@ esac
             }
             if ending == "stopped" {
                 unsafe {
-                    libc::kill(child.0.id() as i32, libc::SIGSTOP);
+                    libc::kill(child.guard.0.id() as i32, libc::SIGSTOP);
                 }
             }
             for _ in 0..10 {
@@ -3834,26 +4002,22 @@ esac
             }
             match ending {
                 "interrupt" => unsafe {
-                    libc::kill(child.0.id() as i32, libc::SIGINT);
+                    libc::kill(child.guard.0.id() as i32, libc::SIGINT);
                 },
-                "kill" => child.0.kill().unwrap(),
+                "kill" => child.guard.0.kill().unwrap(),
                 _ => {
                     if ending == "stopped" {
                         unsafe {
-                            libc::kill(child.0.id() as i32, libc::SIGCONT);
+                            libc::kill(child.guard.0.id() as i32, libc::SIGCONT);
                         }
                     }
-                    leader.write_all(b"n\n").unwrap();
+                    child.terminals[0].write_all(b"n\n").unwrap();
                 }
             }
         }
-        let status = loop {
-            if let Some(status) = child.0.try_wait().unwrap() {
-                break status;
-            }
-            assert!(Instant::now() < deadline, "{ending}: helper did not finish");
-            thread::sleep(Duration::from_millis(10));
-        };
+        let status = child
+            .exit(deadline)
+            .unwrap_or_else(|| panic!("{ending}: helper did not finish"));
         assert_eq!(
             unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
             flags,
@@ -3861,6 +4025,7 @@ esac
         );
         let mut bytes = Vec::new();
         child
+            .guard
             .0
             .stdout
             .take()
@@ -3948,7 +4113,7 @@ esac
             ),
         );
         fs::write(root.join("mode"), manager).unwrap();
-        let (mut leader, device) = pseudo_terminal();
+        let (leader, device) = pseudo_terminal();
         let flags = unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) };
         let mut command = eon_command(&commands);
         command
@@ -3971,7 +4136,7 @@ esac
                 Ok(())
             });
         }
-        let mut child = ManagedChild(command.spawn().unwrap());
+        let mut child = TerminalChild::spawn(&mut command, vec![leader]);
         let read_until = |leader: &mut fs::File, marker: &[u8]| {
             let deadline = Instant::now() + Duration::from_secs(10);
             let mut text = Vec::new();
@@ -3995,20 +4160,20 @@ esac
             String::from_utf8(text).unwrap()
         };
         if let Some(answer) = answer {
-            let prompt = read_until(&mut leader, b"[y/N] ");
+            let prompt = read_until(&mut child.terminals[0], b"[y/N] ");
             assert!(prompt.contains(profile.to_str().unwrap()), "{prompt}");
             assert!(prompt.contains("eon+x"), "{prompt}");
             assert!(!root.join("upgrade-argv").exists());
-            leader.write_all(answer.as_bytes()).unwrap();
+            child.terminals[0].write_all(answer.as_bytes()).unwrap();
         }
         if let Some(interrupt) = interrupt {
             if manager == "hard-kill" {
                 wait_for(&root.join("manager-pid"));
             }
             // Terminal ISIG sends Ctrl+C/Ctrl+\ to the whole foreground group.
-            leader.write_all(&[interrupt]).unwrap();
+            child.terminals[0].write_all(&[interrupt]).unwrap();
         }
-        let output = read_until(&mut leader, b"Press Enter to close");
+        let output = read_until(&mut child.terminals[0], b"Press Enter to close");
         let expected = if mode == "--check" {
             "Update: available".into()
         } else {
@@ -4020,15 +4185,20 @@ esac
             assert!(output.contains("interrupted"), "{output}");
         }
         assert!(
-            child.0.try_wait().unwrap().is_none(),
+            child.guard.0.try_wait().unwrap().is_none(),
             "result was not retained"
         );
         assert_eq!(
             unsafe { libc::fcntl(device.as_raw_fd(), libc::F_GETFL) },
             flags
         );
-        leader.write_all(b"\n").unwrap();
-        assert_eq!(wait_for_exit(&mut child.0).code(), Some(status));
+        child.terminals[0].write_all(b"\n").unwrap();
+        let exit = Instant::now() + Duration::from_secs(5);
+        let exited = child.exit(exit);
+        assert_eq!(
+            exited.expect("Eon process did not exit").code(),
+            Some(status)
+        );
         if answer == Some("y\n") {
             assert_eq!(
                 fs::read_to_string(root.join("upgrade-argv")).unwrap(),
@@ -15724,15 +15894,11 @@ fn at_terminal(command: &mut Command, answer: Option<&[u8]>, meanwhile: impl FnO
         }
         leader.write_all(answer).unwrap();
     }
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            child.kill().unwrap();
-            panic!("did not finish: {}", String::from_utf8_lossy(&stderr));
-        }
-        thread::sleep(Duration::from_millis(10));
+    let Some(status) =
+        exit_reading_terminals(&mut child, std::slice::from_mut(&mut leader), deadline)
+    else {
+        child.kill().unwrap();
+        panic!("did not finish: {}", String::from_utf8_lossy(&stderr));
     };
     drop(leader);
     reader.join().unwrap();
