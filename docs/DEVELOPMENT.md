@@ -950,6 +950,11 @@ their doctests separately. The check retains its discovered test inventory in
 `nix build --out-link result-eon-tests .#checks.x86_64-linux.eon-tests`.
 
 Eon's Linux package compiles the release executable with thin LTO.
+The `eon-rust` derivation builds that executable independently of the selected
+tools. A separate composition copies it and installs the wrapper, managed
+commands, shell files, licenses, icons and, on macOS, Eon.app. Product
+compositions share this Rust build; changing which tools are included does not
+compile another executable.
 The check executes dev-profile tests
 using a separate reusable dependency cache and line-table debug information.
 It retains debug assertions and overflow checks. Beyond the author's full

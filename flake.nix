@@ -961,44 +961,22 @@
             EOF
           '';
 
-          eonEnvironment = out: {
-            set = {
-              EON_ORBIT = "${orbitPackage}/bin/yazelix-orbit";
-              EON_VENUS = "${venusPackage}/bin/yazelix-venus";
-              EON_CODEXBAR = "${codexbarPackage}/bin/CodexBarCLI";
-              EON_ANIMA = "${animaPackage}/bin/anima";
-              # `eon update --check` asks GitHub through this curl, never PATH's.
-              EON_CURL = "${pkgs.curlMinimal}/bin/curl";
-              EON_ICON = "${out}/share/eon/eon-icon-256.rgba";
-              EON_NU = "${nushellPackage}/bin/nu";
-              EON_BASH = "${bashPackage}/bin/bash";
-              EON_HX = "${helixPackage}/bin/hx";
-              EON_YAZI = "${yaziPackage}/bin/yazi";
-              EON_FILES_CONFIG = "${filesPopupConfig}";
-              EON_YA = "${yaziPackage}/bin/ya";
-              EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
-              EON_NU_VENDOR_AUTOLOAD = "${out}/libexec/eon/shell/nu";
-              EON_BASH_RC = "${out}/libexec/eon/shell/eon.bashrc";
-              EON_SESSION_BIN = "${out}/libexec/eon/bin";
-            };
-            prefix.TERMINFO_DIRS = [ "${orbitPackage}/share/terminfo" ];
+          eonMeta = {
+            description = "Native sessions with persistent terminals";
+            license = lib.licenses.asl20;
+            mainProgram = "eon";
+            platforms = [ system ];
           };
-          macosApp = import ./nix/macos-app.nix {
-            inherit pkgs nushellPackage bashPackage;
-            inherit (eonCargo.package) version;
-          };
-          eonPackage =
+          # This build is shared by product compositions; tool selection belongs below.
+          eonRust =
             assert workspaceVersions;
             assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
             assert ratconfig.rev == ratconfigIdentity.revision;
             assert anima.rev == animaIdentity.revision;
             assert lib.assertMsg ((builtins.fromTOML (builtins.readFile "${anima}/Cargo.toml")).package.version == animaIdentity.version)
               "Anima manifest version does not match the selected Cargo package";
-            assert helix.rev == helixIdentity.revision;
-            assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
-              "Helix manifest version does not match the selected Cargo workspace package";
             buildWorkspacePackage ({
-              pname = "eon";
+              pname = "eon-rust";
               inherit (eonCargo.package) version;
               src = workspaceSource;
               cargoLock = workspaceCargoLock;
@@ -1007,80 +985,7 @@
                 "eon"
               ];
               doCheck = !pkgs.stdenv.isLinux;
-              nativeBuildInputs = [
-                pkgs.copyDesktopItems
-                pkgs.makeWrapper
-              ];
-              desktopItems = [ desktopItem ];
-              postInstall = ''
-                for size in 16 24 32 48 64 128 256 512; do
-                  icon_dir="$out/share/icons/hicolor/''${size}x''${size}/apps"
-                  mkdir -p "$icon_dir"
-                  ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} \
-                    -filter Box -resize "''${size}x''${size}" "$icon_dir/eon.png"
-                done
-                # The Eon Bar's icon: the mark in its own colours, centred in a 256x256 square,
-                # as raw 8-bit RGBA with premultiplied alpha.
-                mkdir -p "$out/share/eon"
-                ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt "$out/share/eon/update-ca-bundle.crt"
-                ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} -trim +repage -background none \
-                  -set option:side '%[fx:max(w,h)]' -gravity center -extent '%[side]x%[side]' \
-                  -filter Box -resize 256x256 -channel RGB -fx 'u*u.a' +channel -depth 8 \
-                  "rgba:$out/share/eon/eon-icon-256.rgba"
-                test "$(stat -c %s "$out/share/eon/eon-icon-256.rgba")" = 262144
-                for command in nu bash hx yazi ya lazygit lg; do
-                  ln -s eon "$out/bin/eon-$command"
-                done
-                mkdir -p "$out/libexec/eon/bin"
-                for command in nu bash hx yazi ya lazygit; do
-                  ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/$command"
-                done
-                for command in nu bash lazygit; do
-                  ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/eon-$command"
-                done
-                ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
-                ln -s ${zoxidePackage}/bin/zoxide "$out/libexec/eon/bin/zoxide"
-                ln -s ${fzfPackage}/bin/fzf "$out/libexec/eon/bin/fzf"
-                ln -s ${animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
-                # A terminal's own build answers `eon` there after the profile changes.
-                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon"
-                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-files"
-                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-commands"
-                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-sessions"
-                ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
-                ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
-                cp -r ${shellEnvironment} "$out/libexec/eon/shell"
-                install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
-                install -Dm444 ${./eon/skills/eon/SKILL.md} "$out/share/eon/skills/eon/SKILL.md"
-                install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eon/eon-runtime/LICENSE"
-                install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eon/eon-runtime/NOTICE"
-                install -Dm444 ${anima}/LICENSE "$out/share/licenses/eon/anima/LICENSE"
-                install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
-                install -Dm444 ${bashLicense} "$out/share/licenses/eon/bash/COPYING"
-                install -Dm444 ${starshipPackage.src}/LICENSE "$out/share/licenses/eon/starship/LICENSE"
-                install -Dm444 ${zoxidePackage.src}/LICENSE "$out/share/licenses/eon/zoxide/LICENSE"
-                install -Dm444 ${fzfPackage.src}/LICENSE "$out/share/licenses/eon/fzf/LICENSE"
-                install -Dm444 ${atuinPackage.src}/LICENSE "$out/share/licenses/eon/atuin/LICENSE"
-                install -Dm444 ${carapacePackage.src}/LICENSE "$out/share/licenses/eon/carapace/LICENSE"
-                install -Dm444 ${helix}/LICENSE "$out/share/licenses/eon/helix/LICENSE"
-                install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
-                install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
-              '' + lib.optionalString pkgs.stdenv.isDarwin ''
-                cp -R ${macosApp}/Applications "$out/Applications"
-                chmod -R u+w "$out/Applications"
-                printf '%s' "$out/bin/eon" > "$out/Applications/Eon.app/Contents/Resources/eon-command"
-              '';
-              postFixup = ''
-                substituteInPlace "$out/share/applications/eon.desktop" \
-                  --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
-                wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment (placeholder "out"))}
-              '';
-              meta = {
-                description = "Native sessions with persistent terminals";
-                license = lib.licenses.asl20;
-                mainProgram = "eon";
-                platforms = [ system ];
-              };
+              meta = eonMeta;
             } // lib.optionalAttrs pkgs.stdenv.isDarwin {
               cargoTestFlags = [
                 "--package"
@@ -1129,6 +1034,132 @@
               # Runtime tests paste printed commands into Eon's Nushell.
               nativeCheckInputs = [ nushellPackage ];
             });
+          # Helix's composition inputs stay together for the no-Helix product slice.
+          eonHelix =
+            assert helix.rev == helixIdentity.revision;
+            assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
+              "Helix manifest version does not match the selected Cargo workspace package";
+            {
+              environment.EON_HX = "${helixPackage}/bin/hx";
+              postInstall = ''
+                ln -s eon "$out/bin/eon-hx"
+                ln -s "../../../bin/eon-hx" "$out/libexec/eon/bin/hx"
+                install -Dm444 ${helix}/LICENSE "$out/share/licenses/eon/helix/LICENSE"
+              '';
+            };
+          eonEnvironment = tools: out: {
+            set = {
+              EON_ORBIT = "${orbitPackage}/bin/yazelix-orbit";
+              EON_VENUS = "${venusPackage}/bin/yazelix-venus";
+              EON_CODEXBAR = "${codexbarPackage}/bin/CodexBarCLI";
+              EON_ANIMA = "${animaPackage}/bin/anima";
+              # `eon update --check` asks GitHub through this curl, never PATH's.
+              EON_CURL = "${pkgs.curlMinimal}/bin/curl";
+              EON_ICON = "${out}/share/eon/eon-icon-256.rgba";
+              EON_NU = "${nushellPackage}/bin/nu";
+              EON_BASH = "${bashPackage}/bin/bash";
+              EON_YAZI = "${yaziPackage}/bin/yazi";
+              EON_FILES_CONFIG = "${filesPopupConfig}";
+              EON_YA = "${yaziPackage}/bin/ya";
+              EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
+              EON_NU_VENDOR_AUTOLOAD = "${out}/libexec/eon/shell/nu";
+              EON_BASH_RC = "${out}/libexec/eon/shell/eon.bashrc";
+              EON_SESSION_BIN = "${out}/libexec/eon/bin";
+            } // tools.environment;
+            prefix.TERMINFO_DIRS = [ "${orbitPackage}/share/terminfo" ];
+          };
+          macosApp = import ./nix/macos-app.nix {
+            inherit pkgs nushellPackage bashPackage;
+            inherit (eonCargo.package) version;
+          };
+          composeEon = tools:
+            pkgs.stdenvNoCC.mkDerivation {
+              pname = "eon";
+              inherit (eonRust) version;
+              meta = eonMeta;
+              dontUnpack = true;
+              dontConfigure = true;
+              dontBuild = true;
+              # The Rust build already fixes the executable, including its Darwin signature.
+              dontStrip = true;
+              dontPatchELF = true;
+              passthru = lib.optionalAttrs pkgs.stdenv.isLinux {
+                inherit (eonRust) cargoArtifacts;
+              };
+              nativeBuildInputs = [
+                pkgs.copyDesktopItems
+                pkgs.makeWrapper
+              ];
+              desktopItems = [ desktopItem ];
+              installPhase = ''
+                runHook preInstall
+                install -Dm755 ${eonRust}/bin/eon "$out/bin/eon"
+                runHook postInstall
+              '';
+              postInstall = ''
+                for size in 16 24 32 48 64 128 256 512; do
+                  icon_dir="$out/share/icons/hicolor/''${size}x''${size}/apps"
+                  mkdir -p "$icon_dir"
+                  ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} \
+                    -filter Box -resize "''${size}x''${size}" "$icon_dir/eon.png"
+                done
+                # The Eon Bar's icon: the mark in its own colours, centred in a 256x256 square,
+                # as raw 8-bit RGBA with premultiplied alpha.
+                mkdir -p "$out/share/eon"
+                ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt "$out/share/eon/update-ca-bundle.crt"
+                ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} -trim +repage -background none \
+                  -set option:side '%[fx:max(w,h)]' -gravity center -extent '%[side]x%[side]' \
+                  -filter Box -resize 256x256 -channel RGB -fx 'u*u.a' +channel -depth 8 \
+                  "rgba:$out/share/eon/eon-icon-256.rgba"
+                test "$(stat -c %s "$out/share/eon/eon-icon-256.rgba")" = 262144
+                for command in nu bash yazi ya lazygit lg; do
+                  ln -s eon "$out/bin/eon-$command"
+                done
+                mkdir -p "$out/libexec/eon/bin"
+                for command in nu bash yazi ya lazygit; do
+                  ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/$command"
+                done
+                for command in nu bash lazygit; do
+                  ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/eon-$command"
+                done
+                ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
+                ln -s ${zoxidePackage}/bin/zoxide "$out/libexec/eon/bin/zoxide"
+                ln -s ${fzfPackage}/bin/fzf "$out/libexec/eon/bin/fzf"
+                ln -s ${animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
+                # A terminal's own build answers `eon` there after the profile changes.
+                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon"
+                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-files"
+                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-commands"
+                ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-sessions"
+                ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
+                ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
+                cp -r ${shellEnvironment} "$out/libexec/eon/shell"
+                install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
+                install -Dm444 ${./eon/skills/eon/SKILL.md} "$out/share/eon/skills/eon/SKILL.md"
+                install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eon/eon-runtime/LICENSE"
+                install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eon/eon-runtime/NOTICE"
+                install -Dm444 ${anima}/LICENSE "$out/share/licenses/eon/anima/LICENSE"
+                install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
+                install -Dm444 ${bashLicense} "$out/share/licenses/eon/bash/COPYING"
+                install -Dm444 ${starshipPackage.src}/LICENSE "$out/share/licenses/eon/starship/LICENSE"
+                install -Dm444 ${zoxidePackage.src}/LICENSE "$out/share/licenses/eon/zoxide/LICENSE"
+                install -Dm444 ${fzfPackage.src}/LICENSE "$out/share/licenses/eon/fzf/LICENSE"
+                install -Dm444 ${atuinPackage.src}/LICENSE "$out/share/licenses/eon/atuin/LICENSE"
+                install -Dm444 ${carapacePackage.src}/LICENSE "$out/share/licenses/eon/carapace/LICENSE"
+                install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
+                install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
+              '' + tools.postInstall + lib.optionalString pkgs.stdenv.isDarwin ''
+                cp -R ${macosApp}/Applications "$out/Applications"
+                chmod -R u+w "$out/Applications"
+                printf '%s' "$out/bin/eon" > "$out/Applications/Eon.app/Contents/Resources/eon-command"
+              '';
+              postFixup = ''
+                substituteInPlace "$out/share/applications/eon.desktop" \
+                  --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
+                wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment tools (placeholder "out"))}
+              '';
+            };
+          eonPackage = composeEon eonHelix;
           eonTestArgs = {
             pname = "eon-tests";
             inherit (eonCargo.package) version;
@@ -1177,7 +1208,7 @@
           # flake's revision, so it stays outside the Rust build: a commit that
           # changes no source rebuilds only this.
           eonProduct = pkgs.runCommand "eon-${eonCargo.package.version}" {
-            inherit (eonPackage) meta;
+            inherit (eonPackage) version meta;
             # Landing tooling roots the release dependency cache through checks.default.
             passthru = lib.optionalAttrs pkgs.stdenv.isLinux {
               inherit (eonPackage) cargoArtifacts;
@@ -1373,7 +1404,7 @@
             wrappers = [
               {
                 program = "${eonPackage}/bin/eon";
-                environment = eonEnvironment "${eonPackage}";
+                environment = eonEnvironment eonHelix "${eonPackage}";
                 # Bash's ncurses for terminal types other than Orbit's.
                 relocated.prefix.TERMINFO_DIRS = [ "${pkgs.ncurses}/share/terminfo" ];
                 relocated.set.EON_INSTALLER = "${installerPackage}/bin/eon-install";
@@ -1434,7 +1465,10 @@
           # The installer, the manual bundle, the release files, the demo recorder
           # and the bundle checks are Linux's; Darwin has none of them.
           packages.${system} = {
-            default = eonProduct;
+            default =
+              assert lib.assertMsg (eonProduct ? version && eonProduct.version == eonCargo.package.version)
+                "Eon product version must match eon/crates/eon/Cargo.toml";
+              eonProduct;
             eonbase = eonbasePackage;
             bench = benchPackage;
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
