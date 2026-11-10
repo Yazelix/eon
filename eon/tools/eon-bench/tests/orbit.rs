@@ -58,10 +58,12 @@ fn orbit_runs_a_vtebench_sample_detached_and_attached() {
             "{result}"
         );
     }
-    // Only the attached sample's counters hold frames. This small fixture's
-    // client keeps up, so every revision after the go arrives once, in
-    // order, and at most the query's own frame follows the reply; the
-    // setup's frames are read but not counted.
+    // Only the attached sample's counters hold frames. Revisions after the
+    // go arrive in order, never twice, and after everything read before it
+    // (ORB-C4). Orbit replaces a queued frame that has not started to send,
+    // so a client that falls behind skips revisions, more than the query's
+    // own frame can follow the reply, and the setup's frame can complete the
+    // attachment, leaving none to read before the go.
     let attached = &result[result.find("\"layer\": \"orbit-attached\"").unwrap()..];
     let detached = &result[..result.find("\"layer\": \"orbit-attached\"").unwrap()];
     assert!(!detached.contains("\"frames\""), "{result}");
@@ -75,15 +77,10 @@ fn orbit_runs_a_vtebench_sample_detached_and_attached() {
     };
     let frames = counter("frames");
     assert!(frames > 1, "{result}");
-    assert_eq!(counter("revision_gaps"), 0, "{result}");
     assert_eq!(counter("revision_repeats"), 0, "{result}");
-    assert_eq!(
-        counter("last_revision") - counter("first_revision") + 1,
-        frames,
-        "{result}"
-    );
-    assert!(counter("frames_after_reply") <= 1, "{result}");
-    assert!(counter("setup_frames") >= 1, "{result}");
+    assert_eq!(counter("revision_regressions"), 0, "{result}");
+    // Follows from the two above; `counter` panics here unless the reader
+    // started its counts at the attach frame's revision.
     assert!(
         counter("first_revision") > counter("setup_last_revision"),
         "{result}"

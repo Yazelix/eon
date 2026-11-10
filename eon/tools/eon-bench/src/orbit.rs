@@ -103,10 +103,12 @@ child sends untimed before the go, and the benchmark repeated to
 Time is the completion writer's, from its first write to Orbit's reply to its
 status query, or kitten's own. Throughput is MB (10^6 bytes) per second.
 Counters per sample: attach_us (handshake, outside the time); attached,
-setup_frames and setup_last_revision (read before the go, not counted after),
-frames, frame_bytes, other_bytes, first_revision, last_revision,
-revision_gaps (frames whose revision skipped one: Orbit replaced a queued
-frame), revision_repeats, frames_after_reply, last_frame_after_reply_us,
+setup_frames and setup_last_revision (read before the go, not counted after;
+the attach frame's revision when no frame followed it), frames, frame_bytes,
+other_bytes, first_revision, last_revision, revision_gaps (frames whose
+revision skipped one: Orbit replaced a queued frame), revision_repeats and
+revision_regressions (a revision again, or one behind an earlier one: Orbit
+sends neither), frames_after_reply, last_frame_after_reply_us,
 reply_after_last_frame_us and client_cpu_us; on Linux, host_cpu_us,
 worker_cpu_us, host_context_switches and worker_context_switches (CPU time
 and voluntary context switches of Orbit's host and its Bend worker from the
@@ -802,6 +804,8 @@ fn writer_report(path: &Path) -> Result<(f64, u64, u64), String> {
 pub(crate) struct Client {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
+    /// The revision of the frame that completed `attach`.
+    attached: Option<u64>,
 }
 
 impl Client {
@@ -815,7 +819,11 @@ impl Client {
                 .try_clone()
                 .map_err(|error| format!("socket: {error}"))?,
         );
-        Ok(Self { stream, reader })
+        Ok(Self {
+            stream,
+            reader,
+            attached: None,
+        })
     }
 
     fn send(&mut self, message: &ClientMessage) -> Result<(), String> {
@@ -873,6 +881,7 @@ impl Client {
                 (ServerMessage::Frame(frame), _)
                     if (frame.dimensions.rows, frame.dimensions.cols) == (rows, cols) =>
                 {
+                    self.attached = Some(frame.revision);
                     return Ok(frame);
                 }
                 (ServerMessage::Failure(failure), _) => {
@@ -883,12 +892,20 @@ impl Client {
         }
     }
 
+    /// Reads and counts from here on. The counts start from the attach
+    /// frame's revision, so a later frame that repeats it or goes behind it
+    /// counts, and the go always has an earlier revision to compare with.
     pub(crate) fn discard_in_background(self) -> Result<Reader, String> {
-        let Self { stream, mut reader } = self;
+        let Self {
+            stream,
+            mut reader,
+            attached,
+        } = self;
         stream
             .set_read_timeout(None)
             .map_err(|error| format!("socket: {error}"))?;
         let state = Arc::new(Mutex::new(Received {
+            last_revision: attached,
             last_message_ns: monotonic_ns(),
             ..Received::default()
         }));
@@ -980,6 +997,8 @@ struct Received {
     last_revision: Option<u64>,
     revision_gaps: u64,
     revision_repeats: u64,
+    /// Frames whose revision went backward: ORB-C4 forbids any.
+    revision_regressions: u64,
     /// Monotonic arrival of each frame.
     frame_ns: Vec<u64>,
     last_message_ns: u64,
@@ -1007,11 +1026,14 @@ impl Received {
         self.frame_ns.push(at_ns);
         match self.last_revision {
             Some(last) if revision == last => self.revision_repeats += 1,
+            Some(last) if revision < last => self.revision_regressions += 1,
             Some(last) if revision > last + 1 => self.revision_gaps += 1,
             _ => {}
         }
         self.first_revision.get_or_insert(revision);
-        self.last_revision = Some(revision);
+        // The newest revision seen, so one that went backward hides no later
+        // repeat or gap.
+        self.last_revision = self.last_revision.max(Some(revision));
     }
 
     /// Counts from here on, keeping the last revision so a skip across the
@@ -1037,6 +1059,7 @@ impl Received {
             ("other_bytes".to_owned(), self.other_bytes),
             ("revision_gaps".to_owned(), self.revision_gaps),
             ("revision_repeats".to_owned(), self.revision_repeats),
+            ("revision_regressions".to_owned(), self.revision_regressions),
         ];
         if let Some(revision) = self.setup_last_revision {
             counters.push(("setup_last_revision".into(), revision));
@@ -1507,10 +1530,64 @@ mod tests {
         assert_eq!(get("other_bytes"), Some(16));
         assert_eq!(get("revision_gaps"), Some(1));
         assert_eq!(get("revision_repeats"), Some(1));
+        assert_eq!(get("revision_regressions"), Some(0));
         assert_eq!(get("first_revision"), Some(4));
         assert_eq!(get("last_revision"), Some(9));
         assert_eq!(get("frames_after_reply"), Some(2));
         assert_eq!(get("last_frame_after_reply_us"), Some(15));
         assert_eq!(get("reply_after_last_frame_us"), Some(0));
+    }
+
+    /// The counts start at the attach frame's revision and keep the newest
+    /// one across the go: a skip across the go is a gap, and a frame that
+    /// repeats an earlier revision or goes behind one counts.
+    #[test]
+    fn revision_counters_start_at_the_attach_frame_and_cross_the_go() {
+        fn run(attached: u64, setup: &[u64], workload: &[u64]) -> impl Fn(&str) -> Option<u64> {
+            let mut received = Received {
+                last_revision: Some(attached),
+                ..Received::default()
+            };
+            for &revision in setup {
+                received.frame(revision, 1, 0);
+            }
+            received.restart();
+            for &revision in workload {
+                received.frame(revision, 1, 0);
+            }
+            let counters = received.counters(None);
+            move |name| {
+                counters
+                    .iter()
+                    .find(|(counter, _)| counter == name)
+                    .map(|&(_, value)| value)
+            }
+        }
+        // A setup frame, then a workload whose first frames Orbit replaced.
+        let get = run(1, &[2], &[5, 6]);
+        assert_eq!(get("setup_frames"), Some(1));
+        assert_eq!(get("setup_last_revision"), Some(2));
+        assert_eq!(get("first_revision"), Some(5));
+        assert_eq!(get("last_revision"), Some(6));
+        assert_eq!(get("revision_gaps"), Some(1));
+        assert_eq!(get("revision_repeats"), Some(0));
+        assert_eq!(get("revision_regressions"), Some(0));
+        // The setup's frame completed the attachment: nothing before the go.
+        let get = run(2, &[], &[3, 4]);
+        assert_eq!(get("setup_frames"), Some(0));
+        assert_eq!(get("setup_last_revision"), Some(2));
+        assert_eq!(get("revision_gaps"), Some(0));
+        // The attach frame again after the go.
+        let get = run(2, &[], &[2, 3]);
+        assert_eq!(get("revision_repeats"), Some(1));
+        assert_eq!(get("revision_regressions"), Some(0));
+        // Out of order, to a new revision and to one already seen.
+        for workload in [[3, 7, 5, 8], [3, 7, 3, 8]] {
+            let get = run(2, &[], &workload);
+            assert_eq!(get("revision_regressions"), Some(1), "{workload:?}");
+            assert_eq!(get("revision_repeats"), Some(0), "{workload:?}");
+            assert_eq!(get("revision_gaps"), Some(1), "{workload:?}");
+            assert_eq!(get("last_revision"), Some(8), "{workload:?}");
+        }
     }
 }

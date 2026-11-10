@@ -519,7 +519,12 @@ or sent it nothing after the signal, made it fail.
 Rust queues every message to the interactive client and writes only what the
 socket takes, so a slow or stopped client never parks Bend's loop.
 A newer frame replaces queued frames and previews that have
-not started to send, and a newer preview replaces one such preview. Bend sets
+not started to send, and a newer preview replaces one such preview. So an
+attached client that falls behind may never receive some intermediate
+revisions: sending every frame is not a goal. What it receives stays in
+order, and while the attachment lasts and the client reads, the latest frame
+arrives. eon-bench's `attached_quick_corpora_obey_frame_invariants` checks
+this on the wire against the revisions Orbit published. Bend sets
 the queue's bound at attachment to 13,094,971 bytes: one maximum
 frame, one maximum payload, two headers, and 4 KiB. A message that would pass
 the bound is not queued. The session's next wait reports the pressure, and

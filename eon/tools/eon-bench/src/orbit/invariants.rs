@@ -140,6 +140,27 @@ impl Drop for Trace {
     }
 }
 
+/// Orbit's order and convergence on the wire (ORB-C4). Orbit publishes
+/// contiguous revisions after `first`, and the client receives a strictly
+/// increasing selection of them that ends at the last one. A newer frame
+/// replaces queued frames that have not started to send
+/// (orbit/docs/BEHAVIOR.md, Interactive pressure), so a client that falls
+/// behind skips revisions. Returns how many published revisions were
+/// replaced.
+fn check_revisions(first: u64, emitted: &[u64], delivered: &[u64]) -> Result<usize> {
+    let published = emitted.first() == Some(&(first + 1))
+        && emitted.windows(2).all(|pair| pair[1] == pair[0] + 1);
+    let ordered = delivered.first().is_some_and(|revision| *revision > first)
+        && delivered.windows(2).all(|pair| pair[1] > pair[0]);
+    if !published || !ordered || delivered.last() != emitted.last() {
+        return Err(format!(
+            "published revisions are not contiguous, or the delivered ones are not a \
+             strictly increasing selection ending at the last: {emitted:?} / {delivered:?}"
+        ));
+    }
+    Ok(emitted.len() - delivered.len())
+}
+
 /// Run one whole-unit quick prefix per corpus. The expected text is a fixed
 /// frozen regression capture from the accepted Orbit, not a VT reference model.
 #[doc(hidden)]
@@ -301,18 +322,11 @@ pub fn check(exe: &Path, orbit: &Path, expected: &[(&str, &str)]) -> Result {
             .collect::<Vec<_>>();
         let received = delivered.lock().unwrap();
         let revisions = received.iter().map(|f| f.0).collect::<Vec<_>>();
-        if emitted != revisions
-            || emitted.is_empty()
-            || emitted[0] != first + 1
-            || emitted.windows(2).any(|p| p[1] != p[0] + 1)
-        {
-            return Err(format!(
-                "{}: emitted/delivered revisions differ or repeat: {emitted:?} / {revisions:?}",
-                corpus.id
-            ));
-        }
+        let replaced = check_revisions(first, &emitted, &revisions)
+            .map_err(|e| format!("{}: {e}", corpus.id))?;
         let reads = events.iter().filter(|e| e.0 == "pty_read").count() as u64;
-        let frames = received.len() as u64;
+        // Published frames, so replacement cannot hide overproduction.
+        let frames = emitted.len() as u64;
         let bytes = chunks.iter().map(Vec::len).sum::<usize>() as u64;
         if frames > reads {
             return Err(format!(
@@ -373,7 +387,7 @@ pub fn check(exe: &Path, orbit: &Path, expected: &[(&str, &str)]) -> Result {
             ));
         }
         eprintln!(
-            "{}: {bytes} bytes, {reads} PTY turns, {frames} frames, max {} bytes/frame, oracle matched",
+            "{}: {bytes} bytes, {reads} PTY turns, {frames} frames published, {replaced} replaced, max {} bytes/frame, oracle matched",
             corpus.id,
             received.iter().map(|f| f.1).max().unwrap_or(0)
         );
@@ -384,6 +398,53 @@ pub fn check(exe: &Path, orbit: &Path, expected: &[(&str, &str)]) -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A client that falls behind may miss revisions, but what it gets is in
+    /// order, never twice, only what Orbit published, and ends at the last.
+    #[test]
+    fn revisions_may_skip_but_never_repeat_reorder_or_end_stale() {
+        let published = (3..=98).collect::<Vec<u64>>();
+        assert_eq!(check_revisions(2, &published, &published), Ok(0));
+        // mac-proof 42809718166's shape: 32 chunks of three reads, where a
+        // chunk's middle frame is replaced; there, in 29 of the 32.
+        let without_middles = |kept: u64| {
+            published
+                .iter()
+                .copied()
+                .filter(|r| r % 3 != 1 || (*r > 67 && *r <= 67 + 3 * kept))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(check_revisions(2, &published, &without_middles(0)), Ok(32));
+        assert_eq!(check_revisions(2, &published, &without_middles(3)), Ok(29));
+        assert_eq!(check_revisions(2, &[3, 4, 5], &[5]), Ok(2));
+        let rejected: [(&[u64], &[u64]); 13] = [
+            // Delivered twice, out of order to a new and to a seen revision.
+            (&[3, 4, 5], &[3, 3, 5]),
+            (&[3, 4, 5, 6, 7, 8], &[3, 7, 5, 8]),
+            (&[3, 4, 5, 6, 7, 8], &[3, 7, 3, 8]),
+            // The attach frame again, or one before it.
+            (&[3, 4, 5], &[2, 3, 5]),
+            (&[3, 4, 5], &[1, 5]),
+            // A stale final presentation, and nothing at all.
+            (&[3, 4, 5], &[3, 4]),
+            (&[3, 4, 5], &[]),
+            // A revision Orbit never published.
+            (&[3, 4, 5], &[3, 5, 6]),
+            // Publication with a gap, a repeat, a late or early start, or none.
+            (&[3, 5], &[3, 5]),
+            (&[3, 3, 4], &[3, 4]),
+            (&[4, 5], &[4, 5]),
+            (&[2, 3], &[3]),
+            (&[], &[]),
+        ];
+        for (emitted, delivered) in rejected {
+            assert!(
+                check_revisions(2, emitted, delivered).is_err(),
+                "{emitted:?} / {delivered:?}"
+            );
+        }
+    }
+
     #[test]
     fn trace_burst_survives_a_stalled_consumer() {
         let dir = run_dir(900).unwrap();

@@ -277,11 +277,13 @@ The bench package pins vtebench's scripts, the tools they call, and kitty's
 writer; kitten times itself to its own status-report replies and reports its
 MiB/s and time, from which the cell's bytes come. Counters per sample:
 `attach_us` (the handshake, outside the time); attached, `setup_frames` and
-`setup_last_revision` (read before the go and not counted after it),
+`setup_last_revision` (read before the go and not counted after it; the
+attach frame's revision when no frame followed it),
 `frames`, `frame_bytes`, `other_bytes`, `first_revision`, `last_revision`,
 `revision_gaps` (a revision skipped: Orbit replaced a queued frame, which it
-does when the client falls behind), `revision_repeats`,
-`frames_after_reply`, `last_frame_after_reply_us`,
+does when the client falls behind), `revision_repeats` and
+`revision_regressions` (a revision again, or one behind an earlier one: Orbit
+sends neither), `frames_after_reply`, `last_frame_after_reply_us`,
 `reply_after_last_frame_us` (from the writer's monotonic stamps) and
 `client_cpu_us`; on Linux, `host_cpu_us`, `worker_cpu_us`,
 `host_context_switches` and `worker_context_switches`: CPU time and voluntary
@@ -320,9 +322,19 @@ counts `pty_bytes` and `pty_reads`.
 
 `eon-test` runs the bench crate's timing-free attached-Orbit check: all six
 seeded corpora as 64 KiB whole-unit prefixes at 80x24, paced by status replies
-and client drains. Every emitted revision must arrive in order exactly once,
-frames may not exceed attached PTY reads, each frame stays within 128 KiB,
-and frames per MiB stay below 4,096 plus four endpoint frames. The last screen
+and client drains. Published revisions must be contiguous, and the client
+must receive a strictly increasing selection of them, never one twice, that
+ends at the last one published, after every chunk and at the end (ORB-C4). A
+client that falls behind may skip revisions, because Orbit replaces a queued
+frame that has not started to send (`orbit/docs/BEHAVIOR.md`, Interactive
+pressure). The recorded Linux runs of this check skipped none. On macOS it is
+routine: mac-proof run 42809718166 lost the middle frame of 29 of the 32 ascii
+chunks. The likely
+cause, inferred from the frame counts and reproduced on Linux but not measured
+on a Mac, is PTY reads of at most 1,024 bytes and a local socket that takes a
+frame in several writes. Published frames may not exceed attached PTY reads,
+each delivered frame stays within 128 KiB, and published frames per MiB stay
+below 4,096 plus four endpoint frames. The last screen
 must match its fixed text oracle. The generous count ceiling allows fragmented
 PTY reads; it is a performance budget for these inputs, not an ORBF limit.
 A text projection does not prove style/graphics fidelity.
