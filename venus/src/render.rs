@@ -579,6 +579,77 @@ struct FrameTitleTab {
     title: FrameTitle,
 }
 
+#[derive(Clone)]
+struct PaneTitleTab {
+    card: CardFill,
+    tab: FrameTitleTab,
+    /// Reflection about a lower pane edge; text itself stays upright.
+    flip: Option<f32>,
+}
+
+struct PaneTitleCache {
+    workspace: WorkspaceScene,
+    metrics: CellMetrics,
+    widths: (f32, f32),
+    scrollback: Option<String>,
+    tabs: Vec<Vec<Option<PaneTitleTab>>>,
+}
+
+impl PaneTitleCache {
+    fn matches(
+        &self,
+        workspace: &WorkspaceScene,
+        metrics: CellMetrics,
+        widths: (f32, f32),
+        scrollback: &Option<String>,
+    ) -> bool {
+        self.workspace == *workspace
+            && self.metrics == metrics
+            && self.widths == widths
+            && self.scrollback == *scrollback
+    }
+}
+
+impl PaneTitleTab {
+    fn reflect(&self, rect: SceneRect) -> SceneRect {
+        match self.flip {
+            Some(axis) => SceneRect {
+                top: axis - rect.bottom(),
+                ..rect
+            },
+            None => rect,
+        }
+    }
+
+    fn bands(&self, inset: f32) -> Vec<SceneRect> {
+        title_tab_bands(self.card, &self.tab, inset)
+            .into_iter()
+            .map(|band| self.reflect(band))
+            .collect()
+    }
+
+    fn hover_bands(&self, inset: f32) -> impl Iterator<Item = SceneRect> {
+        let header = self.reflect(SceneRect {
+            left: self.card.bounds.left,
+            top: self.tab.top,
+            width: self.tab.start + self.tab.return_run - self.card.bounds.left,
+            height: self.tab.row.bottom() - self.tab.top,
+        });
+        self.bands(inset)
+            .into_iter()
+            .filter_map(move |band| band.intersection(header))
+    }
+
+    fn replacement(&self) -> SceneRect {
+        self.reflect(SceneRect {
+            top: self.tab.top,
+            height: self.card.bounds.top + rounded_radius(self.card.bounds, self.card.radius)
+                - self.tab.top,
+            ..self.card.bounds
+        })
+    }
+}
+
 // Fill and stroke share the contour, including the tangent return into the top rule.
 fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<SceneRect> {
     let bounds = SceneRect {
@@ -628,6 +699,21 @@ fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<Scene
             .filter(|band| band.top >= cut),
     );
     bands
+}
+
+fn title_tab_outline_rects(
+    card: CardFill,
+    tab: &FrameTitleTab,
+    width: f32,
+) -> Vec<(SceneRect, f32)> {
+    let inner = title_tab_bands(card, tab, width);
+    let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
+    title_tab_bands(card, tab, 0.0)
+        .into_iter()
+        .filter(|band| band.top < cut)
+        .flat_map(|band| uncovered(band, &inner))
+        .flat_map(|piece| span_rects(piece.left, piece.right(), piece.top))
+        .collect()
 }
 
 // Partition once so the terminal background under the title never double-blends.
@@ -699,6 +785,7 @@ fn build_workspace_padding(
     metrics: CellMetrics,
     padding_color: PaddingColor,
     pane_frames: bool,
+    pane_tabs: &[Vec<Option<PaneTitleTab>>],
     stroke_width: f32,
     scroll: (Option<&ScenePreview>, f32),
 ) -> Vec<Vec<SceneColor>> {
@@ -766,6 +853,22 @@ fn build_workspace_padding(
                     radius: outline.radius,
                 })
         });
+        let notch = panes
+            .iter()
+            .position(|pane| pane.selected)
+            .and_then(|pane| pane_tabs.get(index)?.get(pane)?.as_ref());
+        let viewport = if header_band {
+            notch.map_or(viewport, |tab| {
+                let top = tab.tab.top.min(viewport.top);
+                SceneRect {
+                    top,
+                    height: viewport.bottom() - top,
+                    ..viewport
+                }
+            })
+        } else {
+            viewport
+        };
         let bounds = if popup {
             let card = outer.unwrap();
             // Popup margins are padding too; the title band retains its own background.
@@ -777,7 +880,10 @@ fn build_workspace_padding(
             }
         } else if pane_frames {
             let top = if header_band {
-                pane.map_or(terminal.top, |pane| pane.bounds.top)
+                notch.map_or_else(
+                    || pane.map_or(terminal.top, |pane| pane.bounds.top),
+                    |tab| tab.tab.top,
+                )
             } else {
                 terminal.top
             };
@@ -799,30 +905,34 @@ fn build_workspace_padding(
             .into_iter()
             .flat_map(CardFill::bands)
             .chain(outer.is_none().then_some(bounds));
-        rectangles.card_clip = pane;
+        rectangles.card_clip = if notch.is_some() { None } else { pane };
+        let pane_bands = notch.map_or_else(|| vec![bounds], |tab| tab.bands(0.0));
         for band in bands {
-            let Some(clip) = bounds
-                .intersection(viewport)
-                .and_then(|clip| clip.intersection(band))
-            else {
-                continue;
-            };
-            rectangles.clip = Some(clip);
-            let top_colors = build_padding_rectangles(
-                rectangles,
-                scene,
-                metrics,
-                terminal,
-                bounds,
-                padding_color,
-                if terminal == workspace.terminal {
-                    scroll
-                } else {
-                    (None, 0.0)
-                },
-            );
-            if header_band {
-                header_bands[index] = top_colors;
+            for pane_band in &pane_bands {
+                let Some(clip) = bounds
+                    .intersection(viewport)
+                    .and_then(|clip| clip.intersection(band))
+                    .and_then(|clip| clip.intersection(*pane_band))
+                else {
+                    continue;
+                };
+                rectangles.clip = Some(clip);
+                let top_colors = build_padding_rectangles(
+                    rectangles,
+                    scene,
+                    metrics,
+                    terminal,
+                    bounds,
+                    padding_color,
+                    if terminal == workspace.terminal {
+                        scroll
+                    } else {
+                        (None, 0.0)
+                    },
+                );
+                if header_band {
+                    header_bands[index].extend(top_colors);
+                }
             }
         }
     }
@@ -988,6 +1098,7 @@ pub struct Renderer {
     /// The keycap popup this frame drew, for the pointer.
     hint_popup_hit: Option<chrome::HintPopupHit>,
     content_key: Option<ContentKey>,
+    pane_titles: Option<PaneTitleCache>,
     notice_lines: usize,
     terminal: TerminalLayer,
     header: HeaderInteraction,
@@ -1251,6 +1362,7 @@ impl Renderer {
             text: Vec::new(),
             hint_popup_hit: None,
             content_key: None,
+            pane_titles: None,
             notice_lines: 1,
             terminal: TerminalLayer {
                 hyperlink: None,
@@ -1311,6 +1423,7 @@ impl Renderer {
         }
         self.surface.configure(&self.device, &self.config);
         self.content_key = None;
+        self.pane_titles = None;
         self.reset_cursor_animation();
     }
 
@@ -1701,6 +1814,7 @@ impl Renderer {
         let mut cursor_vertex_boundary = 0;
         if let Some(workspace) = workspace {
             let title_tabs = self.workspace_title_tabs(workspace);
+            let pane_tabs = self.workspace_pane_tabs(workspace);
             self.clear = wgpu::Color::TRANSPARENT;
             if self.pane_frames {
                 // Below the tab bar, everything no card covers is opaque bar color, so the bar,
@@ -1770,6 +1884,7 @@ impl Renderer {
                 self.metrics,
                 self.padding_color,
                 self.pane_frames,
+                &pane_tabs,
                 self.card_stroke_width(),
                 (scroll_preview, scroll_offset),
             );
@@ -1790,6 +1905,7 @@ impl Renderer {
                 &backgrounds,
                 &bands,
                 &title_tabs,
+                &pane_tabs,
             );
             for ((column, scene), band) in workspace
                 .other_columns
@@ -2880,25 +2996,19 @@ impl RectangleBatch {
         width: f32,
         color: SceneColor,
     ) {
-        let inner = title_tab_bands(card, tab, width);
-        let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
-        for band in title_tab_bands(card, tab, 0.0)
-            .into_iter()
-            .filter(|band| band.top < cut)
-        {
-            for piece in uncovered(band, &inner) {
-                for (rect, alpha) in span_rects(piece.left, piece.right(), piece.top) {
-                    self.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
-                }
-            }
+        for (rect, alpha) in title_tab_outline_rects(card, tab, width) {
+            self.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_pane_outlines(
         &mut self,
         fill: CardFill,
         viewport: SceneRect,
         frames: &[(PaneOutline, [SceneRect; 2])],
+        tabs: &[Option<PaneTitleTab>],
+        focused_title: Option<usize>,
         focus_color: Option<SceneColor>,
         border_width: f32,
         focus_width: f32,
@@ -2911,6 +3021,7 @@ impl RectangleBatch {
         }
         let mut focus = Vec::new();
         let mut neutral = Vec::new();
+        let mut accent = Vec::new();
         // Header scrolling keeps its viewport; only the fixed bottom curve bounds joins.
         let radius = rounded_radius(fill.bounds, fill.radius);
         let bottom = fill.bounds.bottom() - radius;
@@ -2921,7 +3032,7 @@ impl RectangleBatch {
         })
         .chain(fill.bands().filter(|band| band.top >= bottom))
         .collect::<Vec<_>>();
-        for (outline, gaps) in frames {
+        for (index, (outline, gaps)) in frames.iter().enumerate() {
             let Some(clip) = outline
                 .clip
                 .intersection(viewport)
@@ -2952,44 +3063,63 @@ impl RectangleBatch {
             } else {
                 &mut neutral
             };
+            let tab = tabs.get(index).and_then(Option::as_ref);
+            let replacement = tab.map(|tab| tab.replacement());
             for (rect, alpha) in rounded_outline_rects(outline.bounds, outline.radius, width) {
                 let Some(rect) = rect.intersection(clip) else {
                     continue;
                 };
                 for band in &outline_clip {
                     if let Some(rect) = rect.intersection(*band) {
+                        for piece in uncovered(rect, &gaps) {
+                            target.extend(
+                                uncovered(piece, replacement.as_slice())
+                                    .into_iter()
+                                    .map(|rect| (rect, alpha)),
+                            );
+                        }
+                    }
+                }
+            }
+            if let Some(tab) = tab {
+                let target = if focused_title == Some(index) {
+                    &mut accent
+                } else {
+                    target
+                };
+                // Caps may borrow an adjacent header's margin, but never its input bounds.
+                for (rect, alpha) in title_tab_outline_rects(tab.card, &tab.tab, width) {
+                    if let Some(rect) = tab
+                        .reflect(rect)
+                        .intersection(viewport)
+                        .and_then(|rect| rect.intersection(fill.bounds))
+                    {
                         target.extend(uncovered(rect, &gaps).into_iter().map(|rect| (rect, alpha)));
                     }
                 }
             }
         }
         let mut painted = Vec::new();
-        for (rect, alpha) in focus {
-            self.push(
-                rect.left,
-                rect.top,
-                rect.width,
-                rect.height,
-                focus_color,
-                alpha,
-            );
-            painted.push(rect);
-        }
-        // A join is a union of strokes: reserve focus coverage, then paint neutral coverage once.
         neutral.sort_by(|a, b| b.1.total_cmp(&a.1));
-        for (rect, alpha) in neutral {
-            let pieces = uncovered(rect, &painted);
-            for piece in &pieces {
-                self.push(
-                    piece.left,
-                    piece.top,
-                    piece.width,
-                    piece.height,
-                    palette::CARD_OUTLINE,
-                    alpha,
-                );
+        for (pieces, color) in [
+            (accent, palette::ACCENT),
+            (focus, focus_color),
+            (neutral, palette::CARD_OUTLINE),
+        ] {
+            for (rect, alpha) in pieces {
+                let pieces = uncovered(rect, &painted);
+                for piece in &pieces {
+                    self.push(
+                        piece.left,
+                        piece.top,
+                        piece.width,
+                        piece.height,
+                        color,
+                        alpha,
+                    );
+                }
+                painted.extend(pieces);
             }
-            painted.extend(pieces);
         }
     }
 

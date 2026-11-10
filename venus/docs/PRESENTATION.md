@@ -224,9 +224,9 @@ visible. Each pane is its own rounded card, stacked without gaps in its
 column's allocated card area. Even outer gaps surround and separate the
 allocated column areas. Collapsed panes show a rounded title edge with corners turning toward the
 expanded pane and sides continuing to the next card in that direction. The
-expanded pane has a full rounded frame. Every pane title is a compact gap in its
+expanded pane has a full rounded frame. Pane titles sit in a left notch in their
 rounded edge; the column card's top line above the first pane carries its Stack
-tab.
+tab. The final collapsed title keeps a compact gap in the bottom edge.
 `border_width` sizes neutral outlines; `focus_border_width` sizes the selected
 pane's outline. The visible shortcut footer sits bare in the margin below
 the allocated column areas.
@@ -266,23 +266,29 @@ has one column and `Stack 1`, `Stack 2`, ... from left to right when it has
 several; Stack N holds the panes whose `column` is N in `eon session --json`.
 The first pane's top edge sits one stack band lower: one title row plus the
 tab's rise, a third of the title padding (24 px at the default font). Every
-pane title, the first, a lone and a zoomed pane's included, is a compact
-border-gap title in its rounded edge. The column's sides run from the Stack line
+pane title, the first, a lone and a zoomed pane's included, uses the shared left
+title notch. Interior collapsed edges below the expanded pane mirror the notch;
+the final collapsed title keeps a compact gap in the column's bottom edge.
+Caps use the space clear of neighbouring title ink and retain a compact gap
+when the configured stroke cannot clear the text or viewport. The column's sides run from the Stack line
 down to the first pane's rounded top corners in the neutral border colour and
 width, even while that pane is selected. Headers scroll below the band. On a
 window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
 
-Stack tabs, popups, Agents and native titled dialogs use one shared title
-style. The outline rises seamlessly from the left border over the fitted name,
+Pane notches, Stack tabs, popups, Agents and native titled dialogs use one shared
+title style. The outline rises seamlessly from the left border over the fitted name,
 then returns into the top edge with a tangent S curve spanning 1.5 times its
 rise. The curve begins beside the visible text, including after truncation.
 Stack, popup and Agents tab tops sit one card gap (8 px) below the bar's pills.
-A popup, Agents or dialog tab adds no height or terminal rows inside its card.
+A pane, popup, Agents or dialog tab adds no height or terminal rows inside its card.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.
 A title is omitted only when it cannot fit. A tab keeps full accessibility
-names and adds no input targets; the Stack label is a visual heading only.
+names and adds no input targets; decorative pane caps outside a header row do
+not extend that row's click or accessibility bounds. The Stack label is a visual
+heading only. Keyboard focus colours the pane notch's own stroke; hover fills
+inside it. Compact and frameless titles retain their focus pill.
 Popup tabs keep their outline with pane frames off; Stack and Agents labels show
 plain then, and the Stack band stays reserved. On a light terminal background a
 Stack label darkens only as far as 4.5:1 contrast needs. Dialog tabs stay inside

@@ -6,13 +6,18 @@
   from 1% used, with no elapsed-time gate. Windows with no quota used are
   neutral at any age and show no pace line (`eon-7aw48`).
 
+- VEN-C8/C18: pane titles share the fitted left title notch and tangent return;
+  interior lower edges mirror it, with compact-gap fallback for insufficient
+  clearance and the final collapsed bottom title. Focus uses the notch stroke;
+  layout, input and accessibility bounds remain unchanged (`eon-7xryp`). No
+  wire change.
+
 - VEN-C5: plain-text loopback hosts with a port (`localhost`, `127.0.0.1`,
   `[::1]`) are detected as links targeting `http://` and the text, unless
   `--detect-local-hosts false` (`eon-onvk0`). New launch flag, no wire change.
 - VEN-C8/C18/C21/C30: each column card's top line carries
   the shared tab, labelled `Stack` or `Stack N`, one stack band above the
-  first pane; every pane title is a compact border-gap title, and headers
-  scroll below the band. Title tab tops sit one card gap below the Eon Bar's
+  first pane; headers scroll below the band. Title tab tops sit one card gap below the Eon Bar's
   pills (`eon-whjhd`). No wire change.
 
 - VEN-C8/C18/C30: top panes, popups, Agents and native titled dialogs share

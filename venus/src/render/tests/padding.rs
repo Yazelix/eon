@@ -237,6 +237,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                     metrics,
                     PaddingColor::Extend,
                     frames,
+                    &[],
                     stroke,
                     (None, 0.0),
                 );
@@ -330,6 +331,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                     metrics,
                     PaddingColor::Background,
                     frames,
+                    &[],
                     stroke,
                     (None, 0.0),
                 );
@@ -364,6 +366,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                             metrics,
                             mode,
                             true,
+                            &[],
                             stroke,
                             (None, 0.0),
                         );
@@ -407,6 +410,8 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         fill,
                         workspace.pane_viewport,
                         &rules,
+                        &[],
+                        None,
                         Some(palette::CARD_OUTLINE),
                         stroke,
                         stroke,
@@ -416,6 +421,8 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         fill,
                         workspace.pane_viewport,
                         &rules,
+                        &[],
+                        None,
                         Some(palette::CARD_OUTLINE),
                         stroke,
                         stroke,
@@ -459,6 +466,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         metrics,
                         PaddingColor::Extend,
                         true,
+                        &[],
                         stroke,
                         (None, 0.0),
                     );
@@ -616,4 +624,67 @@ fn padding_color_declines_only_primary_vertical_edges() {
             "default background retains the backdrop's opacity"
         );
     }
+}
+
+#[test]
+fn expanded_padding_uses_the_fitted_pane_notch_contour() {
+    let metrics = CellMetrics::for_scale(1.0);
+    let (workspace, _) = retained_frame_text_clip(PhysicalSize::new(1280, 800));
+    let mut fonts = clipping_test_fonts();
+    let mut swash = SwashCache::new();
+    let fill = workspace.card_fill(workspace.chrome, metrics, 2.0);
+    let outlines = workspace.pane_outlines(
+        &workspace.panes,
+        workspace.terminal,
+        fill,
+        1.0,
+        metrics,
+        2.0,
+    );
+    let top = workspace.header_viewport.top - crate::scene::title_tab_rise(metrics);
+    let viewport = SceneRect {
+        top,
+        height: workspace.header_viewport.bottom() - top,
+        ..workspace.header_viewport
+    };
+    let notch = PaneTitleTab::fit(
+        &mut fonts.font_system,
+        &mut swash,
+        metrics,
+        &workspace.panes[0],
+        None,
+        &outlines[0],
+        viewport.intersection(fill.bounds).unwrap(),
+        workspace.panes[0].rect.right(),
+        2.0,
+    )
+    .unwrap();
+    let band = notch
+        .bands(0.0)
+        .into_iter()
+        .find(|band| band.top == notch.tab.top + 3.0)
+        .unwrap();
+    let tabs = vec![vec![Some(notch)]];
+    let mut batch = RectangleBatch::new(1280, 800);
+    build_workspace_padding(
+        &mut batch,
+        &workspace,
+        Some(&padding_scene()),
+        &[],
+        metrics,
+        PaddingColor::Extend,
+        true,
+        &tabs,
+        2.0,
+        (None, 0.0),
+    );
+    assert!(
+        padding_pixel(&batch, band.left + band.width / 2.0, band.top + 0.5).is_some(),
+        "extended padding must reach the inside of the raised title"
+    );
+    assert_eq!(
+        padding_pixel(&batch, band.right() + 1.0, band.top + 0.5),
+        None,
+        "padding must not cover the space outside the notch return"
+    );
 }

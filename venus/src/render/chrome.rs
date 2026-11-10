@@ -2,8 +2,8 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
-    CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PlacedText, RectangleBatch,
-    Renderer, SceneColor,
+    CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PaneTitleTab, PlacedText,
+    RectangleBatch, Renderer, SceneColor,
     cells::{NERD_FONT_FAMILY, blend_to_contrast},
     palette, physical_outline_width, shaping,
 };
@@ -657,7 +657,7 @@ fn chip_label_top(
 
 /// `glyph` shaped in the status font, and its ink box from an origin at zero in whole physical
 /// pixels: left, top, right and bottom. A glyph without ink gives its layout box.
-fn status_glyph_ink(
+pub(super) fn status_glyph_ink(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
     metrics: CellMetrics,
@@ -1173,6 +1173,23 @@ impl FrameTitleTab {
         if top + stroke + 1.0 > row.top {
             return None;
         }
+        Self::at(fonts, metrics, label, row, card, top, row.top, stroke)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn at(
+        fonts: &mut FontSystem,
+        metrics: CellMetrics,
+        label: &str,
+        row: SceneRect,
+        card: crate::scene::CardFill,
+        top: f32,
+        ink_top: f32,
+        stroke: f32,
+    ) -> Option<Self> {
+        if top + stroke + 1.0 > ink_top || top >= card.bounds.top {
+            return None;
+        }
         let rise = card.bounds.top - top;
         let join_radius = (card.radius / 2.0).min(rise / 2.0);
         let return_run = rise * 1.5;
@@ -1183,7 +1200,7 @@ impl FrameTitleTab {
         // Keep antialiased corner pixels outside the title box, including at large fonts.
         let corner_limit = |padding: f32| {
             let clearance = (padding - stroke - 1.0).max(0.0);
-            let extra = (row.top - top - stroke).max(0.0);
+            let extra = (ink_top - top - stroke).max(0.0);
             stroke + clearance + extra + (2.0 * clearance * extra).sqrt()
         };
         let left_radius = rise.min(corner_limit(metrics.padding));
@@ -1348,7 +1365,216 @@ impl FrameTitleTab {
     }
 }
 
+impl PaneTitleTab {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fit(
+        fonts: &mut FontSystem,
+        swash: &mut SwashCache,
+        metrics: CellMetrics,
+        pane: &crate::scene::WorkspacePane,
+        neighbour: Option<(&crate::scene::WorkspacePane, SceneRect)>,
+        outline: &crate::scene::PaneOutline,
+        viewport: SceneRect,
+        right: f32,
+        stroke: f32,
+    ) -> Option<Self> {
+        let line = outline.title_y?;
+        let bottom = !outline.expanded && line > outline.bounds.top;
+        let flip = bottom.then_some(outline.bounds.bottom() + line);
+        let reflect = |rect: SceneRect| match flip {
+            Some(axis) => SceneRect {
+                top: axis - rect.bottom(),
+                ..rect
+            },
+            None => rect,
+        };
+        let row = reflect(pane.rect);
+        let card = crate::scene::CardFill {
+            bounds: reflect(outline.bounds),
+            radius: outline.radius,
+        };
+        let ink = |fonts: &mut FontSystem,
+                   swash: &mut SwashCache,
+                   pane: &crate::scene::WorkspacePane,
+                   row: SceneRect| {
+            let (_, (_, top, _, bottom)) = status_glyph_ink(fonts, swash, metrics, pane.label());
+            reflect(SceneRect {
+                top: (row.top + (row.height - chrome_title_metrics(metrics).text_height) / 2.0)
+                    .trunc()
+                    + top as f32,
+                height: (bottom - top) as f32,
+                ..pane.rect
+            })
+        };
+        let own_ink = ink(fonts, swash, pane, pane.rect);
+        let limit = neighbour
+            .map(|(pane, row)| ink(fonts, swash, pane, row).bottom())
+            .unwrap_or(f32::NEG_INFINITY)
+            .max(reflect(viewport).top);
+        let top = (row.top - crate::scene::title_tab_rise(metrics))
+            .floor()
+            .max(limit.ceil());
+        let tab = FrameTitleTab::at(
+            fonts,
+            metrics,
+            pane.label(),
+            SceneRect {
+                width: (right - row.left).max(0.0),
+                ..row
+            },
+            card,
+            top,
+            own_ink.top,
+            stroke,
+        )?;
+        Some(Self { card, tab, flip })
+    }
+
+    pub(super) fn workspace(
+        fonts: &mut FontSystem,
+        swash: &mut SwashCache,
+        metrics: CellMetrics,
+        workspace: &WorkspaceScene,
+        widths: (f32, f32),
+        right_limit: Option<f32>,
+    ) -> Vec<Vec<Option<PaneTitleTab>>> {
+        if workspace.popup_label().is_some() {
+            return Vec::new();
+        }
+        let (border, focus) = widths;
+        let terminals = std::iter::once(workspace.terminal)
+            .chain(workspace.other_columns.iter().map(|column| column.terminal));
+        workspace
+            .column_cards()
+            .zip(terminals)
+            .enumerate()
+            .map(|(column, ((area, _, panes), terminal))| {
+                let fill = workspace.card_fill(area, metrics, border.max(focus));
+                let outlines = workspace.pane_outlines(
+                    panes,
+                    terminal,
+                    fill,
+                    border,
+                    metrics,
+                    border.max(focus),
+                );
+                let expanded = panes.iter().position(|pane| pane.selected).unwrap_or(0);
+                panes
+                    .iter()
+                    .zip(&outlines)
+                    .enumerate()
+                    .map(|(index, (pane, outline))| {
+                        // The last collapsed title closes the column on its fixed bottom line.
+                        if index + 1 == panes.len() && !pane.selected {
+                            return None;
+                        }
+                        let current = column == 0 && pane.selected;
+                        let right = if current {
+                            right_limit.unwrap_or(pane.rect.right())
+                        } else {
+                            pane.rect.right()
+                        };
+                        let neighbour_index = if index > expanded {
+                            Some(index + 1)
+                        } else {
+                            index.checked_sub(1)
+                        };
+                        let neighbour = neighbour_index.and_then(|i| {
+                            let pane = panes.get(i)?;
+                            let row = if i + 1 == panes.len() && !pane.selected {
+                                bottom_title_row(
+                                    pane.rect,
+                                    outlines[i].bounds.bottom(),
+                                    chrome_title_metrics(metrics).text_height,
+                                )
+                            } else {
+                                pane.rect
+                            };
+                            Some((pane, row))
+                        });
+                        let top = (workspace.header_viewport.top
+                            - crate::scene::title_tab_rise(metrics))
+                        .max(fill.bounds.top);
+                        let viewport = SceneRect {
+                            top,
+                            height: (workspace.header_viewport.bottom() - top).max(0.0),
+                            ..workspace.header_viewport
+                        };
+                        PaneTitleTab::fit(
+                            fonts,
+                            swash,
+                            metrics,
+                            pane,
+                            neighbour,
+                            outline,
+                            viewport,
+                            right,
+                            if current { focus } else { border },
+                        )
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+}
+
 impl Renderer {
+    pub(super) fn workspace_pane_tabs(
+        &mut self,
+        workspace: &WorkspaceScene,
+    ) -> Vec<Vec<Option<PaneTitleTab>>> {
+        if !self.pane_frames {
+            return Vec::new();
+        }
+        let widths = (
+            physical_outline_width(self.border_width, self.metrics.scale),
+            physical_outline_width(self.focus_border_width, self.metrics.scale),
+        );
+        if let Some(cache) = &self.pane_titles
+            && cache.matches(
+                workspace,
+                self.metrics,
+                widths,
+                &self.terminal.scrollback_label,
+            )
+        {
+            return cache.tabs.clone();
+        }
+        let right = workspace
+            .panes
+            .iter()
+            .find(|pane| pane.selected)
+            .and_then(|pane| {
+                self.scrollback_geometry(
+                    SceneRect {
+                        left: pane.rect.left + self.metrics.width * 4.0,
+                        width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
+                        ..pane.rect
+                    },
+                    workspace.header_viewport,
+                    true,
+                    None,
+                )
+                .map(|(rect, _)| rect.left)
+            });
+        let tabs = PaneTitleTab::workspace(
+            &mut self.fonts.font_system,
+            &mut self.swash_cache,
+            self.metrics,
+            workspace,
+            widths,
+            right,
+        );
+        self.pane_titles = Some(super::PaneTitleCache {
+            workspace: workspace.clone(),
+            metrics: self.metrics,
+            widths,
+            scrollback: self.terminal.scrollback_label.clone(),
+            tabs: tabs.clone(),
+        });
+        tabs
+    }
+
     pub(super) fn workspace_title_tabs(
         &mut self,
         workspace: &WorkspaceScene,
@@ -2247,6 +2473,7 @@ impl Renderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_workspace(
         &mut self,
         workspace: &WorkspaceScene,
@@ -2255,6 +2482,7 @@ impl Renderer {
         backgrounds: &[SceneColor],
         bands: &[Vec<SceneColor>],
         title_tabs: &[Option<FrameTitleTab>],
+        pane_tabs: &[Vec<Option<PaneTitleTab>>],
     ) {
         rectangles.push(
             workspace.header.left,
@@ -2761,7 +2989,28 @@ impl Renderer {
                     pane.rect
                 };
                 let first_text = self.text.len();
-                let pill = self.build_border_title(pane.label(), row, rect, width, color);
+                let notch = pane_tabs
+                    .get(column_index)
+                    .and_then(|tabs| tabs.get(index))
+                    .and_then(Option::as_ref);
+                let pill = if let Some(notch) = notch {
+                    self.build_frame_title(
+                        &notch.tab.title,
+                        row,
+                        rect,
+                        color,
+                        physical_outline_width(
+                            if current {
+                                self.focus_border_width
+                            } else {
+                                self.border_width
+                            },
+                            self.metrics.scale,
+                        ),
+                    )
+                } else {
+                    self.build_border_title(pane.label(), row, rect, width, color)
+                };
                 let id_color = pane_id_color(
                     color,
                     current,
@@ -2798,13 +3047,36 @@ impl Renderer {
                 rectangles.clip = Some(rect);
                 if pill.width > self.metrics.padding {
                     if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
-                        rectangles.push_rounded(
-                            pill,
-                            self.metrics.padding / 2.0,
-                            palette::CHROME_HIGHLIGHT,
-                        );
+                        if let Some(notch) = notch {
+                            rectangles.clip = Some(workspace.pane_viewport);
+                            for band in notch.hover_bands(physical_outline_width(
+                                if current {
+                                    self.focus_border_width
+                                } else {
+                                    self.border_width
+                                },
+                                self.metrics.scale,
+                            )) {
+                                if let Some(fill) = band.intersection(fill.bounds) {
+                                    rectangles.push(
+                                        fill.left,
+                                        fill.top,
+                                        fill.width,
+                                        fill.height,
+                                        palette::CHROME_HIGHLIGHT,
+                                        1.0,
+                                    );
+                                }
+                            }
+                        } else {
+                            rectangles.push_rounded(
+                                pill,
+                                self.metrics.padding / 2.0,
+                                palette::CHROME_HIGHLIGHT,
+                            );
+                        }
                     }
-                    if current && focus == WorkspaceFocus::Panes {
+                    if notch.is_none() && current && focus == WorkspaceFocus::Panes {
                         rectangles.push_rounded_outline(
                             pill,
                             self.metrics.padding / 2.0,
@@ -2852,6 +3124,10 @@ impl Renderer {
                 fill,
                 workspace.pane_viewport,
                 &rules,
+                pane_tabs.get(column_index).map_or(&[], Vec::as_slice),
+                (selected_column && focus == WorkspaceFocus::Panes)
+                    .then(|| panes.iter().position(|pane| pane.selected))
+                    .flatten(),
                 self.pane_frames.then_some(if selected_column {
                     self.focus_color
                 } else {
@@ -4803,6 +5079,7 @@ mod tests {
                     |_, label| renderer.fit_tab_text(label, false),
                 );
                 let title_tabs = renderer.workspace_title_tabs(&workspace);
+                let pane_tabs = renderer.workspace_pane_tabs(&workspace);
                 renderer.build_workspace(
                     &workspace,
                     WorkspaceFocus::Terminal,
@@ -4810,6 +5087,7 @@ mod tests {
                     &[],
                     &[],
                     &title_tabs,
+                    &pane_tabs,
                 );
                 let label = &renderer.text[1];
                 let line = label.buffer.layout_runs().next().unwrap();
@@ -4941,6 +5219,7 @@ mod tests {
                     renderer.set_hovered_header(Some((WorkspaceFocus::Panes, "p3".into())));
                     let mut batch = RectangleBatch::new(900, 600);
                     let title_tabs = renderer.workspace_title_tabs(&workspace);
+                    let pane_tabs = renderer.workspace_pane_tabs(&workspace);
                     renderer.build_workspace(
                         &workspace,
                         WorkspaceFocus::Panes,
@@ -4948,6 +5227,7 @@ mod tests {
                         &[],
                         &[],
                         &title_tabs,
+                        &pane_tabs,
                     );
                     let pane = &workspace.panes[0];
                     let label = renderer
@@ -5186,6 +5466,7 @@ mod tests {
                     renderer.text.clear();
                     let mut batch = RectangleBatch::new(1600, 900);
                     let title_tabs = renderer.workspace_title_tabs(&workspace);
+                    let pane_tabs = renderer.workspace_pane_tabs(&workspace);
                     renderer.build_workspace(
                         &workspace,
                         WorkspaceFocus::Terminal,
@@ -5193,6 +5474,7 @@ mod tests {
                         &[],
                         &[],
                         &title_tabs,
+                        &pane_tabs,
                     );
                     let title = chrome_title_metrics(renderer.metrics);
                     for (name, card) in [

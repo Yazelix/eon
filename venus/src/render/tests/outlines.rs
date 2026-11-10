@@ -1442,6 +1442,8 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                     fill,
                                     workspace.pane_viewport,
                                     &rules,
+                                    &[],
+                                    None,
                                     frames.then_some(if current_column { focus } else { neutral }),
                                     physical_outline_width(border, metrics.scale),
                                     if current_column {
@@ -1739,6 +1741,8 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                             fill,
                                             workspace.pane_viewport,
                                             &scrolled,
+                                            &[],
+                                            None,
                                             Some(focus),
                                             border_width,
                                             focus_width,
@@ -1940,6 +1944,8 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                 fill,
                 paint.pane_viewport,
                 &rules,
+                &[],
+                None,
                 Some(palette::CARD_OUTLINE),
                 1.0,
                 1.0,
@@ -2399,6 +2405,8 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                             fill,
                             workspace.pane_viewport,
                             &rules,
+                            &[],
+                            None,
                             Some(palette::CARD_OUTLINE),
                             neutral,
                             stroke,
@@ -2421,6 +2429,8 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                 peer_fill,
                                 workspace.pane_viewport,
                                 &rules,
+                                &[],
+                                None,
                                 Some(palette::CARD_OUTLINE),
                                 neutral,
                                 neutral,
@@ -2561,6 +2571,8 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                 fill,
                                 paint.pane_viewport,
                                 &rules,
+                                &[],
+                                None,
                                 Some(palette::CARD_OUTLINE),
                                 neutral,
                                 if current { stroke } else { neutral },
@@ -2604,88 +2616,90 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
         ..label
     };
     for top in [20.0, 70.0, 21.25, -10.0] {
-        let mut batch = RectangleBatch::new(200, 200);
-        let viewport = SceneRect {
-            top: 20.0,
-            height: 180.0,
-            ..card
-        };
-        batch.clip = Some(viewport);
-        let top = crate::scene::title_rule_y(top, 20.0);
-        let frame = SceneRect {
-            top,
-            height: card.bottom() - top,
-            ..card
-        };
-        batch.push_pane_outlines(
-            CardFill {
+        for notched in [false, true] {
+            let mut batch = RectangleBatch::new(200, 200);
+            let viewport = SceneRect {
+                top: 20.0,
+                height: 180.0,
+                ..card
+            };
+            batch.clip = Some(viewport);
+            let top = crate::scene::title_rule_y(top, 20.0);
+            let frame = SceneRect {
+                top,
+                height: card.bottom() - top,
+                ..card
+            };
+            let fill = CardFill {
                 bounds: viewport,
                 radius: 8.0,
-            },
-            viewport,
-            &[(
-                PaneOutline {
+            };
+            let tab = notched.then(|| PaneTitleTab {
+                card: CardFill {
                     bounds: frame,
-                    clip: frame,
-                    radius: rounded_radius(frame, 8.0),
-                    title_y: Some(top),
-                    expanded: true,
+                    radius: 8.0,
                 },
-                [label, scrollback],
-            )],
-            Some(SceneColor::default()),
-            1.0,
-            1.0,
-        );
-        assert_eq!(batch.clip, Some(viewport));
-        let quads = batch
-            .bytes
-            .chunks_exact(VERTEX_SIZE as usize * 6)
-            .map(|quad| {
-                let value = |vertex: usize, component: usize| {
-                    let offset = vertex * VERTEX_SIZE as usize + component * 4;
-                    f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
-                };
-                SceneRect {
-                    left: (value(0, 0) + 1.0) * 100.0,
-                    top: (1.0 - value(0, 1)) * 100.0,
-                    width: (value(2, 0) - value(0, 0)) * 100.0,
-                    height: (value(0, 1) - value(2, 1)) * 100.0,
-                }
-            })
-            .collect::<Vec<_>>();
-        let y = top;
-        assert!(
-            quads.iter().all(|rect| rect.top >= viewport.top - 0.001
-                && rect.bottom() <= viewport.bottom() + 0.001)
-        );
-        if y >= viewport.top {
-            assert!(
-                !quads.iter().any(|rect| rect.contains(10.5, y + 0.5)),
-                "every pane's top must have its own rounded corner"
+                tab: FrameTitleTab {
+                    top: top - 14.0,
+                    start: 85.0,
+                    left_radius: 14.0,
+                    row: label,
+                    return_run: 21.0,
+                    title: FrameTitle {
+                        label: "label".into(),
+                        width: label.width,
+                    },
+                },
+                flip: None,
+            });
+            batch.push_pane_outlines(
+                fill,
+                viewport,
+                &[(
+                    PaneOutline {
+                        bounds: frame,
+                        clip: frame,
+                        radius: rounded_radius(frame, 8.0),
+                        title_y: Some(top),
+                        expanded: true,
+                    },
+                    [label, scrollback],
+                )],
+                &[tab],
+                None,
+                Some(SceneColor::default()),
+                1.0,
+                1.0,
             );
-            assert!(quads.iter().any(|rect| rect.contains(100.0, y + 0.5)));
-            assert!(!quads.iter().any(|rect| rect.contains(160.0, y + 0.5)));
-            assert!(quads.iter().any(|rect| rect.contains(180.0, y + 0.5)));
-            assert!(!quads.iter().any(|rect| rect.contains(50.0, y + 0.5)));
-            if y == card.top {
+            assert_eq!(batch.clip, Some(viewport));
+            let quads = painted_rects(&batch).collect::<Vec<_>>();
+            assert!(quads.iter().all(|rect| rect.top >= viewport.top - 0.001
+                && rect.bottom() <= viewport.bottom() + 0.001));
+            if top >= viewport.top {
                 assert!(
-                    !quads.iter().any(|rect| rect.contains(10.5, y + 0.5)),
-                    "rounded top corner must stay clear"
+                    !quads.iter().any(|rect| rect.contains(160.0, top + 0.5)),
+                    "header stroke crosses scrollback, notched={notched}"
+                );
+                assert_eq!(
+                    quads.iter().any(|rect| rect.contains(10.5, top + 0.5)),
+                    notched
+                );
+                assert!(quads.iter().any(|rect| rect.contains(120.0, top + 0.5)));
+                assert!(quads.iter().any(|rect| rect.contains(180.0, top + 0.5)));
+                assert!(!quads.iter().any(|rect| rect.contains(50.0, top + 0.5)));
+            } else {
+                assert!(
+                    !quads
+                        .iter()
+                        .any(|rect| rect.contains(120.0, viewport.top + 0.5)),
+                    "clipping must not invent a top edge"
+                );
+                assert!(
+                    quads
+                        .iter()
+                        .any(|rect| rect.contains(card.left + 0.5, viewport.top + 20.0))
                 );
             }
-        } else {
-            assert!(
-                !quads
-                    .iter()
-                    .any(|rect| rect.contains(100.0, viewport.top + 0.5)),
-                "clipping must not invent a top edge"
-            );
-            assert!(
-                quads
-                    .iter()
-                    .any(|rect| rect.contains(card.left + 0.5, viewport.top + 20.0))
-            );
         }
     }
 }
@@ -3685,4 +3699,223 @@ fn dialog_title_edge_keeps_a_clear_row_below_bar_chips() {
             workspace.header.bottom()
         );
     }
+}
+
+#[test]
+fn pane_notches_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
+    use eon_workspace_protocol::v38::{Column, Pane};
+    let mut fonts = clipping_test_fonts();
+    let mut swash = SwashCache::new();
+    for scale in [1.0, 1.3, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        for selected in 0..4 {
+            for width in [760, 1280] {
+                let mut snapshot = popup_title_snapshot("Popup", 4.0);
+                let tab = &mut snapshot.tabs[0];
+                tab.selected_popup = None;
+                tab.popups.clear();
+                tab.selected_pane = Some(format!("p{selected}"));
+                tab.columns = vec![Column {
+                    expanded: format!("p{selected}"),
+                    panes: (0..4)
+                        .map(|index| Pane {
+                            id: format!("p{index}"),
+                            label: format!("p{index}  gjpqy {}", "long/path/".repeat(8)),
+                            pinned_name: None,
+                            session: format!("s{index}"),
+                            endpoint: format!("/tmp/p{index}.sock").into_bytes(),
+                            live: true,
+                            attention: None,
+                        })
+                        .collect(),
+                }];
+                let workspace = WorkspaceScene::from_snapshot(
+                    &snapshot,
+                    PhysicalSize::new(width, 800),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| (text.into(), text.len() as f32 * metrics.width),
+                );
+                let border = physical_outline_width(1, metrics.scale);
+                let focus = physical_outline_width(2, metrics.scale);
+                let fill = workspace.card_fill(workspace.chrome, metrics, focus);
+                let outlines = workspace.pane_outlines(
+                    &workspace.panes,
+                    workspace.terminal,
+                    fill,
+                    border,
+                    metrics,
+                    focus,
+                );
+                let right = workspace.panes[selected].rect.right() - metrics.padding * 3.0;
+                let tabs = PaneTitleTab::workspace(
+                    &mut fonts.font_system,
+                    &mut swash,
+                    metrics,
+                    &workspace,
+                    (border, focus),
+                    Some(right),
+                )
+                .remove(0);
+                assert_eq!(tabs.len(), workspace.panes.len());
+                for (index, (pane, notch)) in workspace.panes.iter().zip(&tabs).enumerate() {
+                    if index + 1 == tabs.len() && !pane.selected {
+                        assert!(notch.is_none(), "last collapsed title must stay compact");
+                    } else {
+                        let fitted = &notch
+                            .as_ref()
+                            .expect("visible header must have a notch")
+                            .tab;
+                        let limit = if pane.selected {
+                            right
+                        } else {
+                            pane.rect.right()
+                        };
+                        assert!(
+                            fitted.start + fitted.return_run <= limit,
+                            "notch curve enters the reserved right slot"
+                        );
+                    }
+                }
+                let mut ink = Vec::new();
+                let rules = outlines
+                    .into_iter()
+                    .zip(&workspace.panes)
+                    .enumerate()
+                    .map(|(index, (outline, pane))| {
+                        let row = if index == 3 && !pane.selected {
+                            super::super::chrome::bottom_title_row(
+                                pane.rect,
+                                outline.bounds.bottom(),
+                                chrome_title_metrics(metrics).text_height,
+                            )
+                        } else {
+                            pane.rect
+                        };
+                        let title = tabs[index]
+                            .as_ref()
+                            .map(|tab| tab.tab.title.clone())
+                            .unwrap_or_else(|| {
+                                FrameTitle::fit(
+                                    &mut fonts.font_system,
+                                    metrics,
+                                    pane.label(),
+                                    pane.rect.width - 2.0 * metrics.padding,
+                                )
+                            });
+                        let (buffer, _) = super::super::chrome::status_glyph_ink(
+                            &mut fonts.font_system,
+                            &mut swash,
+                            metrics,
+                            &title.label,
+                        );
+                        for run in buffer.layout_runs() {
+                            for glyph in run.glyphs {
+                                let physical =
+                                    glyph.physical((row.left + metrics.padding, row.top), 1.0);
+                                let Some(image) =
+                                    swash.get_image(&mut fonts.font_system, physical.cache_key)
+                                else {
+                                    continue;
+                                };
+                                if image.placement.width > 0 && image.placement.height > 0 {
+                                    ink.push(SceneRect {
+                                        left: physical.x as f32 + image.placement.left as f32,
+                                        top: run.line_y.round() + physical.y as f32
+                                            - image.placement.top as f32,
+                                        width: image.placement.width as f32,
+                                        height: image.placement.height as f32,
+                                    });
+                                }
+                            }
+                        }
+                        (
+                            outline,
+                            [title.border_gap(row, metrics), SceneRect::default()],
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let mut batch = RectangleBatch::new(width, 800);
+                batch.push_pane_outlines(
+                    fill,
+                    workspace.pane_viewport,
+                    &rules,
+                    &tabs,
+                    Some(selected),
+                    Some(palette::PRIMARY_TEXT),
+                    border,
+                    focus,
+                );
+                let strokes = painted_rects(&batch).collect::<Vec<_>>();
+                for rect in &strokes {
+                    // Decoding NDC vertices can move an exact raster boundary by a few ulps.
+                    let collision = ink
+                        .iter()
+                        .filter_map(|ink| rect.intersection(*ink))
+                        .find(|overlap| overlap.width > 0.01 && overlap.height > 0.01);
+                    assert!(
+                        collision.is_none(),
+                        "notch stroke crosses title ink: scale={scale}, selected={selected}, rect={rect:?}, overlap={collision:?}"
+                    );
+                }
+                let notch = tabs[selected].as_ref().unwrap();
+                let point = notch.reflect(SceneRect {
+                    left: notch.card.bounds.left + metrics.padding * 2.0,
+                    top: notch.tab.top,
+                    width: 1.0,
+                    height: 1.0,
+                });
+                assert!(
+                    strokes
+                        .iter()
+                        .any(|rect| rect.intersection(point).is_some()),
+                    "notch cap not drawn"
+                );
+                assert!(
+                    strokes
+                        .iter()
+                        .all(|rect| rect.bottom() <= fill.bounds.bottom() + 0.001),
+                    "pane stroke enters the footer"
+                );
+                if selected == 0 {
+                    let cap = notch.reflect(SceneRect {
+                        left: notch.card.bounds.left + metrics.padding * 2.0,
+                        top: notch.tab.top + focus,
+                        width: 1.0,
+                        height: 1.0,
+                    });
+                    assert!(
+                        notch
+                            .hover_bands(focus)
+                            .any(|band| band.intersection(cap).is_some()),
+                        "hover fill must reach the inside of the raised cap"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn pane_title_cache_keys_geometry_typography_strokes_and_scrollback() {
+    let metrics = CellMetrics::for_scale(1.0);
+    let (workspace, _) = retained_frame_text_clip(PhysicalSize::new(1280, 800));
+    let cache = PaneTitleCache {
+        workspace: workspace.clone(),
+        metrics,
+        widths: (1.0, 2.0),
+        scrollback: None,
+        tabs: Vec::new(),
+    };
+    assert!(cache.matches(&workspace, metrics, (1.0, 2.0), &None));
+    assert!(!cache.matches(&workspace, metrics, (2.0, 2.0), &None));
+    assert!(!cache.matches(&workspace, CellMetrics::for_scale(1.3), (1.0, 2.0), &None));
+    assert!(!cache.matches(&workspace, metrics, (1.0, 2.0), &Some("↓ 10 rows".into())));
+    let mut changed = workspace.clone();
+    changed.panes[0].id = "p2".into();
+    assert!(!cache.matches(&changed, metrics, (1.0, 2.0), &None));
+    changed = workspace.clone();
+    changed.header_viewport.top += 1.0;
+    assert!(!cache.matches(&changed, metrics, (1.0, 2.0), &None));
 }

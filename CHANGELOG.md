@@ -19,10 +19,15 @@ installation, and proven contract changes.
   before LF, with the complete output checked. Linux keeps its exact byte
   count; `pty_bytes` reports all delivered bytes (`eon-18gk1`).
 
+- Framed pane titles use a left notch continuous with their pane edge,
+  including first, lone and zoomed panes. Interior lower edges mirror the
+  notch; the final collapsed title keeps its bottom-edge gap. Keyboard focus
+  colours the notch itself (`eon-7xryp`). Right-side pane controls follow in
+  `eon-ipc6f`.
+
 - Each column card's top line carries a Stack tab, labelled `Stack`, or
   `Stack 1`, `Stack 2`, ... left to right when a tab has several columns
-  (Stack N is `column` N in `eon session --json`). Every pane title, the top
-  pane's included, is now the plain border-gap title. Stack, popup and Agents
+  (Stack N is `column` N in `eon session --json`). Stack, popup and Agents
   tab tops sit one card gap below the bar's pills. The Stack band (24 px) and
   the wider bar gap (6 px) make the top pane about 30 px shorter
   (`eon-whjhd`).
