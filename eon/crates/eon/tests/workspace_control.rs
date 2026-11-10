@@ -5033,7 +5033,7 @@ fn eon_command(binary: &Path) -> Command {
 }
 
 /// The window `eon window ls --json` lists first, as this build's `eon` sees it from
-/// `command`'s composition.
+/// `command`'s composition, with busy-terminal labels omitted.
 fn listed_window(mut command: Command, runtime: &Path, config: &Path) -> serde_json::Value {
     let output = command
         .args(["window", "ls", "--json"])
@@ -5042,8 +5042,18 @@ fn listed_window(mut command: Command, runtime: &Path, config: &Path) -> serde_j
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    listed["windows"][0].clone()
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("window ls: {error}; {output:?}"));
+    let mut window = listed["windows"][0].clone();
+    assert!(window.is_object(), "window ls: {output:?}");
+    for terminal in window["busy"]["terminals"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+    {
+        terminal.as_object_mut().unwrap().remove("name");
+    }
+    window
 }
 
 /// A window of a build without Helix: its supervisor and every `eon` it runs have no
@@ -5148,18 +5158,21 @@ impl WindowWithoutHelix {
 
     /// Asserts that the last edit started `editor` on notes.txt in the selected pane.
     fn assert_editing(&self, edited: &Output, editor: &[u8]) {
-        assert!(edited.status.success(), "{}", stdout(edited));
+        assert!(edited.status.success(), "edit: {edited:?}");
         let tabs = self.tabs();
-        let pane = tabs[0]
+        let tab = tabs
+            .first()
+            .unwrap_or_else(|| panic!("edit: {edited:?}; tabs: {tabs:?}"));
+        let pane = tab
             .panes()
-            .find(|pane| Some(pane.id.as_str()) == tabs[0].selected_pane.as_deref())
-            .unwrap();
+            .find(|pane| Some(pane.id.as_str()) == tab.selected_pane.as_deref())
+            .unwrap_or_else(|| panic!("edit: {edited:?}; tabs: {tabs:?}"));
         let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
         let arguments = process::cmdline(live_identity(endpoint).process_id);
         let file = fs::canonicalize(&self.root).unwrap().join("notes.txt");
         assert!(
             arguments.ends_with(&[editor, file.as_os_str().as_bytes(), b"\0"].concat()),
-            "{}",
+            "edit: {edited:?}; tabs: {tabs:?}; arguments: {}",
             String::from_utf8_lossy(&arguments)
         );
     }
@@ -5167,11 +5180,14 @@ impl WindowWithoutHelix {
     /// Asserts that the last edit was refused with `edit-command`, said each of
     /// `detail`, and left the tabs as `before`.
     fn assert_refused(&self, refused: &Output, detail: &[&str], before: &[Tab]) {
-        assert_eq!(refused.status.code(), Some(1), "{}", stdout(refused));
+        assert_eq!(refused.status.code(), Some(1), "edit: {refused:?}");
         for text in [&["\"code\":\"edit-command\""], detail].concat() {
-            assert!(stdout(refused).contains(text), "{}", stdout(refused));
+            assert!(
+                stdout(refused).contains(text),
+                "missing {text:?}; edit: {refused:?}"
+            );
         }
-        assert_eq!(self.tabs(), before);
+        assert_eq!(self.tabs(), before, "refused edit: {refused:?}");
     }
 
     fn configure_editor(&self, argv: &str) {
@@ -5291,7 +5307,12 @@ fn without_helix_an_unset_editor_is_visual_and_a_configured_one_overrides_it() {
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
     let build = |command: &mut Command| {
         let output = command.arg("versions").output().unwrap();
-        stdout(&output).lines().next().unwrap().to_owned()
+        assert!(output.status.success(), "versions: {output:?}");
+        stdout(&output)
+            .lines()
+            .next()
+            .unwrap_or_else(|| panic!("versions: {output:?}"))
+            .to_owned()
     };
     assert_eq!(
         build(&mut eon_command(binary)),
