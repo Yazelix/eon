@@ -28,7 +28,7 @@ pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct EonConfig {
     shell: ShellSettings,
@@ -77,7 +77,7 @@ impl EonConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UpdateSettings {
     pub nix_profile: Option<PathBuf>,
@@ -227,7 +227,7 @@ impl Defaults {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct BarSettings {
     widgets: Option<Vec<String>>,
@@ -458,7 +458,7 @@ pub(crate) fn bar(
     })
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct AnimationSettings {
     enabled: Option<bool>,
@@ -468,7 +468,7 @@ struct AnimationSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct SessionSettings {
     warning_close_last_tab: Option<bool>,
@@ -478,7 +478,7 @@ struct SessionSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct SidebarSettings {
     enabled: Option<bool>,
@@ -500,7 +500,7 @@ pub enum TerminalAccess {
 
 const MAX_TYPING_QUIET_MS: u16 = 60000;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct AgentSettings {
     terminal_access: Option<TerminalAccess>,
@@ -518,7 +518,7 @@ pub(crate) struct Agents {
     pub(crate) send_typing_quiet_ms: u16,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct EditorSettings {
     command: Option<PopupCommandSetting>,
@@ -526,7 +526,7 @@ struct EditorSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct PopupEntrySettings {
     command: Option<PopupCommandSetting>,
@@ -538,7 +538,7 @@ struct PopupEntrySettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 enum PopupCommandSetting {
     Named(String),
@@ -583,7 +583,7 @@ pub struct ShellConfig {
     pub mise: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct ShellSettings {
     command: Option<Vec<String>>,
@@ -634,7 +634,7 @@ pub struct TerminalConfig {
     pub rows: Option<u16>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct TerminalSettings {
     background_opacity: Option<f32>,
@@ -657,14 +657,9 @@ struct TerminalSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, String> {
-    use serde_json::json;
-
-    // Preserve the resolved f32 values' short decimal representation in both formats.
-    let terminal = serde_json::to_string(&defaults.terminal).map_err(|error| error.to_string())?;
-    let terminal: serde_json::Value =
-        serde_json::from_str(&terminal).map_err(|error| error.to_string())?;
-    let mut popups = serde_json::Map::new();
+// Keep unset keys here so defaults consumers can check the complete parser surface.
+fn defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
+    let mut popups = BTreeMap::new();
     for entry in &defaults.popups.entries {
         let mut keys = Vec::new();
         if let Some(shortcut) = entry.shortcut.bound() {
@@ -686,78 +681,180 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
                     .unwrap_or(&shortcut.key),
             );
         }
-        let mut settings = json!({ "label": entry.label, "keybinding": keys.join("+") });
-        if !matches!(entry.id.as_str(), "project" | "files") {
-            settings["enabled"] = true.into();
-        }
-        if !matches!(
+        let command = if matches!(
             entry.id.as_str(),
             "project" | "files" | "anima" | "editor" | "scrollback"
         ) {
-            settings["keep_alive"] = entry.keep_alive.into();
-            settings["command"] = match &entry.command {
-                PopupCommand::AgentAuto => "auto".into(),
-                PopupCommand::Argv(argv) => {
-                    let argv = argv
-                        .iter()
+            None
+        } else {
+            Some(match &entry.command {
+                PopupCommand::AgentAuto => PopupCommandSetting::Named("auto".into()),
+                PopupCommand::Argv(argv) => PopupCommandSetting::Argv(
+                    argv.iter()
                         .map(|argument| {
                             argument
                                 .to_str()
+                                .map(str::to_owned)
                                 .ok_or_else(|| "default popup command is not UTF-8".to_owned())
                         })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    json!(argv)
-                }
+                        .collect::<Result<_, _>>()?,
+                ),
                 PopupCommand::Edit(_) => return Err("a default popup cannot edit a file".into()),
                 PopupCommand::Editor | PopupCommand::Scrollback => {
                     unreachable!("this popup's command is Eon-owned")
                 }
-            };
-        }
-        popups.insert(entry.id.clone(), settings);
+            })
+        };
+        popups.insert(
+            entry.id.clone(),
+            PopupEntrySettings {
+                command,
+                keybinding: Some(keys.join("+")),
+                label: Some(entry.label.clone()),
+                enabled: Some(true),
+                keep_alive: Some(entry.keep_alive),
+                unknown: BTreeMap::new(),
+            },
+        );
     }
-    let mut config = json!({
-        "bar": {
-            "widgets": defaults.bar_widgets,
-            "ram_notice_percent": defaults.bar_load.ram_notice_percent,
-            "ram_warning_percent": defaults.bar_load.ram_warning_percent,
-            "ram_critical_percent": defaults.bar_load.ram_critical_percent,
-            "cpu_notice_percent": defaults.bar_load.cpu_notice_percent,
-            "cpu_warning_percent": defaults.bar_load.cpu_warning_percent,
-            "cpu_critical_percent": defaults.bar_load.cpu_critical_percent,
-            "cpu_average_seconds": defaults.bar_load.cpu_average_seconds,
-            "cpu_temperature_warning_celsius": defaults.bar_load.cpu_temperature_warning_celsius,
-            "cpu_temperature_critical_celsius": defaults.bar_load.cpu_temperature_critical_celsius,
-            "disk_notice_percent": defaults.bar_load.disk_notice_percent,
-            "disk_warning_percent": defaults.bar_load.disk_warning_percent,
-            "disk_critical_percent": defaults.bar_load.disk_critical_percent,
-            "disk_path": defaults.bar_disk_path,
+    // Exhaustive literals make every added parser field require a defaults decision.
+    let config = EonConfig {
+        shell: ShellSettings {
+            command: Some(defaults.shell.command.clone()),
+            starship: Some(defaults.shell.starship),
+            zoxide: Some(defaults.shell.zoxide),
+            atuin: Some(defaults.shell.atuin),
+            carapace: Some(defaults.shell.carapace),
+            mise: Some(defaults.shell.mise),
+            unknown: BTreeMap::new(),
         },
-        "terminal": terminal,
-        "shell": defaults.shell,
-        "anima": defaults.anima,
-        "session": {
-            "warning_close_last_tab": defaults.warning_close_last_tab,
-            "animate_working_badge": defaults.animate_working_badge,
-            "number_keys": defaults.number_keys,
+        terminal: TerminalSettings {
+            background_opacity: Some(defaults.terminal.background_opacity),
+            background_blur: Some(defaults.terminal.background_blur),
+            padding_color: Some(defaults.terminal.padding_color),
+            pane_frames: Some(defaults.terminal.pane_frames),
+            detect_local_hosts: Some(defaults.terminal.detect_local_hosts),
+            focus_color: defaults.terminal.focus_color.clone(),
+            border_width: defaults.terminal.border_width,
+            focus_border_width: defaults.terminal.focus_border_width,
+            cursor_trail_color: defaults.terminal.cursor_trail_color.clone(),
+            cursor_trail_duration: defaults.terminal.cursor_trail_duration,
+            font_family: defaults.terminal.font_family.clone(),
+            font_fallbacks: Some(defaults.terminal.font_fallbacks.clone()),
+            font_size: defaults.terminal.font_size,
+            line_height: defaults.terminal.line_height,
+            columns: defaults.terminal.columns,
+            rows: defaults.terminal.rows,
+            unknown: BTreeMap::new(),
         },
-        "sidebar": { "enabled": defaults.sidebar_enabled },
-        "agents": {
-            "send_enter_delay_ms": defaults.send_enter_delay_ms,
-            "send_typing_quiet_ms": defaults.send_typing_quiet_ms,
-            "terminal_access": defaults.terminal_access,
+        bar: BarSettings {
+            widgets: Some(
+                defaults
+                    .bar_widgets
+                    .iter()
+                    .map(|widget| (*widget).into())
+                    .collect(),
+            ),
+            ram_notice_percent: Some(u64::from(defaults.bar_load.ram_notice_percent)),
+            ram_warning_percent: Some(u64::from(defaults.bar_load.ram_warning_percent)),
+            ram_critical_percent: Some(u64::from(defaults.bar_load.ram_critical_percent)),
+            cpu_notice_percent: Some(u64::from(defaults.bar_load.cpu_notice_percent)),
+            cpu_warning_percent: Some(u64::from(defaults.bar_load.cpu_warning_percent)),
+            cpu_critical_percent: Some(u64::from(defaults.bar_load.cpu_critical_percent)),
+            cpu_average_seconds: Some(u64::from(defaults.bar_load.cpu_average_seconds)),
+            cpu_temperature_warning_celsius: Some(u64::from(
+                defaults.bar_load.cpu_temperature_warning_celsius,
+            )),
+            cpu_temperature_critical_celsius: Some(u64::from(
+                defaults.bar_load.cpu_temperature_critical_celsius,
+            )),
+            disk_notice_percent: Some(u64::from(defaults.bar_load.disk_notice_percent)),
+            disk_warning_percent: Some(u64::from(defaults.bar_load.disk_warning_percent)),
+            disk_critical_percent: Some(u64::from(defaults.bar_load.disk_critical_percent)),
+            disk_path: Some(defaults.bar_disk_path.into()),
+            unknown: BTreeMap::new(),
         },
-        "editor": { "command": defaults.editor },
-        "updates": {},
-        "popups": popups,
-    });
+        anima: AnimationSettings {
+            enabled: Some(defaults.anima.enabled),
+            style: Some(defaults.anima.style.clone()),
+            duration_seconds: Some(defaults.anima.duration_seconds),
+            unknown: BTreeMap::new(),
+        },
+        session: SessionSettings {
+            warning_close_last_tab: Some(defaults.warning_close_last_tab),
+            animate_working_badge: Some(defaults.animate_working_badge),
+            number_keys: Some(defaults.number_keys),
+            unknown: BTreeMap::new(),
+        },
+        sidebar: SidebarSettings {
+            enabled: Some(defaults.sidebar_enabled),
+            unknown: BTreeMap::new(),
+        },
+        agents: AgentSettings {
+            terminal_access: Some(defaults.terminal_access),
+            send_enter_delay_ms: Some(u64::from(defaults.send_enter_delay_ms)),
+            send_typing_quiet_ms: Some(u64::from(defaults.send_typing_quiet_ms)),
+            unknown: BTreeMap::new(),
+        },
+        editor: EditorSettings {
+            command: defaults.editor.map(|argv| {
+                PopupCommandSetting::Argv(argv.iter().map(|argument| (*argument).into()).collect())
+            }),
+            unknown: BTreeMap::new(),
+        },
+        updates: UpdateSettings {
+            nix_profile: None,
+            nix_entry: None,
+            bundle_prefix: None,
+            allowed_signers: None,
+            unknown: BTreeMap::new(),
+        },
+        popups,
+        unknown: BTreeMap::new(),
+        deprecated: Vec::new(),
+        tombstoned: Vec::new(),
+    };
+    // Preserve f32 values' short decimal representation in both formats.
+    let config = serde_json::to_string(&config).map_err(|error| error.to_string())?;
+    let mut config: serde_json::Value =
+        serde_json::from_str(&config).map_err(|error| error.to_string())?;
+    for (id, settings) in config["popups"].as_object_mut().unwrap() {
+        let settings = settings.as_object_mut().unwrap();
+        if matches!(id.as_str(), "project" | "files") {
+            settings.remove("enabled");
+        }
+        if matches!(
+            id.as_str(),
+            "project" | "files" | "anima" | "editor" | "scrollback"
+        ) {
+            settings.remove("command");
+            settings.remove("keep_alive");
+        }
+    }
+    Ok(config)
+}
+
+pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, String> {
+    format_defaults(defaults_config(defaults)?, json)
+}
+
+fn omit_unset(config: &mut serde_json::Value) {
+    if let Some(settings) = config.as_object_mut() {
+        settings.retain(|_, value| !value.is_null());
+        for value in settings.values_mut() {
+            omit_unset(value);
+        }
+    }
+}
+
+fn format_defaults(mut config: serde_json::Value, json: bool) -> Result<String, String> {
     if json {
-        config.as_object_mut().unwrap().remove("updates");
-        for section in ["terminal", "editor"] {
-            config[section]
-                .as_object_mut()
-                .unwrap()
-                .retain(|_, value| !value.is_null());
+        omit_unset(&mut config);
+        if config["updates"]
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty)
+        {
+            config.as_object_mut().unwrap().remove("updates");
         }
         return serde_json::to_string_pretty(&config)
             .map(|text| text + "\n")
@@ -765,13 +862,25 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     }
     let mut output =
         String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
-    for section in [
+    let order = [
         "bar", "terminal", "shell", "anima", "session", "sidebar", "agents", "editor", "updates",
-    ] {
-        defaults_table(&mut output, section, &config[section])?;
-    }
-    for (id, settings) in config["popups"].as_object().unwrap() {
-        defaults_table(&mut output, &format!("popups.{id}"), settings)?;
+        "popups",
+    ];
+    let mut sections: Vec<_> = config.as_object().unwrap().iter().collect();
+    sections.sort_by_key(|(section, _)| {
+        order
+            .iter()
+            .position(|name| name == section)
+            .unwrap_or(order.len())
+    });
+    for (section, settings) in sections {
+        if section == "popups" {
+            for (id, settings) in settings.as_object().unwrap() {
+                defaults_table(&mut output, &format!("popups.{id}"), settings)?;
+            }
+        } else {
+            defaults_table(&mut output, section, settings)?;
+        }
     }
     Ok(output)
 }
@@ -781,11 +890,17 @@ fn defaults_table(
     section: &str,
     settings: &serde_json::Value,
 ) -> Result<(), String> {
-    if section == "updates" {
-        output.push_str("\n# [updates]\n# nix_profile: unset. Absolute profile path; set with nix_entry.\n# nix_entry: unset. Exact profile entry name; set with nix_profile.\n# bundle_prefix: unset. Absolute existing managed prefix; excludes the Nix pair.\n# allowed_signers: unset. Absolute independently trusted OpenSSH signer file.\n");
-        return Ok(());
+    if section == "updates"
+        && settings
+            .as_object()
+            .unwrap()
+            .values()
+            .all(serde_json::Value::is_null)
+    {
+        output.push_str("\n# [updates]\n");
+    } else {
+        output.push_str(&format!("\n[{section}]\n"));
     }
-    output.push_str(&format!("\n[{section}]\n"));
     if section == "popups.project" {
         output.push_str("# Project is required and shows the tab's Files on quick search.\n");
     } else if section == "popups.files" {
@@ -795,8 +910,27 @@ fn defaults_table(
     } else if matches!(section, "popups.anima" | "popups.scrollback") {
         output.push_str("# command and keep_alive are Eon-owned.\n");
     }
-    for (key, value) in settings.as_object().unwrap() {
+    let mut fields: Vec<_> = settings.as_object().unwrap().iter().collect();
+    if section == "updates" {
+        let order = [
+            "nix_profile",
+            "nix_entry",
+            "bundle_prefix",
+            "allowed_signers",
+        ];
+        fields.sort_by_key(|(key, _)| {
+            order
+                .iter()
+                .position(|name| name == key)
+                .unwrap_or(order.len())
+        });
+    }
+    for (key, value) in fields {
         let comment = match key.as_str() {
+            "nix_profile" => "Absolute profile path; set with nix_entry.",
+            "nix_entry" => "Exact profile entry name; set with nix_profile.",
+            "bundle_prefix" => "Absolute existing managed prefix; excludes the Nix pair.",
+            "allowed_signers" => "Absolute independently trusted OpenSSH signer file.",
             "widgets" => {
                 "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows."
             }
@@ -2502,6 +2636,52 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn defaults_formatter_keeps_new_sections_and_unset_keys() {
+        let mut defaults = crate::fixtures::inputs().defaults;
+        defaults.editor = None;
+        let mut config = super::defaults_config(&defaults).unwrap();
+        for path in [
+            "/terminal/font_size",
+            "/editor/command",
+            "/updates/allowed_signers",
+        ] {
+            assert_eq!(
+                config.pointer(path),
+                Some(&serde_json::Value::Null),
+                "{path}"
+            );
+        }
+        // Model additions to parser structs without keeping a second key list.
+        config["workspace"] = serde_json::json!({"future_value": true});
+        config["session"]["future_option"] = serde_json::Value::Null;
+        config["popups"]["git"]["future_option"] = serde_json::Value::Null;
+        config["updates"]["future_option"] = serde_json::Value::Null;
+        let toml = super::format_defaults(config.clone(), false).unwrap();
+        let parsed: toml::Value = toml::from_str(&toml).unwrap();
+        assert_eq!(parsed["workspace"]["future_value"].as_bool(), Some(true));
+        assert_eq!(
+            toml.matches("# future_option: unset. Built-in setting.")
+                .count(),
+            3
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&super::format_defaults(config.clone(), true).unwrap()).unwrap();
+        assert_eq!(json["workspace"]["future_value"], true);
+        assert!(json["session"].get("future_option").is_none());
+        assert!(json["popups"]["git"].get("future_option").is_none());
+        assert!(json.get("updates").is_none());
+        assert_eq!(json["editor"], serde_json::json!({}));
+        // A future configured update default must no longer hide its section.
+        config["updates"]["future_value"] = true.into();
+        let toml = super::format_defaults(config.clone(), false).unwrap();
+        let parsed: toml::Value = toml::from_str(&toml).unwrap();
+        assert_eq!(parsed["updates"]["future_value"].as_bool(), Some(true));
+        let json: serde_json::Value =
+            serde_json::from_str(&super::format_defaults(config, true).unwrap()).unwrap();
+        assert_eq!(json["updates"], serde_json::json!({"future_value": true}));
     }
 
     #[test]
