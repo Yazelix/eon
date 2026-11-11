@@ -234,6 +234,15 @@ reset before a read), or when a read finds the provider has gained or lost a
 window. The version belongs to its
 running supervisor; updating the installation does not change it.
 
+Header widgets and the session label use the unselected tab's filled capsule,
+without resting outlines. CPU, RAM and disk percentages share the interface
+font with tab labels and quota chips; each keeps a fixed slot sized for its
+widest value. The icon and value stay left-aligned. The Shortcuts button is a
+plain `?` with the other bar controls' hover and mint keyboard-focus treatment.
+These fills and glyphs follow the fixed chrome palette and typography policy;
+there is no separate widget style setting. Clock and version keep their
+bottom-corner monospace text and cyan colour.
+
 The CPU, RAM and disk chips use the same three grades by default: yellow
 from 60% use, orange from 75% and red from 90%, otherwise neutral. For each
 chip, `<chip>_notice_percent`, `<chip>_warning_percent` and
@@ -305,8 +314,9 @@ other chrome controls keep their mint pill outline. This setting applies to full
 eonbase has no pane outline.
 
 `border_width` sizes neutral pane-card, agent-sidebar-card, popup and native dialog outlines,
-including their title edges, the popup marker in Agents and the attention inbox,
-and the Eon Bar widget outlines. `focus_border_width` sizes the selected pane's
+including their title edges and the popup marker in Agents and the attention inbox.
+Eon Bar widgets are filled capsules without neutral outlines; `border_width`
+does not affect them. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
 are omitted, leaving Venus's built-in widths in use. With the example's widths,
 physical widths are `max(1, round(width * scale))`:

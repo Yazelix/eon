@@ -2244,10 +2244,10 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         shown.tooltip,
         "Disk \u{b7} /\n50.0 GiB free of 1000.0 GiB\nNearly full"
     );
-    // Sized for its icon and ` 100%`, six cells, so the bar never shifts as the use changes.
+    // The injected text measure reserves 40 pixels for the widest percentage.
     assert_eq!(
         shown.rect.width,
-        6.0 * metrics.width + metrics.padding * 2.0
+        metrics.font_size + tokens::icon_gap(metrics) + 40.0 + metrics.padding * 2.0
     );
     assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
     assert_eq!(
@@ -2435,6 +2435,82 @@ fn eon_icon_leads_the_bar_and_survives_tab_overflow() {
         }
     }
     assert_eq!(states, [true; 2], "both a shown and a yielded icon");
+}
+
+#[test]
+fn reading_slots_keep_the_widest_interface_value_without_moving_neighbours() {
+    let snapshot = one_pane_snapshot();
+    for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        // A proportional face can make a two-digit reading wider than 100%.
+        let widest = 53.5 * scale as f32;
+        let reserved =
+            metrics.font_size + tokens::icon_gap(metrics) + widest + metrics.padding * 2.0;
+        for logical_width in [400, 900, 1800] {
+            let mut previous = None;
+            for percent in [9, 88, 100] {
+                let cpu = crate::CpuUse {
+                    percent,
+                    label: format!("\u{f4bc} {percent}%"),
+                    tooltip: "CPU".into(),
+                    description: "CPU".into(),
+                    load: Load::Normal,
+                };
+                let ram = crate::RamUse::parse(&format!(
+                    "MemTotal: 100000 kB\nMemAvailable: {} kB\n",
+                    (100 - percent) * 1000
+                ))
+                .unwrap()
+                .rated(crate::LoadLevels::default());
+                let disk = DiskUse::of(100, 100 - percent, 100 - percent, 4096, "/")
+                    .unwrap()
+                    .rated(crate::LoadLevels::default());
+                let scene = WorkspaceScene::from_snapshot_with_bar(
+                    &snapshot,
+                    EonBar {
+                        cpu: Some(&cpu),
+                        ram: Some(&ram),
+                        disk: Some(&disk),
+                        ..EonBar::default()
+                    },
+                    PhysicalSize::new((logical_width as f64 * scale) as u32, 800),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| {
+                        (
+                            text.to_owned(),
+                            if text == "100%" {
+                                widest
+                            } else {
+                                text.chars().count() as f32 * 10.0 * scale as f32
+                            },
+                        )
+                    },
+                    None,
+                );
+                let slots = [&scene.cpu, &scene.ram, &scene.disk].map(|label| {
+                    label.as_ref().map(|label| {
+                        assert_eq!(label.rect.width, reserved);
+                        label.rect
+                    })
+                });
+                let positions = (
+                    slots,
+                    scene.tabs.iter().map(|tab| tab.rect).collect::<Vec<_>>(),
+                    scene.controls.map(|control| control.rect),
+                    scene.drag_region,
+                );
+                if let Some(previous) = &previous {
+                    assert_eq!(&positions, previous);
+                }
+                previous = Some(positions);
+                if logical_width == 1800 {
+                    assert!(slots.iter().all(Option::is_some));
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -3011,13 +3087,12 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
                 shortcuts.centre,
                 shortcuts.rect.right() - scene.controls[0].rect.width / 2.0
             );
-            // After a chip the round button keeps the chips' own spacing: two outline insets
-            // between the chip's outline and the circle, with the target reaching back over it.
+            // After a chip the glyph keeps the existing spacing and the full target.
             if let Some(ram) = &scene.ram {
                 let chip_inset = (metrics.padding / 3.0).min(height / 4.0);
                 assert_eq!(ram.rect.right(), shortcuts.rect.left);
-                let circle = scene.round_button_rect(&shortcuts, metrics);
-                let gap = circle.left - (ram.rect.right() - chip_inset);
+                let square = scene.control_glyph_rect(&shortcuts, metrics);
+                let gap = square.left - (ram.rect.right() - chip_inset);
                 assert!((gap - 2.0 * chip_inset).abs() <= 0.5, "{scale}: {gap}");
                 assert_eq!(
                     scene.hit_test(ram.rect.left + ram.rect.width / 2.0, height / 2.0),
@@ -3056,20 +3131,20 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
                 let row = label.rect.top + label.rect.height / 2.0;
                 assert_eq!(scene.hit_test(centre, row), Some(WorkspaceHit::Version));
             }
-            // The Eon icon and the round Shortcuts button are as tall as the tab pills, centred
-            // on them, and the button's circle stays inside its target.
+            // Shortcuts' ink-centering square follows the pills' height and centre line,
+            // and stays inside its full target.
             let pill = scene.bar_pill_rect(scene.tabs[0].rect, metrics);
             let pill_centre = pill.top + pill.height / 2.0;
-            let circle = scene.round_button_rect(&shortcuts, metrics);
+            let square = scene.control_glyph_rect(&shortcuts, metrics);
             assert_eq!(
-                (circle.width, circle.height),
+                (square.width, square.height),
                 (pill.height.round(), pill.height.round())
             );
-            assert!((circle.left + circle.width / 2.0 - shortcuts.centre).abs() <= 0.5);
-            assert!((circle.top + circle.height / 2.0 - pill_centre).abs() <= 0.5);
-            assert!(circle.left >= shortcuts.rect.left && circle.right() <= shortcuts.rect.right());
+            assert!((square.left + square.width / 2.0 - shortcuts.centre).abs() <= 0.5);
+            assert!((square.top + square.height / 2.0 - pill_centre).abs() <= 0.5);
+            assert!(square.left >= shortcuts.rect.left && square.right() <= shortcuts.rect.right());
             assert_eq!(
-                scene.hit_test(circle.left + 0.5, pill_centre),
+                scene.hit_test(square.left + 0.5, pill_centre),
                 Some(WorkspaceHit::Control(WorkspaceHeaderControl::Shortcuts))
             );
             // The Eon icon mirrors Close's glyph about the bar's middle.

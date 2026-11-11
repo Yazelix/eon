@@ -545,7 +545,7 @@ pub(super) fn ink_cornered_glyph(
 }
 
 /// The glyph of a header control whose ink Venus places itself, with its origin: Shortcuts' `?`
-/// centred in its circle, and Close's `×` at the window's corner. None for the others, which
+/// centred in its slot, and Close's `×` at the window's corner. None for the others, which
 /// draw their layout box.
 pub(super) fn placed_control_glyph(
     font_system: &mut FontSystem,
@@ -554,10 +554,10 @@ pub(super) fn placed_control_glyph(
     workspace: &WorkspaceScene,
     control: &WorkspaceControl,
 ) -> Option<(Buffer, f32, f32)> {
-    let circle = workspace.round_button_rect(control, metrics);
+    let square = workspace.control_glyph_rect(control, metrics);
     let centre = (
-        circle.left + circle.width / 2.0,
-        circle.top + circle.height / 2.0,
+        square.left + square.width / 2.0,
+        square.top + square.height / 2.0,
     );
     let glyph = control.kind.glyph();
     match control.kind {
@@ -1683,18 +1683,56 @@ fn header_item_visual(rect: SceneRect, metrics: CellMetrics) -> SceneRect {
     }
 }
 
-fn push_bar_widget(
-    rectangles: &mut RectangleBatch,
-    visual: SceneRect,
-    border_width: u8,
-    scale: f32,
-) {
-    rectangles.push_rounded_outline_width(
+fn push_bar_widget(rectangles: &mut RectangleBatch, visual: SceneRect) {
+    rectangles.push_rounded(
         visual,
         tokens::capsule_radius(visual.height),
-        physical_outline_width(border_width, scale),
-        palette::CHIP_OUTLINE,
+        palette::TAB_IDLE,
     );
+}
+
+fn push_session_label_surface(
+    rectangles: &mut RectangleBatch,
+    visual: SceneRect,
+    state: HeaderButtonState,
+) {
+    push_bar_widget(rectangles, visual);
+    let radius = tokens::capsule_radius(visual.height);
+    if state.enabled {
+        if state.pressed {
+            rectangles.push_rounded(visual, radius, palette::TAB_SELECTED);
+        } else if state.hovered {
+            rectangles.push_rounded(visual, radius, palette::TAB_HOVER);
+        }
+        if state.focused {
+            rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+        }
+    }
+}
+
+fn push_bar_control_surface(
+    rectangles: &mut RectangleBatch,
+    visual: SceneRect,
+    state: HeaderButtonState,
+) {
+    let fill = if state.pressed {
+        palette::CHROME_HIGHLIGHT
+    } else if state.hovered {
+        palette::CONTROL_HOVER
+    } else {
+        palette::BAR_BACKGROUND
+    };
+    let radius = tokens::capsule_radius(visual.height);
+    rectangles.push_rounded(visual, radius, fill);
+    if state.focused {
+        rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+    }
+}
+
+pub(super) fn measure_reading_width(fonts: &mut FontSystem, metrics: CellMetrics) -> f32 {
+    (0..=100)
+        .map(|percent| fit_header_text(fonts, metrics, &format!("{percent}%"), f32::INFINITY).1)
+        .fold(0.0, f32::max)
 }
 
 fn fit_tab_text(
@@ -2016,6 +2054,11 @@ impl Renderer {
             DrawStyleKind::Status(Wrap::None),
             clip,
         );
+    }
+
+    /// The widest bar percentage for this renderer's current fonts, metrics and scale.
+    pub fn reading_width(&self) -> f32 {
+        self.reading_width
     }
 
     /// Measure an exact, non-truncated Eon Bar fact label with header typography.
@@ -2837,23 +2880,21 @@ impl Renderer {
             }
             self.push_bar_icon(EON_ICON_ID, palette::VERSION_TEXT, icon, None);
         }
-        // The workspace label shares the tabs' band but reads as a bar widget, with the header
-        // controls' hover, pressed and focus states while it opens the picker.
+        // The session label shares the tab fills for hover and press, with the header controls'
+        // keyboard focus and Tab order while it opens the picker.
         if let Some(label) = &workspace.workspace_label {
             let control = WorkspaceHeaderControl::Workspaces;
             let visual = workspace.bar_pill_rect(label.rect, self.metrics);
-            let radius = tokens::capsule_radius(visual.height);
-            if workspace.has_control(control) {
-                if self.header.pressed_header == Some(control) {
-                    rectangles.push_rounded(visual, radius, palette::CHROME_HIGHLIGHT);
-                } else if self.header.hovers(WorkspaceFocus::Header(control), "") {
-                    rectangles.push_rounded(visual, radius, palette::CONTROL_HOVER);
-                }
-            }
-            push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
-            if focus == WorkspaceFocus::Header(control) && workspace.has_control(control) {
-                rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
-            }
+            push_session_label_surface(
+                rectangles,
+                visual,
+                HeaderButtonState {
+                    hovered: self.header.hovers(WorkspaceFocus::Header(control), ""),
+                    pressed: self.header.pressed_header == Some(control),
+                    focused: focus == WorkspaceFocus::Header(control),
+                    enabled: workspace.has_control(control),
+                },
+            );
             self.push_chip_label(
                 &label.label,
                 chip_label_box(workspace, label.rect, self.metrics),
@@ -2873,7 +2914,7 @@ impl Renderer {
         for quota in &workspace.quotas {
             let visual =
                 workspace.bar_pill_rect(header_item_visual(quota.rect, self.metrics), self.metrics);
-            push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
+            push_bar_widget(rectangles, visual);
             self.push_quota_icon(quota.provider, quota.logo, None);
             let label_left = quota.logo.right() + tokens::icon_gap(self.metrics);
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
@@ -2907,28 +2948,33 @@ impl Renderer {
             let content = workspace.bar_item_rect(label.rect, self.metrics);
             let visual =
                 workspace.bar_pill_rect(header_item_visual(label.rect, self.metrics), self.metrics);
-            push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
-            let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
-            // A label narrower than its chip sits in the middle; each character takes one cell.
-            let slack = (width - label.label.chars().count() as f32 * self.metrics.width).max(0.0);
-            // The icon draws from its own cell, as in a terminal: a symbol wider than a cell
-            // spills into the space after it instead of pushing the value off the cells.
+            push_bar_widget(rectangles, visual);
             let icon = label.label.chars().next().map_or(0, char::len_utf8);
             let (icon, value) = label.label.split_at(icon);
-            for (cell, text) in [icon, value].into_iter().enumerate() {
-                let offset = slack / 2.0 + cell as f32 * self.metrics.width;
-                self.push_text_clipped(
-                    text,
-                    label.rect.left + self.metrics.padding + offset,
-                    content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
-                    width - offset,
-                    width - offset,
-                    self.metrics.height.min(label.rect.height),
-                    color,
-                    DrawStyleKind::Monospace,
-                    label.rect,
-                );
-            }
+            let left = label.rect.left + self.metrics.padding;
+            let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
+            self.push_text_clipped(
+                icon,
+                left,
+                content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
+                width,
+                width,
+                self.metrics.height.min(label.rect.height),
+                color,
+                DrawStyleKind::Monospace,
+                label.rect,
+            );
+            let value_left = left + self.metrics.font_size + tokens::icon_gap(self.metrics);
+            self.push_chip_label(
+                value.trim_start(),
+                SceneRect {
+                    left: value_left,
+                    width: (label.rect.right() - self.metrics.padding - value_left).max(0.0),
+                    ..visual
+                },
+                color,
+                label.rect,
+            );
         }
         for control in workspace.controls {
             if control.rect.width <= 0.0 {
@@ -2943,32 +2989,21 @@ impl Renderer {
                 ..control.rect
             };
             let content = workspace.bar_item_rect(button, self.metrics);
-            // Shortcuts is a round button as tall as the tab pills, like the Eon icon.
-            let round = control.kind == WorkspaceHeaderControl::Shortcuts;
-            let visual = if round {
-                workspace.round_button_rect(&control, self.metrics)
-            } else {
-                header_item_visual(content, self.metrics)
-            };
+            let visual = header_item_visual(content, self.metrics);
             let hovered = self.header.hovers(WorkspaceFocus::Header(control.kind), "");
             let pressed = self.header.pressed_header == Some(control.kind);
             let focused = focus == WorkspaceFocus::Header(control.kind);
-            let fill = if pressed {
-                palette::CHROME_HIGHLIGHT
-            } else if hovered {
-                palette::CONTROL_HOVER
-            } else {
-                palette::BAR_BACKGROUND
-            };
-            let radius = tokens::capsule_radius(visual.height);
-            rectangles.push_rounded(visual, radius, fill);
-            if focused {
-                rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
-            } else if round {
-                push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
-            }
-            // The round button centres the glyph's ink, not its layout box, and Close's ink keeps
-            // equal right and top insets at the window's corner.
+            push_bar_control_surface(
+                rectangles,
+                visual,
+                HeaderButtonState {
+                    hovered,
+                    pressed,
+                    focused,
+                    enabled: true,
+                },
+            );
+            // Shortcuts centres its glyph's ink; Close keeps equal corner insets.
             let placed = placed_control_glyph(
                 &mut self.fonts.font_system,
                 &mut self.swash_cache,
@@ -4117,13 +4152,13 @@ mod tests {
     }
 
     #[test]
-    fn round_shortcuts_glyph_centres_its_ink_on_the_circle() {
-        let mut font_system = FontSystem::new();
+    fn shortcuts_glyph_centres_its_ink_in_the_slot() {
+        let mut font_system = test_sans();
         let mut swash_cache = SwashCache::new();
         let glyph = WorkspaceHeaderControl::Shortcuts.glyph();
-        for scale in [1.0, 1.25, 2.0] {
+        for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
             let metrics = CellMetrics::for_scale(scale);
-            // Circle centres fall on whole, half and quarter pixels.
+            // Slot centres fall on whole, half and quarter pixels.
             for centre in [(16.0, 20.0), (16.5, 20.5), (40.25, 23.75), (1203.5, 19.0)] {
                 let (buffer, left, top) =
                     ink_centred_glyph(&mut font_system, &mut swash_cache, metrics, glyph, centre);
@@ -4134,7 +4169,7 @@ mod tests {
                 assert!(
                     (ink_centre.0 - centre.0).abs() <= 0.5
                         && (ink_centre.1 - centre.1).abs() <= 0.5,
-                    "{scale}: ink centre {ink_centre:?}, circle centre {centre:?}"
+                    "{scale}: ink centre {ink_centre:?}, slot centre {centre:?}"
                 );
             }
         }
@@ -4143,12 +4178,13 @@ mod tests {
     #[test]
     fn quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows() {
         assert_eq!(load_color(Load::Notice), palette::LOAD_NOTICE);
+        for load in [Load::Normal, Load::Notice, Load::High, Load::Critical] {
+            assert!(contrast(load_color(load), palette::TAB_IDLE) >= 4.5);
+        }
+        assert!(contrast(palette::PRIMARY_TEXT, palette::TAB_IDLE) >= 4.5);
         for (shortfall, color) in palette::QUOTA_PACE {
             assert_eq!(quota_pace_color(shortfall), color);
-            assert!(
-                contrast(color, palette::BAR_BACKGROUND) >= 4.5,
-                "{shortfall}"
-            );
+            assert!(contrast(color, palette::TAB_IDLE) >= 4.5, "{shortfall}");
         }
         assert_eq!(quota_pace_color(-1.0), palette::QUOTA_PACE[0].1);
         assert_eq!(quota_pace_color(1.0), palette::QUOTA_PACE[4].1);
@@ -4157,19 +4193,19 @@ mod tests {
         assert_eq!(quota_pace_color(0.0), rgb(144, 196, 93));
         assert_eq!(quota_pace_color(0.05), rgb(255, 196, 87));
         assert_eq!(quota_pace_color(0.10), rgb(255, 150, 70));
-        assert_eq!(quota_pace_color(0.25), rgb(255, 59, 59));
-        assert_eq!(palette::LOAD_CRITICAL, rgb(255, 59, 59));
-        // More shortfall is never greener, and every shade stays readable on the bar.
+        assert_eq!(quota_pace_color(0.25), rgb(255, 75, 75));
+        assert_eq!(palette::LOAD_CRITICAL, rgb(255, 75, 75));
+        // More shortfall is never greener, and every shade stays readable on the chip fill.
         let mut previous = quota_pace_color(-1.0);
-        for step in -100..=100 {
-            let color = quota_pace_color(step as f32 / 100.0);
+        for step in -2500..=2500 {
+            let color = quota_pace_color(step as f32 / 10000.0);
             assert!(color.r >= previous.r && color.g <= previous.g, "{step}");
-            assert!(contrast(color, palette::BAR_BACKGROUND) >= 4.5, "{step}");
+            assert!(contrast(color, palette::TAB_IDLE) >= 4.5, "{step}");
             previous = color;
         }
 
         for label in ["2h30m/5h 50%", "2d15h/7d 50%"] {
-            let mut fonts = FontSystem::new();
+            let mut fonts = test_sans();
             let mut buffer = Buffer::new(&mut fonts, Metrics::new(16.0, 18.0));
             buffer.set_size(Some(600.0), Some(40.0));
             let attrs = Attrs::new().family(Family::SansSerif);
@@ -4288,73 +4324,151 @@ mod tests {
     }
 
     #[test]
-    fn eon_bar_widgets_paint_only_scaled_neutral_outlines() {
-        let coverage = |batch: &RectangleBatch, x: f32, y: f32| {
-            batch
-                .bytes
-                .chunks_exact(VERTEX_SIZE as usize * 6)
-                .map(|quad| {
-                    let value = |vertex: usize, component: usize| {
-                        let offset = vertex * VERTEX_SIZE as usize + component * 4;
-                        f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
-                    };
-                    let rect = SceneRect {
-                        left: (value(0, 0) + 1.0) * 64.0,
-                        top: (1.0 - value(0, 1)) * 64.0,
-                        width: (value(2, 0) - value(0, 0)) * 64.0,
-                        height: (value(0, 1) - value(2, 1)) * 64.0,
-                    };
-                    if rect.contains(x, y) {
-                        value(0, 5)
-                    } else {
-                        0.0
-                    }
-                })
-                .sum::<f32>()
-        };
-        for scale in [1.0, 1.3] {
+    fn eon_bar_widgets_fill_the_same_capsule_as_idle_tabs() {
+        for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
             let visual = SceneRect {
-                left: 16.0,
-                top: 13.0,
-                width: 96.0,
-                height: 38.0,
+                left: 8.0 * scale,
+                top: 6.0 * scale,
+                width: 40.0 * scale,
+                height: 16.0 * scale,
             };
-            for border in 1..=3 {
+            let mut widget = RectangleBatch::new(128, 128);
+            push_bar_widget(&mut widget, visual);
+            let mut tab = RectangleBatch::new(128, 128);
+            tab.push_rounded(
+                visual,
+                tokens::capsule_radius(visual.height),
+                palette::TAB_IDLE,
+            );
+            assert_eq!(widget.bytes, tab.bytes, "scale {scale}");
+            // A filled capsule includes an opaque interior, unlike the old outline.
+            assert!(
+                widget
+                    .bytes
+                    .chunks_exact(VERTEX_SIZE as usize)
+                    .any(|vertex| {
+                        let value = |component: usize| {
+                            f32::from_ne_bytes(
+                                vertex[component * 4..component * 4 + 4].try_into().unwrap(),
+                            )
+                        };
+                        (value(1) - (1.0 - (visual.top + visual.height / 2.0) / 64.0)).abs() < 0.1
+                            && value(5) == 1.0
+                    })
+            );
+        }
+    }
+
+    #[test]
+    fn bar_surfaces_keep_distinct_session_hover_press_and_mint_focus() {
+        assert_ne!(palette::TAB_IDLE, palette::TAB_HOVER);
+        type Surface = fn(&mut RectangleBatch, SceneRect, HeaderButtonState);
+        for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
+            let visual = SceneRect {
+                left: 8.0 * scale,
+                top: 6.0 * scale,
+                width: 40.0 * scale,
+                height: 16.0 * scale,
+            };
+            let state = HeaderButtonState {
+                hovered: false,
+                pressed: false,
+                focused: false,
+                enabled: true,
+            };
+            let bytes = |draw: fn(&mut RectangleBatch, SceneRect, HeaderButtonState), state| {
                 let mut batch = RectangleBatch::new(128, 128);
-                push_bar_widget(&mut batch, visual, border, scale);
-                let width = physical_outline_width(border, scale);
-                for row in 0..visual.height as u32 {
-                    let expected = if (row as f32) < width || row as f32 >= visual.height - width {
-                        1.0
-                    } else {
-                        0.0
-                    };
-                    assert_eq!(
-                        coverage(&batch, 64.5, visual.top + row as f32 + 0.5),
-                        expected,
-                        "widget interior/stroke at border {border}, scale {scale}, row {row}"
-                    );
-                }
-                assert_eq!(coverage(&batch, visual.left + 0.5, visual.top + 0.5), 0.0);
-                for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
-                    for (component, channel) in [
-                        palette::CHIP_OUTLINE.r,
-                        palette::CHIP_OUTLINE.g,
-                        palette::CHIP_OUTLINE.b,
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        let offset = (component + 2) * 4;
-                        let actual =
-                            f32::from_ne_bytes(vertex[offset..offset + 4].try_into().unwrap());
-                        assert!((actual - f32::from(channel) / 255.0).abs() < 0.001);
+                draw(&mut batch, visual, state);
+                batch.bytes
+            };
+            let idle = bytes(push_session_label_surface, state);
+            let hover = bytes(
+                push_session_label_surface,
+                HeaderButtonState {
+                    hovered: true,
+                    ..state
+                },
+            );
+            let press = bytes(
+                push_session_label_surface,
+                HeaderButtonState {
+                    pressed: true,
+                    ..state
+                },
+            );
+            assert_ne!(idle, hover);
+            assert_ne!(hover, press);
+            for (draw, fills) in [
+                (
+                    push_session_label_surface as Surface,
+                    [palette::TAB_IDLE, palette::TAB_HOVER, palette::TAB_SELECTED],
+                ),
+                (
+                    push_bar_control_surface as Surface,
+                    [
+                        palette::BAR_BACKGROUND,
+                        palette::CONTROL_HOVER,
+                        palette::CHROME_HIGHLIGHT,
+                    ],
+                ),
+            ] {
+                for (state, fill) in [
+                    (state, fills[0]),
+                    (
+                        HeaderButtonState {
+                            hovered: true,
+                            ..state
+                        },
+                        fills[1],
+                    ),
+                    (
+                        HeaderButtonState {
+                            hovered: true,
+                            pressed: true,
+                            ..state
+                        },
+                        fills[2],
+                    ),
+                ] {
+                    let surface = bytes(draw, state);
+                    let expected = [fill.r, fill.g, fill.b].map(|v| f32::from(v) / 255.0);
+                    let last = surface.chunks_exact(VERTEX_SIZE as usize).last().unwrap();
+                    for (i, value) in expected.into_iter().enumerate() {
+                        let offset = (i + 2) * 4;
+                        assert_eq!(
+                            f32::from_ne_bytes(last[offset..offset + 4].try_into().unwrap()),
+                            value
+                        );
                     }
+                    let focused = bytes(
+                        draw,
+                        HeaderButtonState {
+                            focused: true,
+                            ..state
+                        },
+                    );
+                    let mut outline = RectangleBatch::new(128, 128);
+                    outline.push_rounded_outline(
+                        visual,
+                        tokens::capsule_radius(visual.height),
+                        palette::ACCENT,
+                    );
+                    assert!(focused.starts_with(&surface));
+                    assert!(focused.ends_with(&outline.bytes));
                 }
             }
-            let mut tab = RectangleBatch::new(128, 128);
-            tab.push_rounded(visual, visual.height / 2.0, palette::BAR_BACKGROUND);
-            assert_eq!(coverage(&tab, 64.5, visual.top + visual.height / 2.0), 1.0);
+            assert_eq!(
+                idle,
+                bytes(
+                    push_session_label_surface,
+                    HeaderButtonState {
+                        hovered: true,
+                        pressed: true,
+                        focused: true,
+                        enabled: false,
+                    }
+                )
+            );
         }
     }
 
@@ -5220,74 +5334,71 @@ mod tests {
         }
     }
 
-    #[test]
-    fn reading_icons_draw_from_the_bundled_symbol_face_whatever_the_terminal_fonts() {
-        let original = FontSystem::new();
+    fn test_sans() -> FontSystem {
+        let font = std::env::var_os("EON_VENUS_TEST_SANS_FONT")
+            .expect("run in nix develop with the exact packaged sans fixture");
         let mut db = fontdb::Database::new();
-        // Symbols Nerd Font, the proportional face of the same package, also has the icons and
-        // comes first, as another installed symbol font can.
-        for name in [
-            "DejaVu Sans",
-            "DejaVu Sans Mono",
-            "Symbols Nerd Font",
-            NERD_FONT_FAMILY,
-        ] {
-            let id = original
-                .db()
-                .query(&fontdb::Query {
-                    families: &[Family::Name(name)],
-                    ..Default::default()
-                })
-                .expect("the accepted font environment supplies the tested face");
-            db.push_face_info(original.db().face(id).unwrap().clone());
-        }
+        db.load_font_file(std::path::Path::new(&font)).unwrap();
         db.set_sans_serif_family("DejaVu Sans");
-        // A person's own terminal font whose fallbacks leave out the symbol face, from the
-        // smallest font size to the largest, at the default and a fractional scale.
-        for size in [6.0, FontSettings::default().size, 96.0] {
-            let settings = FontSettings {
-                family: Some("DejaVu Sans Mono".into()),
-                size,
-                ..FontSettings::default()
-            };
-            let mut fonts = FontSetup::resolve(
-                &settings,
-                FontSystem::new_with_locale_and_db("en-US".into(), db.clone()),
-            )
-            .unwrap();
-            for scale in [1.0, 1.25] {
-                let metrics = fonts.metrics(scale);
-                let cell_font =
-                    fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, true);
-                for label in ["\u{f4bc} 12%", "\u{efc5} 43%", "\u{f0a0} 80%"] {
-                    let case = format!("{label} at size {size}, scale {scale}");
+        db.set_monospace_family("DejaVu Sans");
+        FontSystem::new_with_locale_and_db("en-US".into(), db)
+    }
+
+    #[test]
+    fn readings_keep_bundled_symbol_attrs_and_interface_percentage_widths() {
+        // No host font discovery: the explicit database contains one known sans file.
+        // Symbols need their named attributes even when that face is absent from a test DB.
+        let mut fonts = test_sans();
+        for size in [6.0, 16.0, 96.0] {
+            for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
+                let metrics = CellMetrics {
+                    font_size: size * scale,
+                    height: size * 1.125 * scale,
+                    ..CellMetrics::for_scale(f64::from(scale))
+                };
+                let cell_font = fitted_cell_font(&mut fonts, metrics, None, false);
+                for icon in [
+                    crate::system::CPU_ICON,
+                    crate::system::RAM_ICON,
+                    crate::system::DISK_ICON,
+                ] {
                     let buffer = shape_styled_text(
-                        &mut fonts.font_system,
+                        &mut fonts,
                         metrics,
                         cell_font,
-                        label,
+                        &icon.to_string(),
                         1000.0,
                         metrics.height,
                         DrawStyleKind::Monospace,
                     );
-                    let glyphs: Vec<_> = buffer.layout_runs().flat_map(|run| run.glyphs).collect();
-                    assert_eq!(glyphs.len(), label.chars().count(), "{case}");
-                    for glyph in glyphs {
-                        let text = &label[glyph.start..glyph.end];
-                        let face = fonts.font_system.db().face(glyph.font_id).unwrap();
-                        let family = &face.families[0].0;
-                        assert!(glyph.glyph_id != 0, "{text:?} in {case} has no glyph");
-                        if text.is_ascii() {
-                            assert_eq!(family, "DejaVu Sans Mono", "{text:?} in {case}");
-                            assert!((glyph.w - metrics.width).abs() < 0.01, "{case}");
-                        } else {
-                            assert_eq!(family, NERD_FONT_FAMILY, "{text:?} in {case}");
-                            // The chip draws the icon from its own cell; it spills into the space
-                            // after it but never reaches the value.
-                            assert!(glyph.w <= 2.0 * metrics.width, "{case}: icon {}", glyph.w);
-                        }
-                    }
+                    assert_eq!(
+                        buffer.lines[0].attrs_list().get_span(0).family,
+                        Family::Name(NERD_FONT_FAMILY)
+                    );
                 }
+                let widest = measure_reading_width(&mut fonts, metrics);
+                let mut measured_max: f32 = 0.0;
+                for percent in 0..=100 {
+                    let value = format!("{percent}%");
+                    let buffer = shape_styled_text(
+                        &mut fonts,
+                        metrics,
+                        cell_font,
+                        &value,
+                        2000.0,
+                        metrics.height,
+                        DrawStyleKind::Status(Wrap::None),
+                    );
+                    assert_eq!(
+                        buffer.lines[0].attrs_list().get_span(0).family,
+                        Family::SansSerif
+                    );
+                    let run = buffer.layout_runs().next().unwrap();
+                    assert!(run.glyphs.iter().all(|glyph| glyph.glyph_id != 0));
+                    assert!(run.line_w <= widest, "{value} at {size}, {scale}");
+                    measured_max = measured_max.max(run.line_w);
+                }
+                assert_eq!(measured_max, widest);
             }
         }
     }

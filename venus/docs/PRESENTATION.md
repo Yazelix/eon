@@ -15,9 +15,10 @@ order, selection, and popups; Venus draws the visible scene.
   centre line, starting half the card-title height below the window top. The
   allocated card areas start lower so the tops of the card title tabs sit one
   card gap below the pills. This extra space yields first on
-  short windows, before the bar's top gap and pill height. Tabs keep their
-  fills; widgets have no fill and use rounded outlines in the pane cards'
-  neutral colour and `border_width`. The header controls share their centre.
+  short windows, before the bar's top gap and pill height. Widgets use filled
+  capsules in the unselected-tab fill, without resting outlines. The session
+  label steps up to the tab hover and selected fills on hover and press;
+  keyboard focus retains its mint outline. The header controls share their centre.
   Hover and accessibility bounds stay unchanged.
 - The Eon logo, in its own colours and two logical pixels shorter than the tab
   pills, leads the bar before the session label and tabs. Its centre is as far
@@ -54,9 +55,9 @@ order, selection, and popups; Venus draws the visible scene.
   and `eon window stop ID` quits an addressed window. Detach and opening this
   native menu are local view actions.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
-  overflow. Shortcut help, a round outlined button as tall as the tab pills
-  with its `?` centred in the circle, then Close stay at the right; after a
-  chip or reading, the button keeps the space chips keep
+  overflow. Shortcut help, a plain `?`, then Close stay at the right. New tab,
+  help and Close share their hover, pressed and mint keyboard-focus treatment;
+  after a chip or reading, the button keeps the space chips keep
   between them. Close's `×` lies as far from the window's right edge as from
   its top. A small empty area lets users drag an undecorated window without
   taking clicks from tabs or controls.
@@ -98,7 +99,7 @@ order, selection, and popups; Venus draws the visible scene.
   runs out about a stated time before it, or is used up, so colour is never the
   only signal. Once the reset has passed, hover drops the pace line; the label
   colour and accessible description still reflect the reading. Every colour
-  keeps at least 4.5:1 contrast on the bar.
+  keeps at least 4.5:1 contrast on the chip fill.
 - The CPU and RAM chips show whole-machine use as an icon and a percentage,
   such as `12%`, refreshed every 2 seconds. CPU covers the last 2 seconds and
   first appears 2 seconds after the window opens; on macOS user, system and
@@ -108,8 +109,11 @@ order, selection, and popups; Venus draws the visible scene.
   Nerd Font's `nf-oct-cpu` (U+F4BC) for CPU, `nf-fa-memory` (U+EFC5) for RAM
   and `nf-fa-hard_drive` (U+F0A0) for disk, drawn from that bundled face
   whatever the terminal font and its fallbacks; hover and accessibility name
-  each reading in words. Each reading chip keeps the width of its icon and
-  ` 100%`, six cells, with its text centred, so neighbouring items never shift.
+  each reading in words. Percentages use the interface font, like quota chips
+  and tab labels. Each reading reserves the widest percentage from 0% through
+  100% for that font and scale. Its icon stays at the left inset, followed by
+  the shared icon gap and a left-aligned percentage, so the contents and
+  neighbouring items stay put as values change.
   Accessibility says, for example, `CPU use 12% across 16 logical CPUs, over
   the last 2 seconds` and `RAM use 43%, 13.5 GiB of 31.3 GiB`; hover lists
   `CPU` then `16 logical CPUs`, and `RAM` then `13.5 GiB used of 31.3 GiB`, the
@@ -159,7 +163,7 @@ order, selection, and popups; Venus draws the visible scene.
   lists `45% on average over the last 30 s` before the load line. The average
   needs a full window of unbroken readings, so it starts over after a failed
   reading or a stall. Yellow, orange and red are the quota pace scale's, at
-  4.5:1 or more on the opaque bar, including over light terminal themes.
+  4.5:1 or more on the opaque chip fill, including over light terminal themes.
   Eon's `[bar]` sets each chip's notice, warning and critical percentage and
   the averaging window; equal percentage levels select the stronger grade.
   macOS uses the same levels.

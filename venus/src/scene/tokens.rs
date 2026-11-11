@@ -51,7 +51,7 @@ pub(crate) const fn pill_gap(metrics: CellMetrics) -> f32 {
     metrics.padding / 3.0
 }
 
-/// How far a bar chip's or control's outline sits inside its slot, before a small slot makes it
+/// How far a bar chip's or control's surface sits inside its slot, before a small slot makes it
 /// yield.
 pub(crate) const fn chip_inset(metrics: CellMetrics) -> f32 {
     metrics.padding / 3.0

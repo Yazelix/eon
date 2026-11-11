@@ -2213,10 +2213,13 @@ mod tests {
                 for (_, label) in &labels {
                     assert_eq!(label.rect.left, left);
                     left = label.rect.right();
-                    // Each reading keeps the width of its icon and ` 100%`: six cells.
+                    // The injected interface measure reserves four characters for percentages.
                     assert_eq!(
                         label.rect.width,
-                        6.0 * metrics.width + metrics.padding * 2.0
+                        metrics.font_size
+                            + crate::scene::tokens::icon_gap(metrics)
+                            + 40.0 * metrics.scale
+                            + metrics.padding * 2.0
                     );
                 }
                 assert_eq!(left, scene.controls[1].rect.left);

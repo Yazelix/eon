@@ -18,8 +18,6 @@ pub(super) const TERMINAL_FALLBACK: SceneColor = rgb(10, 13, 20);
 /// The neutral outline around a card: every pane outline but the selected column's expanded
 /// pane, popups, the agent sidebar, the dialog, and the sidebar row for the current pane.
 pub(super) const CARD_OUTLINE: SceneColor = rgb(86, 106, 126);
-/// The outline of an Eon Bar chip: quota, CPU, RAM, disk and clock.
-pub(super) const CHIP_OUTLINE: SceneColor = rgb(86, 106, 126);
 /// The fill under a hovered, pressed or keyboard-selected chrome item: sidebar rows, pane header
 /// titles and bar controls, and the disc behind a sidebar badge on such a row.
 pub(super) const CHROME_HIGHLIGHT: SceneColor = rgb(40, 54, 70);
@@ -31,8 +29,8 @@ pub(super) const TOOLTIP_BACKGROUND: SceneColor = rgb(52, 72, 92);
 pub(super) const DIALOG_BACKGROUND: SceneColor = rgb(20, 27, 38);
 pub(super) const SCROLLBAR_TRACK: SceneColor = rgb(56, 70, 88);
 
-// Tab pills step up from idle to hover to selected. The highlight, control hover, keycap, tooltip
-// and scrollback pill fills reuse these steps, so the chrome climbs one ladder from the bar.
+// Tabs and the session label step up from idle to hover to selected; widgets use idle.
+// Highlight, control hover, keycap, tooltip and scrollback fills reuse these steps.
 pub(super) const TAB_IDLE: SceneColor = rgb(30, 40, 54);
 pub(super) const TAB_HOVER: SceneColor = rgb(40, 54, 70);
 pub(super) const TAB_SELECTED: SceneColor = rgb(52, 72, 92);
@@ -93,8 +91,8 @@ pub(super) const QUOTA_PACE: [(f32, SceneColor); 5] = [
     (0.0, rgb(144, 196, 93)),
     (0.05, rgb(255, 196, 87)),
     (0.10, rgb(255, 150, 70)),
-    // A quarter of a window early or more: a saturated red at 5.5:1 on the bar.
-    (0.25, rgb(255, 59, 59)),
+    // A quarter of a window early or more: alarm red at 4.5:1 on the chip fill.
+    (0.25, rgb(255, 75, 75)),
 ];
 /// CPU, RAM and disk chips under load (`docs/PRESENTATION.md`, Eon Bar): the pace scale's yellow,
 /// orange and red.

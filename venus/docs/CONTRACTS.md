@@ -1834,6 +1834,11 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-7cf0y.6`: the icon opens the Window menu; proven with an isolated
   installed x86_64 Linux Wayland candidate on 2026-11-07.
+  Amended on 2026-11-11 by `eon-wuau8.2`: Lucca approved interface-font
+  readings and quiet filled capsules ("ok"), and plain `?` ("ok, but im not so
+  sure") on 2026-11-10. The shared critical/pace red is slightly brighter to
+  preserve 4.5:1 contrast on the capsule fill, approved by eon-overseer under
+  Lucca's standing delegation on 2026-11-11.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the session header;
@@ -1843,12 +1848,13 @@ re-proved when that platform or feature is next touched.
   height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and disk widgets share
   one height and centre line, starting half the card title height below the window's top edge; the
   allocated card areas start below them so that the tops of the card title tabs (VEN-C18) sit one
-  card gap (VEN-C8) below the pills. The widgets draw no fill: each is a
-  rounded outline at the pane cards' neutral border width and outline color, with its text and icons on the opaque bar
-  background. The clock and the version label are plain text in one colour.
-  Keyboard shortcuts is a round outlined button as tall as the tab pills, with
-  its glyph's ink centred in the circle, and New tab, Keyboard
-  shortcuts and Close centre on the same line. The Eon icon, when Eon supplies one,
+  card gap (VEN-C8) below the pills. The widgets draw filled capsules in the
+  unselected-tab fill, without resting outlines. CPU, RAM and disk percentages
+  use the interface font in fixed slots sized for the widest percentage; icons
+  and values stay left-aligned as the readings change. The clock and the
+  version label remain plain text in one colour. Keyboard shortcuts is a bare
+  `?`, with the same hover and pressed treatment as New tab and Close.
+  New tab, Keyboard shortcuts and Close centre on the same line. The Eon icon, when Eon supplies one,
   leads the bar before the session label and tabs, two logical pixels shorter than the tab pills
   and centred on them. With a running-windows summary it opens the Window menu
   (eon-7cf0y.6; PRESENTATION.md), through pointer, keyboard or accessible
@@ -1892,13 +1898,15 @@ re-proved when that platform or feature is next touched.
   it. It reads the shown session's name, or its `sN` when unnamed, then
   ` N/M` when M ≥ 2, where N is its 1-based position in window order and M
   the count. The name is fitted to a tab's widest text, and ` N/M` stays
-  whole. It draws like the widgets, an outline with no fill and primary text,
-  so it does not read as a tab. A left press and release on it while the
+  whole. It draws like the widgets, a filled capsule with primary text. Its
+  leading position, session name and count, and session-picker action
+  distinguish it from the tabs. Hover and press step its fill up to the tab
+  hover and selected fills; keyboard focus adds the mint outline. A left press and release on it while the
   presentation is current, or Enter or Space after Tab focuses it, invokes the
   snapshot's `sessions` popup entry as that entry's key does. Its tooltip is
-  that entry's label and any chord, such as `Sessions — Alt+Shift+S`; it takes
-  the header controls' hover, pressed and focus states and precedes the tab
-  pills in Tab order. Without that entry it is inert text with no hover,
+  that entry's label and any chord, such as `Sessions — Alt+Shift+S`; it shares
+  the header controls' keyboard-focus behavior and precedes the tab pills in
+  Tab order. Without that entry it is inert text with no hover,
   focus, tooltip or action. Its AccessKit node is a button, or a label while
   inert, named `Session NAME, N of M` with the scene's rectangle. While
   another session's `attention` is needs input, the needs-input badge (◆)
@@ -1970,6 +1978,16 @@ re-proved when that platform or feature is next touched.
   - **Override evidence (`eon-igae.10`):**
     `eon_bar_buttons_share_scene_bounds_and_separate_focus_from_activation`; the
     installed observation is pending.
+  - **Filled widgets and interface readings (`eon-wuau8.2`):** headless checks
+    `eon_bar_widgets_fill_the_same_capsule_as_idle_tabs`,
+    `bar_surfaces_keep_distinct_session_hover_press_and_mint_focus`,
+    `reading_slots_keep_the_widest_interface_value_without_moving_neighbours`,
+    `readings_keep_bundled_symbol_attrs_and_interface_percentage_widths` and
+    `quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows`.
+    `shortcuts_glyph_centres_its_ink_in_the_slot` retains the ink-centering
+    check formerly named `round_shortcuts_glyph_centres_its_ink_on_the_circle`.
+    Commands, environment and staged revision are in the bead's proof record;
+    installed visual acceptance awaits Lucca's live look after landing.
   - **Eon icon, round Keyboard shortcuts and trailing order (`eon-369s`):**
     added checks `eon_icon_loads_only_bounded_square_rgba_images`,
     `eon_icon_rasterizes_in_its_own_colours_at_the_requested_pixels`,

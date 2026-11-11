@@ -10,6 +10,12 @@ installation, and proven contract changes.
   Eon's Starship default sets only `add_newline = false`; your own Starship
   config always wins, including one created while the shell is running
   (`eon-ckaya`, EON-C9).
+- Top-bar readings share the interface font and reserve a stable width. Widgets
+  and the session label use quiet filled capsules; Shortcuts is a plain `?`.
+  Lucca approved the font and capsules ("ok") and `?` ("ok, but im not so sure")
+  on 2026-11-10. The shared critical/pace red is slightly brighter, (255,75,75),
+  to keep 4.5:1 contrast on the capsule fill, approved by eon-overseer under
+  Lucca's standing delegation on 2026-11-11 (`eon-wuau8.2`, VEN-C21).
 
 - Popup agents in Agents and the attention inbox carry a thin rounded-square
   outline in place of the heavy window mark. Its stroke follows `border_width`

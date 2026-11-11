@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C21: bar widgets and the session label use the idle-tab capsule fill,
+  CPU/RAM/disk percentages use the interface font in fixed slots, and Shortcuts
+  draws a plain `?`. Session hover and press step up the tab fills; mint focus
+  remains. The shared critical/pace red meets 4.5:1 on the capsule fill
+  (`eon-wuau8.2`, Lucca's 2026-11-10 approval and delegated contrast amendment).
+
 - VEN-C30: popup-source agent rows draw a thin rounded-square outline at the
   existing right edge, using the neutral card stroke (`border_width`) without
   a filled title bar (`eon-wpbjz`).

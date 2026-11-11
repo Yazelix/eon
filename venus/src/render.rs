@@ -1094,6 +1094,8 @@ pub struct Renderer {
     border_width: u8,
     focus_border_width: u8,
     metrics: CellMetrics,
+    /// Widest Status percentage for these fonts and metrics, shared by the bar readings.
+    reading_width: f32,
     cell_font: CellFont,
     window: Arc<Window>,
 }
@@ -1297,6 +1299,7 @@ impl Renderer {
         let images = Images::new(&device, config.format);
 
         let metrics = fonts.metrics(window.scale_factor());
+        let reading_width = chrome::measure_reading_width(&mut fonts.font_system, metrics);
         let cell_font = fitted_cell_font(
             &mut fonts.font_system,
             metrics,
@@ -1366,6 +1369,7 @@ impl Renderer {
             border_width,
             focus_border_width,
             metrics,
+            reading_width,
             cell_font,
             window,
         })
@@ -1392,6 +1396,8 @@ impl Renderer {
         self.config.height = size.height;
         let metrics = self.fonts.metrics(scale_factor);
         if metrics != self.metrics {
+            self.reading_width =
+                chrome::measure_reading_width(&mut self.fonts.font_system, metrics);
             self.cell_font = fitted_cell_font(
                 &mut self.fonts.font_system,
                 metrics,

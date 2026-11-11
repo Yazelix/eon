@@ -749,6 +749,8 @@ pub enum HeaderText<'a> {
     Tab(&'a str),
     /// An exact Eon Bar fact.
     Fact,
+    /// The widest interface-font percentage, cached for the renderer typography and scale.
+    Reading,
     /// Text fitted to at most this many pixels.
     Fit(f32),
 }
@@ -3370,9 +3372,9 @@ impl WorkspaceScene {
         }
     }
 
-    /// A round header button's circle: as tall as the tab pills, centred on the control's glyph
-    /// and the pills' band, in whole pixels, never wider than the button.
-    pub(crate) fn round_button_rect(
+    /// The square that centres a header glyph's ink on the pills' band, in whole pixels,
+    /// never wider than the button.
+    pub(crate) fn control_glyph_rect(
         &self,
         control: &WorkspaceControl,
         metrics: CellMetrics,
@@ -3721,8 +3723,8 @@ impl WorkspaceScene {
             })
             .collect::<Vec<_>>();
         let quota_count = quotas.len();
-        // A chip or reading before Shortcuts keeps the chips' own spacing from its round button:
-        // each chip's outline sits `chip_inset` inside its slot, and the circle inside its own.
+        // A chip or reading before Shortcuts keeps the chips' own spacing from its glyph:
+        // each capsule sits `chip_inset` inside its slot, and the glyph square inside its own.
         let chip_inset = tokens::chip_inset(metrics).min(tab_height / 4.0);
         let button = tab_row(metrics, tab_height);
         let circle = (pill_band.end - pill_band.start).round().min(button);
@@ -3893,16 +3895,17 @@ impl WorkspaceScene {
         // readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| quotas.len() == quota_count && shown(item);
-        // Each reading keeps the width of its one-cell icon and ` 100%`, so the header never
-        // shifts as they change.
-        let readings = 1 + " 100%".len();
+        // The percentage width is measured once per renderer typography and scale.
+        let reading_width = metrics.font_size
+            + tokens::icon_gap(metrics)
+            + header_text(HeaderText::Reading, "100%").1
+            + metrics.padding * 2.0;
         let mut labels = [
             bar.cpu.filter(|_| reading(BarItem::Cpu)).map(|cpu| {
                 (
                     cpu.label.clone(),
                     cpu.tooltip.clone(),
                     cpu.description.clone(),
-                    readings,
                     cpu.load,
                 )
             }),
@@ -3911,7 +3914,6 @@ impl WorkspaceScene {
                     ram.label.clone(),
                     ram.tooltip.clone(),
                     ram.description.clone(),
-                    readings,
                     ram.load,
                 )
             }),
@@ -3920,27 +3922,22 @@ impl WorkspaceScene {
                     disk.label.clone(),
                     disk.tooltip.clone(),
                     disk.description.clone(),
-                    readings,
                     disk.load,
                 )
             }),
         ]
         .map(|label| {
-            label.map(
-                |(label, tooltip, description, cells, load)| WorkspaceLabel {
-                    rect: SceneRect {
-                        // Every label is an icon then ASCII, one terminal cell per character.
-                        width: label.chars().count().max(cells) as f32 * metrics.width
-                            + metrics.padding * 2.0,
-                        height: tab_height,
-                        ..SceneRect::default()
-                    },
-                    label,
-                    tooltip,
-                    description,
-                    load,
+            label.map(|(label, tooltip, description, load)| WorkspaceLabel {
+                rect: SceneRect {
+                    width: reading_width,
+                    height: tab_height,
+                    ..SceneRect::default()
                 },
-            )
+                label,
+                tooltip,
+                description,
+                load,
+            })
         });
         // The first reading to show before Shortcuts also takes the space before its button,
         // unless a quota chip already took it.

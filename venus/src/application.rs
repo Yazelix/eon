@@ -1772,6 +1772,7 @@ impl Application {
                 |kind, label| match kind {
                     HeaderText::Tab(id) => self.tab_texts[id].clone(),
                     HeaderText::Fact => (label.to_owned(), self.quota_widths[label]),
+                    HeaderText::Reading => (label.to_owned(), state.renderer.reading_width()),
                     HeaderText::Fit(_) => self.fitted_texts[label].clone(),
                 },
                 self.hints.clone(),
@@ -2747,6 +2748,7 @@ impl Application {
                     self.tab_texts.insert(id.to_owned(), fitted.clone());
                     fitted
                 }
+                HeaderText::Reading => (label.to_owned(), state.renderer.reading_width()),
                 HeaderText::Fact => {
                     let fitted = state.renderer.measure_header_text(label);
                     self.quota_widths.insert(label.to_owned(), fitted.1);
