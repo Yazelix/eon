@@ -1760,9 +1760,16 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
     // Zoom keeps the column card's Stack band above the pane.
     assert_eq!(zoom.header_viewport, scene.header_viewport);
     assert_eq!(zoom.header_viewport.top, 76.0);
-    assert_eq!(zoom.panes[0].rect.top, zoom.header_viewport.top);
+    assert_eq!(zoom.panes[0].rect.top, zoom.header_viewport.top + 10.0);
     for column in &scene.other_columns {
-        assert_eq!(column.panes[0].rect.top, zoom.header_viewport.top);
+        assert_eq!(
+            column.panes[0].rect.top,
+            if column.panes[0].selected {
+                zoom.panes[0].rect.top
+            } else {
+                zoom.header_viewport.top
+            }
+        );
     }
     assert_eq!(zoom.terminal.left, 8.0);
     assert_eq!(zoom.terminal.right(), size.width as f32 - 8.0);

@@ -677,6 +677,9 @@ re-proved when that platform or feature is next touched.
   stay unchanged.
   Amended on 2026-11-10 by `eon-xaq6c`, approved by eon-overseer under Lucca's
   standing rule. The expanded pane's band follows the collapsed row pitch.
+  Amended on 2026-11-11 by `eon-yjrru`, approved by eon-overseer under Lucca's
+  standing rule. The first expanded band follows the same pitch below the
+  Stack line.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -760,12 +763,17 @@ re-proved when that platform or feature is next touched.
     button targets keep their existing geometry. A collapsed pane has no band:
     its title and any visible buttons are compact gaps in its row's line, and the final
     collapsed title stays a compact gap in the column's bottom edge. When room
-    permits, the band starts one collapsed row's height below the line of the
-    collapsed title above it. When the first pane in a multi-pane column is
-    expanded, that space follows the terminal, so a column's terminal height
-    does not depend on which of its panes is expanded. On a short window the
-    space yields before the last padded terminal row. Insufficient text/stroke clearance also
-    leaves the expanded title in a compact gap. Each pane header reserves room
+    permits, the expanded band's top starts one collapsed title row's height
+    below the preceding collapsed title's line, or below the Stack's top line
+    when the first pane is expanded, including a lone or zoomed pane. A
+    multi-pane column reserves the same total space whichever pane is expanded;
+    for the first pane the part needed for that top clearance precedes its
+    header and the remainder follows its terminal. A lone or zoomed pane
+    reserves only the top clearance. Each column's terminal height remains
+    independent of which of its panes is expanded. On a short window the space
+    yields before the last padded terminal row. Insufficient text/stroke
+    clearance also leaves the expanded title in a compact gap. Each pane
+    header reserves room
     for Zoom (Restore while zoomed) and Close at the right; the title and
     scrollback pill fit to their left even while the buttons are hidden. The
     buttons are drawn and accept pointer actions only on the active tab's
@@ -782,12 +790,15 @@ re-proved when that platform or feature is next touched.
     carries VEN-C18's shared framed-title tab, labelled
     `Stack` when the tab has one column and `Stack 1`, `Stack 2`, ... from left
     to right when it has several (the panes' one-based `column` in `eon session
-    --json`); without pane frames the label shows plain. The first pane's top
-    edge sits one stack band below that line: one chrome title row plus the
-    tab's rise, a third of the title padding (24 logical pixels at default
-    typography). The column's sides run from that line down to where the first
-    pane's rounded top corners turn into them, as stacked cards meet; that
-    segment and its tab keep the neutral border colour and width. Headers scroll
+    --json`); without pane frames the label shows plain. The Stack band remains
+    one chrome title row plus the tab's rise, a third of the title padding
+    (24 logical pixels at default typography). A first collapsed pane's title
+    row starts that far below the band's top (14 logical pixels below the
+    Stack line at default typography); a first expanded band's cap uses the
+    clearance above. The column's sides run from the Stack line down to where
+    the first pane's rounded top corners turn into them, as stacked cards
+    meet; that segment and its tab keep the neutral border colour and width.
+    Headers scroll
     below the stack band. At the unscrolled top, each column's top line, the
     popup card and the agent sidebar card share one snapped top line, subject to
     VEN-C18's tiny-window popup exception. Each column's fill starts at its

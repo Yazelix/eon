@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The first expanded Stack pane's band and focus frame sit one title row
+  below the Stack outline, matching the gap below collapsed titles. Existing
+  multi-pane clearance is redistributed without losing terminal rows. A lone
+  or zoomed pane reserves half a title row and loses about one terminal row
+  (`eon-yjrru`, VEN-C8).
+
 - When a terminal ends while Eon checks its sockets during discovery,
   Eon rereads its record to reconcile the ended run. This avoids a spurious
   `cannot inspect terminal endpoint` error in Stop, final close, Stack close,

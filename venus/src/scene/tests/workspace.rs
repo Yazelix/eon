@@ -229,7 +229,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
     }
     let metrics = CellMetrics::for_scale(1.0);
     let size = PhysicalSize::new(1280, 720);
-    for (count, before, after) in [(1, 31, 31), (3, 28, 28), (4, 26, 27)] {
+    for (count, before, after) in [(1, 31, 30), (3, 28, 28), (4, 26, 27)] {
         let mut snapshot = snapshot.clone();
         snapshot.tabs[0].columns[0].panes.truncate(count);
         snapshot.tabs[0].selected_pane = Some("p1".into());
@@ -260,15 +260,18 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
         );
         assert_eq!(rows((metrics.height * 1.5).round()), before);
         assert_eq!(actual_rows, after);
-        // The reservation for a multi-pane column follows the first expanded pane's terminal.
-        let cap = if count > 1 { 14.0 } else { 0.0 };
+        // The first header uses ten reserve pixels; the remainder follows its terminal.
+        let cap = if count > 1 { 14.0 } else { 10.0 };
         assert_eq!(scene.terminal.top, scene.panes[0].rect.bottom());
         assert_eq!(
             scene.terminal.height,
             scene.header_viewport.height - count as f32 * scene.panes[0].rect.height - cap
         );
         if count > 1 {
-            assert_eq!(scene.panes[1].rect.top, scene.terminal.bottom() + cap);
+            assert_eq!(
+                scene.panes[1].rect.top,
+                scene.terminal.bottom() + cap - 10.0
+            );
             assert_eq!(
                 scene.panes[count - 1].rect.bottom(),
                 scene.header_viewport.bottom()
@@ -286,7 +289,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
             painted.top,
             (scene.pane_viewport.top + scene.panes[0].rect.height / 2.0).floor()
         );
-        assert_eq!(scene.panes[0].rect.top, scene.header_viewport.top);
+        assert_eq!(scene.panes[0].rect.top, scene.header_viewport.top + 10.0);
         assert_eq!(
             painted.bottom(),
             (scene.chrome.bottom() - chrome_title_metrics(metrics).text_height / 2.0).floor()
@@ -352,15 +355,17 @@ fn band_space_keeps_one_terminal_height_whichever_pane_is_expanded() {
                 "the column must fill its viewport"
             );
             for (index, pair) in panes.windows(2).enumerate() {
-                // The space sits before the expanded pane's band, or after a first pane's
-                // terminal; every other row follows the one above it.
+                // A first pane splits the reserve around its header and terminal;
+                // later expanded panes use it all before their header.
                 let terminal = if index == expanded {
                     scene.terminal.height
                 } else {
                     0.0
                 };
-                let space = if index + 1 == expanded || (expanded == 0 && index == 0) {
+                let space = if index + 1 == expanded {
                     cap
+                } else if expanded == 0 && index == 0 {
+                    cap - (panes[0].rect.top - scene.header_viewport.top)
                 } else {
                     0.0
                 };
@@ -534,7 +539,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
         painted.top,
         stack.pane_viewport.top + stack.panes[0].rect.height / 2.0
     );
-    assert_eq!(stack.panes[0].rect.top, stack.header_viewport.top);
+    assert_eq!(stack.panes[0].rect.top, stack.header_viewport.top + 10.0);
     // The popup ends on the edge the column card and the sidebar card share.
     let popup_card = popup
         .card_fill(popup.chrome, CellMetrics::for_scale(1.0), 2.0)
@@ -689,7 +694,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                     pane_card.top
                 );
                 for (headers, _) in panes.column_panes() {
-                    assert_eq!(headers[0].rect.top, panes.header_viewport.top);
+                    assert!(headers[0].rect.top >= panes.header_viewport.top);
                 }
                 if count > 0 {
                     assert!(panes.terminal.top >= pane_card.top);
@@ -1422,7 +1427,7 @@ fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
         assert!(
             three
                 .column_panes()
-                .all(|(panes, _)| panes[0].rect.top == three.header_viewport.top)
+                .all(|(panes, _)| panes[0].rect.top == lone.panes[0].rect.top)
         );
         // A popup covers the columns with its own card and no Stack band.
         let mut popup = snapshot(vec![column(1, 1)]);
@@ -1450,6 +1455,7 @@ fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
     assert_eq!(labels(&short), [None]);
     assert_eq!(short.header_viewport, short.pane_viewport);
     assert!(short.terminal.height >= minimum_terminal(metrics, metrics.height));
+    assert!(short.terminal.bottom() <= short.pane_viewport.bottom() + 0.001);
     // Scrolled headers pass under the band: neither drawn there nor hit there.
     let tall = snapshot(vec![column(1, 30)]);
     let scrolled = project(&tall, 400, metrics, 200.0);

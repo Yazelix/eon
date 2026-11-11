@@ -2413,13 +2413,21 @@ fn bar_edge(metrics: CellMetrics, tab_height: f32, card_top: f32) -> f32 {
     (band.start + band.end) / 2.0
 }
 
-/// Give the cap one snapped title pitch from the preceding rule, halfway down its row.
+/// Give the cap one snapped title pitch, crediting the rise already supplied by the Stack band.
+fn band_cap_clearance(metrics: CellMetrics, provided_rise: f32) -> f32 {
+    let title_height = chrome_title_metrics(metrics).text_height;
+    (title_height.floor() - title_height / 2.0 + (title_tab_rise(metrics) - provided_rise)).ceil()
+}
+
+fn first_band_clearance(metrics: CellMetrics) -> f32 {
+    band_cap_clearance(metrics, title_tab_rise(metrics))
+}
+
 fn band_cap_space(metrics: CellMetrics, panes: usize) -> f32 {
-    if panes < 2 {
-        0.0
-    } else {
-        let title_height = chrome_title_metrics(metrics).text_height;
-        (title_height.floor() - title_height / 2.0 + title_tab_rise(metrics)).ceil()
+    match panes {
+        0 => 0.0,
+        1 => first_band_clearance(metrics),
+        _ => band_cap_clearance(metrics, 0.0),
     }
 }
 
@@ -4041,16 +4049,18 @@ impl WorkspaceScene {
                     .expect("EONW validates the expanded pane")
             };
             // Reserve the same space for every expanded position to keep one terminal height.
-            // A first pane's cap rises into the Stack band, so its space follows the terminal.
+            // A first pane uses the Stack band's rise and leaves the rest after its terminal.
             // The space yields before the last padded terminal row.
-            let title_rows = if zoomed { 1 } else { column.panes.len() } as f32 * pane_height;
-            let cap = if zoomed {
-                0.0
+            let visible_panes = if zoomed { 1 } else { column.panes.len() };
+            let title_rows = visible_panes as f32 * pane_height;
+            let cap = band_cap_space(metrics, visible_panes)
+                .min((header_viewport.height - title_rows - minimum_terminal_height).max(0.0));
+            let cap_above = if expanded == 0 {
+                first_band_clearance(metrics).min(cap)
             } else {
-                band_cap_space(metrics, column.panes.len())
-                    .min((header_viewport.height - title_rows - minimum_terminal_height).max(0.0))
+                cap
             };
-            let (cap_above, cap_below) = if expanded > 0 { (cap, 0.0) } else { (0.0, cap) };
+            let cap_below = cap - cap_above;
             let pane_headers_height = title_rows + cap;
             let terminal_height = (header_viewport.height - pane_headers_height)
                 .clamp(minimum_terminal_height, maximum_terminal_height);

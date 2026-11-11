@@ -264,20 +264,22 @@ footer.
 Each column card's top line carries a Stack tab, labelled `Stack` when the tab
 has one column and `Stack 1`, `Stack 2`, ... from left to right when it has
 several; Stack N holds the panes whose `column` is N in `eon session --json`.
-The first pane's top edge sits one stack band lower: one title row plus the
-tab's rise, a third of the title padding (24 px at the default font). The
-expanded pane's framed header, a lone and a zoomed pane's included, has one
-continuous raised band: the edge runs straight over the fitted title, empty
-middle and right action group between rounded outer corners. A collapsed pane
-shows its title and any visible buttons in gaps in its row's line. The last
-collapsed title sits in the column's bottom edge. When room permits, the
+The Stack band is one title row plus the tab's rise, a third of the title
+padding (24 px at the default font). A first collapsed pane's title row starts
+that far below the band's top (14 px below the Stack line at the default
+font). The expanded pane's framed header, a lone and a zoomed pane's included,
+has one continuous raised band: the edge runs straight over the fitted title,
+empty middle and right action group between rounded outer corners. A collapsed
+pane shows its title and any visible buttons in gaps in its row's line. The
+last collapsed title sits in the column's bottom edge. When room permits, the
 expanded band starts one collapsed row's height below the line of the
-collapsed title above it (20 px at the default font). A first pane's cap
-rises into the stack band and the reserved space follows its terminal, so
-a column's terminal keeps one height whichever pane is expanded. Tight text
-or stroke clearance leaves the expanded title in a compact gap. The column's
-sides run from the Stack line down to the first pane's rounded top corners in
-the neutral border colour and
+collapsed title above it, or below the Stack line when the first pane is
+expanded (20 px at the default font), including a lone or zoomed pane. For the
+first expanded pane, the space needed for that top gap precedes its header and
+the remaining reserve follows its terminal. A column's terminal keeps one
+height whichever pane is expanded. Tight text or stroke clearance leaves the
+expanded title in a compact gap. The column's sides run from the Stack line
+down to the first pane's rounded top corners in the neutral border colour and
 width, even while that pane is selected. Headers scroll below the band. On a
 window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
@@ -339,7 +341,9 @@ Stack, popup and Agents tab tops sit one card gap (8 px) below the bar's pills.
 Popup, Agents and dialog tabs add no height or terminal rows inside their cards.
 Each pane header uses the shared title row height. A Stack with several panes
 reserves half a title row plus one tab rise (14 px at the default font) from
-the terminal.
+the terminal. A lone or zoomed pane reserves only half a title row (10 px at
+the default font), costing about one terminal row. Multi-pane terminal
+capacity is unchanged by the first-pane gap.
 The reservation yields before the last padded terminal row on short windows.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.

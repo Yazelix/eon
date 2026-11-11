@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The first expanded Stack pane's band and focus frame sit one title row
+  below the Stack outline, matching the gap below collapsed titles. Existing
+  multi-pane clearance is redistributed without losing terminal rows. A lone
+  or zoomed pane reserves half a title row and loses about one terminal row
+  (`eon-yjrru`, VEN-C8).
+
 - VEN-C8: pane Zoom/Restore and Close draw and accept clicks only on the tab's
   selected pane, except for one-pane Stacks. Hidden controls keep their title
   space reserved; keyboard and AccessKit actions retain their availability.

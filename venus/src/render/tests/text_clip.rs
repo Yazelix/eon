@@ -73,7 +73,7 @@ fn bounded_preview_rows_cover_multi_row_fractional_offsets() {
 #[test]
 fn retained_frame_text_preserves_padding_after_resize() {
     let metrics = CellMetrics::for_scale(1.0);
-    let (workspace, clip) = retained_frame_text_clip(PhysicalSize::new(1014, 900));
+    let (workspace, clip) = retained_frame_text_clip(PhysicalSize::new(1014, 910));
     let fill = workspace.card_fill(
         workspace.chrome,
         metrics,
@@ -85,7 +85,7 @@ fn retained_frame_text_preserves_padding_after_resize() {
             left: 8.0,
             top: 62.0,
             width: 998.0,
-            height: 820.0,
+            height: 830.0,
         }
     );
     let mut fonts = clipping_test_fonts();
@@ -122,7 +122,7 @@ fn retained_frame_text_preserves_padding_after_resize() {
         );
         buffer.shape_until_scroll(&mut fonts.font_system, false);
         if column == 98 {
-            assert_eq!((cell.left, cell.top), (1000.0, 864.0));
+            assert_eq!((cell.left, cell.top), (1000.0, 874.0));
             let run = buffer.layout_runs().next().unwrap();
             let physical = run.glyphs[0].physical((cell.left, cell.top), 1.0);
             let image = SwashCache::new()
@@ -131,14 +131,14 @@ fn retained_frame_text_preserves_padding_after_resize() {
             let ink_left = physical.x + image.placement.left;
             let ink_top = run.line_y.round() as i32 + physical.y - image.placement.top;
             let x = 1004 - ink_left;
-            let y = 881 - ink_top;
+            let y = 891 - ink_top;
             assert!(x >= 0 && x < image.placement.width as i32);
             assert!(y >= 0 && y < image.placement.height as i32);
             assert_ne!(
                 image.data[y as usize * image.placement.width as usize + x as usize],
                 0
             );
-            assert!(!fill.bands().any(|band| band.contains(1004.5, 881.5)));
+            assert!(!fill.bands().any(|band| band.contains(1004.5, 891.5)));
         }
         if let Some(bounds) = cell.intersection(clip) {
             text.push(PlacedText {
@@ -158,8 +158,8 @@ fn retained_frame_text_preserves_padding_after_resize() {
     assert!(
         areas
             .iter()
-            .all(|area| area.bounds.right <= 1004 || area.bounds.bottom <= 881),
-        "retained-frame text admits ink at (1004,881) outside the rounded fill"
+            .all(|area| area.bounds.right <= 1004 || area.bounds.bottom <= 891),
+        "retained-frame text admits ink at (1004,891) outside the rounded fill"
     );
     assert_eq!(areas.len(), 1, "the inset interior glyph must survive");
     assert!(areas.iter().all(|area| {

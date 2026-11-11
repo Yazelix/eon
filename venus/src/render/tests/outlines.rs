@@ -329,14 +329,12 @@ fn every_column_card_carries_a_stack_tab_one_card_gap_below_the_bar() {
                             (gap - crate::scene::tokens::card_gap(metrics)).abs() <= 1.0,
                             "scale={scale}, gap={gap}"
                         );
-                        // The first pane's title row sits one Stack band lower, plain.
+                        // A collapsed first row starts below the Stack band; an expanded
+                        // first row also uses its top-clearance reserve.
                         let first = &panes[0];
-                        assert_eq!(
-                            first.rect.top,
-                            workspace.pane_viewport.top
-                                + chrome_title_metrics(metrics).text_height
-                                + metrics.padding / 3.0
-                        );
+                        if !first.selected {
+                            assert_eq!(first.rect.top, workspace.header_viewport.top);
+                        }
                         assert!(tab.row.bottom() < first.rect.top);
                     }
                     if !zoom {
@@ -1387,8 +1385,8 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                         (outline, gaps)
                                     })
                                     .collect::<Vec<_>>();
-                                // The first pane's top edge sits one Stack band below the
-                                // card's top line, and the Stack segment closes the gap.
+                                // The Stack band stays fixed while its segment joins the
+                                // first pane's allocated title row.
                                 let band = chrome_title_metrics(metrics).text_height
                                     + metrics.padding / 3.0;
                                 assert!(
@@ -1401,7 +1399,7 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                 assert_eq!(
                                     rules[0].0.title_y,
                                     Some(crate::scene::title_rule_y(
-                                        workspace.header_viewport.top,
+                                        panes[0].rect.top,
                                         panes[0].rect.height
                                     ))
                                 );
@@ -1862,7 +1860,10 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
             let current = workspace(720, after_zoom);
             assert_eq!(current.pane_viewport.top, 52.0);
             assert_eq!(current.header_viewport.top, 76.0);
-            assert_eq!(current.panes[0].rect.top, current.header_viewport.top);
+            assert_eq!(
+                current.panes[0].rect.top,
+                current.header_viewport.top + if current.panes[0].selected { 10.0 } else { 0.0 }
+            );
             let shared_top = current.card_rect(current.chrome, metrics, 1.0).top;
             assert_eq!(shared_top, 62.0);
             assert_eq!(current.sidebar().unwrap().top, shared_top);
@@ -3953,7 +3954,16 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                 assert_eq!(tabs.len(), workspace.panes.len());
                 let exact_pitch = scale == 1.0 || scale == 2.0;
                 let tolerance = if exact_pitch { 0.0 } else { 1.0 };
-                if let Some(above) = selected.checked_sub(1) {
+                if selected == 0 {
+                    let cap = tabs[selected].as_ref().unwrap().tab.top;
+                    let pitch = chrome_title_metrics(metrics).text_height.floor();
+                    let gap = cap - fill.bounds.top;
+                    assert!(
+                        (gap - pitch).abs() <= tolerance,
+                        "first band gap {gap} differs from the collapsed pitch {pitch} \
+                         (scale {scale}, font {font_size})"
+                    );
+                } else if let Some(above) = selected.checked_sub(1) {
                     let cap = tabs[selected].as_ref().unwrap().tab.top;
                     assert!(
                         cap >= workspace.panes[above].rect.bottom(),
@@ -4172,6 +4182,114 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                         .iter()
                         .all(|rect| rect.right() <= notch.tab.start + notch.tab.return_run + 0.001),
                     "title focus must stop before the empty middle and action group"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn first_pane_bands_keep_stack_clearance_in_selected_and_unselected_columns() {
+    use eon_workspace_protocol::v39::Column;
+    let mut fonts = clipping_test_fonts();
+    let mut swash = SwashCache::new();
+    for scale in [1.0, 1.125, 4.0 / 3.0, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        for count in [1, 3] {
+            for focused in [true, false] {
+                let mut snapshot = popup_title_snapshot("Popup", 4.0);
+                let tab = &mut snapshot.tabs[0];
+                tab.selected_popup = None;
+                tab.popups.clear();
+                let pane = eon_workspace_protocol::v39::Pane {
+                    id: "other".into(),
+                    label: "other".into(),
+                    pinned_name: None,
+                    session: "other".into(),
+                    endpoint: b"/tmp/other.sock".to_vec(),
+                    live: true,
+                    attention: None,
+                };
+                tab.columns = vec![Column {
+                    expanded: "p0".into(),
+                    panes: (0..count)
+                        .map(|index| eon_workspace_protocol::v39::Pane {
+                            id: format!("p{index}"),
+                            label: format!("p{index} gjpqy"),
+                            session: format!("s{index}"),
+                            endpoint: format!("/tmp/p{index}.sock").into_bytes(),
+                            ..pane.clone()
+                        })
+                        .collect(),
+                }];
+                tab.selected_pane = Some(if focused { "p0" } else { "other" }.into());
+                if !focused {
+                    tab.columns.push(Column {
+                        expanded: "other".into(),
+                        panes: vec![pane],
+                    });
+                }
+                let workspace = WorkspaceScene::from_snapshot(
+                    &snapshot,
+                    PhysicalSize::new(1600, 900),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| (text.into(), text.len() as f32 * metrics.width),
+                );
+                let column = usize::from(!focused);
+                let (area, _, panes) = workspace.column_cards().nth(column).unwrap();
+                assert_eq!(panes[0].id, "p0");
+                let terminal = if focused {
+                    workspace.terminal
+                } else {
+                    workspace.other_columns[0].terminal
+                };
+                let border = physical_outline_width(1, scale as f32);
+                let focus = physical_outline_width(2, scale as f32);
+                let stroke = if focused { focus } else { border };
+                let fill = workspace.card_fill(area, metrics, focus);
+                let tabs = PaneTitleTab::workspace(
+                    &mut fonts.font_system,
+                    &mut swash,
+                    metrics,
+                    &workspace,
+                    (border, focus),
+                    None,
+                )
+                .remove(column);
+                let cap = tabs[0].as_ref().unwrap().tab.top;
+                let gap = cap - fill.bounds.top;
+                let pitch = chrome_title_metrics(metrics).text_height.floor();
+                let tolerance = if scale == 1.0 || scale == 2.0 {
+                    0.0
+                } else {
+                    1.0
+                };
+                assert!(
+                    (gap - pitch).abs() <= tolerance,
+                    "first gap {gap}, pitch {pitch}, scale {scale}, panes {count}, focused {focused}"
+                );
+                let rules = workspace
+                    .pane_outlines(panes, terminal, fill, border, metrics, stroke)
+                    .into_iter()
+                    .map(|outline| (outline, [SceneRect::default(); 2]))
+                    .collect::<Vec<_>>();
+                let mut batch = RectangleBatch::new(1600, 900);
+                batch.push_pane_outlines(
+                    fill,
+                    workspace.pane_viewport,
+                    &rules,
+                    &tabs,
+                    focused.then_some(0),
+                    Some(palette::PRIMARY_TEXT),
+                    border,
+                    stroke,
+                );
+                assert!(
+                    painted_rects(&batch).any(|rect| rect
+                        .contains(panes[0].rect.right() - metrics.padding * 3.0, cap + 0.5,)),
+                    "first band's stroke must be drawn at the measured cap"
                 );
             }
         }

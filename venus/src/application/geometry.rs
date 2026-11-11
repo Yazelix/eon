@@ -209,7 +209,9 @@ mod tests {
             sidebar: eon_workspace_protocol::v39::Sidebar::Open,
             attention_queue: Vec::new(),
         };
-        for popup in [false, true] {
+        for (popup, pane_count) in [(false, 1), (false, 3), (true, 3)] {
+            let mut snapshot = snapshot.clone();
+            snapshot.tabs[0].columns[0].panes.truncate(pane_count);
             if popup {
                 show_test_popup(&mut snapshot);
             }
@@ -248,6 +250,7 @@ mod tests {
         }
         // Card gaps yield on tiny windows; the window still gives a tiny requested grid, here for
         // a popup over two columns.
+        show_test_popup(&mut snapshot);
         snapshot.tabs[0]
             .columns
             .push(eon_workspace_protocol::v39::Column {
