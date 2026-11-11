@@ -270,6 +270,10 @@ v0.2.0 release assets):
 - **Agents:** the checks ran without agent accounts, so the Agent popup and
   the quota chips were not exercised from the archive.
 - **eonbase:** the archive has no eonbase; it is available only through Nix.
+- **Helix highlighting:** Blueprint, Drools, GNU assembler (GAS), Hare, Jinja2,
+  nginx and Prolog have no syntax highlighting in the archive. The Nix package
+  keeps their grammars. The archive's `THIRD-PARTY-NOTICES/` lists its included
+  components and license terms.
 - **Interrupted install:** it can leave a `.eon-stage-*` directory in the
   prefix ([Failure and recovery](#failure-and-recovery)).
 - **Restart:** restarting the machine ends live terminals, as in the Nix

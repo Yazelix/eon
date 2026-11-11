@@ -1,0 +1,38 @@
+Source: https://www.iana.org/help/licensing-terms
+Retrieved: 2026-11-11 UTC
+Page last revised: 2021-11-10
+
+Joint Statement of IANA and IETF Concerning Copyright Rights in the Protocol
+Registries dated 10 November 2021
+
+Terminology. For the purposes of this statement, “IANA” means the Internet
+Corporation for Assigned Names and Numbers (ICANN) and its affiliate that
+performs the IANA functions, and “IETF” means IETF Trust, the body that manages
+intellectual property matters for the Internet Engineering Task Force. “Protocol
+Registries” means the technical protocol registry data directly linked at either
+https://www.iana.org/protocols or https://www.ietf.org/assignments/; it does not
+include any other material on or linked from those pages (e.g., the RFC
+documents that are linked on those pages are excluded).
+
+IANA and IETF intend that the Protocol Registries may be freely used by any
+party for any purpose. Both IANA and IETF believe that the Protocol Registries
+consist primarily of factual information that is unlikely to be protectable as a
+matter of copyright law. However, for additional clarity, and to avoid any
+potential confusion about applicable rights, both IANA and IETF desire to (a)
+dedicate any applicable copyright rights that they may own in the Protocol
+Registries to the public domain, and (b) license any copyright or related rights
+for which they are a licensee (with a right to sublicense) to the broadest
+extent that they are permitted to do so. Accordingly, both IANA and IETF affirm
+that any applicable rights that they may have in the Protocol Registries are
+subject to the Creative Commons CC0 1.0 dedication found at
+https://creativecommons.org/publicdomain/zero/1.0/legalcode.
+
+Disclaimer. While as of the date of this statement neither IANA nor IETF are
+aware of any third parties claiming intellectual property rights in the Protocol
+Registries, neither can guarantee that third parties will not do so. Further,
+the Protocol Registries are made available without any other sort of
+representation or warranty. The limitations and disclaimers found in the CC0 1.0
+dedication are an integral part of this joint statement.  For example, in no way
+are the patent or trademark rights of any person affected by CC0, nor are the
+rights that other persons may have in the work or in how the work is used,
+including data protection rights.

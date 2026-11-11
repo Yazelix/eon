@@ -68,10 +68,14 @@ pub(crate) fn inputs() -> Inputs {
                 cursor_trail_color: None,
                 cursor_trail_duration: Some(1.5),
                 font_family: None,
-                font_fallbacks: vec![
-                    "Symbols Nerd Font Mono".into(),
-                    "Accelerando Terminal".into(),
-                ],
+                font_fallbacks: if option_env!("EON_WITHOUT_ACCELERANDO") == Some("1") {
+                    vec!["Symbols Nerd Font Mono".into()]
+                } else {
+                    vec![
+                        "Symbols Nerd Font Mono".into(),
+                        "Accelerando Terminal".into(),
+                    ]
+                },
                 font_size: None,
                 line_height: None,
                 columns: None,
@@ -240,6 +244,16 @@ fn nonempty_environment_path(name: &str) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{eon_icon, inputs};
+
+    #[test]
+    fn packaged_font_defaults_follow_the_accelerando_omission() {
+        let fonts = inputs().defaults.terminal.font_fallbacks;
+        assert!(fonts.iter().any(|font| font == "Symbols Nerd Font Mono"));
+        assert_eq!(
+            fonts.iter().any(|font| font == "Accelerando Terminal"),
+            option_env!("EON_WITHOUT_ACCELERANDO") != Some("1")
+        );
+    }
 
     #[test]
     fn agent_popup_starts_codex_without_its_shared_daemon() {

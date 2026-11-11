@@ -35,6 +35,11 @@ installation, and proven contract changes.
   (`eon-xodrj.4`). Opening the popup from the CLI is tracked by
   `eon-agent-parity-a9g0.1`. Configurations already at the 32-enabled-popup
   limit must disable Editor or another popup to load.
+- The Nix-free archive carries generated third-party notices. Its Helix build
+  omits the Blueprint, Drools, GNU assembler, Hare, Jinja2, nginx and Prolog
+  grammars, so those languages lack syntax highlighting in the archive. The
+  Nix package keeps those grammars. An opt-in archive variant omits Accelerando,
+  its fonts and its default font fallback (`eon-igae.15.6`).
 
 - `eon column close PANE --yes [--json]` closes the pane's Stack through
   EONW v39. Without `--yes`, it lists every terminal it would stop and

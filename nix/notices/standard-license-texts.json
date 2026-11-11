@@ -1,0 +1,18 @@
+{
+  "MIT": {
+    "hash": "sha256-sFeF+fGOZxa6tjQksRRUUTuZQ6IiWVtwQRAJIC/FkrU=",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/MIT.txt"
+  },
+  "ISC": {
+    "hash": "sha256-8uxgf2e7DdMFO0mDWwIRDVzQ+Otto6rE3AsUKmspm+k=",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/ISC.txt"
+  },
+  "Apache-2.0": {
+    "hash": "sha256-B05uMshqTA74s+0ltyHKI6yoPfJ3zYgQbvcXfDVGFf8=",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/Apache-2.0.txt"
+  },
+  "LLVM-exception": {
+    "hash": "sha256-40xYM4vYnUPnCeImYQ2PMrPjxH9K2amajcHUrHhCSI4=",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/LLVM-exception.txt"
+  }
+}

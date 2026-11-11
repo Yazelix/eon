@@ -1,0 +1,71 @@
+# Build-only dependencies which contribute generated or embedded code are inventoried separately.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+accepted = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "BSL-1.0",
+  "CC0-1.0",
+  "Unlicense",
+  "0BSD",
+  "MPL-2.0",
+  "CDLA-Permissive-2.0",
+  "WTFPL",
+]
+
+# The overseer accepted this exact Nushell dependency for the archive.
+[pwd]
+accepted = ["CC-PDDC"]
+[pwd.clarify]
+license = "CC-PDDC"
+[[pwd.clarify.files]]
+path = "LICENSE"
+checksum = "88a49ec7b8c2a0ab11d597889a39e2bb631eee8c3b184d1d0dbd2ea15388bb9b"
+
+[orbit-protocol.clarify]
+license = "Apache-2.0"
+[[orbit-protocol.clarify.files]]
+path = "../../LICENSE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+
+[yazelix-orbit.clarify]
+license = "Apache-2.0"
+[[yazelix-orbit.clarify.files]]
+path = "LICENSE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+
+[yazelix-venus.clarify]
+license = "Apache-2.0"
+[[yazelix-venus.clarify.files]]
+path = "LICENSE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+
+[eon.clarify]
+license = "Apache-2.0"
+[[eon.clarify.files]]
+path = "../../../LICENSE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+
+[eon-manifest.clarify]
+license = "Apache-2.0"
+[[eon-manifest.clarify.files]]
+path = "../../../LICENSE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+
+[eon-runtime.clarify]
+license = "Apache-2.0"
+[[eon-runtime.clarify.files]]
+path = "../../LICENSE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+
+[eon-workspace-protocol.clarify]
+license = "Apache-2.0"
+[[eon-workspace-protocol.clarify.files]]
+path = "../../LICENSE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"

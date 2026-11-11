@@ -71,6 +71,7 @@
       # Each target the manifest names gets its outputs from this one definition.
       perSystem =
         system:
+        { archive ? false, withoutAccelerando ? false }:
         let
           pkgs = import nixpkgs {
             inherit system;
@@ -221,6 +222,7 @@
             root = ./.;
             fileset = lib.fileset.unions [
               crateFiles
+              ./LICENSE
               ./flake.nix
               ./flake.lock
               ./components
@@ -250,7 +252,31 @@
           yaziIdentity = component "yazi";
           lazygitIdentity = component "lazygit";
           ratconfigIdentity = component "ratconfig";
-          animaPackage = anima.packages.${system}.anima;
+          animaPackage = anima.packages.${system}.anima.overrideAttrs (old: lib.optionalAttrs withoutAccelerando {
+            src = let
+              root = /. + builtins.unsafeDiscardStringContext anima.outPath;
+              path = relative: root + "/${relative}";
+            in lib.fileset.toSource {
+              inherit root;
+              fileset = lib.fileset.difference (lib.fileset.unions (map path [
+                "Cargo.toml" "Cargo.lock" "LICENSE" "README.md" "src"
+              ])) (lib.fileset.unions (map path [
+                "src/accelerando-glyphs.bin" "src/accelerando-glyphs.NOTICE"
+              ]));
+            };
+            patches = (old.patches or [ ]) ++ [ ./nix/notices/anima-without-accelerando.patch ];
+            env.RUSTFLAGS = "--cfg eon_without_accelerando --check-cfg=cfg(eon_without_accelerando)";
+            # The upstream postInstall also links the font output into Anima's closure.
+            postInstall = ''
+              install -Dm444 LICENSE "$out/share/licenses/anima/LICENSE"
+              if "$out/bin/anima" accelerando > /dev/null 2> error; then
+                echo "Accelerando must not be available in this archive" >&2
+                exit 1
+              fi
+              grep -F 'unsupported screen style' error
+              "$out/bin/anima" --help | grep -F game_of_life_gliders
+            '';
+          });
 
           githubSource =
             identity: hash:
@@ -548,8 +574,8 @@
           venusFonts = [
             pkgs.dejavu_fonts
             pkgs.nerd-fonts.symbols-only
-            anima.packages.${system}.accelerando-font
-          ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.noto-fonts-color-emoji ];
+          ] ++ lib.optional (!withoutAccelerando) anima.packages.${system}.accelerando-font
+            ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.noto-fonts-color-emoji ];
           # Font directories are relative to this file, so the relocated bundle finds them too.
           venusFontsConf = pkgs.runCommand "fonts.conf" { } ''
             sed 's|<dir>${builtins.storeDir}/|<dir prefix="relative">|' ${
@@ -615,6 +641,14 @@
             }
             // venusFontEnvironment
             // venusTestEnvironment
+            // lib.optionalAttrs (withoutAccelerando && pkgs.stdenv.isLinux) {
+              # Existing tests use Accelerando as a fixture; it stays out of runtime fonts.
+              preCheck = ''
+                export FONTCONFIG_FILE=${pkgs.makeFontsConf {
+                  fontDirectories = venusFonts ++ [ anima.packages.${system}.accelerando-font ];
+                }}
+              '';
+            }
             // lib.optionalAttrs pkgs.stdenv.isDarwin {
               # Venus's tests build their font database without
               # EON_VENUS_FONT_DIRS, and on macOS it reads only the system and
@@ -649,7 +683,10 @@
           # Eon's Helix is built without Steel (EON-C9), which nova-helix enables by
           # default. buildRustPackage reads buildNoDefaultFeatures and buildFeatures
           # only from its own call, so the override sets what its Cargo hook reads.
-          helixPackage = helix.packages.${system}.yazelix_helix.overrideAttrs {
+          omittedGrammars = builtins.fromJSON (builtins.readFile ./nix/notices/omitted-grammars.json);
+          helixPackage = (helix.packages.${system}.yazelix_helix.override {
+            includeGrammarIf = grammar: !archive || !(builtins.elem grammar.name omittedGrammars);
+          }).overrideAttrs {
             cargoBuildNoDefaultFeatures = true;
             cargoBuildFeatures = [ "git" ];
           };
@@ -979,6 +1016,7 @@
               "Anima manifest version does not match the selected Cargo package";
             buildWorkspacePackage ({
               pname = "eon-rust";
+              env = lib.optionalAttrs withoutAccelerando { EON_WITHOUT_ACCELERANDO = "1"; };
               inherit (eonCargo.package) version;
               src = workspaceSource;
               cargoLock = workspaceCargoLock;
@@ -1155,7 +1193,10 @@
                 install -Dm444 ${carapacePackage.src}/LICENSE "$out/share/licenses/eon/carapace/LICENSE"
                 install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
                 install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
-              '' + (tools.postInstall or "") + lib.optionalString pkgs.stdenv.isDarwin ''
+              '' + (tools.postInstall or "") + lib.optionalString withoutAccelerando ''
+                "$out/bin/eon" config defaults --json | ${pkgs.jq}/bin/jq -e \
+                  '.terminal.font_fallbacks == ["Symbols Nerd Font Mono"]'
+              '' + lib.optionalString pkgs.stdenv.isDarwin ''
                 cp -R ${macosApp}/Applications "$out/Applications"
                 chmod -R u+w "$out/Applications"
                 printf '%s' "$out/bin/eon" > "$out/Applications/Eon.app/Contents/Resources/eon-command"
@@ -1455,6 +1496,22 @@
             ];
             fallbacks = eonHelix.bundleFallbacks;
           };
+          noticeTool = buildWorkspacePackage {
+            pname = "archive-notices";
+            version = "0.1.0";
+            src = packageSource [ ./eon/tools/archive-notices ];
+            cargoLock = workspaceCargoLock;
+            cargoBuildFlags = [ "--package" "archive-notices" ];
+            doCheck = false;
+          };
+          archiveNotices = import ./nix/notices/inputs.nix {
+            inherit pkgs manifest noticeTool bundleRelink helix yazi ghostty ghosttyDeps bend anima
+            zig rustToolchain system withoutAccelerando githubSource codexbarIdentity
+            animaIdentity helixIdentity venusFonts venusBuildInputs venusRuntimeLibraries
+            venusFontsConf filesPopupConfig eonRust eonPackage orbitPackage venusPackage installerPackage
+            animaPackage nushellPackage bashPackage starshipPackage zoxidePackage fzfPackage
+            atuinPackage carapacePackage helixPackage yaziPackage lazygitPackage codexbarPackage;
+          };
           br = pkgs.runCommand "br-0.7.2" { } ''
             mkdir -p "$out/bin" "$out/share/licenses/br"
             ${pkgs.gnutar}/bin/tar -xzf ${pkgs.fetchurl {
@@ -1483,6 +1540,11 @@
             }.${system}} -C "$out/bin" bv LICENSE
             mv "$out/bin/LICENSE" "$out/share/licenses/bv/LICENSE"
           '';
+          archivePackages = (perSystem system { archive = true; }).packages.${system};
+          withoutAccelerandoPackages = (perSystem system {
+            archive = true;
+            withoutAccelerando = true;
+          }).packages.${system};
         in
         {
           # The installer, the manual bundle, the release files, the demo recorder
@@ -1495,16 +1557,32 @@
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
           } // lib.optionalAttrs pkgs.stdenv.isLinux rec {
             installer = installerPackage;
-            manual-bundle = import ./nix/linux-bundle.nix {
+            manual-bundle = if !archive then
+              archivePackages.manual-bundle
+            else import ./nix/linux-bundle.nix {
               inherit pkgs eonPackage eonProduct installer;
               relink = bundleRelink;
               manifestFile = ./components/eon-v5.json;
               lockFile = ./flake.lock;
+              notices = archiveNotices.notices;
             };
-            release = import ./nix/release.nix {
+            release = if !archive then
+              archivePackages.release
+            else import ./nix/release.nix {
               inherit pkgs installer;
               bundle = manual-bundle;
+              noticeCheck = archiveNotices.check;
             };
+            archive-notices = if archive then archiveNotices.notices else
+              archivePackages.archive-notices;
+            archive-notice-inputs = if archive then archiveNotices.input else
+              archivePackages.archive-notice-inputs;
+            archive-notice-check = if archive then archiveNotices.check else
+              archivePackages.archive-notice-check;
+            manual-bundle-without-accelerando =
+              withoutAccelerandoPackages.manual-bundle;
+            release-without-accelerando =
+              withoutAccelerandoPackages.release;
           };
           apps.${system} = {
             default = {
@@ -1578,5 +1656,5 @@
           } // venusFontEnvironment // venusTestEnvironment);
         };
     in
-    lib.foldl' lib.recursiveUpdate { } (map perSystem manifest.product.targets);
+    lib.foldl' lib.recursiveUpdate { } (map (system: perSystem system { }) manifest.product.targets);
 }

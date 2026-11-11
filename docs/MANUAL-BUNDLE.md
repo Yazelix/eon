@@ -162,13 +162,24 @@ original path. That bead records its exact second archive and unchanged
 component graph. Its archives used the earlier Bubblewrap mechanism, which the
 installer no longer accepts.
 
-Existing component notices remain in the payload, and Eon's license is carried
-at the archive root. The payload's programs and libraries are modified builds:
-relinking changes their interpreter and library search paths. The published
-payload's complete notice and source obligations, including for these modified
-files and the launcher's statically linked dependencies, remain a separate
-open gate: the notices in the payload do not by themselves establish
-redistribution clearance.
+The archive root contains `THIRD-PARTY-NOTICES/` with the generated inventory,
+license texts and attribution. It identifies the actual relinked store outputs
+and the code embedded in their binaries, including the static launcher and
+installer. Relinking changes interpreters and library search paths. The release
+build refuses a payload with unresolved license or notice findings. Delivery
+of corresponding source for the modified and linked components remains a
+separate publication gate (`eon-igae.15.7`).
+
+The archive omits the Helix grammars for Blueprint, Drools, GNU assembler
+(GAS), Hare, Jinja2, nginx and Prolog because they use strong-copyleft licenses.
+Those languages have no syntax
+highlighting in the archive; the Nix package keeps its grammars.
+
+The default archive includes Accelerando and its fonts. Its release check
+requires the rights holder's grant for the exact font and glyph bytes.
+`nix build .#manual-bundle-without-accelerando` builds the alternative archive
+without those fonts or the Accelerando program; its default font fallback list
+contains only Symbols Nerd Font Mono. Game of Life remains available.
 
 Manual-download copy: Download the immutable Linux archive, `SHA256SUMS` and
 `SHA256SUMS.sig` from the release. Verify them with the Eon release public key

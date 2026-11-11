@@ -198,6 +198,7 @@ let
 in
 {
   inherit tree glibcFloor;
+  launcherPrograms = map (wrapper: wrapper.program) bundleWrappers;
   excluded = map toString excluded;
   substituted = map (lib.mapAttrs (_: toString)) substitutes;
   launch = pkgs.runCommand "eon-bundle-launch" {

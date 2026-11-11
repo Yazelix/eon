@@ -1,4 +1,4 @@
-{ pkgs, eonPackage, eonProduct, installer, relink, manifestFile, lockFile }:
+{ pkgs, eonPackage, eonProduct, installer, relink, manifestFile, lockFile, notices }:
 let
   name = "eon-${eonPackage.version}-x86_64-linux";
   provenance = pkgs.writeText "eon-bundle-provenance.json" (builtins.toJSON {
@@ -36,6 +36,7 @@ pkgs.runCommand "${name}-bundle" {
   cp ${lockFile} ${name}/flake.lock
   cp ${provenance} ${name}/provenance.json
   cp ${../LICENSE} ${name}/licenses/eon
+  cp -R ${notices} ${name}/THIRD-PARTY-NOTICES
   tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner \
     -cf - ${name} | zstd -T2 -10 -o "$out/${name}.tar.zst"
 ''

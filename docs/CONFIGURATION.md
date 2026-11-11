@@ -489,7 +489,9 @@ most eight installed family names. The built-in order is listed above, so alien
 glyphs avoid searching all installed fonts.
 An explicit list replaces that order. The terminal package includes fonts for
 ordinary text, Nerd Font icons, Accelerando and, on Linux, Noto Color Emoji; it
-does not install them system-wide. Compositors may ignore blur or initial window
+does not install them system-wide. The archive built without Accelerando omits
+that font and defaults to `["Symbols Nerd Font Mono"]` for `font_fallbacks`.
+Compositors may ignore blur or initial window
 sizing.
 
 The terminal settings apply when a surface opens or reopens. Shell settings are

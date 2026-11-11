@@ -1,0 +1,248 @@
+{
+  "yazi-native-lua": {
+    "crate": {
+      "name": "lua-src",
+      "version": "550.0.0",
+      "checksum": "e836dc8ae16806c9bdcf42003a88da27d163433e3f9684c52f0301258004a4fb"
+    },
+    "version": "5.5.0",
+    "licenses": [
+      "MIT"
+    ],
+    "files": [
+      "lua-5.5.0/lua.h"
+    ],
+    "hosts": [
+      "yazi"
+    ],
+    "binding": {
+      "name": "mlua-sys",
+      "version": "0.10.0",
+      "features": [
+        "lua55",
+        "vendored"
+      ],
+      "build_package": [
+        "lua-src",
+        "550.0.0"
+      ]
+    }
+  },
+  "nushell-native-libgit2": {
+    "crate": {
+      "name": "libgit2-sys",
+      "version": "0.18.3+1.9.2",
+      "checksum": "c9b3acc4b91781bb0b3386669d325163746af5f6e4f73e6d2d630e09a35f3487"
+    },
+    "version": "1.9.2",
+    "licenses": [
+      "GPL-2.0-only WITH GCC-exception-2.0",
+      "BSD-3-Clause",
+      "BSD-2-Clause",
+      "MIT",
+      "OpenSSL",
+      "CC0-1.0"
+    ],
+    "files": [
+      "libgit2/COPYING",
+      "libgit2/AUTHORS",
+      "libgit2/deps/llhttp/LICENSE-MIT",
+      "libgit2/deps/pcre/COPYING"
+    ],
+    "hosts": [
+      "nushell"
+    ]
+  },
+  "nushell-native-sqlite": {
+    "crate": {
+      "name": "libsqlite3-sys",
+      "version": "0.35.0",
+      "checksum": "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
+    },
+    "version": "3.50.2",
+    "licenses": [
+      "blessing"
+    ],
+    "files": [
+      "sqlite3/sqlite3.h"
+    ],
+    "hosts": [
+      "nushell"
+    ],
+    "binding": {
+      "name": "libsqlite3-sys",
+      "version": "0.35.0",
+      "features": [
+        "bundled"
+      ],
+      "forbidden_features": [
+        "sqlcipher",
+        "bundled-sqlcipher",
+        "bundled-sqlcipher-vendored-openssl"
+      ]
+    }
+  },
+  "atuin-native-sqlite": {
+    "crate": {
+      "name": "libsqlite3-sys",
+      "version": "0.30.1",
+      "checksum": "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+    },
+    "version": "3.46.0",
+    "licenses": [
+      "blessing"
+    ],
+    "files": [
+      "sqlite3/sqlite3.h"
+    ],
+    "hosts": [
+      "atuin"
+    ],
+    "binding": {
+      "name": "libsqlite3-sys",
+      "version": "0.30.1",
+      "features": [
+        "bundled"
+      ],
+      "forbidden_features": [
+        "sqlcipher",
+        "bundled-sqlcipher",
+        "bundled-sqlcipher-vendored-openssl"
+      ]
+    }
+  },
+  "nushell-native-lmdb": {
+    "crate": {
+      "name": "lmdb-master-sys",
+      "version": "0.2.6",
+      "checksum": "aaeb9bd22e73bd1babffff614994b341e9b2008de7bb73bf1f7e9154f1978f8b"
+    },
+    "version": "0.9.70",
+    "licenses": [
+      "OLDAP-2.8"
+    ],
+    "files": [
+      "lmdb/libraries/liblmdb/COPYRIGHT",
+      "lmdb/libraries/liblmdb/LICENSE"
+    ],
+    "hosts": [
+      "nushell"
+    ]
+  },
+  "ring-native-code": {
+    "crate": {
+      "name": "ring",
+      "version": "0.17.14",
+      "checksum": "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7"
+    },
+    "version": "0.17.14",
+    "licenses": [
+      "ISC",
+      "Apache-2.0",
+      "MIT"
+    ],
+    "files": [
+      "LICENSE",
+      "LICENSE-BoringSSL",
+      "LICENSE-other-bits",
+      "src/polyfill/once_cell/LICENSE-MIT",
+      "src/polyfill/once_cell/LICENSE-APACHE",
+      "third_party/fiat/LICENSE"
+    ],
+    "hosts": [
+      "nushell",
+      "atuin",
+      "yazi"
+    ]
+  },
+  "yazi-native-jemalloc": {
+    "crate": {
+      "name": "tikv-jemalloc-sys",
+      "version": "0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7",
+      "checksum": "cd8aa5b2ab86a2cefa406d889139c162cbb230092f7d1d7cbc1716405d852a3b"
+    },
+    "version": "5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7",
+    "licenses": [
+      "BSD-2-Clause"
+    ],
+    "files": [
+      "jemalloc/COPYING"
+    ],
+    "hosts": [
+      "yazi"
+    ]
+  },
+  "yazi-native-oniguruma": {
+    "crate": {
+      "name": "onig_sys",
+      "version": "69.9.3",
+      "checksum": "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
+    },
+    "version": "6.9.9",
+    "licenses": [
+      "BSD-2-Clause"
+    ],
+    "files": [
+      "oniguruma/AUTHORS",
+      "oniguruma/COPYING"
+    ],
+    "hosts": [
+      "yazi"
+    ]
+  },
+  "atuin-native-tree-sitter": {
+    "crate": {
+      "name": "tree-sitter",
+      "version": "0.26.8",
+      "checksum": "887bd495d0582c5e3e0d8ece2233666169fa56a9644d172fc22ad179ab2d0538"
+    },
+    "version": "0.26.8",
+    "licenses": [
+      "MIT",
+      "Unicode-DFS-2016"
+    ],
+    "files": [
+      "LICENSE",
+      "src/unicode/LICENSE"
+    ],
+    "hosts": [
+      "atuin"
+    ]
+  },
+  "helix-native-tree-sitter": {
+    "crate": {
+      "name": "tree-house-bindings",
+      "version": "0.3.2",
+      "checksum": "6f5d0eed0db98578618e598b8f6f413f7c172bade1f12f8242d71c38dd5deb0f"
+    },
+    "version": "vendored tree-house-bindings 0.3.2 snapshot",
+    "licenses": [
+      "MIT",
+      "Unicode-DFS-2016"
+    ],
+    "files": [
+      "vendor/LICENSE",
+      "vendor/src/unicode/LICENSE"
+    ],
+    "hosts": [
+      "helix"
+    ]
+  },
+  "nushell-native-blake3": {
+    "crate": {
+      "name": "blake3",
+      "version": "1.8.3",
+      "checksum": "2468ef7d57b3fb7e16b576e8377cdbde2320c60e1491e961d11da40fc4f02a2d"
+    },
+    "version": "1.8.3",
+    "licenses": [
+      "CC0-1.0"
+    ],
+    "files": [
+      "LICENSE_CC0"
+    ],
+    "hosts": [
+      "nushell"
+    ]
+  }
+}
