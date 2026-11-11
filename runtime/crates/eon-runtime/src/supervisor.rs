@@ -1038,6 +1038,11 @@ fn supervise(
         log.orbit_directory().ok(),
         Instant::now() + SESSION_CLEANUP_TIMEOUT,
     )?;
+    if let Some(attention) = &mut attention {
+        for session in &sessions {
+            attention.recover(session.run_id());
+        }
+    }
     let mut scrollback = Snapshots::new(runtime);
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
     let mut editor_sockets = Sockets::recover(runtime, &sessions, log);

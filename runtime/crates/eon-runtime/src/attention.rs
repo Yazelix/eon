@@ -129,6 +129,7 @@ struct Raise {
     /// The change sequence it raised at.
     changed: u64,
     seen: bool,
+    notified: bool,
 }
 
 struct Record {
@@ -136,6 +137,7 @@ struct Record {
     /// Fixed on first sight of this change sequence.
     changed_at: Instant,
     raise: Option<Raise>,
+    blocked_notified: bool,
 }
 
 impl Record {
@@ -213,13 +215,14 @@ impl Terminal {
     }
 
     fn see(&mut self) {
-        for raise in self
-            .records
-            .iter_mut()
-            .chain(&mut self.omitted)
-            .filter_map(|record| record.raise.as_mut())
-        {
-            raise.seen = true;
+        for record in self.records.iter_mut().chain(&mut self.omitted) {
+            if let Some(raise) = &mut record.raise {
+                raise.seen = true;
+            }
+            // Viewing consumes the notice, not the blocked attention itself.
+            if record.record.state == ProgramState::Blocked {
+                record.blocked_notified = true;
+            }
         }
     }
 }
@@ -243,6 +246,8 @@ pub(super) type Key = (State, Instant, usize, usize, usize);
 
 pub(super) struct Attention {
     terminals: Vec<Terminal>,
+    /// Adopted Orbit runs and their first reply's notification baseline.
+    recovered: Vec<(String, Option<u64>)>,
     focus: Option<String>,
     /// Whether an attached Venus's native window has focus (EON-C31's Seen).
     viewing: bool,
@@ -264,6 +269,7 @@ impl Attention {
             .map_or(0, |since| since.as_millis() as u64);
         Attention {
             terminals: Vec::new(),
+            recovered: Vec::new(),
             focus: None,
             viewing: false,
             cursor: None,
@@ -271,6 +277,12 @@ impl Attention {
             sidebar: if enabled { Sidebar::Open } else { Sidebar::Off },
             epoch: (now, wall),
         }
+    }
+
+    /// Baselines notifications for an adopted run without changing Seen.
+    // shortcut: recovery's first reply is quiet; persist consumption if those changes must notify.
+    pub(super) fn recover(&mut self, run: &str) {
+        self.recovered.push((run.into(), None));
     }
 
     /// Sends due requests and reads replies without blocking. A miss, a Busy
@@ -300,6 +312,11 @@ impl Attention {
 
     /// Drops the attention of removed targets and of ended or replaced runs.
     pub(super) fn retain(&mut self, targets: &[Target], sessions: &[RunningSession]) {
+        self.recovered.retain(|(run, _)| {
+            sessions
+                .iter()
+                .any(|session| !session.is_finished() && session.run_id() == run)
+        });
         self.terminals.retain(|terminal| {
             targets
                 .iter()
@@ -312,6 +329,42 @@ impl Attention {
         });
     }
 
+    /// Consumes eligible opportunities before handing them to a best-effort sink.
+    // Delivery is wired by eon-2kvr.2; S1 exercises this through a recording sink.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn take_notifications(
+        &mut self,
+        targets: &[Target],
+        mut send: impl FnMut(&Target, State),
+    ) {
+        for target in targets {
+            let Some(terminal) = self
+                .terminals
+                .iter_mut()
+                .find(|terminal| terminal.session == target.session)
+            else {
+                continue;
+            };
+            for record in &mut terminal.records {
+                let (state, _) = record.normalized(terminal.background > 0);
+                let notified = match state {
+                    State::NeedsInput => &mut record.blocked_notified,
+                    State::Finished | State::Error => {
+                        &mut record
+                            .raise
+                            .as_mut()
+                            .expect("normalized unseen raise")
+                            .notified
+                    }
+                    _ => continue,
+                };
+                if !std::mem::replace(notified, true) {
+                    send(target, state);
+                }
+            }
+        }
+    }
+
     /// Takes one good reply for `session`'s run `run`.
     fn apply(
         &mut self,
@@ -321,6 +374,11 @@ impl Attention {
         status: ProgramStatus,
         now: Instant,
     ) {
+        let notification_baseline = self
+            .recovered
+            .iter_mut()
+            .find(|(id, _)| id == run)
+            .map_or(0, |(_, baseline)| *baseline.get_or_insert(status.update));
         let index = self
             .terminals
             .iter()
@@ -353,6 +411,7 @@ impl Attention {
                     return Record {
                         changed_at: cached.changed_at,
                         raise: cached.raise,
+                        blocked_notified: cached.blocked_notified,
                         record,
                     };
                 }
@@ -363,6 +422,7 @@ impl Attention {
                     at: changed_at,
                     changed: record.changed,
                     seen: false,
+                    notified: record.changed <= notification_baseline,
                 });
                 let raise = match (record.state, record.previous) {
                     (ProgramState::Done | ProgramState::Error, _)
@@ -370,10 +430,16 @@ impl Attention {
                     (ProgramState::Idle, Some(ProgramState::Done)) => cached
                         .filter(|cached| cached.record.state == ProgramState::Done)
                         .and_then(|cached| cached.raise)
-                        .or(own),
+                        // Without a cached record, creation is our only episode-start evidence.
+                        .or(own.map(|raise| Raise {
+                            notified: raise.notified
+                                || (cached.is_none() && record.created <= notification_baseline),
+                            ..raise
+                        })),
                     _ => None,
                 };
                 Record {
+                    blocked_notified: record.changed <= notification_baseline,
                     record,
                     changed_at,
                     raise,
@@ -935,6 +1001,470 @@ mod tests {
             .find(|target| target.session == session)
             .unwrap();
         Some(attention.shown(target, now)?.state)
+    }
+
+    fn notifications(attention: &mut Attention, targets: &[Target]) -> Vec<(String, State)> {
+        let mut notices = Vec::new();
+        attention.take_notifications(targets, |target, state| {
+            notices.push((target.id.clone(), state));
+        });
+        notices
+    }
+
+    #[test]
+    fn notification_opportunities_are_consumed_once_per_raise_or_blocked_episode() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let now = Instant::now();
+        for (program, previous, expected) in [
+            (Done, Some(Working), State::Finished),
+            (Error, Some(Working), State::Error),
+            (Idle, Some(Working), State::Finished),
+            (Blocked, Some(Working), State::NeedsInput),
+        ] {
+            let mut attention = Attention::new(true);
+            let first = record("a", program, previous, 1);
+            attention.apply(&targets, "s", "run", status(1, vec![first.clone()]), now);
+            assert_eq!(
+                notifications(&mut attention, &targets),
+                [("pane-s".into(), expected)]
+            );
+            assert!(notifications(&mut attention, &targets).is_empty());
+
+            let repeat = ProgramRecord {
+                updated: 2,
+                message: "different message".into(),
+                kind: (program == Blocked).then_some(ProgramKind::Question),
+                ..first.clone()
+            };
+            attention.apply(&targets, "s", "run", status(2, vec![repeat]), now);
+            assert!(notifications(&mut attention, &targets).is_empty());
+
+            // A changed sequence is a new episode even if its intervening
+            // working state fell between polls; creation is unchanged.
+            let next = ProgramRecord {
+                created: first.created,
+                ..record("a", program, Some(Working), 4)
+            };
+            attention.apply(&targets, "s", "run", status(4, vec![next]), now);
+            assert_eq!(
+                notifications(&mut attention, &targets),
+                [("pane-s".into(), expected)]
+            );
+            assert!(notifications(&mut attention, &targets).is_empty());
+        }
+    }
+
+    #[test]
+    fn notification_of_done_does_not_replay_when_idle_keeps_its_raise() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let mut attention = Attention::new(true);
+        let now = Instant::now();
+        attention.apply(
+            &targets,
+            "s",
+            "run",
+            status(1, vec![record("a", Done, None, 1)]),
+            now,
+        );
+        assert_eq!(
+            notifications(&mut attention, &targets),
+            [("pane-s".into(), State::Finished)]
+        );
+        let idle = ProgramRecord {
+            created: 1,
+            ..record("a", Idle, Some(Done), 2)
+        };
+        attention.apply(&targets, "s", "run", status(2, vec![idle]), now);
+        assert!(notifications(&mut attention, &targets).is_empty());
+        assert_eq!(state(&attention, &targets, "s", now), Some(State::Finished));
+    }
+
+    #[test]
+    fn notification_viewing_suppresses_without_clearing_blocked_or_catching_up() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let now = Instant::now();
+        for program in [Done, Error, Blocked] {
+            let mut attention = Attention::new(true);
+            attention.observe(Some("s".into()), true);
+            attention.apply(
+                &targets,
+                "s",
+                "run",
+                status(1, vec![record("a", program, None, 1)]),
+                now,
+            );
+            assert!(notifications(&mut attention, &targets).is_empty());
+            attention.observe(Some("s".into()), false);
+            assert!(notifications(&mut attention, &targets).is_empty());
+
+            // Viewing between drains must consume the episode too.
+            attention.apply(
+                &targets,
+                "s",
+                "run",
+                status(2, vec![record("a", program, None, 2)]),
+                now,
+            );
+            attention.observe(Some("s".into()), true);
+            attention.observe(None, false);
+            assert!(notifications(&mut attention, &targets).is_empty());
+            if program == Blocked {
+                assert_eq!(
+                    state(&attention, &targets, "s", now),
+                    Some(State::NeedsInput)
+                );
+                assert!(attention.entry(&targets, "s").is_some());
+            }
+
+            attention.apply(
+                &targets,
+                "s",
+                "run",
+                status(3, vec![record("a", program, None, 3)]),
+                now,
+            );
+            assert_eq!(notifications(&mut attention, &targets).len(), 1);
+
+            let pending = record("a", program, None, 4);
+            attention.apply(&targets, "s", "run", status(4, vec![pending.clone()]), now);
+            let omitted = ProgramStatus {
+                count: 1,
+                omitted: vec![4],
+                ..status(5, Vec::new())
+            };
+            attention.apply(&targets, "s", "run", omitted, now);
+            attention.observe(Some("s".into()), true);
+            attention.observe(None, false);
+            attention.apply(&targets, "s", "run", status(6, vec![pending]), now);
+            assert!(notifications(&mut attention, &targets).is_empty());
+        }
+    }
+
+    #[test]
+    fn notification_background_holds_a_finish_until_work_ends_unless_seen_or_superseded() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let now = Instant::now();
+        for (program, previous, expected) in [
+            (Done, Some(Working), State::Finished),
+            (Idle, Some(Working), State::Finished),
+            (Error, None, State::Error),
+            (Blocked, None, State::NeedsInput),
+        ] {
+            let mut attention = Attention::new(true);
+            let first = record("a", program, previous, 1);
+            let held = ProgramStatus {
+                background: 1,
+                ..status(1, vec![first.clone()])
+            };
+            attention.apply(&targets, "s", "run", held, now);
+            let early = notifications(&mut attention, &targets);
+            if expected == State::Finished {
+                assert!(early.is_empty());
+            } else {
+                assert_eq!(early, [("pane-s".into(), expected)]);
+            }
+            attention.apply(&targets, "s", "run", status(2, vec![first.clone()]), now);
+            let released = notifications(&mut attention, &targets);
+            if expected == State::Finished {
+                assert_eq!(released, [("pane-s".into(), expected)]);
+            } else {
+                assert!(released.is_empty());
+            }
+            assert!(notifications(&mut attention, &targets).is_empty());
+        }
+
+        for viewed in [true, false] {
+            let mut attention = Attention::new(true);
+            let finish = record("a", Done, None, 1);
+            let held = ProgramStatus {
+                background: 1,
+                ..status(1, vec![finish.clone()])
+            };
+            attention.apply(&targets, "s", "run", held, now);
+            assert!(notifications(&mut attention, &targets).is_empty());
+            if viewed {
+                attention.observe(Some("s".into()), true);
+                attention.observe(None, false);
+            } else {
+                let work = record("b", Working, None, 2);
+                let held = ProgramStatus {
+                    background: 1,
+                    ..status(2, vec![finish.clone(), work])
+                };
+                attention.apply(&targets, "s", "run", held, now);
+            }
+            attention.apply(&targets, "s", "run", status(3, vec![finish]), now);
+            assert!(notifications(&mut attention, &targets).is_empty());
+        }
+    }
+
+    #[test]
+    fn notification_consumption_survives_omission_and_old_replies_but_not_new_identity() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let now = Instant::now();
+        for program in [Done, Error, Blocked] {
+            let mut attention = Attention::new(true);
+            let first = record("a", program, None, 1);
+            attention.apply(&targets, "s", "run", status(1, vec![first.clone()]), now);
+            assert_eq!(notifications(&mut attention, &targets).len(), 1);
+            let omitted = ProgramStatus {
+                count: 1,
+                omitted: vec![1],
+                ..status(2, Vec::new())
+            };
+            attention.apply(&targets, "s", "run", omitted, now);
+            assert!(notifications(&mut attention, &targets).is_empty());
+            attention.apply(&targets, "s", "run", status(3, vec![first.clone()]), now);
+            assert!(notifications(&mut attention, &targets).is_empty());
+            attention.apply(
+                &targets,
+                "s",
+                "run",
+                status(2, vec![record("a", program, None, 2)]),
+                now,
+            );
+            assert!(notifications(&mut attention, &targets).is_empty());
+
+            attention.apply(
+                &targets,
+                "s",
+                "run",
+                status(4, vec![record("a", program, None, 4)]),
+                now,
+            );
+            assert_eq!(notifications(&mut attention, &targets).len(), 1);
+            attention.apply(&targets, "s", "run-2", status(1, vec![first]), now);
+            assert_eq!(notifications(&mut attention, &targets).len(), 1);
+            attention.apply(&targets, "s", "run-2", status(2, Vec::new()), now);
+            assert!(notifications(&mut attention, &targets).is_empty());
+
+            // A disabled or full sender drops the opportunity without retry.
+            attention.apply(
+                &targets,
+                "s",
+                "run-2",
+                status(3, vec![record("a", program, None, 3)]),
+                now,
+            );
+            attention.take_notifications(&targets, |_, _| {});
+            assert!(notifications(&mut attention, &targets).is_empty());
+        }
+    }
+
+    #[test]
+    fn notification_targets_cross_hidden_workspaces_and_records_are_independent() {
+        let workspaces = [
+            in_workspace("w1", "w1", "t1", vec![tab("t1", &["s1"], &[], None)]),
+            in_workspace(
+                "w2",
+                "w1",
+                "t2",
+                vec![tab("t2", &["s2"], &[("agent", "a")], None)],
+            ),
+        ];
+        let (targets, focus) = targets(&workspaces);
+        let mut attention = Attention::new(false);
+        let now = Instant::now();
+        attention.observe(focus, true);
+        for session in ["s1", "s2", "a"] {
+            attention.apply(
+                &targets,
+                session,
+                "run",
+                status(
+                    2,
+                    vec![
+                        record("finish", Done, None, 1),
+                        record("input", Blocked, None, 2),
+                    ],
+                ),
+                now,
+            );
+        }
+        let queue_before = attention.queue(&targets).len();
+        assert_eq!(
+            notifications(&mut attention, &targets),
+            [
+                ("pane-s2".into(), State::Finished),
+                ("pane-s2".into(), State::NeedsInput),
+                ("popup-a".into(), State::Finished),
+                ("popup-a".into(), State::NeedsInput),
+            ]
+        );
+        assert!(notifications(&mut attention, &targets).is_empty());
+        assert_eq!(attention.queue(&targets).len(), queue_before);
+        assert_eq!(attention.sidebar(), Sidebar::Off);
+    }
+
+    #[test]
+    fn notification_reconstruction_baselines_surviving_runs_without_seeing_them() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let now = Instant::now();
+        for program in [Done, Error, Blocked] {
+            for background in [0, 1] {
+                let surviving = record("a", program, None, 2);
+                let reply = || ProgramStatus {
+                    background,
+                    count: 2,
+                    omitted: vec![1],
+                    ..status(3, vec![surviving.clone()])
+                };
+                let mut before = Attention::new(true);
+                before.apply(&targets, "s", "run", reply(), now);
+                let expected = state(&before, &targets, "s", now);
+                let _ = notifications(&mut before, &targets);
+
+                let mut recovered = Attention::new(true);
+                recovered.recover("run");
+                recovered.apply(&targets, "s", "run", reply(), now);
+                assert!(notifications(&mut recovered, &targets).is_empty());
+                assert_eq!(state(&recovered, &targets, "s", now), expected);
+                assert_eq!(recovered.sidebar(), Sidebar::Open);
+
+                // Even an initially omitted record belongs to the baseline;
+                // ending background work must not resurrect a held finish.
+                let omitted = record("old", program, None, 1);
+                recovered.apply(
+                    &targets,
+                    "s",
+                    "run",
+                    status(4, vec![surviving.clone(), omitted.clone()]),
+                    now,
+                );
+                assert!(notifications(&mut recovered, &targets).is_empty());
+                let expected = match program {
+                    Done => State::Finished,
+                    Error => State::Error,
+                    Blocked => State::NeedsInput,
+                    _ => unreachable!(),
+                };
+                assert_eq!(state(&recovered, &targets, "s", now), Some(expected));
+                assert!(recovered.entry(&targets, "s").is_some());
+
+                // The same record's next episode and a new record are fresh.
+                let next = ProgramRecord {
+                    created: surviving.created,
+                    ..record("a", program, Some(Working), 5)
+                };
+                recovered.apply(&targets, "s", "run", status(5, vec![next, omitted]), now);
+                assert_eq!(
+                    notifications(&mut recovered, &targets),
+                    [("pane-s".into(), expected)]
+                );
+                recovered.apply(
+                    &targets,
+                    "s",
+                    "run",
+                    status(6, vec![record("new", program, None, 6)]),
+                    now,
+                );
+                assert_eq!(
+                    notifications(&mut recovered, &targets),
+                    [("pane-s".into(), expected)]
+                );
+
+                // A replacement Orbit run starts with its own sequences.
+                recovered.apply(
+                    &targets,
+                    "s",
+                    "run-2",
+                    status(1, vec![record("a", program, None, 1)]),
+                    now,
+                );
+                assert_eq!(
+                    notifications(&mut recovered, &targets),
+                    [("pane-s".into(), expected)]
+                );
+                assert!(notifications(&mut recovered, &targets).is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn notification_omitted_recovery_finish_uses_its_episode_start() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let now = Instant::now();
+        let idle = |created, changed| ProgramRecord {
+            created,
+            ..record("a", Idle, Some(Done), changed)
+        };
+        for background in [0, 1] {
+            let mut before = Attention::new(true);
+            before.apply(
+                &targets,
+                "s",
+                "run",
+                status(1, vec![record("a", Done, None, 1)]),
+                now,
+            );
+            assert_eq!(notifications(&mut before, &targets).len(), 1);
+
+            let mut recovered = Attention::new(true);
+            recovered.recover("run");
+            let baseline = ProgramStatus {
+                count: 2,
+                omitted: vec![1],
+                ..status(3, vec![record("other", Idle, None, 3)])
+            };
+            recovered.apply(&targets, "s", "run", baseline, now);
+            assert!(notifications(&mut recovered, &targets).is_empty());
+
+            // Idle is a later transition of the finish that preceded recovery.
+            let returned = ProgramStatus {
+                background,
+                ..status(4, vec![idle(1, 4)])
+            };
+            recovered.apply(&targets, "s", "run", returned, now);
+            assert!(notifications(&mut recovered, &targets).is_empty());
+            recovered.apply(&targets, "s", "run", status(5, vec![idle(1, 4)]), now);
+            assert!(notifications(&mut recovered, &targets).is_empty());
+            assert_eq!(state(&recovered, &targets, "s", now), Some(State::Finished));
+            assert!(recovered.entry(&targets, "s").is_some());
+
+            // A record created after recovery has a fresh finish, even if Done
+            // fell between polls and the first observation is Idle.
+            let new = ProgramRecord {
+                id: "new".into(),
+                ..idle(6, 7)
+            };
+            recovered.apply(&targets, "s", "run", status(7, vec![idle(1, 4), new]), now);
+            assert_eq!(
+                notifications(&mut recovered, &targets),
+                [("pane-s".into(), State::Finished)]
+            );
+
+            // A known fresh Done in the older record keeps its own raise.
+            let fresh = ProgramRecord {
+                created: 1,
+                ..record("a", Done, Some(Working), 9)
+            };
+            recovered.apply(&targets, "s", "run", status(9, vec![fresh]), now);
+            recovered.apply(&targets, "s", "run", status(10, vec![idle(1, 10)]), now);
+            assert_eq!(
+                notifications(&mut recovered, &targets),
+                [("pane-s".into(), State::Finished)]
+            );
+            assert!(notifications(&mut recovered, &targets).is_empty());
+
+            let fresh = ProgramRecord {
+                created: 1,
+                ..record("a", Idle, Some(Working), 12)
+            };
+            recovered.apply(&targets, "s", "run", status(12, vec![fresh]), now);
+            assert_eq!(
+                notifications(&mut recovered, &targets),
+                [("pane-s".into(), State::Finished)]
+            );
+
+            // A later changed Idle proves another episode in this tracked
+            // record, even when its intermediate Working and Done were missed.
+            recovered.apply(&targets, "s", "run", status(15, vec![idle(1, 15)]), now);
+            assert_eq!(
+                notifications(&mut recovered, &targets),
+                [("pane-s".into(), State::Finished)]
+            );
+            assert!(notifications(&mut recovered, &targets).is_empty());
+        }
     }
 
     #[test]
