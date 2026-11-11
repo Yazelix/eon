@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- When a terminal ends while Eon checks its sockets during discovery,
+  Eon rereads its record to reconcile the ended run. This avoids a spurious
+  `cannot inspect terminal endpoint` error in Stop, final close, Stack close,
+  and replacement supervisor startup. Discovery can still fail when an
+  Orbit host fails and drops a socket while its record and process appear
+  live. An exit during the initial record read or between listing and
+  leasing can also fail the operation (`eon-8ehhn`).
+
 - Pane Zoom/Restore and Close buttons show only on the tab's selected pane,
   except for one-pane Stacks. Hidden buttons keep their space reserved, so
   titles stay put. Keyboard, CLI and accessibility actions stay available

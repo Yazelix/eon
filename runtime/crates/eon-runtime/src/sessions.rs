@@ -797,6 +797,86 @@ pub(super) fn untracked_runs(
     owned: &[RunningSession],
     deadline: Instant,
 ) -> Result<Vec<ManagedCandidate>, String> {
+    discover_untracked_runs(runtime, mode, component_generation, owned, deadline, |_| {})
+}
+
+/// Reconciles an ended run's tombstone by waiting for its endpoints to go,
+/// reaping its child and removing its record.
+fn reconcile_tombstone(
+    record_path: &Path,
+    object: ObjectIdentity,
+    tombstone: &Tombstone,
+    component_generation: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    let (_, endpoint) =
+        validate_management_identity(&tombstone.identity, component_generation, None, false)?;
+    if artifact_path(&endpoint, ".record") != record_path {
+        return Err(format!(
+            "ended terminal record {} has the wrong identity path",
+            record_path.display()
+        ));
+    }
+    let management_path = Path::new(OsStr::from_bytes(&tombstone.identity.management.path));
+    loop {
+        if endpoint_removed(&endpoint, tombstone.identity.presentation.object)?
+            && endpoint_removed(management_path, tombstone.identity.management.object)?
+        {
+            break;
+        }
+        operation_timeout(deadline, "ended terminal cleanup")?;
+        thread::sleep(Duration::from_millis(25));
+    }
+    recorded_process_is_dead(&tombstone.identity)?;
+    reap_untracked_child(tombstone.identity.process_id, deadline)?;
+    cleanup_record(record_path, object)
+}
+
+/// Reconciles the run from the first read if it ended during endpoint validation.
+/// Orbit publishes its tombstone before removing its endpoints (ORB-C13), so
+/// discovery needs only one fresh read.
+fn reconcile_if_ended(
+    record_path: &Path,
+    object: ObjectIdentity,
+    identity: &LiveIdentity,
+    component_generation: &str,
+    deadline: Instant,
+) -> Result<bool, String> {
+    let Some(fresh) = read_management_record(record_path)? else {
+        return Ok(false);
+    };
+    match fresh.record {
+        ManagementRecord::Tombstone(tombstone) if tombstone.identity == *identity => {
+            reconcile_tombstone(
+                record_path,
+                fresh.object,
+                &tombstone,
+                component_generation,
+                deadline,
+            )?;
+            Ok(true)
+        }
+        ManagementRecord::Live(current) if current == *identity && fresh.object == object => {
+            if !recorded_process_is_dead(identity)? {
+                return Ok(false);
+            }
+            retire_dead_run(record_path, object, identity, deadline)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// As `untracked_runs`, with a hook after checking a host's liveness and before
+/// checking its endpoints.
+fn discover_untracked_runs(
+    runtime: &Path,
+    mode: LaunchMode,
+    component_generation: &str,
+    owned: &[RunningSession],
+    deadline: Instant,
+    mut before_endpoint_check: impl FnMut(&LiveIdentity),
+) -> Result<Vec<ManagedCandidate>, String> {
     let mut paths = fs::read_dir(runtime)
         .map_err(|error| {
             format!(
@@ -840,32 +920,13 @@ pub(super) fn untracked_runs(
         let identity = match snapshot.record {
             ManagementRecord::Live(identity) => identity,
             ManagementRecord::Tombstone(tombstone) => {
-                let (_, endpoint) = validate_management_identity(
-                    &tombstone.identity,
+                reconcile_tombstone(
+                    &record_path,
+                    snapshot.object,
+                    &tombstone,
                     component_generation,
-                    None,
-                    false,
+                    deadline,
                 )?;
-                if artifact_path(&endpoint, ".record") != record_path {
-                    return Err(format!(
-                        "ended terminal record {} has the wrong identity path",
-                        record_path.display()
-                    ));
-                }
-                let management_path =
-                    Path::new(OsStr::from_bytes(&tombstone.identity.management.path));
-                loop {
-                    if endpoint_removed(&endpoint, tombstone.identity.presentation.object)?
-                        && endpoint_removed(management_path, tombstone.identity.management.object)?
-                    {
-                        break;
-                    }
-                    operation_timeout(deadline, "ended terminal cleanup")?;
-                    thread::sleep(Duration::from_millis(25));
-                }
-                recorded_process_is_dead(&tombstone.identity)?;
-                reap_untracked_child(tombstone.identity.process_id, deadline)?;
-                cleanup_record(&record_path, snapshot.object)?;
                 continue;
             }
         };
@@ -881,7 +942,21 @@ pub(super) fn untracked_runs(
             retire_dead_run(&record_path, snapshot.object, &identity, deadline)?;
             continue;
         }
-        validate_management_identity(&identity, component_generation, None, true)?;
+        before_endpoint_check(&identity);
+        if let Err(error) =
+            validate_management_identity(&identity, component_generation, None, true)
+        {
+            if reconcile_if_ended(
+                &record_path,
+                snapshot.object,
+                &identity,
+                component_generation,
+                deadline,
+            )? {
+                continue;
+            }
+            return Err(error);
+        }
         let candidate = ManagedCandidate {
             number,
             endpoint,
@@ -2349,7 +2424,7 @@ pub(crate) mod tests {
             },
         },
         path::{Path, PathBuf},
-        process::{Command, Stdio},
+        process::{Child, Command, Stdio},
         thread,
         time::{Duration, Instant},
     };
@@ -2850,6 +2925,328 @@ pub(crate) mod tests {
             );
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    struct UntrackedHost {
+        root: PathBuf,
+        child: Option<Child>,
+        identity: LiveIdentity,
+        record: PathBuf,
+        endpoint: PathBuf,
+        management: PathBuf,
+        _listeners: [UnixListener; 2],
+    }
+
+    impl UntrackedHost {
+        fn discover(
+            &mut self,
+            timeout: Duration,
+            mut before_endpoint_check: impl FnMut(&mut Self),
+        ) -> Result<Vec<super::ManagedCandidate>, String> {
+            let root = self.root.clone();
+            let mut checks = 0;
+            let result = super::discover_untracked_runs(
+                &root,
+                super::LaunchMode::Workspace,
+                "component-1",
+                &[],
+                Instant::now() + timeout,
+                |identity| {
+                    checks += 1;
+                    assert_eq!(identity, &self.identity);
+                    before_endpoint_check(self);
+                },
+            );
+            assert_eq!(checks, 1);
+            result
+        }
+    }
+
+    impl Drop for UntrackedHost {
+        fn drop(&mut self) {
+            // ECHILD means discovery already reaped this PID.
+            if let Some(child) = &mut self.child
+                && matches!(child.try_wait(), Ok(None))
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn untracked_host(own_child: bool) -> UntrackedHost {
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let endpoint = root.join("terminal-2.sock");
+        let management = super::artifact_path(&endpoint, ".management");
+        let record = super::artifact_path(&endpoint, ".record");
+        let listeners = [&endpoint, &management].map(|path| {
+            let listener = UnixListener::bind(path).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+            listener
+        });
+        let child = own_child.then(|| Command::new("sleep").arg("30").spawn().unwrap());
+        let process_id = child.as_ref().map_or_else(std::process::id, Child::id);
+        let endpoint_identity = |path: &Path| EndpointIdentity {
+            path: path.as_os_str().as_bytes().to_vec(),
+            object: super::object_identity(&fs::symlink_metadata(path).unwrap()),
+        };
+        let identity = LiveIdentity {
+            session_id: "terminal-2".into(),
+            run_id: "discovery-race".into(),
+            component_generation: "component-1".into(),
+            record_generation: management::RECORD_GENERATION,
+            management_generation: management::VERSION,
+            process_id,
+            process_start: crate::platform::process(process_id).unwrap().unwrap().start,
+            uid: super::effective_uid(),
+            presentation: endpoint_identity(&endpoint),
+            management: endpoint_identity(&management),
+        };
+        let host = UntrackedHost {
+            root,
+            child,
+            identity,
+            record,
+            endpoint,
+            management,
+            _listeners: listeners,
+        };
+        publish_record(&host, &ManagementRecord::Live(host.identity.clone()));
+        host
+    }
+
+    fn publish_record(host: &UntrackedHost, record: &ManagementRecord) -> ObjectIdentity {
+        let pending = host.root.join("pending-record");
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&pending)
+            .unwrap();
+        file.write_all(&management::encode_record(record).unwrap())
+            .unwrap();
+        fs::rename(pending, &host.record).unwrap();
+        super::object_identity(&file.metadata().unwrap())
+    }
+
+    fn tombstone_of(identity: &LiveIdentity) -> ManagementRecord {
+        ManagementRecord::Tombstone(Tombstone {
+            identity: identity.clone(),
+            reason: TerminationReason::NaturalExit,
+            outcome: ProcessOutcome::ExitCode(0),
+        })
+    }
+
+    fn end_unreaped(child: &mut Child) {
+        child.kill().unwrap();
+        // SAFETY: zero is a valid initial value for the waitid output buffer.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        loop {
+            // SAFETY: the PID names our child and info is writable. WNOWAIT leaves it unreaped.
+            if unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    child.id() as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            } == 0
+            {
+                break;
+            }
+            let error = io::Error::last_os_error();
+            assert_eq!(error.kind(), io::ErrorKind::Interrupted, "{error}");
+        }
+    }
+
+    #[test]
+    fn discovery_reconciles_a_host_that_exits_in_order_before_its_endpoint_check() {
+        for own_child in [true, false] {
+            let mut host = untracked_host(own_child);
+            let result = host.discover(Duration::from_secs(5), |host| {
+                publish_record(host, &tombstone_of(&host.identity));
+                fs::remove_file(&host.management).unwrap();
+                fs::remove_file(&host.endpoint).unwrap();
+                if let Some(child) = &mut host.child {
+                    end_unreaped(child);
+                }
+            });
+            assert!(result.unwrap().is_empty());
+            assert!(!host.record.exists());
+            if own_child {
+                assert!(
+                    crate::platform::process(host.identity.process_id)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
+
+        let mut host = untracked_host(false);
+        let error = host
+            .discover(Duration::from_millis(500), |host| {
+                publish_record(host, &tombstone_of(&host.identity));
+                fs::remove_file(&host.management).unwrap();
+            })
+            .err()
+            .expect("cleanup succeeded while the presentation socket remained");
+        assert!(error.contains("ended terminal cleanup exceeded"), "{error}");
+        assert_eq!(
+            fs::read(&host.record).unwrap(),
+            management::encode_record(&tombstone_of(&host.identity)).unwrap()
+        );
+        assert!(host.endpoint.exists());
+    }
+
+    #[test]
+    fn discovery_retires_a_host_that_dies_before_its_endpoint_check() {
+        for remove_management in [false, true] {
+            let mut host = untracked_host(true);
+            let result = host.discover(Duration::from_secs(5), |host| {
+                let missing = if remove_management {
+                    &host.management
+                } else {
+                    &host.endpoint
+                };
+                fs::remove_file(missing).unwrap();
+                end_unreaped(host.child.as_mut().unwrap());
+            });
+            assert!(result.unwrap().is_empty());
+            assert!(!host.record.exists() && !host.endpoint.exists() && !host.management.exists());
+            assert!(
+                crate::platform::process(host.identity.process_id)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn discovery_fails_closed_when_a_live_host_has_no_valid_endpoint() {
+        let mut host = untracked_host(true);
+        let original = fs::read(&host.record).unwrap();
+        let object = super::object_identity(&fs::symlink_metadata(&host.record).unwrap());
+        let error = host
+            .discover(Duration::from_secs(5), |host| {
+                fs::remove_file(&host.endpoint).unwrap();
+            })
+            .err()
+            .expect("discovery accepted a missing socket for a live host");
+        assert!(
+            error.starts_with(&format!(
+                "cannot inspect terminal endpoint {}:",
+                host.endpoint.display()
+            )),
+            "{error}"
+        );
+        assert_eq!(fs::read(&host.record).unwrap(), original);
+        assert_eq!(
+            super::object_identity(&fs::symlink_metadata(&host.record).unwrap()),
+            object
+        );
+        assert!(host.management.exists());
+        assert!(!super::recorded_process_is_dead(&host.identity).unwrap());
+    }
+
+    #[test]
+    fn discovery_preserves_a_replacement_endpoint_after_a_tombstone() {
+        let mut host = untracked_host(true);
+        let tombstone = tombstone_of(&host.identity);
+        let mut published = None;
+        let error = host
+            .discover(Duration::from_secs(5), |host| {
+                published = Some(publish_record(host, &tombstone));
+                fs::remove_file(&host.management).unwrap();
+                fs::rename(&host.endpoint, host.root.join("held-endpoint")).unwrap();
+                fs::write(&host.endpoint, b"replacement").unwrap();
+            })
+            .err()
+            .expect("discovery accepted a replacement endpoint");
+        assert!(error.contains("replaced during cleanup"), "{error}");
+        assert_eq!(fs::read(&host.endpoint).unwrap(), b"replacement");
+        assert_eq!(
+            fs::read(&host.record).unwrap(),
+            management::encode_record(&tombstone).unwrap()
+        );
+        assert_eq!(
+            super::object_identity(&fs::symlink_metadata(&host.record).unwrap()),
+            published.unwrap()
+        );
+    }
+
+    #[test]
+    fn discovery_requires_a_matching_record_to_settle_a_failed_endpoint_check() {
+        for (tombstone, same_run) in [(true, false), (false, true), (false, false)] {
+            let mut host = untracked_host(true);
+            let mut identity = host.identity.clone();
+            if !same_run {
+                identity.run_id = "other-run".into();
+            }
+            let replacement = if tombstone {
+                tombstone_of(&identity)
+            } else {
+                ManagementRecord::Live(identity)
+            };
+            let original = super::object_identity(&fs::symlink_metadata(&host.record).unwrap());
+            let mut published = None;
+            let error = host
+                .discover(Duration::from_secs(5), |host| {
+                    fs::remove_file(&host.endpoint).unwrap();
+                    published = Some(publish_record(host, &replacement));
+                    if !tombstone {
+                        end_unreaped(host.child.as_mut().unwrap());
+                    }
+                })
+                .err()
+                .expect("discovery accepted a replacement record");
+            assert!(
+                error.contains("cannot inspect terminal endpoint"),
+                "{error}"
+            );
+            let published = published.unwrap();
+            assert_ne!(published, original);
+            assert_eq!(
+                fs::read(&host.record).unwrap(),
+                management::encode_record(&replacement).unwrap()
+            );
+            assert_eq!(
+                super::object_identity(&fs::symlink_metadata(&host.record).unwrap()),
+                published
+            );
+            assert!(host.management.exists());
+            let process = crate::platform::process(host.identity.process_id)
+                .unwrap()
+                .expect("discovery reaped the host");
+            assert_eq!(process.ended, !tombstone);
+        }
+
+        for unreadable in [false, true] {
+            let mut host = untracked_host(false);
+            let error = host
+                .discover(Duration::from_secs(5), |host| {
+                    fs::remove_file(&host.endpoint).unwrap();
+                    fs::remove_file(&host.record).unwrap();
+                    if unreadable {
+                        std::os::unix::fs::symlink(&host.management, &host.record).unwrap();
+                    }
+                })
+                .err()
+                .expect("discovery accepted an unavailable record");
+            let expected = if unreadable {
+                assert_eq!(fs::read_link(&host.record).unwrap(), host.management);
+                format!("cannot open terminal record {}:", host.record.display())
+            } else {
+                assert!(!host.record.exists());
+                format!(
+                    "cannot inspect terminal endpoint {}:",
+                    host.endpoint.display()
+                )
+            };
+            assert!(error.starts_with(&expected), "{error}");
+            assert!(host.management.exists());
+        }
     }
 
     #[test]
