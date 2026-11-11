@@ -19,6 +19,11 @@ pub(crate) const fn card_radius(metrics: CellMetrics) -> f32 {
     card_gap(metrics)
 }
 
+/// The popup marker's rounded-square corners, snapped to physical pixel rows.
+pub(crate) const fn popup_marker_radius(size: f32) -> f32 {
+    (size / 4.0).round()
+}
+
 /// The corner radius of what sits inside a card or in the frame around the cards: sidebar and
 /// inbox rows, tooltips and hint popups, hint keycaps, pane title highlights, and pane and
 /// heading buttons.

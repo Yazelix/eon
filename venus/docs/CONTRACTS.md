@@ -2297,6 +2297,8 @@ re-proved when that platform or feature is next touched.
   Agents heading's Hide button and its keyboard stop.
   Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
   `eon-cq38r`: EONW v39; Hide sets the sidebar closed through `SetSidebar`.
+  Amended on 2026-11-11 by `eon-wpbjz`, approved by Lucca through
+  eon-overseer: the popup marker is a thin rounded-square outline.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2381,10 +2383,12 @@ re-proved when that platform or feature is next touched.
     - Within a tab, a row whose source terminal is a popup comes first; pane
       rows follow in pane order.
     - **Popup marker.** In the shown session, a row whose source terminal is a
-      popup always shows a window glyph at the row's right edge, inside its
-      padding and vertically centered across the row, larger than the label
-      text. In both the sidebar and attention inbox, every text line stops
+      popup always shows a thin rounded-square outline at the row's right edge,
+      inside its padding and vertically centered across the row, larger than
+      the label text. In both the sidebar and attention inbox, every text line stops
       before the marker, and the accessible label adds "popup". The marker
+      has the popup cards' neutral stroke width (`border_width`) and rounded
+      corners proportional to its size, with no filled title bar or interior. It
       takes the title color, dimmed with a stale record; resting row text and
       marks adapt for contrast against the terminal background. Popup and pane rows
       use the same fill in resting, hover, current and keyboard-focus states;

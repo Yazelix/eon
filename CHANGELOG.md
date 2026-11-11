@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Popup agents in Agents and the attention inbox carry a thin rounded-square
+  outline in place of the heavy window mark. Its stroke follows `border_width`
+  (`eon-wpbjz`).
+
 - The first expanded Stack pane's band and focus frame sit one title row
   below the Stack outline, matching the gap below collapsed titles. Existing
   multi-pane clearance is redistributed without losing terminal rows. A lone

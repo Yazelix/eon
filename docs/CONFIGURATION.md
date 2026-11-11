@@ -305,7 +305,8 @@ other chrome controls keep their mint pill outline. This setting applies to full
 eonbase has no pane outline.
 
 `border_width` sizes neutral pane-card, agent-sidebar-card, popup and native dialog outlines,
-including their title edges, and the Eon Bar widget outlines. `focus_border_width` sizes the selected pane's
+including their title edges, the popup marker in Agents and the attention inbox,
+and the Eon Bar widget outlines. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
 are omitted, leaving Venus's built-in widths in use. With the example's widths,
 physical widths are `max(1, round(width * scale))`:

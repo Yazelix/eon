@@ -900,13 +900,24 @@ fn badge_inside(badge: TabBadge, clip: Option<SceneRect>) -> bool {
     })
 }
 
-/// Draws the agent sidebar's popup marker, a small window: an outlined square with a filled
-/// title bar, distinct from every attention glyph. Quads keep it independent of fonts.
-fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: SceneColor) {
-    let stroke = (rect.width / 8.0).round().max(1.0);
-    rectangles.push_hollow(rect.left, rect.top, rect.width, rect.height, stroke, color);
-    let bar = (rect.height * 0.3).round().max(stroke);
-    rectangles.push(rect.left, rect.top, rect.width, bar, color, 1.0);
+/// The popup marker's thin rounded square stays distinct from circular attention glyphs.
+fn push_popup_marker(
+    rectangles: &mut RectangleBatch,
+    rect: SceneRect,
+    stroke: f32,
+    color: SceneColor,
+) {
+    let rect = SceneRect {
+        left: rect.left.round(),
+        top: rect.top.round(),
+        ..rect
+    };
+    rectangles.push_rounded_outline_width(
+        rect,
+        tokens::popup_marker_radius(rect.width),
+        stroke,
+        color,
+    );
 }
 
 /// Paint the row and badge together, returning text colours readable on that surface.
@@ -1915,7 +1926,12 @@ impl Renderer {
             self.push_quota_icon(provider, rect, Some(list));
         }
         if let Some(marker) = row.popup_marker {
-            push_popup_marker(rectangles, marker, title);
+            push_popup_marker(
+                rectangles,
+                marker,
+                physical_outline_width(self.border_width, self.metrics.scale),
+                title,
+            );
         }
         let text_width = (row.text_right - row.text_left).max(0.0);
         let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
@@ -4636,8 +4652,7 @@ mod tests {
         assert_eq!(turning, still);
     }
 
-    #[test]
-    fn popup_and_pane_rows_share_surfaces_in_every_state() {
+    fn popup_sidebar_snapshot() -> eon_workspace_protocol::v39::Snapshot {
         use eon_workspace_protocol::v39::{
             Attention, AttentionRecord, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Snapshot, Tab,
@@ -4666,7 +4681,7 @@ mod tests {
             live: true,
             attention,
         };
-        let snapshot = Snapshot {
+        Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
             workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
@@ -4715,7 +4730,12 @@ mod tests {
             busy: None,
             sidebar: Sidebar::Open,
             attention_queue: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn popup_and_pane_rows_share_surfaces_in_every_state() {
+        let snapshot = popup_sidebar_snapshot();
         let metrics = CellMetrics::for_scale(1.0);
         let scene = WorkspaceScene::from_snapshot(
             &snapshot,
@@ -4783,6 +4803,130 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn popup_marker_is_a_crisp_rounded_card_outline() {
+        let mut snapshot = popup_sidebar_snapshot();
+        let attention = snapshot.tabs[0].popups[0].attention.as_mut().unwrap();
+        attention.state = AttentionState::NeedsInput;
+        attention.record.as_mut().unwrap().message = "A question".into();
+        let color = palette::SECONDARY_TEXT;
+        let mut fractional_top = false;
+        for (scale, font_size, height, padding) in [
+            (1.0_f32, 16.0_f32, 19.0, 12.0),
+            (1.125, 18.0, 21.0, 14.0),
+            (2.0, 32.0, 38.0, 24.0),
+            (1.0, 16.0, 18.0, 13.0),
+            (1.0, 6.0, 7.0, 5.0),
+        ] {
+            let metrics = CellMetrics {
+                scale,
+                width: (font_size * 0.625).round(),
+                height,
+                font_size,
+                padding,
+            };
+            let scene = WorkspaceScene::from_snapshot(
+                &snapshot,
+                PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+            );
+            let row = &scene.sidebar_rows()[0];
+            let marker = row.popup_marker.unwrap();
+            fractional_top |=
+                marker.top.fract() != 0.0 && (row.rect.height - marker.height) % 2.0 != 0.0;
+            let rect = SceneRect {
+                left: marker.left.round(),
+                top: marker.top.round(),
+                ..marker
+            };
+            for border in 1..=3 {
+                let stroke = physical_outline_width(border, scale);
+                let mut batch = RectangleBatch::new(2048, 2048);
+                push_popup_marker(&mut batch, marker, stroke, color);
+                let ink = batch
+                    .bytes
+                    .chunks_exact(VERTEX_SIZE as usize * 6)
+                    .map(|quad| {
+                        let value = |vertex: usize, component: usize| {
+                            let offset = vertex * VERTEX_SIZE as usize + component * 4;
+                            f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+                        };
+                        let quad = SceneRect {
+                            left: (value(0, 0) + 1.0) * 1024.0,
+                            top: (1.0 - value(0, 1)) * 1024.0,
+                            width: (value(2, 0) - value(0, 0)) * 1024.0,
+                            height: (value(0, 1) - value(2, 1)) * 1024.0,
+                        };
+                        assert_eq!((quad.top.fract(), quad.bottom().fract()), (0.0, 0.0));
+                        assert!(quad.left >= rect.left && quad.right() <= rect.right());
+                        assert!(quad.top >= rect.top && quad.bottom() <= rect.bottom());
+                        (quad, value(0, 5))
+                    })
+                    .collect::<Vec<_>>();
+                let coverage = |x, y| {
+                    ink.iter()
+                        .filter(|(quad, _)| quad.contains(x, y))
+                        .map(|(_, alpha)| alpha)
+                        .sum::<f32>()
+                };
+                for pixel in 0..rect.width as u32 {
+                    let offset = pixel as f32 + 0.5;
+                    let expected = if offset < stroke || offset >= rect.width - stroke {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    assert_eq!(
+                        coverage(rect.left + rect.width / 2.0, rect.top + offset),
+                        expected,
+                        "vertical stroke/interior at scale {scale}, border {border}, offset {offset}"
+                    );
+                    assert_eq!(
+                        coverage(rect.left + offset, rect.top + rect.height / 2.0),
+                        expected,
+                        "horizontal stroke/interior at scale {scale}, border {border}, offset {offset}"
+                    );
+                }
+                for x in [rect.left + 0.5, rect.right() - 0.5] {
+                    for y in [rect.top + 0.5, rect.bottom() - 0.5] {
+                        assert!(coverage(x, y) < 1.0, "square corner remains");
+                    }
+                }
+                let quarter = (rect.width / 4.0).round() + 0.5;
+                assert_eq!(coverage(rect.left + quarter, rect.top + 0.5), 1.0);
+                assert_eq!(coverage(rect.right() - quarter, rect.bottom() - 0.5), 1.0);
+                for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                    for (component, channel) in [color.r, color.g, color.b].into_iter().enumerate()
+                    {
+                        let offset = (component + 2) * 4;
+                        let actual =
+                            f32::from_ne_bytes(vertex[offset..offset + 4].try_into().unwrap());
+                        assert!((actual - f32::from(channel) / 255.0).abs() < 0.001);
+                    }
+                }
+            }
+            let mut empty = RectangleBatch::new(2048, 2048);
+            push_popup_marker(
+                &mut empty,
+                SceneRect {
+                    width: 0.0,
+                    height: 0.0,
+                    ..marker
+                },
+                1.0,
+                color,
+            );
+            assert!(empty.bytes.is_empty());
+        }
+        assert!(
+            fractional_top,
+            "scene geometry must exercise odd row/marker parity"
+        );
     }
 
     #[test]

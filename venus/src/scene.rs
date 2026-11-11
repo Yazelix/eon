@@ -367,7 +367,7 @@ pub struct SidebarRow {
     pub(crate) title: String,
     /// The age, the source terminal, "+N" for other records and "status stale".
     pub(crate) detail: String,
-    /// The popup window glyph at the padded right edge, centered across the row.
+    /// The popup outline marker at the padded right edge, centered across the row.
     pub(crate) popup_marker: Option<SceneRect>,
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,

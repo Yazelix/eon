@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C30: popup-source agent rows draw a thin rounded-square outline at the
+  existing right edge, using the neutral card stroke (`border_width`) without
+  a filled title bar (`eon-wpbjz`).
+
 - The first expanded Stack pane's band and focus frame sit one title row
   below the Stack outline, matching the gap below collapsed titles. Existing
   multi-pane clearance is redistributed without losing terminal rows. A lone

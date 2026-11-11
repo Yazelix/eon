@@ -478,10 +478,12 @@ Rows retain their state, app icon, age, source pane ID or popup label and
 needs-input message; their accessible names include the pin when present.
 
 Popup-source rows from the shown session in the sidebar and attention inbox use
-the same fill as pane rows. A window mark larger than the label text sits at
-the padded right edge, vertically centered across the row; title, detail and
-message text stop before it. The mark takes the title color and the stale-row
-palette. Row text retains at least 4.5:1 contrast against the terminal or
+the same fill as pane rows. A thin rounded-square outline larger than the label
+text sits at the padded right edge, vertically centered across the row; title,
+detail and message text stop before it. Its corners are proportional to its
+size. Its stroke follows popup cards' neutral `border_width`, with no filled
+title bar or interior. The mark takes the title color and the stale-row palette.
+Row text retains at least 4.5:1 contrast against the terminal or
 highlight background, including stale text. Resting row text and marks darken when the terminal
 background needs contrast, as Stack labels do. The mark's size scales with the
 sidebar font. Current-row and keyboard-focus outlines retain their normal

@@ -2944,19 +2944,18 @@ fn rounded_outline_rects(rect: SceneRect, radius: f32, width: f32) -> Vec<(Scene
             1.0,
         ));
     }
-    if radius < 1.0 {
-        for top in [rect.top, rect.bottom() - width] {
+    if width > radius {
+        for top in [rect.top + radius, rect.bottom() - width] {
             rects.push((
                 SceneRect {
                     left: rect.left + width,
                     top,
                     width: rect.width - width * 2.0,
-                    height: width,
+                    height: width - radius,
                 },
                 1.0,
             ));
         }
-        return rects;
     }
     for row in 0..radius as u32 {
         let dy = radius - row as f32 - 0.5;
