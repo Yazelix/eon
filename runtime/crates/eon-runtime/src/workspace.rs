@@ -37,6 +37,7 @@ pub(crate) enum LaunchCommand {
         pending: bool,
     },
     Tool(Vec<OsString>),
+    Editor(Vec<OsString>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1894,10 +1895,13 @@ impl Workspace {
             .position(|popup| popup.entry == shown_entry)
         {
             let popup = self.tabs[tab_index].popups[index].clone();
-            // Files keeps its Yazi, and its location, across tab-directory
-            // changes, and a Scrollback snapshot belongs to no directory.
+            // Retargeting preserves Files' location and Editor's buffers.
+            // A Scrollback snapshot belongs to no directory.
             if popup.entry != "files"
-                && definition.command != PopupCommand::Scrollback
+                && !matches!(
+                    definition.command,
+                    PopupCommand::Editor | PopupCommand::Scrollback
+                )
                 && popup.launch_directory != self.tabs[tab_index].directory
             {
                 let candidate =
@@ -2057,6 +2061,8 @@ impl Workspace {
                 quick,
                 pending: self.tabs[tab_index].pending,
             }
+        } else if definition.command == PopupCommand::Editor {
+            LaunchCommand::Editor(argv)
         } else {
             LaunchCommand::Tool(argv)
         };
@@ -6213,6 +6219,7 @@ mod tests {
     fn prepared(command: &PopupCommand, _: &Path) -> Result<Vec<OsString>, String> {
         match command {
             PopupCommand::Argv(argv) => Ok(argv.clone()),
+            PopupCommand::Editor => Ok(vec!["editor".into()]),
             PopupCommand::Edit(file) => Ok(vec!["editor".into(), file.clone()]),
             PopupCommand::Scrollback => Ok(vec!["snapshot-editor".into()]),
             PopupCommand::AgentAuto => unreachable!(),

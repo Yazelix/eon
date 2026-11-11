@@ -155,6 +155,12 @@ keep_alive = false # Keep this popup running when hidden.
 keybinding = "Alt+Shift+M" # Popup shortcut using physical keys.
 label = "Commands" # Popup display name.
 
+[popups.editor]
+# Editor uses [editor] command and keeps running when hidden.
+enabled = true # Enable this feature or popup.
+keybinding = "Alt+Shift+O" # Popup shortcut using physical keys.
+label = "Editor" # Popup display name.
+
 [popups.files]
 # Files is required: it is the tab's directory pair.
 keybinding = "Alt+Shift+Y" # Popup shortcut using physical keys.
@@ -626,7 +632,7 @@ at the sides and 4 above and below; a `[popup]` table is ignored with a warning.
 ```toml
 [popups.monitor]
 command = ["btop"]
-keybinding = "Alt+Shift+O"
+keybinding = "Alt+Shift+U"
 label = "Monitor"
 keep_alive = true
 ```
@@ -635,7 +641,13 @@ Built-in popup commands, labels and shortcuts are listed in the defaults above.
 Every built-in popup accepts `keybinding` and `label`. Git, Agent, Commands and
 Sessions also accept `command`, `enabled` and `keep_alive`, and
 Agent's `command` may also be `"auto"`. Anima and Scrollback also accept
-`enabled`; they reject `command` and `keep_alive = true`. Project has no
+`enabled`, and they reject `command` and `keep_alive = true`. Editor also
+accepts `enabled`. It uses `[editor] command` and keeps running when hidden.
+Eon warns and ignores `command` and `keep_alive` in `[popups.editor]`.
+Editor counts toward the limit of 32 enabled popup entries. If your
+configuration already uses all 32, disable Editor with
+`[popups.editor] enabled = false` or disable another popup.
+Project has no
 command of its own:
 it shows the tab's Files on quick search, and Alt+Z hides it again when quick
 search is already shown. It rejects `command`, `enabled = false` and
@@ -730,6 +742,13 @@ the editor it names is not on the terminal PATH, the edit fails rather than
 trying the other. With neither naming an editor, the edit fails with
 `edit-command` and names this setting; Eon picks no editor for you.
 `eon config defaults` shows `command` as unset there.
+
+The Editor popup (Alt+Shift+O) uses the same editor resolution when it starts.
+The editor keeps its buffers and working directory when the popup hides or
+the tab directory changes. When the popup starts the packaged Helix, Eon
+supplies its private listener socket. Remove Helix's own `--listen` option
+from `[editor] command` to use the popup. An ordinary `eon edit` can still
+pass that option to Helix.
 
 The Scrollback popup (Alt+Shift+E, or `eon pane history TARGET --edit`) opens
 its snapshot file with the same command, in a popup instead of a pane. When

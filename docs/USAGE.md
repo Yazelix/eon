@@ -356,6 +356,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Z | Show the tab's quick search, or hide it when quick search is shown |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
+| Alt+Shift+O | Open or hide the tab's Editor popup |
 | Alt+Shift+Y | Show the tab's Files, or hide it when Files is shown |
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
 | Alt+Shift+M | Open or dismiss the tab's Commands popup |
@@ -602,6 +603,11 @@ the next time you open it. Anima is transient:
 closing its popup stops playback. Closing a transient popup such as Commands,
 Sessions or Anima, including after a session switch, returns to the popup
 it covered, such as Agent, or to the pane when it covered none.
+
+Editor starts the configured terminal editor in the tab's current directory.
+Hiding Editor or changing the tab directory keeps the editor and its open
+buffers. After the editor exits, Alt+Shift+O starts a fresh instance in the
+tab's current directory.
 
 Each tab has one Files popup, Yazi at the tab's directory, with two screens:
 quick search over recent folders, and Files itself. Alt+Z shows quick search

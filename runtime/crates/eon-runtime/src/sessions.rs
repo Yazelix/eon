@@ -36,7 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn session_number(value: &str) -> Option<usize> {
+pub(super) fn session_number(value: &str) -> Option<usize> {
     let number = value.strip_prefix("terminal-")?;
     if number.starts_with('0') || !number.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;

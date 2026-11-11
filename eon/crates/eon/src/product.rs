@@ -122,6 +122,14 @@ pub(crate) fn inputs() -> Inputs {
                         true,
                     ),
                     (
+                        "editor",
+                        "Editor",
+                        "KeyO",
+                        ALT | SHIFT,
+                        PopupCommand::Editor,
+                        true,
+                    ),
+                    (
                         "files",
                         "Files",
                         "KeyY",

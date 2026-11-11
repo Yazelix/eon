@@ -22,7 +22,7 @@ use std::{
     os::fd::AsRawFd,
     os::unix::{
         ffi::OsStrExt,
-        fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
+        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
         net::{UnixListener, UnixStream},
         process::{CommandExt, ExitStatusExt},
     },
@@ -5358,9 +5358,57 @@ fn without_helix_an_unset_editor_falls_to_editor_with_its_arguments() {
 }
 
 #[test]
+fn editor_popup_uses_the_supervisors_resolver_without_a_packaged_helix() {
+    let window = WindowWithoutHelix::start(&[("VISUAL", "hx --visual"), ("EDITOR", "other")]);
+    let editor = window.editor.join("hx");
+    executable(&editor, "#!/bin/sh\nexit 0\n");
+    executable(&window.editor.join("other"), "#!/bin/sh\nexit 0\n");
+    let opened = protocol_action(
+        &window.control,
+        "visual-editor",
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "editor".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    );
+    let Response::Snapshot(opened) = opened else {
+        panic!("Editor did not open: {opened:?}");
+    };
+    let popup = opened.tabs[0]
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "editor")
+        .unwrap();
+    let endpoint = Path::new(OsStr::from_bytes(&popup.endpoint));
+    let host = live_identity(endpoint).process_id;
+    let arguments = process::cmdline(host);
+    assert!(arguments.ends_with(&[editor.as_os_str().as_bytes(), b"\0--visual\0"].concat()));
+    assert!(!endpoint.parent().unwrap().join("editor").exists());
+    assert_eq!(opened.tabs[0].selected_popup.as_ref(), Some(&popup.id));
+    window.stop();
+}
+
+#[test]
 fn without_helix_and_without_an_editor_the_edit_names_the_setting() {
     let window = WindowWithoutHelix::start(&[]);
     let before = window.tabs();
+    assert!(matches!(
+        protocol_action(
+            &window.control,
+            "unresolved-editor-popup",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "editor".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        ),
+        Response::Failure(error)
+            if error.code == "popup-command" && error.detail.contains("set [editor] command")
+    ));
+    assert_eq!(window.tabs(), before);
     window.assert_refused(
         &window.edit(),
         &[
@@ -15291,6 +15339,320 @@ fn wait_for_removal(path: &Path) {
         assert!(Instant::now() < deadline, "{} remained", path.display());
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn editor_popup_socket_helper() {
+    if std::env::var_os("EON_TEST_EDITOR_SOCKET_HELPER").is_none() {
+        return;
+    }
+    let arguments: Vec<_> = std::env::args_os()
+        .skip_while(|argument| argument != "--")
+        .skip(1)
+        .collect();
+    assert!((2..=3).contains(&arguments.len()));
+    assert_eq!(arguments[0], "--listen");
+    let path = Path::new(&arguments[1]);
+    let hold = PathBuf::from(std::env::var_os("EON_TEST_EDITOR_BIND_HOLD").unwrap());
+    let stop = PathBuf::from(std::env::var_os("EON_TEST_STOP").unwrap());
+    while hold.exists() {
+        if stop.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let listener = UnixListener::bind(path).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    let mut log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::env::var_os("EON_TEST_EDITOR_SOCKET_LOG").unwrap())
+        .unwrap();
+    writeln!(
+        log,
+        "{}|{}",
+        path.display(),
+        std::env::current_dir().unwrap().display()
+    )
+    .unwrap();
+    let release = PathBuf::from(std::env::var_os("EON_TEST_EDITOR_RELEASE").unwrap())
+        .with_extension(path.file_stem().unwrap());
+    while !release.exists() && !stop.exists() {
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(listener);
+    // Leave the socket behind, as a terminated editor can.
+}
+
+fn editor_popup_window() -> PairWindow {
+    let window = PairWindow::new();
+    let editor = window.root.join("packaged-hx");
+    let launcher = window.root.join("session-bin/hx");
+    executable(
+        &editor,
+        format!(
+            "#!/bin/sh\nEON_TEST_EDITOR_SOCKET_HELPER=1 exec '{}' --exact editor_popup_socket_helper --nocapture -- \"$@\"\n",
+            std::env::current_exe().unwrap().display(),
+        ),
+    );
+    executable(
+        &launcher,
+        format!("#!/bin/sh\nexec '{}' \"$@\"\n", editor.display()),
+    );
+    window
+}
+
+fn start_editor_popup_window(window: &PairWindow) -> TestProcess {
+    let mut command = window.command(&[]);
+    command
+        .env("EON_HX", window.root.join("packaged-hx"))
+        .env(
+            "EON_TEST_EDITOR_SOCKET_LOG",
+            window.root.join("editor-socket.log"),
+        )
+        .env(
+            "EON_TEST_EDITOR_RELEASE",
+            window.root.join("editor-release"),
+        )
+        .env(
+            "EON_TEST_EDITOR_BIND_HOLD",
+            window.root.join("editor-bind-hold"),
+        );
+    let supervisor = window.start(command);
+    wait_for_ready(&window.control());
+    supervisor
+}
+
+fn pick_editor_popup_tab(window: &PairWindow) {
+    window.pair_launch("terminal-2");
+    assert!(
+        window
+            .eon(&[
+                "tab",
+                "directory",
+                "t1",
+                "--",
+                window.home.to_str().unwrap()
+            ])
+            .status
+            .success()
+    );
+}
+
+fn open_editor_popup(window: &PairWindow, id: &str) -> Popup {
+    let response = window.invoke_popup(id, "editor", None);
+    let Response::Snapshot(snapshot) = response else {
+        panic!("{id}: {response:?}");
+    };
+    let tab = snapshot
+        .tabs
+        .iter()
+        .find(|tab| tab.id == snapshot.active_tab)
+        .unwrap();
+    let popup = tab
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "editor")
+        .unwrap();
+    assert_eq!(tab.selected_popup.as_ref(), Some(&popup.id));
+    popup.clone()
+}
+
+#[test]
+fn editor_popup_keeps_its_terminal_and_cleans_up_the_packaged_listener() {
+    let window = editor_popup_window();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let home = window.home.to_str().unwrap();
+    let launch = window.launch.to_str().unwrap();
+    let launcher = window.root.join("session-bin/hx");
+    let log = window.root.join("editor-socket.log");
+    let directory = window.generation().join("editor");
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&directory)
+        .unwrap();
+    let canonical = directory.canonicalize().unwrap();
+    let stale = canonical.join("terminal-3.sock");
+    drop(UnixListener::bind(&stale).unwrap());
+
+    let popup = open_editor_popup(&window, "open-editor");
+    assert_eq!(
+        wait_for_lines(&log, 1)[0],
+        format!("{}|{home}", stale.display())
+    );
+    let mode = |path: &Path| fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777;
+    assert_eq!((mode(&directory), mode(&stale)), (0o700, 0o600));
+    let endpoint = Path::new(OsStr::from_bytes(&popup.endpoint));
+    let host = live_identity(endpoint);
+    assert!(
+        process::cmdline(host.process_id).ends_with(
+            &[
+                launcher.as_os_str().as_bytes(),
+                b"\0--listen\0",
+                stale.as_os_str().as_bytes(),
+                b"\0"
+            ]
+            .concat()
+        )
+    );
+
+    let hidden = window.eon(&["popup", "hide", &popup.id, "--json"]);
+    assert!(hidden.status.success(), "{hidden:?}");
+    assert!(
+        window
+            .eon(&["tab", "directory", "t1", "--", launch])
+            .status
+            .success()
+    );
+    let Response::Snapshot(reopened) =
+        window.invoke_popup("reopen-editor", "editor", Some(&popup.id))
+    else {
+        panic!("Editor did not reopen");
+    };
+    assert_eq!(reopened.tabs[0].selected_popup.as_ref(), Some(&popup.id));
+    assert_eq!(live_identity(endpoint), host);
+    assert_eq!(log_lines(&log).len(), 1);
+
+    fs::write(
+        window
+            .root
+            .join(format!("editor-release.{}", popup.session)),
+        "",
+    )
+    .unwrap();
+    wait_for_removal(&stale);
+    let next = open_editor_popup(&window, "new-editor");
+    let next_socket = canonical.join(format!("{}.sock", next.session));
+    assert_ne!(next.session, popup.session);
+    assert_eq!(
+        wait_for_lines(&log, 2)[1],
+        format!("{}|{launch}", next_socket.display())
+    );
+
+    let added = window.eon(&["tab", "create", "--dir", home]);
+    assert!(added.status.success(), "{added:?}");
+    let hold = window.root.join("editor-bind-hold");
+    fs::write(&hold, "").unwrap();
+    let starting = open_editor_popup(&window, "starting-editor");
+    let starting_socket = canonical.join(format!("{}.sock", starting.session));
+    assert!(!starting_socket.exists());
+    fs::write(
+        window.root.join(format!("editor-release.{}", next.session)),
+        "",
+    )
+    .unwrap();
+    wait_for_removal(&next_socket);
+    window.inspect("other-editor-ended");
+    assert!(directory.is_dir(), "the other editor has yet to bind");
+    fs::remove_file(&hold).unwrap();
+    assert_eq!(
+        wait_for_lines(&log, 3)[2],
+        format!("{}|{home}", starting_socket.display())
+    );
+    window.stop_generation(&mut supervisor);
+    assert!(!directory.exists());
+}
+
+#[test]
+fn editor_popup_recovery_preserves_a_listener_that_has_yet_to_bind() {
+    let window = editor_popup_window();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let hold = window.root.join("editor-bind-hold");
+    fs::write(&hold, "").unwrap();
+    let starting = open_editor_popup(&window, "starting-editor");
+    let directory = window.generation().join("editor");
+    let canonical = directory.canonicalize().unwrap();
+    let socket = canonical.join(format!("{}.sock", starting.session));
+    assert!(!socket.exists());
+    let unrelated = canonical.join("terminal-99.sock");
+    drop(UnixListener::bind(&unrelated).unwrap());
+    window.crash(&mut supervisor);
+    let mut supervisor = start_editor_popup_window(&window);
+    let recovered = window.inspect("recovered-editor");
+    assert!(
+        recovered.tabs[0]
+            .panes()
+            .any(|pane| pane.session == starting.session)
+    );
+    assert!(!unrelated.exists());
+    assert!(directory.is_dir(), "the adopted editor has yet to bind");
+    assert!(!socket.exists());
+    fs::remove_file(&hold).unwrap();
+    wait_for_lines(&window.root.join("editor-socket.log"), 1);
+    assert!(socket.exists());
+    fs::write(
+        window
+            .root
+            .join(format!("editor-release.{}", starting.session)),
+        "",
+    )
+    .unwrap();
+    wait_for_removal(&socket);
+    window.stop_generation(&mut supervisor);
+    assert!(!directory.exists());
+}
+
+#[test]
+fn editor_popup_refuses_a_configured_helix_listener_before_stopping_the_shown_popup() {
+    let window = editor_popup_window();
+    let own_socket = window.root.join("user.sock");
+    writeln!(
+        fs::OpenOptions::new().append(true).open(window.config.join("config.toml")).unwrap(),
+        "\n[editor]\ncommand = [\"hx\", \"--listen\", \"{}\"]\n[popups.commands]\ncommand = [\"eon-nu\"]",
+        own_socket.display(),
+    )
+    .unwrap();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let Response::Snapshot(before) = window.invoke_popup("commands", "commands", None) else {
+        panic!("Commands did not open");
+    };
+    assert!(before.tabs[0].selected_popup.is_some());
+    assert!(matches!(
+        window.invoke_popup("invalid-editor-listener", "editor", None),
+        Response::Failure(error)
+            if error.code == "popup-command" && error.detail.contains("remove --listen from [editor] command")
+    ));
+    assert_eq!(
+        stable_tabs(&window.inspect("after-refusal").tabs),
+        stable_tabs(&before.tabs)
+    );
+    assert!(!window.generation().join("editor").exists());
+
+    let caller = quit_terminal_caller(&window.generation().join("orbit.sock"));
+    let file = window.root.join("notes.txt");
+    let edited = eon_command(&window.binary)
+        .args(["edit", "--json", "--"])
+        .arg(&file)
+        .env("EON_RUNTIME_DIR", &window.runtime)
+        .env("EON_CONFIG_HOME", &window.config)
+        .env("EON_TERMINAL", OsStr::from_bytes(&caller))
+        .output()
+        .unwrap();
+    assert!(edited.status.success(), "{edited:?}");
+    wait_for_lines(&window.root.join("editor-socket.log"), 1);
+    assert!(own_socket.exists());
+    let after = window.inspect("edit-after-refusal");
+    let pane = after.tabs[0]
+        .panes()
+        .find(|pane| Some(&pane.id) == after.tabs[0].selected_pane.as_ref())
+        .unwrap();
+    let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+    assert!(
+        process::cmdline(live_identity(endpoint).process_id).ends_with(
+            &[
+                b"hx\0--listen\0",
+                own_socket.as_os_str().as_bytes(),
+                b"\0",
+                file.as_os_str().as_bytes(),
+                b"\0",
+            ]
+            .concat()
+        )
+    );
+    window.stop_generation(&mut supervisor);
 }
 
 /// Scrollback writes the shown terminal's history to a private snapshot,

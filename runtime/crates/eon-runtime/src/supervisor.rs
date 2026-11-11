@@ -7,6 +7,7 @@ use super::{
         probe_presentable_runtime, send_action_on, socket_identity, stop_failure,
     },
     diagnostics::DiagnosticLog,
+    editor::{self, Sockets},
     events::Projection,
     generation::{current_generation, generation_directory, record_launcher, remove_launcher},
     managed_environment::{self, PopupCommand, TerminalAccess, nonempty_environment_path},
@@ -1036,6 +1037,7 @@ fn supervise(
     )?;
     let mut scrollback = Snapshots::new(runtime);
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
+    let mut editor_sockets = Sockets::recover(runtime, &sessions, log);
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
     let recovering = mode == LaunchMode::Workspace && !sessions.is_empty();
     let (registry, mut registry_setup_error) = match (mode == LaunchMode::Workspace)
@@ -1268,6 +1270,7 @@ fn supervise(
                         generation,
                         &mut sessions,
                         &mut initial_child,
+                        &mut editor_sockets,
                         operation,
                         PairStart::Fresh(startup_animation.as_ref()),
                         admitted.as_ref().and_then(|venus| venus.name),
@@ -1319,6 +1322,7 @@ fn supervise(
         notices: notification::Notices::default(),
         subscribers: Subscribers::new(generation),
         scrollback,
+        editor_sockets,
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -1349,7 +1353,7 @@ fn supervise(
         Err(error) => {
             let session_cleanup = stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT);
             // A recovered Scrollback editor that stopped leaves no snapshot.
-            state.retain_snapshots();
+            state.retain_popup_files(Instant::now());
             state.scrollback.remove_empty_root();
             drop(control_listener);
             if session_cleanup.is_ok() {
@@ -1432,7 +1436,7 @@ fn supervise(
         drop(process);
     }
     state.notices.close_and_wait(NOTICE_CLOSE_TIMEOUT);
-    state.retain_snapshots();
+    state.retain_popup_files(Instant::now());
     state.scrollback.remove_empty_root();
     remove_launcher(runtime);
     let _ = fs::remove_dir(runtime);
@@ -1515,6 +1519,7 @@ struct SupervisorState {
     subscribers: Subscribers,
     /// Scrollback popups' private snapshots (EON-C10).
     scrollback: Snapshots,
+    editor_sockets: Sockets,
     log: Arc<DiagnosticLog>,
 }
 
@@ -1714,9 +1719,8 @@ impl SupervisorState {
         Some(Projection::new(&prepared, busy))
     }
 
-    /// Removes the snapshots of Scrollback popups whose terminals ended
-    /// (EON-C10).
-    fn retain_snapshots(&mut self) {
+    /// Removes private popup files after their terminals end (EON-C10).
+    fn retain_popup_files(&mut self, now: Instant) {
         let sessions = &self.sessions;
         self.scrollback.retain(
             |terminal, uncertain| {
@@ -1727,6 +1731,7 @@ impl SupervisorState {
             },
             &self.log,
         );
+        self.editor_sockets.retain(sessions, now, &self.log);
     }
 
     /// The loop turn's work before its control request: follows the window's
@@ -1739,7 +1744,7 @@ impl SupervisorState {
         {
             venus.read_native_focus();
         }
-        self.retain_snapshots();
+        self.retain_popup_files(now);
         if !self.stopping {
             sessions::drain_given_up_requests(&mut self.sessions);
             // The backstop for a naming that failed or came late.
@@ -1893,6 +1898,7 @@ fn reap_finished_sessions(
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
                 let initial_child = &mut state.initial_child;
+                let editor_sockets = &mut state.editor_sockets;
                 let log = &state.log;
                 let result =
                     workspace.session_ended(&session.id, SessionEnd::Exited, |operation| {
@@ -1903,6 +1909,7 @@ fn reap_finished_sessions(
                             component_generation,
                             sessions,
                             initial_child,
+                            editor_sockets,
                             operation,
                             PairStart::Later,
                             venus,
@@ -2563,6 +2570,7 @@ fn apply_session_operation(
     component_generation: &str,
     sessions: &mut Vec<RunningSession>,
     initial_child: &mut Vec<OsString>,
+    editor_sockets: &mut Sockets,
     operation: SessionOperation,
     pair_start: PairStart<'_>,
     venus: Option<AttachName>,
@@ -2596,6 +2604,13 @@ fn apply_session_operation(
             pair_command(argv, quick, &session, pair_start)?
         }
         LaunchCommand::Tool(argv) => argv,
+        LaunchCommand::Editor(mut argv) => {
+            if let Some(index) = editor::listen_position(&argv, &inputs.managed, &directory)? {
+                let socket = editor_sockets.prepare(&session.endpoint, sessions)?;
+                argv.splice(index..index, ["--listen".into(), socket.into_os_string()]);
+            }
+            argv
+        }
         LaunchCommand::Pane if session.id == "terminal-1" => initial_child.clone(),
         LaunchCommand::Pane => Vec::new(),
     };
@@ -2775,6 +2790,7 @@ fn dismiss_pending_pairs(
         workspaces,
         sessions,
         initial_child,
+        editor_sockets,
         log,
         ..
     } = state;
@@ -2789,6 +2805,7 @@ fn dismiss_pending_pairs(
             component_generation,
             sessions,
             initial_child,
+            editor_sockets,
             operation,
             PairStart::Later,
             venus,
@@ -3519,6 +3536,7 @@ fn dispatch_registered_request(
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
             let initial_child = &mut state.initial_child;
+            let editor_sockets = &mut state.editor_sockets;
             let log = &state.log;
             let result = match (&jump, &accepted) {
                 (Some((target_workspace, _)), Some(Action::FocusAttention { tab, target })) => {
@@ -3536,14 +3554,18 @@ fn dispatch_registered_request(
                     action,
                     registration,
                     |command, directory| {
-                        managed_environment::prepare_popup_command(
+                        let argv = managed_environment::prepare_popup_command(
                             &snapshot_command(command, snapshot.as_ref()),
                             inputs.managed.shell_bin.as_deref(),
                             directory,
                             config,
                             &inputs.defaults,
                             Some(log),
-                        )
+                        )?;
+                        if *command == PopupCommand::Editor {
+                            editor::listen_position(&argv, &inputs.managed, directory)?;
+                        }
+                        Ok(argv)
                     },
                     |operation| {
                         mark_before_start(snapshot.as_ref(), &mut marked, operation, |operation| {
@@ -3554,6 +3576,7 @@ fn dispatch_registered_request(
                                 component_generation,
                                 sessions,
                                 initial_child,
+                                editor_sockets,
                                 operation,
                                 PairStart::Later,
                                 venus,
@@ -3685,6 +3708,7 @@ fn edit_terminal_history(
     let component_generation = &state.component_generation;
     let sessions = &mut state.sessions;
     let initial_child = &mut state.initial_child;
+    let editor_sockets = &mut state.editor_sockets;
     let log = &state.log;
     // The target's tab is the shown workspace's active tab, which a request
     // without a caller acts on.
@@ -3717,6 +3741,7 @@ fn edit_terminal_history(
                     component_generation,
                     sessions,
                     initial_child,
+                    editor_sockets,
                     operation,
                     PairStart::Later,
                     venus,
@@ -4028,6 +4053,7 @@ mod tests {
         stop_generation_sessions, stop_owned_session, stop_owned_sessions, temporary_directory,
         venus_command, window_bar, xdg_path,
     };
+    use crate::editor::Sockets;
     use crate::scrollback::{Snapshots, tests::history};
     use crate::sessions::{
         self,
@@ -5593,6 +5619,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let subscribe = |state: &mut SupervisorState, caller: Option<&str>, filter| {
@@ -5805,6 +5832,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -6000,6 +6028,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -6203,6 +6232,7 @@ mod tests {
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let mut fixture = FinishingWindow {
@@ -6642,6 +6672,7 @@ exec "$ORBIT_BIN" "$@"
             notices,
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log,
         };
         let closes = (0..2)
@@ -6731,6 +6762,7 @@ exec "$ORBIT_BIN" "$@"
             notices,
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log,
         };
         // The pending pair is a popup and not counted (EON-C18).
@@ -6876,6 +6908,7 @@ exec "$ORBIT_BIN" "$@"
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -7084,6 +7117,7 @@ exec "$ORBIT_BIN" "$@"
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
@@ -7197,6 +7231,7 @@ exec "$ORBIT_BIN" "$@"
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
@@ -7256,6 +7291,7 @@ exec "$ORBIT_BIN" "$@"
             notices: crate::notification::Notices::default(),
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
 
@@ -7445,6 +7481,7 @@ exec "$ORBIT_BIN" "$@"
                 "component-1",
                 &mut owned,
                 &mut Vec::new(),
+                &mut Sockets::default(),
                 crate::workspace::SessionOperation::SettlePair("terminal-1".into()),
                 PairStart::Later,
                 None,

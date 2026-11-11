@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     env,
-    ffi::{OsStr, OsString},
+    ffi::{CString, OsStr, OsString},
     fs,
     io::{self, Read, Write},
     os::{
         fd::AsRawFd,
-        unix::{ffi::OsStrExt, fs::PermissionsExt, process::CommandExt},
+        unix::{ffi::OsStrExt, process::CommandExt},
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -549,6 +549,8 @@ enum PopupCommandSetting {
 pub enum PopupCommand {
     AgentAuto,
     Argv(Vec<OsString>),
+    /// The built-in Editor popup, started without a file (EON-C10).
+    Editor,
     /// The configured editor on this file, as `eon edit` opens it.
     Edit(OsString),
     /// Scrollback's: the configured editor on a private snapshot of the tab's
@@ -690,7 +692,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         }
         if !matches!(
             entry.id.as_str(),
-            "project" | "files" | "anima" | "scrollback"
+            "project" | "files" | "anima" | "editor" | "scrollback"
         ) {
             settings["keep_alive"] = entry.keep_alive.into();
             settings["command"] = match &entry.command {
@@ -707,7 +709,9 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
                     json!(argv)
                 }
                 PopupCommand::Edit(_) => return Err("a default popup cannot edit a file".into()),
-                PopupCommand::Scrollback => unreachable!("Scrollback's command is Eon-owned"),
+                PopupCommand::Editor | PopupCommand::Scrollback => {
+                    unreachable!("this popup's command is Eon-owned")
+                }
             };
         }
         popups.insert(entry.id.clone(), settings);
@@ -786,6 +790,8 @@ fn defaults_table(
         output.push_str("# Project is required and shows the tab's Files on quick search.\n");
     } else if section == "popups.files" {
         output.push_str("# Files is required: it is the tab's directory pair.\n");
+    } else if section == "popups.editor" {
+        output.push_str("# Editor uses [editor] command and keeps running when hidden.\n");
     } else if matches!(section, "popups.anima" | "popups.scrollback") {
         output.push_str("# command and keep_alive are Eon-owned.\n");
     }
@@ -1261,6 +1267,10 @@ pub(crate) fn popup_catalog(
             settings.enabled = None;
             settings.keep_alive = None;
         }
+        if builtin.command == PopupCommand::Editor {
+            settings.command = None;
+            settings.keep_alive = None;
+        }
         if matches!(id, "anima" | "scrollback") && settings.command.is_some() {
             return Err(format!("popups.{id}.command is Eon-owned"));
         }
@@ -1530,12 +1540,13 @@ pub(crate) fn prepare_popup_command(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Vec<OsString>, String> {
-    let argv = match command {
+    let mut argv = match command {
         // Project, which shows the tab's Files instead.
         PopupCommand::Argv(argv) if argv.is_empty() => {
             return Err("this popup has no command".into());
         }
         PopupCommand::Argv(argv) => argv.clone(),
+        PopupCommand::Editor => editor_command(config, defaults, log)?,
         // An unavailable or unresolved editor fails the edit; nothing falls back to Helix.
         PopupCommand::Edit(file) => {
             let mut argv = editor_command(config, defaults, log)?;
@@ -1548,18 +1559,22 @@ pub(crate) fn prepare_popup_command(
         PopupCommand::AgentAuto => {
             for candidate in defaults.agent_commands {
                 let argv = candidate.iter().map(OsString::from).collect::<Vec<_>>();
-                if popup_executable(&argv[0], session_bin, directory)? {
+                if popup_executable(&argv[0], session_bin, directory)?.is_some() {
                     return Ok(argv);
                 }
             }
             return Err("no supported Agent executable is available on Eon's terminal PATH; install codex, grok, opencode, pi, or claude, or configure popups.agent.command".into());
         }
     };
-    if !popup_executable(&argv[0], session_bin, directory)? {
-        return Err(format!(
+    let program = popup_executable(&argv[0], session_bin, directory)?.ok_or_else(|| {
+        format!(
             "executable {:?} is unavailable on Eon's terminal PATH",
             argv[0]
-        ));
+        )
+    })?;
+    if *command == PopupCommand::Editor {
+        // Preserve the multicall launcher's basename and run the executable we checked.
+        argv[0] = program.into_os_string();
     }
     Ok(argv)
 }
@@ -1568,18 +1583,22 @@ fn popup_executable(
     program: &OsStr,
     session_bin: Option<&Path>,
     directory: &Path,
-) -> Result<bool, String> {
+) -> Result<Option<PathBuf>, String> {
     let search_path = session_bin.map(session_path).transpose()?;
     let program = Path::new(program);
     let executable = |path: &Path| {
-        fs::metadata(path)
-            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
+            && CString::new(path.as_os_str().as_bytes()).is_ok_and(|path| {
+                // SAFETY: path is NUL-terminated and kept alive for the call.
+                unsafe {
+                    libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS)
+                        == 0
+                }
+            })
     };
-    if program.is_absolute() {
-        return Ok(executable(program));
-    }
-    if program.components().count() > 1 {
-        return Ok(executable(&directory.join(program)));
+    if program.is_absolute() || program.components().count() > 1 {
+        let path = directory.join(program);
+        return Ok(executable(&path).then_some(path));
     }
     Ok(search_path
         .or_else(|| env::var_os("PATH"))
@@ -1587,14 +1606,8 @@ fn popup_executable(
         .map(env::split_paths)
         .into_iter()
         .flatten()
-        .any(|path| {
-            let path = if path.is_absolute() {
-                path
-            } else {
-                directory.join(path)
-            };
-            executable(&path.join(program))
-        }))
+        .map(|path| directory.join(path).join(program))
+        .find(|path| executable(path)))
 }
 
 /// The settings file in the configuration root.
@@ -2167,6 +2180,26 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
             )
         })
     });
+    let editor = defaults
+        .popups
+        .entries
+        .iter()
+        .find(|entry| entry.command == PopupCommand::Editor)
+        .and_then(|entry| config.popups.get(&entry.id))
+        .into_iter()
+        .flat_map(|settings| {
+            [
+                settings.command.is_some().then_some("command"),
+                settings.keep_alive.is_some().then_some("keep_alive"),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|key| {
+                format!(
+                    "eon: ignoring popups.editor.{key} in {path}: Editor keeps running and uses [editor] command"
+                )
+            })
+        });
     let focus = config.popups.iter().filter_map(|(id, settings)| {
         let keybinding = settings.keybinding.as_deref()?;
         ((settings.enabled != Some(false) || id == "files")
@@ -2184,6 +2217,7 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
         .chain(deprecated)
         .chain(tombstoned)
         .chain(files)
+        .chain(editor)
         .chain(focus)
         .collect()
 }
@@ -2244,8 +2278,8 @@ mod tests {
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
         animate_working_badge, command as managed_command, disk_path, integration_mask,
         number_keys, pair_launch_flags, popup_catalog, prepare_popup_command, prepend_path,
-        read_shell_config, remove_agent_environment, remove_agent_session, sidebar_enabled,
-        startup_animation, terminal_presentation, tool, user_manager_environment,
+        print_defaults, read_shell_config, remove_agent_environment, remove_agent_session,
+        sidebar_enabled, startup_animation, terminal_presentation, tool, user_manager_environment,
         warning_close_last_tab,
     };
     use std::{
@@ -3684,6 +3718,86 @@ label = "Browse"
     }
 
     #[test]
+    fn editor_popup_settings_round_trip_and_count_against_the_catalog_limit() {
+        use eon_workspace_protocol::v39::MAX_ENTRIES;
+
+        let mut defaults = crate::fixtures::inputs().defaults;
+        let editor = PopupDefinition {
+            id: "editor".into(),
+            label: "Editor".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: ALT | SHIFT,
+                key: "KeyO".into(),
+            }),
+            command: PopupCommand::Editor,
+            keep_alive: true,
+        };
+        defaults.popups.entries.push(editor.clone());
+        let root = crate::supervisor::temporary_directory();
+        let path = root.join("config.toml");
+        let printed = print_defaults(&defaults, false).unwrap();
+        fs::write(&path, printed).unwrap();
+        assert_eq!(
+            popup_catalog(&root, &defaults, None).unwrap(),
+            defaults.popups
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&print_defaults(&defaults, true).unwrap()).unwrap();
+        assert_eq!(
+            json["popups"]["editor"],
+            serde_json::json!({
+                "enabled": true, "keybinding": "Alt+Shift+O", "label": "Editor",
+            })
+        );
+
+        fs::write(&path, "[popups.editor]\ncommand = ['hx']\nkeep_alive = false\nkeybinding = 'Alt+Shift+F'\nlabel = 'Code'\n").unwrap();
+        let catalog = popup_catalog(&root, &defaults, None).unwrap();
+        let configured = catalog.entries.last().unwrap();
+        assert_eq!(
+            configured,
+            &PopupDefinition {
+                label: "Code".into(),
+                shortcut: PopupKey::Bound(Shortcut {
+                    modifiers: ALT | SHIFT,
+                    key: "KeyF".into()
+                }),
+                ..editor
+            },
+        );
+        let warnings = super::config_warnings(
+            &super::parse_config(&root, &defaults).unwrap(),
+            Path::new("config.toml"),
+            &defaults,
+        );
+        assert_eq!(warnings.len(), 2);
+        for (warning, setting) in warnings.iter().zip(["command", "keep_alive"]) {
+            assert!(
+                warning.contains(&format!("popups.editor.{setting}")),
+                "{warning}"
+            );
+            assert!(warning.contains("[editor] command"), "{warning}");
+        }
+
+        let custom = (0..=MAX_ENTRIES - defaults.popups.entries.len())
+            .map(|index| format!("[popups.extra-{index}]\ncommand = ['tool']\nkeybinding = ''\n"))
+            .collect::<String>();
+        fs::write(&path, &custom).unwrap();
+        assert_eq!(
+            popup_catalog(&root, &defaults, None).unwrap_err(),
+            format!("popups accepts at most {MAX_ENTRIES} enabled entries")
+        );
+        fs::write(
+            &path,
+            format!("{custom}\n[popups.editor]\nenabled = false\n"),
+        )
+        .unwrap();
+        let catalog = popup_catalog(&root, &defaults, None).unwrap();
+        assert_eq!(catalog.entries.len(), MAX_ENTRIES);
+        assert!(catalog.entries.iter().all(|entry| entry.id != "editor"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn configured_popup_keys_take_built_in_defaults() {
         let mut inputs = crate::fixtures::inputs();
         inputs.defaults.popups.entries.push(PopupDefinition {
@@ -3893,6 +4007,15 @@ label = "Browse"
         assert!(
             prepare_popup_command(&command, None, &root, &root, &inputs.defaults, None).is_err()
         );
+        if crate::supervisor::effective_uid() != 0 {
+            // The owner cannot execute this file, even though the group bit is set.
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o010)).unwrap();
+            assert!(
+                prepare_popup_command(&command, None, &launch, &root, &inputs.defaults, None)
+                    .is_err()
+            );
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         fs::create_dir(launch.join("bin")).unwrap();
         let path_tool = launch.join("bin/path-tool");
         fs::write(&path_tool, "#!/bin/sh\n").unwrap();

@@ -1415,6 +1415,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
   rule) by `eon-5g0e5`: `eon sidebar show|hide|toggle`, best effort under a
   concurrent visibility change.
+  Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
+  rule) by `eon-xodrj.4` for the built-in Editor popup.
   Amended on 2026-11-10 (approved by Lucca, relayed by eon-overseer) by
   `eon-igae.17.1`: `[editor] command` has no default in the `no-helix`
   package, where an unset command resolves from `$VISUAL`, then `$EDITOR`.
@@ -1815,10 +1817,32 @@ names its socket. CLI JSON names a session `session` and a terminal
   In Files, Yazi's edit opener runs `eon edit`, so Enter on a text file opens
   it in a new pane running the configured editor and hides the popup. Enter
   on a folder enters it, and other file types keep Yazi's default openers. For
-  Git and other keep-alive popups except Files, retargeting changes no process
-  until the next invocation, which stops the exact old terminal before starting
+  Git and other keep-alive popups except Files and Editor, retargeting changes
+  no process until the next invocation, which stops the exact old terminal before starting
   a fresh one at the new directory. A stop failure preserves the old instance;
   a start failure records no replacement.
+  Editor defaults to Alt+Shift+O. It runs the configured editor in the tab's
+  directory when it starts, using the same resolution as `eon edit` and
+  reading the setting on each fresh start. `[popups.editor]` accepts
+  `keybinding`, `label` and `enabled`. Eon ignores `command` and `keep_alive`
+  in that table with a warning naming `[editor] command`. Hiding Editor or
+  changing the tab directory preserves the process and its buffers. After the
+  terminal ends, the next invocation starts at the tab's current directory.
+  An unresolved editor or unavailable executable fails with `popup-command`
+  and starts no terminal. If no editor is resolved, the resolver's message
+  names `[editor] command`.
+  When Editor runs the packaged Helix, Eon supplies `--listen` with an
+  instance-specific Unix socket path under a mode-0700 directory in the
+  window's private runtime directory. Eon requires its packaged Helix to
+  bind that socket as mode 0600. A Helix `--listen` option in `[editor] command`
+  fails the popup with `popup-command`. Ordinary `eon edit` still passes that
+  option to Helix. Before a new launch, Eon removes an owned non-listening
+  socket left at the instance's path. A live or non-owned leftover fails
+  the popup start. Eon removes leftover sockets when their terminals end and
+  sweeps stale sockets on supervisor start, keeping the sockets of terminals
+  it adopts until they end. The Unix permissions admit any same-user process,
+  including agents with `[agents] terminal_access = "none"`. Eon exports
+  the path to no terminal. The argv and socket path are runtime policy.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
@@ -1963,7 +1987,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   exit statuses `eon-8mnr.1` and `eon-8mnr.3` (automated tier); calling-terminal
   targets `eon-8mnr.2` (automated and installed tiers); Agent parking on
-  retarget `eon-tbn1` (automated and installed tiers); the Files popup
+  retarget `eon-tbn1` (automated and installed tiers); the Editor popup and
+  private listener lifecycle `eon-xodrj.4` (automated tier); the Files popup
   `eon-ecne.1` (automated and installed tiers); `EON_TAB` and Files Alt+Enter
   `eon-ecne.4` (automated and installed tiers); `eon edit` and Files Enter
   `eon-ecne.2` (automated and installed tiers); the configured editor

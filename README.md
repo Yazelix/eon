@@ -137,6 +137,7 @@ remains.
 | Alt+K / Alt+J | Previous or next pane |
 | Alt+Shift+L | Agent popup |
 | Alt+Shift+J | Git popup |
+| Alt+Shift+O | Editor popup |
 | Alt+Shift+Y | Files popup (Yazi) |
 | Alt+Shift+M | Commands popup: search and run Eon commands |
 | Alt+Shift+S | Sessions: switch, create or close a session in this window |

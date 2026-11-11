@@ -23,6 +23,13 @@ installation, and proven contract changes.
   and `eon edit`. With the setting unset, Eon uses `VISUAL` or `EDITOR` from
   the window's startup environment (`eon-igae.17.3`, EON-C6, EON-C9).
 
+- Alt+Shift+O opens the built-in Editor popup using `[editor] command`.
+  Hiding it or changing the tab directory preserves the running editor and
+  its buffers. The packaged Helix starts with a private listener socket
+  (`eon-xodrj.4`). Opening the popup from the CLI is tracked by
+  `eon-agent-parity-a9g0.1`. Configurations already at the 32-enabled-popup
+  limit must disable Editor or another popup to load.
+
 - `eon column close PANE --yes [--json]` closes the pane's Stack through
   EONW v39. Without `--yes`, it lists every terminal it would stop and
   refuses, including idle and one-pane Stacks. Consent binds the generation,
@@ -50,7 +57,7 @@ installation, and proven contract changes.
   `.helix` ones already were. Eon no longer refuses to start Helix when the
   configuration root's path is not valid UTF-8. The packaged Helix moves to
   nova-helix `6ee75ad3`, whose `hx --listen PATH` opens files in a running
-  editor; Eon does not use it yet (`eon-xodrj.3`).
+  editor (`eon-xodrj.3`).
 
 - Untimed benchmark traces on macOS retry a full receiver instead of losing
   records. A stalled collector times out once, then drops with loss accounting
