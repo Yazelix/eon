@@ -4484,7 +4484,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        drop(held);
+        sessions::tests::release_lease(held);
         fs::write(root.join("bad.record"), "malformed").unwrap();
         assert_eq!(
             column_request(&mut state, &root, "p1", None)
@@ -4539,7 +4539,7 @@ mod tests {
         let (mut state, _) = finishing_window(&root);
         let extra = start_column_run(&state, &root, "terminal-9", &root.join("terminal-9.sock"));
         let extra_run = extra.run_id().to_owned();
-        drop(extra);
+        sessions::tests::release_lease(extra);
         let scope = column_scope(&mut state, &root, "p1");
         assert_eq!(
             scope.untracked,
@@ -4578,28 +4578,17 @@ mod tests {
             let scope = column_scope(&mut state, &root, "p1");
             assert_eq!(scope.untracked.len(), 1, "{context}: {scope:?}");
             assert_eq!(scope.untracked[0].run, extra_run, "{context}");
-            drop(extra);
+            sessions::tests::release_lease(extra);
             let deadline = Instant::now() + SESSION_START_TIMEOUT;
-            let acquired = loop {
-                let candidates = sessions::untracked_runs(
-                    &root,
-                    LaunchMode::Workspace,
-                    "component-1",
-                    &state.sessions,
-                    deadline,
-                )
-                .unwrap_or_else(|error| panic!("{context}: discover before Stop: {error}"));
-                match sessions::acquire_runs(candidates, state.log.orbit_directory().ok(), deadline)
-                {
-                    Ok(acquired) => break acquired,
-                    Err(error)
-                        if error.contains("already managed") && Instant::now() < deadline =>
-                    {
-                        std::thread::sleep(Duration::from_millis(5))
-                    }
-                    Err(error) => panic!("{context}: acquire lease before Stop: {error}"),
-                }
-            };
+            let acquired = sessions::acquire_generation_sessions(
+                &root,
+                LaunchMode::Workspace,
+                "component-1",
+                &state.sessions,
+                state.log.orbit_directory().ok(),
+                deadline,
+            )
+            .unwrap_or_else(|error| panic!("{context}: discover and acquire before Stop: {error}"));
             // SAFETY: freezes only the test-owned host after acquiring its lease.
             assert_eq!(unsafe { libc::kill(extra_pid, libc::SIGSTOP) }, 0);
             let pane_pid = sessions::tests::orbit_pid(&state.sessions[0]);
@@ -5102,7 +5091,7 @@ mod tests {
             )
             .unwrap();
             let pid = orbit_pid(&live);
-            drop(live);
+            sessions::tests::release_lease(live);
             let mut command = Command::new(std::env::current_exe().unwrap());
             command
                 .args([
@@ -6997,29 +6986,16 @@ mod tests {
         let orbit_logs = root.join("launch-logs/orbit");
         let orbit_log = orbit_logs.join(format!("component-1-terminal-1-{}.log", session.run_id()));
         assert_eq!(session.orbit_log.as_ref(), Some(&orbit_log));
-        // A supervisor that recovers the run rebuilds its log path. Orbit may
-        // refuse the new lease as Busy until it sees the old one close. On
-        // macOS, Busy is also reported when Orbit closes before the peer check.
-        drop(session);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let sessions = loop {
-            match sessions::recover_sessions(
-                &root,
-                LaunchMode::Workspace,
-                "component-1",
-                Some(&orbit_logs),
-                deadline,
-            ) {
-                Ok((sessions, _)) => break sessions,
-                Err(error)
-                    if error.ends_with("is already managed")
-                        && std::time::Instant::now() < deadline =>
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(error) => panic!("{error}"),
-            }
-        };
+        // A supervisor that recovers the run rebuilds its log path.
+        sessions::tests::release_lease(session);
+        let (sessions, _) = sessions::recover_sessions(
+            &root,
+            LaunchMode::Workspace,
+            "component-1",
+            Some(&orbit_logs),
+            Instant::now() + SESSION_START_TIMEOUT,
+        )
+        .unwrap_or_else(|error| panic!("recover {}: {error}", orbit_log.display()));
         assert_eq!(sessions[0].orbit_log.as_ref(), Some(&orbit_log));
         kill_orbit_worker(orbit);
         let mut state = SupervisorState {
@@ -7304,26 +7280,20 @@ mod tests {
             }
             let stale = sessions::pending_pair_marker(&root.join("terminal-9.sock"));
             sessions::mark_pending_pair(&root.join("terminal-9.sock")).unwrap();
-            drop(session);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            let (mut recovered, pair) = loop {
-                match sessions::recover_sessions(
-                    &root,
-                    LaunchMode::Workspace,
-                    "component-1",
-                    None,
-                    deadline,
-                ) {
-                    Ok(result) => break result,
-                    Err(error)
-                        if error.ends_with("is already managed")
-                            && std::time::Instant::now() < deadline =>
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    Err(error) => panic!("{error}"),
-                }
-            };
+            sessions::tests::release_lease(session);
+            let (mut recovered, pair) = sessions::recover_sessions(
+                &root,
+                LaunchMode::Workspace,
+                "component-1",
+                None,
+                Instant::now() + SESSION_START_TIMEOUT,
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "recover {} with pending={pending}: {error}",
+                    endpoint.display()
+                )
+            });
             assert_eq!(pair, pending);
             assert!(!marker.exists());
             assert!(!stale.exists());

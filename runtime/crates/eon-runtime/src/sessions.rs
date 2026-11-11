@@ -2399,9 +2399,10 @@ pub(super) fn stop_managed_sessions(
 pub(crate) mod tests {
     use super::{
         AttachName, EndpointIdentity, LiveIdentity, ManagementRecord, Naming, ObjectIdentity,
-        ProcessOutcome, ProgramStatusRead, RequestKind, RunningSession, TerminationReason,
-        Tombstone, bound_io, managed_session_number, management, name_presentation, orbit_command,
-        read_management_response, session_number, stop_managed_sessions, unix_connect_with_timeout,
+        ProcessOutcome, ProgramStatusRead, RequestKind, RunningSession, SESSION_START_TIMEOUT,
+        TerminationReason, Tombstone, bound_io, managed_session_number, management,
+        name_presentation, orbit_command, read_management_response, session_number,
+        stop_managed_sessions, unix_connect_with_timeout,
     };
     use crate::{diagnostics::DiagnosticLog, supervisor::temporary_directory};
     use orbit_protocol::{
@@ -2434,7 +2435,7 @@ pub(crate) mod tests {
         let root = temporary_directory();
         let run = leased_orbit(&root, "exec sleep 300");
         let run_id = run.run_id().to_owned();
-        drop(run);
+        release_lease(run);
         let candidates = super::untracked_runs(
             &root,
             super::LaunchMode::Workspace,
@@ -3478,6 +3479,42 @@ pub(crate) mod tests {
         let orbit =
             PathBuf::from(std::env::var_os("ORBIT_BIN").expect("ORBIT_BIN names the Orbit to run"));
         leased_orbit_with_program(root, script, &orbit)
+    }
+
+    /// Waits for Orbit to close the old lease before a test acquires it again.
+    pub(crate) fn release_lease(session: RunningSession) {
+        let mut lease = &session.lease;
+        let context = || {
+            format!(
+                "{} run {} at {}",
+                session.id,
+                session.run_id(),
+                session.endpoint.display()
+            )
+        };
+        lease
+            .set_nonblocking(false)
+            .and_then(|()| lease.set_read_timeout(Some(SESSION_START_TIMEOUT)))
+            .and_then(|()| lease.shutdown(std::net::Shutdown::Write))
+            .unwrap_or_else(|error| panic!("{}: cannot close lease writes: {error}", context()));
+        match lease.read_exact(&mut [0]) {
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                panic!(
+                    "{}: timed out after {SESSION_START_TIMEOUT:?} waiting for Orbit to release lease",
+                    context()
+                );
+            }
+            result => panic!(
+                "{}: expected EOF from Orbit after releasing lease, got {result:?}",
+                context()
+            ),
+        }
     }
 
     pub(crate) fn leased_orbit_with_program(
