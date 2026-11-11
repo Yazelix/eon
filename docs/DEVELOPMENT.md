@@ -11,6 +11,13 @@ It provides Rust/Cargo 1.96.1, formatting and lint tools, Git, `br` 0.7.2,
 Orbit and Venus build and test with, and `eon-test`. The Beads binaries come
 from hash-verified release archives and retain their full upstream licenses
 under `share/licenses/<tool>/LICENSE`, including the OpenAI/Anthropic rider.
+The shell sets `CARGO_PROFILE_DEV_DEBUG=line-tables-only`: backtraces keep
+file and line, target directories are about a third smaller and links are
+faster, but debuggers see no variables. The shell sets the variable, so
+prefixing `nix develop` has no effect: run
+`nix develop -c env CARGO_PROFILE_DEV_DEBUG=full eon-test ...` or export it
+inside the shell. Switching the value rebuilds the target directory once, and
+backtraces keep file and line but drop module prefixes from function names.
 
 One Cargo workspace holds Orbit (`orbit/`), Venus (`venus/`), Eon Runtime with
 EONW (`runtime/`) and Eon (`eon/`). `eon/crates/eon` owns executable assembly

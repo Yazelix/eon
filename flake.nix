@@ -1574,6 +1574,7 @@
             buildInputs = venusBuildInputs;
             inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
             inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
+            CARGO_PROFILE_DEV_DEBUG = "line-tables-only";
           } // venusFontEnvironment // venusTestEnvironment);
         };
     in
