@@ -30,7 +30,7 @@ fn padding_color_follows_scrolled_rows_and_orbit_preview_edges() {
             rows: vec![row.clone()],
         };
         let mut batch = RectangleBatch::new(200, 200);
-        let top_colors = build_padding_rectangles(
+        build_padding_rectangles(
             &mut batch,
             &scene,
             metrics,
@@ -38,13 +38,6 @@ fn padding_color_follows_scrolled_rows_and_orbit_preview_edges() {
             viewport,
             PaddingColor::Extend,
             (Some(&preview), offset),
-        );
-        assert!(
-            top_colors.contains(
-                &padding_pixel(&batch, grid.left + metrics.width + 1.0, viewport.top + 1.0)
-                    .unwrap()
-            ),
-            "the header band's contrast check sees the scrolled top padding"
         );
         let (side_y, padding_y) = match direction {
             VerticalDirection::Up => (grid.top + 1.0, viewport.top + 1.0),
@@ -237,7 +230,6 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                     metrics,
                     PaddingColor::Extend,
                     frames,
-                    &[],
                     stroke,
                     (None, 0.0),
                 );
@@ -261,7 +253,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                 assert!(band_y > title_top + stroke && band_y < workspace.terminal.top);
                 assert_eq!(
                     padding_pixel(&batch, band_x, band_y),
-                    (frames && !popup).then_some(scene.content[0].cells[1].style.background),
+                    None,
                     "header band: popup={popup}, frames={frames}, scale={scale}"
                 );
                 assert_eq!(
@@ -331,7 +323,6 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                     metrics,
                     PaddingColor::Background,
                     frames,
-                    &[],
                     stroke,
                     (None, 0.0),
                 );
@@ -358,7 +349,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                             edge.content[0].cells[0].text = reason.into();
                         }
                         let mut changed = RectangleBatch::new(400, 300);
-                        let bands = build_workspace_padding(
+                        build_workspace_padding(
                             &mut changed,
                             &workspace,
                             Some(&edge),
@@ -366,24 +357,18 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                             metrics,
                             mode,
                             true,
-                            &[],
                             stroke,
                             (None, 0.0),
                         );
                         let expected = extends.then_some(edge.content[0].cells[1].style.background);
                         assert_eq!(
                             padding_pixel(&changed, band_x, band_y),
-                            expected,
+                            None,
                             "{screen:?}, {mode:?}, {reason}"
                         );
                         assert_eq!(
                             padding_pixel(&changed, band_x, workspace.terminal.top + 1.0),
                             expected
-                        );
-                        assert_eq!(
-                            bands[0].contains(&edge.content[0].cells[1].style.background),
-                            extends,
-                            "the label's contrast check sees the painted band"
                         );
                     }
                     let fill = workspace.card_fill(workspace.chrome, metrics, stroke);
@@ -466,7 +451,6 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         metrics,
                         PaddingColor::Extend,
                         true,
-                        &[],
                         stroke,
                         (None, 0.0),
                     );
@@ -627,64 +611,86 @@ fn padding_color_declines_only_primary_vertical_edges() {
 }
 
 #[test]
-fn expanded_padding_uses_the_continuous_pane_header_contour() {
+fn lone_pane_header_keeps_the_shared_fill_through_its_raised_cap() {
     let metrics = CellMetrics::for_scale(1.0);
     let (workspace, _) = retained_frame_text_clip(PhysicalSize::new(1280, 800));
-    let mut fonts = clipping_test_fonts();
-    let mut swash = SwashCache::new();
+    let scene = padding_scene();
     let fill = workspace.card_fill(workspace.chrome, metrics, 2.0);
-    let outlines = workspace.pane_outlines(
+    let outline = &workspace.pane_outlines(
         &workspace.panes,
         workspace.terminal,
         fill,
         1.0,
         metrics,
         2.0,
-    );
-    let top = workspace.header_viewport.top - crate::scene::tokens::title_tab_rise(metrics);
-    let viewport = SceneRect {
-        top,
-        height: workspace.header_viewport.bottom() - top,
-        ..workspace.header_viewport
+    )[0];
+    let row = workspace.panes[0].rect;
+    let top = row.top - crate::scene::tokens::title_tab_rise(metrics);
+    let notch = PaneTitleTab {
+        card: CardFill {
+            bounds: outline.bounds,
+            radius: outline.radius,
+        },
+        tab: FrameTitleTab {
+            top,
+            start: row.left + metrics.width * 8.0,
+            left_radius: outline.bounds.top - top,
+            row,
+            return_run: (outline.bounds.top - top) * 1.5,
+            action: None,
+            title: FrameTitle {
+                label: "p1".into(),
+                width: metrics.width * 2.0,
+            },
+        },
     };
-    let notch = PaneTitleTab::fit(
-        &mut fonts.font_system,
-        &mut swash,
-        metrics,
-        &workspace.panes[0],
-        None,
-        &outlines[0],
-        viewport.intersection(fill.bounds).unwrap(),
-        workspace.panes[0].rect.right(),
-        2.0,
-    )
-    .unwrap();
-    let band = notch
+    let cap = notch
         .bands(0.0)
         .into_iter()
-        .find(|band| band.top == notch.tab.top + 3.0)
+        .find(|band| band.top == top + 3.0)
         .unwrap();
-    let tabs = vec![vec![Some(notch)]];
-    let mut batch = RectangleBatch::new(1280, 800);
+    let mut backdrop = RectangleBatch::new(1280, 800);
+    push_card_backdrop(
+        &mut backdrop,
+        SceneRect {
+            left: 0.0,
+            top: 0.0,
+            width: 1280.0,
+            height: 800.0,
+        },
+        &[(Some(fill), scene.background)],
+        1.0,
+    );
+    let mut padding = RectangleBatch::new(1280, 800);
     build_workspace_padding(
-        &mut batch,
+        &mut padding,
         &workspace,
-        Some(&padding_scene()),
+        Some(&scene),
         &[],
         metrics,
         PaddingColor::Extend,
         true,
-        &tabs,
         2.0,
         (None, 0.0),
     );
-    assert!(
-        padding_pixel(&batch, band.left + band.width / 2.0, band.top + 0.5).is_some(),
-        "extended padding must reach the middle of the raised header band"
+    for (x, y) in [
+        (cap.left + cap.width / 2.0, cap.top + 0.5),
+        (row.left + row.width / 2.0, row.top + row.height / 2.0),
+        (row.right() - metrics.padding, row.top + row.height / 2.0),
+    ] {
+        assert!(y < workspace.terminal.top);
+        assert_eq!(padding_pixel(&padding, x, y), None);
+        assert_eq!(padding_pixel(&backdrop, x, y), Some(scene.background));
+    }
+    let grid = scene_grid(&scene, workspace.terminal, metrics);
+    let x = grid.left + metrics.width + 1.0;
+    assert_eq!(
+        padding_pixel(&padding, x, workspace.terminal.top - 0.5),
+        None,
     );
     assert_eq!(
-        padding_pixel(&batch, band.right() + 1.0, band.top + 0.5),
-        None,
-        "padding must not cover the space outside the pane's outer corner"
+        padding_pixel(&padding, x, workspace.terminal.top + 0.5),
+        Some(scene.content[0].cells[1].style.background),
+        "top terminal padding still extends immediately below the header",
     );
 }

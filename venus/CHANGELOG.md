@@ -5,6 +5,10 @@
 - VEN-C30: popup-source agent rows draw a thin rounded-square outline at the
   existing right edge, using the neutral card stroke (`border_width`) without
   a filled title bar (`eon-wpbjz`).
+- VEN-C8: pane header bands retain the shared column background and opacity;
+  terminal edge backgrounds extend only into terminal padding, including popup
+  margins and frameless gutters, below the terminal's top edge. No wire or
+  geometry change (`eon-jg86j`).
 
 - The first expanded Stack pane's band and focus frame sit one title row
   below the Stack outline, matching the gap below collapsed titles. Existing

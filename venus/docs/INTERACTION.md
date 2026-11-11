@@ -209,8 +209,7 @@ Pane labels come from Runtime: the pane ID, then a pinned name, otherwise its
 sanitized terminal title, otherwise its compact working directory. A differing
 terminal directory adds ` · DIRECTORY`, using a relative or shorter compact path.
 Labels keep explicit connecting, unavailable and offline states. The ID is dimmer
-when the resolved background, including an extended header band, and opacity
-permit readable contrast; narrow labels
+when the shared background and opacity permit readable contrast; narrow labels
 keep the ID when it fits, while accessibility and close listings retain the full
 bounded label. Metadata and names are display text, never command input.
 
@@ -241,9 +240,10 @@ popup and frameless paint.
 Last collapsed labels center on the line, clamped so their text boxes end at
 or above the bottom of their unchanged title bands.
 Stacked title rows and the space between cards share the expanded terminal's
-background colour and opacity, except that extended top padding fills an
-unzoomed expanded pane's band below its title (`padding_color`). Above that edge
-and outside the outer corners, the gaps and footer stay the opaque bar colour.
+background colour and opacity. Pane header bands, including lone and zoomed
+panes, keep that shared fill; terminal edge colours never extend into header
+chrome. Above that edge and outside the outer corners, the gaps and footer stay
+the opaque bar colour.
 The first title sits on that boundary. Popup and Agents fills follow their
 rounded outer edges in the same way, with their titles on the boundary. Header
 scrolling keeps the fill's top fixed. Frameless mode keeps terminal-background

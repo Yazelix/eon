@@ -252,7 +252,6 @@ fn pane_id_color(
     live: bool,
     fill: SceneColor,
     opacity: f32,
-    band: &[SceneColor],
 ) -> SceneColor {
     if !live {
         return name;
@@ -264,11 +263,7 @@ fn pane_id_color(
     };
     // A bright desktop bounds the translucent fill; frame and hover remain opaque.
     let resolved = over_bright_desktop(fill, opacity);
-    // An extended header band is opaque and sits under the label's lower half.
-    if contrast(dim, resolved) >= 4.5
-        && contrast(dim, palette::BAR_BACKGROUND) >= 4.5
-        && band.iter().all(|&color| contrast(dim, color) >= 4.5)
-    {
+    if contrast(dim, resolved) >= 4.5 && contrast(dim, palette::BAR_BACKGROUND) >= 4.5 {
         dim
     } else {
         name
@@ -2602,7 +2597,6 @@ impl Renderer {
         focus: WorkspaceFocus,
         rectangles: &mut RectangleBatch,
         backgrounds: &[SceneColor],
-        bands: &[Vec<SceneColor>],
         title_tabs: &[Option<FrameTitleTab>],
         pane_tabs: &[Vec<Option<PaneTitleTab>>],
     ) {
@@ -3189,10 +3183,6 @@ impl Renderer {
                         .copied()
                         .unwrap_or(palette::TERMINAL_FALLBACK),
                     self.background_opacity,
-                    bands
-                        .get(column_index)
-                        .filter(|_| outline.expanded)
-                        .map_or(&[], Vec::as_slice),
                 );
                 if id_color != color
                     && let Some(text) = self.text.get_mut(first_text)
@@ -4234,7 +4224,7 @@ mod tests {
             b: 248,
         };
         let black = SceneColor { r: 0, g: 0, b: 0 };
-        let dim = pane_id_color(name, true, true, black, 0.8, &[]);
+        let dim = pane_id_color(name, true, true, black, 0.8);
         assert_ne!(dim, name);
         assert!(
             contrast(
@@ -4246,13 +4236,7 @@ mod tests {
                 }
             ) >= 4.5
         );
-        assert_eq!(pane_id_color(name, true, true, black, 0.3, &[]), name);
-        let grey = SceneColor {
-            r: 110,
-            g: 110,
-            b: 110,
-        };
-        assert_eq!(pane_id_color(name, true, true, black, 0.8, &[grey]), name);
+        assert_eq!(pane_id_color(name, true, true, black, 0.3), name);
         assert_eq!(
             pane_id_color(
                 name,
@@ -4263,8 +4247,7 @@ mod tests {
                     g: 220,
                     b: 200
                 },
-                1.0,
-                &[]
+                1.0
             ),
             name
         );
@@ -5524,7 +5507,6 @@ mod tests {
                     WorkspaceFocus::Terminal,
                     &mut RectangleBatch::new(900, 600),
                     &[],
-                    &[],
                     &title_tabs,
                     &pane_tabs,
                 );
@@ -5664,7 +5646,6 @@ mod tests {
                         WorkspaceFocus::Panes,
                         &mut batch,
                         &[],
-                        &[],
                         &title_tabs,
                         &pane_tabs,
                     );
@@ -5779,7 +5760,6 @@ mod tests {
                             WorkspaceFocus::Terminal,
                             &mut hovered,
                             &[],
-                            &[],
                             &title_tabs,
                             &pane_tabs,
                         );
@@ -5805,7 +5785,6 @@ mod tests {
                                 scene,
                                 WorkspaceFocus::Terminal,
                                 &mut resting,
-                                &[],
                                 &[],
                                 &title_tabs,
                                 &pane_tabs,
@@ -5985,7 +5964,6 @@ mod tests {
                         &workspace,
                         WorkspaceFocus::Terminal,
                         &mut batch,
-                        &[],
                         &[],
                         &title_tabs,
                         &pane_tabs,

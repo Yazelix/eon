@@ -327,8 +327,9 @@ configuration is needed.
 With pane frames on, each column has one continuous terminal-background fill,
 from its Stack tab's contour down to the column's rounded bottom.
 The Stack band, stacked title rows and the space between cards share the
-expanded terminal's background colour and opacity. Extended top padding fills
-an unzoomed expanded pane's band below its top edge (`padding_color`). Outside the shared title contour and outer corners, the gaps and
+expanded terminal's background colour and opacity. Pane header bands, including
+lone and zoomed panes, keep that shared fill; terminal edge colours never extend
+into header chrome. Outside the shared title contour and outer corners, the gaps and
 footer stay the opaque bar colour. The Agents fill follows the same contour.
 Header scrolling keeps the fill's top fixed. Frameless mode keeps terminal
 background strips across the window below the bar, including the sidebar and
@@ -464,11 +465,11 @@ Alternate-screen TUIs always extend. `extend-always` skips those exceptions;
 `background` keeps the terminal default background throughout the padding.
 Default backgrounds retain the configured opacity; explicit backgrounds paint
 as they do in cells. Padding stays inside the rounded card and below outlines.
-In an expanded pane with frames on and no zoom, the pane's band below its top edge
-follows the top padding's colour and opacity instead of the shared title-row
-background. Collapsed title rows, the Stack band, popups,
-zoom and frameless mode keep their existing backgrounds. The setting applies
-when a window opens or reopens.
+Terminal padding (around the grid, popup margins and frameless gutters) follows
+`padding_color`; it never reaches above the terminal's top edge into header
+chrome. Pane header bands keep the shared column background and opacity,
+including lone and zoomed panes. The setting applies when a window opens or
+reopens.
 
 `background_opacity` sets how opaque each terminal's default background is, in
 Eon and eonbase alike. It also covers the terminal padding, the title rows and

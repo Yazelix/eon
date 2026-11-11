@@ -313,10 +313,9 @@ fn build_padding_rectangles(
     bounds: SceneRect,
     padding_color: PaddingColor,
     (preview, offset): (Option<&ScenePreview>, f32),
-) -> Vec<SceneColor> {
-    let mut top_colors = Vec::new();
+) {
     if padding_color == PaddingColor::Background || scene.columns == 0 || scene.rows == 0 {
-        return top_colors;
+        return;
     }
     let grid = scene_grid(scene, viewport, metrics);
     let columns = usize::from(scene.columns);
@@ -372,9 +371,9 @@ fn build_padding_rectangles(
             }
         }
     }
-    for (is_top, edge, top, bottom) in [
-        (true, grid.top, bounds.top, grid.top),
-        (false, grid.bottom(), grid.bottom(), bounds.bottom()),
+    for (edge, top, bottom) in [
+        (grid.top, bounds.top, grid.top),
+        (grid.bottom(), grid.bottom(), bounds.bottom()),
     ] {
         let Some((_, row)) = rows.clone().min_by(|(a, _), (b, _)| {
             (a + metrics.height / 2.0 - edge)
@@ -395,15 +394,6 @@ fn build_padding_rectangles(
             })
         {
             continue;
-        }
-        if is_top {
-            top_colors = row
-                .cells
-                .iter()
-                .take(columns)
-                .filter(|cell| !cell.style.background_is_default)
-                .map(|cell| cell.style.background)
-                .collect();
         }
         for (column, cell) in row.cells.iter().take(columns).enumerate() {
             let left = if column == 0 {
@@ -428,7 +418,6 @@ fn build_padding_rectangles(
             );
         }
     }
-    top_colors
 }
 
 fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> SceneRect {
@@ -818,12 +807,11 @@ fn build_workspace_padding(
     metrics: CellMetrics,
     padding_color: PaddingColor,
     pane_frames: bool,
-    pane_tabs: &[Vec<Option<PaneTitleTab>>],
     stroke_width: f32,
     scroll: (Option<&ScenePreview>, f32),
-) -> Vec<Vec<SceneColor>> {
+) {
     if padding_color == PaddingColor::Background {
-        return Vec::new();
+        return;
     }
     let mut surfaces = std::iter::once((
         workspace.chrome,
@@ -845,13 +833,12 @@ fn build_workspace_padding(
                 )
             }),
     )
-    .enumerate()
     .collect::<Vec<_>>();
-    surfaces.sort_by(|a, b| a.1.1.left.total_cmp(&b.1.1.left));
+    surfaces.sort_by(|a, b| a.1.left.total_cmp(&b.1.left));
     let spans = background_spans(
         &surfaces
             .iter()
-            .map(|(_, (_, terminal, _, _))| *terminal)
+            .map(|(_, terminal, _, _)| *terminal)
             .collect::<Vec<_>>(),
         rectangles.width as f32,
     );
@@ -867,12 +854,7 @@ fn build_workspace_padding(
             ..workspace.header_viewport
         }
     };
-    // The colours each column's top padding paints into its expanded pane's header band.
-    let mut header_bands = vec![Vec::new(); surfaces.len()];
-    let header_band = pane_frames && !popup && workspace.zoomed_pane().is_none();
-    for ((index, (allocated, terminal, scene, panes)), (left, right)) in
-        surfaces.into_iter().zip(spans)
-    {
+    for ((allocated, terminal, scene, panes), (left, right)) in surfaces.into_iter().zip(spans) {
         let Some(scene) = scene else { continue };
         let outer =
             (pane_frames || popup).then(|| workspace.card_fill(allocated, metrics, stroke_width));
@@ -886,22 +868,6 @@ fn build_workspace_padding(
                     radius: outline.radius,
                 })
         });
-        let notch = panes
-            .iter()
-            .position(|pane| pane.selected)
-            .and_then(|pane| pane_tabs.get(index)?.get(pane)?.as_ref());
-        let viewport = if header_band {
-            notch.map_or(viewport, |tab| {
-                let top = tab.tab.top.min(viewport.top);
-                SceneRect {
-                    top,
-                    height: viewport.bottom() - top,
-                    ..viewport
-                }
-            })
-        } else {
-            viewport
-        };
         let bounds = if popup {
             let card = outer.unwrap();
             // Popup margins are padding too; the title band retains its own background.
@@ -912,19 +878,7 @@ fn build_workspace_padding(
                 ..terminal
             }
         } else if pane_frames {
-            let top = if header_band {
-                notch.map_or_else(
-                    || pane.map_or(terminal.top, |pane| pane.bounds.top),
-                    |tab| tab.tab.top,
-                )
-            } else {
-                terminal.top
-            };
-            SceneRect {
-                top,
-                height: (terminal.bottom() - top).max(0.0),
-                ..terminal
-            }
+            terminal
         } else {
             let left = left.max(viewport.left);
             SceneRect {
@@ -938,40 +892,32 @@ fn build_workspace_padding(
             .into_iter()
             .flat_map(CardFill::bands)
             .chain(outer.is_none().then_some(bounds));
-        rectangles.card_clip = if notch.is_some() { None } else { pane };
-        let pane_bands = notch.map_or_else(|| vec![bounds], |tab| tab.bands(0.0));
+        rectangles.card_clip = pane;
         for band in bands {
-            for pane_band in &pane_bands {
-                let Some(clip) = bounds
-                    .intersection(viewport)
-                    .and_then(|clip| clip.intersection(band))
-                    .and_then(|clip| clip.intersection(*pane_band))
-                else {
-                    continue;
-                };
-                rectangles.clip = Some(clip);
-                let top_colors = build_padding_rectangles(
-                    rectangles,
-                    scene,
-                    metrics,
-                    terminal,
-                    bounds,
-                    padding_color,
-                    if terminal == workspace.terminal {
-                        scroll
-                    } else {
-                        (None, 0.0)
-                    },
-                );
-                if header_band {
-                    header_bands[index].extend(top_colors);
-                }
-            }
+            let Some(clip) = bounds
+                .intersection(viewport)
+                .and_then(|clip| clip.intersection(band))
+            else {
+                continue;
+            };
+            rectangles.clip = Some(clip);
+            build_padding_rectangles(
+                rectangles,
+                scene,
+                metrics,
+                terminal,
+                bounds,
+                padding_color,
+                if terminal == workspace.terminal {
+                    scroll
+                } else {
+                    (None, 0.0)
+                },
+            );
         }
     }
     rectangles.clip = None;
     rectangles.card_clip = None;
-    header_bands
 }
 
 fn terminal_text_clip(
@@ -1909,7 +1855,7 @@ impl Renderer {
                     );
                 }
             }
-            let bands = build_workspace_padding(
+            build_workspace_padding(
                 &mut rectangles,
                 workspace,
                 scene,
@@ -1917,7 +1863,6 @@ impl Renderer {
                 self.metrics,
                 self.padding_color,
                 self.pane_frames,
-                &pane_tabs,
                 self.card_stroke_width(),
                 (scroll_preview, scroll_offset),
             );
@@ -1936,7 +1881,6 @@ impl Renderer {
                 workspace_focus,
                 &mut rectangles,
                 &backgrounds,
-                &bands,
                 &title_tabs,
                 &pane_tabs,
             );

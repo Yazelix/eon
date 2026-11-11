@@ -684,6 +684,9 @@ re-proved when that platform or feature is next touched.
   standing rule (plan v5, overseer decisions of 2026-11-10): each Stack tab
   carries a Close button that always asks first, in a prompt worded from
   Runtime's answer, with a fixed confirmation delay before Enter counts.
+  Amended on 2026-11-11 by `eon-jg86j`, approved by eon-overseer under Lucca's
+  standing rule (Lucca's “auto-decide”, relayed 2026-11-11): pane header bands
+  keep the shared column fill; terminal padding never reaches header chrome.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -812,13 +815,13 @@ re-proved when that platform or feature is next touched.
     Stack tab's contour and follows it down to the column's rounded bottom;
     inside it, title rows and the space between stacked pane cards share the
     expanded terminal's background color/opacity under the surface-wide blur
-    request, so the stack has one background. In framed, unzoomed expanded
-    panes, the pane's band below its top edge follows the top padding's color and
-    opacity rules (`padding_color` in [Configuration
-    behavior](../../docs/CONFIGURATION.md#configuration-behavior)) instead of
-    the shared title-row background; title text, cutouts and outlines stay above
-    it, while collapsed rows, popups, zoom and frameless headers retain their
-    existing backgrounds. The Stack tab and the stack band keep the uniform
+    request, so the stack has one background. Pane header bands, including
+    expanded, lone and zoomed panes, keep the shared column background and
+    opacity. Terminal padding (around the grid, popup margins and frameless
+    gutters) follows `padding_color`; it never reaches above the terminal's top
+    edge into header chrome. Title text, cutouts and outlines retain their
+    existing treatment. Popups and frameless headers retain their existing
+    backgrounds. The Stack tab and the stack band keep the uniform
     column background and opacity. Outside the shared title contour and those
     outer corners, everything below the tab bar that the column fills do not
     cover, including the gaps and footer band, takes the header's opaque color,

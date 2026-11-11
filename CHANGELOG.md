@@ -8,6 +8,9 @@ installation, and proven contract changes.
 - Popup agents in Agents and the attention inbox carry a thin rounded-square
   outline in place of the heavy window mark. Its stroke follows `border_width`
   (`eon-wpbjz`).
+- Pane header bands keep Eon's shared background and opacity when a terminal
+  paints its top row a different colour. Terminal padding still follows
+  `padding_color` (`eon-jg86j`).
 
 - The first expanded Stack pane's band and focus frame sit one title row
   below the Stack outline, matching the gap below collapsed titles. Existing
