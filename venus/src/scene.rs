@@ -372,8 +372,7 @@ pub struct SidebarRow {
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,
     pub(crate) focused: bool,
-    /// The row's source terminal is the one the active tab focuses, so it takes the "you are
-    /// here" outline.
+    /// The row's source terminal is the one the active tab focuses, so it takes the selected fill.
     pub(crate) current: bool,
     /// Milliseconds since the record changed; unavailable rows have no age.
     age: Option<u64>,
@@ -3834,7 +3833,8 @@ impl WorkspaceScene {
                 let (mut label, mut accessible_label) =
                     tab_labels(index, snapshot.tabs.len(), &tab.directory);
                 if zoomed && index == active_tab {
-                    label.push_str(" \u{f00e}");
+                    label.push(' ');
+                    label.push_str(tokens::RESTORE_GLYPH);
                     accessible_label.push_str(", zoomed");
                 }
                 let (label, text_width) = header_text(HeaderText::Tab(&tab.id), &label);

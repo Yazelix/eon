@@ -142,6 +142,9 @@ pub(crate) const fn dialog_chip_label_margins(padding: f32) -> f32 {
 }
 
 // Text.
+/// Shared Zoom/Restore affordances in pane headers and tab labels.
+pub(crate) const ZOOM_GLYPH: &str = "□";
+pub(crate) const RESTORE_GLYPH: &str = "▣";
 /// Shared typography for chrome titles and their descender-safe clip box.
 pub(crate) struct ChromeTitleMetrics {
     pub font_size: f32,

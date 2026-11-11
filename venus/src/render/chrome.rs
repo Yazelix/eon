@@ -4,7 +4,7 @@
 use super::{
     CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PaneTitleTab, PlacedText,
     RectangleBatch, Renderer, SceneColor,
-    cells::{NERD_FONT_FAMILY, blend_to_contrast},
+    cells::{blend_to_contrast, contrast_ratio},
     palette, physical_outline_width, shaping,
 };
 use crate::{
@@ -18,8 +18,7 @@ use crate::{
 use eon_workspace_protocol::v39::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
-    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Weight, Wrap,
-    fontdb,
+    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Wrap,
 };
 use winit::dpi::PhysicalSize;
 
@@ -270,7 +269,7 @@ fn pane_id_color(
     }
 }
 
-fn color_pane_identity(buffer: &mut Buffer, fonts: &mut FontSystem, id: &str, color: SceneColor) {
+fn color_label_identity(buffer: &mut Buffer, fonts: &mut FontSystem, id: &str, color: SceneColor) {
     let label = buffer
         .lines
         .iter()
@@ -925,23 +924,44 @@ fn push_attention_row_surface(
     spinners: &mut Spinners,
     rectangles: &mut RectangleBatch,
 ) -> (SceneColor, SceneColor) {
-    let fill = (row.focused || hovered).then_some(palette::CHROME_HIGHLIGHT);
+    let fill = if row.current {
+        Some(blend_to_contrast(palette::TAB_SELECTED, background, 3.0))
+    } else if row.focused || hovered {
+        let hover = palette::CHROME_HIGHLIGHT;
+        let current = blend_to_contrast(palette::TAB_SELECTED, background, 3.0);
+        let to_rest = contrast_ratio(hover, background);
+        let to_current = contrast_ratio(hover, current);
+        let span = contrast_ratio(background, current);
+        Some(
+            if to_rest >= 1.5 && to_current >= 1.5 && to_rest < span && to_current < span {
+                hover
+            } else {
+                // Step from the same surface as selection, in the same contrast direction.
+                blend_to_contrast(background, background, 1.5)
+            },
+        )
+    } else {
+        None
+    };
     if let Some(fill) = fill {
         rectangles.push_rounded(row.rect, radius, fill);
     }
-    // The current outline stays above the fill and below keyboard focus.
-    if row.current {
-        rectangles.push_rounded_outline(row.rect, radius, palette::CARD_OUTLINE);
-    }
     if row.focused {
-        rectangles.push_rounded_outline(row.rect, radius, palette::ACCENT);
+        let focus = blend_to_contrast(palette::ACCENT, fill.unwrap_or(background), 3.0);
+        rectangles.push_rounded_outline(row.rect, radius, focus);
     }
     let backing = match fill {
+        // Adapted fills keep fixed attention colours readable on the tab badges' dark disc.
+        Some(fill) if row.current || fill != palette::CHROME_HIGHLIGHT => {
+            Backing::Disc(palette::BAR_BACKGROUND)
+        }
         Some(fill) => Backing::Disc(fill),
         None => surface,
     };
     spinners.push_badge(row.glyph, backing, rectangles);
-    let (title, detail) = if row.glyph.dimmed {
+    let (title, detail) = if row.current {
+        (palette::PRIMARY_TEXT, palette::PRIMARY_TEXT)
+    } else if row.glyph.dimmed {
         (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
     } else {
         (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
@@ -1700,7 +1720,7 @@ fn push_session_label_surface(
     let radius = tokens::capsule_radius(visual.height);
     if state.enabled {
         if state.pressed {
-            rectangles.push_rounded(visual, radius, palette::TAB_SELECTED);
+            rectangles.push_rounded(visual, radius, palette::SESSION_PRESSED);
         } else if state.hovered {
             rectangles.push_rounded(visual, radius, palette::TAB_HOVER);
         }
@@ -1733,30 +1753,6 @@ pub(super) fn measure_reading_width(fonts: &mut FontSystem, metrics: CellMetrics
     (0..=100)
         .map(|percent| fit_header_text(fonts, metrics, &format!("{percent}%"), f32::INFINITY).1)
         .fold(0.0, f32::max)
-}
-
-fn fit_tab_text(
-    fonts: &mut FontSystem,
-    metrics: CellMetrics,
-    text: &str,
-    zoomed: bool,
-    width: f32,
-) -> (String, f32) {
-    let fallback = text
-        .strip_suffix(" \u{f00e}")
-        .filter(|_| {
-            zoomed
-                && fonts
-                    .db()
-                    .query(&fontdb::Query {
-                        families: &[Family::Name(NERD_FONT_FAMILY)],
-                        ..Default::default()
-                    })
-                    .and_then(|id| fonts.get_font(id, Weight::NORMAL))
-                    .is_none()
-        })
-        .map(|label| format!("{label} · zoom"));
-    fit_header_text(fonts, metrics, fallback.as_deref().unwrap_or(text), width)
 }
 
 /// Lines `text` takes in dialog row typography wrapped to `width` pixels.
@@ -1920,15 +1916,9 @@ impl Renderer {
     }
 
     /// Fit the scene's canonical label using the same typography as its header.
-    pub fn fit_tab_text(&mut self, label: &str, zoomed: bool) -> (String, f32) {
+    pub fn fit_tab_text(&mut self, label: &str) -> (String, f32) {
         let width = WorkspaceScene::tab_text_width(self.size(), self.metrics);
-        fit_tab_text(
-            &mut self.fonts.font_system,
-            self.metrics,
-            label,
-            zoomed,
-            width,
-        )
+        fit_header_text(&mut self.fonts.font_system, self.metrics, label, width)
     }
 
     /// Draws one sidebar or inbox row over `surface`, what its badge sits on unless the row is
@@ -2290,7 +2280,7 @@ impl Renderer {
                             top,
                             column.width.max(1.0),
                             line,
-                            palette::SECONDARY_TEXT,
+                            palette::HINT_POPUP_TEXT,
                             DrawStyleKind::PopupLabel,
                         );
                     }
@@ -2301,7 +2291,7 @@ impl Renderer {
                             top,
                             column.keys.max(1.0),
                             line,
-                            palette::ACCENT,
+                            palette::HINT_POPUP_TEXT,
                             DrawStyleKind::Status(Wrap::None),
                         );
                         self.push_text(
@@ -2549,7 +2539,7 @@ impl Renderer {
                     heading.width,
                     heading.width,
                     heading.height,
-                    palette::ACCENT,
+                    palette::SECONDARY_TEXT,
                     DrawStyleKind::PopupLabel,
                     viewer.content,
                 );
@@ -2614,7 +2604,7 @@ impl Renderer {
                     ..track
                 },
                 tokens::capsule_radius(track.width),
-                palette::ACCENT,
+                palette::DIALOG_SCROLL_THUMB,
             );
         }
         rectangles.clip = None;
@@ -2729,21 +2719,33 @@ impl Renderer {
                 );
             }
             rectangles.clip = Some(list);
+            let background = backgrounds
+                .last()
+                .copied()
+                .unwrap_or(palette::TERMINAL_FALLBACK);
+            let heading_name = blend_to_contrast(palette::PRIMARY_TEXT, background, 4.5);
+            let heading_number = blend_to_contrast(palette::PANE_ID, background, 4.5);
             for heading in &workspace.sidebar_headings {
+                let first = self.text.len();
                 self.push_sidebar_line(
                     &heading.label,
                     heading.rect.left,
                     heading.rect.top,
                     heading.rect.width,
-                    palette::ACCENT,
+                    heading_name,
                     list,
                 );
+                if let Some(index) = workspace.tabs.iter().position(|tab| tab.id == heading.tab)
+                    && let Some(text) = self.text.get_mut(first)
+                {
+                    color_label_identity(
+                        &mut text.buffer,
+                        &mut self.fonts.font_system,
+                        &(index + 1).to_string(),
+                        heading_number,
+                    );
+                }
             }
-            // `card_backdrops` lists the sidebar's card last.
-            let background = backgrounds
-                .last()
-                .copied()
-                .unwrap_or(palette::TERMINAL_FALLBACK);
             let card = Backing::card(background, self.background_opacity);
             for row in workspace.sidebar_rows() {
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
@@ -2783,7 +2785,7 @@ impl Renderer {
                         hint.key.as_str(),
                         hint.rect.left,
                         hint.label_offset,
-                        palette::ACCENT,
+                        palette::TAB_TEXT,
                     ),
                     (
                         hint.label.as_str(),
@@ -2826,7 +2828,7 @@ impl Renderer {
             }
         }
         rectangles.clip = Some(workspace.tab_viewport);
-        for tab in &workspace.tabs {
+        for (index, tab) in workspace.tabs.iter().enumerate() {
             if tab.rect.intersection(workspace.tab_viewport).is_none() {
                 continue;
             }
@@ -2844,6 +2846,7 @@ impl Renderer {
             if tab.selected && focus == WorkspaceFocus::Tabs {
                 rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
             }
+            let first = self.text.len();
             self.push_chip_label(
                 tab.label(),
                 chip_label_box(workspace, tab.rect, self.metrics),
@@ -2854,6 +2857,16 @@ impl Renderer {
                 },
                 workspace.tab_label_clip,
             );
+            if !tab.selected
+                && let Some(text) = self.text.get_mut(first)
+            {
+                color_label_identity(
+                    &mut text.buffer,
+                    &mut self.fonts.font_system,
+                    &(index + 1).to_string(),
+                    blend_to_contrast(palette::PANE_ID, fill, 4.5),
+                );
+            }
             if let Some(badge) = tab.badge {
                 self.spinners
                     .push_badge(badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
@@ -3222,7 +3235,7 @@ impl Renderer {
                 if id_color != color
                     && let Some(text) = self.text.get_mut(first_text)
                 {
-                    color_pane_identity(
+                    color_label_identity(
                         &mut text.buffer,
                         &mut self.fonts.font_system,
                         &pane.id,
@@ -3273,9 +3286,9 @@ impl Renderer {
                         let glyph = match action {
                             crate::PaneHeaderAction::Close => "×",
                             crate::PaneHeaderAction::Zoom if workspace.zoomed_pane().is_some() => {
-                                "▣"
+                                tokens::RESTORE_GLYPH
                             }
-                            crate::PaneHeaderAction::Zoom => "□",
+                            crate::PaneHeaderAction::Zoom => tokens::ZOOM_GLYPH,
                         };
                         self.push_header_button(
                             rectangles,
@@ -3602,10 +3615,11 @@ impl RectangleBatch {
 
 #[cfg(test)]
 mod tests {
+    use super::super::cells::NERD_FONT_FAMILY;
     use super::super::cells::contrast_ratio;
     use super::super::*;
     use super::*;
-    use glyphon::cosmic_text::SubpixelBin;
+    use glyphon::{cosmic_text::SubpixelBin, fontdb};
 
     /// Venus's focus color when Eon passes none (`--focus-color`), readable on the bar disc.
     const DEFAULT_FOCUS: SceneColor = SceneColor {
@@ -4287,7 +4301,7 @@ mod tests {
             ),
             name
         );
-        let mut fonts = FontSystem::new();
+        let mut fonts = test_sans();
         let mut buffer = Buffer::new(&mut fonts, Metrics::new(16.0, 18.0));
         buffer.set_size(Some(600.0), Some(40.0));
         buffer.set_text(
@@ -4298,7 +4312,7 @@ mod tests {
         );
         buffer.shape_until_scroll(&mut fonts, false);
         let before = buffer.layout_runs().next().unwrap().line_w;
-        color_pane_identity(&mut buffer, &mut fonts, "p7", dim);
+        color_label_identity(&mut buffer, &mut fonts, "p7", dim);
         let run = buffer.layout_runs().next().unwrap();
         assert_eq!(run.line_w, before);
         assert!(
@@ -4321,6 +4335,104 @@ mod tests {
             width,
         );
         assert_eq!(fitted.0, "p7");
+    }
+
+    #[test]
+    fn chrome_text_roles_keep_grey_labels_and_readable_identity_spans() {
+        let light_blue = SceneColor {
+            r: 162,
+            g: 204,
+            b: 230,
+        };
+        for color in [
+            palette::HINT_MODIFIER_TEXT,
+            palette::HINT_POPUP_TEXT,
+            palette::SHORTCUT_KEY_TEXT,
+            palette::SECONDARY_TEXT,
+            palette::PRIMARY_TEXT,
+            palette::PANE_ID,
+            palette::DIALOG_SCROLL_THUMB,
+        ] {
+            assert_ne!(color, palette::ACCENT);
+            assert_ne!(color, light_blue);
+        }
+        assert!(contrast_ratio(palette::DIALOG_SCROLL_THUMB, palette::SCROLLBAR_TRACK) >= 3.0);
+        for (text, background) in [
+            (palette::HINT_POPUP_TEXT, palette::TOOLTIP_BACKGROUND),
+            (palette::HINT_MODIFIER_TEXT, palette::HINT_KEYCAP),
+            (palette::HINT_MODIFIER_TEXT, palette::CHROME_HIGHLIGHT),
+            (palette::SHORTCUT_KEY_TEXT, palette::DIALOG_BACKGROUND),
+            (palette::SHORTCUT_KEY_TEXT, palette::CONTROL_HOVER),
+            (palette::SECONDARY_TEXT, palette::DIALOG_BACKGROUND),
+        ] {
+            assert!(
+                contrast_ratio(text, background) >= 4.5,
+                "{text:?} on {background:?}"
+            );
+        }
+        let black = SceneColor { r: 0, g: 0, b: 0 };
+        assert!(
+            contrast_ratio(palette::TAB_IDLE, black) < contrast_ratio(palette::TAB_HOVER, black)
+        );
+        assert!(
+            contrast_ratio(palette::TAB_HOVER, black)
+                < contrast_ratio(palette::TAB_SELECTED, black)
+        );
+        assert!(contrast_ratio(palette::TAB_SELECTED, palette::BAR_BACKGROUND) >= 3.0);
+        assert!(contrast_ratio(palette::PRIMARY_TEXT, palette::TAB_SELECTED) >= 4.5);
+        let metrics = CellMetrics::for_scale(1.0);
+        let mut fonts = test_sans();
+        for (label, id) in [
+            ("12  e\u{301}on", "12"),
+            ("p7  Review pane", "p7"),
+            ("12", "12"),
+        ] {
+            let mut buffer =
+                Buffer::new(&mut fonts, Metrics::new(metrics.font_size, metrics.height));
+            buffer.set_wrap(Wrap::None);
+            buffer.set_text(
+                label,
+                &Attrs::new().family(Family::SansSerif),
+                shaping(label),
+                None,
+            );
+            buffer.shape_until_scroll(&mut fonts, false);
+            let width = buffer.layout_runs().next().unwrap().line_w;
+            for background in [
+                palette::TAB_IDLE,
+                palette::TAB_HOVER,
+                SceneColor {
+                    r: 40,
+                    g: 42,
+                    b: 54,
+                },
+                SceneColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                },
+            ] {
+                let identity = blend_to_contrast(palette::PANE_ID, background, 4.5);
+                let name = blend_to_contrast(palette::PRIMARY_TEXT, background, 4.5);
+                assert!(contrast_ratio(identity, background) >= 4.5);
+                assert!(contrast_ratio(name, background) >= 4.5);
+                color_label_identity(&mut buffer, &mut fonts, id, identity);
+                let run = buffer.layout_runs().next().unwrap();
+                assert_eq!(run.line_w, width);
+                assert_eq!(run.text, label);
+                assert!(run.glyphs.iter().all(|glyph| glyph.glyph_id != 0));
+                for glyph in run.glyphs {
+                    assert_eq!(
+                        glyph.color_opt,
+                        (glyph.start < id.len())
+                            .then_some(Color::rgb(identity.r, identity.g, identity.b))
+                    );
+                }
+            }
+            let before = buffer.lines[0].attrs_list().clone();
+            color_label_identity(&mut buffer, &mut fonts, "absent", palette::ACCENT);
+            assert_eq!(buffer.lines[0].attrs_list(), &before);
+        }
     }
 
     #[test]
@@ -4401,7 +4513,11 @@ mod tests {
             for (draw, fills) in [
                 (
                     push_session_label_surface as Surface,
-                    [palette::TAB_IDLE, palette::TAB_HOVER, palette::TAB_SELECTED],
+                    [
+                        palette::TAB_IDLE,
+                        palette::TAB_HOVER,
+                        palette::SESSION_PRESSED,
+                    ],
                 ),
                 (
                     push_bar_control_surface as Surface,
@@ -4883,19 +4999,259 @@ mod tests {
                     let mut pane = row.clone();
                     pane.popup_marker = None;
                     assert_eq!(popup, paint(&pane));
-                    if background == white && !focused && !hovered {
-                        for text in [popup.0.0, popup.0.1] {
-                            assert!(contrast_ratio(text, background) >= 4.5);
+                    let fill = if current || focused || hovered {
+                        let rgb = [2, 3, 4].map(|i| {
+                            (f32::from_ne_bytes(popup.1[i * 4..i * 4 + 4].try_into().unwrap())
+                                * 255.0)
+                                .round() as u8
+                        });
+                        SceneColor {
+                            r: rgb[0],
+                            g: rgb[1],
+                            b: rgb[2],
                         }
                     } else {
-                        assert_eq!(
-                            popup.0,
-                            if dimmed {
-                                (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
-                            } else {
-                                (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
-                            }
+                        background
+                    };
+                    for text in [popup.0.0, popup.0.1] {
+                        assert!(contrast_ratio(text, fill) >= 4.5);
+                    }
+                    if current {
+                        let primary = blend_to_contrast(palette::PRIMARY_TEXT, fill, 4.5);
+                        assert_eq!(popup.0, (primary, primary));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn adapted_sidebar_fill_steps_keep_hover_and_current_distinct() {
+        let snapshot = popup_sidebar_snapshot();
+        let metrics = CellMetrics::for_scale(1.0);
+        let scene = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(1600, 900),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        );
+        let mut row = scene.sidebar_rows()[0].clone();
+        row.focused = false;
+        let black = SceneColor { r: 0, g: 0, b: 0 };
+        for background in [
+            palette::BAR_BACKGROUND,
+            SceneColor { r: 4, g: 5, b: 7 },
+            SceneColor {
+                r: 40,
+                g: 42,
+                b: 54,
+            },
+            SceneColor {
+                r: 80,
+                g: 80,
+                b: 80,
+            },
+            SceneColor {
+                r: 100,
+                g: 100,
+                b: 100,
+            },
+            SceneColor {
+                r: 128,
+                g: 128,
+                b: 128,
+            },
+            SceneColor {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+        ]
+        .into_iter()
+        .chain((0..=255).map(|value| SceneColor {
+            r: value,
+            g: value,
+            b: value,
+        })) {
+            let mut paint = |current| {
+                row.current = current;
+                let mut batch = RectangleBatch::new(1600, 900);
+                push_attention_row_surface(
+                    &row,
+                    true,
+                    tokens::inner_radius(metrics),
+                    Backing::Surface(background),
+                    background,
+                    &mut Spinners::new(false, DEFAULT_FOCUS),
+                    &mut batch,
+                );
+                let rgb = [2, 3, 4].map(|i| {
+                    (f32::from_ne_bytes(batch.bytes[i * 4..i * 4 + 4].try_into().unwrap()) * 255.0)
+                        .round() as u8
+                });
+                SceneColor {
+                    r: rgb[0],
+                    g: rgb[1],
+                    b: rgb[2],
+                }
+            };
+            let hover = paint(false);
+            let current = paint(true);
+            let rest_luma = contrast_ratio(background, black);
+            let hover_luma = contrast_ratio(hover, black);
+            let current_luma = contrast_ratio(current, black);
+            assert!(
+                (rest_luma < hover_luma && hover_luma < current_luma)
+                    || (rest_luma > hover_luma && hover_luma > current_luma),
+                "{background:?}: hover {hover:?}, current {current:?} must step in one direction"
+            );
+            assert!(contrast_ratio(hover, background) >= 1.5);
+            assert!(contrast_ratio(current, background) >= 3.0);
+            assert!(
+                contrast_ratio(hover, current) >= 1.5,
+                "{background:?}: hover {hover:?} must remain distinct from current {current:?}"
+            );
+            if background == palette::BAR_BACKGROUND
+                || background == black
+                || background == (SceneColor { r: 4, g: 5, b: 7 })
+            {
+                assert_eq!(hover, palette::CHROME_HIGHLIGHT);
+                assert_eq!(current, palette::TAB_SELECTED);
+            }
+        }
+    }
+
+    #[test]
+    fn selected_and_hovered_sidebar_rows_keep_readable_fill_focus_text_and_badges() {
+        let snapshot = popup_sidebar_snapshot();
+        let metrics = CellMetrics::for_scale(1.0);
+        let scene = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(1600, 900),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        );
+        let mut row = scene.sidebar_rows()[0].clone();
+        row.current = true;
+        row.glyph.dimmed = false;
+        for background in [
+            palette::BAR_BACKGROUND,
+            SceneColor { r: 4, g: 5, b: 7 },
+            SceneColor {
+                r: 40,
+                g: 42,
+                b: 54,
+            },
+            SceneColor {
+                r: 80,
+                g: 80,
+                b: 80,
+            },
+            SceneColor {
+                r: 100,
+                g: 100,
+                b: 100,
+            },
+            SceneColor {
+                r: 128,
+                g: 128,
+                b: 128,
+            },
+            SceneColor {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+        ] {
+            for current in [false, true] {
+                row.current = current;
+                for state in [
+                    AttentionState::NeedsInput,
+                    AttentionState::Error,
+                    AttentionState::Finished,
+                    AttentionState::Working,
+                    AttentionState::Background,
+                    AttentionState::Idle,
+                    AttentionState::Unavailable,
+                ] {
+                    row.glyph.state = state;
+                    for focused in [false, true] {
+                        row.focused = focused;
+                        let mut batch = RectangleBatch::new(1600, 900);
+                        let colors = push_attention_row_surface(
+                            &row,
+                            true,
+                            tokens::inner_radius(metrics),
+                            Backing::Surface(background),
+                            background,
+                            &mut Spinners::new(false, DEFAULT_FOCUS),
+                            &mut batch,
                         );
+                        let rgb = [2, 3, 4].map(|i| {
+                            (f32::from_ne_bytes(batch.bytes[i * 4..i * 4 + 4].try_into().unwrap())
+                                * 255.0)
+                                .round() as u8
+                        });
+                        let fill = SceneColor {
+                            r: rgb[0],
+                            g: rgb[1],
+                            b: rgb[2],
+                        };
+                        let mut expected = RectangleBatch::new(1600, 900);
+                        expected.push_rounded(row.rect, tokens::inner_radius(metrics), fill);
+                        if focused {
+                            let focus = blend_to_contrast(palette::ACCENT, fill, 3.0);
+                            assert!(contrast_ratio(focus, fill) >= 3.0);
+                            expected.push_rounded_outline(
+                                row.rect,
+                                tokens::inner_radius(metrics),
+                                focus,
+                            );
+                        }
+                        let mut badge = RectangleBatch::new(1600, 900);
+                        let disc = if current || fill != palette::CHROME_HIGHLIGHT {
+                            palette::BAR_BACKGROUND
+                        } else {
+                            fill
+                        };
+                        Spinners::new(false, DEFAULT_FOCUS).push_badge(
+                            row.glyph,
+                            Backing::Disc(disc),
+                            &mut badge,
+                        );
+                        expected.bytes.extend_from_slice(&badge.bytes);
+                        assert_eq!(
+                            batch.bytes, expected.bytes,
+                            "{background:?}, {state:?}, focus={focused}"
+                        );
+                        assert!(
+                            contrast_ratio(fill, background) >= if current { 3.0 } else { 1.5 }
+                        );
+                        for text in [colors.0, colors.1] {
+                            assert!(
+                                contrast_ratio(text, fill) >= 4.5,
+                                "{background:?}, {text:?}"
+                            );
+                        }
+                        for vertex in badge.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                            let rgb = [2, 3, 4].map(|i| {
+                                (f32::from_ne_bytes(vertex[i * 4..i * 4 + 4].try_into().unwrap())
+                                    * 255.0)
+                                    .round() as u8
+                            });
+                            let color = SceneColor {
+                                r: rgb[0],
+                                g: rgb[1],
+                                b: rgb[2],
+                            };
+                            if color != disc {
+                                assert!(contrast_ratio(color, disc) >= 3.0, "{state:?}: {color:?}");
+                            }
+                        }
                     }
                 }
             }
@@ -5404,78 +5760,40 @@ mod tests {
     }
 
     #[test]
-    fn zoom_marker_uses_bundled_face_or_text_fallback_and_fits() {
-        let original = FontSystem::new();
-        for available in [true, false] {
-            let mut db = fontdb::Database::new();
-            for name in ["DejaVu Sans", NERD_FONT_FAMILY] {
-                if !available && name == NERD_FONT_FAMILY {
-                    continue;
-                }
-                let id = original
-                    .db()
-                    .query(&fontdb::Query {
-                        families: &[Family::Name(name)],
-                        ..Default::default()
-                    })
-                    .expect("the accepted font environment supplies the tested face");
-                db.push_face_info(original.db().face(id).unwrap().clone());
-            }
-            db.set_sans_serif_family("DejaVu Sans");
-            let mut fonts = FontSystem::new_with_locale_and_db("en-US".into(), db);
-            for scale in [1.0, 1.3, 2.0] {
-                let metrics = CellMetrics::for_scale(scale);
-                let plain = "1  eon";
-                let label = "1  eon \u{f00e}";
-                let unzoomed = fit_tab_text(&mut fonts, metrics, label, false, f32::INFINITY);
-                assert_eq!(unzoomed.0, label, "directory text must not imply zoom");
-                let (fitted, width) = fit_tab_text(&mut fonts, metrics, label, true, f32::INFINITY);
-                assert_eq!(fitted, if available { label } else { "1  eon · zoom" });
-                let plain_width = fit_header_text(&mut fonts, metrics, plain, f32::INFINITY).1;
-                assert!(width > plain_width, "the marker must consume tab width");
-                let narrow = fit_tab_text(&mut fonts, metrics, label, true, plain_width);
-                assert!(narrow.1 <= plain_width);
-                assert_ne!(narrow.0, fitted);
-
-                let title = chrome_title_metrics(metrics);
-                let mut buffer =
-                    Buffer::new(&mut fonts, Metrics::new(title.font_size, title.line_height));
-                buffer.set_wrap(Wrap::None);
-                buffer.set_text(
-                    &fitted,
-                    &Attrs::new().family(Family::SansSerif),
-                    shaping(&fitted),
-                    None,
-                );
-                buffer.shape_until_scroll(&mut fonts, false);
-                let runs: Vec<_> = buffer.layout_runs().collect();
-                assert_eq!(runs.len(), 1, "label and marker share one baseline");
-                assert!((runs[0].line_w - width).abs() < 0.01);
-                assert!(runs[0].glyphs.iter().all(|glyph| glyph.glyph_id != 0));
-                if available {
-                    let glyph = runs[0]
-                        .glyphs
-                        .iter()
-                        .find(|glyph| fitted[glyph.start..glyph.end].contains('\u{f00e}'))
-                        .unwrap();
-                    assert!(
-                        fonts
-                            .db()
-                            .face(glyph.font_id)
-                            .unwrap()
-                            .families
-                            .iter()
-                            .any(|(name, _)| name == NERD_FONT_FAMILY),
-                        "the marker resolves through the bundled symbol face"
-                    );
-                }
-            }
+    fn zoom_marker_uses_the_shared_restore_glyph_and_fits_without_symbol_fonts() {
+        let mut fonts = test_sans();
+        for scale in [1.0, 1.3, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            let plain = "1  eon";
+            let label = format!("{plain} {}", tokens::RESTORE_GLYPH);
+            let (fitted, width) = fit_header_text(&mut fonts, metrics, &label, f32::INFINITY);
+            assert_eq!(fitted, label);
+            let plain_width = fit_header_text(&mut fonts, metrics, plain, f32::INFINITY).1;
+            assert!(width > plain_width, "the marker consumes tab width");
+            let narrow = fit_header_text(&mut fonts, metrics, &label, plain_width);
+            assert!(narrow.1 <= plain_width);
+            assert_ne!(narrow.0, fitted);
+            let title = chrome_title_metrics(metrics);
+            let mut buffer =
+                Buffer::new(&mut fonts, Metrics::new(title.font_size, title.line_height));
+            buffer.set_wrap(Wrap::None);
+            buffer.set_text(
+                &fitted,
+                &Attrs::new().family(Family::SansSerif),
+                shaping(&fitted),
+                None,
+            );
+            buffer.shape_until_scroll(&mut fonts, false);
+            let runs: Vec<_> = buffer.layout_runs().collect();
+            assert_eq!(runs.len(), 1);
+            assert!((runs[0].line_w - width).abs() < 0.01);
+            assert!(runs[0].glyphs.iter().all(|glyph| glyph.glyph_id != 0));
         }
     }
 
     #[test]
     fn tab_text_fits_shaped_width_without_splitting_combining_clusters() {
-        let mut fonts = FontSystem::new();
+        let mut fonts = test_sans();
         for scale in [1.0, 1.25, 2.0] {
             let metrics = CellMetrics::for_scale(scale);
             let available = (crate::scene::tab_max_width(metrics, 1000.0 * scale as f32)
@@ -5522,6 +5840,252 @@ mod tests {
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
         };
 
+        fn assert_chrome_text(renderer: &mut Renderer) {
+            fn color(color: SceneColor) -> Color {
+                Color::rgb(color.r, color.g, color.b)
+            }
+            fn source(text: &PlacedText) -> &str {
+                text.buffer.lines.first().map_or("", |line| line.text())
+            }
+            fn identity(text: &PlacedText, id: &str, number: SceneColor, name: SceneColor) {
+                let run = text.buffer.layout_runs().next().unwrap();
+                assert!(run.text.starts_with(id));
+                assert!(run.glyphs.iter().any(|glyph| glyph.start < id.len()));
+                assert!(run.glyphs.iter().any(|glyph| glyph.start > id.len()));
+                for glyph in run.glyphs {
+                    assert_eq!(
+                        glyph.color_opt.unwrap_or(text.color),
+                        color(if glyph.start < id.len() { number } else { name }),
+                        "{} at {}",
+                        run.text,
+                        glyph.start
+                    );
+                }
+            }
+            fn grey_text(texts: &[PlacedText]) {
+                for text in texts.iter().filter(|text| text.custom_glyph.is_none()) {
+                    for ink in std::iter::once(text.color).chain(
+                        text.buffer
+                            .layout_runs()
+                            .flat_map(|run| run.glyphs.iter().filter_map(|glyph| glyph.color_opt)),
+                    ) {
+                        assert_ne!(ink, color(palette::ACCENT), "mint text: {}", source(text));
+                        assert_ne!(
+                            ink,
+                            Color::rgb(162, 204, 230),
+                            "blue text: {}",
+                            source(text)
+                        );
+                    }
+                }
+            }
+            let size = PhysicalSize::new(1600, 900);
+            renderer.resize(size, 1.0);
+            renderer.header = HeaderInteraction::default();
+            renderer.set_scrollback_label(None);
+            let metrics = renderer.metrics();
+            let mut snapshot = popup_sidebar_snapshot();
+            snapshot.tabs[0].directory = b"/tmp/first".to_vec();
+            let mut second = snapshot.tabs[0].clone();
+            second.id = "t2".into();
+            second.directory = b"/tmp/second".to_vec();
+            second.selected_pane = Some("p4".into());
+            second.columns[0].expanded = "p4".into();
+            for (index, pane) in second.columns[0].panes.iter_mut().enumerate() {
+                pane.id = format!("p{}", index + 3);
+            }
+            second.popups[0].id = "u2".into();
+            snapshot.tabs.push(second);
+            snapshot.workspaces[0].tab_count = 2;
+            for tab in &mut snapshot.tabs {
+                for pane in &mut tab.columns[0].panes {
+                    pane.label = format!("{}  pane", pane.id);
+                }
+            }
+            let mut hint_definitions = default_popup_hints();
+            hint_definitions.push(crate::ShortcutHint {
+                modifiers: String::new(),
+                modifier_names: String::new(),
+                key: "F6".into(),
+                label: "focus".into(),
+                short: "Focus chrome".into(),
+                description: "Focus chrome".into(),
+                section: HintSection::Actions,
+                accessible_label: "F6 — Focus chrome".into(),
+                priority: 0,
+            });
+            let hints =
+                ShortcutHintsScene::new(hint_definitions, size, metrics, None, None, |text| {
+                    renderer.measure_header_text(text).1
+                });
+            let workspace = WorkspaceScene::from_snapshot_with_bar(
+                &snapshot,
+                EonBar::default(),
+                size,
+                metrics,
+                0.0,
+                0.0,
+                |_, text| renderer.fit_tab_text(text),
+                Some(hints),
+            );
+            for background in [
+                SceneColor { r: 4, g: 5, b: 7 },
+                SceneColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                },
+            ] {
+                renderer.text.clear();
+                let title_tabs = renderer.workspace_title_tabs(&workspace);
+                let pane_tabs = renderer.workspace_pane_tabs(&workspace);
+                renderer.build_workspace(
+                    &workspace,
+                    WorkspaceFocus::Terminal,
+                    &mut RectangleBatch::new(1600, 900),
+                    &[background, background],
+                    &title_tabs,
+                    &pane_tabs,
+                );
+                for (index, tab) in workspace.tabs.iter().enumerate() {
+                    let text = renderer
+                        .text
+                        .iter()
+                        .find(|text| {
+                            source(text) == tab.label() && text.top < workspace.header.bottom()
+                        })
+                        .expect("painted tab label");
+                    identity(
+                        text,
+                        &(index + 1).to_string(),
+                        if tab.selected {
+                            palette::PRIMARY_TEXT
+                        } else {
+                            palette::PANE_ID
+                        },
+                        if tab.selected {
+                            palette::PRIMARY_TEXT
+                        } else {
+                            palette::TAB_TEXT
+                        },
+                    );
+                }
+                for (index, heading) in workspace.sidebar_headings.iter().enumerate() {
+                    let text = renderer
+                        .text
+                        .iter()
+                        .find(|text| {
+                            source(text) == heading.label && text.top >= workspace.header.bottom()
+                        })
+                        .expect("painted sidebar heading");
+                    identity(
+                        text,
+                        &(index + 1).to_string(),
+                        blend_to_contrast(palette::PANE_ID, background, 4.5),
+                        blend_to_contrast(palette::PRIMARY_TEXT, background, 4.5),
+                    );
+                }
+                let hints = workspace.hints.as_ref().unwrap();
+                assert!(!hints.pieces.is_empty());
+                for hint in &hints.pieces {
+                    for (label, expected) in [
+                        (&hint.key, palette::TAB_TEXT),
+                        (&hint.label, palette::SECONDARY_TEXT),
+                    ] {
+                        let text = renderer
+                            .text
+                            .iter()
+                            .find(|text| {
+                                source(text) == label.as_str() && text.top >= hints.rect.top
+                            })
+                            .expect("painted hint key or label");
+                        assert_eq!(text.color, color(expected), "bar hint {label}");
+                    }
+                }
+                for group in &hints.groups {
+                    let text = renderer
+                        .text
+                        .iter()
+                        .find(|text| source(text) == group.legend)
+                        .expect("painted keycap legend");
+                    assert_eq!(text.color, color(palette::HINT_MODIFIER_TEXT));
+                }
+                grey_text(&renderer.text);
+            }
+            let hints = workspace.hints.as_ref().unwrap();
+            let group = &hints.groups[1];
+            let first = renderer.text.len();
+            renderer.build_hint_popup(
+                &workspace,
+                hints.rect.top - tokens::tooltip_gap(metrics),
+                1,
+                group,
+                &mut RectangleBatch::new(1600, 900),
+            );
+            let painted = &renderer.text[first..];
+            for section in HintSection::ALL {
+                assert!(painted.iter().any(|text| source(text) == section.title()
+                    && text.color == color(palette::HINT_POPUP_TEXT)));
+            }
+            for row in &group.rows {
+                assert!(
+                    painted.iter().any(|text| source(text) == row.key
+                        && text.color == color(palette::HINT_POPUP_TEXT))
+                );
+            }
+            grey_text(painted);
+            let dialog = DialogScene::new(
+                crate::DialogKind::Shortcuts,
+                vec![crate::ShortcutGroup::new(
+                    "Chrome group",
+                    (0..200)
+                        .map(|_| crate::ShortcutRow::new("Ctrl+Q", "Chrome action"))
+                        .collect(),
+                )],
+                size,
+                metrics,
+                0.0,
+                &crate::CellText(metrics),
+            );
+            assert!(dialog.max_scroll > 0.0);
+            renderer.text.clear();
+            let mut batch = RectangleBatch::new(1600, 900);
+            renderer.build_dialog(&dialog, &mut batch);
+            for (label, expected) in [
+                ("Chrome group", palette::SECONDARY_TEXT),
+                ("Ctrl+Q", palette::SHORTCUT_KEY_TEXT),
+                ("Chrome action", palette::SHORTCUT_ACTION_TEXT),
+            ] {
+                assert!(
+                    renderer
+                        .text
+                        .iter()
+                        .any(|text| source(text) == label && text.color == color(expected)),
+                    "painted dialog {label}"
+                );
+            }
+            grey_text(&renderer.text);
+            let mut neutral_thumb = false;
+            for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                let rgb = [2, 3, 4].map(|i| {
+                    (f32::from_ne_bytes(vertex[i * 4..i * 4 + 4].try_into().unwrap()) * 255.0)
+                        .round() as u8
+                });
+                assert_ne!(
+                    rgb,
+                    [palette::ACCENT.r, palette::ACCENT.g, palette::ACCENT.b],
+                    "dialog thumb is not focus"
+                );
+                neutral_thumb |= rgb
+                    == [
+                        palette::DIALOG_SCROLL_THUMB.r,
+                        palette::DIALOG_SCROLL_THUMB.g,
+                        palette::DIALOG_SCROLL_THUMB.b,
+                    ];
+            }
+            assert!(neutral_thumb, "painted neutral scroll thumb");
+        }
+
         struct Probe(bool);
         impl ApplicationHandler for Probe {
             fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -5547,7 +6111,7 @@ mod tests {
                     2,
                     true,
                     None,
-                    FontSetup::new(&FontSettings::default()).unwrap(),
+                    FontSetup::resolve(&FontSettings::default(), test_sans()).unwrap(),
                 ))
                 .unwrap();
                 let snapshot = Snapshot {
@@ -5609,7 +6173,7 @@ mod tests {
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label, false),
+                    |_, label| renderer.fit_tab_text(label),
                 );
                 let title_tabs = renderer.workspace_title_tabs(&workspace);
                 let pane_tabs = renderer.workspace_pane_tabs(&workspace);
@@ -5686,7 +6250,7 @@ mod tests {
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label, false),
+                    |_, label| renderer.fit_tab_text(label),
                 );
                 renderer.pane_frames = false;
                 renderer.set_hovered_header(None);
@@ -5741,7 +6305,7 @@ mod tests {
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label, false),
+                    |_, label| renderer.fit_tab_text(label),
                     None,
                 );
                 // Exercise the real shaped title and rectangle path in this existing native probe.
@@ -5852,7 +6416,7 @@ mod tests {
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label, false),
+                    |_, label| renderer.fit_tab_text(label),
                 );
                 for frames in [true, false] {
                     renderer.pane_frames = frames;
@@ -6065,7 +6629,7 @@ mod tests {
                         renderer.metrics(),
                         0.0,
                         0.0,
-                        |_, label| renderer.fit_tab_text(label, false),
+                        |_, label| renderer.fit_tab_text(label),
                     );
                     renderer.text.clear();
                     let mut batch = RectangleBatch::new(1600, 900);
@@ -6173,7 +6737,7 @@ mod tests {
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label, false),
+                    |_, label| renderer.fit_tab_text(label),
                 );
                 let row = workspace.sidebar_row("u2").unwrap();
                 let marker = row.popup_marker.unwrap();
@@ -6205,6 +6769,7 @@ mod tests {
                         }
                     }
                 }
+                assert_chrome_text(&mut renderer);
                 event_loop.exit();
             }
 
@@ -6298,7 +6863,7 @@ mod tests {
             let width = WorkspaceScene::tab_text_width(size, metrics);
             let workspace =
                 WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, label| {
-                    fit_tab_text(&mut fonts.font_system, metrics, label, false, width)
+                    fit_header_text(&mut fonts.font_system, metrics, label, width)
                 });
             let tab = &workspace.tabs[1];
             assert_eq!(tab.label(), "2  rota-gtp");

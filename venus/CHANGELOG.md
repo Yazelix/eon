@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Selected tabs and the current Agents row share a brighter fill; keyboard
+  focus stays distinct and adapts for contrast. Resting tab and sidebar
+  heading numbers are dimmer than their names, hint and dialog text use
+  grey roles, and zoomed tabs share the pane Restore mark `▣`
+  (`eon-wuau8.3`, Lucca's 2026-11-10 approval and delegated contrast decisions).
+
 - VEN-C21: bar widgets and the session label use the idle-tab capsule fill,
   CPU/RAM/disk percentages use the interface font in fixed slots, and Shortcuts
   draws a plain `?`. Session hover and press step up the tab fills; mint focus

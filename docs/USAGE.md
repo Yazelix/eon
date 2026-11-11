@@ -371,8 +371,8 @@ The top row is the native Eon Bar. Its `+`, `?`, and `×` controls create
 a tab, open Shortcuts, and close the active tab. The empty space
 between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
-A zoomed tab shows a zoom-in magnifier after its name, or ` · zoom` if the
-bundled Symbols Nerd Font face is unavailable. Its accessible name says `, zoomed`.
+A zoomed tab shows `▣` after its name, the same Restore mark as the pane
+header button. Its accessible name says `, zoomed`.
 While the window holds two or more sessions, or its one session has a name,
 an outlined label before the tabs names the shown session, or gives its ID
 such as `s2`, followed, when there are several, by its position and the
@@ -609,9 +609,12 @@ Stack label darkens only as far as 4.5:1 contrast needs. Dialog tabs stay inside
 their existing dismissal bounds and use the dialog's opaque background; other
 tabs inherit their terminal background colour and opacity.
 
-Keycaps are steel blue and brighten under the pointer; in their popups keys
-are mint and descriptions white, and the expanded hints show mint keys before
-gray labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
+Keycaps keep their dark fill and brighten under the pointer; their legends,
+popup keys and expanded hint keys use grey text roles. Mint marks keyboard
+focus and pressed controls. Selected tabs and the current Agents row share a
+brighter fill; resting tab numbers and sidebar heading numbers are dimmer
+than their names. The whole selected tab label brightens. Keyboard focus
+adds an outline to the current row without hiding its selection fill. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints. The `Alt`
 popup lists one `focus` row, HJKL · 1..9, the `Ctrl+Alt` popup one row for the
 HJKL pane moves, and the `Ctrl+Alt+Shift` popup the HL tab moves. Full help and
@@ -735,8 +738,8 @@ unavailable`. An agent running in a popup has a window mark larger than the
 label text at the row's right edge, whether or not the popup is shown. Text
 stops before the mark, and the row uses the same fill as a pane agent. The
 attention inbox uses the same treatment for agents in the shown session. The
-current terminal's row has a separate outline. While no agent reports, the
-sidebar says so.
+current terminal's row uses the selected tab's brighter fill; keyboard focus
+adds its own mint outline. While no agent reports, the sidebar says so.
 
 Click a row, or press Enter or Space on it, to jump to that agent: Eon selects
 its tab and shows its pane or popup, and keyboard focus moves to that terminal.

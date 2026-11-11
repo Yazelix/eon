@@ -1824,7 +1824,7 @@ mod tests {
                     metrics,
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label, false),
+                    |_, label| renderer.fit_tab_text(label),
                 );
                 // The grid fills the terminal, as Orbit sizes it, and the image runs past the
                 // grid's right and bottom edges, under the notice.

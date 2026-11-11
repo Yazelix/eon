@@ -687,6 +687,9 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-11 by `eon-jg86j`, approved by eon-overseer under Lucca's
   standing rule (Lucca's “auto-decide”, relayed 2026-11-11): pane header bands
   keep the shared column fill; terminal padding never reaches header chrome.
+  Presentation amended by `eon-wuau8.3`, approved by Lucca on 2026-11-10
+  (selection, accents and labels), with zoom and contrast decisions relayed
+  by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -739,7 +742,7 @@ re-proved when that platform or feature is next touched.
     snapshot that changes the active tab, its panes or columns, or its selected
     pane ends the zoom, and unzooming sizes every column for the current window
     again, resizing only where that size changed. The active tab's label gains a
-    zoom-in magnifier glyph (Nerd Font U+F00E) after its name and its accessible
+    Restore mark `▣`, shared with the pane header button, after its name and its accessible
     name `, zoomed`; the pane panel is named `Zoomed pane <label>` and lists
     only that pane. In a tab with one pane the key is consumed with a rejected-
     action notice. While a popup covers the tab it is consumed without effect;
@@ -1839,6 +1842,9 @@ re-proved when that platform or feature is next touched.
   sure") on 2026-11-10. The shared critical/pace red is slightly brighter to
   preserve 4.5:1 contrast on the capsule fill, approved by eon-overseer under
   Lucca's standing delegation on 2026-11-11.
+  Presentation amended by `eon-wuau8.3`, approved by Lucca on 2026-11-10
+  (selection, accents and labels), with zoom and contrast decisions relayed
+  by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the session header;
@@ -1900,8 +1906,9 @@ re-proved when that platform or feature is next touched.
   the count. The name is fitted to a tab's widest text, and ` N/M` stays
   whole. It draws like the widgets, a filled capsule with primary text. Its
   leading position, session name and count, and session-picker action
-  distinguish it from the tabs. Hover and press step its fill up to the tab
-  hover and selected fills; keyboard focus adds the mint outline. A left press and release on it while the
+  distinguish it from the tabs. Hover uses the tab hover fill; press uses a
+  separately owned quieter fill. Keyboard focus adds the mint outline.
+  A left press and release on it while the
   presentation is current, or Enter or Space after Tab focuses it, invokes the
   snapshot's `sessions` popup entry as that entry's key does. Its tooltip is
   that entry's label and any chord, such as `Sessions — Alt+Shift+S`; it shares
@@ -2293,8 +2300,8 @@ re-proved when that platform or feature is next touched.
   except compositor blur through the card, which waits on the native backdrop
   re-proof of background blur ([Window background and
   decorations](PRESENTATION.md#window-background-and-decorations)), and the
-  current row's outline over a hovered row's highlight, which no isolated
-  capture could produce (`eon-sidebar-you-are-here-3743`). Approved by Lucca on
+  current row's selected fill and focus treatment introduced by `eon-wuau8.3`,
+  whose live acceptance follows landing. Approved by Lucca on
   2026-10-21 (draft 15 on `eon-agent-sidebar-yx8.1`, there under an earlier
   draft ID). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
@@ -2320,6 +2327,9 @@ re-proved when that platform or feature is next touched.
   `eon-cq38r`: EONW v39; Hide sets the sidebar closed through `SetSidebar`.
   Amended on 2026-11-11 by `eon-wpbjz`, approved by Lucca through
   eon-overseer: the popup marker is a thin rounded-square outline.
+  Presentation amended by `eon-wuau8.3`, approved by Lucca on 2026-11-10
+  (selection, accents and labels), with zoom and contrast decisions relayed
+  by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2413,15 +2423,18 @@ re-proved when that platform or feature is next touched.
       takes the title color, dimmed with a stale record; resting row text and
       marks adapt for contrast against the terminal background. Popup and pane rows
       use the same fill in resting, hover, current and keyboard-focus states;
-      the current-row and keyboard-focus outlines retain their normal order
-      (`eon-x8d5x`). Tab headers carry no marker.
+      keyboard focus outlines the row fill (`eon-wuau8.3`). Tab headers
+      carry no marker.
     - **Current row.** The row whose source terminal is the active tab's
       focused terminal (its shown popup, else its selected pane) takes a
-      one-pixel outline in the pane cards' outline color. It draws over the
-      opaque highlight of a focused or hovered row, and a focused row's accent
-      outline draws over it; the row keeps the outline while the sidebar holds
-      keyboard focus. Rows in other tabs never take it. Its accessible label
-      adds "current".
+      selected-tab fill role, adapted to at least 3:1 against the sidebar
+      background. Hover uses a weaker fill on the same adapted contrast ramp,
+      with a visible step to current. Current selection survives hover
+      and keyboard focus without a neutral outline. Keyboard focus adds the
+      mint role, adjusted only as needed for 3:1 against the row fill. Selected
+      text starts in the primary role and retains 4.5:1, including stale text;
+      selected badges keep the bar's dark disc. Rows in other tabs never take
+      this selection fill. Its accessible label adds "current".
   - **Navigation.**
     - Activating a row sends `FocusAttention`, and keyboard focus moves to the
       target terminal, or stays on the tab when the covered-target rule only
@@ -2667,10 +2680,10 @@ re-proved when that platform or feature is next touched.
   - Compositor blur through the card: headless Sway has no blur, so only its
     translucency was measured. It waits on the native backdrop re-proof of
     background blur, whose open proof `eon-vn0nk` records.
-  - The current row's outline drawn over a hovered row's highlight
-    (`eon-sidebar-you-are-here-3743`): in the isolated captures neither a
-    `swaymsg` pointer warp nor a relative move gave a Venus row hover, so
-    only review of `venus/src/render/chrome.rs` checks that order.
+  - The current-row fill and focus treatment (`eon-wuau8.3`) await Lucca's
+    live acceptance after landing. The earlier current-row outline
+    observation gap (`eon-sidebar-you-are-here-3743`) is superseded by this
+    presentation change; its historical observations above remain unchanged.
 
 ## VEN-C31 — Static terminal images
 

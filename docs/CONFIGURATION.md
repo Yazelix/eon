@@ -335,8 +335,15 @@ at scale 1.3 they draw at 1 and 1 physical pixels, and at scale 2 at 2
 and 2. Pane frames off hides pane and sidebar outlines and title rules;
 popups keep their outline. These settings apply to full-Eon surfaces;
 eonbase receives neither override. F6 title focus uses the pane header's configured
-stroke; other focus pills and the current agent row keep their one-physical-pixel
-outlines.
+stroke; other focus pills keep their one-physical-pixel outlines. The current
+agent row uses the selected-tab fill role rather than a neutral outline.
+Hover and current fills adapt together along the same contrast ramp.
+Its keyboard-focus outline remains one physical pixel, with mint adjusted
+only as needed for 3:1 against the row fill. Selection fills adapt for 3:1
+against the sidebar background, and selected text for 4.5:1 against the fill.
+Resting numbers and IDs are dimmer than names where 4.5:1 remains possible;
+the selected tab label uses one primary text role. These colours follow the
+fixed chrome palette; colour settings belong to the themes work.
 
 `cursor_trail_duration` defaults to `1.5`. Set it to `0` (or `0.0`) to turn
 the trail off while keeping the cursor's color and contrasting edge. To enable
@@ -380,7 +387,8 @@ window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
 
 Each pane header has a right action group: Zoom (`□`, Restore `▣` while zoomed)
-and Close (`×`). The expanded pane's framed header keeps both in its band and a
+and Close (`×`). The zoomed tab also shows `▣` after its name. Zoom/Restore
+glyphs are fixed together so the tab and button keep the same meaning. The expanded pane's framed header keeps both in its band and a
 collapsed row keeps them in a gap in its line; frameless headers keep the
 controls inline. The title and scrollback indicator fit to its
 left. Both controls disappear together if two full targets cannot fit; tight

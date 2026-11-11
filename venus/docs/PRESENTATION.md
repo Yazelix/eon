@@ -10,14 +10,15 @@ order, selection, and popups; Venus draws the visible scene.
 
 - Tabs show their one-based position and the directory leaf or `/` from Eon's tab
   launch directory. Long labels use middle ellipsis; hover shows the full path.
-  Selection brightens the tab, and keyboard focus adds an outline.
+  Selection brightens the tab and its whole label; resting tab numbers are dimmer
+  than their names. Keyboard focus adds a mint outline.
 - Tab pills and quota, CPU, RAM and disk widgets share one height and
   centre line, starting half the card-title height below the window top. The
   allocated card areas start lower so the tops of the card title tabs sit one
   card gap below the pills. This extra space yields first on
   short windows, before the bar's top gap and pill height. Widgets use filled
   capsules in the unselected-tab fill, without resting outlines. The session
-  label steps up to the tab hover and selected fills on hover and press;
+  label uses the tab hover fill on hover and its own quieter pressed fill;
   keyboard focus retains its mint outline. The header controls share their centre.
   Hover and accessibility bounds stay unchanged.
 - The Eon logo, in its own colours and two logical pixels shorter than the tab
@@ -420,10 +421,9 @@ Zoom shows one rounded card with the selected pane's label in its top edge,
 including in a one-column tab with several panes. The other panes keep running
 at their last sizes. Changing the active tab, selected pane or pane/column layout
 ends zoom; toggling it again restores the columns at the current window size.
-A one-pane tab refuses the toggle with a notice. A zoom-in magnifier (Nerd Font
-U+F00E) follows the tab's name in its label colour and on the same baseline;
-it participates in tab width fitting. If the bundled Symbols Nerd Font face
-is unavailable, the marker falls back to ` · zoom`. The marker
+A one-pane tab refuses the toggle with a notice. The Restore mark `▣`, shared
+with the pane header button, follows the tab's name in its label colour and
+on the same baseline; it participates in tab width fitting. The marker
 and `, zoomed` accessible name show while zoom is visible, and the pane panel
 is named `Zoomed pane <label>`. Popups cover zoom and hide its marker until they close.
 
@@ -491,8 +491,21 @@ title bar or interior. The mark takes the title color and the stale-row palette.
 Row text retains at least 4.5:1 contrast against the terminal or
 highlight background, including stale text. Resting row text and marks darken when the terminal
 background needs contrast, as Stack labels do. The mark's size scales with the
-sidebar font. Current-row and keyboard-focus outlines retain their normal
-behavior, and accessible names include "popup".
+sidebar font. The current row uses the selected tab's fill role, adapted to
+contrast at least 3:1 against the sidebar background. Hover uses a weaker fill
+on the same adapted contrast ramp, preserving a visible step to current;
+keyboard focus adds a mint outline, adapted only as needed to retain 3:1
+against the row fill. Selected text uses the primary role, adjusted for 4.5:1
+contrast; its attention badge keeps the bar's dark disc. Accessible names
+include "popup" and, for the current row, "current".
+
+Sidebar tab headings use a dimmed number followed by a primary name, each
+adapted to retain 4.5:1 contrast against the sidebar's terminal background.
+Headings have no selected state. Pane IDs retain their dimmed role and contrast
+guard even on the focused pane. Hint keys, keycap legends, shortcut keys and
+dialog group headings use grey text roles. Mint marks keyboard focus and
+existing pressed states; the dialog scroll thumb is neutral. The splash and
+scrollback label retain their own colours.
 
 ## Ownership
 

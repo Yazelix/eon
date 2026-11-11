@@ -2037,7 +2037,7 @@ impl Renderer {
                 self.config.height as f32 * 0.42,
                 self.config.width as f32 - self.metrics.padding * 4.0,
                 self.metrics.height * 1.5,
-                palette::ACCENT,
+                palette::SPLASH_TITLE,
                 DrawStyleKind::Heading,
             );
             self.push_text(

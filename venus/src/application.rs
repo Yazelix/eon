@@ -2742,9 +2742,7 @@ impl Application {
             pane_scroll,
             |kind, label| match kind {
                 HeaderText::Tab(id) => {
-                    let fitted = state
-                        .renderer
-                        .fit_tab_text(label, zoom && id == snapshot.active_tab);
+                    let fitted = state.renderer.fit_tab_text(label);
                     self.tab_texts.insert(id.to_owned(), fitted.clone());
                     fitted
                 }
