@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Managed Bash and Nushell omit the extra blank row before every Starship
+  prompt, including the first prompt in a fresh pane.
+  Eon's Starship default sets only `add_newline = false`; your own Starship
+  config always wins, including one created while the shell is running
+  (`eon-ckaya`, EON-C9).
+
 - Popup agents in Agents and the attention inbox carry a thin rounded-square
   outline in place of the heavy window mark. Its stroke follows `border_width`
   (`eon-wpbjz`).

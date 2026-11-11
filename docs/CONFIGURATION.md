@@ -813,6 +813,19 @@ environment apply from the first prompt. Eon skips it when mise is missing,
 fails, or your configuration already activates it, and `mise = false` turns
 it off. Eon never installs mise or trusts its configuration for you.
 
+When Eon activates Starship in `eon-nu` or `eon-bash`, its prompt omits the
+leading blank line unless you have your own Starship config. Each prompt call
+uses a packaged config containing only `add_newline = false` when
+`STARSHIP_CONFIG` is unset and `$HOME/.config/starship.toml` is missing.
+Starship does not use `XDG_CONFIG_HOME` for this file. Create
+`~/.config/starship.toml` or set `STARSHIP_CONFIG` in your shell configuration
+to use your own settings. In Bash, use
+`export STARSHIP_CONFIG=/path/to/starship.toml`. Setting `add_newline = true`
+restores the blank line. A config created while the shell is running takes
+effect at the next prompt. Eon never edits your file or exports the fallback to other commands,
+so Starship's configuration commands keep their native behavior. Other shells
+and user-owned prompts receive no Eon Starship default.
+
 Managed Nushell supports `clip copy` and `clip paste` through the native
 clipboard. Interactive `eon-nu` terminals also provide `clc`
 and `clp` aliases. User autoload files run afterward and can override them.

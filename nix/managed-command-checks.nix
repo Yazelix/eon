@@ -5,6 +5,61 @@
   eonPackage,
 }:
 let
+  starshipBashCheck = pkgs.writeText "eon-starship-check.bash" ''
+    set -e
+    starship_precmd
+    [[ -n $PS1 && $PS1 != $'\n'* ]]
+    [[ -z ''${STARSHIP_CONFIG+x} ]]
+    if ${pkgs.coreutils}/bin/env | ${pkgs.gnugrep}/bin/grep -q '^STARSHIP_CONFIG='; then exit 1; fi
+
+    printf 'format = "from-home"\n' > "$HOME/.config/starship.toml"
+    starship_precmd
+    [[ $PS1 == $'\nfrom-home' ]]
+    printf 'format = "from-explicit"\n' > "$HOME/explicit starship.toml"
+    export STARSHIP_CONFIG="$HOME/explicit starship.toml"
+    starship_precmd
+    [[ $PS1 == $'\nfrom-explicit' ]]
+    STARSHIP_CONFIG=""
+    starship_precmd
+    [[ $PS1 == $'\n'* ]]
+    STARSHIP_CONFIG="$HOME/missing.toml"
+    starship_precmd
+    [[ $PS1 == $'\n'* ]]
+
+    unset STARSHIP_CONFIG
+    ${pkgs.coreutils}/bin/rm "$HOME/.config/starship.toml" "$HOME/explicit starship.toml"
+    starship_precmd
+    [[ -n $PS1 && $PS1 != $'\n'* ]]
+    [[ -z ''${STARSHIP_CONFIG+x} ]]
+  '';
+  starshipNuCheck = pkgs.writeText "eon-starship-check.nu" ''
+    use std/assert
+    $env.CMD_DURATION_MS = "0"
+    let prompt = do $env.PROMPT_COMMAND
+    assert ($prompt | is-not-empty)
+    assert (not ($prompt | str starts-with (char newline)))
+    assert ('STARSHIP_CONFIG' not-in $env)
+    assert (not (^${pkgs.coreutils}/bin/env | lines | any { str starts-with 'STARSHIP_CONFIG=' }))
+
+    let home_config = $env.HOME | path join .config starship.toml
+    'format = "from-home"' | save $home_config
+    assert equal (do $env.PROMPT_COMMAND) "\nfrom-home"
+    let explicit_config = $env.HOME | path join 'explicit starship.toml'
+    'format = "from-explicit"' | save $explicit_config
+    $env.STARSHIP_CONFIG = $explicit_config
+    assert equal (do $env.PROMPT_COMMAND) "\nfrom-explicit"
+    $env.STARSHIP_CONFIG = ""
+    assert ((do $env.PROMPT_COMMAND) | str starts-with (char newline))
+    $env.STARSHIP_CONFIG = ($env.HOME | path join missing.toml)
+    assert ((do $env.PROMPT_COMMAND) | str starts-with (char newline))
+
+    hide-env STARSHIP_CONFIG
+    rm $home_config $explicit_config
+    let prompt = do $env.PROMPT_COMMAND
+    assert ($prompt | is-not-empty)
+    assert (not ($prompt | str starts-with (char newline)))
+    assert ('STARSHIP_CONFIG' not-in $env)
+  '';
   # A host mise that activates only Bash and Nushell, or fails when asked.
   fakeMise = pkgs.writeShellScriptBin "mise" ''
     if [[ -n ''${FAKE_MISE_FAIL-} ]]; then
@@ -54,6 +109,7 @@ pkgs.runCommand "eon-managed-command-path-check" { } ''
     'PATH=$EON_CHECK_PATH' \
     'unset PROMPT_COMMAND' \
     'unset -f starship_precmd __zoxide_hook __atuin_history _carapace_completer _mise_hook' \
+    'if [[ ''${EON_CHECK_CUSTOM_PROMPT-} == 1 ]]; then PS1=custom; fi' \
     > "$HOME/.bashrc"
   # Runs COMMAND in managed Bash with PATH set to SEARCH_PATH.
   managed_bash() {
@@ -81,6 +137,35 @@ pkgs.runCommand "eon-managed-command-path-check" { } ''
     || fail "Nushell Starship activation changes overlays or loses its prompt"
   managed_bash "$PATH" 'for tool in starship zoxide atuin carapace; do name=_eon_$tool; test -x "''${!name}" || exit 1; done' \
     || fail "managed Bash did not set up Starship, Zoxide, Atuin and Carapace"
+
+  # Exercise shell-owned prompts, including configs created after startup.
+  # XDG_CONFIG_HOME deliberately differs: Starship discovers only ~/.config.
+  (
+    unset STARSHIP_CONFIG
+    export XDG_CONFIG_HOME="$TMPDIR/starship-xdg"
+    ${pkgs.coreutils}/bin/mkdir -p "$HOME/.config" "$XDG_CONFIG_HOME" "$EON_CONFIG_HOME"
+    printf 'format = "from-xdg"\n' > "$XDG_CONFIG_HOME/starship.toml"
+    managed_bash "$PATH" 'source ${starshipBashCheck}' \
+      || fail "managed Bash lost Starship default or user-config precedence"
+    eon-nu --config ${eonPackage}/libexec/eon/shell/nu/1/eon.nu -c 'source ${starshipNuCheck}' \
+      || fail "managed Nushell lost Starship default or user-config precedence"
+
+    printf '[shell]\nstarship = false\n' > "$EON_CONFIG_HOME/config.toml"
+    managed_bash "$PATH" '! declare -F _eon_starship_prompt >/dev/null' \
+      || fail "managed Bash applied its Starship default while disabled"
+    eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c \
+      'if (scope commands | any { $in.name == "_eon_starship_prompt" }) { exit 1 }' \
+      || fail "managed Nushell applied its Starship default while disabled"
+    ${pkgs.coreutils}/bin/rm "$EON_CONFIG_HOME/config.toml"
+    EON_CHECK_CUSTOM_PROMPT=1 managed_bash "$PATH" \
+      '[[ $PS1 == custom ]] && ! declare -F _eon_starship_prompt >/dev/null' \
+      || fail "managed Bash replaced a custom prompt"
+    printf '%s\n' '$env.PROMPT_COMMAND = {|| "custom" }' \
+      'source ${eonPackage}/libexec/eon/shell/nu/1/eon.nu' > "$TMPDIR/custom-prompt.nu"
+    eon-nu --config "$TMPDIR/custom-prompt.nu" -c \
+      'use std/assert; assert equal (do $env.PROMPT_COMMAND) custom' \
+      || fail "managed Nushell replaced a custom prompt"
+  )
   if ${pkgs.gnugrep}/bin/grep -rl ${builtins.storeDir} ${eonPackage}/libexec/eon/shell; then
     fail "the shell tree names store paths"
   elif test $? != 1; then

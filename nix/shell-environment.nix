@@ -8,9 +8,29 @@ let
   # Files land in init/, so the session bin is ../../bin from each of them.
   shellInit = pkgs.runCommand "eon-shell-init" { } ''
     mkdir -p "$out"
-    ${starshipPackage}/bin/starship init nu > "$out/starship-nu"
-    ${starshipPackage}/bin/starship init bash --print-full-init > "$out/starship-bash"
-    sed -i 's#\^${starshipPackage}/bin/starship#^$_eon_starship#g' "$out/starship-nu"
+    # Keep native config commands writable and notice configs created mid-session.
+    cat > "$out/starship-nu" <<'NU'
+    const _eon_starship_config = path self ../starship.toml
+    def --wrapped _eon_starship_prompt [...args] {
+      let config = if ('STARSHIP_CONFIG' not-in $env) and not ($env.HOME | path join .config starship.toml | path exists) {
+        {STARSHIP_CONFIG: $_eon_starship_config}
+      } else { {} }
+      with-env $config { ^$_eon_starship ...$args }
+    }
+    NU
+    ${starshipPackage}/bin/starship init nu >> "$out/starship-nu"
+    cat > "$out/starship-bash" <<'BASH'
+    _eon_starship_prompt() {
+      if [[ -z ''${STARSHIP_CONFIG+x} && ! -e $HOME/.config/starship.toml ]]; then
+        STARSHIP_CONFIG="''${BASH_SOURCE[0]%/*}/../starship.toml" "$_eon_starship" "$@"
+      else
+        "$_eon_starship" "$@"
+      fi
+    }
+    BASH
+    ${starshipPackage}/bin/starship init bash --print-full-init >> "$out/starship-bash"
+    sed -i 's#\^${starshipPackage}/bin/starship#_eon_starship_prompt#g' "$out/starship-nu"
+    sed -i 's#${starshipPackage}/bin/starship prompt#_eon_starship_prompt prompt#g' "$out/starship-bash"
     sed -i 's#${starshipPackage}/bin/starship#"$_eon_starship"#g' "$out/starship-bash"
 
     for shell in nushell bash; do
@@ -204,6 +224,7 @@ let
 
   shellTree = pkgs.runCommand "eon-shell" { } ''
     mkdir -p "$out"
+    printf 'add_newline = false\n' > "$out/starship.toml"
     install -m644 ${bashRc} "$out/eon.bashrc"
     cp -r ${shellInit} "$out/init"
     for mask in $(seq 0 31); do

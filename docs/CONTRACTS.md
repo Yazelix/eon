@@ -1114,7 +1114,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   built without Steel, and a configuration root whose path is not valid UTF-8
   no longer fails Helix launch. Amended on 2026-11-10 (approved by Lucca,
   relayed by eon-overseer) by `eon-igae.17.1`: the `no-helix` product package
-  selects no Helix.
+  selects no Helix. Amended on 2026-11-11 (approved under Lucca's
+  “auto-decide”, relayed by eon-overseer) by `eon-ckaya`: managed Starship
+  prompt calls use a packaged default without a leading blank line when
+  neither an explicit config path nor the person's home config exists.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
   paths, Eon terminals launched under Nushell or Bash, and every terminal,
   popup, Venus and quota reader the supervisor starts.
@@ -1167,8 +1170,14 @@ names its socket. CLI JSON names a session `session` and a terminal
     completers, same-tool hooks, normal Starship discovery, and Atuin policy
     remain child-owned.
   - Nushell native user autoload remains last and its stock startup banner is
-    suppressed. Eon does not set `STARSHIP_CONFIG`, and Atuin continues to honor
-    `ATUIN_NOBIND`.
+    suppressed. When Eon activates Starship in `eon-nu` or `eon-bash`, each
+    prompt call uses a packaged config containing only `add_newline = false`
+    if `STARSHIP_CONFIG` is unset and `$HOME/.config/starship.toml` is missing.
+    This is rechecked each call; the fallback is never exported to the shell
+    or its other children, so native Starship commands retain their config
+    discovery and editing behavior. Explicit `STARSHIP_CONFIG` values,
+    including empty or missing-file paths, remain untouched. Atuin continues
+    to honor `ATUIN_NOBIND`.
   - Managed Nushell enables native `clip copy` and `clip paste`. Its interactive
     startup supplies `clc` and `clp` aliases for those commands; native user
     autoload may override the aliases afterward.
