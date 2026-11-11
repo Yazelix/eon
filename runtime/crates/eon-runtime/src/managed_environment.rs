@@ -53,6 +53,18 @@ struct EonConfig {
 }
 
 impl EonConfig {
+    fn validate(self, defaults: &Defaults) -> Result<(), String> {
+        resolve_bar(self.bar, defaults)?;
+        resolve_terminal(self.terminal, defaults)?;
+        resolve_popups(self.popups, defaults)?;
+        shell_config(self.shell, defaults)?;
+        resolve_agents(self.agents, defaults)?;
+        resolve_editor(self.editor, defaults)?;
+        resolve_animation(self.anima, defaults)?;
+        self.updates.resolve(false)?;
+        Ok(())
+    }
+
     fn unknown_keys(&self) -> Vec<String> {
         let mut keys = Vec::new();
         for (prefix, unknown) in [
@@ -285,7 +297,10 @@ pub(crate) fn bar(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Bar, String> {
-    let settings = read_config(root, defaults, log)?.bar;
+    resolve_bar(read_config(root, defaults, log)?.bar, defaults)
+}
+
+fn resolve_bar(settings: BarSettings, defaults: &Defaults) -> Result<Bar, String> {
     let percent = |key: &str, value: Option<u64>, default: u8| {
         value.map_or(Ok(default), |value| {
             u8::try_from(value)
@@ -1097,7 +1112,14 @@ pub(crate) fn editor_setting(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Option<Vec<String>>, String> {
-    let argv = match read_config(root, defaults, log)?.editor.command {
+    resolve_editor(read_config(root, defaults, log)?.editor, defaults)
+}
+
+fn resolve_editor(
+    settings: EditorSettings,
+    defaults: &Defaults,
+) -> Result<Option<Vec<String>>, String> {
+    let argv = match settings.command {
         None => match defaults.editor {
             Some(argv) => argv.iter().map(|&argument| argument.into()).collect(),
             None => return Ok(None),
@@ -1165,7 +1187,13 @@ pub(crate) fn startup_animation(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Option<StartupAnimation>, String> {
-    let settings = read_config(root, defaults, log)?.anima;
+    resolve_animation(read_config(root, defaults, log)?.anima, defaults)
+}
+
+fn resolve_animation(
+    settings: AnimationSettings,
+    defaults: &Defaults,
+) -> Result<Option<StartupAnimation>, String> {
     let anima = StartupAnimation {
         enabled: settings.enabled.unwrap_or(defaults.anima.enabled),
         style: settings
@@ -1237,7 +1265,10 @@ pub(crate) fn agents(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Agents, String> {
-    let settings = read_config(root, defaults, log)?.agents;
+    resolve_agents(read_config(root, defaults, log)?.agents, defaults)
+}
+
+fn resolve_agents(settings: AgentSettings, defaults: &Defaults) -> Result<Agents, String> {
     let delay = settings
         .send_enter_delay_ms
         .unwrap_or(defaults.send_enter_delay_ms.into());
@@ -1266,7 +1297,13 @@ pub(crate) fn terminal_presentation(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<TerminalConfig, String> {
-    let settings = read_config(root, defaults, log)?.terminal;
+    resolve_terminal(read_config(root, defaults, log)?.terminal, defaults)
+}
+
+fn resolve_terminal(
+    settings: TerminalSettings,
+    defaults: &Defaults,
+) -> Result<TerminalConfig, String> {
     let base = &defaults.terminal;
     let terminal = TerminalConfig {
         background_opacity: settings
@@ -1371,7 +1408,13 @@ pub(crate) fn popup_catalog(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<PopupCatalog, String> {
-    let mut config = read_config(root, defaults, log)?;
+    resolve_popups(read_config(root, defaults, log)?.popups, defaults)
+}
+
+fn resolve_popups(
+    mut popups: BTreeMap<String, PopupEntrySettings>,
+    defaults: &Defaults,
+) -> Result<PopupCatalog, String> {
     // Popup margins are Eon's fixed values, not configuration (EON-C10).
     let geometry = defaults.popups.geometry;
 
@@ -1380,7 +1423,7 @@ pub(crate) fn popup_catalog(
     let mut configured = Vec::new();
     for builtin in &defaults.popups.entries {
         let id = builtin.id.as_str();
-        let mut settings = config.popups.remove(id).unwrap_or_default();
+        let mut settings = popups.remove(id).unwrap_or_default();
         if id == "project" {
             if settings.command.is_some() {
                 return Err("popups.project.command is Eon-owned".into());
@@ -1431,7 +1474,7 @@ pub(crate) fn popup_catalog(
         });
     }
 
-    for (id, settings) in config.popups {
+    for (id, settings) in popups {
         validate_popup_id(&id)?;
         if settings.enabled == Some(false) {
             continue;
@@ -2360,24 +2403,43 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
 /// and dropping tombstoned tables, without warning about any of them.
 fn parse_config(root: &Path, defaults: &Defaults) -> Result<EonConfig, String> {
     let path = root.join(CONFIG_FILE);
-    let source = match fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(EonConfig::default());
-        }
-        Err(error) => {
-            return Err(format!("cannot read {}: {error}", path.display()));
-        }
-    };
+    parse_configuration_text(&read_configuration(&path)?, &path, defaults)
+}
+
+/// Read without creating directories; a missing file selects the build's defaults.
+pub(super) fn read_configuration(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(source) => Ok(source),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
+}
+
+/// Validate one candidate without reading a file, emitting warnings or starting children.
+pub(super) fn validate_configuration_text(
+    source: &str,
+    path: &Path,
+    defaults: &Defaults,
+) -> Result<(), String> {
+    parse_configuration_text(source, path, defaults)?
+        .validate(defaults)
+        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))
+}
+
+fn parse_configuration_text(
+    source: &str,
+    path: &Path,
+    defaults: &Defaults,
+) -> Result<EonConfig, String> {
     let invalid = |error: String| format!("invalid Eon configuration {}: {error}", path.display());
     let mut table: toml::Table =
-        toml::from_str(&source).map_err(|error: toml::de::Error| invalid(error.to_string()))?;
+        toml::from_str(source).map_err(|error: toml::de::Error| invalid(error.to_string()))?;
     // A tombstoned table goes before any typed read, so nothing in it can fail.
     let tombstoned = remove_tombstoned(&mut table);
     // Parsing the text keeps each error's line and column; a deprecated key
     // lands among the unknown keys until the translation below replaces it.
     let parsed: Option<EonConfig> = if tombstoned.is_empty() {
-        Some(toml::from_str(&source).map_err(|error: toml::de::Error| invalid(error.to_string()))?)
+        Some(toml::from_str(source).map_err(|error: toml::de::Error| invalid(error.to_string()))?)
     } else {
         None
     };
@@ -2425,6 +2487,53 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn configuration_text_validation_covers_all_resolvers_without_reading_disk() {
+        let root = crate::supervisor::temporary_directory();
+        let path = root.join("config.toml");
+        let defaults = crate::fixtures::inputs().defaults;
+        fs::write(&path, "broken = [").unwrap();
+        for source in [
+            "",
+            "[terminal]\nfont_size = 18\n[shell]\ncommand = ['custom']",
+        ] {
+            super::validate_configuration_text(source, &path, &defaults).unwrap();
+        }
+        assert!(super::parse_config(&root, &defaults).is_err());
+        fs::write(&path, "").unwrap();
+        for (source, key) in [
+            (
+                "[bar]\ncpu_warning_percent = 101",
+                "bar.cpu_warning_percent",
+            ),
+            ("[bar]\nwidgets = ['cpu', 'cpu']", "bar.widgets"),
+            ("[terminal]\nfont_size = 0", "terminal.font_size"),
+            (
+                "[popups.project]\nenabled = false",
+                "popups.project.enabled",
+            ),
+            (
+                "[popups.one]\ncommand = ['one']\nkeybinding = 'Alt+Shift+B'\n\
+                 [popups.two]\ncommand = ['two']\nkeybinding = 'Alt+Shift+B'",
+                "conflicts with popups.one.keybinding",
+            ),
+            ("[shell]\ncommand = []", "shell.command"),
+            (
+                "[agents]\nsend_enter_delay_ms = 65535",
+                "agents.send_enter_delay_ms",
+            ),
+            ("[editor]\ncommand = []", "editor.command"),
+            ("[anima]\nduration_seconds = 0", "anima.duration_seconds"),
+            ("[updates]\nbundle_prefix = 'relative'", "updates"),
+        ] {
+            let error = super::validate_configuration_text(source, &path, &defaults).unwrap_err();
+            assert!(error.contains(key), "{source}: {error}");
+            assert!(error.contains(path.to_str().unwrap()), "{error}");
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn update_targets_and_trust_are_resolved_independently() {

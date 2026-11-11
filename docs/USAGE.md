@@ -854,6 +854,7 @@ line points agents to `eon --skill`.
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
+| `eon config check [--json]` | Check config.toml for settings Eon would reject, without starting Eon or changing state |
 | `eon --skill` | Print the `eon` agent skill this build ships, without starting a session or reading configuration |
 | `eon -V`, `eon --version` | Print this build's Eon version as `eon VERSION`, without starting a session or reading configuration |
 
@@ -1176,7 +1177,19 @@ with `codex --no-daemon`; the Agent popup's `auto` command already does.
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more
-precisely. `eon update --install` exits 0 for installed, unchanged or a human
+precisely. After editing configuration, run `eon config check`: it checks settings
+Eon would reject at startup or during later use, using this build's defaults.
+It needs no supervisor and creates no directories; a missing `config.toml` uses
+the defaults. It exits 0 when valid or 1 on a read or validation failure;
+invalid arguments exit 2. `--json` prints `{path, valid, error}` on stdout with
+no stderr: `path` is the absolute file path (null if root discovery failed),
+and `error` is null or `{code, detail}`. `invalid-configuration` means a parser
+or settings error; `unreadable-configuration` means discovery or reading failed.
+Consumers allow additional fields. Success does not mean every key was recognised:
+unknown/ignored settings keep their usual behavior, and this command reports no
+warnings. It does not check availability of external programs, files or services.
+
+`eon update --install` exits 0 for installed, unchanged or a human
 decline; 1 for failed checks/builds/selection, invalid configuration or absent
 noninteractive confirmation; 2 for invalid arguments; 3 for a missing target;
 4 for a typed refusal; and 130 for a handled interrupt. It reports the actual

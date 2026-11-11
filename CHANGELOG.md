@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon config check [--json]` checks configuration for settings Eon would reject
+  at startup or during later use, without a running supervisor or state changes.
+  JSON results include the checked path, validity and structured error details
+  (`eon-configurability-qkq8.13`, EON-C9).
+
 - Closing a column or stopping right after a failed close no longer fails
   with "already managed" (`eon-k0okt`).
 

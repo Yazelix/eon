@@ -1118,10 +1118,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   “auto-decide”, relayed by eon-overseer) by `eon-ckaya`: managed Starship
   prompt calls use a packaged default without a leading blank line when
   neither an explicit config path nor the person's home config exists.
+  Amended on 2026-11-11 (approved by eon-overseer under Lucca's standing
+  delegation) by `eon-configurability-qkq8.13`: offline configuration checking
+  with structured JSON diagnostics.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
-  paths, Eon terminals launched under Nushell or Bash, and every terminal,
-  popup, Venus and quota reader the supervisor starts.
-- **Trigger:** Eon prints configuration defaults or paths, or constructs a child launch environment.
+  paths or checking configuration, Eon terminals launched under Nushell or Bash,
+  and every terminal, popup, Venus and quota reader the supervisor starts.
+- **Trigger:** Eon prints configuration defaults or paths, checks configuration,
+  or constructs a child launch environment.
 - **Result:**
   - `eon config defaults` prints a TOML configuration representing this build's
     defaults, with comments explaining defaults that require omission or remain
@@ -1132,6 +1136,27 @@ names its socket. CLI JSON names a session `session` and a terminal
     command does not read the user's configuration, prepare directories, contact
     a supervisor or start children. Successful output exits 0 with no stderr
     output; invalid syntax exits 2 and output failure exits 1.
+  - `eon config check [--json]` reads `config.toml` in the configuration root and
+    validates it with Eon Runtime's configuration parser and fallible configuration
+    resolvers, using this build's defaults. It does not create directories, write
+    configuration, contact a supervisor or start children. A missing file uses the
+    defaults. Configuration that validates exits 0; root-discovery, file-read and
+    configuration-validation failures exit 1. Human success names the file on stdout;
+    failure names the file when its path is available and gives the original error
+    on stderr, including the key or source location when available. With `--json`,
+    success and these failures print one object on stdout with `path` (the absolute
+    file path, null only if root discovery failed), `valid` (boolean), and `error`
+    (null on success, an object with `code` and `detail` on failure), and no stderr.
+    `invalid-configuration` identifies parser/resolver failures;
+    `unreadable-configuration` identifies root-discovery/read failures. `detail`
+    contains the diagnostic described above. Consumers allow additional fields.
+    Invalid arguments exit 2 using usage stderr. Other stdout write failures exit 1
+    with a diagnostic on stderr; a closed pipe retains the validation exit status
+    without a diagnostic. Checking configuration does not establish availability
+    of external programs, files or services used at runtime. It checks settings
+    Eon would reject at startup or during later use; success does not mean every
+    key was recognised. Unknown/ignored settings retain the parser policy, and
+    this command does not report warnings.
   - `eon config path` creates the configuration root if it is missing and
     prints the absolute path of the settings file `config.toml` inside it,
     without creating or reading that file. `eon config dir` creates the root

@@ -201,6 +201,149 @@ fn configure_mock_desktop(config: &Path) {
 }
 
 #[test]
+fn config_check_validates_offline_without_changing_state() {
+    let root = temporary_directory();
+    let config = root.join(OsStr::from_bytes(b"config-\xff"));
+    let path = config.join("config.toml");
+    let run = |arguments: &[&str]| {
+        eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(arguments)
+            .env("EON_CONFIG_HOME", &config)
+            .env("XDG_CONFIG_HOME", root.join("xdg"))
+            .env("HOME", root.join("home"))
+            .env("EON_RUNTIME_DIR", root.join("runtime"))
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env("EON_ORBIT", root.join("missing-orbit"))
+            .env("EON_VENUS", root.join("missing-venus"))
+            .env("EON_ANIMA", root.join("missing-anima"))
+            .output()
+            .unwrap()
+    };
+    let check = || {
+        let human = run(&["config", "check"]);
+        assert_eq!(human.status.code(), Some(0), "{human:?}");
+        assert!(human.stderr.is_empty());
+        assert!(stdout(&human).contains(path.to_string_lossy().as_ref()));
+        let json = run(&["config", "check", "--json"]);
+        assert_eq!(json.status.code(), Some(0), "{json:?}");
+        assert!(json.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(value["path"], path.to_string_lossy().as_ref());
+        assert_eq!(value["valid"], true);
+        assert!(value["error"].is_null());
+    };
+    check();
+    assert!(!config.exists());
+    fs::create_dir(&config).unwrap();
+    check();
+    assert!(!path.exists());
+    let defaults = run(&["config", "defaults"]);
+    assert!(defaults.status.success());
+    for source in [
+        "",
+        stdout(&defaults),
+        "[terminal]\nfont_size = 18\n[bar]\ncpu_warning_percent = 85\n",
+        "[terminal]\nfont_sise = 18\n",
+    ] {
+        fs::write(&path, source).unwrap();
+        check();
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+        assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
+    }
+    for arguments in [
+        &["--help"][..],
+        &["config", "--help"],
+        &["config", "check", "--help"],
+    ] {
+        let help = run(arguments);
+        assert!(help.status.success(), "{help:?}");
+        assert!(stdout(&help).contains("config check [--json]"));
+    }
+    for arguments in [
+        &["config", "check", "extra"][..],
+        &["config", "--json", "check"],
+        &["config", "check", "--json", "--json"],
+    ] {
+        let output = run(arguments);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty());
+    }
+    assert!(!root.join("runtime").exists());
+    assert!(!root.join("xdg").exists());
+    assert!(!root.join("home").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn config_check_reports_validation_and_read_failures_as_data() {
+    let root = temporary_directory();
+    let path = root.join("config.toml");
+    let run = |json: bool, discover: bool| {
+        let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+        command.args(["config", "check"]);
+        if json {
+            command.arg("--json");
+        }
+        command
+            .env("EON_CONFIG_HOME", &root)
+            .env("XDG_CONFIG_HOME", root.join("xdg"))
+            .env("HOME", root.join("home"))
+            .env("EON_RUNTIME_DIR", root.join("runtime"));
+        if !discover {
+            for variable in ["EON_CONFIG_HOME", "XDG_CONFIG_HOME", "HOME"] {
+                command.env_remove(variable);
+            }
+        }
+        command.output().unwrap()
+    };
+    let check = |code: &str, detail: &str, discover: bool| {
+        let human = run(false, discover);
+        let json = run(true, discover);
+        assert_eq!(human.status.code(), Some(1), "{human:?}");
+        assert_eq!(json.status.code(), Some(1), "{json:?}");
+        assert!(human.stdout.is_empty());
+        assert!(json.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(value["valid"], false);
+        assert_eq!(value["error"]["code"], code);
+        let diagnostic = value["error"]["detail"].as_str().unwrap();
+        assert!(diagnostic.contains(detail), "{value}");
+        assert!(String::from_utf8_lossy(&human.stderr).contains(diagnostic));
+        if discover {
+            assert_eq!(value["path"], path.to_str().unwrap());
+            assert!(diagnostic.contains(path.to_str().unwrap()), "{value}");
+        } else {
+            assert!(value["path"].is_null());
+        }
+    };
+    for (source, detail) in [
+        ("broken = [", "line 1"),
+        ("[terminal]\nfont_size = 'large'", "font_size"),
+        ("[terminal]\nfont_size = 0", "terminal.font_size"),
+        (
+            "[bar]\ncpu_warning_percent = 101",
+            "bar.cpu_warning_percent",
+        ),
+        (
+            "[popups.project]\nenabled = false",
+            "popups.project.enabled",
+        ),
+    ] {
+        fs::write(&path, source).unwrap();
+        check("invalid-configuration", detail, true);
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    }
+    fs::write(&path, [0xff]).unwrap();
+    check("unreadable-configuration", "cannot read", true);
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    check("unreadable-configuration", "cannot read", true);
+    check("unreadable-configuration", "are unset", false);
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn config_defaults_ignore_user_configuration_and_have_documented_values() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));

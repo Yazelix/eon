@@ -196,6 +196,21 @@ started, and
 `{"window": ID, "results": [...]}` object per window. Stop or attach only
 windows the person asked about.
 
+## Check configuration after edits
+
+After editing Eon's `config.toml`, run `eon config check --json` before calling
+the edit done. It checks settings Eon would reject at startup or during later
+use without a running supervisor or state changes. Read `path`, `valid` and
+`error`: `error` is null on success or `{code, detail}` on failure.
+`invalid-configuration` identifies a parser or settings error;
+`unreadable-configuration` identifies discovery or read failure, with `path`
+null only if root discovery failed. Fix the reported error and check again.
+Exit 0 means valid, 1 means checking failed, and 2 means invalid arguments.
+A missing file uses this build's defaults. Success does not mean every key was
+recognised: unknown/ignored settings retain their usual behavior and this command
+reports no warnings. It does not check availability of external programs, files
+or services. Allow additional JSON fields.
+
 ## Handle exit status
 
 | Status | Meaning |

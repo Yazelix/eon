@@ -3,6 +3,17 @@
 Settings live in `config.toml`; `eon config path` prints its full path, normally
 `~/.config/eon/config.toml`. `eon config dir` prints the configuration root
 that holds it, which also holds the managed tools' configuration directories.
+After editing, run `eon config check` to check for settings Eon would reject at
+startup or during later use. It needs no running Eon and changes no state; a
+missing file uses this build's defaults. It exits 0 when valid, 1 on read or
+validation failure, and 2 for invalid arguments. Errors name the file and the
+key or source location when available. `eon config check --json` returns
+`{path, valid, error}`, with `error` null or `{code, detail}`; see
+[Exit status](USAGE.md#exit-status) for the error codes. Success does not mean
+every key was recognised: unknown/ignored settings retain their usual behavior,
+and this command reports no warnings. It does not check availability of external
+programs, files or services.
+
 This example chooses a font, cursor preset and 100x30 grid; it is not the
 empty-configuration default:
 

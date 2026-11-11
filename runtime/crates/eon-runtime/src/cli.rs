@@ -851,6 +851,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         }
         [command, action] if command == "config" && action == "path" => print_config_path(true),
         [command, action] if command == "config" && action == "dir" => print_config_path(false),
+        [command, action] if command == "config" && action == "check" => {
+            check_configuration(inputs, false)
+        }
+        [command, action, flag] if command == "config" && action == "check" && flag == "--json" => {
+            check_configuration(inputs, true)
+        }
         [command, action] if command == "config" && action == "defaults" => {
             print_config_defaults(inputs, false)
         }
@@ -986,6 +992,35 @@ fn print_config_path(file: bool) -> Result<i32, String> {
     };
     write_stdout(format!("{}\n", path.display()))?;
     Ok(0)
+}
+
+fn check_configuration(inputs: &Inputs, json: bool) -> Result<i32, String> {
+    let path = configuration_directory().map(|root| root.join(managed_environment::CONFIG_FILE));
+    let result = match &path {
+        Ok(path) => managed_environment::read_configuration(path)
+            .map_err(|detail| ("unreadable-configuration", detail))
+            .and_then(|source| {
+                managed_environment::validate_configuration_text(&source, path, &inputs.defaults)
+                    .map_err(|detail| ("invalid-configuration", detail))
+            }),
+        Err(detail) => Err(("unreadable-configuration", detail.clone())),
+    };
+    let valid = result.is_ok();
+    if json {
+        let error = result
+            .err()
+            .map(|(code, detail)| serde_json::json!({"code": code, "detail": detail}));
+        let output = serde_json::json!({
+            "path": path.as_ref().ok().map(|path| path.to_string_lossy()),
+            "valid": valid,
+            "error": error,
+        });
+        write_stdout(format!("{output}\n"))?;
+    } else {
+        result.map_err(|(_, detail)| detail)?;
+        write_stdout(format!("Valid Eon configuration: {}\n", path?.display()))?;
+    }
+    Ok(if valid { 0 } else { 1 })
 }
 
 fn print_config_defaults(inputs: &Inputs, json: bool) -> Result<i32, String> {
@@ -1172,6 +1207,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("", "its config.toml path"),
             ("config dir", "Create and print the config root"),
             ("config defaults [--json]", "Print config.toml defaults"),
+            ("config check [--json]", "Check config.toml offline"),
             ("--skill", "Print this build's agent skill"),
             ("-V, --version", "Print this build's Eon version"),
             ("-h, --help", "Show this help; after a command,"),
