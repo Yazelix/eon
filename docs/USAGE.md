@@ -112,6 +112,8 @@ object (EON-C41). It checks only when you run it.
 - A `main` or `edge` profile entry gets an answer from GitHub. A newer
   revision on the same version is still an update. Without network, or under
   GitHub's rate limit, the check fails (exit 1); it never reports a guess.
+  Nix updates keep the installed `default` or `no-helix` package; to switch,
+  install the other package separately.
 - A tag or commit stays pinned and reports how to follow `main` instead.
 - Home Manager, NixOS and nix-darwin installs are updated through their own
   configuration, which the check names.

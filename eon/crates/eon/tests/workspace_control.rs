@@ -5002,6 +5002,215 @@ esac
     assert!(output.stdout.is_empty());
 }
 
+#[test]
+fn update_keeps_an_isolated_no_helix_profile_entry_on_its_package() {
+    let root = temporary_directory();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let platform = if cfg!(target_os = "macos") {
+        "aarch64-darwin"
+    } else {
+        "x86_64-linux"
+    };
+    let versions = eon_command(binary).arg("versions").output().unwrap();
+    let build = stdout(&versions).split_whitespace().nth(2).unwrap();
+    let (old, new) = ("1".repeat(40), "2".repeat(40));
+    let attribute = format!("packages.{platform}.no-helix");
+    let default = format!("packages.{platform}.default");
+    let profiles = root.join("profiles");
+    fs::create_dir(&profiles).unwrap();
+    let profile = profiles.join("profile");
+    let location = fs::canonicalize(&profiles).unwrap().join("profile");
+    let mut listings = Vec::new();
+    for (generation, revision) in [(1, &old), (2, &new)] {
+        let package = root.join(format!("store/eon-{generation}"));
+        fs::create_dir_all(package.join("bin")).unwrap();
+        fs::create_dir_all(package.join("share")).unwrap();
+        executable(&package.join("bin/eon"), fs::read(binary).unwrap());
+        fs::write(
+            package.join("share/eon-source-receipt.json"),
+            serde_json::json!({
+                "schema_version": 1,
+                "repository": "https://github.com/Yazelix/eon",
+                "revision": revision,
+                "build": build,
+                "platform": platform,
+                "attribute": attribute,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let environment = root.join(format!("store/environment-{generation}"));
+        fs::create_dir_all(environment.join("bin")).unwrap();
+        fs::write(environment.join("manifest.json"), "{}").unwrap();
+        symlink(package.join("bin/eon"), environment.join("bin/eon")).unwrap();
+        symlink(
+            environment,
+            profiles.join(format!("profile-{generation}-link")),
+        )
+        .unwrap();
+        listings.push(serde_json::json!({"version": 3, "elements": {
+            "eon+x": {
+                "active": true, "priority": 5, "outputs": null,
+                "attrPath": attribute,
+                "originalUrl": "github:Yazelix/eon/edge",
+                "url": format!("github:Yazelix/eon/{revision}"),
+                "storePaths": [package],
+            },
+            "other": {"active": true, "priority": 7, "storePaths": []},
+        }}));
+    }
+    symlink("profile-1-link", &profile).unwrap();
+    fs::write(root.join("listing.json"), listings[0].to_string()).unwrap();
+    fs::write(root.join("after.json"), listings[1].to_string()).unwrap();
+    let stubs = root.join("stubs");
+    fs::create_dir(&stubs).unwrap();
+    executable(
+        &stubs.join("nix"),
+        format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  '--version ') echo 'nix (Nix) 2.34.1' ;;
+  'profile list') cat '{r}/listing.json' ;;
+  'profile upgrade')
+    printf '%s\n' "$@" >> '{r}/upgrade-argv'
+    cp '{r}/after.json' '{r}/listing.json'
+    ln -sfn profile-2-link '{p}' ;;
+  *) exit 99 ;;
+esac
+"#,
+            r = root.display(),
+            p = profile.display()
+        ),
+    );
+    let curl = root.join("pinned-curl");
+    executable(
+        &curl,
+        format!(
+            r#"#!/bin/sh
+for url; do :; done
+echo "$url" >> '{r}/curl-calls'
+case "$url" in
+  */commits/edge) printf '{new}\n200' ;;
+  */compare/{old}...{new}*) printf '{{"status":"ahead"}}\n200' ;;
+  *) exit 99 ;;
+esac
+"#,
+            r = root.display()
+        ),
+    );
+    let path = std::iter::once(stubs)
+        .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))
+        .collect::<Vec<_>>();
+    fs::create_dir(root.join("home")).unwrap();
+    let run = |mode: &str| {
+        let mut command = eon_command(binary);
+        command
+            .args(["update", mode, "--json", "--profile"])
+            .arg(&profile)
+            .args(["--entry", "eon+x"]);
+        if mode == "--install" {
+            command.arg("--yes");
+        }
+        command
+            .env("PATH", std::env::join_paths(&path).unwrap())
+            .env("HOME", root.join("home"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("EON_CONFIG_HOME", root.join("config"))
+            .env("EON_RUNTIME_DIR", root.join("must-not-exist"))
+            .env("EON_CURL", &curl)
+            .env_remove("EON_HX")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let report = |output: &Output| -> serde_json::Value {
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"))
+    };
+
+    let output = run("--check");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let checked = report(&output);
+    assert_eq!(checked["schema_version"], 1);
+    assert_eq!(checked["source"]["attribute"], attribute);
+    assert_eq!(checked["availability"]["state"], "available");
+    assert_eq!(checked["capability"]["install"], true);
+    assert_eq!(checked["selection"], serde_json::Value::Null);
+    assert_eq!(
+        fs::read_link(&profile).unwrap(),
+        Path::new("profile-1-link")
+    );
+
+    let output = run("--install");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let installed = report(&output);
+    assert_eq!(installed["outcome"], "installed");
+    assert_eq!(installed["selection"]["source"]["attribute"], attribute);
+    assert_eq!(
+        installed["selection"]["source"]["original_ref"],
+        "github:Yazelix/eon/edge"
+    );
+    assert_eq!(installed["selection"]["selected"]["revision"], new);
+    assert_eq!(installed["selection"]["selected"]["build"], build);
+    assert_eq!(
+        fs::read_link(&profile).unwrap(),
+        Path::new("profile-2-link")
+    );
+    let selected: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("listing.json")).unwrap()).unwrap();
+    assert_eq!(
+        selected["elements"]["other"],
+        listings[0]["elements"]["other"]
+    );
+    let argv = format!(
+        "profile\nupgrade\n--profile\n{}\n--refresh\n--\neon+x\n",
+        location.display()
+    );
+    assert_eq!(fs::read_to_string(root.join("upgrade-argv")).unwrap(), argv);
+    let output = run("--check");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(report(&output)["availability"]["state"], "current");
+    let output = run("--install");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(report(&output)["outcome"], "unchanged");
+    assert_eq!(fs::read_to_string(root.join("upgrade-argv")).unwrap(), argv);
+
+    fs::remove_file(root.join("upgrade-argv")).unwrap();
+    for (entry_attribute, receipt_attribute) in [(&default, &attribute), (&attribute, &default)] {
+        let mut listing = listings[0].clone();
+        listing["elements"]["eon+x"]["attrPath"] = entry_attribute.clone().into();
+        fs::write(root.join("listing.json"), listing.to_string()).unwrap();
+        fs::remove_file(&profile).unwrap();
+        symlink("profile-1-link", &profile).unwrap();
+        let receipt_path = root.join("store/eon-1/share/eon-source-receipt.json");
+        let mut receipt: serde_json::Value =
+            serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        receipt["attribute"] = receipt_attribute.clone().into();
+        fs::write(receipt_path, receipt.to_string()).unwrap();
+        let calls = fs::read(root.join("curl-calls")).unwrap();
+        let output = run("--check");
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let checked = report(&output);
+        assert_eq!(checked["availability"]["state"], "unknown");
+        assert_eq!(checked["availability"]["reason"], "source-unverified");
+        assert_eq!(checked["capability"]["install"], false);
+        assert_eq!(checked["capability"]["reason"], "source-unverified");
+        let output = run("--install");
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        assert_eq!(report(&output)["error"]["code"], "source-unverified");
+        assert!(!root.join("upgrade-argv").exists());
+        assert_eq!(fs::read(root.join("curl-calls")).unwrap(), calls);
+        assert_eq!(
+            fs::read_link(&profile).unwrap(),
+            Path::new("profile-1-link")
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("listing.json")).unwrap(),
+            listing.to_string()
+        );
+    }
+    assert!(!root.join("must-not-exist").exists());
+}
+
 fn eon_command(binary: &Path) -> Command {
     let codex_stub = CODEX_STUB.get_or_init(|| {
         let directory = std::env::temp_dir().join(format!("eon-codex-stub-{}", std::process::id()));

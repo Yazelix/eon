@@ -38,7 +38,9 @@ installation, and proven contract changes.
 - Install Eon without Helix using the Nix `#no-helix` package. Set
   `[editor] command` in `config.toml` to use your terminal editor for Files
   and `eon edit`. With the setting unset, Eon uses `VISUAL` or `EDITOR` from
-  the window's startup environment (`eon-igae.17.3`, EON-C6, EON-C9).
+  the window's startup environment. `eon update` keeps the installed Nix
+  package, including `no-helix` (`eon-igae.17.3`, `eon-igae.17.4`, EON-C6,
+  EON-C9, EON-C41).
 
 - Alt+Shift+O opens the built-in Editor popup using `[editor] command`.
   Hiding it or changing the tab directory preserves the running editor and

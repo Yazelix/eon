@@ -5621,6 +5621,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   `--prefix` for Check are implemented (`eon-update-button-f10d1.6`);
   direct `--install`, `updates.bundle_prefix` and `updates.allowed_signers`
   are implemented (`eon-update-button-f10d1.7`).
+  Amended on 2026-11-11 (approved by Lucca, relayed by eon-overseer) by
+  `eon-igae.17.4`: Nix profile updates retain `default` or `no-helix`.
 - **Consumer:** A person or local agent acting as that person, using full
   Eon's product CLI or its future Commands/menu action to inspect or update
   one installation. eonbase is outside this scope.
@@ -5672,6 +5674,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     from `github:Yazelix/eon/main` or `github:Yazelix/eon/edge`, whose attribute
     is the product package recorded in the receipt, Install asks Nix to
     upgrade that exact named entry on its original ref and attribute.
+    The product packages are `default` and `no-helix`; an entry of one is
+    never moved to the other.
     A renamed entry or custom profile uses its actual manager identity.
     Exact-name Install requires upstream or Determinate Nix 2.21 or later;
     unsupported implementations, including Lix, cannot authorize mutation.

@@ -1473,6 +1473,13 @@ fn check(
     check_remote(inspect(selector, invoked, places, host, now), host)
 }
 
+fn product_package(attribute: Option<&str>, platform: Option<&str>) -> Option<&'static str> {
+    let platform = platform?;
+    ["default", "no-helix"]
+        .into_iter()
+        .find(|package| attribute == Some(format!("packages.{platform}.{package}").as_str()))
+}
+
 fn check_remote(mut report: Report, host: &dyn Host) -> Report {
     if report.install_kind == "eon-install" {
         return direct::check_remote(report, host);
@@ -1482,12 +1489,7 @@ fn check_remote(mut report: Report, host: &dyn Host) -> Report {
     };
     let proved = report.proved;
     let follows = matches!(source.policy, "main" | "edge")
-        && source.attribute
-            == report
-                .invoked
-                .as_ref()
-                .and_then(|build| build.platform.as_ref())
-                .map(|platform| format!("packages.{platform}.default"));
+        && report.capability.reason != Some("source-unverified");
     report.availability = if !follows {
         unknown(Some(match source.policy {
             "tag" | "commit" => "pinned",
@@ -1657,10 +1659,13 @@ fn inspect(
     ));
     let source = source(&element);
     let platform = invoked.platform.clone();
-    let attribute = platform
-        .as_ref()
-        .map(|platform| format!("packages.{platform}.default"));
+    let product = product_package(source.attribute.as_deref(), platform.as_deref());
     let receipt = package.as_deref().and_then(receipt);
+    let variant_mismatch = receipt.as_ref().is_some_and(|receipt| {
+        Some(&receipt.platform) == platform.as_ref()
+            && product_package(receipt.attribute.as_deref(), platform.as_deref()).is_some()
+            && receipt.attribute != source.attribute
+    });
     report.proved = receipt.as_ref().is_some_and(|receipt| {
         receipt.revision.is_some()
             && receipt.revision == source.revision
@@ -1684,25 +1689,35 @@ fn inspect(
     let profile_word = shell_word(&profile.to_string_lossy());
     let entry_word = shell_word(&element.name);
     let upgrade = format!("nix profile upgrade --profile {profile_word} --refresh {entry_word}");
-    let follows = matches!(source.policy, "main" | "edge") && source.attribute == attribute;
+    let follows = matches!(source.policy, "main" | "edge") && product.is_some();
     report.capability = if matches!(source.policy, "tag" | "commit") {
+        let package_selector = if product == Some("no-helix") {
+            "#no-helix"
+        } else {
+            ""
+        };
         Capability {
             install: false,
             reason: Some("pinned-install"),
             next_step: Some(format!(
                 "This entry stays pinned to {}. To follow the main branch, which tracks \
                  releases, replace it: nix profile remove --profile {profile_word} {entry_word}, \
-                 then nix profile add --profile {profile_word} --refresh github:Yazelix/eon/main",
+                 then nix profile add --profile {profile_word} --refresh github:Yazelix/eon/main{package_selector}",
                 source.original_ref.as_deref().unwrap_or_default()
             )),
         }
-    } else if !follows {
+    } else if !follows || variant_mismatch {
         Capability {
             install: false,
             reason: Some("source-unverified"),
             next_step: Some(format!(
-                "Eon updates only entries of github:Yazelix/eon/main or edge with their default \
-                 package; update this one yourself with {upgrade}"
+                "{}; update this one yourself with {upgrade}",
+                if variant_mismatch {
+                    "The entry and its receipt name different packages"
+                } else {
+                    "Eon updates only entries of github:Yazelix/eon/main or edge with their default \
+                     or no-helix package"
+                }
             )),
         }
     } else if !proved {
@@ -3123,6 +3138,201 @@ mod tests {
                 profile.display()
             )
         );
+    }
+
+    #[test]
+    fn both_nix_product_packages_follow_their_branch() {
+        for platform in ["x86_64-linux", "aarch64-darwin"] {
+            for package in ["default", "no-helix"] {
+                for branch in ["main", "edge"] {
+                    for (revision, state, requests) in [(OLD, "current", 1), (NEW, "available", 2)]
+                    {
+                        let tree = Tree::new();
+                        let attribute = format!("packages.{platform}.{package}");
+                        let mut text: Value =
+                            serde_json::from_str(&receipt(Some(OLD), BUILD).unwrap()).unwrap();
+                        text["platform"] = platform.into();
+                        text["attribute"] = attribute.clone().into();
+                        let product = tree.package("eon", Some(text.to_string()));
+                        let profile = tree.home_profile(&product);
+                        let original = format!("github:Yazelix/eon/{branch}");
+                        let locked = format!("github:Yazelix/eon/{OLD}");
+                        let fake = Fake {
+                            listings: HashMap::from([(
+                                profile.clone(),
+                                listing(&[(
+                                    "eon",
+                                    Some(&original),
+                                    Some(&locked),
+                                    Some(&attribute),
+                                    &product,
+                                )]),
+                            )]),
+                            responses: vec![
+                                ("commits/", Ok((200, revision.into()))),
+                                ("compare/", Ok((200, br#"{"status":"ahead"}"#.to_vec()))),
+                            ],
+                            ..Fake::default()
+                        };
+                        let mut build = invoked();
+                        build.platform = Some(platform.into());
+                        let places = tree.places(&profile.join("bin/eon"));
+                        let report = check(None, build, &places, &fake, at(0));
+                        assert!(report.proved, "{attribute} {branch}");
+                        assert_eq!(report.availability.state, state, "{attribute} {branch}");
+                        assert!(report.capability.install, "{report:?}");
+                        assert_eq!(report.json()["source"]["attribute"], attribute);
+                        assert_eq!(fake.requests.borrow().len(), requests);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_other_product_attribute_is_a_source_mismatch() {
+        let no_helix = "packages.x86_64-linux.no-helix";
+        for attribute in [ATTRIBUTE, no_helix] {
+            for receipt_attribute in [
+                Some(ATTRIBUTE),
+                Some(no_helix),
+                None,
+                Some("packages.x86_64-linux.eonbase"),
+                Some("packages.aarch64-darwin.no-helix"),
+            ] {
+                if receipt_attribute == Some(attribute) {
+                    continue;
+                }
+                let tree = Tree::new();
+                let mut text: Value =
+                    serde_json::from_str(&receipt(Some(OLD), BUILD).unwrap()).unwrap();
+                text["attribute"] = receipt_attribute.into();
+                let product = tree.package("eon", Some(text.to_string()));
+                let profile = tree.home_profile(&product);
+                let locked = format!("github:Yazelix/eon/{OLD}");
+                let fake = Fake {
+                    listings: HashMap::from([(
+                        profile.clone(),
+                        listing(&[(
+                            "eon",
+                            Some("github:Yazelix/eon/edge"),
+                            Some(&locked),
+                            Some(attribute),
+                            &product,
+                        )]),
+                    )]),
+                    responses: vec![("commits/edge", Ok((200, OLD.into())))],
+                    ..Fake::default()
+                };
+                let places = tree.places(&profile.join("bin/eon"));
+                let report = check(None, invoked(), &places, &fake, at(0));
+                let variant_mismatch = matches!(receipt_attribute, Some(ATTRIBUTE))
+                    || receipt_attribute == Some(no_helix);
+                assert!(!report.proved);
+                assert_eq!(
+                    report.capability.reason,
+                    Some(if variant_mismatch {
+                        "source-unverified"
+                    } else {
+                        "provenance-invalid"
+                    }),
+                    "{attribute} / {receipt_attribute:?}"
+                );
+                assert_eq!(report.availability.state, "unknown");
+                assert_eq!(
+                    report.availability.reason,
+                    Some(if variant_mismatch {
+                        "source-unverified"
+                    } else {
+                        "provenance-unknown"
+                    })
+                );
+                assert_eq!(
+                    report.availability.candidate.as_deref(),
+                    (!variant_mismatch).then_some(OLD)
+                );
+                assert_eq!(fake.requests.borrow().len(), usize::from(!variant_mismatch));
+            }
+        }
+    }
+
+    #[test]
+    fn other_profile_attributes_stay_unverified_even_with_matching_receipts() {
+        for attribute in [
+            None,
+            Some("packages.x86_64-linux.eonbase"),
+            Some("packages.aarch64-darwin.default"),
+            Some("packages.aarch64-darwin.no-helix"),
+            Some("packages.x86_64-linux.no-helix.extra"),
+        ] {
+            let tree = Tree::new();
+            let mut text: Value =
+                serde_json::from_str(&receipt(Some(OLD), BUILD).unwrap()).unwrap();
+            text["attribute"] = attribute.into();
+            let product = tree.package("eon", Some(text.to_string()));
+            let profile = tree.home_profile(&product);
+            let locked = format!("github:Yazelix/eon/{OLD}");
+            let fake = Fake {
+                listings: HashMap::from([(
+                    profile.clone(),
+                    listing(&[(
+                        "eon",
+                        Some("github:Yazelix/eon/edge"),
+                        Some(&locked),
+                        attribute,
+                        &product,
+                    )]),
+                )]),
+                ..Fake::default()
+            };
+            let places = tree.places(&profile.join("bin/eon"));
+            let report = check(None, invoked(), &places, &fake, at(0));
+            assert_eq!(report.capability.reason, Some("source-unverified"));
+            assert_eq!(report.availability, unknown(Some("source-unverified")));
+            assert!(fake.requests.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn pinned_no_helix_guidance_retains_the_package() {
+        for original in [
+            "github:Yazelix/eon/v0.1.21".to_owned(),
+            format!("github:Yazelix/eon/{OLD}"),
+        ] {
+            let tree = Tree::new();
+            let attribute = "packages.x86_64-linux.no-helix";
+            let text = receipt(Some(OLD), BUILD)
+                .unwrap()
+                .replace(ATTRIBUTE, attribute);
+            let product = tree.package("eon", Some(text));
+            let profile = tree.home_profile(&product);
+            let locked = format!("github:Yazelix/eon/{OLD}");
+            let fake = Fake {
+                listings: HashMap::from([(
+                    profile.clone(),
+                    listing(&[(
+                        "eon",
+                        Some(&original),
+                        Some(&locked),
+                        Some(attribute),
+                        &product,
+                    )]),
+                )]),
+                ..Fake::default()
+            };
+            let places = tree.places(&profile.join("bin/eon"));
+            let report = check(None, invoked(), &places, &fake, at(0));
+            assert_eq!(report.capability.reason, Some("pinned-install"));
+            assert!(
+                report
+                    .capability
+                    .next_step
+                    .unwrap()
+                    .ends_with("github:Yazelix/eon/main#no-helix")
+            );
+            assert_eq!(report.availability, unknown(Some("pinned")));
+            assert!(fake.requests.borrow().is_empty());
+        }
     }
 
     #[test]
