@@ -272,12 +272,14 @@
               set ? { },
               setDefault ? { },
               prefix ? { },
+              unset ? [ ],
             }:
             lib.escapeShellArgs (
               lib.concatLists (
                 lib.mapAttrsToList (name: value: [ "--set" name value ]) set
                 ++ lib.mapAttrsToList (name: value: [ "--set-default" name value ]) setDefault
                 ++ lib.mapAttrsToList (name: paths: [ "--prefix" name ":" (lib.concatStringsSep ":" paths) ]) prefix
+                ++ map (name: [ "--unset" name ]) unset
               )
             );
           managedPackage =
@@ -1034,20 +1036,25 @@
               # Runtime tests paste printed commands into Eon's Nushell.
               nativeCheckInputs = [ nushellPackage ];
             });
-          # Helix's composition inputs stay together for the no-Helix product slice.
           eonHelix =
             assert helix.rev == helixIdentity.revision;
             assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
               "Helix manifest version does not match the selected Cargo workspace package";
             {
-              environment.EON_HX = "${helixPackage}/bin/hx";
+              environment.set.EON_HX = "${helixPackage}/bin/hx";
+              bundleFallbacks = [
+                {
+                  link = "${helixPackage}/bin/runtime";
+                  target = helixPackage.HELIX_DEFAULT_RUNTIME;
+                }
+              ];
               postInstall = ''
                 ln -s eon "$out/bin/eon-hx"
                 ln -s "../../../bin/eon-hx" "$out/libexec/eon/bin/hx"
                 install -Dm444 ${helix}/LICENSE "$out/share/licenses/eon/helix/LICENSE"
               '';
             };
-          eonEnvironment = tools: out: {
+          eonEnvironment = tools: out: tools.environment // {
             set = {
               EON_ORBIT = "${orbitPackage}/bin/yazelix-orbit";
               EON_VENUS = "${venusPackage}/bin/yazelix-venus";
@@ -1065,16 +1072,16 @@
               EON_NU_VENDOR_AUTOLOAD = "${out}/libexec/eon/shell/nu";
               EON_BASH_RC = "${out}/libexec/eon/shell/eon.bashrc";
               EON_SESSION_BIN = "${out}/libexec/eon/bin";
-            } // tools.environment;
+            } // (tools.environment.set or { });
             prefix.TERMINFO_DIRS = [ "${orbitPackage}/share/terminfo" ];
           };
           macosApp = import ./nix/macos-app.nix {
             inherit pkgs nushellPackage bashPackage;
             inherit (eonCargo.package) version;
           };
-          composeEon = tools:
+          composeEon = pname: tools:
             pkgs.stdenvNoCC.mkDerivation {
-              pname = "eon";
+              inherit pname;
               inherit (eonRust) version;
               meta = eonMeta;
               dontUnpack = true;
@@ -1148,7 +1155,7 @@
                 install -Dm444 ${carapacePackage.src}/LICENSE "$out/share/licenses/eon/carapace/LICENSE"
                 install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
                 install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
-              '' + tools.postInstall + lib.optionalString pkgs.stdenv.isDarwin ''
+              '' + (tools.postInstall or "") + lib.optionalString pkgs.stdenv.isDarwin ''
                 cp -R ${macosApp}/Applications "$out/Applications"
                 chmod -R u+w "$out/Applications"
                 printf '%s' "$out/bin/eon" > "$out/Applications/Eon.app/Contents/Resources/eon-command"
@@ -1159,7 +1166,10 @@
                 wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment tools (placeholder "out"))}
               '';
             };
-          eonPackage = composeEon eonHelix;
+          eonPackage = composeEon "eon" eonHelix;
+          eonNoHelixPackage = composeEon "eon-no-helix" {
+            environment.unset = [ "EON_HX" ];
+          };
           eonTestArgs = {
             pname = "eon-tests";
             inherit (eonCargo.package) version;
@@ -1186,14 +1196,22 @@
           })).cargoNextest (eonTestArgs // {
             cargoArtifacts = eonTestCargoArtifacts;
             doInstallCargoArtifacts = false;
+            allowedReferences = [ ];
             ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
-            nativeCheckInputs = [ nushellPackage ];
+            nativeCheckInputs = [ nushellPackage pkgs.jq ];
             cargoNextestExtraArgs = ''--config-file ${./.config/nextest.toml} --no-fail-fast --no-tests fail --test-threads "$NIX_BUILD_CORES"'';
             preCheck = ''
               eonTestBuildTmpdir="$TMPDIR"
               export TMPDIR=/dev/shm
-              cargo nextest list --cargo-profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} \
-                --config-file ${./.config/nextest.toml} --message-format json > "$out/test-list.json"
+              # The exported inventory needs no Rust toolchain in its cache closure.
+              (
+                set -o pipefail
+                cargo nextest list --cargo-profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} \
+                  --config-file ${./.config/nextest.toml} --message-format json | jq -ce '
+                    (."rust-build-meta".platforms | .host.libdir, .targets[].libdir) =
+                      {status: "unavailable", reason: "build-only"}
+                  '
+              ) > "$out/test-list.json"
             '';
             postCheck = ''
               cargo nextest run --cargo-profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} \
@@ -1203,39 +1221,45 @@
               export TMPDIR="$eonTestBuildTmpdir"
             '';
           });
-          # The installed product: eonPackage's files and the source receipt that
+          # The installed product: the composition's files and the source receipt that
           # `eon update --check` reads (EON-C41 Provenance). The receipt names this
           # flake's revision, so it stays outside the Rust build: a commit that
           # changes no source rebuilds only this.
-          eonProduct = pkgs.runCommand "eon-${eonCargo.package.version}" {
-            inherit (eonPackage) version meta;
+          withSourceReceipt = attribute: package: pkgs.runCommand package.name {
+            inherit (package) version meta;
             # Landing tooling roots the release dependency cache through checks.default.
-            passthru = lib.optionalAttrs pkgs.stdenv.isLinux {
-              inherit (eonPackage) cargoArtifacts;
+            passthru = { inherit eonRust; } // lib.optionalAttrs pkgs.stdenv.isLinux {
+              inherit (package) cargoArtifacts;
             };
           } ''
             ${lib.optionalString pkgs.stdenv.isLinux ''
               test -s ${eonTests}/test-list.json
             ''}
             mkdir -p "$out/share"
-            for entry in ${eonPackage}/*; do
+            for entry in ${package}/*; do
               if [ "''${entry##*/}" != share ]; then
                 ln -s "$entry" "$out/"
               fi
             done
-            for entry in ${eonPackage}/share/*; do
+            for entry in ${package}/share/*; do
               ln -s "$entry" "$out/share/"
             done
             # `eon versions` opens with `eon VERSION BUILD`.
-            read -r _ _ build < <(${eonPackage}/bin/eon versions)
+            read -r _ _ build < <(${package}/bin/eon versions)
             if [[ ! "$build" =~ ^g1-[0-9a-f]{32}$ ]]; then
               echo "eon versions reported no build identity: $build" >&2
               exit 1
             fi
             printf '{"schema_version":1,"repository":"https://github.com/Yazelix/eon","revision":%s,"build":"%s","platform":"%s","attribute":"%s"}\n' \
               ${lib.escapeShellArg (builtins.toJSON (self.rev or null))} "$build" ${system} \
-              packages.${system}.default > "$out/share/eon-source-receipt.json"
+              packages.${system}.${attribute} > "$out/share/eon-source-receipt.json"
           '';
+          eonProduct = withSourceReceipt "default" eonPackage;
+          eonNoHelixProduct = withSourceReceipt "no-helix" eonNoHelixPackage;
+          requireProductVersion = product:
+            assert lib.assertMsg (product ? version && product.version == eonCargo.package.version)
+              "Eon product version must match eon/crates/eon/Cargo.toml";
+            product;
           # eonbase is Eon's executable under its own name, which selects the eonbase
           # command line. It copies eonPackage's built executable rather than compiling
           # and testing the eon crate again, and copies rather than links so its closure
@@ -1300,6 +1324,10 @@
           '';
           managedCommandPathCheck = import ./nix/managed-command-checks.nix {
             inherit pkgs eonPackage;
+          };
+          noHelixClosureCheck = import ./nix/no-helix-closure.nix {
+            inherit pkgs system helixPackage;
+            package = eonNoHelixProduct;
           };
           recordDemo = kinestra.lib.${system}.mkRecorder {
             name = "record-eon-demo";
@@ -1425,12 +1453,7 @@
                 environment = codexbarEnvironment;
               }
             ];
-            fallbacks = [
-              {
-                link = "${helixPackage}/bin/runtime";
-                target = helixPackage.HELIX_DEFAULT_RUNTIME;
-              }
-            ];
+            fallbacks = eonHelix.bundleFallbacks;
           };
           br = pkgs.runCommand "br-0.7.2" { } ''
             mkdir -p "$out/bin" "$out/share/licenses/br"
@@ -1465,10 +1488,8 @@
           # The installer, the manual bundle, the release files, the demo recorder
           # and the bundle checks are Linux's; Darwin has none of them.
           packages.${system} = {
-            default =
-              assert lib.assertMsg (eonProduct ? version && eonProduct.version == eonCargo.package.version)
-                "Eon product version must match eon/crates/eon/Cargo.toml";
-              eonProduct;
+            default = requireProductVersion eonProduct;
+            no-helix = requireProductVersion eonNoHelixProduct;
             eonbase = eonbasePackage;
             bench = benchPackage;
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
@@ -1518,6 +1539,7 @@
             macos-app = macosApp;
             helix-grammars = helix.checks.${system}.codeberg_grammars;
             eonbase-closure = eonbaseClosureCheck;
+            no-helix-closure = noHelixClosureCheck;
             managed-command-path = managedCommandPathCheck;
             # The pair's quick search against a slow stand-in fzf (EON-C18), and a pick or
             # Esc reported while Yazi is still hidden.

@@ -389,7 +389,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Consumer:** The Nix channel and any later approved distribution channel.
 - **Trigger:** A channel composes an Eon product artifact.
 - **Result:** Every channel consumes the same accepted EON-C2 component graph
-  without changing runtime semantics.
+  without changing runtime semantics. A product variant composes the same
+  graph with a named tool left out. It substitutes nothing, changes no other
+  identity, and names the omission in its package attribute or archive name;
+  `eon versions` lists the composed components without the omitted tool. The
+  only variant is `no-helix`, which leaves out Helix.
 - **Important failures:** A channel-specific compatibility graph or hidden
   component substitution is rejected.
 - **Owner:** Eon distribution composition consuming EON-C2.
@@ -1284,8 +1288,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     `managed_commands_use_exact_programs_and_private_configuration` and
     `helix_does_not_start_under_a_configuration_root_that_is_not_utf8` went
     with the behavior they checked.
-  - **No Helix:** `eon-igae.17.1`, automated tier on x86_64 Linux, before the
-    `no-helix` package exists (`eon-igae.17.3`): an `eon` whose composition
+  - **No Helix:** `eon-igae.17.1`, automated tier on x86_64 Linux:
+    an `eon` whose composition
     supplies no Helix. `a_build_without_helix_refuses_its_names` and
     `a_build_without_helix_omits_it_from_versions_and_defaults_and_refuses_its_names`
     cover `hx` and `eon-hx` refusing with one line and exit 1 before anything
@@ -2182,8 +2186,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
     In the first two, t2, its popup and the compositor focus stayed. Each
     close ended exactly its target's processes.
-  - **Editor without Helix (`eon-igae.17.1`, automated tier on x86_64 Linux,
-    before the `no-helix` package exists):** with a real supervisor whose
+  - **Editor without Helix (`eon-igae.17.1`, automated tier on x86_64 Linux):**
+    with a real supervisor whose
     composition supplies no Helix, a fake Orbit and an unset
     `[editor] command`:
     `without_helix_an_unset_editor_is_visual_and_a_configured_one_overrides_it`

@@ -92,8 +92,19 @@ nix profile add --refresh github:Yazelix/eon/main
 `main` always holds the latest release. For fixes before they are released,
 install `github:Yazelix/eon/edge` instead; it gets every change as it lands.
 
+From v0.2.0, Nix also offers Eon without Helix:
+
+```sh
+nix profile add --refresh github:Yazelix/eon/main#no-helix
+```
+
+Set [`[editor] command`](docs/CONFIGURATION.md#editor) in `config.toml` to use
+your terminal editor. See [the Nix variant](docs/DISTRIBUTION.md#nix-channel)
+for environment fallback and update support.
+
 To update from a terminal outside Eon, run `eon update --install`, then use
-the reported launcher for fresh windows. For an older build without
+the reported launcher for fresh windows. This command currently supports the
+default Nix package. For an older build without
 source provenance, run `nix profile upgrade --refresh eon` once.
 Windows already running keep their version until you close them. Tags such as
 `v0.1.12` name one exact release and never update; if you installed from one,

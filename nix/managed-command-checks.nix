@@ -1,4 +1,4 @@
-# Checks Eon's managed command PATH and managed shells (Nushell and Bash)
+# Checks the full product's managed command PATH and shells (Nushell and Bash)
 # as packaged, including host mise activation against a fake mise.
 {
   pkgs,

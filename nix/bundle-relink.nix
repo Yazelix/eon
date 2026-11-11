@@ -34,6 +34,8 @@ let
   # Prefix entries in excluded paths leave with them; the tree gate requires every other value.
   bundleEnvironment =
     { environment, relocated ? { }, ... }:
+    assert lib.assertMsg (!(environment ? unset || relocated ? unset))
+      "the bundle launcher does not support unset wrapper variables";
     {
       set = environment.set or { } // relocated.set or { };
       setDefault = environment.setDefault or { } // relocated.setDefault or { };

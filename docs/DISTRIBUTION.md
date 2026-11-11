@@ -67,6 +67,17 @@ package installs the `eon` command, an Eon desktop entry, and its icon. The
 runtime commands, configuration paths, and detach behavior live in the Eon
 binary rather than the Nix wrapper.
 
+Install Eon without Helix from the same flake with `nix profile add .#no-helix`.
+Use `github:Yazelix/eon/main#no-helix` from v0.2.0 or
+`github:Yazelix/eon/edge#no-helix` before that release. This variant is
+available through Nix on x86_64 Linux. Its Nix output evaluates on Apple
+Silicon macOS. Build and runtime proof there remain pending. Set
+[`[editor] command`](CONFIGURATION.md#editor) in `config.toml`, for example
+`command = ["nvim"]` under `[editor]`. With the setting unset, Eon uses the
+`VISUAL` or `EDITOR` value inherited when the window starts. Desktop launches
+may have neither variable. Use Nix to upgrade the profile entry. Support for
+this variant in `eon update` is tracked in `eon-igae.17.4`.
+
 On Apple Silicon macOS the same package contains
 `Applications/Eon.app`, with its version, Eon icon and a native launcher for
 the package's exact `eon` command. With a plain Nix profile install, open
@@ -308,14 +319,14 @@ pushes that source closure with `cachix push`. It pins the aggregate as
 `helix-grammar-sources-<helix rev>`, using the exact Helix revision in
 `flake.lock` and `cachix pin --keep-forever` to retain it.
 
-The job then builds `packages.x86_64-linux.default` and
-`packages.x86_64-linux.eonbase` with their required checks. Each product
-requires a build-only check that runs Eon and Eon Runtime's
-tests through cached dev-profile Nextest, including serial ignored lease tests
-against release Orbit and separate doctests. A second
-`cachix push` publishes both outputs and their runtime dependencies. Grammar
-sources are the build inputs this job publishes; it does not upload the whole
-store, compilers or unrelated build intermediates.
+The job then builds `packages.x86_64-linux.default`, `eonbase`, and `no-helix`
+together. The packages share an `eon-rust` executable and require a build-only
+check that runs Eon and Eon Runtime's tests through cached dev-profile Nextest,
+including serial ignored lease tests against release Orbit and separate
+doctests. After the no-Helix closure check passes, a second `cachix push`
+publishes the three packages, the shared `eon-rust` output, the `eon-tests`
+output containing `test-list.json`, and the runtime dependencies of those
+outputs.
 
 Cachix skips paths that `cache.nixos.org` already serves, including grammar
 sources with the same store identity. Eon's Cachix pin does not retain those

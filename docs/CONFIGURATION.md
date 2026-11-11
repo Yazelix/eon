@@ -775,10 +775,10 @@ clipboard. Interactive `eon-nu` terminals also provide `clc`
 and `clp` aliases. User autoload files run afterward and can override them.
 If no desktop clipboard is available, Nushell reports the error.
 
-The profile also exposes `eon-hx`, `eon-yazi`, `eon-ya`, `eon-lazygit`, and
-`eon-lg`. Inside terminals their unprefixed names resolve to the pinned tools.
-The package without Helix has no `eon-hx`, and `hx` in its terminals is
-whatever your PATH holds.
+The profile also exposes `eon-yazi`, `eon-ya`, `eon-lazygit`, and `eon-lg`.
+Inside terminals their unprefixed names resolve to the pinned tools.
+Packages with Helix also expose `eon-hx` and provide `hx` in their terminals.
+In the `no-helix` package, `hx` resolves through your PATH.
 Eon's Helix reads its configuration from `$(eon config dir)/helix/`. It is
 built without Steel, so it never runs `helix.scm` or `init.scm`, whether they
 are in that directory or in a repository's `.helix` directory.

@@ -44,7 +44,7 @@ jobs:
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
         with:
           name: eon-yazelix
-          # Publish only the products and retained grammar sources, not the whole store.
+          # The push steps below select the exact cache roots.
           skipPush: true
 
       - name: Check Helix grammars without evaluator source fetches
@@ -61,9 +61,18 @@ jobs:
           cachix pin eon-yazelix "helix-grammar-sources-$(jq -r '.nodes.helix.locked.rev' flake.lock)" "$(cat "$RUNNER_TEMP/helix-grammar-source-path")" --keep-forever
 
       - name: Build the canonical Linux packages
-        run: nix build --print-build-logs --no-link --print-out-paths .#packages.x86_64-linux.default .#packages.x86_64-linux.eonbase > "$RUNNER_TEMP/eon-store-paths"
+        run: |
+          nix build --print-build-logs --no-link --print-out-paths \
+            .#packages.x86_64-linux.default \
+            .#packages.x86_64-linux.eonbase \
+            .#packages.x86_64-linux.no-helix \
+            .#packages.x86_64-linux.default.eonRust \
+            .#checks.x86_64-linux.eon-tests > "$RUNNER_TEMP/eon-store-paths"
 
-      - name: Publish runtime closure
+      - name: Check the no-Helix closure
+        run: nix build --print-build-logs --no-link .#checks.x86_64-linux.no-helix-closure
+
+      - name: Publish packages and shared build outputs
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: cachix push eon-yazelix < "$RUNNER_TEMP/eon-store-paths"

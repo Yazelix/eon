@@ -18,6 +18,11 @@ installation, and proven contract changes.
   titles stay put. Keyboard, CLI and accessibility actions stay available
   (`eon-vzf2k`).
 
+- Install Eon without Helix using the Nix `#no-helix` package. Set
+  `[editor] command` in `config.toml` to use your terminal editor for Files
+  and `eon edit`. With the setting unset, Eon uses `VISUAL` or `EDITOR` from
+  the window's startup environment (`eon-igae.17.3`, EON-C6, EON-C9).
+
 - `eon column close PANE --yes [--json]` closes the pane's Stack through
   EONW v39. Without `--yes`, it lists every terminal it would stop and
   refuses, including idle and one-pane Stacks. Consent binds the generation,
