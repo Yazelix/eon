@@ -758,6 +758,32 @@ impl Attention {
         self.sidebar
     }
 
+    #[cfg(test)]
+    pub(super) fn diagnostics(&self) -> String {
+        let terminals = self
+            .terminals
+            .iter()
+            .map(|terminal| {
+                format!(
+                    "{} run {}, update={}, reply_age={:?}, records={:?}",
+                    terminal.session,
+                    terminal.run,
+                    terminal.update,
+                    terminal.replied.elapsed(),
+                    terminal
+                        .records
+                        .iter()
+                        .map(|record| &record.record)
+                        .collect::<Vec<_>>()
+                )
+            })
+            .collect::<Vec<_>>();
+        format!(
+            "poll due in {:?}, terminals={terminals:?}",
+            self.next_poll.saturating_duration_since(Instant::now())
+        )
+    }
+
     /// A state-naming command never reverses its requested value.
     fn set_sidebar(&mut self, open: bool) {
         if self.sidebar != Sidebar::Off {

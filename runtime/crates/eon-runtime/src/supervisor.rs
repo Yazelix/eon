@@ -4276,7 +4276,7 @@ mod tests {
             .target
             .terminal
             .clone();
-        stop_owned_session(&mut state.sessions, &exited, &state.log).unwrap();
+        stop_owned_session(&mut state.state.sessions, &exited, &state.state.log).unwrap();
         state
             .workspaces
             .as_mut()
@@ -4378,7 +4378,6 @@ mod tests {
         reap_finished_sessions(&mut state, &crate::fixtures::inputs(), &root).unwrap();
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -4409,7 +4408,6 @@ mod tests {
         state.sessions.push(b);
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
-        fs::remove_dir_all(root).unwrap();
         // A failed pane start leaves its number free while its run can still be live.
         let root = temporary_directory();
         let (mut state, _) = finishing_window(&root);
@@ -4455,7 +4453,6 @@ mod tests {
         );
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -4534,7 +4531,6 @@ mod tests {
         state.sessions.push(late);
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
-        fs::remove_dir_all(root).unwrap();
         let root = temporary_directory();
         let (mut state, _) = finishing_window(&root);
         let extra = start_column_run(&state, &root, "terminal-9", &root.join("terminal-9.sock"));
@@ -4554,7 +4550,6 @@ mod tests {
         ));
         assert!(state.stopping && state.sessions.is_empty());
         drop(state);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -4720,7 +4715,6 @@ mod tests {
             }
             stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
             drop(state);
-            fs::remove_dir_all(root).unwrap();
         }
     }
 
@@ -4763,7 +4757,6 @@ mod tests {
         ));
         assert!(state.sessions.is_empty());
         drop(state);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -4826,7 +4819,6 @@ mod tests {
         }
         stop_generation_sessions(&mut state, &root, LaunchMode::Terminal).unwrap();
         drop(state);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -6068,42 +6060,127 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// A full-Eon window whose one pane runs a real Orbit agent that reports
-    /// a fresh finish each time its gate, the returned FIFO, is written.
     #[cfg(target_os = "linux")]
-    fn finishing_window(root: &Path) -> (SupervisorState, PathBuf) {
-        let gate = root.join("gate");
-        assert!(
-            Command::new("mkfifo")
-                .arg(&gate)
-                .status()
-                .unwrap()
-                .success()
-        );
-        let session = leased_orbit(
-            root,
-            &format!(
-                "while read -r _ < '{}'; do \
-                 printf '\\033]7501;state=working:app=claude-code\\007'; \
-                 printf '\\033]7501;state=done:app=claude-code\\007'; done",
-                gate.display()
-            ),
-        );
-        let inputs = crate::fixtures::inputs();
-        let workspace = WorkspaceSet::with_recovered_sessions(
-            root.to_path_buf(),
-            root.to_path_buf(),
-            Some(root.to_path_buf()),
-            vec![(
-                1,
-                Session {
-                    id: session.id.clone(),
-                    endpoint: session.endpoint.clone(),
-                },
-            )],
-            inputs.defaults.popups.clone(),
-        )
-        .unwrap();
+    struct FinishingWindow {
+        state: SupervisorState,
+        root: PathBuf,
+    }
+
+    #[cfg(target_os = "linux")]
+    struct FixtureProcess {
+        pid: libc::pid_t,
+        start: u64,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FixtureProcess {
+        fn read(path: &Path) -> Result<Option<Self>, String> {
+            let stat = match fs::read_to_string(path) {
+                Ok(stat) => stat,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(format!("{}: {error}", path.display())),
+            };
+            let identity = || {
+                let pid = stat.split_whitespace().next()?.parse().ok()?;
+                let start = stat
+                    .rsplit_once(')')?
+                    .1
+                    .split_whitespace()
+                    .nth(19)?
+                    .parse()
+                    .ok()?;
+                (pid > 0).then_some(Self { pid, start })
+            };
+            identity()
+                .map(Some)
+                .ok_or_else(|| format!("invalid fixture process identity in {}", path.display()))
+        }
+
+        fn matches(&self) -> bool {
+            matches!(crate::platform::process(self.pid as u32),
+                Ok(Some(process)) if process.start == self.start)
+        }
+
+        fn signal(&self, signal: i32) {
+            if self.matches() {
+                // SAFETY: this is the exact process registered by the fixture before exec.
+                unsafe { libc::kill(self.pid, signal) };
+            }
+        }
+
+        fn pending(&self) -> bool {
+            match crate::platform::process(self.pid as u32) {
+                Ok(Some(process)) if process.start == self.start => {
+                    // SAFETY: reaps this exact exited child; a non-child returns ECHILD.
+                    let reaped =
+                        unsafe { libc::waitpid(self.pid, std::ptr::null_mut(), libc::WNOHANG) };
+                    reaped != self.pid && !process.ended
+                }
+                _ => false,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl std::ops::Deref for FinishingWindow {
+        type Target = SupervisorState;
+
+        fn deref(&self) -> &Self::Target {
+            &self.state
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl std::ops::DerefMut for FinishingWindow {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.state
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for FinishingWindow {
+        fn drop(&mut self) {
+            drop(self.state.venus.take());
+            if let Err(error) =
+                sessions::stop_managed_sessions(&mut self.state.sessions, SESSION_START_TIMEOUT)
+            {
+                eprintln!("fixture cleanup {}: {error}", self.root.display());
+            }
+            let processes = ["orbit.process", "agent.process"]
+                .into_iter()
+                .filter_map(|name| match FixtureProcess::read(&self.root.join(name)) {
+                    Ok(process) => process,
+                    Err(error) => {
+                        eprintln!("fixture process cleanup: {error}");
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            for signal in [libc::SIGTERM, libc::SIGKILL] {
+                for process in &processes {
+                    process.signal(signal);
+                    process.signal(libc::SIGCONT);
+                }
+                let deadline = Instant::now() + SESSION_START_TIMEOUT;
+                while processes.iter().any(FixtureProcess::pending) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                if !processes.iter().any(FixtureProcess::pending) {
+                    break;
+                }
+            }
+            for process in processes.iter().filter(|process| process.pending()) {
+                eprintln!("fixture cleanup could not reap pid {}", process.pid);
+            }
+            if let Err(error) = fs::remove_dir_all(&self.root) {
+                eprintln!("fixture directory cleanup {}: {error}", self.root.display());
+            }
+        }
+    }
+
+    /// A full-Eon window whose agent reports a finish for each FIFO pulse.
+    #[cfg(target_os = "linux")]
+    fn finishing_window(root: &Path) -> (FinishingWindow, PathBuf) {
         let state = SupervisorState {
             registry_worker: None,
             registry_pending: None,
@@ -6113,8 +6190,8 @@ mod tests {
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
-            workspaces: Some(workspace),
-            sessions: vec![session],
+            workspaces: None,
+            sessions: Vec::new(),
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
@@ -6128,7 +6205,80 @@ mod tests {
             scrollback: Snapshots::new(Path::new("/unused")),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
-        (state, gate)
+        let mut fixture = FinishingWindow {
+            state,
+            root: root.to_path_buf(),
+        };
+        let gate = root.join("gate");
+        let ready = root.join("agent.ready");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&gate)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let launcher = root.join("orbit-launcher");
+        script(
+            &launcher,
+            &format!(
+                r#"#!/bin/sh
+set -eu
+IFS= read -r identity < /proc/$$/stat
+printf '%s\n' "$identity" > '{}'
+exec "$ORBIT_BIN" "$@"
+"#,
+                root.join("orbit.process").display()
+            ),
+        );
+        // Retain a writer so a pulse's close cannot make the next read end the agent.
+        fixture
+            .state
+            .sessions
+            .push(sessions::tests::leased_orbit_with_program(
+                root,
+                &format!(
+                    "set -eu; IFS= read -r identity < /proc/$$/stat; \
+                 printf '%s\\n' \"$identity\" > '{}'; \
+                 exec 3<> '{}'; : > '{}'; \
+                 while read -r _ <&3; do \
+                 printf '\\033]7501;state=working:app=claude-code\\007'; \
+                 printf '\\033]7501;state=done:app=claude-code\\007'; done",
+                    root.join("agent.process").display(),
+                    gate.display(),
+                    ready.display()
+                ),
+                &launcher,
+            ));
+        // Orbit Ready precedes the agent opening its FIFO; wait for that open before pulses.
+        let deadline = Instant::now() + SESSION_START_TIMEOUT;
+        while !ready.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "fixture agent did not open {}: {}",
+                gate.display(),
+                sessions::tests::lease_diagnostics(&fixture.state.sessions[0])
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let session = &fixture.state.sessions[0];
+        fixture.state.workspaces = Some(
+            WorkspaceSet::with_recovered_sessions(
+                root.to_path_buf(),
+                root.to_path_buf(),
+                Some(root.to_path_buf()),
+                vec![(
+                    1,
+                    Session {
+                        id: session.id.clone(),
+                        endpoint: session.endpoint.clone(),
+                    },
+                )],
+                crate::fixtures::inputs().defaults.popups.clone(),
+            )
+            .unwrap(),
+        );
+        (fixture, gate)
     }
 
     /// Attaches a Venus whose native focus reports are what the returned
@@ -6196,11 +6346,13 @@ mod tests {
     /// Writes the gate, then runs loop turns until the pane shows the fresh
     /// finish, and returns its state.
     #[cfg(target_os = "linux")]
+    #[track_caller]
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
     ) -> eon_workspace_protocol::v39::AttentionState {
         use eon_workspace_protocol::v39::AttentionState;
+        use std::{io::Write, os::unix::fs::OpenOptionsExt};
         let changed = |attention: &Option<eon_workspace_protocol::v39::Attention>| {
             attention
                 .as_ref()
@@ -6211,8 +6363,23 @@ mod tests {
             let snapshot = state.workspace_snapshot_in(None).unwrap();
             snapshot.tabs[0].panes().next().unwrap().attention.clone()
         };
-        let before = changed(&shown(state));
-        fs::write(gate, "\n").unwrap();
+        let before_attention = shown(state);
+        let before = changed(&before_attention);
+        let before_diagnostics = state.attention.as_ref().unwrap().diagnostics();
+        fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(gate)
+            .and_then(|mut writer| writer.write_all(b"\n"))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "cannot pulse {} at {}: {error}; before={before_attention:?}; poll={before_diagnostics}; native focus={:?}; leases={:?}",
+                    gate.display(),
+                    std::panic::Location::caller(),
+                    state.venus.as_ref().map(|venus| venus.focus.focused),
+                    state.sessions.iter().map(sessions::tests::lease_diagnostics).collect::<Vec<_>>()
+                )
+            });
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             state.tend(Instant::now());
@@ -6224,7 +6391,19 @@ mod tests {
             {
                 return shown;
             }
-            assert!(Instant::now() < deadline, "no finish within 20 s");
+            assert!(
+                Instant::now() < deadline,
+                "no finish within 20 s at {}, gate {}; before={before_attention:?}; before poll={before_diagnostics}; last={attention:?}; native focus={:?}; leases={:?}; poll={}",
+                std::panic::Location::caller(),
+                gate.display(),
+                state.venus.as_ref().map(|venus| venus.focus.focused),
+                state
+                    .sessions
+                    .iter()
+                    .map(sessions::tests::lease_diagnostics)
+                    .collect::<Vec<_>>(),
+                state.attention.as_ref().unwrap().diagnostics()
+            );
             std::thread::sleep(Duration::from_millis(25));
         }
     }
@@ -6283,7 +6462,6 @@ mod tests {
         drop(original);
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -6407,7 +6585,6 @@ mod tests {
         );
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
         drop(state);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]

@@ -3481,6 +3481,42 @@ pub(crate) mod tests {
         leased_orbit_with_program(root, script, &orbit)
     }
 
+    pub(crate) fn lease_diagnostics(session: &RunningSession) -> String {
+        let request = session.request.as_ref().map(|request| {
+            let kind = match request.kind {
+                RequestKind::ProgramStatus => "ProgramStatus",
+                RequestKind::AttachAllow(_) => "AttachAllow",
+                RequestKind::Terminal => "Terminal",
+            };
+            format!(
+                "{kind}, unsent={}, reply={}, overdue={:?}",
+                request.unsent.len(),
+                request.reply.len(),
+                Instant::now().saturating_duration_since(request.deadline)
+            )
+        });
+        let naming = match session.naming {
+            None => "none".into(),
+            Some(Naming::Named(name)) => format!("named {name:?}"),
+            Some(Naming::Failed { name, retry }) => format!(
+                "failed {name:?}, retry in {:?}",
+                retry.saturating_duration_since(Instant::now())
+            ),
+        };
+        let process = crate::platform::process(session.identity.process_id)
+            .map(|process| process.map(|process| (process.start, process.ended)));
+        let record = super::read_management_record(&session.record)
+            .map(|record| record.map(|record| record.record));
+        format!(
+            "{} run {} pid {}, request={request:?}, naming={naming}, stop_sent={}, ended={}, process={process:?}, record={record:?}",
+            session.id,
+            session.run_id(),
+            session.identity.process_id,
+            session.stop_sent,
+            session.is_finished()
+        )
+    }
+
     /// Waits for Orbit to close the old lease before a test acquires it again.
     pub(crate) fn release_lease(session: RunningSession) {
         let mut lease = &session.lease;
