@@ -568,6 +568,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   by `eon-30skm` (S3): its prose says session for the product concept.
   Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
   `eon-cq38r`: consent-bound column close over exact generation and run IDs on EONW v39.
+  Amended on 2026-11-11 by `eon-t5boa`, approved by eon-overseer under Lucca's
+  standing rule (plan v5, overseer decisions of 2026-11-10): Venus's Stack
+  Close button always asks under the column-close rule.
 - **Consumer:** One local Eon session user.
 - **Trigger:** Launch, create or close a tab, create, close or rename a pane, create a column, traverse focus,
   reorder the active tab or selected pane, move the selected pane into a neighbouring column, zoom the
@@ -789,7 +792,9 @@ names its socket. CLI JSON names a session `session` and a terminal
 
     Tab and pane CLI closes also use EON-C10's target-scoped busy confirmation,
     independently of `warning_close_last_tab`; a column close always needs
-    consent, under the rule below, whatever that setting is. A native confirmed close sends its named
+    consent, under the rule below, whatever that setting is. Venus's Stack
+    Close button always asks under that rule (VEN-C8); its native pane and tab
+    close actions ask only before a final close. A native confirmed close sends its named
     close action without first selecting the named tab. If that tab became
     background while the prompt was open, the current active tab stays active.
   - Closing a pane names an exact live `pN` in any tab of the addressed

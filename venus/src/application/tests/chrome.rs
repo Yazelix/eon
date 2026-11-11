@@ -556,6 +556,95 @@ fn heading_hide_sends_the_cli_actions() {
     }
 }
 
+/// A one-tab snapshot whose columns hold the named panes, each column's first pane expanded.
+fn stack_snapshot(columns: &[&[&str]]) -> Snapshot {
+    let mut snapshot = quit_snapshot();
+    snapshot.tabs = vec![Tab {
+        pending: false,
+        selected_popup: None,
+        popups: Vec::new(),
+        id: "t1".into(),
+        directory: b"/work".to_vec(),
+        selected_pane: Some(columns[0][0].into()),
+        attention_rollup: None,
+        columns: columns
+            .iter()
+            .map(|panes| eon_workspace_protocol::v39::Column {
+                panes: panes
+                    .iter()
+                    .map(|id| Pane {
+                        label: (*id).into(),
+                        pinned_name: None,
+                        id: (*id).into(),
+                        session: format!("session-{id}"),
+                        endpoint: format!("/tmp/{id}.sock").into_bytes(),
+                        live: true,
+                        attention: None,
+                    })
+                    .collect(),
+                expanded: panes[0].into(),
+            })
+            .collect(),
+    }];
+    snapshot
+}
+
+/// Runtime's answer to a column close naming `pane`: one idle pane terminal.
+fn close_scope(pane: &str) -> CloseScope {
+    use eon_workspace_protocol::v39::{CloseTerminal, TargetId, TerminalTarget};
+    CloseScope {
+        generation: "g7".into(),
+        pane: pane.into(),
+        end: CloseEnd::Column,
+        session: "s1".into(),
+        terminals: vec![CloseTerminal {
+            target: TerminalTarget {
+                workspace: "s1".into(),
+                tab: "t1".into(),
+                id: TargetId::Pane(pane.into()),
+                terminal: "terminal-3".into(),
+            },
+            run: "run-a".into(),
+            name: format!("{pane}  shell"),
+            busy: false,
+        }],
+        untracked: Vec::new(),
+    }
+}
+
+#[test]
+fn stack_close_first_asks_runtime_with_no_consent() {
+    use HeadingAction::CloseStack;
+    let ask = |pane: &str| WorkspaceAction::CloseColumn {
+        pane: pane.into(),
+        consent: None,
+    };
+    // Every Stack asks the same way: one with several panes names its expanded pane, and a
+    // one-pane Stack sends a column close too, never a pane close.
+    let mut snapshot = stack_snapshot(&[&["p1", "p2"], &["p3"]]);
+    snapshot.tabs[0].columns[0].expanded = "p2".into();
+    assert_eq!(heading_request(&snapshot, CloseStack(0)), Some(ask("p2")));
+    assert_eq!(heading_request(&snapshot, CloseStack(1)), Some(ask("p3")));
+    assert_eq!(heading_request(&snapshot, CloseStack(2)), None);
+    // So does the only Stack of the only tab, whose close would be final.
+    let only = stack_snapshot(&[&["p1"]]);
+    assert_eq!(heading_request(&only, CloseStack(0)), Some(ask("p1")));
+
+    // A held press closes nothing once that column's expanded pane changed.
+    let pressed = ask("p2");
+    assert_eq!(
+        held_heading_request(&snapshot, CloseStack(0), &pressed),
+        Some(ask("p2"))
+    );
+    let mut moved = snapshot.clone();
+    moved.tabs[0].columns[0].expanded = "p1".into();
+    assert_eq!(held_heading_request(&moved, CloseStack(0), &pressed), None);
+
+    // No Stack tab shows under a popup, so its button sends nothing there.
+    show_test_popup(&mut snapshot);
+    assert_eq!(heading_request(&snapshot, CloseStack(0)), None);
+}
+
 #[test]
 fn held_popup_hide_never_dismisses_a_popup_shown_in_its_place() {
     let mut snapshot = quit_snapshot();
@@ -1238,6 +1327,358 @@ fn quit_progress_follows_workspace_events() {
 }
 
 #[test]
+fn a_stack_close_answer_is_the_confirm_before_its_ticket() {
+    use eon_workspace_protocol::v39::{Failure, Response};
+
+    let confirm = |pane: &str| WorkspaceEvent::Response(Response::Confirm(close_scope(pane)));
+    let answered = |ticket| WorkspaceEvent::Answered {
+        ticket,
+        accepted: false,
+    };
+    let pending = |consented| {
+        Some(PendingClose {
+            pane: "p3".into(),
+            ticket: 7,
+            consented,
+            answer: None,
+        })
+    };
+    // Feeds the events in order and returns what the last one asks, with the slot left.
+    let run = |mut slot: Option<PendingClose>, events: &[WorkspaceEvent]| {
+        let mut ask = None;
+        for event in events {
+            ask = PendingClose::on_workspace(&mut slot, event);
+        }
+        (ask, slot)
+    };
+
+    // The `Confirm` delivered just before the request's ticket is its answer; a consented
+    // request's answer means the Stack changed.
+    for consented in [false, true] {
+        assert_eq!(
+            run(pending(consented), &[confirm("p3"), answered(7)]),
+            (Some((close_scope("p3"), consented)), None)
+        );
+    }
+    // The `Confirm` itself asks nothing: the ticket does.
+    assert_eq!(run(pending(false), &[confirm("p3")]).0, None);
+    // A slow notice between the request and its answer changes nothing.
+    assert_eq!(
+        run(
+            pending(false),
+            &[WorkspaceEvent::Slow, confirm("p3"), answered(7)]
+        ),
+        (Some((close_scope("p3"), false)), None)
+    );
+
+    // A `Confirm` naming another pane is not this request's.
+    assert_eq!(
+        run(pending(false), &[confirm("p4"), answered(7)]),
+        (None, None)
+    );
+    // Nor is one that answered an older request, whose own ticket follows it: taken as the
+    // answer to a consented request it would announce a change that never happened.
+    let (ask, slot) = run(pending(true), &[confirm("p3"), answered(6)]);
+    assert_eq!((ask, &slot), (None, &pending(true)));
+    assert_eq!(run(slot, &[answered(7)]), (None, None));
+    // Nor one with a snapshot between it and the ticket.
+    let snapshot = WorkspaceEvent::Response(Response::Snapshot(quit_snapshot()));
+    assert_eq!(
+        run(
+            pending(false),
+            &[confirm("p3"), snapshot.clone(), answered(7)]
+        ),
+        (None, None)
+    );
+
+    // A request answered by a snapshot or a failure asks nothing and is over.
+    let failure = WorkspaceEvent::Response(Response::Failure(Failure {
+        code: "close-changed".into(),
+        detail: "the column changed".into(),
+    }));
+    for answer in [snapshot, failure] {
+        assert_eq!(
+            run(
+                pending(true),
+                &[
+                    answer,
+                    WorkspaceEvent::Answered {
+                        ticket: 7,
+                        accepted: true
+                    }
+                ]
+            ),
+            (None, None)
+        );
+    }
+    // Losing the workspace ends the request, and a request forgotten after local input
+    // leaves no slot: either way a late answer opens nothing.
+    let unavailable = WorkspaceEvent::Unavailable {
+        notice: "Eon workspace unavailable".into(),
+        detail: None,
+    };
+    assert_eq!(
+        run(pending(false), &[unavailable, confirm("p3"), answered(7)]),
+        (None, None)
+    );
+    assert_eq!(run(None, &[confirm("p3"), answered(7)]), (None, None));
+}
+
+#[test]
+fn a_window_focus_change_forgets_a_pending_stack_close() {
+    use eon_workspace_protocol::v39::Response;
+    use winit::event::{DeviceId, TouchPhase};
+
+    let device_id = DeviceId::dummy();
+    let mouse = |state| WindowEvent::MouseInput {
+        device_id,
+        state,
+        button: MouseButton::Left,
+    };
+    let commit = || WindowEvent::Ime(Ime::Commit("é".into()));
+    let wheel = || WindowEvent::MouseWheel {
+        device_id,
+        delta: MouseScrollDelta::LineDelta(0.0, 1.0),
+        phase: TouchPhase::Moved,
+    };
+    let moved = || WindowEvent::CursorMoved {
+        device_id,
+        position: PhysicalPosition::new(1.0, 1.0),
+    };
+    let resized = || WindowEvent::Resized(PhysicalSize::new(800, 600));
+    // What a pending Stack close asks once its answer arrives after `event`.
+    let after = |event: &WindowEvent| {
+        let mut slot = Some(PendingClose {
+            pane: "p3".into(),
+            ticket: 7,
+            consented: false,
+            answer: None,
+        });
+        PendingClose::on_window(&mut slot, event);
+        let forgotten = slot.is_none();
+        PendingClose::on_workspace(
+            &mut slot,
+            &WorkspaceEvent::Response(Response::Confirm(close_scope("p3"))),
+        );
+        let ask = PendingClose::on_workspace(
+            &mut slot,
+            &WorkspaceEvent::Answered {
+                ticket: 7,
+                accepted: false,
+            },
+        );
+        (forgotten, ask)
+    };
+
+    // Local input, and the window gaining or losing focus, forget the request: its answer
+    // then opens no prompt, in a window the person may have left.
+    for event in [
+        WindowEvent::Focused(false),
+        WindowEvent::Focused(true),
+        commit(),
+        mouse(ElementState::Pressed),
+        wheel(),
+    ] {
+        assert_eq!(after(&event), (true, None), "{event:?}");
+    }
+    // The pointer release is what sent the request, and movement and resizing are not input
+    // to it: the answer still asks.
+    for event in [mouse(ElementState::Released), moved(), resized()] {
+        assert_eq!(
+            after(&event),
+            (false, Some((close_scope("p3"), false))),
+            "{event:?}"
+        );
+    }
+
+    // A pending pane action keeps its own rule: exactly the three input events, no focus change.
+    for event in [commit(), mouse(ElementState::Pressed), wheel()] {
+        assert!(local_input(&event), "{event:?}");
+    }
+    for event in [
+        WindowEvent::Focused(false),
+        WindowEvent::Focused(true),
+        mouse(ElementState::Released),
+        moved(),
+        resized(),
+    ] {
+        assert!(!local_input(&event), "{event:?}");
+    }
+}
+
+#[test]
+fn enter_approves_only_after_the_delay_and_a_full_turn() {
+    let at = Instant::now();
+    let shown = Some(Shown { at, turn: 10 });
+    let ms = Duration::from_millis;
+    // Nothing presented yet: no wait is long enough.
+    assert!(!enter_approves(at + ms(5_000), None, 100));
+    // Inside the delay, however many turns passed.
+    assert!(!enter_approves(at + ms(399), shown, 100));
+    // After the delay, but the turn that presented the list is the only one finished since:
+    // a loop stalled across the presentation ages a queued key past the delay.
+    assert!(!enter_approves(at + ms(400), shown, 11));
+    // After the delay and one full turn that began after the presentation.
+    assert!(enter_approves(at + ms(400), shown, 12));
+    // The turn counter wraps.
+    let wrapped = Some(Shown { at, turn: u64::MAX });
+    assert!(!enter_approves(at + ms(400), wrapped, 0));
+    assert!(enter_approves(at + ms(400), wrapped, 1));
+}
+
+#[test]
+fn a_consented_stack_close_survives_resize_before_repaint() {
+    let mut presentation = PresentationState::default();
+    presentation.publish(presentation.candidate(Some(7)));
+    assert!(stack_close_admitted(&presentation, None));
+
+    let at = Instant::now();
+    let scope = close_scope("p3");
+    let prompt = ClosePrompt {
+        target: PromptTarget::CloseColumn {
+            scope: scope.clone(),
+            changed: false,
+            shown: Some(Shown { at, turn: 5 }),
+        },
+        scroll: 0.0,
+    };
+    // Resize invalidates targets, then Enter arrives before a replacement frame.
+    presentation.invalidate();
+    assert!(!stack_close_admitted(&presentation, None));
+    assert!(prompt.accepts_enter(at + CONFIRM_DELAY, 7));
+    assert!(
+        stack_close_admitted(&presentation, Some(&consent_of(&scope))),
+        "an accepted Stack close must survive resize before repaint"
+    );
+}
+
+#[test]
+fn a_stack_close_prompt_waits_for_its_own_frame_and_discards_early_enters() {
+    let ms = Duration::from_millis;
+    let prompt = |pane: &str, changed| ClosePrompt {
+        target: PromptTarget::CloseColumn {
+            scope: close_scope(pane),
+            changed,
+            shown: None,
+        },
+        scroll: 0.0,
+    };
+    let shown = |prompt: &ClosePrompt| match &prompt.target {
+        PromptTarget::CloseColumn { shown, .. } => *shown,
+        _ => None,
+    };
+    let list = DialogKind::CloseStack {
+        stack: Some(1),
+        terminals: 1,
+        running: 0,
+        end: CloseEnd::Column,
+        session: "s1".into(),
+        detach: None,
+        changed: false,
+    };
+    let t0 = Instant::now();
+
+    // Until a frame showing its list is presented, no Enter counts, however late.
+    let mut first = prompt("p3", false);
+    assert!(!first.accepts_enter(t0 + ms(5_000), 100));
+    // A presented frame that drew nothing, or another dialog ahead of it, is not that frame.
+    first.presented(None, t0, 5);
+    first.presented(Some(&DialogKind::WindowMenu), t0, 5);
+    assert_eq!(shown(&first), None);
+    assert!(!first.accepts_enter(t0 + ms(5_000), 100));
+    // The first frame that drew the list starts the delay, and later frames never move it.
+    first.presented(Some(&list), t0, 5);
+    let started = Some(Shown { at: t0, turn: 5 });
+    assert_eq!(shown(&first), started);
+    first.presented(Some(&list), t0 + ms(300), 9);
+    assert_eq!(shown(&first), started);
+    // An early Enter is refused and leaves nothing behind: the delay neither restarts nor
+    // holds the key, so the same prompt accepts a later Enter on its original schedule.
+    assert!(!first.accepts_enter(t0 + ms(10), 7));
+    assert_eq!(shown(&first), started);
+    assert!(first.accepts_enter(t0 + ms(400), 7));
+
+    // A prompt for a second answer starts with nothing shown: an Enter queued behind the
+    // first cannot approve its list, whenever it arrives, until that list's own frame.
+    let mut second = prompt("p3", true);
+    assert_eq!(shown(&second), None);
+    assert!(!second.accepts_enter(t0 + ms(5_000), 100));
+    second.presented(Some(&list), t0 + ms(500), 20);
+    assert!(!second.accepts_enter(t0 + ms(899), 30));
+    assert!(second.accepts_enter(t0 + ms(900), 22));
+
+    // The tab, pane and quit prompts keep answering at once, and keep no shown time.
+    for target in [
+        PromptTarget::CloseTab {
+            tab: "t1".into(),
+            action: WorkspaceAction::Workspace(CommonAction::CloseTab { tab: "t1".into() }),
+        },
+        PromptTarget::CloseTab {
+            tab: "t1".into(),
+            action: WorkspaceAction::ClosePane { pane: "p1".into() },
+        },
+        PromptTarget::QuitWindow,
+    ] {
+        let mut prompt = ClosePrompt {
+            target,
+            scroll: 0.0,
+        };
+        assert!(prompt.accepts_enter(t0, 0));
+        prompt.presented(Some(&list), t0, 0);
+        assert_eq!(shown(&prompt), None);
+    }
+}
+
+#[test]
+fn a_stack_close_consent_repeats_exactly_what_was_listed() {
+    use eon_workspace_protocol::v39::{CloseTerminal, TargetId, TerminalTarget, UntrackedRun};
+
+    let mut scope = close_scope("p3");
+    scope.end = CloseEnd::Window;
+    scope.terminals.push(CloseTerminal {
+        target: TerminalTarget {
+            workspace: "s1".into(),
+            tab: "t1".into(),
+            id: TargetId::Popup("u1".into()),
+            terminal: "terminal-4".into(),
+        },
+        run: "run-b".into(),
+        name: "Files".into(),
+        busy: true,
+    });
+    scope.untracked.push(UntrackedRun {
+        terminal: "terminal-9".into(),
+        run: "run-c".into(),
+    });
+    // The generation, the end, and every run in the answer's order: terminals, then the runs
+    // no tab tracks. Run IDs only: a terminal number can be reused, a run ID cannot.
+    assert_eq!(
+        consent_of(&scope),
+        CloseConsent {
+            generation: "g7".into(),
+            runs: vec!["run-a".into(), "run-b".into(), "run-c".into()],
+            end: CloseEnd::Window,
+        }
+    );
+
+    // The prompt lives while the answer's pane is a pane of any tab, the active one or not.
+    let prompt = ClosePrompt {
+        target: PromptTarget::CloseColumn {
+            scope,
+            changed: false,
+            shown: None,
+        },
+        scroll: 0.0,
+    };
+    let mut snapshot = stack_snapshot(&[&["p1"], &["p2", "p3"]]);
+    assert!(prompt.names_live_target(&snapshot));
+    snapshot.active_tab = "t9".into();
+    assert!(prompt.names_live_target(&snapshot));
+    snapshot.tabs[0].columns.pop();
+    assert!(!prompt.names_live_target(&snapshot));
+}
+
+#[test]
 fn a_second_enter_reaches_nothing_while_a_stop_is_in_flight() {
     let enter = PhysicalKey::Code(KeyCode::Enter);
     let held = |quit: QuitProgress| quit.holds_key(KeyCode::Enter, session::Modifiers::empty());
@@ -1331,17 +1772,67 @@ fn window_menu_pointer_waits_for_matching_release_and_hover_never_scrolls() {
 fn pane_button_focus_wraps_and_skips_disabled_zoom() {
     use PaneHeaderAction::{Close, Zoom};
     use WorkspaceFocus::{PaneAction, Panes};
-    assert_eq!(cycle_pane_focus(Panes, false, true), PaneAction(Zoom));
-    assert_eq!(
-        cycle_pane_focus(PaneAction(Zoom), false, true),
-        PaneAction(Close)
-    );
-    assert_eq!(cycle_pane_focus(PaneAction(Close), false, true), Panes);
-    assert_eq!(cycle_pane_focus(Panes, true, true), PaneAction(Close));
-    assert_eq!(
-        cycle_pane_focus(PaneAction(Close), true, true),
-        PaneAction(Zoom)
-    );
-    assert_eq!(cycle_pane_focus(Panes, false, false), PaneAction(Close));
-    assert_eq!(cycle_pane_focus(PaneAction(Close), true, false), Panes);
+    // Without a Stack Close the order is the pane's own: title, Zoom while enabled, Close.
+    let cycle = |focus, backwards, zoom| cycle_pane_focus(focus, backwards, true, zoom, None);
+    assert_eq!(cycle(Panes, false, true), PaneAction(Zoom));
+    assert_eq!(cycle(PaneAction(Zoom), false, true), PaneAction(Close));
+    assert_eq!(cycle(PaneAction(Close), false, true), Panes);
+    assert_eq!(cycle(Panes, true, true), PaneAction(Close));
+    assert_eq!(cycle(PaneAction(Close), true, true), PaneAction(Zoom));
+    assert_eq!(cycle(Panes, false, false), PaneAction(Close));
+    assert_eq!(cycle(PaneAction(Close), true, false), Panes);
+
+    // The selected Stack's Close comes after the pane's Close and before the title again.
+    let stack = |index| WorkspaceFocus::HeadingAction(HeadingAction::CloseStack(index));
+    let cycle = |focus, backwards| cycle_pane_focus(focus, backwards, true, true, Some(2));
+    assert_eq!(cycle(PaneAction(Close), false), stack(2));
+    assert_eq!(cycle(stack(2), false), Panes);
+    assert_eq!(cycle(Panes, true), stack(2));
+    assert_eq!(cycle(stack(2), true), PaneAction(Close));
+    // Where the pane's own buttons do not fit, the title and the Stack's Close remain.
+    let cycle = |focus, backwards| cycle_pane_focus(focus, backwards, false, true, Some(2));
+    assert_eq!(cycle(Panes, false), stack(2));
+    assert_eq!(cycle(stack(2), false), Panes);
+    assert_eq!(cycle(Panes, true), stack(2));
+    // With neither, Tab rests on the title.
+    assert_eq!(cycle_pane_focus(Panes, false, false, true, None), Panes);
+    // An unselected Stack's Close, where a screen reader can put focus, is not stranded: Tab
+    // and Shift+Tab step from it as from the title.
+    let cycle = |focus, backwards| cycle_pane_focus(focus, backwards, true, true, Some(2));
+    assert_eq!(cycle(stack(0), false), PaneAction(Zoom));
+    assert_eq!(cycle(stack(0), true), stack(2));
+}
+
+#[test]
+fn stack_close_focus_stays_on_a_shown_button_and_returns_to_the_titles() {
+    use HeadingAction::{CloseStack, HidePopup, HideSidebar};
+    use WorkspaceFocus::{Panes, Terminal};
+    let heading = WorkspaceFocus::HeadingAction;
+
+    // A button that still shows keeps focus, whichever column is selected: the rule takes no
+    // selected column, so an unselected Stack's Close is never evicted.
+    for action in [CloseStack(0), CloseStack(3), HidePopup, HideSidebar] {
+        assert_eq!(retained_heading_focus(action, true), heading(action));
+    }
+    // One that no longer shows gives focus up: a Stack's to the pane titles, a Hide
+    // button's to the terminal.
+    assert_eq!(retained_heading_focus(CloseStack(1), false), Panes);
+    assert_eq!(retained_heading_focus(HidePopup, false), Terminal);
+    assert_eq!(retained_heading_focus(HideSidebar, false), Terminal);
+
+    // Once a consent is sent, focus never stays on a Stack's Close: the Stack that takes the
+    // closed one's position is another Stack.
+    assert_eq!(focus_after_stack_close(heading(CloseStack(0))), Panes);
+    assert_eq!(focus_after_stack_close(heading(CloseStack(2))), Panes);
+    // A close confirmed with focus elsewhere, as after a pointer click, moves nothing.
+    for focus in [
+        Terminal,
+        Panes,
+        WorkspaceFocus::PaneAction(PaneHeaderAction::Close),
+        WorkspaceFocus::Tabs,
+        WorkspaceFocus::Sidebar,
+        heading(HideSidebar),
+    ] {
+        assert_eq!(focus_after_stack_close(focus), focus);
+    }
 }

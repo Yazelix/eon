@@ -1359,7 +1359,7 @@ impl FrameTitleTab {
         Self::new(
             fonts,
             metrics,
-            viewer.kind.title(),
+            &viewer.kind.title(),
             row,
             card,
             viewer.bounds.top,
@@ -1383,7 +1383,7 @@ impl FrameTitleTab {
         } else {
             workspace
                 .column_cards()
-                .map(|(chrome, label, panes)| {
+                .map(|(chrome, label, panes, index)| {
                     label
                         .filter(|_| pane_frames && !panes.is_empty())
                         .and_then(|label| {
@@ -1395,7 +1395,7 @@ impl FrameTitleTab {
                                 label,
                                 border,
                                 card_stroke,
-                                None,
+                                workspace.heading_action(crate::HeadingAction::CloseStack(index)),
                             )
                         })
                 })
@@ -1493,7 +1493,7 @@ impl PaneTitleTab {
             .column_cards()
             .zip(terminals)
             .enumerate()
-            .map(|(column, ((area, _, panes), terminal))| {
+            .map(|(column, ((area, _, panes, _), terminal))| {
                 let fill = workspace.card_fill(area, metrics, border.max(focus));
                 let outlines = workspace.pane_outlines(
                     panes,
@@ -2406,7 +2406,7 @@ impl Renderer {
             );
         } else {
             self.build_border_title(
-                viewer.kind.title(),
+                &viewer.kind.title(),
                 SceneRect {
                     left: viewer.bounds.left,
                     width: viewer.bounds.width,
@@ -2653,6 +2653,8 @@ impl Renderer {
                 focus,
                 rectangles,
                 crate::HeadingAction::HideSidebar,
+                "–",
+                palette::PRIMARY_TEXT,
                 area,
                 backgrounds
                     .last()
@@ -3048,6 +3050,8 @@ impl Renderer {
                     focus,
                     rectangles,
                     crate::HeadingAction::HidePopup,
+                    "–",
+                    palette::PRIMARY_TEXT,
                     workspace.chrome,
                     backgrounds
                         .first()
@@ -3067,7 +3071,9 @@ impl Renderer {
         }
         let terminals = std::iter::once(workspace.terminal)
             .chain(workspace.other_columns.iter().map(|column| column.terminal));
-        for (column_index, ((card, stack_label, panes), terminal)) in
+        // `column_index` counts cards with the selected column's first, the order of
+        // `backgrounds` and `title_tabs`; `stack_index` is the column's place from the left.
+        for (column_index, ((card, stack_label, panes, stack_index), terminal)) in
             workspace.column_cards().zip(terminals).enumerate()
         {
             let selected_column = column_index == 0;
@@ -3255,6 +3261,7 @@ impl Renderer {
                 rectangles.clip = None;
             }
             // The Stack tab, or a compact title on the card's top line, always neutral.
+            let mut stack_close = None;
             if let Some(stack_label) = stack_label
                 && let Some((first, _)) = rules.first()
             {
@@ -3270,7 +3277,10 @@ impl Renderer {
                     height: chrome_title_metrics(self.metrics).text_height,
                     ..card
                 };
-                let gap = if let Some(tab) = title_tabs.get(column_index).and_then(Option::as_ref) {
+                let close = crate::HeadingAction::CloseStack(stack_index);
+                let target = workspace.heading_action(close);
+                let tab = title_tabs.get(column_index).and_then(Option::as_ref);
+                let gap = if let Some(tab) = tab {
                     rectangles.push_title_tab_outline(fill, tab, stroke, palette::CARD_OUTLINE);
                     let cut = fill.bounds.top + super::rounded_radius(fill.bounds, fill.radius);
                     let bottom = stack.clip.bottom();
@@ -3278,15 +3288,18 @@ impl Renderer {
                     stack.clip.height = (bottom - cut).max(0.0);
                     self.build_frame_title(&tab.title, row, card, color, stroke)
                 } else {
-                    self.build_border_title(
-                        stack_label,
-                        row,
-                        card,
-                        (card.width - self.metrics.padding * 2.0).max(0.0),
-                        color,
-                    )
+                    // A compact title stops before the button.
+                    let width = target.map_or(card.width - self.metrics.padding * 2.0, |close| {
+                        close.left - row.left - self.metrics.padding * 2.0
+                    });
+                    self.build_border_title(stack_label, row, card, width.max(0.0), color)
                 };
-                rules.push((stack, [gap, empty_gap]));
+                // Without its notch the button sits in a gap in the top edge.
+                let button_gap = target
+                    .filter(|_| tab.is_none_or(|tab| tab.action.is_none()))
+                    .map_or(empty_gap, |close| heading_button_gap(close, self.metrics));
+                rules.push((stack, [gap, button_gap]));
+                stack_close = Some((close, color));
             }
             rectangles.push_pane_outlines(
                 fill,
@@ -3311,6 +3324,22 @@ impl Renderer {
                     self.metrics.scale,
                 ),
             );
+            // The Stack's Close, in the label's colour, over its card's outline.
+            if let Some((close, color)) = stack_close {
+                self.push_heading_button(
+                    workspace,
+                    focus,
+                    rectangles,
+                    close,
+                    "×",
+                    color,
+                    card,
+                    backgrounds
+                        .get(column_index)
+                        .copied()
+                        .unwrap_or(palette::TERMINAL_FALLBACK),
+                );
+            }
         }
     }
 
@@ -3369,13 +3398,17 @@ impl Renderer {
         });
     }
 
-    /// Draws a popup or Agents heading's Hide button, which is as tall as its title row.
+    /// Draws a heading's button, which is as tall as its title row: a popup's or the Agents
+    /// heading's Hide, or a Stack's Close, as its `glyph` in `color`.
+    #[allow(clippy::too_many_arguments)]
     fn push_heading_button(
         &mut self,
         workspace: &WorkspaceScene,
         focus: WorkspaceFocus,
         rectangles: &mut RectangleBatch,
         action: crate::HeadingAction,
+        glyph: &str,
+        color: SceneColor,
         clip: SceneRect,
         background: SceneColor,
     ) {
@@ -3388,7 +3421,7 @@ impl Renderer {
             target,
             target,
             clip,
-            "–",
+            glyph,
             HeaderButtonState {
                 hovered: self
                     .header
@@ -3397,7 +3430,7 @@ impl Renderer {
                 focused: focus == WorkspaceFocus::HeadingAction(action),
                 enabled: true,
             },
-            palette::PRIMARY_TEXT,
+            color,
             background,
         );
         rectangles.clip = None;

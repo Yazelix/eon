@@ -524,12 +524,14 @@ controls inline. The title and scrollback indicator fit to its
 left. Both controls disappear together if two full targets cannot fit; tight
 clearances retain a compact gap. Stack, Agents, popup and
 dialog headings have no pane actions, and a popup covers the underlying headers.
-Popup and Agents headings have a Hide button of their own, described below.
+Popup and Agents headings have a Hide button of their own, and each Stack tab
+a Close button; both are described below.
 Hover and press highlight the individual button. A one-pane tab keeps a dimmed,
 disabled Zoom button in its slot.
 
 F6 cycles to pane chrome. Tab and Shift+Tab cycle the selected pane's title, Zoom
-and Close, skipping disabled Zoom; Enter or Space activates a button. Up/Down
+and Close, skipping disabled Zoom, then the selected Stack's Close while it
+shows; Enter or Space activates a button. Up/Down
 select another pane and return focus to its title. Action focus uses a transient
 accent pill outline. Zoom first selects the named pane if necessary and then uses
 Alt+Shift+Z's local view behavior; another action or zoom toggle cancels a pending
@@ -556,6 +558,25 @@ Most popups still hide on their own shortcut; Sessions' key confirms its
 selection instead, and quick search and Files switch to each other. Screen
 readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
 
+Each Stack tab carries the same right notch with one Close button (`×`); the
+label fits to its left. Every Stack shows it unless a pane is zoomed or the
+tab is too narrow for a full button; with pane frames off it sits beside the
+plain label with no notch or outline. Close always asks first, whatever the
+Stack runs, even for one idle pane, and whatever `warning_close_last_tab` is.
+The prompt lists every terminal the close would stop, one row each, marks the
+ones still running with `· running`, and for the last Stack of the last tab
+says that it closes the session or quits the window. Esc keeps the Stack.
+Enter closes exactly the listed terminals. It is ignored for the first moment
+(400 ms) after the list appears, so a key pressed before the list could be
+read never confirms it; press Enter again. If the Stack changed while the
+prompt was open (a pane joined or left it, or the close became a final one),
+Enter stops nothing and the prompt shows again from the new list, starting
+"This Stack changed.". Tab reaches the selected Stack's Close after the
+pane's own buttons; Enter or Space activates it and Up or Down returns to the
+pane title. After a confirmed close, keyboard focus returns to the pane
+title; Esc leaves it where it was. Screen readers list `Close Stack` or
+`Close Stack N` as a button on every visible Stack and can focus any of them.
+
 The expanded pane's header uses the continuous band above; collapsed pane
 titles sit in their row's line. Stack tabs, popups, Agents and
 native titled dialogs share a fitted tab style. Their outline rises seamlessly
@@ -573,7 +594,8 @@ The reservation yields before the last padded terminal row on short windows.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.
 A title is omitted only when it cannot fit. A tab keeps full accessibility
-names and adds no input targets other than the Hide buttons above; decorative
+names and adds no input targets other than the Hide and Stack Close buttons
+above; decorative
 pane caps outside a header row do
 not extend that row's click or accessibility bounds. The Stack label is a visual
 heading only. Keyboard title focus colours the title's span of the continuous
@@ -940,6 +962,9 @@ marks those known to be running, and refuses with `not-confirmed` (exit 1).
 A final close also lists live runs in no tab and says whether it closes the
 session or quits the window. This applies even to an idle or one-pane Stack,
 independently of `warning_close_last_tab`. It reads no stdin, piped or at a terminal.
+A Stack's Close button in the window asks under the same rule, and
+`eon column close PANE --json` prints the list its prompt shows as data and
+stops nothing.
 Use `--yes` only when stopping all work in that invocation's listed runs is
 authorized. Runtime binds consent to the generation, exact run IDs and the
 close's consequence; if those change before the close runs, it stops nothing

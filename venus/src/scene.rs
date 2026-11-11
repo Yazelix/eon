@@ -4,8 +4,9 @@ use crate::{
     render::CellMetrics,
 };
 use eon_workspace_protocol::v39::{
-    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState,
-    CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot, Tab, TargetId,
+    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
+    CloseScope, CodexQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot,
+    Tab, TargetId,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -484,6 +485,8 @@ impl PaneHeaderAction {
 pub enum HeadingAction {
     HidePopup,
     HideSidebar,
+    /// A Stack tab's Close, by its column's position among the tab's columns, left to right.
+    CloseStack(usize),
 }
 
 /// A column other than the selected one: its accordion headers and terminal area.
@@ -496,6 +499,8 @@ pub struct WorkspaceColumn {
     pub(crate) chrome: SceneRect,
     /// The label of its Stack tab, while its Stack band shows.
     pub(crate) stack_label: Option<String>,
+    /// The Close button in its Stack tab's title row, while it fits.
+    pub(crate) stack_close: Option<SceneRect>,
 }
 
 impl WorkspacePane {
@@ -865,7 +870,7 @@ pub enum WorkspaceHit<'a> {
     SidebarRow(&'a str),
     Pane(&'a str),
     PaneAction(&'a str, PaneHeaderAction),
-    /// A popup or Agents heading's button.
+    /// A popup, Agents or Stack heading's button.
     HeadingAction(HeadingAction),
     /// Another column's terminal area, named by that column's expanded pane.
     ColumnTerminal(&'a str),
@@ -1394,18 +1399,43 @@ pub enum DialogKind {
         running: usize,
         detach: Option<String>,
     },
+    /// The Stack close prompt, worded from Runtime's answer alone (EON-C8): the Stack's
+    /// one-based number unless its tab has one column, how many terminals the close stops and
+    /// how many of them count as running, how far the close reaches, the session a final close
+    /// removes, the detach chord of a final close, and whether this answer replaces one that
+    /// Enter already consented to.
+    CloseStack {
+        stack: Option<usize>,
+        terminals: usize,
+        running: usize,
+        end: CloseEnd,
+        session: String,
+        detach: Option<String>,
+        changed: bool,
+    },
 }
 
 impl DialogKind {
     #[must_use]
-    pub(crate) fn title(&self) -> &'static str {
+    pub(crate) fn title(&self) -> Cow<'static, str> {
         match self {
-            Self::Shortcuts => "Shortcuts",
-            Self::AttentionInbox => "Attention inbox",
-            Self::WindowMenu => WorkspaceHeaderControl::WindowMenu.label(&[]),
-            Self::QuitOtherWindow { .. } => "Quit this other window?",
-            Self::CloseLastTab { .. } => "Close the last tab?",
-            Self::QuitWindow { .. } => "Quit this window?",
+            Self::Shortcuts => "Shortcuts".into(),
+            Self::AttentionInbox => "Attention inbox".into(),
+            Self::WindowMenu => WorkspaceHeaderControl::WindowMenu.label(&[]).into(),
+            Self::QuitOtherWindow { .. } => "Quit this other window?".into(),
+            Self::CloseLastTab { .. } => "Close the last tab?".into(),
+            Self::QuitWindow { .. } => "Quit this window?".into(),
+            Self::CloseStack {
+                end: CloseEnd::Column,
+                stack: Some(stack),
+                ..
+            } => format!("Close Stack {stack}?").into(),
+            Self::CloseStack {
+                end: CloseEnd::Column,
+                stack: None,
+                ..
+            } => "Close Stack?".into(),
+            Self::CloseStack { .. } => "Close the last tab?".into(),
         }
     }
 
@@ -1446,6 +1476,29 @@ impl DialogKind {
                 }
             )
             .into(),
+            Self::CloseStack {
+                terminals,
+                running,
+                end,
+                session,
+                changed,
+                ..
+            } => format!(
+                "{}This {} {terminals} terminal{}{}.",
+                if *changed { "This Stack changed. " } else { "" },
+                match end {
+                    CloseEnd::Column => "stops".into(),
+                    CloseEnd::Session => format!("closes session {session} and stops"),
+                    CloseEnd::Window => "quits the window and stops".into(),
+                },
+                if *terminals == 1 { "" } else { "s" },
+                if *running == 0 {
+                    String::new()
+                } else {
+                    format!("; {running} still running")
+                }
+            )
+            .into(),
         }
     }
 
@@ -1475,6 +1528,20 @@ impl DialogKind {
                     "Enter Close · Esc Cancel"
                 } else {
                     "Enter Quit · Esc Cancel"
+                }
+                .into(),
+            )
+            .chain(
+                detach
+                    .iter()
+                    .map(|chord| format!("{chord} keeps it running instead")),
+            )
+            .collect(),
+            Self::CloseStack { end, detach, .. } => std::iter::once(
+                if *end == CloseEnd::Window {
+                    "Enter Quit · Esc Cancel"
+                } else {
+                    "Enter Close · Esc Cancel"
                 }
                 .into(),
             )
@@ -1658,6 +1725,12 @@ impl DialogScene {
             scroll,
             measure,
         )
+    }
+
+    /// What this dialog shows.
+    #[must_use]
+    pub fn kind(&self) -> &DialogKind {
+        &self.kind
     }
 
     /// The footer's hint lines; Shortcuts mention scrolling only while their rows overflow.
@@ -1890,7 +1963,7 @@ impl DialogScene {
             _ => {
                 [
                     content_width,
-                    measure.width(kind.title()) + padding * 2.0,
+                    measure.width(&kind.title()) + padding * 2.0,
                     measure.width(&kind.subtitle()) * label_ratio,
                 ]
                 .into_iter()
@@ -2271,6 +2344,68 @@ impl DialogScene {
             measure,
         )
     }
+
+    /// The Stack close prompt, from Runtime's answer alone: every terminal the close stops in
+    /// the answer's order, as `Pane` or `Popup` with its name and ` · running` when marked
+    /// busy, then each run no tab tracks as `Terminal` with its terminal ID. `stack` is the
+    /// Stack's one-based number unless its tab has one column; `changed` says this answer
+    /// replaces one that Enter consented to.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn close_stack(
+        scope: &CloseScope,
+        stack: Option<usize>,
+        detach: Option<String>,
+        changed: bool,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        scroll: f32,
+        measure: &dyn DialogText,
+    ) -> Self {
+        let rows =
+            scope
+                .terminals
+                .iter()
+                .map(|terminal| {
+                    ShortcutRow::new(
+                        match terminal.target.id {
+                            TargetId::Pane(_) => "Pane",
+                            TargetId::Popup(_) => "Popup",
+                        },
+                        if terminal.busy {
+                            format!("{} · running", terminal.name)
+                        } else {
+                            terminal.name.clone()
+                        },
+                    )
+                })
+                .chain(scope.untracked.iter().map(|run| {
+                    ShortcutRow::new("Terminal", format!("{} · in no tab", run.terminal))
+                }))
+                .collect::<Vec<_>>();
+        Self::new(
+            DialogKind::CloseStack {
+                stack,
+                terminals: rows.len(),
+                // A run no tab tracks counts as running: nothing says it is idle.
+                running: scope
+                    .terminals
+                    .iter()
+                    .filter(|terminal| terminal.busy)
+                    .count()
+                    + scope.untracked.len(),
+                end: scope.end,
+                session: scope.session.clone(),
+                detach,
+                changed,
+            },
+            vec![ShortcutGroup::new("", rows)],
+            size,
+            metrics,
+            scroll,
+            measure,
+        )
+    }
 }
 
 /// Deterministic native projection of one complete accepted Eon snapshot.
@@ -2303,6 +2438,9 @@ pub struct WorkspaceScene {
     pub selected_column: usize,
     /// The selected column's Stack tab label, while its Stack band shows.
     pub(crate) stack_label: Option<String>,
+    /// The Close button in the selected column's Stack tab, while it fits; `other_columns`
+    /// hold their own.
+    stack_close: Option<SceneRect>,
     pub other_columns: Vec<WorkspaceColumn>,
     pub tab_viewport: SceneRect,
     /// The area every card shares: the columns', the popup's and the agent sidebar's.
@@ -3962,6 +4100,7 @@ impl WorkspaceScene {
                 pane_viewport,
                 header_viewport: pane_viewport,
                 stack_label: None,
+                stack_close: None,
                 chrome: pane_viewport,
                 displayed_grid_bottoms: Vec::new(),
                 sidebar,
@@ -4152,6 +4291,7 @@ impl WorkspaceScene {
                     terminal,
                     chrome,
                     stack_label: label(index),
+                    stack_close: None,
                 });
             }
         }
@@ -4180,6 +4320,7 @@ impl WorkspaceScene {
             terminal,
             selected_column,
             stack_label,
+            stack_close: None,
             other_columns,
             tab_viewport,
             pane_viewport,
@@ -4205,7 +4346,7 @@ impl WorkspaceScene {
         .with_heading_actions(metrics)
     }
 
-    /// Places each heading's Hide button at the right of its title row, as a pane's buttons sit.
+    /// Places each heading's button at the right of its title row, as a pane's buttons sit.
     fn with_heading_actions(mut self, metrics: CellMetrics) -> Self {
         let button = chrome_title_metrics(metrics).text_height;
         let target = |row: SceneRect| {
@@ -4218,6 +4359,28 @@ impl WorkspaceScene {
         };
         self.popup_hide = self.popup_title_row(metrics).and_then(target);
         self.sidebar_hide = self.sidebar_title_row(metrics).and_then(target);
+        // A Stack's Close shows with its label while every column is laid out, on a card whose
+        // top edge runs through the title row.
+        let stack = |scene: &Self, chrome: SceneRect, labelled: bool| {
+            let row = SceneRect {
+                height: button,
+                ..chrome
+            };
+            (labelled
+                && !scene.zoomed
+                && scene.card_rect(chrome, metrics, 0.0).top == title_rule_y(row.top, row.height))
+            .then(|| target(row))
+            .flatten()
+        };
+        self.stack_close = stack(&self, self.chrome, self.stack_label.is_some());
+        let others = self
+            .other_columns
+            .iter()
+            .map(|column| stack(&self, column.chrome, column.stack_label.is_some()))
+            .collect::<Vec<_>>();
+        for (column, close) in self.other_columns.iter_mut().zip(others) {
+            column.stack_close = close;
+        }
         self
     }
 
@@ -4251,13 +4414,28 @@ impl WorkspaceScene {
         (self.card_rect(area, metrics, 0.0).top == title_rule_y(row.top, row.height)).then_some(row)
     }
 
-    /// A heading's Hide button, while it shows.
+    /// A heading's button, while it shows.
     #[must_use]
     pub fn heading_action(&self, action: HeadingAction) -> Option<SceneRect> {
         match action {
             HeadingAction::HidePopup => self.popup_hide,
             HeadingAction::HideSidebar => self.sidebar_hide,
+            HeadingAction::CloseStack(index) if index == self.selected_column => self.stack_close,
+            HeadingAction::CloseStack(index) => self
+                .other_columns
+                .iter()
+                .find(|column| column.index == index)
+                .and_then(|column| column.stack_close),
         }
+    }
+
+    /// Every heading button that shows: the popup's, the sidebar's, then each Stack's from
+    /// left to right.
+    pub fn heading_actions(&self) -> impl Iterator<Item = HeadingAction> + '_ {
+        [HeadingAction::HidePopup, HeadingAction::HideSidebar]
+            .into_iter()
+            .chain((0..MAX_COLUMNS).map(HeadingAction::CloseStack))
+            .filter(|action| self.heading_action(*action).is_some())
     }
 
     /// The hover and accessible label of a heading's button.
@@ -4271,6 +4449,18 @@ impl WorkspaceScene {
                 )
             }
             HeadingAction::HideSidebar => "Hide agent sidebar".into(),
+            HeadingAction::CloseStack(index) => format!(
+                "Close {}",
+                if index == self.selected_column {
+                    self.stack_label.as_deref()
+                } else {
+                    self.other_columns
+                        .iter()
+                        .find(|column| column.index == index)
+                        .and_then(|column| column.stack_label.as_deref())
+                }
+                .unwrap_or("Stack")
+            ),
         }
     }
 
@@ -4348,22 +4538,25 @@ impl WorkspaceScene {
         self.panes.first().filter(|_| self.zoomed)
     }
 
-    /// Each column card's allocated area, Stack label while its band shows, and headers: the
-    /// selected column's first, then the others in order, as card backdrops and title tabs list
-    /// them. Without columns the selected slot is empty.
+    /// Each column card's allocated area, Stack label while its band shows, headers, and
+    /// position among the tab's columns from the left: the selected column's first, then the
+    /// others in order, as card backdrops and title tabs list them. A card's place in this
+    /// list is therefore not its column's position. Without columns the selected slot is empty.
     pub(crate) fn column_cards(
         &self,
-    ) -> impl Iterator<Item = (SceneRect, Option<&str>, &[WorkspacePane])> + '_ {
+    ) -> impl Iterator<Item = (SceneRect, Option<&str>, &[WorkspacePane], usize)> + '_ {
         std::iter::once((
             self.chrome,
             self.stack_label.as_deref(),
             self.panes.as_slice(),
+            self.selected_column,
         ))
         .chain(self.other_columns.iter().map(|column| {
             (
                 column.chrome,
                 column.stack_label.as_deref(),
                 column.panes.as_slice(),
+                column.index,
             )
         }))
     }
@@ -4469,7 +4662,7 @@ impl WorkspaceScene {
         }) {
             return Some(WorkspaceHit::HintGroup(index));
         }
-        for action in [HeadingAction::HidePopup, HeadingAction::HideSidebar] {
+        for action in self.heading_actions() {
             if self
                 .heading_action(action)
                 .is_some_and(|target| target.contains(x, y))

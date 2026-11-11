@@ -363,12 +363,14 @@ controls inline. The title and scrollback indicator fit to its
 left. Both controls disappear together if two full targets cannot fit; tight
 clearances retain a compact gap. Stack, Agents, popup and
 dialog headings have no pane actions, and a popup covers the underlying headers.
-Popup and Agents headings have a Hide button of their own, described below.
+Popup and Agents headings have a Hide button of their own, and each Stack tab
+a Close button; both are described below.
 Hover and press highlight the individual button. A one-pane tab keeps a dimmed,
 disabled Zoom button in its slot.
 
 F6 cycles to pane chrome. Tab and Shift+Tab cycle the selected pane's title, Zoom
-and Close, skipping disabled Zoom; Enter or Space activates a button. Up/Down
+and Close, skipping disabled Zoom, then the selected Stack's Close while it
+shows; Enter or Space activates a button. Up/Down
 select another pane and return focus to its title. Action focus uses a transient
 accent pill outline. Zoom first selects the named pane if necessary and then uses
 Alt+Shift+Z's local view behavior; another action or zoom toggle cancels a pending
@@ -380,9 +382,9 @@ Action size, spacing and header corners derive from the configured typography
 and existing title padding. Border widths, focus color and background opacity
 apply to the continuous band. There are no separate action-geometry settings;
 the controls keep full targets and text/curve clearance across supported fonts and scales.
-The Hide buttons on popup and Agents headings follow the same rule: their size,
-glyph and labels are fixed and derive from the configured typography and title
-padding.
+The Hide buttons on popup and Agents headings and the Close button on each
+Stack tab follow the same rule: their size, glyph and labels are fixed and
+derive from the configured typography and title padding.
 
 Popup and Agents headings also carry a second notch at the right, mirroring the
 title's, with one Hide button (`–`); the name fits to its left. The popup's
@@ -402,6 +404,10 @@ Most popups still hide on their own shortcut; Sessions' key confirms its
 selection instead, and quick search and Files switch to each other. Screen
 readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
 
+Each Stack tab carries the same right notch with one Close button (`×`),
+which always asks before it closes anything; [Usage](USAGE.md) describes its
+prompt.
+
 The expanded pane's header uses the continuous band above; collapsed pane
 titles sit in their row's line. Stack tabs, popups, Agents and
 native titled dialogs share a fitted tab style. Their outline rises seamlessly
@@ -419,7 +425,8 @@ The reservation yields before the last padded terminal row on short windows.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.
 A title is omitted only when it cannot fit. A tab keeps full accessibility
-names and adds no input targets other than the Hide buttons above; decorative
+names and adds no input targets other than the Hide and Stack Close buttons
+above; decorative
 pane caps outside a header row do
 not extend that row's click or accessibility bounds. The Stack label is a visual
 heading only. Keyboard title focus colours the title's span of the continuous
@@ -523,6 +530,14 @@ state is unknown, it still asks, naming the final consequence, or with `--json`
 requires `--yes` ([CLI commands](USAGE.md#cli-commands)). It stays fixed
 because stopping busy work needs explicit consent. The window reads the setting
 when it starts.
+
+A Stack close always asks, whatever this setting is: `eon column close` needs
+`--yes`, and a Stack tab's Close button shows its prompt even for one idle
+pane. The prompt has no off switch, because its answer is the consent that
+binds the close to the exact terminals listed. Enter in that prompt is
+ignored for 400 ms after the list first appears; this confirmation delay is
+fixed, a safety floor that keeps a key pressed before the list could be read
+from approving it.
 
 `animate_working_badge = true` steps the working attention badge, on tabs and
 in the agent sidebar, through the braille dots ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ten times a

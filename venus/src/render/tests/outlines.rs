@@ -243,6 +243,7 @@ fn every_column_card_carries_a_stack_tab_one_card_gap_below_the_bar() {
     let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
     for scale in [1.0, 1.3, 2.0] {
         let metrics = fonts.metrics(scale);
+        let wide = (1280.0 * scale).ceil() as u32;
         let stroke = physical_outline_width(1, metrics.scale);
         for (columns, panes) in [(1, 1), (1, 3), (2, 1), (2, 3), (4, 2)] {
             for expanded in 0..panes {
@@ -268,11 +269,11 @@ fn every_column_card_carries_a_stack_tab_one_card_gap_below_the_bar() {
                         expanded: id(column, expanded),
                     })
                     .collect();
-                // Four columns fit their numbered labels from 1280 pixels.
+                // Keep room for numbered titles and Close notches at every scale.
                 let widths = if columns == 4 {
-                    &[(1280, false), (1280, true)][..]
+                    &[(wide, false), (wide, true)][..]
                 } else {
-                    &[(400, false), (1280, false), (1280, true)]
+                    &[(400, false), (wide, false), (wide, true)]
                 };
                 for &(width, zoom) in widths {
                     let workspace = WorkspaceScene::from_snapshot_with_zoom(
@@ -301,28 +302,47 @@ fn every_column_card_carries_a_stack_tab_one_card_gap_below_the_bar() {
                     };
                     assert_eq!(tabs.len(), shown);
                     let pills = workspace.bar_pill_rect(SceneRect::default(), metrics);
-                    for (tab, (chrome, label, panes)) in tabs.iter().zip(workspace.column_cards()) {
-                        let index = if chrome == workspace.chrome {
-                            workspace.selected_column
-                        } else {
-                            workspace
-                                .other_columns
-                                .iter()
-                                .find(|column| column.chrome == chrome)
-                                .unwrap()
-                                .index
-                        };
+                    for (tab, (chrome, label, panes, index)) in
+                        tabs.iter().zip(workspace.column_cards())
+                    {
                         let expected = if columns == 1 {
                             "Stack".to_string()
                         } else {
                             format!("Stack {}", index + 1)
                         };
                         assert_eq!(label, Some(expected.as_str()));
-                        let tab = tab.as_ref().expect("the Stack tab fits");
-                        if width == 1280 || scale == 1.0 {
+                        let close =
+                            workspace.heading_action(crate::HeadingAction::CloseStack(index));
+                        assert_eq!(
+                            close.is_some(),
+                            workspace.zoomed_pane().is_none(),
+                            "scale={scale}, width={width}"
+                        );
+                        if let Some(close) = close {
+                            // The button's rectangle, which its hover pill and focus outline
+                            // fill, ends at or above the first pane's header, whichever pane
+                            // of the column is expanded.
+                            assert!(close.left >= chrome.left && close.right() <= chrome.right());
+                            assert!(
+                                close.bottom() <= panes[0].rect.top - metrics.padding / 3.0 + 0.001
+                            );
+                        }
+                        let Some(tab) = tab.as_ref() else {
+                            // Narrow cards use the compact label and button without notches.
+                            assert_eq!(width, 400, "scale={scale}, columns={columns}");
+                            continue;
+                        };
+                        if width == wide {
                             assert_eq!(tab.title.label, expected);
                         }
                         assert_eq!(tab.row.top, workspace.pane_viewport.top);
+                        if columns == 2 && width == wide && !zoom {
+                            assert!(
+                                tab.action.is_some(),
+                                "scale={scale}: a Stack tab carries its Close notch"
+                            );
+                        }
+                        assert_eq!(tab.action.is_some(), close.is_some(), "scale={scale}");
                         // The cap clears the bar's pills by one card gap.
                         let gap = tab.top - pills.bottom();
                         assert!(
@@ -3507,7 +3527,160 @@ fn heading_action_notches_mirror_the_title_notch_without_double_blending() {
                 }
             }
         }
+
+        // Each Stack tab carries the same mirrored notch around its own column's Close. The
+        // middle column is selected, so a card's place in the selected-first list is never
+        // its column's position.
+        let mut swash = SwashCache::new();
+        for expanded in 0..2 {
+            let snapshot = stack_tab_snapshot(3, 2, 1, expanded);
+            let workspace = WorkspaceScene::from_snapshot(
+                &snapshot,
+                PhysicalSize::new(2400, 900),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+            );
+            assert_eq!(workspace.selected_column, 1);
+            for border in [1, 3] {
+                let stroke = physical_outline_width(border, metrics.scale);
+                let tabs = FrameTitleTab::workspace(
+                    &mut fonts.font_system,
+                    metrics,
+                    &workspace,
+                    true,
+                    (stroke, stroke),
+                );
+                let bands = PaneTitleTab::workspace(
+                    &mut fonts.font_system,
+                    &mut swash,
+                    metrics,
+                    &workspace,
+                    (stroke, stroke),
+                    None,
+                );
+                assert_eq!(tabs.len(), 3);
+                for ((tab, pane_tabs), (chrome, _, panes, index)) in
+                    tabs.iter().zip(&bands).zip(workspace.column_cards())
+                {
+                    let context = format!(
+                        "Stack {} at scale {scale}, border {border}, pane {expanded} expanded",
+                        index + 1
+                    );
+                    let tab = tab.as_ref().unwrap_or_else(|| panic!("no tab: {context}"));
+                    assert_eq!(tab.title.label, format!("Stack {}", index + 1), "{context}");
+                    let target = workspace
+                        .heading_action(HeadingAction::CloseStack(index))
+                        .unwrap_or_else(|| panic!("no Close: {context}"));
+                    // The notch holds the Close of its card's own column, inside that card.
+                    assert!(
+                        target.left > chrome.left && target.right() < chrome.right(),
+                        "{context}"
+                    );
+                    let card = workspace.card_fill(chrome, metrics, stroke);
+                    let start = tab
+                        .action
+                        .unwrap_or_else(|| panic!("no action notch: {context}"));
+                    let mirror = |x: f32| card.bounds.left + card.bounds.right() - x;
+                    // The fitted label and its return end before the action notch begins.
+                    let title_end = tab.start + tab.return_run;
+                    let action_begin = mirror(start + tab.return_run);
+                    assert!(title_end + stroke < action_begin, "{context}");
+                    assert!(
+                        card.bounds.left + metrics.padding + tab.title.ink_width(metrics, stroke)
+                            < action_begin,
+                        "{context}"
+                    );
+                    for inset in [0.0, stroke] {
+                        let fill = title_tab_bands(card, tab, inset);
+                        for (at, band) in fill.iter().enumerate() {
+                            assert!(
+                                fill[at + 1..]
+                                    .iter()
+                                    .all(|other| band.intersection(*other).is_none()),
+                                "dual-notch fill must not blend a pixel twice: {context}"
+                            );
+                        }
+                        let y = target.top + 0.5;
+                        for x in [
+                            target.left + metrics.padding / 2.0,
+                            target.left + target.width / 2.0,
+                            target.right() - metrics.padding / 2.0,
+                        ] {
+                            assert!(
+                                fill.iter().any(|band| band.contains(x, y)),
+                                "button outside its notch at {x}, inset {inset}: {context}"
+                            );
+                        }
+                    }
+                    // The button's rectangle, which its hover pill and focus outline fill,
+                    // ends at or above the first pane's header and that pane's band cap.
+                    assert!(target.bottom() <= panes[0].rect.top, "{context}");
+                    if let Some(first) = pane_tabs.first().and_then(Option::as_ref) {
+                        assert!(target.bottom() <= first.tab.top, "{context}");
+                    }
+                }
+            }
+        }
+        // No notch forms where the scene shows no button: while a pane is zoomed.
+        let zoomed = WorkspaceScene::from_snapshot_with_zoom(
+            &stack_tab_snapshot(3, 2, 1, 0),
+            crate::EonBar::default(),
+            PhysicalSize::new(2400, 900),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+            None,
+            true,
+            crate::SidebarView::default(),
+        );
+        let stroke = physical_outline_width(1, metrics.scale);
+        let tabs = FrameTitleTab::workspace(
+            &mut fonts.font_system,
+            metrics,
+            &zoomed,
+            true,
+            (stroke, stroke),
+        );
+        assert_eq!(tabs.len(), 1);
+        assert!(tabs[0].as_ref().is_some_and(|tab| tab.action.is_none()));
     }
+}
+
+/// A one-tab snapshot of `columns` columns of `panes` panes each, with pane `expanded`
+/// expanded in every column and column `selected` selected.
+fn stack_tab_snapshot(
+    columns: usize,
+    panes: usize,
+    selected: usize,
+    expanded: usize,
+) -> eon_workspace_protocol::v39::Snapshot {
+    use eon_workspace_protocol::v39::{Column, Pane};
+    let mut snapshot = popup_title_snapshot("Popup", 4.0);
+    let tab = &mut snapshot.tabs[0];
+    tab.selected_popup = None;
+    tab.popups.clear();
+    let id = |column: usize, pane: usize| format!("p{}", column * panes + pane);
+    tab.selected_pane = Some(id(selected, expanded));
+    tab.columns = (0..columns)
+        .map(|column| Column {
+            panes: (0..panes)
+                .map(|pane| Pane {
+                    id: id(column, pane),
+                    label: format!("{}  Codex", id(column, pane)),
+                    session: format!("s{column}-{pane}"),
+                    endpoint: format!("/tmp/{column}-{pane}.sock").into_bytes(),
+                    pinned_name: None,
+                    live: true,
+                    attention: None,
+                })
+                .collect(),
+            expanded: id(column, expanded),
+        })
+        .collect();
+    snapshot
 }
 
 #[test]
@@ -3548,6 +3721,41 @@ fn compact_heading_button_gap_keeps_the_titles_margin_and_clears_its_gap() {
                 title.border_gap(row, metrics).right() <= gap.left,
                 "title gap runs into the button's at scale {scale}, width {width}"
             );
+        }
+        // A Stack whose notch cannot form keeps the same gap around its Close, and its
+        // compact label, fitted as the Stack fits it, stops before that gap.
+        for width in [420, 760, 1600] {
+            let workspace = WorkspaceScene::from_snapshot(
+                &stack_tab_snapshot(2, 1, 1, 0),
+                PhysicalSize::new(width, 900),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+            );
+            for (chrome, label, _, index) in workspace.column_cards() {
+                let Some(close) = workspace.heading_action(HeadingAction::CloseStack(index)) else {
+                    continue;
+                };
+                let row = SceneRect {
+                    height: chrome_title_metrics(metrics).text_height,
+                    ..chrome
+                };
+                let gap = chrome::heading_button_gap(close, metrics);
+                assert_eq!(gap.left, close.left - metrics.padding / 2.0);
+                assert_eq!(gap.right(), close.right() + metrics.padding / 2.0);
+                assert!(gap.right() <= row.right());
+                let title = FrameTitle::fit(
+                    &mut fonts.font_system,
+                    metrics,
+                    label.unwrap(),
+                    (close.left - row.left - metrics.padding * 2.0).max(0.0),
+                );
+                assert!(
+                    title.border_gap(row, metrics).right() <= gap.left,
+                    "Stack title gap runs into its Close's at scale {scale}, width {width}"
+                );
+            }
         }
     }
 }
@@ -3615,6 +3823,15 @@ fn all_native_dialog_titles_fit_inside_existing_dismissal_bounds() {
                     terminals: Some(3),
                     running: 1,
                     detach: None,
+                },
+                DialogKind::CloseStack {
+                    stack: Some(2),
+                    terminals: 3,
+                    running: 1,
+                    end: eon_workspace_protocol::v39::CloseEnd::Column,
+                    session: "work".into(),
+                    detach: None,
+                    changed: false,
                 },
             ] {
                 let viewer = DialogScene::new(
@@ -4238,7 +4455,7 @@ fn first_pane_bands_keep_stack_clearance_in_selected_and_unselected_columns() {
                     |_, text| (text.into(), text.len() as f32 * metrics.width),
                 );
                 let column = usize::from(!focused);
-                let (area, _, panes) = workspace.column_cards().nth(column).unwrap();
+                let (area, _, panes, _) = workspace.column_cards().nth(column).unwrap();
                 assert_eq!(panes[0].id, "p0");
                 let terminal = if focused {
                     workspace.terminal

@@ -11,6 +11,7 @@ use accesskit::{
     TextSelection, TreeId, TreeInfo, TreeUpdate,
 };
 use accesskit_winit::Adapter;
+use eon_workspace_protocol::v39::CloseEnd;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},
@@ -43,6 +44,9 @@ const HINT_PIECES: NodeId = NodeId(22);
 const WINDOW_MENU: NodeId = NodeId(64);
 const POPUP_HIDE: NodeId = NodeId(65);
 const SIDEBAR_HIDE: NodeId = NodeId(66);
+/// One Close button per Stack tab, by its column's position: 67 to 70 for EONW's four columns.
+/// Hint groups count up from 23 and stay below the window menu's 64.
+const STACK_CLOSE_START: u64 = 67;
 /// One label per shortcut hints keycap; at most one group per set of modifiers.
 const HINT_GROUP_START: u64 = 23;
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
@@ -311,7 +315,9 @@ impl Snapshot {
                     ));
                     dialog
                 }
-                DialogKind::CloseLastTab { detach, .. } | DialogKind::QuitWindow { detach, .. } => {
+                DialogKind::CloseLastTab { detach, .. }
+                | DialogKind::QuitWindow { detach, .. }
+                | DialogKind::CloseStack { detach, .. } => {
                     let mut dialog = Node::new(Role::AlertDialog);
                     dialog.set_label(viewer.kind.title());
                     let subtitle = viewer.kind.subtitle();
@@ -319,6 +325,9 @@ impl Snapshot {
                         viewer.kind,
                         DialogKind::CloseLastTab {
                             workspace: Some(_),
+                            ..
+                        } | DialogKind::CloseStack {
+                            end: CloseEnd::Column | CloseEnd::Session,
                             ..
                         }
                     ) {
@@ -427,7 +436,8 @@ impl Snapshot {
                         }
                         DialogKind::QuitOtherWindow { .. }
                         | DialogKind::CloseLastTab { .. }
-                        | DialogKind::QuitWindow { .. } => {
+                        | DialogKind::QuitWindow { .. }
+                        | DialogKind::CloseStack { .. } => {
                             format!("{} {}", row.shortcut, row.action)
                         }
                     });
@@ -774,7 +784,14 @@ impl Snapshot {
             {
                 children.push(CONTENT);
             }
-            for (panes, selected_column) in workspace.column_panes() {
+            // Columns come left to right here, so a position is the column's index whenever a
+            // Stack's button shows: it shows only while every column is laid out.
+            for (index, (panes, selected_column)) in workspace.column_panes().enumerate() {
+                let close = HeadingAction::CloseStack(index);
+                if let Some(node) = heading_button(workspace, close) {
+                    children.push(heading_node_id(close));
+                    nodes.push((heading_node_id(close), node));
+                }
                 for pane in panes {
                     children.push(self.pane_ids[pane.id.as_str()]);
                     for action in PaneHeaderAction::ALL {
@@ -989,7 +1006,7 @@ impl Snapshot {
                 activate: action == Action::Click,
             });
         }
-        for heading in [HeadingAction::HidePopup, HeadingAction::HideSidebar] {
+        for heading in workspace.heading_actions() {
             if target == heading_node_id(heading) {
                 return workspace.heading_action(heading).map(|_| {
                     AccessibilityTarget::HeadingAction {
@@ -1144,6 +1161,7 @@ fn heading_node_id(action: HeadingAction) -> NodeId {
     match action {
         HeadingAction::HidePopup => POPUP_HIDE,
         HeadingAction::HideSidebar => SIDEBAR_HIDE,
+        HeadingAction::CloseStack(index) => NodeId(STACK_CLOSE_START + index as u64),
     }
 }
 
@@ -3936,6 +3954,131 @@ mod tests {
     }
 
     #[test]
+    fn stack_close_buttons_are_accessible_targets() {
+        use eon_workspace_protocol::v39::CloseEnd;
+
+        // Three one-pane Stacks with the middle one selected, so a column's position is never
+        // its place in the scene's selected-first list.
+        let mut tab = workspace_tab("t1", &["p1"], "p1");
+        for id in ["p2", "p3"] {
+            tab.columns.extend(workspace_tab("t1", &[id], id).columns);
+        }
+        tab.selected_pane = Some("p2".into());
+        let scene = workspace_scene("t1", vec![tab]);
+        assert_eq!(scene.selected_column, 1);
+        let size = PhysicalSize::new(800, 600);
+        let mut snapshot = Snapshot::new(size);
+        snapshot.set_workspace(Some(&scene));
+        let update = snapshot.tree();
+        let children = node(&update, PANE_PANEL).children();
+        let place = |id: NodeId| children.iter().position(|child| *child == id).unwrap();
+        for index in 0..3 {
+            let action = HeadingAction::CloseStack(index);
+            let id = NodeId(67 + index as u64);
+            // A button on the scene's target, named by its Stack, listed before that
+            // column's panes.
+            let button = node(&update, id);
+            assert_eq!(button.role(), Role::Button);
+            assert_eq!(
+                button.label(),
+                Some(format!("Close Stack {}", index + 1).as_str())
+            );
+            assert_eq!(
+                button.bounds(),
+                Some(rect(scene.heading_action(action).unwrap()))
+            );
+            let pane = snapshot.pane_ids[format!("p{}", index + 1).as_str()];
+            assert_eq!(place(id) + 1, place(pane));
+            // Click closes that Stack and Focus rests on its button, selected column or not.
+            for (request, activate) in [(Action::Click, true), (Action::Focus, false)] {
+                assert!(button.supports_action(request));
+                assert_eq!(
+                    snapshot.action_target(id, request),
+                    Some(AccessibilityTarget::HeadingAction { action, activate })
+                );
+            }
+            snapshot.workspace_focus = WorkspaceFocus::HeadingAction(action);
+            assert_eq!(snapshot.tree().focus, id);
+        }
+        // A fourth column's ID names nothing while the tab has three.
+        assert_eq!(snapshot.action_target(NodeId(70), Action::Click), None);
+
+        // The Stack close prompt is an alert dialog labelled by its title, described as the
+        // final-close prompt is.
+        let prompt = |end, detach: Option<&str>| {
+            let mut snapshot = Snapshot::new(size);
+            snapshot.dialog = Some(DialogScene::new(
+                DialogKind::CloseStack {
+                    stack: Some(2),
+                    terminals: 2,
+                    running: 1,
+                    end,
+                    session: "work".into(),
+                    detach: detach.map(Into::into),
+                    changed: false,
+                },
+                vec![ShortcutGroup::new(
+                    "",
+                    vec![
+                        ShortcutRow::new("Pane", "p2"),
+                        ShortcutRow::new("Pane", "p3 · running"),
+                    ],
+                )],
+                size,
+                CellMetrics::for_scale(1.0),
+                0.0,
+                &crate::CellText(CellMetrics::for_scale(1.0)),
+            ));
+            let update = snapshot.tree();
+            let dialog = node(&update, DIALOG);
+            assert_eq!(dialog.role(), Role::AlertDialog);
+            assert!(dialog.is_modal());
+            assert_eq!(update.focus, DIALOG);
+            let rows = dialog
+                .children()
+                .iter()
+                .map(|id| node(&update, *id).value().map(str::to_owned))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rows,
+                [
+                    Some("Pane p2".to_owned()),
+                    Some("Pane p3 · running".to_owned())
+                ]
+            );
+            (
+                dialog.label().map(str::to_owned),
+                dialog.description().map(str::to_owned),
+            )
+        };
+        assert_eq!(
+            prompt(CloseEnd::Column, None),
+            (
+                Some("Close Stack 2?".to_owned()),
+                Some(
+                    "This stops 2 terminals; 1 still running. Press Enter to close it or \
+                     Escape to cancel."
+                        .to_owned()
+                )
+            )
+        );
+        assert_eq!(
+            prompt(CloseEnd::Session, Some("Alt+Shift+D")).1.as_deref(),
+            Some(
+                "This closes session work and stops 2 terminals; 1 still running. Press Enter \
+                 to close it, Escape to cancel, or Alt+Shift+D to keep it running instead."
+            )
+        );
+        assert_eq!(
+            prompt(CloseEnd::Window, Some("Alt+Shift+D")).1.as_deref(),
+            Some(
+                "This quits the window and stops 2 terminals; 1 still running. Press Enter to \
+                 quit, Escape to cancel, or Alt+Shift+D to keep it running instead."
+            )
+        );
+    }
+
+    #[test]
     fn agent_sidebar_region_follows_the_header_and_names_its_empty_state() {
         use eon_workspace_protocol::v39::{AttentionState, Sidebar};
 
@@ -4726,6 +4869,7 @@ mod tests {
         assert_eq!(
             node(&update, PANE_PANEL).children(),
             &[
+                NodeId(STACK_CLOSE_START),
                 pane_1,
                 snapshot.pane_action_ids[0]["p1"],
                 snapshot.pane_action_ids[1]["p1"],
@@ -5018,6 +5162,7 @@ mod tests {
         assert_eq!(
             node(&update, PANE_PANEL).children(),
             &[
+                NodeId(STACK_CLOSE_START),
                 pane,
                 snapshot.pane_action_ids[0]["p2"],
                 snapshot.pane_action_ids[1]["p2"],

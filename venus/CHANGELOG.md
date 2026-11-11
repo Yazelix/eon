@@ -8,6 +8,15 @@
   or zoomed pane reserves half a title row and loses about one terminal row
   (`eon-yjrru`, VEN-C8).
 
+- VEN-C8/C18: each Stack tab carries the shared right action notch holding
+  one Close button. It sends EONW v39's column close with no consent, and
+  Runtime's `Confirm` opens a prompt worded from that answer alone. Enter
+  counts only 400 ms and one full event-loop turn after the list's first
+  presented frame; an accepted Enter sends the consent that repeats the
+  answer, and a second `Confirm` asks again ("This Stack changed."). Tab,
+  Enter or Space and AccessKit (`Close Stack`, `Close Stack N`) share the
+  scene's targets. No wire change (`eon-t5boa`).
+
 - VEN-C8: pane Zoom/Restore and Close draw and accept clicks only on the tab's
   selected pane, except for one-pane Stacks. Hidden controls keep their title
   space reserved; keyboard and AccessKit actions retain their availability.

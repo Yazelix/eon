@@ -11,6 +11,17 @@ installation, and proven contract changes.
   or zoomed pane reserves half a title row and loses about one terminal row
   (`eon-yjrru`, VEN-C8).
 
+- Each Stack tab has a Close button (`×`) in a notch at its right. It always
+  asks first, even for one idle pane and whatever `warning_close_last_tab`
+  is: the prompt lists every terminal the close would stop and marks the
+  ones still running. Esc keeps the Stack; Enter closes exactly the listed
+  terminals, and is ignored for the first 400 ms after the list appears. If
+  the Stack changed meanwhile, Enter stops nothing and the prompt shows
+  again. Tab reaches the button after the pane's own, and screen readers
+  list `Close Stack N`. The button hides while a pane is zoomed or the tab
+  is too narrow. `eon column close PANE --json` prints the same list
+  (`eon-t5boa`).
+
 - When a terminal ends while Eon checks its sockets during discovery,
   Eon rereads its record to reconcile the ended run. This avoids a spurious
   `cannot inspect terminal endpoint` error in Stop, final close, Stack close,
@@ -45,8 +56,8 @@ installation, and proven contract changes.
   EONW v39. Without `--yes`, it lists every terminal it would stop and
   refuses, including idle and one-pane Stacks. Consent binds the generation,
   exact run IDs and the close's consequence; a changed scope stops nothing.
-  Column close never sweeps in a run that appeared later. The Stack Close
-  button follows in `eon-t5boa`. `eon sidebar show|hide` and Agents Hide set
+  Column close never sweeps in a run that appeared later.
+  `eon sidebar show|hide` and Agents Hide set
   Runtime's value directly, so concurrent hides cannot reopen it
   (`eon-cq38r`). EONW v39 requires restarting windows for the updated CLI.
 

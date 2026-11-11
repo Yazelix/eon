@@ -1333,6 +1333,350 @@ fn quit_prompt_words_counts_and_lists_busy_terminals() {
     );
 }
 
+/// A one-tab snapshot of columns holding `counts` panes each, numbered `p1` onward, with the
+/// first pane of column `selected` selected and no sidebar.
+fn stack_columns_snapshot(counts: &[usize], selected: usize) -> Snapshot {
+    use eon_workspace_protocol::v39::{Column, PopupGeometry};
+
+    let mut next = 1;
+    let columns = counts
+        .iter()
+        .map(|count| {
+            let first = next;
+            next += count;
+            Column {
+                panes: (first..first + count)
+                    .map(|n| Pane {
+                        label: format!("p{n}"),
+                        pinned_name: None,
+                        id: format!("p{n}"),
+                        session: format!("s{n}"),
+                        endpoint: format!("/tmp/p{n}.sock").into_bytes(),
+                        live: true,
+                        attention: None,
+                    })
+                    .collect(),
+                expanded: format!("p{first}"),
+            }
+        })
+        .collect::<Vec<_>>();
+    Snapshot {
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
+            id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        }],
+        active_tab: "t1".into(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp/eon".to_vec(),
+            pending: false,
+            selected_pane: Some(columns[selected].expanded.clone()),
+            selected_popup: None,
+            columns,
+            popups: Vec::new(),
+            attention_rollup: None,
+        }],
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        codex_quota: None,
+        claude_quota: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: Sidebar::Closed,
+        attention_queue: Vec::new(),
+    }
+}
+
+#[test]
+fn stack_close_targets_sit_in_the_stack_band_and_hide_while_zoomed() {
+    use HeadingAction::CloseStack;
+
+    let project = |snapshot: &Snapshot, size: (u32, u32), metrics: CellMetrics, zoom: bool| {
+        WorkspaceScene::from_snapshot_with_zoom(
+            snapshot,
+            EonBar::default(),
+            PhysicalSize::new(size.0, size.1),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+            None,
+            zoom,
+            SidebarView::default(),
+        )
+    };
+    for scale in [1.0, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        let button = chrome_title_metrics(metrics).text_height;
+        // With the first, the middle and the last column selected, target `i` belongs to the
+        // column whose position is `i`, never to a card's place in the selected-first list.
+        for selected in 0..3 {
+            let snapshot = stack_columns_snapshot(&[2, 1, 3], selected);
+            let scene = project(&snapshot, (1400, 900), metrics, false);
+            let cards = scene
+                .column_cards()
+                .map(|(chrome, _, _, index)| (index, chrome))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                cards[0].0, selected,
+                "the selected column's card comes first"
+            );
+            let mut indices = cards.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+            indices.sort_unstable();
+            assert_eq!(indices, [0, 1, 2]);
+            let mut lefts = cards.clone();
+            lefts.sort_by(|a, b| a.1.left.total_cmp(&b.1.left));
+            assert_eq!(
+                lefts.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+                [0, 1, 2],
+                "a card's index is its column's position from the left"
+            );
+            for (index, chrome) in cards {
+                let target = scene
+                    .heading_action(CloseStack(index))
+                    .expect("every Stack shows its Close");
+                // A square of the title height in the Stack band, half a padding inside the
+                // right edge of its own column's card, above every pane header.
+                assert_eq!((target.width, target.height), (button, button));
+                assert_eq!(target.top, scene.pane_viewport.top);
+                assert!(
+                    (target.right() - (chrome.right() - metrics.padding / 2.0)).abs() < 0.001,
+                    "selected={selected} index={index}"
+                );
+                assert!(target.left > chrome.left);
+                assert!(target.bottom() <= scene.header_viewport.top);
+                assert_eq!(
+                    scene.hit_test(
+                        target.left + target.width / 2.0,
+                        target.top + target.height / 2.0
+                    ),
+                    Some(WorkspaceHit::HeadingAction(CloseStack(index)))
+                );
+                assert_eq!(
+                    scene.heading_action_label(CloseStack(index)),
+                    format!("Close Stack {}", index + 1)
+                );
+            }
+            assert_eq!(scene.heading_action(CloseStack(3)), None);
+            assert_eq!(
+                scene.heading_actions().collect::<Vec<_>>(),
+                [CloseStack(0), CloseStack(1), CloseStack(2)]
+            );
+
+            // While a pane is zoomed only it is laid out, and no Stack shows a Close.
+            let zoomed = project(&snapshot, (1400, 900), metrics, true);
+            assert!(zoomed.zoomed_pane().is_some());
+            assert_eq!(zoomed.heading_actions().count(), 0);
+            for index in 0..3 {
+                assert_eq!(zoomed.heading_action(CloseStack(index)), None);
+            }
+        }
+
+        // The only Stack is closed by its plain name.
+        let lone = project(
+            &stack_columns_snapshot(&[1], 0),
+            (1400, 900),
+            metrics,
+            false,
+        );
+        assert!(lone.heading_action(CloseStack(0)).is_some());
+        assert_eq!(lone.heading_action_label(CloseStack(0)), "Close Stack");
+        assert_eq!(lone.heading_actions().collect::<Vec<_>>(), [CloseStack(0)]);
+
+        // A column too narrow for a full button and its margins shows none.
+        let narrow = project(
+            &stack_columns_snapshot(&[1, 1, 1, 1], 0),
+            (200, 900),
+            metrics,
+            false,
+        );
+        for (chrome, label, _, index) in narrow.column_cards() {
+            assert!(label.is_some());
+            assert!(chrome.width < button + metrics.padding * 4.0);
+            assert_eq!(narrow.heading_action(CloseStack(index)), None);
+        }
+        assert_eq!(narrow.heading_actions().count(), 0);
+
+        // A window too short for the Stack band has no Stack tab to hold one.
+        let short = project(
+            &stack_columns_snapshot(&[1, 1], 0),
+            (1400, (112.0 * scale) as u32),
+            metrics,
+            false,
+        );
+        assert!(short.column_cards().all(|(_, label, _, _)| label.is_none()));
+        assert_eq!(short.heading_actions().count(), 0);
+
+        // A shown popup covers the columns: only its own Hide remains.
+        let mut popup = stack_columns_snapshot(&[1, 1], 0);
+        popup.tabs[0].selected_popup = Some("u1".into());
+        popup.tabs[0].popups = vec![eon_workspace_protocol::v39::Popup {
+            id: "u1".into(),
+            entry: "files".into(),
+            session: "popup".into(),
+            endpoint: b"/tmp/popup.sock".to_vec(),
+            attention: None,
+        }];
+        popup.entries = vec![eon_workspace_protocol::v39::PopupEntry {
+            id: "files".into(),
+            label: "Files".into(),
+            shortcut: eon_workspace_protocol::v39::PopupKey::Unbound,
+        }];
+        let covered = project(&popup, (1400, 900), metrics, false);
+        assert_eq!(
+            covered.heading_actions().collect::<Vec<_>>(),
+            [HeadingAction::HidePopup]
+        );
+    }
+}
+
+#[test]
+fn close_stack_prompt_words_each_end_and_lists_every_terminal() {
+    use eon_workspace_protocol::v39::{
+        CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
+    };
+
+    let terminal = |id: TargetId, name: &str, busy| CloseTerminal {
+        target: TerminalTarget {
+            workspace: "s1".into(),
+            tab: "t1".into(),
+            id,
+            terminal: "terminal-1".into(),
+        },
+        run: format!("run-{name}"),
+        name: name.into(),
+        busy,
+    };
+    let scope = |end, terminals: Vec<CloseTerminal>, untracked: Vec<UntrackedRun>| CloseScope {
+        generation: "g7".into(),
+        pane: "p1".into(),
+        end,
+        session: "work".into(),
+        terminals,
+        untracked,
+    };
+    let metrics = CellMetrics::for_scale(1.0);
+    let prompt = |scope: &CloseScope, stack, detach: Option<&str>, changed| {
+        DialogScene::close_stack(
+            scope,
+            stack,
+            detach.map(Into::into),
+            changed,
+            PhysicalSize::new(960, 600),
+            metrics,
+            0.0,
+            &crate::CellText(metrics),
+        )
+    };
+    let rows = |dialog: &DialogScene| {
+        dialog.groups[0]
+            .rows
+            .iter()
+            .map(|row| (row.shortcut.clone(), row.action.clone()))
+            .collect::<Vec<_>>()
+    };
+    let row = |kind: &str, text: &str| (kind.to_owned(), text.to_owned());
+
+    // A column close: every terminal in the answer's order, the busy ones marked.
+    let column = scope(
+        CloseEnd::Column,
+        vec![
+            terminal(TargetId::Pane("p1".into()), "p1  shell", false),
+            terminal(TargetId::Pane("p2".into()), "p2  sleep", true),
+            terminal(TargetId::Popup("u1".into()), "Files", false),
+        ],
+        Vec::new(),
+    );
+    let dialog = prompt(&column, Some(2), None, false);
+    assert_eq!(dialog.kind.title(), "Close Stack 2?");
+    assert_eq!(
+        dialog.kind.subtitle(),
+        "This stops 3 terminals; 1 still running."
+    );
+    assert_eq!(dialog.kind.footer(), ["Enter Close · Esc Cancel"]);
+    assert_eq!(
+        rows(&dialog),
+        [
+            row("Pane", "p1  shell"),
+            row("Pane", "p2  sleep · running"),
+            row("Popup", "Files"),
+        ]
+    );
+    // The only Stack of a tab has no number; one idle terminal is singular and unmarked.
+    let one = scope(
+        CloseEnd::Column,
+        vec![terminal(TargetId::Pane("p1".into()), "p1", false)],
+        Vec::new(),
+    );
+    let dialog = prompt(&one, None, None, false);
+    assert_eq!(dialog.kind.title(), "Close Stack?");
+    assert_eq!(dialog.kind.subtitle(), "This stops 1 terminal.");
+    assert_eq!(rows(&dialog), [row("Pane", "p1")]);
+    // An answer that replaces a consented one says so first.
+    assert_eq!(
+        prompt(&one, None, None, true).kind.subtitle(),
+        "This Stack changed. This stops 1 terminal."
+    );
+
+    // A final close that removes the session, with the detach hint.
+    let mut last = column.clone();
+    last.end = CloseEnd::Session;
+    let dialog = prompt(&last, None, Some("Alt+Shift+D"), true);
+    assert_eq!(dialog.kind.title(), "Close the last tab?");
+    assert_eq!(
+        dialog.kind.subtitle(),
+        "This Stack changed. This closes session work and stops 3 terminals; 1 still running."
+    );
+    assert_eq!(
+        dialog.kind.footer(),
+        [
+            "Enter Close · Esc Cancel",
+            "Alt+Shift+D keeps it running instead"
+        ]
+    );
+    // A final close that quits the window lists the runs no tab tracks, by terminal ID, and
+    // counts each as a terminal and as running.
+    let window = scope(
+        CloseEnd::Window,
+        vec![terminal(TargetId::Pane("p1".into()), "p1", false)],
+        vec![UntrackedRun {
+            terminal: "terminal-9".into(),
+            run: "run-z".into(),
+        }],
+    );
+    let dialog = prompt(&window, None, Some("Alt+Shift+D"), false);
+    assert_eq!(dialog.kind.title(), "Close the last tab?");
+    assert_eq!(
+        dialog.kind.subtitle(),
+        "This quits the window and stops 2 terminals; 1 still running."
+    );
+    assert_eq!(
+        dialog.kind.footer(),
+        [
+            "Enter Quit · Esc Cancel",
+            "Alt+Shift+D keeps it running instead"
+        ]
+    );
+    assert_eq!(
+        rows(&dialog),
+        [row("Pane", "p1"), row("Terminal", "terminal-9 · in no tab"),]
+    );
+    // No run ID is shown anywhere.
+    assert!(rows(&dialog).iter().all(|(_, text)| !text.contains("run-")));
+}
+
 #[test]
 fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
     use eon_workspace_protocol::v39::{Column, PopupGeometry};
@@ -1401,7 +1745,7 @@ fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
     let labels = |scene: &WorkspaceScene| {
         scene
             .column_cards()
-            .map(|(_, label, _)| label.map(str::to_owned))
+            .map(|(_, label, _, _)| label.map(str::to_owned))
             .collect::<Vec<_>>()
     };
     for scale in [1.0, 1.3, 2.0] {

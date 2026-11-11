@@ -1,8 +1,8 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v39::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, PopupEntry, Sidebar,
-    WorkspaceAction as CommonAction,
+    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, Direction as WorkspaceDirection,
+    PopupEntry, Sidebar, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
     PlacementState,
@@ -726,7 +726,106 @@ impl PendingPaneAction {
     }
 }
 
-/// A final close, or a quit, that the prompt holds until Enter sends it.
+/// A Stack close between its request and Runtime's answer (VEN-C8).
+#[derive(Debug, PartialEq)]
+struct PendingClose {
+    pane: String,
+    ticket: u64,
+    /// The request carried a consent, so a `Confirm` answer means the Stack changed.
+    consented: bool,
+    /// The `Confirm` just delivered for `pane`, until the next event.
+    answer: Option<CloseScope>,
+}
+
+impl PendingClose {
+    /// Takes each workspace event before the model applies it. Returns the answer to ask
+    /// about, and whether it replaces a consented one: the `Confirm` delivered immediately
+    /// before this request's ticket, which is how the transport orders an answer.
+    fn on_workspace(slot: &mut Option<Self>, event: &WorkspaceEvent) -> Option<(CloseScope, bool)> {
+        let pending = slot.as_mut()?;
+        match event {
+            WorkspaceEvent::Response(eon_workspace_protocol::v39::Response::Confirm(scope)) => {
+                pending.answer = (scope.pane == pending.pane).then(|| scope.clone());
+            }
+            WorkspaceEvent::Answered { ticket, .. } if *ticket == pending.ticket => {
+                let pending = slot.take()?;
+                return pending.answer.map(|scope| (scope, pending.consented));
+            }
+            // A `Confirm` followed by anything else answered another request.
+            WorkspaceEvent::Answered { .. } | WorkspaceEvent::Response(_) => pending.answer = None,
+            WorkspaceEvent::Unavailable { .. } => *slot = None,
+            WorkspaceEvent::Slow => {}
+        }
+        None
+    }
+
+    /// Forgets the request on local input, and when the window gains or loses focus: its
+    /// answer then opens nothing.
+    fn on_window(slot: &mut Option<Self>, event: &WindowEvent) {
+        if local_input(event) || matches!(event, WindowEvent::Focused(_)) {
+            *slot = None;
+        }
+    }
+}
+
+/// An IME commit, a pointer press or a wheel step: local input that a pending pane action
+/// does not outlive.
+fn local_input(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::Ime(Ime::Commit(_))
+            | WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            }
+            | WindowEvent::MouseWheel { .. }
+    )
+}
+
+/// When a prompt's list was first on screen: the time its frame was presented, and the
+/// event-loop turn that presented it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Shown {
+    at: Instant,
+    turn: u64,
+}
+
+/// How long a Stack close prompt's list is on screen before Enter counts (VEN-C8). Fixed: it
+/// decides whether a key press can be consent to stopping terminals.
+const CONFIRM_DELAY: Duration = Duration::from_millis(400);
+
+/// Whether Enter may count: the list was presented, `CONFIRM_DELAY` ago or longer, and one
+/// event-loop turn that began after that presentation has finished. `turns` counts finished
+/// turns, so the presenting turn's end is `shown.turn + 1`.
+fn enter_approves(now: Instant, shown: Option<Shown>, turns: u64) -> bool {
+    shown.is_some_and(|shown| {
+        now.checked_duration_since(shown.at)
+            .is_some_and(|waited| waited >= CONFIRM_DELAY)
+            && turns.wrapping_sub(shown.turn) >= 2
+    })
+}
+
+/// The consent that repeats `scope` exactly: its generation, the run IDs of its terminals and
+/// then its untracked runs, and its end (EON-C8).
+fn consent_of(scope: &CloseScope) -> CloseConsent {
+    CloseConsent {
+        generation: scope.generation.clone(),
+        runs: scope
+            .terminals
+            .iter()
+            .map(|terminal| terminal.run.clone())
+            .chain(scope.untracked.iter().map(|run| run.run.clone()))
+            .collect(),
+        end: scope.end,
+    }
+}
+
+/// A consent names stable runs; only the initial request needs presented target geometry.
+fn stack_close_admitted(presentation: &PresentationState, consent: Option<&CloseConsent>) -> bool {
+    consent.is_some() || presentation.has_presented_geometry()
+}
+
+/// A final close, a quit, or a Stack close that the prompt holds until Enter sends it.
 #[derive(Debug)]
 struct ClosePrompt {
     target: PromptTarget,
@@ -742,9 +841,41 @@ enum PromptTarget {
     /// Quit this window: Stop for the generation the current snapshot names (EON-C8).
     QuitWindow,
     QuitOtherWindow(WindowMenuAction),
+    /// A Stack close Runtime answered: Enter consents to exactly `scope` (EON-C8). `changed`
+    /// says the answer replaces one Enter already consented to; `shown` is when its list was
+    /// first presented.
+    CloseColumn {
+        scope: CloseScope,
+        changed: bool,
+        shown: Option<Shown>,
+    },
 }
 
 impl ClosePrompt {
+    /// Records the first presented frame that drew this prompt's list; never moves it. Only a
+    /// Stack close keeps it, and only a frame whose dialog was that prompt counts: the window
+    /// menu and the attention inbox draw ahead of it.
+    fn presented(&mut self, drawn: Option<&DialogKind>, now: Instant, turns: u64) {
+        if let PromptTarget::CloseColumn { shown, .. } = &mut self.target
+            && shown.is_none()
+            && matches!(drawn, Some(DialogKind::CloseStack { .. }))
+        {
+            *shown = Some(Shown {
+                at: now,
+                turn: turns,
+            });
+        }
+    }
+
+    /// Whether Enter is taken as the answer now. Only a Stack close waits; a refused Enter
+    /// changes nothing, so it is neither held nor restarts the delay.
+    fn accepts_enter(&self, now: Instant, turns: u64) -> bool {
+        match &self.target {
+            PromptTarget::CloseColumn { shown, .. } => enter_approves(now, *shown, turns),
+            _ => true,
+        }
+    }
+
     /// Whether the snapshot still holds what the prompt names: the tab and pane of a close, or
     /// the running window of a quit.
     fn names_live_target(&self, snapshot: &eon_workspace_protocol::v39::Snapshot) -> bool {
@@ -759,8 +890,28 @@ impl ClosePrompt {
                 }),
             PromptTarget::QuitWindow => snapshot.running.is_some(),
             PromptTarget::QuitOtherWindow(action) => peer_window(snapshot, action).is_some(),
+            PromptTarget::CloseColumn { scope, .. } => snapshot_has_pane(snapshot, &scope.pane),
         }
     }
+}
+
+/// Whether `pane` is a pane of some tab of the snapshot.
+fn snapshot_has_pane(snapshot: &eon_workspace_protocol::v39::Snapshot, pane: &str) -> bool {
+    snapshot
+        .tabs
+        .iter()
+        .any(|tab| tab.panes().any(|live| live.id == pane))
+}
+
+/// The one-based number of the Stack holding `pane`, unless its tab has one column.
+fn stack_number(snapshot: &eon_workspace_protocol::v39::Snapshot, pane: &str) -> Option<usize> {
+    snapshot.tabs.iter().find_map(|tab| {
+        let index = tab
+            .columns
+            .iter()
+            .position(|column| column.panes.iter().any(|live| live.id == pane))?;
+        (tab.columns.len() > 1).then_some(index + 1)
+    })
 }
 
 /// The Stop `eon quit` sends for the snapshot's window; None without a running-windows
@@ -1208,6 +1359,10 @@ struct Application {
     /// A sidebar row's jump awaiting its result, which focus follows (VEN-C30).
     attention_jump: Option<AttentionJump>,
     pending_pane: Option<PendingPaneAction>,
+    /// A Stack's Close awaiting Runtime's answer, which opens its prompt (VEN-C8).
+    pending_close: Option<PendingClose>,
+    /// Finished event-loop turns, which the Stack close prompt's confirmation delay counts.
+    turns: u64,
     /// When a sidebar row's age next changes its label.
     next_age: Option<Instant>,
     header_press: Option<HeaderPress>,
@@ -1337,6 +1492,8 @@ impl Application {
             sidebar_row: None,
             attention_jump: None,
             pending_pane: None,
+            pending_close: None,
+            turns: 0,
             next_age: None,
             header_press: None,
             shortcut_viewer: ShortcutViewerState::default(),
@@ -1750,6 +1907,22 @@ impl Application {
                     measure,
                 ));
             }
+            // Worded from Runtime's answer, so a later snapshot cannot change the list Enter
+            // consents to; only the Stack's number and the detach chord follow the snapshot.
+            PromptTarget::CloseColumn { scope, changed, .. } => {
+                return Some(DialogScene::close_stack(
+                    scope,
+                    stack_number(snapshot, &scope.pane),
+                    (scope.end != CloseEnd::Column)
+                        .then(|| detach_chord(&snapshot.entries))
+                        .flatten(),
+                    *changed,
+                    state.renderer.size(),
+                    state.renderer.metrics(),
+                    prompt.scroll,
+                    measure,
+                ));
+            }
             // Worded from the current snapshot, so an open prompt follows the busy list.
             PromptTarget::QuitWindow => {
                 return Some(DialogScene::quit_window(
@@ -2065,9 +2238,15 @@ impl Application {
         true
     }
 
+    /// Local input retires a pane action and a Stack close that still await their answers.
+    fn forget_pending(&mut self) {
+        self.pending_pane = None;
+        self.pending_close = None;
+    }
+
     /// Opens or closes a dialog, reporting the terminal's focus change with it.
     fn change_dialog(&mut self, change: impl FnOnce(&mut Self)) {
-        self.pending_pane = None;
+        self.forget_pending();
         let was_terminal_focused =
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         self.cancel_terminal_scroll();
@@ -2143,7 +2322,9 @@ impl Application {
     }
 
     /// While the close prompt is open, Enter sends its close, Escape dismisses it, the
-    /// viewer's navigation keys scroll it, and other keys reach nothing.
+    /// viewer's navigation keys scroll it, and other keys reach nothing. An Enter inside a
+    /// Stack close's confirmation delay is discarded: the prompt stays, and nothing is sent
+    /// then or later.
     fn handle_close_prompt_key(&mut self, event: &ShortcutKey) -> bool {
         if self.close_prompt.is_none()
             || !self
@@ -2160,6 +2341,11 @@ impl Application {
         }
         let modifiers = self.input.modifiers();
         match close_prompt_answer(code, modifiers).filter(|_| !event.repeat) {
+            Some(true)
+                if !self
+                    .close_prompt
+                    .as_ref()
+                    .is_some_and(|prompt| prompt.accepts_enter(Instant::now(), self.turns)) => {}
             Some(quit) => {
                 let mut prompt = None;
                 self.change_dialog(|app| prompt = app.close_prompt.take());
@@ -2189,12 +2375,63 @@ impl Application {
                 }
             }
             PromptTarget::QuitOtherWindow(action) => self.stop_other_window(action),
+            // The one place a consent is built: an accepted Enter, for exactly the answer shown.
+            PromptTarget::CloseColumn { scope, .. } => {
+                // First, since a focus change forgets a pending request.
+                self.set_workspace_focus(focus_after_stack_close(self.workspace_focus));
+                self.request_stack_close(scope.pane.clone(), Some(consent_of(&scope)));
+            }
         }
+    }
+
+    /// Sends a Stack's column close and awaits Runtime's answer: with no consent it stops
+    /// nothing, and its `Confirm` opens the prompt.
+    fn request_stack_close(&mut self, pane: String, consent: Option<CloseConsent>) {
+        if !stack_close_admitted(&self.presentation, consent.as_ref()) {
+            bench_trace("input_rejected", "unpublished-request-geometry");
+            return;
+        }
+        let consented = consent.is_some();
+        if let Some(ticket) = self.queue_workspace_ticket(WorkspaceAction::CloseColumn {
+            pane: pane.clone(),
+            consent,
+        }) {
+            self.pending_close = Some(PendingClose {
+                pane,
+                ticket,
+                consented,
+                answer: None,
+            });
+        }
+    }
+
+    /// Opens the Stack close prompt for Runtime's answer. Another dialog, or a pane that has
+    /// left, takes precedence: nothing opens.
+    fn ask_stack_close(&mut self, scope: CloseScope, changed: bool) {
+        if self.dialog_open()
+            || !self
+                .workspace_model
+                .snapshot()
+                .is_some_and(|snapshot| snapshot_has_pane(snapshot, &scope.pane))
+        {
+            return;
+        }
+        self.change_dialog(|app| {
+            app.close_prompt = Some(ClosePrompt {
+                target: PromptTarget::CloseColumn {
+                    scope,
+                    changed,
+                    shown: None,
+                },
+                scroll: 0.0,
+            })
+        });
     }
 
     /// Quit this window (EON-C8): the prompt while a terminal is busy, else Stop once the next
     /// workspace response confirms that none is.
     fn begin_quit(&mut self) {
+        self.pending_close = None;
         let step = self.quit.begin(self.workspace_model.snapshot());
         self.take_quit_step(step);
     }
@@ -2236,7 +2473,7 @@ impl Application {
     /// it reaches no terminal.
     fn handle_shortcut_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
         if event.state == ElementState::Pressed {
-            self.pending_pane = None;
+            self.forget_pending();
         }
         self.input
             .suppresses_retired_key(event.physical_key, event.state, event.repeat)
@@ -2641,13 +2878,12 @@ impl Application {
         {
             self.set_workspace_focus(WorkspaceFocus::Terminal);
         }
-        if let WorkspaceFocus::HeadingAction(action) = self.workspace_focus
-            && self
+        if let WorkspaceFocus::HeadingAction(action) = self.workspace_focus {
+            let shows = self
                 .workspace_scene()
                 .and_then(|scene| scene.heading_action(action))
-                .is_none()
-        {
-            self.set_workspace_focus(WorkspaceFocus::Terminal);
+                .is_some();
+            self.set_workspace_focus(retained_heading_focus(action, shows));
         }
         if let WorkspaceFocus::Header(label) = self.workspace_focus
             && !self
@@ -2670,7 +2906,7 @@ impl Application {
         if self.workspace_focus == focus {
             return;
         }
-        self.pending_pane = None;
+        self.forget_pending();
         // Focus left for somewhere other than the jump's row, so the jump no longer decides it.
         if focus != WorkspaceFocus::Sidebar {
             self.attention_jump = None;
@@ -2715,7 +2951,7 @@ impl Application {
     /// Show the selected pane alone across the tab, or restore its columns. Hidden
     /// attachments keep their last size.
     fn toggle_zoom(&mut self) {
-        self.pending_pane = None;
+        self.forget_pending();
         let Some(snapshot) = self.workspace_model.snapshot() else {
             return;
         };
@@ -2749,7 +2985,8 @@ impl Application {
         self.refresh_client_view();
     }
 
-    /// Focuses a heading's Hide button, or with `activate` sends what it does.
+    /// Focuses a heading's button, or with `activate` sends what it does. A Stack's Close
+    /// asks Runtime first and never goes through the final-close warning.
     fn heading_button(&mut self, action: HeadingAction, activate: bool) {
         if !self.presentation.has_presented_geometry()
             || self.dialog_open()
@@ -2767,7 +3004,12 @@ impl Application {
             .snapshot()
             .and_then(|snapshot| heading_request(snapshot, action))
         {
-            self.request_workspace(request);
+            match request {
+                WorkspaceAction::CloseColumn { pane, .. } => self.request_stack_close(pane, None),
+                request => {
+                    self.request_workspace(request);
+                }
+            }
         }
     }
 
@@ -2782,7 +3024,7 @@ impl Application {
         {
             return;
         }
-        self.pending_pane = None;
+        self.forget_pending();
         if activate && action == PaneHeaderAction::Close {
             self.request_workspace(WorkspaceAction::ClosePane { pane: pane.into() });
             if self.workspace_focus == WorkspaceFocus::PaneAction(PaneHeaderAction::Close) {
@@ -3334,6 +3576,7 @@ impl Application {
             }
             return;
         }
+        let ask = PendingClose::on_workspace(&mut self.pending_close, &event);
         let quit = self.quit.on_workspace(
             self.workspace_model.snapshot(),
             self.close_prompt
@@ -3344,7 +3587,11 @@ impl Application {
         if let WorkspaceEvent::Answered { ticket, accepted } = event {
             self.settle_pane_action(Some((ticket, accepted)));
             // A refused action's notice is new even when it repeats a poll's or an earlier one.
-            let renewed = !accepted && self.workspace_model.renew_notice();
+            // Runtime's question about a Stack close refuses nothing: it opens the prompt.
+            let renewed = ask.is_none() && !accepted && self.workspace_model.renew_notice();
+            if let Some((scope, changed)) = ask {
+                self.ask_stack_close(scope, changed);
+            }
             if self.attention_jump.is_some() {
                 self.settle_attention_jump(Some((ticket, accepted)));
                 self.refresh_client_view();
@@ -3608,7 +3855,7 @@ impl Application {
     /// Queues a presented action, unless it would close the final tab while the warning is
     /// on: then the close prompt holds it, and nothing is queued yet.
     fn request_workspace(&mut self, action: WorkspaceAction) -> bool {
-        self.pending_pane = None;
+        self.forget_pending();
         if !self.presentation.has_presented_geometry() {
             bench_trace("input_rejected", "unpublished-request-geometry");
             return false;
@@ -3636,7 +3883,7 @@ impl Application {
 
     /// Queues `action`, returning the ticket its answer carries.
     fn queue_workspace_ticket(&mut self, action: impl Into<Outgoing>) -> Option<u64> {
-        self.pending_pane = None;
+        self.forget_pending();
         let transport = self.workspace_transport.as_ref()?;
         bench_trace("workspace_queue", "attempt");
         match transport.send(action) {
@@ -3829,7 +4076,7 @@ impl Application {
                 || action.is_some(),
         ) {
             if event.state == ElementState::Pressed {
-                self.pending_pane = None;
+                self.forget_pending();
                 if opens_window && !event.repeat {
                     self.open_new_window();
                 } else if quits && !event.repeat {
@@ -3898,20 +4145,31 @@ impl Application {
             }
             if !event.repeat
                 && code == KeyCode::Tab
-                && matches!(focus, WorkspaceFocus::Panes | WorkspaceFocus::PaneAction(_))
+                && matches!(
+                    focus,
+                    WorkspaceFocus::Panes
+                        | WorkspaceFocus::PaneAction(_)
+                        | WorkspaceFocus::HeadingAction(HeadingAction::CloseStack(_))
+                )
                 && (modifiers == session::Modifiers::empty()
                     || modifiers == session::Modifiers::SHIFT)
             {
-                if let Some(scene) = self.workspace_scene()
-                    && let Some(pane) = scene
+                // The selected pane's buttons while they fit, then its Stack's Close while it
+                // shows. With neither, the key is still taken and focus rests on the title.
+                if let Some(scene) = self.workspace_scene() {
+                    let pane = scene
                         .panes
                         .iter()
-                        .find(|pane| pane.selected && pane.actions.is_some())
-                {
+                        .find(|pane| pane.selected && pane.actions.is_some());
+                    let stack = scene.selected_column;
                     self.set_workspace_focus(cycle_pane_focus(
                         focus,
                         modifiers == session::Modifiers::SHIFT,
-                        pane.zoom_enabled,
+                        pane.is_some(),
+                        pane.is_some_and(|pane| pane.zoom_enabled),
+                        scene
+                            .heading_action(HeadingAction::CloseStack(stack))
+                            .map(|_| stack),
                     ));
                 }
                 return true;
@@ -4003,7 +4261,9 @@ impl Application {
                     )),
                 ) => Some(direction),
                 (
-                    WorkspaceFocus::Panes | WorkspaceFocus::PaneAction(_),
+                    WorkspaceFocus::Panes
+                    | WorkspaceFocus::PaneAction(_)
+                    | WorkspaceFocus::HeadingAction(HeadingAction::CloseStack(_)),
                     Some(NativeShortcutAction::TraverseChrome(
                         direction @ (WorkspaceDirection::Up | WorkspaceDirection::Down),
                     )),
@@ -4011,7 +4271,11 @@ impl Application {
                 _ => None,
             };
             if let Some(direction) = direction {
-                if matches!(focus, WorkspaceFocus::PaneAction(_)) {
+                if matches!(
+                    focus,
+                    WorkspaceFocus::PaneAction(_)
+                        | WorkspaceFocus::HeadingAction(HeadingAction::CloseStack(_))
+                ) {
                     self.set_workspace_focus(WorkspaceFocus::Panes);
                 }
                 self.send_workspace(CommonAction::Focus(direction));
@@ -5124,6 +5388,14 @@ impl Application {
             candidate.generation,
         ) {
             Ok(PresentOutcome::Presented) => {
+                // `dialog` is the scene this call built and drew, so its list is now on screen.
+                if let Some(prompt) = &mut self.close_prompt {
+                    prompt.presented(
+                        dialog.as_ref().map(DialogScene::kind),
+                        Instant::now(),
+                        self.turns,
+                    );
+                }
                 presented = true;
                 refresh = self.render_notice.take().is_some()
                     || state.renderer.presented_scrollback_rect() != prior_scrollback_target;
@@ -5270,17 +5542,10 @@ impl ApplicationHandler<UserEvent> for Application {
         event: WindowEvent,
     ) {
         let _bench_input = BenchInput::start(&event);
-        if matches!(
-            &event,
-            WindowEvent::Ime(Ime::Commit(_))
-                | WindowEvent::MouseInput {
-                    state: ElementState::Pressed,
-                    ..
-                }
-                | WindowEvent::MouseWheel { .. }
-        ) {
+        if local_input(&event) {
             self.pending_pane = None;
         }
+        PendingClose::on_window(&mut self.pending_close, &event);
         let workspace = self.workspace_scene();
         let workspace_focus = self.workspace_focus;
         let dialog_open = self.dialog_open();
@@ -6050,7 +6315,9 @@ impl ApplicationHandler<UserEvent> for Application {
                 match event.window_event {
                     AccessKitWindowEvent::InitialTreeRequested => self.refresh_client_view(),
                     AccessKitWindowEvent::ActionRequested(request) => {
+                        // As `forget_pending`, by field: `state` borrows the window.
                         self.pending_pane = None;
+                        self.pending_close = None;
                         let target = state
                             .accessibility
                             .action_target(request.target_node, request.action);
@@ -6130,6 +6397,8 @@ impl ApplicationHandler<UserEvent> for Application {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // winit calls this once per loop turn, after that turn's events.
+        self.turns = self.turns.wrapping_add(1);
         // Initial Wayland scale can arrive after the first buffer. Once the
         // window has entered an output, later scale/size changes belong to the user.
         if self.initial_scale_pending
@@ -6777,8 +7046,8 @@ fn accessibility_workspace_focus(
     queue(CommonAction::FocusId(id)).then_some(focus)
 }
 
-/// What a heading's Hide button sends: the popup's dismissal that `eon popup hide` sends, or the
-/// sidebar's toggle while the sidebar is open.
+/// What a heading's button sends: the popup's dismissal that `eon popup hide` sends, the
+/// sidebar's closing while the sidebar is open, or a Stack's first, unconsented close.
 fn heading_request(
     snapshot: &eon_workspace_protocol::v39::Snapshot,
     action: HeadingAction,
@@ -6792,6 +7061,48 @@ fn heading_request(
         }),
         HeadingAction::HideSidebar => (snapshot.sidebar == Sidebar::Open)
             .then_some(WorkspaceAction::SetSidebar { open: false }),
+        HeadingAction::CloseStack(index) => stack_close_request(snapshot, index),
+    }
+}
+
+/// What a Stack's Close button sends: a column close naming that column's expanded pane, with
+/// no consent, which stops nothing (EON-C8). Every Stack asks this way, one pane or many.
+fn stack_close_request(
+    snapshot: &eon_workspace_protocol::v39::Snapshot,
+    index: usize,
+) -> Option<WorkspaceAction> {
+    if active_popup(snapshot).is_some() {
+        return None;
+    }
+    let column = snapshot
+        .tabs
+        .iter()
+        .find(|tab| tab.id == snapshot.active_tab)?
+        .columns
+        .get(index)?;
+    Some(WorkspaceAction::CloseColumn {
+        pane: column.expanded.clone(),
+        consent: None,
+    })
+}
+
+/// Where chrome focus rests once the scene changed: a heading button that no longer shows
+/// gives it up, a Stack's to the pane titles and a Hide button's to the terminal. A button
+/// that still shows keeps it, in any column.
+fn retained_heading_focus(action: HeadingAction, shows: bool) -> WorkspaceFocus {
+    match action {
+        _ if shows => WorkspaceFocus::HeadingAction(action),
+        HeadingAction::CloseStack(_) => WorkspaceFocus::Panes,
+        HeadingAction::HidePopup | HeadingAction::HideSidebar => WorkspaceFocus::Terminal,
+    }
+}
+
+/// Keyboard focus after a consent is sent: never left on a Stack's Close, since the Stack
+/// that then takes the closed one's position is another Stack.
+fn focus_after_stack_close(focus: WorkspaceFocus) -> WorkspaceFocus {
+    match focus {
+        WorkspaceFocus::HeadingAction(HeadingAction::CloseStack(_)) => WorkspaceFocus::Panes,
+        focus => focus,
     }
 }
 
@@ -6926,12 +7237,28 @@ fn workspace_header_action(
     }
 }
 
-fn cycle_pane_focus(focus: WorkspaceFocus, backwards: bool, zoom_enabled: bool) -> WorkspaceFocus {
+/// Tab's next stop in the Panes region: the selected pane's title, its Zoom and Close while
+/// its `actions` fit, then its Stack's Close while that shows. A focus outside this order,
+/// such as an unselected Stack's Close, steps as the title does.
+fn cycle_pane_focus(
+    focus: WorkspaceFocus,
+    backwards: bool,
+    actions: bool,
+    zoom_enabled: bool,
+    stack_close: Option<usize>,
+) -> WorkspaceFocus {
     let mut order = vec![WorkspaceFocus::Panes];
-    if zoom_enabled {
+    if actions && zoom_enabled {
         order.push(WorkspaceFocus::PaneAction(PaneHeaderAction::Zoom));
     }
-    order.push(WorkspaceFocus::PaneAction(PaneHeaderAction::Close));
+    if actions {
+        order.push(WorkspaceFocus::PaneAction(PaneHeaderAction::Close));
+    }
+    if let Some(stack) = stack_close {
+        order.push(WorkspaceFocus::HeadingAction(HeadingAction::CloseStack(
+            stack,
+        )));
+    }
     let index = order.iter().position(|item| *item == focus).unwrap_or(0);
     order[if backwards {
         (index + order.len() - 1) % order.len()

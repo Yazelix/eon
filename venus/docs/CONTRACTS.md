@@ -680,6 +680,10 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-11 by `eon-yjrru`, approved by eon-overseer under Lucca's
   standing rule. The first expanded band follows the same pitch below the
   Stack line.
+  Amended on 2026-11-11 by `eon-t5boa`, approved by eon-overseer under Lucca's
+  standing rule (plan v5, overseer decisions of 2026-11-10): each Stack tab
+  carries a Close button that always asks first, in a prompt worded from
+  Runtime's answer, with a fixed confirmation delay before Enter counts.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -790,7 +794,10 @@ re-proved when that platform or feature is next touched.
     carries VEN-C18's shared framed-title tab, labelled
     `Stack` when the tab has one column and `Stack 1`, `Stack 2`, ... from left
     to right when it has several (the panes' one-based `column` in `eon session
-    --json`); without pane frames the label shows plain. The Stack band remains
+    --json`); without pane frames the label shows plain. Each Stack tab also
+    carries VEN-C18's right action notch, holding one Close button; the label
+    fits to its left. A Stack shows no button while a pane is zoomed, and none
+    where the button cannot fit at full size. The Stack band remains
     one chrome title row plus the tab's rise, a third of the title padding
     (24 logical pixels at default typography). A first collapsed pane's title
     row starts that far below the band's top (14 logical pixels below the
@@ -828,10 +835,17 @@ re-proved when that platform or feature is next touched.
     and the selection, hover and keyboard-focus feedback described above. Both
     modes preserve the same terminal grid, header hit targets and AccessKit
     bounds. In the Panes region Tab and Shift+Tab move among the selected pane's
-    title, Zoom and Close; Enter or Space activates the focused button; Up/Down
-    return focus to the title. After keyboard Close, focus returns to the selected
-    pane's title. AccessKit lists each visible header's buttons as
-    `Zoom pane <label>` (`Restore columns` while zoomed) and `Close pane <label>`.
+    title, Zoom and Close, then the selected column's Stack Close while it
+    shows; Enter or Space activates the focused button; Up/Down return focus to
+    the title. After keyboard Close, focus returns to the selected pane's title.
+    After an accepted Enter in the Stack close prompt, focus on a Stack's Close
+    returns to the selected pane's title; Escape leaves focus where it was.
+    AccessKit lists each visible header's buttons as `Zoom pane <label>`
+    (`Restore columns` while zoomed) and `Close pane <label>`, and each visible
+    Stack's button as `Close Stack` or `Close Stack N`. Its Focus action rests
+    on any visible Stack's button without changing the selected pane, and from
+    an unselected Stack's button Tab and Shift+Tab step into the selected
+    pane's stops.
     Initial requested grids include the card gaps in their window overhead;
     the gaps accept no pane or terminal input. Column width and the 40-column
     admission check both come from the allocated column card areas.
@@ -909,7 +923,39 @@ re-proved when that platform or feature is next touched.
     description "Press Enter to close it" where it otherwise reads "Press
     Enter to quit". Runtime decides whether the sent close ends the window or
     removes the session. When the argument is false, the close is sent at
-    once. Alt+Shift+D is a non-repeating key that detaches (VEN-C14).
+    once.
+    A Stack's Close button always asks first, whatever the Stack runs, however
+    many panes it holds and whatever the `--warning-close-last-tab` launch
+    argument is. It sends one EONW v39 column close (EON-C8) naming that
+    column's expanded `pN` with no consent, which stops nothing, and when
+    Runtime answers `Confirm` Venus shows the close prompt worded from that
+    answer alone. For the end `column`: "Close Stack N?" ("Close Stack?" with
+    one column), "This stops N terminals; M still running." and "Enter Close ·
+    Esc Cancel". For the end `session` or `window`: the final-close prompt's
+    title, consequence, footer and hint line, with "; M still running" added.
+    For every end, "; M still running" is omitted only when M is zero, counting
+    untracked runs as running. The prompt lists every terminal the close stops,
+    one row each, by the answer's names: a row marked busy ends " · running",
+    and a run no tab tracks shows as its terminal ID with " · in no tab". It
+    shares the final-close prompt's owner, scrolling, Alt+Shift+D mapping and
+    AccessKit alert dialog, and closes itself when the answer's pane leaves the
+    snapshot. Enter is ignored until 400 ms after a frame showing that answer's
+    list was first presented, and until one full turn of Venus's event loop
+    that began after that presentation has finished. An Enter that arrives
+    earlier is discarded: it does nothing then or later and leaves the prompt
+    open, so a key pressed before a list was shown, and delivered as the list
+    appears, never approves it. The delay is fixed. An accepted Enter sends the
+    column close again with a consent that repeats exactly the answer's
+    generation, the run IDs of its terminals and untracked runs, and its end;
+    Escape sends nothing. Venus sends a consent only on that Enter. If Runtime
+    answers `Confirm` again, because the Stack's runs or the close's end
+    changed since the answer shown, nothing was stopped and Venus shows the
+    prompt again from the new answer, its consequence starting "This Stack
+    changed.", under the same Enter rule. A `Confirm` that arrives after local
+    input since its request (a key, a pointer press, a wheel step, a chrome
+    focus change, or the window gaining or losing focus), or while another
+    dialog is open, opens nothing.
+    Alt+Shift+D is a non-repeating key that detaches (VEN-C14).
     Alt+Shift+Q is a non-repeating key that quits the window under EON-C8
     while the snapshot carries a running-windows summary. A compositor close
     request acts as Alt+Shift+Q, and detaches without a running-windows
@@ -1529,6 +1575,9 @@ re-proved when that platform or feature is next touched.
   a Hide button. Amended on 2026-11-10 by `eon-u5uv2`, approved by eon-overseer
   under Lucca's standing rule: the references to VEN-C8's pane band follow its
   expanded-pane scope.
+  Amended on 2026-11-11 by `eon-t5boa`, approved by eon-overseer under Lucca's
+  standing rule (plan v5, overseer decisions of 2026-11-10): Stack headings
+  carry the right action notch too, holding VEN-C8's Close button.
 - **Consumer:** One person using a Venus workspace supplied through EONW v5.
 - **Trigger:** The active tab selects a popup, its selection changes, or the
   person invokes an Eon-supplied catalog shortcut.
@@ -1574,11 +1623,12 @@ re-proved when that platform or feature is next touched.
   their cards; pane headers retain VEN-C8's allocation and input bounds. A Stack
   tab has its own stack band (VEN-C8). Where its
   stroke cannot clear the label or neighbouring chrome, retain the compact
-  border-gap title; omit a label only when it cannot fit. Popup and Agents
-  headings also carry a right action notch mirroring the title notch, holding
-  one Hide button; the label fits to its left. With pane frames off the popup
-  keeps its outline and both notches, and the Agents button shows without a
-  notch or outline. With frames on, where the notch cannot form the button
+  border-gap title; omit a label only when it cannot fit. Popup, Agents and
+  Stack headings also carry a right action notch mirroring the title notch;
+  the label fits to its left. A popup's and the Agents heading's notch holds
+  one Hide button, and a Stack's holds one Close button (VEN-C8). With pane
+  frames off the popup keeps its outline and both notches, and the Agents and
+  Stack buttons show without a notch or outline. With frames on, where the notch cannot form the button
   sits in a gap in the top edge half a padding wider than it on each side.
   Where the button cannot fit at full size the heading shows none. The
   popup's Hide sends `DismissPopup` naming the shown instance, as
@@ -1589,8 +1639,8 @@ re-proved when that platform or feature is next touched.
   AccessKit lists `Hide popup <label>` and `Hide agent sidebar` as buttons.
   Pane headers keep VEN-C8's
   collapsed-title and clearance compact gaps. Title hover/click targets and
-  accessibility names stay unchanged, and the Hide buttons are these
-  headings' only input targets; decorative pane cap pixels outside a
+  accessibility names stay unchanged, and the Hide and Stack Close buttons
+  are these headings' only input targets; decorative pane cap pixels outside a
   header row add no hit or accessibility area. Native dialog title ink stays
   inside existing dismissal bounds. Exposed popup margins share the terminal
   default background and opacity, with the existing best-effort surface-wide
