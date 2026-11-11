@@ -540,11 +540,14 @@ impl Host {
             .management
             .map(|launch| launch.prepare(&serve.socket))
             .transpose()?;
+        bench_trace("pty_spawn_start", "");
         let orbit = Orbit::spawn(&serve.command, serve.palette, 80, 24)?;
+        bench_trace("pty_spawned", "");
         // Ready: the live record names both sockets and this process.
         let management = prepared
             .map(|prepared| prepared.publish(&serve.socket))
             .transpose()?;
+        bench_trace("ready_published", "");
         Ok(Self {
             bounds,
             listener,
@@ -1861,9 +1864,14 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
     let run = run_name(&serve);
     TERMINATION_SIGNAL.store(0, Ordering::Relaxed);
     install_termination_handlers()?;
+    bench_trace("worker_spawn_start", "");
     let mut bend = Bend::spawn(worker, &WORKER_ARGUMENTS)?;
+    bench_trace("worker_spawned", "");
     WORKER.store(bend.decisions.as_raw_fd(), Ordering::Relaxed);
-    let opened = bend.bounds().and_then(|bounds| Host::open(bounds, serve));
+    let opened = bend.bounds().and_then(|bounds| {
+        bench_trace("worker_bounds", "");
+        Host::open(bounds, serve)
+    });
     let mut host = match opened {
         Ok(host) => host,
         Err(error) => {

@@ -4,7 +4,7 @@ use super::{
     diagnostics::{self, DiagnosticLog},
     managed_environment, platform,
     supervisor::{
-        LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id, status_code, stop,
+        LaunchMode, SESSION_CLEANUP_TIMEOUT, effective_uid, request_id, status_code, stop,
         validate_private_directory,
     },
 };
@@ -369,7 +369,7 @@ fn operation_timeout(deadline: Instant, operation: &str) -> Result<Duration, Str
     deadline
         .checked_duration_since(Instant::now())
         .filter(|remaining| !remaining.is_zero())
-        .ok_or_else(|| format!("{operation} exceeded five seconds"))
+        .ok_or_else(|| format!("{operation} exceeded its deadline"))
 }
 
 pub(super) fn unix_connect_with_timeout(
@@ -1743,6 +1743,45 @@ pub(crate) fn terminal_session(identity: &str) -> Option<&str> {
         .filter(|session| !session.is_empty())
 }
 
+/// Failed starts stay outside workspace topology but retain their exact child and claim.
+#[derive(Default)]
+pub(super) struct FailedStarts(Vec<(Child, ReadyClaim)>);
+
+impl FailedStarts {
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub(super) fn finish(&mut self, deadline: Instant, log: &DiagnosticLog) -> Result<(), String> {
+        loop {
+            self.reap(log);
+            if self.is_empty() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("failed terminal start cleanup is unconfirmed; retained children are still running".into());
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    pub(super) fn reap(&mut self, log: &DiagnosticLog) {
+        self.0.retain_mut(|(child, _claim)| match child.try_wait() {
+            Ok(Some(_)) => false,
+            Ok(None) => true,
+            // Canonical Stop/discovery may already have reaped this child.
+            Err(error) if error.raw_os_error() == Some(libc::ECHILD) => false,
+            Err(error) => {
+                log.note_once(&format!(
+                    "cannot reap failed terminal start {}: {error}",
+                    child.id()
+                ));
+                true
+            }
+        });
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_orbit(
     inputs: &Inputs,
@@ -1755,11 +1794,14 @@ pub(super) fn start_orbit(
     tab: Option<&str>,
     log: &DiagnosticLog,
     deadline: Instant,
+    failed_starts: &mut FailedStarts,
 ) -> Result<RunningSession, String> {
+    let started = Instant::now();
+    let budget = deadline.saturating_duration_since(started);
     let management = artifact_path(socket, ".management");
     if !platform::socket_path_fits(&management) {
         return Err(format!(
-            "terminal socket {} is too long; set EON_RUNTIME_DIR to a shorter runtime root",
+            "terminal socket {} is too long; set EON_RUNTIME_DIR to a shorter runtime root; command was not started",
             management.display()
         ));
     }
@@ -1776,7 +1818,7 @@ pub(super) fn start_orbit(
         child,
         tab,
         Some(log),
-    )?;
+    ).map_err(|error| format!("{error}; command was not started; safe to retry after correcting the launch configuration"))?;
     let (orbit_stderr, orbit_log) = log
         .orbit_directory()
         .map_err(str::to_string)
@@ -1791,7 +1833,9 @@ pub(super) fn start_orbit(
             (Stdio::null(), None)
         });
     orbit_command.stderr(orbit_stderr);
-    let claim = ReadyClaim::create(&record_path)?;
+    let claim = ReadyClaim::create(&record_path).map_err(|error| format!(
+        "{error}; command was not started by this request; resolve the launch record before retrying"
+    ))?;
     let spawned = orbit_command.spawn();
     // Only Orbit should retain the log's open file description and liveness lock.
     drop(orbit_command);
@@ -1799,19 +1843,37 @@ pub(super) fn start_orbit(
         Ok(orbit) => orbit,
         Err(error) => {
             return match claim.remove_empty() {
-                Ok(()) => Err(format!("cannot launch terminal: {error}")),
+                Ok(()) => Err(format!(
+                    "cannot launch terminal: {error}; command was not started; safe to retry after correcting the launch failure"
+                )),
                 Err(cleanup_error) => Err(format!(
-                    "cannot launch terminal: {error}; cannot roll back terminal: {cleanup_error}"
+                    "cannot launch terminal: {error}; cannot roll back terminal: {cleanup_error}; command was not started; resolve the launch record before retrying"
                 )),
             };
         }
     };
+    let spawned_at = started.elapsed();
+    let mut marked_at = None;
+    let mut record_at = None;
+    let mut lease_at = None;
     let result = (|| {
         loop {
             let record = if claim.retains_path()? {
+                if marked_at.is_none()
+                    && claim
+                        .file
+                        .metadata()
+                        .is_ok_and(|metadata| metadata.len() != 0)
+                {
+                    marked_at = Some(started.elapsed());
+                }
                 None
             } else {
-                read_management_record(&record_path)?
+                let record = read_management_record(&record_path)?;
+                if record.is_some() && record_at.is_none() {
+                    record_at = Some(started.elapsed());
+                }
+                record
             };
             match record {
                 Some(RecordSnapshot {
@@ -1836,6 +1898,7 @@ pub(super) fn start_orbit(
                     if identity.session_id != session_id || endpoint != socket {
                         return Err("terminal Ready identity does not match its launch".into());
                     }
+                    lease_at = Some(started.elapsed());
                     return acquire_management(
                         ManagedCandidate {
                             number,
@@ -1885,7 +1948,9 @@ pub(super) fn start_orbit(
                     if Instant::now() < deadline {
                         thread::sleep(Duration::from_millis(25));
                     } else {
-                        return Err("terminal did not publish Ready within five seconds".into());
+                        return Err(
+                            "terminal did not publish Ready before its startup deadline".into()
+                        );
                     }
                 }
             }
@@ -1898,14 +1963,36 @@ pub(super) fn start_orbit(
             Ok(session)
         }
         Err(error) => {
+            let observed = |at: Option<Duration>| {
+                at.map_or_else(
+                    || "not observed".into(),
+                    |at| format!("{}ms", at.as_millis()),
+                )
+            };
+            let error = format!(
+                "{error}; startup {}ms of {}ms (spawned={}ms, marked={}, record={}, lease-start={})",
+                started.elapsed().as_millis(),
+                budget.as_millis(),
+                spawned_at.as_millis(),
+                observed(marked_at),
+                observed(record_at),
+                observed(lease_at),
+            );
             let error = match rollback_unleased_orbit(
-                orbit,
-                claim,
+                &mut orbit,
+                &claim,
                 (&run_id, component_generation, socket),
-                deadline,
+                SESSION_CLEANUP_TIMEOUT,
             ) {
-                Ok(()) => error,
-                Err(stop_error) => format!("{error}; cannot roll back terminal: {stop_error}"),
+                Ok(()) => format!(
+                    "{error}; startup rolled back; command may have run; retry only if replaying it is safe"
+                ),
+                Err(stop_error) => {
+                    failed_starts.0.push((orbit, claim));
+                    format!(
+                        "{error}; cannot roll back terminal: {stop_error}; cleanup unconfirmed; do not retry until the retained run ends; command may have run"
+                    )
+                }
             };
             Err(format!(
                 "{error}{}",
@@ -1916,11 +2003,12 @@ pub(super) fn start_orbit(
 }
 
 fn rollback_unleased_orbit(
-    mut orbit: Child,
-    claim: ReadyClaim,
+    orbit: &mut Child,
+    claim: &ReadyClaim,
     launch: (&str, &str, &Path),
-    deadline: Instant,
+    timeout: Duration,
 ) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
     let claim_error = match claim.lock_for_rollback(deadline) {
         Ok(true) => {
             while Instant::now() < deadline {
@@ -1930,7 +2018,7 @@ fn rollback_unleased_orbit(
                     Err(_) => break,
                 }
             }
-            stop(&mut orbit);
+            stop(orbit);
             return claim.remove_empty();
         }
         Ok(false) => None,
@@ -1941,15 +2029,18 @@ fn rollback_unleased_orbit(
         .try_wait()
         .map_err(|error| format!("cannot observe terminal rollback: {error}"))?
         .is_some();
-    let Ok(Some(RecordSnapshot { object, record })) = read_management_record(&claim.path) else {
-        return claim_error.map_or(Ok(()), Err);
-    };
+    let RecordSnapshot { object, record } =
+        read_management_record(&claim.path)?.ok_or_else(|| {
+            claim_error.unwrap_or_else(|| "terminal Ready record is missing during rollback".into())
+        })?;
     let (identity, ended) = match record {
         ManagementRecord::Live(identity) => (identity, exited),
         ManagementRecord::Tombstone(tombstone) => (tombstone.identity, true),
     };
     if identity.process_id != orbit.id() {
-        return claim_error.map_or(Ok(()), Err);
+        return Err(
+            "terminal Ready process differs from the launched child during rollback".into(),
+        );
     }
     if ended {
         // Orbit published its final record: a tombstone after its child ended,
@@ -1984,7 +2075,7 @@ fn rollback_unleased_orbit(
         None,
         deadline,
     )?;
-    session.child = Some(orbit);
+    // Keep the Child in the caller on every failure; managed cleanup reaps its exact PID.
     let timeout = operation_timeout(deadline, "terminal rollback")?;
     stop_managed_sessions(std::slice::from_mut(&mut session), timeout).map(|_| ())
 }
@@ -2075,8 +2166,8 @@ fn reap_untracked_child(process_id: u32, deadline: Instant) -> Result<(), String
         .filter(|pid| *pid > 0)
         .ok_or("invalid ended terminal process identity")?;
     loop {
-        // A failed Ready rollback can drop our Child handle. Reap only an
-        // exact child after managed cleanup; recovered runs return ECHILD.
+        // Discovery can precede the failed-start owner's next reap.
+        // Recovered runs return ECHILD; only an exact child can be reaped.
         let mut status = 0;
         // SAFETY: status is writable; WNOHANG sends no signal and cannot wait on a non-child.
         let result = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
@@ -2205,7 +2296,7 @@ fn wait_and_finalize_tombstone(
 }
 
 pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i32>, String> {
-    session_finished_within(session, SESSION_START_TIMEOUT)
+    session_finished_within(session, SESSION_CLEANUP_TIMEOUT)
 }
 
 /// As [`session_finished`], giving a closed lease's run at most `wait` to
@@ -2399,7 +2490,7 @@ pub(super) fn stop_managed_sessions(
 pub(crate) mod tests {
     use super::{
         AttachName, EndpointIdentity, LiveIdentity, ManagementRecord, Naming, ObjectIdentity,
-        ProcessOutcome, ProgramStatusRead, RequestKind, RunningSession, SESSION_START_TIMEOUT,
+        ProcessOutcome, ProgramStatusRead, RequestKind, RunningSession, SESSION_CLEANUP_TIMEOUT,
         TerminationReason, Tombstone, bound_io, managed_session_number, management,
         name_presentation, orbit_command, read_management_response, session_number,
         stop_managed_sessions, unix_connect_with_timeout,
@@ -3312,13 +3403,12 @@ pub(crate) mod tests {
                 .unwrap();
             fs::rename(&published, &record).unwrap();
 
-            let deadline = Instant::now() + Duration::from_secs(2);
             let launch = (format!("run-{pid}"), presentation.clone());
             super::rollback_unleased_orbit(
-                orbit,
-                claim,
+                &mut orbit,
+                &claim,
                 (&launch.0, "component-1", &launch.1),
-                deadline,
+                Duration::from_secs(2),
             )
             .unwrap();
             assert!(
@@ -3530,7 +3620,7 @@ pub(crate) mod tests {
         };
         lease
             .set_nonblocking(false)
-            .and_then(|()| lease.set_read_timeout(Some(SESSION_START_TIMEOUT)))
+            .and_then(|()| lease.set_read_timeout(Some(SESSION_CLEANUP_TIMEOUT)))
             .and_then(|()| lease.shutdown(std::net::Shutdown::Write))
             .unwrap_or_else(|error| panic!("{}: cannot close lease writes: {error}", context()));
         match lease.read_exact(&mut [0]) {
@@ -3542,7 +3632,7 @@ pub(crate) mod tests {
                 ) =>
             {
                 panic!(
-                    "{}: timed out after {SESSION_START_TIMEOUT:?} waiting for Orbit to release lease",
+                    "{}: timed out after {SESSION_CLEANUP_TIMEOUT:?} waiting for Orbit to release lease",
                     context()
                 );
             }
@@ -3573,8 +3663,124 @@ pub(crate) mod tests {
             None,
             &log,
             Instant::now() + Duration::from_secs(5),
+            &mut super::FailedStarts::default(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_lease_deadline_does_not_spend_the_startup_rollback_budget() {
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = root.join("orbit.sock");
+        let record = super::artifact_path(&socket, ".record");
+        let claim = super::ReadyClaim::create(&record).unwrap();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
+        let mut orbit = orbit_command(
+            &inputs,
+            &root,
+            &socket,
+            "terminal-1",
+            "rollback-run",
+            "component-1",
+            &root,
+            &["sh".into(), "-c".into(), "exec sleep 300".into()],
+            None,
+            None,
+        )
+        .unwrap()
+        .spawn()
+        .unwrap();
+        let wait = Instant::now() + SESSION_CLEANUP_TIMEOUT;
+        while claim.retains_path().unwrap() {
+            assert!(Instant::now() < wait, "Orbit did not publish Ready");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let super::RecordSnapshot {
+            object,
+            record: ManagementRecord::Live(identity),
+        } = super::read_management_record(&record).unwrap().unwrap()
+        else {
+            panic!("no Live record")
+        };
+        let expired = Instant::now() - Duration::from_millis(1);
+        let failure = super::acquire_management(
+            super::ManagedCandidate {
+                number: 1,
+                endpoint: socket.clone(),
+                record_path: record.clone(),
+                record: object,
+                identity,
+            },
+            None,
+            expired,
+        )
+        .err()
+        .unwrap();
+        assert!(failure.contains("exceeded its deadline"), "{failure}");
+        super::rollback_unleased_orbit(
+            &mut orbit,
+            &claim,
+            ("rollback-run", "component-1", &socket),
+            SESSION_CLEANUP_TIMEOUT,
+        )
+        .unwrap();
+        assert!(!record.exists());
+        assert!(!socket.exists());
+        assert!(!super::artifact_path(&socket, ".management").exists());
+        assert!(crate::platform::process(orbit.id()).unwrap().is_none());
+        drop(super::ReadyClaim::create(&record).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    pub(crate) fn retained_start(
+        root: &Path,
+    ) -> (super::FailedStarts, std::process::ChildStdin, u32) {
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
+        let record = root.join("orbit.sock.record");
+        let claim = super::ReadyClaim::create(&record).unwrap();
+        (&claim.file).write_all(b"1").unwrap();
+        let mut child = Command::new("sh")
+            .args(["-c", "read line"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let pid = child.id();
+        let failure = super::rollback_unleased_orbit(
+            &mut child,
+            &claim,
+            ("marked", "component-1", &root.join("orbit.sock")),
+            Duration::from_millis(10),
+        )
+        .unwrap_err();
+        assert!(failure.contains("invalid terminal record"), "{failure}");
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "rollback signalled a marked child"
+        );
+        let failed = super::FailedStarts(vec![(child, claim)]);
+        fs::remove_file(&record).unwrap();
+        (failed, input, pid)
+    }
+
+    #[test]
+    fn a_marked_failed_start_keeps_its_child_until_reaped_even_without_a_record() {
+        let root = temporary_directory();
+        let (mut failed, input, pid) = retained_start(&root);
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        failed.reap(&log);
+        assert_eq!(failed.0.len(), 1);
+        drop(input);
+        let wait = Instant::now() + SESSION_CLEANUP_TIMEOUT;
+        while !failed.0.is_empty() {
+            assert!(Instant::now() < wait, "failed start was not reaped");
+            failed.reap(&log);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(crate::platform::process(pid).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -3600,6 +3806,7 @@ pub(crate) mod tests {
             None,
             &log,
             Instant::now() + Duration::from_secs(5),
+            &mut super::FailedStarts::default(),
         )
         .err()
         .expect("an Orbit that exits before Ready started a terminal");
@@ -3607,6 +3814,16 @@ pub(crate) mod tests {
             error.contains("terminal exited before publishing Ready (status 9)"),
             "{error}"
         );
+        for stage in [
+            "spawned=",
+            "marked=",
+            "record=",
+            "lease-start=",
+            "startup rolled back",
+            "command may have run",
+        ] {
+            assert!(error.contains(stage), "{error}");
+        }
         let (_, orbit_log) = error
             .rsplit_once("; Orbit log: ")
             .expect("the startup failure names the Orbit log");

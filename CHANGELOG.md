@@ -17,6 +17,12 @@ installation, and proven contract changes.
 - Pane header bands keep Eon's shared background and opacity when a terminal
   paints its top row a different colour. Terminal padding still follows
   `padding_color` (`eon-jg86j`).
+- Terminal starts, including `eon pane create`, allow fifteen seconds for
+  Orbit Ready and lease acquisition on a loaded machine. Failed starts get
+  their own five-second rollback budget, report startup stages and command
+  replay uncertainty, and retain unconfirmed children for reaping. CLI and
+  window reply waits cover the same lifecycle budgets; Stop's wire bytes
+  are unchanged (`eon-g3vdz`, `eon-l4e7s`).
 
 - The first expanded Stack pane's band and focus frame sit one title row
   below the Stack outline, matching the gap below collapsed titles. Existing

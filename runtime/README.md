@@ -52,6 +52,13 @@ process and original Live record before retiring its exact residue. Healthy
 terminals remain usable; owner loss is a local failure, not a successful Stop
 or a fabricated terminal outcome.
 
+New terminals share a fifteen-second spawn, Ready and lease deadline. A failed
+start gets a fresh five-second rollback deadline. Marked or published runs
+remain management-only: unconfirmed cleanup retains the Child for reaping
+outside workspace topology, and never authorizes fallback signals or automatic
+command replay. The canonical protocol crate supplies the lifecycle budgets
+consumed by Runtime and Venus; EONW and Reserved Stop bytes are unchanged.
+
 Eon's `eon/crates/eon/src/product.rs` supplies the concrete inputs; its
 `build.rs` digests the source tree into the assembly contribution.
 Consumers in this workspace use path dependencies; crates are not published to

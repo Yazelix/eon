@@ -38,6 +38,11 @@ use std::{
 
 mod process;
 
+const AFTER_START_ROLLBACK_MS: u128 = eon_workspace_protocol::TERMINAL_START_TIMEOUT
+    .saturating_add(eon_workspace_protocol::SESSION_CLEANUP_TIMEOUT)
+    .saturating_add(Duration::from_millis(100))
+    .as_millis();
+
 static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
 static CODEX_STUB: OnceLock<PathBuf> = OnceLock::new();
 
@@ -3051,6 +3056,46 @@ impl Drop for PairWindow {
 }
 
 #[test]
+fn a_slow_command_pane_starts_once_without_changing_focus() {
+    let window = PairWindow::new();
+    let mut command = window.command(&[]);
+    command
+        .arg("--dir")
+        .arg(&window.launch)
+        .env("EON_TEST_DELAY_SESSION_2_MS", "5500");
+    let mut supervisor = window.start(command);
+    wait_for_ready(&window.control());
+    let before = window.inspect("before-slow-start");
+    let caller = live_identity(&window.generation().join("orbit.sock"));
+    let script = window.root.join("command.sh");
+    let marker = window.root.join("command-starts");
+    fs::write(&script, "printf 'started\\n' >> \"$1\"\nexec sleep 300\n").unwrap();
+    let created = eon_command(&window.binary)
+        .args(["pane", "create", "--json", "--no-focus", "--", "bash"])
+        .arg(&script)
+        .arg(&marker)
+        .env("EON_RUNTIME_DIR", &window.runtime)
+        .env("EON_CONFIG_HOME", &window.config)
+        .env(
+            "EON_TERMINAL",
+            format!("{}.{}", caller.session_id, caller.run_id),
+        )
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{}", stdout(&created));
+    let reply: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert_eq!(reply["created"]["pane"], "p2");
+    let after = window.inspect("after-slow-start");
+    assert_eq!(after.active_tab, before.active_tab);
+    assert_eq!(after.tabs[0].selected_pane, before.tabs[0].selected_pane);
+    assert_eq!(after.tabs[0].selected_popup, before.tabs[0].selected_popup);
+    assert_eq!(after.tabs[0].panes().count(), 2);
+    wait_for(&marker);
+    assert_eq!(fs::read_to_string(marker).unwrap(), "started\n");
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
 fn pending_tabs_host_the_files_pair_on_quick_search() {
     let window = PairWindow::new();
     let mut supervisor = window.spawn(&[]);
@@ -3914,10 +3959,13 @@ fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
     // The pair publishes Ready after its start and rollback deadlines, so its
     // failed start cannot confirm that rollback stopped it.
     let mut command = window.command(&[]);
-    command.env("EON_TEST_PAIR_READY_DELAY_MS", "5100");
+    command.env(
+        "EON_TEST_PAIR_READY_DELAY_MS",
+        AFTER_START_ROLLBACK_MS.to_string(),
+    );
     let mut first = window.start(command);
     let generation = window.generation();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + eon_workspace_protocol::CONTROL_TIMEOUT;
     while !generation.join("orbit.sock").exists() {
         assert!(Instant::now() < deadline, "the fallback pane did not start");
         thread::sleep(Duration::from_millis(10));
@@ -5706,7 +5754,10 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
             .env("EON_TEST_VENUS_PID", &venus_pid)
             .env("EON_SESSION_BIN", &bin)
             .env("EON_TEST_STOP", &stop)
-            .env("EON_TEST_PAIR_READY_DELAY_MS", "5100")
+            .env(
+                "EON_TEST_PAIR_READY_DELAY_MS",
+                AFTER_START_ROLLBACK_MS.to_string(),
+            )
             .env("EON_TEST_FAIL_STOP_ONCE", &fail)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -5716,7 +5767,7 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
     };
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + eon_workspace_protocol::CONTROL_TIMEOUT;
     while !generation.join("orbit.sock").exists() {
         assert!(
             Instant::now() < deadline,
@@ -6950,7 +7001,7 @@ cat >/dev/null
         assert!(Instant::now() < bound, "eonbase did not bind its endpoint");
         thread::sleep(Duration::from_millis(10));
     }
-    // The first Venus admits after session start's five seconds; its terminal still starts.
+    // Slow native admission still leaves the terminal its own start budget.
     thread::sleep(Duration::from_secs(6));
     wait_for(&venus_log);
     wait_for(&child_pid);
@@ -10411,7 +10462,7 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
     let stderr = String::from_utf8_lossy(&waiting.stderr);
     assert_eq!(waiting.status.code(), Some(1), "{stderr}");
     assert!(
-        stderr.contains("ended terminal cleanup exceeded five seconds"),
+        stderr.contains("ended terminal cleanup exceeded its deadline"),
         "{stderr}"
     );
     assert_eq!(object_identity(&record), tombstone_record);
@@ -10756,8 +10807,12 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
     let orbit = root.join("orbit");
     managed_orbit_executable(&orbit);
 
-    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let supervisor_log = root.join("supervisor.log");
+    let child = eon_command(binary)
         .arg("run")
+        .arg("--dir")
+        .arg(&root)
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
@@ -10765,18 +10820,36 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
         .env("EON_TEST_ORBIT_LOG", &orbit_log)
         .env("EON_TEST_REPLACE_READY_RECORD", "1")
         .env("EON_TEST_STOP", &fallback_stop)
-        .output()
+        .stdout(Stdio::null())
+        .stderr(fs::File::create(&supervisor_log).unwrap())
+        .spawn()
         .unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("invalid terminal record"), "{stderr}");
+    let mut supervisor = TestProcess {
+        child,
+        stop: fallback_stop.clone(),
+    };
     wait_for(&orbit_log);
     let orbit_pid: u32 = fs::read_to_string(&orbit_log)
         .unwrap()
         .trim()
         .parse()
         .unwrap();
+    let refused = invoke(binary, &runtime, &config, &["pane", "create", "--json"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        stdout(&refused).contains("stop-incomplete"),
+        "{}",
+        stdout(&refused)
+    );
+    assert!(
+        fs::read_to_string(&supervisor_log)
+            .unwrap()
+            .contains("invalid terminal record")
+    );
+    assert!(
+        supervisor.child.try_wait().unwrap().is_none(),
+        "startup discarded its cleanup owner"
+    );
     assert!(process::exists(orbit_pid), "marked Ready helper was killed");
 
     fs::write(&fallback_stop, "").unwrap();
@@ -10788,6 +10861,19 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
         !process::exists(orbit_pid),
         "marked Ready helper did not exit"
     );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = supervisor.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "bootstrap owner did not exit after reaping its child"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(status.code(), Some(1));
+    supervisor.stop.clear();
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -16366,7 +16452,7 @@ fn edit_error(output: &Output) -> (Option<i32>, String) {
 /// and its snapshot, which stays.
 fn unconfirmed_scrollback(window: &PairWindow) -> (String, PathBuf) {
     let delay = window.root.join("editor-ready-delay");
-    fs::write(&delay, "5100").unwrap();
+    fs::write(&delay, AFTER_START_ROLLBACK_MS.to_string()).unwrap();
     assert!(matches!(
         window.invoke_popup("late", "scrollback", None),
         Response::Failure(failure) if failure.code == "popup-start"

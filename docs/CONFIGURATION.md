@@ -796,8 +796,19 @@ the editor is missing, it fails with `popup-command` and opens nothing.
   in memory, so there it stays until the system clears `/tmp`.
 - Opening Scrollback reads the history and then starts the editor, each
   within its own deadline. On a machine too loaded to finish both within
-  6 seconds, the window may report Eon as slow or unavailable while the
-  popup still opens.
+  the client's 76-second exchange allowance, the window may report Eon as
+  unavailable while the popup still opens.
+
+Terminal startup has a fixed 15-second lifecycle budget for spawning Orbit,
+publishing Ready and acquiring its management lease. A failed start gets a
+separate five seconds to roll back. Recovery and Stop retain five-second
+operation budgets. These bounds are not settings: they bound workspace
+blocking and keep the CLI and window's waits consistent. The window reports
+slow replies after two seconds while keeping its current workspace visible;
+its exchange allowance is 76 seconds and Stop's is 81 seconds. A failed start
+reports observed startup stages and whether cleanup completed. The command may
+already have run, so repeat it only if replaying it is safe; never retry while
+cleanup is unconfirmed.
 
 ## Managed tools
 

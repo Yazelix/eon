@@ -1325,6 +1325,12 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer, in
+  `eon-g3vdz` / `eon-l4e7s`: startup failures report stage observations,
+  cleanup confirmation and command replay uncertainty. Proof is scoped to
+  those beads' exact staged-tree checks and isolated Linux observations; this
+  does not upgrade the contract's overall proof status.
+
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-ciwn.1`: EON-C39's event subscription is the
@@ -1546,6 +1552,14 @@ names its socket. CLI JSON names a session `session` and a terminal
     becomes the tab's only, selected pane, and a shown popup still stays shown.
     Without `--no-focus`, `pane create` selects the new pane and dismisses the
     tab's popup, as above.
+  - A failed terminal start publishes no pane or `created` result. Its error
+    reports no observed stages before spawn and states that this request did
+    not start the command. After spawn it reports observed startup stages and
+    whether rollback was confirmed. The command may already have run even
+    when rollback succeeds; replay is safe only when repeating the command
+    is safe. Unconfirmed
+    cleanup retains the run for canonical Stop/recovery and forbids claiming
+    a safe retry. Eon never automatically retries the command.
   - `eon tab create [--json] [--no-focus] --dir DIR [-- COMMAND [ARGS...]]`
     adds a new tab to the addressed session with DIR as its directory
     and no picker, and starts its one pane there. That pane is the default pane
@@ -2247,6 +2261,13 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C11 — Runtime generations and presentation
 
+- **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer, in
+  `eon-g3vdz` / `eon-l4e7s`: separate terminal start and cleanup budgets,
+  retain failed-start cleanup owners, and extend client waits through initial
+  Files fallback; Reserved Stop bytes stay unchanged. Proof is scoped to those
+  beads' exact staged-tree checks and isolated Linux observations; this does
+  not upgrade the contract's overall proof status.
+
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-10-30
   (approved by Lucca, relayed by eon-overseer) by
@@ -2472,7 +2493,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   stale or mismatched process identity, lost control, partial Stop, or live
   foreign residue fails closed
   without PID/process-name fallback or duplicate Orbit launch. Orbit startup
-  and Ready negotiation remain bounded by the shared five-second deadline.
+  and Ready/lease negotiation share one fifteen-second deadline for a new
+  terminal; recovery and cleanup retain their five-second bounds. A failed
+  start receives a fresh five-second rollback deadline, independent of the
+  spent start budget.
   Eon requires no cgroup membership or delegation; Orbit owns bounded PTY
   shutdown through its accepted ORB-C12/ORB-C13 management boundary.
   A Reserved Stop reply that is not one complete reply of the layout above is
@@ -2671,6 +2695,13 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C15 — Same-boot Orbit recovery
 
+- **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer, in
+  `eon-g3vdz` / `eon-l4e7s`: fresh failed-start rollback, retained Child
+  ownership through bootstrap/empty topology/Stop, and fallback-aware client
+  waits. Proof is scoped to those beads' exact staged-tree checks and isolated
+  Linux observations; this does not upgrade the contract's overall proof
+  status.
+
 - **Status:** Partially proved; the pre-Bend Linux baseline is candidate
   evidence, and installed Linux supervisor-loss adoption remains pending.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -2684,8 +2715,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Result:**
   - Eon assigns canonical `terminal-N`, one fresh opaque run ID, and the runtime
     generation ID as component generation, then validates complete live identity
-    and acquires the sole management lease within one shared five-second
-    operation.
+    and acquires the sole management lease within one shared fifteen-second
+    new-terminal start operation. Recovery remains one shared five-second
+    operation. These are fixed lifecycle budgets; clients consume their
+    canonical ceilings rather than independently choosing startup allowances.
   - Replacement eonbase recovers exactly one live run; replacement full Eon
     acquires at most 256 valid runs, sorts positive canonical N numerically, and
     projects them into synthetic `t1` as `pN` with the lowest selected. That tab
@@ -2698,6 +2731,17 @@ names its socket. CLI JSON names a session `session` and a terminal
     replaces it with Ready. Local Child rollback requires winning the lock on
     that unchanged still-empty inode; marking revokes signal authority even
     before publication completes. After publication, cleanup is management-only.
+  - A failed start gets a fresh five-second rollback operation. If management
+    cleanup cannot be confirmed after marking, Eon retains the exact Child
+    handle and claim outside workspace topology, sends no fallback signal,
+    and reaps the child when it exits even if its record has disappeared.
+    Retained children keep their supervisor, control endpoint and lifecycle
+    lock alive, including an initial startup failure and an empty tracked
+    topology. After a bootstrap failure, the supervisor exits with its initial
+    failure status once its children finish and retained children are reaped.
+    A failed Stop still requires explicit retry. Stop cannot succeed while a
+    retained child remains unreaped; a missing record never grants fallback
+    signal authority.
   - Explicit generation Stop uses canonical management for every acquired run
     and discovers untracked runs through the same bounded generation record
     and lease validation used for recovery, including late-Ready pickers.
@@ -2733,10 +2777,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   ended untracked direct children before retiring their canonical records.
   During failed cleanup, it still reaps an exited presentation child without
   changing the session or launching replacement terminals.
-  Stop's result read timeout allows one preceding thirty-five-second startup
-  (thirty-second presentation admission, then a five-second first terminal
-  start) plus five-second cleanup and a one-second margin; excessive queues can
-  still fail.
+  Stop's result read timeout is eighty-one seconds: it allows one preceding
+  thirty-second presentation admission, fifteen-second first terminal start
+  and five-second startup rollback, a fifteen-second fallback pane start
+  and its five-second rollback, five-second failed-presentation teardown,
+  then five-second Stop cleanup and a one-second margin; excessive queues
+  can still fail. Reserved Stop request and reply bytes are unchanged; this
+  is a client read allowance only.
 - **Owner:** Eon Runtime generation/recovery enforcement, bounded enumeration,
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,

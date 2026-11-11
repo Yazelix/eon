@@ -54,9 +54,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub(super) const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
-/// Bounds Venus startup admission, which a busy machine can slow well past session start.
-pub(super) const PRESENTATION_ADMISSION_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) use eon_workspace_protocol::{
+    PRESENTATION_ADMISSION_TIMEOUT, SESSION_CLEANUP_TIMEOUT, TERMINAL_START_TIMEOUT,
+};
 /// How long an ending supervisor waits to close its detach notice (EON-C8).
 const NOTICE_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
@@ -253,7 +253,7 @@ pub(super) fn launch_current(
         ) {
             let Some(lock) = try_lock_supervisor_lifecycle(&lifecycle_lock_path)? else {
                 let deadline = missing_deadline.get_or_insert_with(|| {
-                    Instant::now() + SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1))
+                    Instant::now() + SESSION_CLEANUP_TIMEOUT.saturating_add(Duration::from_secs(1))
                 });
                 if Instant::now() >= *deadline {
                     return Err(format!(
@@ -314,6 +314,7 @@ pub(super) fn launch_current(
             application_id,
             decorations,
             &log,
+            TERMINAL_START_TIMEOUT,
         )
     })();
     log.record(&match &result {
@@ -859,7 +860,7 @@ impl PresentationProcess {
 impl Drop for PresentationProcess {
     fn drop(&mut self) {
         let _ = self.control.shutdown(Shutdown::Both);
-        let deadline = Instant::now() + SESSION_START_TIMEOUT;
+        let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(25));
         }
@@ -969,6 +970,7 @@ fn supervise(
     application_id: &str,
     decorations: bool,
     log: &Arc<DiagnosticLog>,
+    start_timeout: Duration,
 ) -> Result<i32, String> {
     let started_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1028,12 +1030,13 @@ fn supervise(
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
     });
+    let mut failed_starts = sessions::FailedStarts::default();
     let (mut sessions, recovered_pair) = recover_sessions(
         runtime,
         mode,
         generation,
         log.orbit_directory().ok(),
-        Instant::now() + SESSION_START_TIMEOUT,
+        Instant::now() + SESSION_CLEANUP_TIMEOUT,
     )?;
     let mut scrollback = Snapshots::new(runtime);
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
@@ -1223,83 +1226,100 @@ fn supervise(
     } else {
         Vec::new()
     };
-    if sessions.is_empty() && (mode == LaunchMode::Terminal || recovered_pair) {
-        sessions.push(
-            start_orbit(
-                inputs,
-                config,
-                &initial_endpoint,
-                initial_session_id,
-                generation,
-                &launch_directory,
-                &initial_child,
-                None,
-                log,
-                // Starts after admission, which may have used most of its own deadline.
-                Instant::now() + SESSION_START_TIMEOUT,
-            )
-            .map_err(&startup_error)?,
-        );
-        initial_child.clear();
-    }
-    let mut workspaces = if mode == LaunchMode::Workspace {
-        Some(if sessions.is_empty() {
-            WorkspaceSet::registered_pending(
-                registry.clone(),
-                registration.as_ref().unwrap().clone(),
-                runtime.to_path_buf(),
-                launch_directory.clone(),
-                env::home_dir(),
-                popup_catalog.clone(),
-                pair,
-                |command, directory| {
-                    managed_environment::prepare_popup_command(
-                        command,
-                        inputs.managed.shell_bin.as_deref(),
-                        directory,
-                        config,
-                        &inputs.defaults,
-                        Some(log),
-                    )
-                },
-                |operation| {
-                    apply_session_operation(
-                        inputs,
-                        config,
-                        log,
-                        generation,
-                        &mut sessions,
-                        &mut initial_child,
-                        &mut editor_sockets,
-                        operation,
-                        PairStart::Fresh(startup_animation.as_ref()),
-                        admitted.as_ref().and_then(|venus| venus.name),
-                    )
-                },
-            )
-            .map_err(&startup_error)?
+    let initialized = (|| {
+        if sessions.is_empty() && (mode == LaunchMode::Terminal || recovered_pair) {
+            sessions.push(
+                start_orbit(
+                    inputs,
+                    config,
+                    &initial_endpoint,
+                    initial_session_id,
+                    generation,
+                    &launch_directory,
+                    &initial_child,
+                    None,
+                    log,
+                    // Starts after admission, which may have used most of its own deadline.
+                    Instant::now() + start_timeout,
+                    &mut failed_starts,
+                )
+                .map_err(&startup_error)?,
+            );
+            initial_child.clear();
+        }
+        let mut workspaces = if mode == LaunchMode::Workspace {
+            Some(if sessions.is_empty() {
+                WorkspaceSet::registered_pending(
+                    registry.clone(),
+                    registration.as_ref().unwrap().clone(),
+                    runtime.to_path_buf(),
+                    launch_directory.clone(),
+                    env::home_dir(),
+                    popup_catalog.clone(),
+                    pair,
+                    |command, directory| {
+                        managed_environment::prepare_popup_command(
+                            command,
+                            inputs.managed.shell_bin.as_deref(),
+                            directory,
+                            config,
+                            &inputs.defaults,
+                            Some(log),
+                        )
+                    },
+                    |operation| {
+                        apply_session_operation(
+                            inputs,
+                            config,
+                            log,
+                            generation,
+                            &mut sessions,
+                            &mut failed_starts,
+                            &mut initial_child,
+                            &mut editor_sockets,
+                            operation,
+                            PairStart::Fresh(startup_animation.as_ref()),
+                            admitted.as_ref().and_then(|venus| venus.name),
+                        )
+                    },
+                )
+                .map_err(&startup_error)?
+            } else {
+                WorkspaceSet::registered_recovered(
+                    registry.clone(),
+                    registration.clone(),
+                    runtime.to_path_buf(),
+                    launch_directory,
+                    env::home_dir(),
+                    recovered_workspace_sessions(&sessions).map_err(&startup_error)?,
+                    popup_catalog,
+                )
+                .map_err(&startup_error)?
+            })
         } else {
-            WorkspaceSet::registered_recovered(
-                registry.clone(),
-                registration.clone(),
-                runtime.to_path_buf(),
-                launch_directory,
-                env::home_dir(),
-                recovered_workspace_sessions(&sessions).map_err(&startup_error)?,
-                popup_catalog,
-            )
-            .map_err(&startup_error)?
-        })
-    } else {
-        None
+            None
+        };
+        if let Some(error) = registry_setup_error
+            && let Some(workspaces) = &mut workspaces
+        {
+            workspaces.registered_recovery("s1", Err(error));
+        }
+        Ok::<_, String>(workspaces)
+    })();
+    let (workspaces, startup_failed) = match initialized {
+        Ok(workspaces) => (workspaces, false),
+        Err(error) => {
+            failed_starts.reap(log);
+            if failed_starts.is_empty() {
+                return Err(error);
+            }
+            log.note(&error);
+            (None, true)
+        }
     };
-    if let Some(error) = registry_setup_error
-        && let Some(workspaces) = &mut workspaces
-    {
-        workspaces.registered_recovery("s1", Err(error));
-    }
     let registration_pending = recovering && registry_worker.is_some();
     let mut state = SupervisorState {
+        failed_starts,
         registry_worker,
         registry_pending: registration_pending.then(|| RegistryPending::Recovery("s1".into())),
         started_at,
@@ -1312,8 +1332,8 @@ fn supervise(
         sessions,
         venus: None,
         initial_child,
-        initial_status: None,
-        stopping: false,
+        initial_status: startup_failed.then_some(1),
+        stopping: startup_failed.then_some(StopReason::BootstrapFailure),
         quotas: (mode == LaunchMode::Workspace)
             .then(|| quota::Quotas::start(&inputs.codexbar, &bar.widgets)),
         attention,
@@ -1325,67 +1345,84 @@ fn supervise(
         editor_sockets,
         log: Arc::clone(log),
     };
-    let presentation = match admitted {
-        Some(venus) => Ok(venus),
-        None => PresentationProcess::start(
-            venus_command(
-                inputs,
-                config,
-                &presentation_socket,
-                mode,
-                &terminal,
-                bar,
-                application_id,
-                decorations,
-                warning_close_last_tab,
-                animate_working_badge,
-                number_keys,
-            ),
-            false,
-            None,
-            PRESENTATION_ADMISSION_TIMEOUT,
-            &mut state.sessions,
-            log,
-        ),
+    let presentation = if startup_failed {
+        drop(admitted);
+        Ok(None)
+    } else {
+        match admitted {
+            Some(venus) => Ok(Some(venus)),
+            None => PresentationProcess::start(
+                venus_command(
+                    inputs,
+                    config,
+                    &presentation_socket,
+                    mode,
+                    &terminal,
+                    bar,
+                    application_id,
+                    decorations,
+                    warning_close_last_tab,
+                    animate_working_badge,
+                    number_keys,
+                ),
+                false,
+                None,
+                PRESENTATION_ADMISSION_TIMEOUT,
+                &mut state.sessions,
+                log,
+            )
+            .map(Some),
+        }
     };
     state.venus = match presentation {
-        Ok(venus) => Some(venus),
+        Ok(venus) => venus,
         Err(error) => {
-            let session_cleanup = stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT);
+            let session_cleanup =
+                stop_managed_sessions(&mut state.sessions, SESSION_CLEANUP_TIMEOUT);
             // A recovered Scrollback editor that stopped leaves no snapshot.
             state.retain_popup_files(Instant::now());
             state.scrollback.remove_empty_root();
-            drop(control_listener);
-            if session_cleanup.is_ok() {
-                remove_launcher(runtime);
-                let _ = fs::remove_dir(runtime);
-            }
+            state.failed_starts.reap(log);
+            let cleanup_succeeded = session_cleanup.is_ok();
             let mut errors = vec![error];
             if let Err(cleanup) = session_cleanup {
                 errors.push(format!("cannot roll back terminals: {cleanup}"));
             }
-            return Err(startup_error(errors.join("; ")));
+            let error = startup_error(errors.join("; "));
+            if state.failed_starts.is_empty() {
+                drop(control_listener);
+                if cleanup_succeeded {
+                    remove_launcher(runtime);
+                    let _ = fs::remove_dir(runtime);
+                }
+                return Err(error);
+            }
+            log.note(&error);
+            state.stopping = Some(StopReason::BootstrapFailure);
+            state.initial_status = Some(1);
+            None
         }
     };
     // Terminals started after an admitted Venus spawned.
     state.name_presentation(true);
 
-    let status = (|| {
-        loop {
-            state.poll_registry(inputs, config, runtime, generation);
-            if !state.stopping {
-                reap_finished_sessions(&mut state, inputs, config)?;
-            }
+    let status = loop {
+        let result: Result<i32, String> = (|| {
+            loop {
+                state.poll_registry(inputs, config, runtime, generation);
+                if state.stopping.is_none() {
+                    reap_finished_sessions(&mut state, inputs, config)?;
+                }
 
-            // An incomplete Stop keeps its owner for a retry, even with no
-            // tracked terminal left, such as a final close whose untracked
-            // runs could not be acquired.
-            if state.sessions.is_empty() && !state.stopping {
-                return Ok(state.initial_status.unwrap_or(0));
-            }
+                // An incomplete Stop keeps its owner for a retry, even with no
+                // tracked terminal left, such as a final close whose untracked
+                // runs could not be acquired.
+                if state.may_exit() {
+                    return Ok(state.initial_status.unwrap_or(0));
+                }
 
-            if reap_presentation(&mut state, inputs, config)? && !state.stopping {
-                match mode {
+                if reap_presentation(&mut state, inputs, config)? && state.stopping.is_none() {
+                    match mode {
                     LaunchMode::Workspace => log.note(&format!(
                         "Eon Desktop exited; terminals remain active. Run `eon window attach {}` to reconnect.",
                         super::windows::durable_window_id(state.window.as_deref(), generation)
@@ -1394,41 +1431,51 @@ fn supervise(
                         "Eon Desktop exited; terminal remains active. Run `eonbase attach {generation}` to reconnect."
                     )),
                 }
-            }
+                }
 
-            state.tend(Instant::now());
-            // Also while an incomplete Stop waits, so the notice's confirmed
-            // Quit retries it.
-            if answer_detach_notice(&mut state, runtime, mode) {
-                return Ok(state.initial_status.unwrap_or(0));
-            }
-
-            let accepted = control_listener.accept(|request| {
-                dispatch(request, &mut state, inputs, config, runtime, generation)
-            })?;
-            state.end_turn(Instant::now());
-            match accepted {
-                Accepted::None => thread::sleep(Duration::from_millis(25)),
-                Accepted::Replied { shutdown: true } => {
+                state.tend(Instant::now());
+                // Also while an incomplete Stop waits, so the notice's confirmed
+                // Quit retries it.
+                if answer_detach_notice(&mut state, runtime, mode) {
                     return Ok(state.initial_status.unwrap_or(0));
                 }
-                Accepted::Replied { shutdown: false } => {}
-                Accepted::Subscribed(stream, subscriber) => {
-                    state
-                        .subscribers
-                        .attach(stream, *subscriber, Instant::now());
-                }
-                Accepted::Deferred(stream) => {
-                    if let Some(RegistryPending::Action {
-                        stream: pending, ..
-                    }) = &mut state.registry_pending
-                    {
-                        *pending = Some(stream);
+
+                let accepted = control_listener.accept(|request| {
+                    dispatch(request, &mut state, inputs, config, runtime, generation)
+                })?;
+                state.end_turn(Instant::now());
+                match accepted {
+                    Accepted::None => thread::sleep(Duration::from_millis(25)),
+                    Accepted::Replied { shutdown: true } => {
+                        return Ok(state.initial_status.unwrap_or(0));
+                    }
+                    Accepted::Replied { shutdown: false } => {}
+                    Accepted::Subscribed(stream, subscriber) => {
+                        state
+                            .subscribers
+                            .attach(stream, *subscriber, Instant::now());
+                    }
+                    Accepted::Deferred(stream) => {
+                        if let Some(RegistryPending::Action {
+                            stream: pending, ..
+                        }) = &mut state.registry_pending
+                        {
+                            *pending = Some(stream);
+                        }
                     }
                 }
             }
+        })();
+        state.failed_starts.reap(log);
+        if state.failed_starts.is_empty() {
+            break result;
         }
-    })();
+        if let Err(error) = result {
+            log.note(&error);
+        }
+        state.stopping.get_or_insert(StopReason::StopRequired);
+        thread::sleep(Duration::from_millis(25));
+    };
     // Stop, quit and the window's final close end every subscription.
     state.subscribers.end(generation);
     drop(control_listener);
@@ -1492,6 +1539,12 @@ fn await_initial_registration(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopReason {
+    BootstrapFailure,
+    StopRequired,
+}
+
 struct SupervisorState {
     registry_worker: Option<session_registry::Worker>,
     registry_pending: Option<RegistryPending>,
@@ -1503,10 +1556,11 @@ struct SupervisorState {
     decorations: bool,
     workspaces: Option<WorkspaceSet>,
     sessions: Vec<RunningSession>,
+    failed_starts: sessions::FailedStarts,
     venus: Option<PresentationProcess>,
     initial_child: Vec<OsString>,
     initial_status: Option<i32>,
-    stopping: bool,
+    stopping: Option<StopReason>,
     quotas: Option<quota::Quotas>,
     /// Full Eon only; eonbase has no poller (EON-C31).
     attention: Option<Attention>,
@@ -1532,6 +1586,15 @@ enum RegistryPending {
 }
 
 impl SupervisorState {
+    fn may_exit(&mut self) -> bool {
+        self.terminals_finished() && self.stopping != Some(StopReason::StopRequired)
+    }
+
+    fn terminals_finished(&mut self) -> bool {
+        self.failed_starts.reap(&self.log);
+        self.sessions.iter().all(RunningSession::is_finished) && self.failed_starts.is_empty()
+    }
+
     fn poll_registry(&mut self, inputs: &Inputs, config: &Path, runtime: &Path, generation: &str) {
         let Some(result) = self
             .registry_worker
@@ -1541,7 +1604,7 @@ impl SupervisorState {
             return;
         };
         match self.registry_pending.take() {
-            Some(RegistryPending::Recovery(target)) if !self.stopping => {
+            Some(RegistryPending::Recovery(target)) if self.stopping.is_none() => {
                 if let Some(workspaces) = &mut self.workspaces {
                     workspaces.registered_recovery(&target, result);
                 }
@@ -1551,7 +1614,7 @@ impl SupervisorState {
                     workspaces.release_registration(&request.id);
                 }
                 let reply = match result {
-                    Ok(Some(registration)) if !self.stopping => {
+                    Ok(Some(registration)) if self.stopping.is_none() => {
                         let reply = dispatch_registered_request(
                             request.clone(),
                             self,
@@ -1738,6 +1801,7 @@ impl SupervisorState {
     /// terminals, focus and attention. The turn publishes it to subscribers
     /// once, with its action's change (EON-C39).
     fn tend(&mut self, now: Instant) {
+        self.failed_starts.reap(&self.log);
         // Read first, so attention this turn sees the latest native focus.
         if self.attention.is_some()
             && let Some(venus) = &mut self.venus
@@ -1745,7 +1809,7 @@ impl SupervisorState {
             venus.read_native_focus();
         }
         self.retain_popup_files(now);
-        if !self.stopping {
+        if self.stopping.is_none() {
             sessions::drain_given_up_requests(&mut self.sessions);
             // The backstop for a naming that failed or came late.
             self.name_presentation(false);
@@ -1795,7 +1859,7 @@ impl SupervisorState {
     /// publishes nothing but still writes, and ends subscribers that hung up
     /// or went too slow.
     fn serve_subscribers(&mut self, now: Instant) {
-        if self.stopping {
+        if self.stopping.is_some() {
             self.subscribers.maintain(now);
         } else if !self.subscribers.is_empty()
             && let Some(projection) = self.projection()
@@ -1897,6 +1961,7 @@ fn reap_finished_sessions(
             if let Some(workspace) = &mut state.workspaces {
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
+                let failed_starts = &mut state.failed_starts;
                 let initial_child = &mut state.initial_child;
                 let editor_sockets = &mut state.editor_sockets;
                 let log = &state.log;
@@ -1908,6 +1973,7 @@ fn reap_finished_sessions(
                             log,
                             component_generation,
                             sessions,
+                            failed_starts,
                             initial_child,
                             editor_sockets,
                             operation,
@@ -2100,7 +2166,7 @@ fn column_close_scope(
             LaunchMode::Workspace,
             &state.component_generation,
             &state.sessions,
-            Instant::now() + SESSION_START_TIMEOUT,
+            Instant::now() + SESSION_CLEANUP_TIMEOUT,
         )
         .map_err(|detail| failure("column-close-failed", detail))?
     } else {
@@ -2149,7 +2215,7 @@ fn stop_consented(
     let untracked = acquire_runs(
         candidates,
         state.log.orbit_directory().ok(),
-        Instant::now() + SESSION_START_TIMEOUT,
+        Instant::now() + SESSION_CLEANUP_TIMEOUT,
     )
     .map_err(|detail| failure("column-close-failed", detail))?;
     stop_consented_runs(state, scope, untracked)
@@ -2184,7 +2250,7 @@ fn stop_consented_runs(
                 .any(|run| run.run == session.run_id())
         });
         if state.sessions.is_empty() {
-            state.stopping = true;
+            state.stopping = Some(StopReason::StopRequired);
             *error = failure(
                 "column-close-failed",
                 format!(
@@ -2219,13 +2285,13 @@ fn consented_close_response(
             .workspace_snapshot_in(reply_workspace)
             .map(Response::Snapshot);
     }
-    state.stopping = true;
+    state.stopping = Some(StopReason::StopRequired);
     let remaining = untracked_runs(
         runtime,
         LaunchMode::Workspace,
         &state.component_generation,
         &state.sessions,
-        Instant::now() + SESSION_START_TIMEOUT,
+        Instant::now() + SESSION_CLEANUP_TIMEOUT,
     );
     match remaining {
         Ok(runs) if runs.is_empty() => Ok(Response::Ended(Ended {
@@ -2387,8 +2453,21 @@ fn stop_generation_sessions(
     runtime: &Path,
     mode: LaunchMode,
 ) -> Result<Vec<String>, String> {
-    state.stopping = true;
-    let deadline = Instant::now() + SESSION_START_TIMEOUT;
+    stop_generation_sessions_until(
+        state,
+        runtime,
+        mode,
+        Instant::now() + SESSION_CLEANUP_TIMEOUT,
+    )
+}
+
+fn stop_generation_sessions_until(
+    state: &mut SupervisorState,
+    runtime: &Path,
+    mode: LaunchMode,
+    deadline: Instant,
+) -> Result<Vec<String>, String> {
+    state.stopping = Some(StopReason::StopRequired);
     let untracked = acquire_generation_sessions(
         runtime,
         mode,
@@ -2433,6 +2512,7 @@ fn stop_generation_sessions(
     }
     let stopped = result.map_err(|error| format!("{error}{orbit_logs}"))?;
     state.sessions.clear();
+    state.failed_starts.finish(deadline, &state.log)?;
     Ok(stopped
         .into_iter()
         .filter(|session| !pending.contains(session))
@@ -2569,6 +2649,7 @@ fn apply_session_operation(
     log: &DiagnosticLog,
     component_generation: &str,
     sessions: &mut Vec<RunningSession>,
+    failed_starts: &mut sessions::FailedStarts,
     initial_child: &mut Vec<OsString>,
     editor_sockets: &mut Sockets,
     operation: SessionOperation,
@@ -2627,7 +2708,8 @@ fn apply_session_operation(
         &child,
         tab.as_deref(),
         log,
-        Instant::now() + SESSION_START_TIMEOUT,
+        Instant::now() + TERMINAL_START_TIMEOUT,
+        failed_starts,
     );
     let mut running = match started {
         Ok(running) => running,
@@ -2678,7 +2760,7 @@ fn stop_owned_sessions(
 ) -> (Vec<(String, Option<i32>)>, Vec<String>) {
     // Reconciling, stopping and reconciling after a failed stop share one
     // bound (EON-C8).
-    let deadline = Instant::now() + SESSION_START_TIMEOUT;
+    let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
     let remaining = || deadline.saturating_duration_since(Instant::now());
     let mut errors = ids
         .iter()
@@ -2789,6 +2871,7 @@ fn dismiss_pending_pairs(
         component_generation,
         workspaces,
         sessions,
+        failed_starts,
         initial_child,
         editor_sockets,
         log,
@@ -2804,6 +2887,7 @@ fn dismiss_pending_pairs(
             log,
             component_generation,
             sessions,
+            failed_starts,
             initial_child,
             editor_sockets,
             operation,
@@ -2827,7 +2911,7 @@ fn reap_presentation(
         return Ok(false);
     };
     state.venus = None;
-    if !state.stopping {
+    if state.stopping.is_none() {
         // Dismissing a pending pair starts its tab's first terminal.
         dismiss_pending_pairs(state, inputs, config)?;
         // Full Eon's clean exit is a detach; a crash is not (EON-C8).
@@ -2879,7 +2963,7 @@ fn open_supervisor_lifecycle_lock(path: &Path) -> Result<fs::File, String> {
 
 pub(super) fn lock_supervisor_lifecycle(path: &Path) -> Result<fs::File, String> {
     let file = open_supervisor_lifecycle_lock(path)?;
-    let deadline = Instant::now() + SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1));
+    let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT.saturating_add(Duration::from_secs(1));
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(file),
@@ -2944,7 +3028,7 @@ fn dispatch(
         }
         Incoming::Request(request) => request,
     };
-    if matches!(request.action, Action::Subscribe { .. }) && !state.stopping {
+    if matches!(request.action, Action::Subscribe { .. }) && state.stopping.is_none() {
         let reply = match subscribe(state, inputs, config, &request, generation) {
             Ok(subscriber) => Dispatched::Subscribe(Box::new(subscriber)),
             Err(error) => {
@@ -2955,7 +3039,7 @@ fn dispatch(
         return reply;
     }
     super::diagnostics::bench_trace("request", &request.id);
-    if !state.stopping
+    if state.stopping.is_none()
         && matches!(
             request.action,
             Action::Workspace(
@@ -3093,7 +3177,7 @@ fn stop_window(
 }
 
 fn launch_mode(state: &SupervisorState) -> LaunchMode {
-    if state.workspaces.is_some() {
+    if state.workspaces.is_some() || state.running.is_some() {
         LaunchMode::Workspace
     } else {
         LaunchMode::Terminal
@@ -3122,7 +3206,7 @@ fn dispatch_registered_request(
     registration: Option<Registration>,
 ) -> (ControlResponse, bool) {
     let mode = launch_mode(state);
-    if state.stopping
+    if state.stopping.is_some()
         && !matches!(
             request.action,
             Action::Workspace(
@@ -3163,7 +3247,7 @@ fn dispatch_registered_request(
             });
             match runtime_status(inputs, generation, state, mode, exclude.as_deref()) {
                 Ok(mut runtime) => {
-                    if state.stopping {
+                    if state.stopping.is_some() {
                         runtime.attach = Availability {
                             available: false,
                             reason: stop_incomplete(mode, state.window.as_deref(), generation),
@@ -3214,7 +3298,7 @@ fn dispatch_registered_request(
                         "generation-ending",
                         "the last terminal exited while Eon Desktop was reopening",
                     ))),
-                    true,
+                    state.failed_starts.is_empty(),
                 );
             }
             let result = reap_presentation(state, inputs, config).and_then(|_| {
@@ -3535,6 +3619,7 @@ fn dispatch_registered_request(
             let venus = state.venus.as_ref().and_then(|venus| venus.name);
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
+            let failed_starts = &mut state.failed_starts;
             let initial_child = &mut state.initial_child;
             let editor_sockets = &mut state.editor_sockets;
             let log = &state.log;
@@ -3575,6 +3660,7 @@ fn dispatch_registered_request(
                                 log,
                                 component_generation,
                                 sessions,
+                                failed_starts,
                                 initial_child,
                                 editor_sockets,
                                 operation,
@@ -3707,6 +3793,7 @@ fn edit_terminal_history(
     let venus = state.venus.as_ref().and_then(|venus| venus.name);
     let component_generation = &state.component_generation;
     let sessions = &mut state.sessions;
+    let failed_starts = &mut state.failed_starts;
     let initial_child = &mut state.initial_child;
     let editor_sockets = &mut state.editor_sockets;
     let log = &state.log;
@@ -3740,6 +3827,7 @@ fn edit_terminal_history(
                     log,
                     component_generation,
                     sessions,
+                    failed_starts,
                     initial_child,
                     editor_sockets,
                     operation,
@@ -4001,7 +4089,7 @@ fn runtime_status(
     mode: LaunchMode,
     exclude: Option<&str>,
 ) -> Result<Runtime, String> {
-    if mode == LaunchMode::Terminal && state.sessions.is_empty() {
+    if mode == LaunchMode::Terminal && state.sessions.is_empty() && state.stopping.is_none() {
         return Err("supervisor has no live terminals".into());
     }
     Ok(Runtime {
@@ -4047,8 +4135,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     use super::apply_session_operation;
     use super::{
-        Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SESSION_START_TIMEOUT,
-        SupervisorState, WorkspaceSet, effective_uid, mark_before_start, pair_command,
+        Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SESSION_CLEANUP_TIMEOUT,
+        StopReason, SupervisorState, WorkspaceSet, effective_uid, mark_before_start, pair_command,
         prepare_configuration, prepare_runtime, reap_finished_sessions, settle_snapshot,
         stop_generation_sessions, stop_owned_session, stop_owned_sessions, temporary_directory,
         venus_command, window_bar, xdg_path,
@@ -4090,6 +4178,171 @@ mod tests {
                 .chain(scope.untracked.iter().map(|run| run.run.clone()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn retained_starts_keep_an_empty_owner_alive_and_make_stop_retryable() {
+        let root = temporary_directory();
+        let (failed_starts, input, pid) = sessions::tests::retained_start(&root);
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eonbase");
+        let mut state = SupervisorState {
+            failed_starts,
+            registry_worker: None,
+            registry_pending: None,
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: None,
+            sessions: Vec::new(),
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: None,
+            quotas: None,
+            attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: Snapshots::new(&root),
+            editor_sockets: Sockets::default(),
+            log,
+        };
+        assert!(
+            !state.terminals_finished(),
+            "empty topology abandoned its retained child"
+        );
+        let stopped = super::stop_generation_sessions_until(
+            &mut state,
+            &root,
+            LaunchMode::Terminal,
+            Instant::now() + Duration::from_millis(20),
+        );
+        assert!(
+            stopped
+                .unwrap_err()
+                .contains("retained children are still running")
+        );
+        assert!(state.stopping.is_some() && !state.terminals_finished());
+        assert!(
+            crate::platform::process(pid).unwrap().is_some(),
+            "Stop signalled an unleased child"
+        );
+        drop(input);
+        let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
+        while !state.terminals_finished() {
+            assert!(Instant::now() < deadline, "retained child did not exit");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            !state.may_exit(),
+            "failed Stop exited without its explicit retry"
+        );
+        assert!(
+            super::stop_generation_sessions_until(
+                &mut state,
+                &root,
+                LaunchMode::Terminal,
+                Instant::now() + SESSION_CLEANUP_TIMEOUT,
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert!(state.terminals_finished());
+        assert!(crate::platform::process(pid).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unconfirmed_initial_start_exits_when_its_child_is_reaped() {
+        const GENERATION: &str = "g1-00000000000000000000000000000001";
+        let root = temporary_directory();
+        let runtime = root.join("generations").join(GENERATION);
+        prepare_runtime(&runtime).unwrap();
+        let pid_file = root.join("child.pid");
+        let gate = root.join("child-exit");
+        let launcher = root.join("marked-orbit");
+        script(
+            &launcher,
+            &format!(
+                "#!/bin/sh\nprintf 1 > \"$2.record\"\nprintf '%s' \"$$\" > '{}'\ncount=0\nwhile [ ! -e '{}' ] && [ \"$count\" -lt 1000 ]; do count=$((count+1)); sleep 0.01; done\n",
+                pid_file.display(),
+                gate.display(),
+            ),
+        );
+        let worker_root = root.clone();
+        let worker_runtime = runtime.clone();
+        let supervisor = std::thread::spawn(move || {
+            let mut inputs = crate::fixtures::inputs();
+            inputs.orbit = launcher;
+            let log = DiagnosticLog::open_in(Ok(worker_root.join("logs")), GENERATION, "eonbase");
+            let lock =
+                super::lock_supervisor_lifecycle(&worker_root.join("lifecycle.lock")).unwrap();
+            super::supervise(
+                &inputs,
+                &worker_root,
+                inputs.defaults.terminal.clone(),
+                &super::window_bar(LaunchMode::Terminal, &worker_root, &inputs, None).unwrap(),
+                None,
+                None,
+                lock,
+                &worker_runtime,
+                &[],
+                Some(worker_root.clone()),
+                GENERATION,
+                LaunchMode::Terminal,
+                "",
+                false,
+                &log,
+                Duration::from_millis(250),
+            )
+        });
+        let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
+        let pid = loop {
+            if let Some(pid) = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|text| text.parse::<u32>().ok())
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "fake Orbit was not started");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        let socket = runtime.join("eon.sock");
+        let inspected = crate::control::send_action_from_until(
+            &socket,
+            None,
+            Action::Workspace(eon_workspace_protocol::v39::WorkspaceAction::InspectRuntime),
+            deadline,
+        )
+        .unwrap();
+        assert!(
+            matches!(inspected, crate::control::ControlResponse::Lifecycle(
+            eon_workspace_protocol::v39::LifecycleResponse::Runtime(runtime)
+        ) if !runtime.attach.available && runtime.attach.reason.contains("cleanup is incomplete"))
+        );
+        assert!(
+            !supervisor.is_finished(),
+            "startup failure discarded its owner"
+        );
+        assert!(crate::platform::process(pid).unwrap().is_some());
+        fs::remove_file(runtime.join("orbit.sock.record")).unwrap();
+        fs::write(gate, "exit").unwrap();
+        let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
+        while !supervisor.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "bootstrap owner did not exit after reaping its child"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(supervisor.join().unwrap().unwrap(), 1);
+        assert!(crate::platform::process(pid).unwrap().is_none());
+        assert!(!socket.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -4147,7 +4400,8 @@ mod tests {
             &["sh".into(), "-c".into(), "exec sleep 300".into()],
             None,
             &state.log,
-            Instant::now() + SESSION_START_TIMEOUT,
+            Instant::now() + SESSION_CLEANUP_TIMEOUT,
+            &mut sessions::FailedStarts::default(),
         )
         .unwrap()
     }
@@ -4417,7 +4671,7 @@ mod tests {
         let first = column_scope(&mut state, &root, "p1");
         assert_eq!(first.untracked[0].run, run_a);
         let mut leased = vec![a];
-        sessions::stop_managed_sessions(&mut leased, SESSION_START_TIMEOUT).unwrap();
+        sessions::stop_managed_sessions(&mut leased, SESSION_CLEANUP_TIMEOUT).unwrap();
         drop(leased);
         column_scope(&mut state, &root, "p1"); // retires A before the number is reused
         let b = start_column_run(&state, &root, "terminal-9", &endpoint);
@@ -4464,7 +4718,7 @@ mod tests {
         state.workspaces = Some(workspace);
         let first = column_scope(&mut state, &root, "p1");
         assert_eq!(first.untracked[0].terminal, "terminal-2");
-        sessions::stop_managed_sessions(&mut failed, SESSION_START_TIMEOUT).unwrap();
+        sessions::stop_managed_sessions(&mut failed, SESSION_CLEANUP_TIMEOUT).unwrap();
         drop(failed);
         column_scope(&mut state, &root, "p1");
         column_mutate(
@@ -4552,7 +4806,7 @@ mod tests {
                 .contains("terminal-10 started while the close ran and was not stopped")
         );
         assert!(error.detail.contains("eon window stop "));
-        assert!(state.stopping);
+        assert!(state.stopping.is_some());
         assert!(sessions::session_finished(&mut late).unwrap().is_none());
         state.sessions.push(late);
         stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
@@ -4574,7 +4828,7 @@ mod tests {
             column_request(&mut state, &root, "p1", Some(&consent_of(&scope))).unwrap(),
             super::Response::Ended(_)
         ));
-        assert!(state.stopping && state.sessions.is_empty());
+        assert!(state.stopping.is_some() && state.sessions.is_empty());
         drop(state);
     }
 
@@ -4600,7 +4854,7 @@ mod tests {
             assert_eq!(scope.untracked.len(), 1, "{context}: {scope:?}");
             assert_eq!(scope.untracked[0].run, extra_run, "{context}");
             sessions::tests::release_lease(extra);
-            let deadline = Instant::now() + SESSION_START_TIMEOUT;
+            let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
             let acquired = sessions::acquire_generation_sessions(
                 &root,
                 LaunchMode::Workspace,
@@ -4640,7 +4894,7 @@ mod tests {
                 "{context}: failed untracked run stayed in the supervisor's sessions"
             );
             if keep_pane {
-                assert!(!state.stopping);
+                assert!(state.stopping.is_none());
                 let retry = column_scope(&mut state, &root, "p1");
                 assert_eq!(
                     retry.untracked, scope.untracked,
@@ -4649,7 +4903,10 @@ mod tests {
                 // SAFETY: resumes the test-owned host frozen above.
                 assert_eq!(unsafe { libc::kill(pane_pid, libc::SIGCONT) }, 0);
             } else {
-                assert!(state.stopping, "an empty window stays for an explicit Stop");
+                assert!(
+                    state.stopping.is_some(),
+                    "an empty window stays for an explicit Stop"
+                );
                 assert!(error.detail.contains("eon window stop "), "{error:?}");
                 assert_eq!(
                     super::consented_close_response(&mut state, &root, "g1-test", None)
@@ -4666,7 +4923,7 @@ mod tests {
                 "{context}: resume failed: {}",
                 std::io::Error::last_os_error()
             );
-            let deadline = Instant::now() + SESSION_START_TIMEOUT;
+            let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
             // Wait for Orbit to finish changing its record and sockets, leaving discovery to reap it.
             let exited_start = loop {
                 let process = crate::platform::process(extra_pid as u32)
@@ -4749,7 +5006,7 @@ mod tests {
     fn work_started_after_a_column_scope_is_stopped_by_its_consent() {
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
-        sessions::stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT).unwrap();
+        sessions::stop_managed_sessions(&mut state.sessions, SESSION_CLEANUP_TIMEOUT).unwrap();
         state.sessions.clear();
         let mut shell = leased_orbit(
             &root,
@@ -4975,6 +5232,7 @@ mod tests {
             "",
             false,
             &log,
+            super::TERMINAL_START_TIMEOUT,
         );
         fs::write(
             root.join("startup-result"),
@@ -5106,6 +5364,7 @@ mod tests {
                 None,
                 &log,
                 Instant::now() + Duration::from_secs(5),
+                &mut sessions::FailedStarts::default(),
             )
             .unwrap();
             let pid = orbit_pid(&live);
@@ -5563,7 +5822,7 @@ mod tests {
             stop.join().unwrap().unwrap(),
             control::StopAnswer::Reply(eon_workspace_protocol::stop::Reply::Stopped { .. })
         ));
-        assert!(state.stopping);
+        assert!(state.stopping.is_some());
         fs::write(registry_root.join(".tmp-test-release"), b"release").unwrap();
         while state.registry_pending.is_some() {
             assert!(Instant::now() < deadline);
@@ -5598,6 +5857,7 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -5611,7 +5871,7 @@ mod tests {
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -5701,7 +5961,7 @@ mod tests {
         let (stream, hung_up_peer) = UnixStream::pair().unwrap();
         state.subscribers.attach(stream, *hung_up, Instant::now());
         assert_eq!(state.subscribers.len(), 2);
-        state.stopping = true;
+        state.stopping = Some(StopReason::StopRequired);
         assert_eq!(
             refusal(subscribe(&mut state, None, Default::default())),
             "stop-incomplete"
@@ -5724,7 +5984,7 @@ mod tests {
         crate::subscriptions::tests::hang_up(hung_up_peer);
         state.serve_subscribers(Instant::now());
         assert_eq!(state.subscribers.len(), 1);
-        state.stopping = false;
+        state.stopping = None;
         // eonbase has no workspace to subscribe to.
         state.workspaces = None;
         assert_eq!(
@@ -5809,6 +6069,7 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: Some(
                 crate::session_registry::Worker::start(workspace.registry().clone()).unwrap(),
             ),
@@ -5824,7 +6085,7 @@ mod tests {
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -6007,6 +6268,7 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -6020,7 +6282,7 @@ mod tests {
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: Some(crate::attention::Attention::new(true)),
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -6096,61 +6358,6 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    struct FixtureProcess {
-        pid: libc::pid_t,
-        start: u64,
-    }
-
-    #[cfg(target_os = "linux")]
-    impl FixtureProcess {
-        fn read(path: &Path) -> Result<Option<Self>, String> {
-            let stat = match fs::read_to_string(path) {
-                Ok(stat) => stat,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(error) => return Err(format!("{}: {error}", path.display())),
-            };
-            let identity = || {
-                let pid = stat.split_whitespace().next()?.parse().ok()?;
-                let start = stat
-                    .rsplit_once(')')?
-                    .1
-                    .split_whitespace()
-                    .nth(19)?
-                    .parse()
-                    .ok()?;
-                (pid > 0).then_some(Self { pid, start })
-            };
-            identity()
-                .map(Some)
-                .ok_or_else(|| format!("invalid fixture process identity in {}", path.display()))
-        }
-
-        fn matches(&self) -> bool {
-            matches!(crate::platform::process(self.pid as u32),
-                Ok(Some(process)) if process.start == self.start)
-        }
-
-        fn signal(&self, signal: i32) {
-            if self.matches() {
-                // SAFETY: this is the exact process registered by the fixture before exec.
-                unsafe { libc::kill(self.pid, signal) };
-            }
-        }
-
-        fn pending(&self) -> bool {
-            match crate::platform::process(self.pid as u32) {
-                Ok(Some(process)) if process.start == self.start => {
-                    // SAFETY: reaps this exact exited child; a non-child returns ECHILD.
-                    let reaped =
-                        unsafe { libc::waitpid(self.pid, std::ptr::null_mut(), libc::WNOHANG) };
-                    reaped != self.pid && !process.ended
-                }
-                _ => false,
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
     impl std::ops::Deref for FinishingWindow {
         type Target = SupervisorState;
 
@@ -6171,35 +6378,9 @@ mod tests {
         fn drop(&mut self) {
             drop(self.state.venus.take());
             if let Err(error) =
-                sessions::stop_managed_sessions(&mut self.state.sessions, SESSION_START_TIMEOUT)
+                sessions::stop_managed_sessions(&mut self.state.sessions, SESSION_CLEANUP_TIMEOUT)
             {
                 eprintln!("fixture cleanup {}: {error}", self.root.display());
-            }
-            let processes = ["orbit.process", "agent.process"]
-                .into_iter()
-                .filter_map(|name| match FixtureProcess::read(&self.root.join(name)) {
-                    Ok(process) => process,
-                    Err(error) => {
-                        eprintln!("fixture process cleanup: {error}");
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            for signal in [libc::SIGTERM, libc::SIGKILL] {
-                for process in &processes {
-                    process.signal(signal);
-                    process.signal(libc::SIGCONT);
-                }
-                let deadline = Instant::now() + SESSION_START_TIMEOUT;
-                while processes.iter().any(FixtureProcess::pending) && Instant::now() < deadline {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                if !processes.iter().any(FixtureProcess::pending) {
-                    break;
-                }
-            }
-            for process in processes.iter().filter(|process| process.pending()) {
-                eprintln!("fixture cleanup could not reap pid {}", process.pid);
             }
             if let Err(error) = fs::remove_dir_all(&self.root) {
                 eprintln!("fixture directory cleanup {}: {error}", self.root.display());
@@ -6211,6 +6392,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn finishing_window(root: &Path) -> (FinishingWindow, PathBuf) {
         let state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -6224,7 +6406,7 @@ mod tests {
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: Some(crate::attention::Attention::new(true)),
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -6248,19 +6430,6 @@ mod tests {
                 .unwrap()
                 .success()
         );
-        let launcher = root.join("orbit-launcher");
-        script(
-            &launcher,
-            &format!(
-                r#"#!/bin/sh
-set -eu
-IFS= read -r identity < /proc/$$/stat
-printf '%s\n' "$identity" > '{}'
-exec "$ORBIT_BIN" "$@"
-"#,
-                root.join("orbit.process").display()
-            ),
-        );
         // Retain a writer so a pulse's close cannot make the next read end the agent.
         fixture
             .state
@@ -6268,20 +6437,17 @@ exec "$ORBIT_BIN" "$@"
             .push(sessions::tests::leased_orbit_with_program(
                 root,
                 &format!(
-                    "set -eu; IFS= read -r identity < /proc/$$/stat; \
-                 printf '%s\\n' \"$identity\" > '{}'; \
-                 exec 3<> '{}'; : > '{}'; \
+                    "set -eu; exec 3<> '{}'; : > '{}'; \
                  while read -r _ <&3; do \
                  printf '\\033]7501;state=working:app=claude-code\\007'; \
                  printf '\\033]7501;state=done:app=claude-code\\007'; done",
-                    root.join("agent.process").display(),
                     gate.display(),
                     ready.display()
                 ),
-                &launcher,
+                Path::new(&std::env::var_os("ORBIT_BIN").unwrap()),
             ));
         // Orbit Ready precedes the agent opening its FIFO; wait for that open before pulses.
-        let deadline = Instant::now() + SESSION_START_TIMEOUT;
+        let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
         while !ready.exists() {
             assert!(
                 Instant::now() < deadline,
@@ -6608,7 +6774,7 @@ exec "$ORBIT_BIN" "$@"
             .count();
         assert_eq!(ended, 1);
 
-        assert!(state.venus.is_some() && !state.stopping);
+        assert!(state.venus.is_some() && state.stopping.is_none());
         assert_eq!(
             (state.sessions.len(), state.sessions[0].run_id()),
             (1, run.as_str())
@@ -6651,6 +6817,7 @@ exec "$ORBIT_BIN" "$@"
         .unwrap();
         let (notices, take_close) = crate::notification::Notices::record_closes();
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -6664,7 +6831,7 @@ exec "$ORBIT_BIN" "$@"
             venus: Some(venus),
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -6738,6 +6905,7 @@ exec "$ORBIT_BIN" "$@"
         venus.child.wait().unwrap();
         let (notices, take_show) = crate::notification::Notices::record_shows();
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -6754,7 +6922,7 @@ exec "$ORBIT_BIN" "$@"
                 .map(OsString::from)
                 .collect(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -6887,6 +7055,7 @@ exec "$ORBIT_BIN" "$@"
         );
         assert_eq!(sessions.len(), 2);
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -6900,7 +7069,7 @@ exec "$ORBIT_BIN" "$@"
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -7034,7 +7203,7 @@ exec "$ORBIT_BIN" "$@"
         let (ended, errors) = stop_owned_sessions(&mut sessions, &ids, &log);
         let elapsed = started.elapsed();
         assert!(
-            elapsed < SESSION_START_TIMEOUT + Duration::from_millis(1500),
+            elapsed < SESSION_CLEANUP_TIMEOUT + Duration::from_millis(1500),
             "the close waited past its one shared bound: {elapsed:?}"
         );
         assert_eq!(ended, [("terminal-2".to_owned(), None)]);
@@ -7096,6 +7265,7 @@ exec "$ORBIT_BIN" "$@"
         let record = sessions::tests::record(&sessions[0]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -7109,7 +7279,7 @@ exec "$ORBIT_BIN" "$@"
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -7204,12 +7374,13 @@ exec "$ORBIT_BIN" "$@"
             LaunchMode::Workspace,
             "component-1",
             Some(&orbit_logs),
-            Instant::now() + SESSION_START_TIMEOUT,
+            Instant::now() + SESSION_CLEANUP_TIMEOUT,
         )
         .unwrap_or_else(|error| panic!("recover {}: {error}", orbit_log.display()));
         assert_eq!(sessions[0].orbit_log.as_ref(), Some(&orbit_log));
         kill_orbit_worker(orbit);
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -7223,7 +7394,7 @@ exec "$ORBIT_BIN" "$@"
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -7270,6 +7441,7 @@ exec "$ORBIT_BIN" "$@"
         let orbit_log = session.orbit_log.clone().unwrap();
         kill_worker(&session);
         let mut state = SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -7283,7 +7455,7 @@ exec "$ORBIT_BIN" "$@"
             venus: None,
             initial_child: Vec::new(),
             initial_status: None,
-            stopping: false,
+            stopping: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -7301,7 +7473,7 @@ exec "$ORBIT_BIN" "$@"
                 && error.ends_with(&format!("; Orbit log: {}", orbit_log.display())),
             "{error}"
         );
-        assert!(state.stopping);
+        assert!(state.stopping.is_some());
         let supervisor_log = fs::read_dir(root.join("logs"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -7480,6 +7652,7 @@ exec "$ORBIT_BIN" "$@"
                 &log,
                 "component-1",
                 &mut owned,
+                &mut sessions::FailedStarts::default(),
                 &mut Vec::new(),
                 &mut Sockets::default(),
                 crate::workspace::SessionOperation::SettlePair("terminal-1".into()),
@@ -7500,7 +7673,7 @@ exec "$ORBIT_BIN" "$@"
                 LaunchMode::Workspace,
                 "component-1",
                 None,
-                Instant::now() + SESSION_START_TIMEOUT,
+                Instant::now() + SESSION_CLEANUP_TIMEOUT,
             )
             .unwrap_or_else(|error| {
                 panic!(

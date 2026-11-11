@@ -106,7 +106,7 @@ type WorkerItem = (Outgoing, Option<u64>);
 /// The fallback refresh; an event the subscription reads refreshes at once.
 const WORKSPACE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 /// How long a request waits before the window says Eon is slow. Fixed: VEN-C8 sets this bound,
-/// well inside the six-second one below, so the notice comes before any loss. A terminal start
+/// well inside the exchange deadline below, so the notice comes before any loss. A terminal start
 /// can still take longer under load; eon-pimct tracks slow starts.
 const WORKSPACE_SLOW_THRESHOLD: Duration = Duration::from_secs(2);
 
@@ -863,14 +863,9 @@ fn run_subscription(socket: PathBuf, subscription: Arc<Subscription>, notify: Ar
     }
 }
 
-/// Eon answers an action that starts a terminal only after Orbit is Ready, within its shared
-/// five-second start deadline. Wait that deadline plus one second, so one slow but successful
-/// terminal start does not read as workspace loss; an action queued behind other slow work, or one
-/// that stops a terminal before starting another, can still exceed it.
-const WORKSPACE_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(6);
-/// Stop waits as `eon quit` does: Eon's 36-second control bound for one in-flight operation,
-/// then five seconds for the Stop itself.
-const STOP_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(41);
+// Runtime owns the budgets; a slow but admitted start must not look like workspace loss.
+const WORKSPACE_EXCHANGE_TIMEOUT: Duration = eon_workspace_protocol::CONTROL_TIMEOUT;
+const STOP_EXCHANGE_TIMEOUT: Duration = eon_workspace_protocol::STOP_TIMEOUT;
 
 /// Why a workspace request has no answer.
 #[derive(Debug, PartialEq)]
@@ -2320,7 +2315,7 @@ mod tests {
         );
         server.join().unwrap();
         // Stop waits as long as `eon quit` does: one in-flight operation, then the Stop.
-        assert_eq!(WAITS.timeout(&stop()), Duration::from_secs(41));
+        assert_eq!(WAITS.timeout(&stop()), eon_workspace_protocol::STOP_TIMEOUT);
         assert_eq!(
             WAITS.timeout(&WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect).into()),
             WORKSPACE_EXCHANGE_TIMEOUT

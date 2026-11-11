@@ -1,10 +1,7 @@
 use super::{
     sessions::bound_io,
     subscriptions::Subscriber,
-    supervisor::{
-        LaunchMode, PRESENTATION_ADMISSION_TIMEOUT, SESSION_START_TIMEOUT, effective_uid,
-        request_id,
-    },
+    supervisor::{LaunchMode, effective_uid, request_id},
     workspace,
 };
 use eon_workspace_protocol::stop;
@@ -28,11 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-// A reply can wait behind one in-flight operation, the longest being startup: presentation
-// admission, then the first terminal's start.
-pub(super) const CONTROL_TIMEOUT: Duration = PRESENTATION_ADMISSION_TIMEOUT
-    .saturating_add(SESSION_START_TIMEOUT)
-    .saturating_add(Duration::from_secs(1));
+pub(super) use eon_workspace_protocol::{CONTROL_TIMEOUT, STOP_TIMEOUT};
 
 /// How long one client's request read or reply write may block the supervisor.
 const CLIENT_IO_TIMEOUT: Duration = Duration::from_millis(250);
@@ -92,10 +85,6 @@ pub(super) enum Incoming {
     Stop(String),
     Request(Request),
 }
-
-/// A Stop can wait behind one in-flight operation, then for the bounded
-/// managed Stop itself.
-pub(super) const STOP_TIMEOUT: Duration = CONTROL_TIMEOUT.saturating_add(SESSION_START_TIMEOUT);
 
 /// What the supervisor does with a request: reply and close the connection,
 /// shutting down after a stopping reply, or keep the connection for an
@@ -310,8 +299,16 @@ pub(super) enum StopAnswer {
 /// Sends the Reserved Stop of `generation` on `stream` (EON-C11). The reply's
 /// first six bytes say whether its supervisor answered it.
 pub(super) fn send_stop_on(
+    stream: UnixStream,
+    generation: &str,
+) -> Result<StopAnswer, EndpointFailure> {
+    send_stop_until(stream, generation, Instant::now() + STOP_TIMEOUT)
+}
+
+fn send_stop_until(
     mut stream: UnixStream,
     generation: &str,
+    deadline: Instant,
 ) -> Result<StopAnswer, EndpointFailure> {
     let request = stop::encode_request(generation).map_err(|error| {
         EndpointFailure::new(
@@ -319,7 +316,6 @@ pub(super) fn send_stop_on(
             format!("cannot encode Eon Stop: {error}"),
         )
     })?;
-    let deadline = Instant::now() + STOP_TIMEOUT;
     write_until(&mut stream, &request, deadline)?;
     let mut reply = vec![0; stop::HEADER_BYTES];
     read_until(&mut stream, &mut reply, deadline)?;
@@ -985,6 +981,104 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn client_deadlines_cover_admission_failed_files_and_failed_fallback() {
+        use crate::{fixtures, workspace::SessionOperation};
+        use eon_workspace_protocol::{
+            PRESENTATION_ADMISSION_TIMEOUT, SESSION_CLEANUP_TIMEOUT, TERMINAL_START_TIMEOUT,
+        };
+        const GENERATION: &str = "g1-0123456789abcdef0123456789abcdef";
+        let startup = PRESENTATION_ADMISSION_TIMEOUT
+            + TERMINAL_START_TIMEOUT * 2
+            + SESSION_CLEANUP_TIMEOUT * 3;
+        assert_eq!(super::CONTROL_TIMEOUT, startup + Duration::from_secs(1));
+        assert_eq!(
+            super::STOP_TIMEOUT,
+            super::CONTROL_TIMEOUT + SESSION_CLEANUP_TIMEOUT
+        );
+        // Exact budgets are checked above; allow fixture scheduling slack in the exchange.
+        const SCALE: u32 = 100;
+        for stopping in [false, true] {
+            let (stream, peer) = UnixStream::pair().unwrap();
+            let (entered, ready) = std::sync::mpsc::channel();
+            let client = thread::spawn(move || {
+                let timeout = if stopping {
+                    super::STOP_TIMEOUT
+                } else {
+                    super::CONTROL_TIMEOUT
+                } / SCALE;
+                let deadline = Instant::now() + timeout + Duration::from_secs(2);
+                entered.send(()).unwrap();
+                if stopping {
+                    assert_eq!(
+                        super::send_stop_until(stream, GENERATION, deadline).unwrap(),
+                        super::StopAnswer::Reply(eon_workspace_protocol::stop::Reply::Stopped {
+                            generation: GENERATION.into(),
+                            terminals: Vec::new(),
+                        })
+                    );
+                } else {
+                    let request = super::prepare_action(
+                        None,
+                        super::Action::Workspace(super::WorkspaceAction::Inspect),
+                    )
+                    .unwrap();
+                    assert!(matches!(
+                        super::send_prepared_action(stream, request, Some(deadline)).unwrap(),
+                        super::ControlResponse::Workspace(super::Response::Failure(_))
+                    ));
+                }
+            });
+            ready.recv().unwrap();
+            thread::sleep(PRESENTATION_ADMISSION_TIMEOUT / SCALE);
+            let root = crate::supervisor::temporary_directory();
+            let mut starts = 0;
+            let workspace = crate::workspace::WorkspaceSet::pending(
+                root.clone(),
+                root.clone(),
+                None,
+                fixtures::inputs().defaults.popups,
+                |_, _| Ok(vec!["fixture-files".into()]),
+                |operation| {
+                    assert!(matches!(operation, SessionOperation::Start { .. }));
+                    starts += 1;
+                    thread::sleep(TERMINAL_START_TIMEOUT / SCALE);
+                    thread::sleep(SESSION_CLEANUP_TIMEOUT / SCALE);
+                    Err("injected start and rollback failure".into())
+                },
+            );
+            assert!(workspace.is_err());
+            assert_eq!(
+                starts, 2,
+                "the Files failure must attempt the fallback pane"
+            );
+            // A failed bootstrap also closes its already admitted presentation.
+            thread::sleep(SESSION_CLEANUP_TIMEOUT / SCALE);
+            if stopping {
+                thread::sleep(SESSION_CLEANUP_TIMEOUT / SCALE);
+            }
+            super::handle_client(peer, |incoming| match incoming {
+                super::Incoming::Stop(generation) => super::Dispatched::Stop(
+                    eon_workspace_protocol::stop::Reply::Stopped {
+                        generation,
+                        terminals: Vec::new(),
+                    },
+                    true,
+                ),
+                super::Incoming::Request(_) => (
+                    super::ControlResponse::Workspace(super::Response::Failure(super::failure(
+                        "terminal-start",
+                        "injected failure",
+                    ))),
+                    false,
+                )
+                    .into(),
+            });
+            client.join().unwrap();
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn handle_client_dispatches_buffered_request_after_peer_closes() {

@@ -810,6 +810,13 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C13 — Same-boot management ownership
 
+- **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer,
+  in `eon-g3vdz` / `eon-l4e7s`: distinguish the fifteen-second new-terminal
+  budget from five-second recovery and fresh five-second rollback. Ready
+  marking and management-only cleanup authority remain unchanged. Proof
+  is limited to the beads' exact-tree checks and isolated Linux observations;
+  these consumer-budget checks do not broaden Orbit's proved platform scope.
+
 - **Status:** Proved
 - **Consumer:** One local Eon launcher and one later replacement on the same boot
   and login.
@@ -856,7 +863,8 @@ PTY pixel size rule needs no wire change.
   - Validation or transport failure authorizes no PID, process group, process
     name, pathname, procfs scan, cgroup, or pidfd fallback.
   - Bounds are explicit:
-    - Eon start and recovery: five seconds;
+    - Eon new-terminal spawn, Ready and lease acquisition: fifteen seconds;
+      recovery: five seconds; failed-start rollback: a fresh five seconds;
     - Orbit incomplete handshake: one second;
     - each management message and record: 4 KiB, except one ORB-C17
       `ReadVisible` reply, whose text is at most 1 MiB, one ORB-C17

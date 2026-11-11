@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- ORB-C13 distinguishes Eon's fifteen-second new-terminal start allowance
+  from five-second recovery and fresh five-second failed-start rollback.
+  Ready marking and management-only authority after marking are unchanged
+  (`eon-g3vdz`, `eon-l4e7s`).
+
 - Management moves to generation 7, a breaking change with no compatibility
   window (`eon-u5bvd.2`). It adds the `ReadHistory` request (8) and its
   `History` reply (76): the active screen's retained history followed by its

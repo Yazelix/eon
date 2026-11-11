@@ -10,8 +10,9 @@ use super::{
     },
     platform::socket_path_fits,
     supervisor::{
-        LaunchMode, LaunchOptions, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
-        probe_supervisor, request_id, runtime_directory, validate_private_directory,
+        LaunchMode, LaunchOptions, SESSION_CLEANUP_TIMEOUT, base_runtime_directory,
+        prepare_runtime, probe_supervisor, request_id, runtime_directory,
+        validate_private_directory,
     },
     workspace::{failure_json, json_escape, terminal_text, validate_initial_directory},
 };
@@ -646,7 +647,7 @@ pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32
         .spawn()
         .map_err(|error| format!("cannot start Eon window {id}: {error}"))?;
     let socket = generation_directory(&root, &generation).join("eon.sock");
-    let deadline = Instant::now() + SESSION_START_TIMEOUT.saturating_mul(4);
+    let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT.saturating_mul(4);
     loop {
         if let Ok((LaunchMode::Workspace, _)) = probe_supervisor(inputs, &socket, &generation) {
             write_stdout(format!("{id}\n"))?;
