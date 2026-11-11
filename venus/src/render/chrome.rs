@@ -11,7 +11,8 @@ use crate::{
     DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup,
-        ShortcutHintsScene, TabBadge, WorkspaceControl, chrome_title_metrics,
+        ShortcutHintsScene, TabBadge, WorkspaceControl,
+        tokens::{self, chrome_title_metrics},
     },
 };
 use eon_workspace_protocol::v39::AttentionState;
@@ -41,12 +42,16 @@ enum TooltipEdge {
 
 /// Where the tooltip of the bar item at `anchor` opens: above the hints for the version label,
 /// which sits in them, and below the header for the rest.
-fn tooltip_edge(workspace: &WorkspaceScene, anchor: SceneRect, padding: f32) -> TooltipEdge {
+fn tooltip_edge(
+    workspace: &WorkspaceScene,
+    anchor: SceneRect,
+    metrics: CellMetrics,
+) -> TooltipEdge {
     match &workspace.hints {
         Some(hints) if anchor.top >= hints.rect.top => {
-            TooltipEdge::Above(hints.rect.top - padding / 3.0)
+            TooltipEdge::Above(hints.rect.top - tokens::tooltip_gap(metrics))
         }
-        _ => TooltipEdge::Below(workspace.header.bottom() + padding / 3.0),
+        _ => TooltipEdge::Below(workspace.header.bottom() + tokens::tooltip_gap(metrics)),
     }
 }
 
@@ -62,7 +67,9 @@ fn tooltip_room(
     let width = (size.width as f32 - padding * 2.0).min(metrics.font_size * 40.0);
     let height = match edge {
         TooltipEdge::Below(top) => size.height as f32 - top - padding,
-        TooltipEdge::Above(bottom) => bottom - workspace.header.bottom() - padding / 3.0,
+        TooltipEdge::Above(bottom) => {
+            bottom - workspace.header.bottom() - tokens::tooltip_gap(metrics)
+        }
     };
     (width, height)
 }
@@ -454,16 +461,16 @@ fn wrapped_text_height(
 fn hint_detail_rect(
     popup: SceneRect,
     text_height: f32,
-    padding: f32,
+    metrics: CellMetrics,
     top: f32,
 ) -> Option<SceneRect> {
-    let height = text_height.ceil() + padding * 2.0;
+    let height = text_height.ceil() + metrics.padding * 2.0;
     let rect = SceneRect {
-        top: popup.top - padding / 3.0 - height,
+        top: popup.top - tokens::tooltip_gap(metrics) - height,
         height,
         ..popup
     };
-    (text_height > 0.0 && rect.top >= top + padding / 3.0).then_some(rect)
+    (text_height > 0.0 && rect.top >= top + tokens::tooltip_gap(metrics)).then_some(rect)
 }
 
 fn text_bounds(rect: SceneRect) -> TextBounds {
@@ -863,7 +870,7 @@ impl Spinners {
             Backing::Translucent => (None, palette::BAR_BACKGROUND),
         };
         if let Some(disc) = disc {
-            rectangles.push_rounded(badge.rect, badge.rect.width / 2.0, disc);
+            rectangles.push_rounded(badge.rect, tokens::capsule_radius(badge.rect.width), disc);
         }
         let color = if dots {
             blend_to_contrast(self.focus, under, 3.0)
@@ -1109,7 +1116,7 @@ fn push_dots(
 /// target and half a padding each side, the margin a compact title's gap keeps around its text.
 pub(super) fn heading_button_gap(target: SceneRect, metrics: CellMetrics) -> SceneRect {
     SceneRect {
-        left: target.left - metrics.padding / 2.0,
+        left: target.left - tokens::title_margin(metrics),
         width: target.width + metrics.padding,
         ..target
     }
@@ -1127,12 +1134,12 @@ impl FrameTitle {
     }
 
     pub(super) fn ink_width(&self, metrics: CellMetrics, stroke: f32) -> f32 {
-        self.width + (metrics.padding / 2.0 - stroke).max(0.0)
+        self.width + (tokens::title_margin(metrics) - stroke).max(0.0)
     }
 
     pub(super) fn border_gap(&self, row: SceneRect, metrics: CellMetrics) -> SceneRect {
         SceneRect {
-            left: row.left + metrics.padding / 2.0,
+            left: row.left + tokens::title_margin(metrics),
             top: row.top + 1.0,
             width: self.width + metrics.padding,
             height: (row.height - 2.0).max(0.0),
@@ -1180,7 +1187,7 @@ impl FrameTitleTab {
         stroke: f32,
         action: Option<SceneRect>,
     ) -> Option<Self> {
-        let extra = crate::scene::title_tab_rise(metrics).max(stroke + 1.0);
+        let extra = tokens::title_tab_rise(metrics).max(stroke + 1.0);
         let top = (row.top - extra).floor().max(frame_top.ceil() + 1.0);
         if top + stroke + 1.0 > row.top {
             return None;
@@ -1189,7 +1196,7 @@ impl FrameTitleTab {
             return Self::at(fonts, metrics, label, row, card, top, row.top, stroke);
         };
         // Both notches return to the top edge over the same run; flat edge stays between them.
-        let return_run = (card.bounds.top - top) * 1.5;
+        let return_run = tokens::title_tab_return(card.bounds.top - top);
         let label_row = SceneRect {
             width: (target.left - metrics.padding - return_run - row.left).max(0.0),
             ..row
@@ -1200,9 +1207,9 @@ impl FrameTitleTab {
         let label_edge = card.bounds.left
             + metrics.padding
             + tab.title.ink_width(metrics, stroke)
-            + metrics.padding / 2.0;
+            + tokens::title_margin(metrics);
         tab.action = Some(
-            card.bounds.left + card.bounds.right() - target.left + metrics.padding / 2.0
+            card.bounds.left + card.bounds.right() - target.left + tokens::title_margin(metrics)
                 - (label_edge - tab.start),
         );
         Some(tab)
@@ -1224,8 +1231,8 @@ impl FrameTitleTab {
         }
         let rise = card.bounds.top - top;
         let join_radius = (card.radius / 2.0).min(rise / 2.0);
-        let return_run = rise * 1.5;
-        let right_padding = metrics.padding / 2.0;
+        let return_run = tokens::title_tab_return(rise);
+        let right_padding = tokens::title_margin(metrics);
         if right_padding < stroke + 1.0 {
             return None;
         }
@@ -1347,7 +1354,7 @@ impl FrameTitleTab {
                 height: (viewer.bounds.bottom() - top).max(0.0),
                 ..viewer.bounds
             },
-            radius: crate::scene::card_gap(metrics),
+            radius: tokens::card_radius(metrics),
         };
         Self::new(
             fonts,
@@ -1435,7 +1442,7 @@ impl PaneTitleTab {
             }
         };
         let own_ink = ink(pane);
-        let rise = crate::scene::title_tab_rise(metrics);
+        let rise = tokens::title_tab_rise(metrics);
         // With at least a tab rise of room, keep the cap out of the previous row too. A short
         // window can shrink the gap below that threshold, leaving the ink and viewport bounds.
         // Fractional row sums can round just below a whole rise.
@@ -1515,9 +1522,8 @@ impl PaneTitleTab {
                             pane.header_content(metrics).right()
                         };
                         let above = index.checked_sub(1).and_then(|above| panes.get(above));
-                        let top = (workspace.header_viewport.top
-                            - crate::scene::title_tab_rise(metrics))
-                        .max(fill.bounds.top);
+                        let top = (workspace.header_viewport.top - tokens::title_tab_rise(metrics))
+                            .max(fill.bounds.top);
                         let viewport = SceneRect {
                             top,
                             height: (workspace.header_viewport.bottom() - top).max(0.0),
@@ -1659,8 +1665,10 @@ impl Renderer {
     }
 }
 
-fn header_item_visual(rect: SceneRect, padding: f32) -> SceneRect {
-    let inset = (padding / 3.0).min(rect.width / 4.0).min(rect.height / 4.0);
+fn header_item_visual(rect: SceneRect, metrics: CellMetrics) -> SceneRect {
+    let inset = tokens::chip_inset(metrics)
+        .min(rect.width / 4.0)
+        .min(rect.height / 4.0);
     SceneRect {
         left: rect.left + inset,
         top: rect.top + inset,
@@ -1677,7 +1685,7 @@ fn push_bar_widget(
 ) {
     rectangles.push_rounded_outline_width(
         visual,
-        visual.height / 2.0,
+        tokens::capsule_radius(visual.height),
         physical_outline_width(border_width, scale),
         palette::CHIP_OUTLINE,
     );
@@ -1890,7 +1898,6 @@ impl Renderer {
         background: SceneColor,
         rectangles: &mut RectangleBatch,
     ) {
-        let padding = self.metrics.padding;
         let line = self.metrics.height;
         if row.rect.intersection(list).is_none() {
             return;
@@ -1898,7 +1905,7 @@ impl Renderer {
         let (title, detail) = push_attention_row_surface(
             row,
             hovered,
-            padding / 2.0,
+            tokens::inner_radius(self.metrics),
             surface,
             background,
             &mut self.spinners,
@@ -2038,7 +2045,7 @@ impl Renderer {
         {
             self.build_hint_popup(
                 workspace,
-                hints.rect.top - padding / 3.0,
+                hints.rect.top - tokens::tooltip_gap(self.metrics),
                 index,
                 group,
                 rectangles,
@@ -2127,12 +2134,12 @@ impl Renderer {
         };
         let edge = if hovered_pane.is_some() {
             if anchor.top > self.config.height as f32 / 2.0 {
-                TooltipEdge::Above(anchor.top - padding / 3.0)
+                TooltipEdge::Above(anchor.top - tokens::tooltip_gap(self.metrics))
             } else {
-                TooltipEdge::Below(anchor.bottom() + padding / 3.0)
+                TooltipEdge::Below(anchor.bottom() + tokens::tooltip_gap(self.metrics))
             }
         } else {
-            tooltip_edge(workspace, anchor, padding)
+            tooltip_edge(workspace, anchor, self.metrics)
         };
         let (width, height) = self.tooltip_room(workspace, edge);
         if width <= padding * 2.0 || height <= padding * 2.0 {
@@ -2299,7 +2306,7 @@ impl Renderer {
             &row.description,
             inner,
         );
-        let Some(rect) = hint_detail_rect(popup, text_height, padding, top) else {
+        let Some(rect) = hint_detail_rect(popup, text_height, self.metrics, top) else {
             return;
         };
         let detail = self.text.len();
@@ -2373,12 +2380,16 @@ impl Renderer {
             text.bound_top = (top + padding).floor() as i32;
             text.bottom = (top + height - padding).ceil() as i32;
         }
-        rectangles.push_rounded(rect, padding / 2.0, palette::TOOLTIP_BACKGROUND);
+        rectangles.push_rounded(
+            rect,
+            tokens::inner_radius(self.metrics),
+            palette::TOOLTIP_BACKGROUND,
+        );
     }
 
     pub(super) fn build_dialog(&mut self, viewer: &DialogScene, rectangles: &mut RectangleBatch) {
         let first = self.text.len();
-        let padding = self.metrics.padding.min(viewer.bounds.width / 8.0);
+        let padding = tokens::dialog_padding(self.metrics, viewer.bounds.width);
         rectangles.clip = None;
         let stroke = physical_outline_width(self.border_width, self.metrics.scale);
         let tab = FrameTitleTab::dialog(&mut self.fonts.font_system, self.metrics, viewer, stroke);
@@ -2421,14 +2432,15 @@ impl Renderer {
         rectangles.clip = Some(viewer.bounds);
         for chip in &viewer.filters {
             if chip.selected {
-                rectangles.push_rounded(chip.rect, padding / 2.0, palette::CHROME_HIGHLIGHT);
-                rectangles.push_rounded_outline(chip.rect, padding / 2.0, palette::ACCENT);
+                let radius = tokens::dialog_radius(padding);
+                rectangles.push_rounded(chip.rect, radius, palette::CHROME_HIGHLIGHT);
+                rectangles.push_rounded_outline(chip.rect, radius, palette::ACCENT);
             }
             self.push_text_clipped(
                 &format!("{} {}", chip.filter.label(), chip.count),
-                chip.rect.left + padding / 3.0,
+                chip.rect.left + tokens::dialog_chip_label_inset(padding),
                 chip.rect.top + (chip.rect.height - self.metrics.height) / 2.0,
-                (chip.rect.width - padding * 2.0 / 3.0).max(0.0),
+                (chip.rect.width - tokens::dialog_chip_label_margins(padding)).max(0.0),
                 chip.rect.width,
                 chrome_title_metrics(self.metrics).text_height,
                 if chip.selected {
@@ -2494,7 +2506,7 @@ impl Renderer {
                 if row.focused {
                     rectangles.push_rounded(
                         row.rect,
-                        self.metrics.padding / 3.0,
+                        tokens::dialog_row_radius(self.metrics),
                         palette::CONTROL_HOVER,
                     );
                 }
@@ -2530,7 +2542,11 @@ impl Renderer {
                 width: self.metrics.scale * 2.0,
                 height: viewer.content.height,
             };
-            rectangles.push_rounded(track, track.width / 2.0, palette::SCROLLBAR_TRACK);
+            rectangles.push_rounded(
+                track,
+                tokens::capsule_radius(track.width),
+                palette::SCROLLBAR_TRACK,
+            );
             let thumb_height = (track.height * viewer.content.height
                 / (viewer.content.height + viewer.max_scroll))
                 .max(track.width * 2.0)
@@ -2543,7 +2559,7 @@ impl Renderer {
                     height: thumb_height,
                     ..track
                 },
-                track.width / 2.0,
+                tokens::capsule_radius(track.width),
                 palette::ACCENT,
             );
         }
@@ -2686,7 +2702,7 @@ impl Renderer {
             for (index, group) in hints.groups.iter().enumerate() {
                 rectangles.push_rounded(
                     group.rect,
-                    padding / 2.0,
+                    tokens::inner_radius(self.metrics),
                     if self.header.hint_group_hovered == Some(index) {
                         palette::CHROME_HIGHLIGHT
                     } else {
@@ -2696,7 +2712,7 @@ impl Renderer {
                 let width = (group.rect.width - padding).max(0.0);
                 self.push_text_clipped(
                     &group.legend,
-                    group.rect.left + padding / 2.0,
+                    group.rect.left + tokens::inner_inset(self.metrics),
                     group.rect.top,
                     width,
                     width,
@@ -2760,7 +2776,7 @@ impl Renderer {
                 continue;
             }
             let visual = workspace.bar_pill_rect(tab.rect, self.metrics);
-            let radius = visual.height / 2.0;
+            let radius = tokens::capsule_radius(visual.height);
             // Each tab state steps up from the last so that the pills stand out from the bar.
             let fill = if tab.selected {
                 palette::TAB_SELECTED
@@ -2797,13 +2813,14 @@ impl Renderer {
             let control = WorkspaceHeaderControl::WindowMenu;
             if workspace.has_control(control) {
                 let visual = workspace.bar_pill_rect(icon, self.metrics);
+                let radius = tokens::capsule_radius(visual.height);
                 if self.header.pressed_header == Some(control) {
-                    rectangles.push_rounded(visual, visual.height / 2.0, palette::CHROME_HIGHLIGHT);
+                    rectangles.push_rounded(visual, radius, palette::CHROME_HIGHLIGHT);
                 } else if self.header.hovers(WorkspaceFocus::Header(control), "") {
-                    rectangles.push_rounded(visual, visual.height / 2.0, palette::CONTROL_HOVER);
+                    rectangles.push_rounded(visual, radius, palette::CONTROL_HOVER);
                 }
                 if focus == WorkspaceFocus::Header(control) {
-                    rectangles.push_rounded_outline(visual, visual.height / 2.0, palette::ACCENT);
+                    rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
                 }
             }
             self.push_bar_icon(EON_ICON_ID, palette::VERSION_TEXT, icon, None);
@@ -2813,7 +2830,7 @@ impl Renderer {
         if let Some(label) = &workspace.workspace_label {
             let control = WorkspaceHeaderControl::Workspaces;
             let visual = workspace.bar_pill_rect(label.rect, self.metrics);
-            let radius = visual.height / 2.0;
+            let radius = tokens::capsule_radius(visual.height);
             if workspace.has_control(control) {
                 if self.header.pressed_header == Some(control) {
                     rectangles.push_rounded(visual, radius, palette::CHROME_HIGHLIGHT);
@@ -2842,13 +2859,11 @@ impl Renderer {
         }
         // Quota chips and readings share the tabs' band.
         for quota in &workspace.quotas {
-            let visual = workspace.bar_pill_rect(
-                header_item_visual(quota.rect, self.metrics.padding),
-                self.metrics,
-            );
+            let visual =
+                workspace.bar_pill_rect(header_item_visual(quota.rect, self.metrics), self.metrics);
             push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
             self.push_quota_icon(quota.provider, quota.logo, None);
-            let label_left = quota.logo.right() + self.metrics.padding / 2.0;
+            let label_left = quota.logo.right() + tokens::icon_gap(self.metrics);
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
             let first_text = self.text.len();
             self.push_chip_label(
@@ -2878,10 +2893,8 @@ impl Renderer {
             };
             let color = load_color(label.load);
             let content = workspace.bar_item_rect(label.rect, self.metrics);
-            let visual = workspace.bar_pill_rect(
-                header_item_visual(label.rect, self.metrics.padding),
-                self.metrics,
-            );
+            let visual =
+                workspace.bar_pill_rect(header_item_visual(label.rect, self.metrics), self.metrics);
             push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
             let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
             // A label narrower than its chip sits in the middle; each character takes one cell.
@@ -2923,7 +2936,7 @@ impl Renderer {
             let visual = if round {
                 workspace.round_button_rect(&control, self.metrics)
             } else {
-                header_item_visual(content, self.metrics.padding)
+                header_item_visual(content, self.metrics)
             };
             let hovered = self.header.hovers(WorkspaceFocus::Header(control.kind), "");
             let pressed = self.header.pressed_header == Some(control.kind);
@@ -2935,9 +2948,10 @@ impl Renderer {
             } else {
                 palette::BAR_BACKGROUND
             };
-            rectangles.push_rounded(visual, visual.height / 2.0, fill);
+            let radius = tokens::capsule_radius(visual.height);
+            rectangles.push_rounded(visual, radius, fill);
             if focused {
-                rectangles.push_rounded_outline(visual, visual.height / 2.0, palette::ACCENT);
+                rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
             } else if round {
                 push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
             }
@@ -3183,14 +3197,14 @@ impl Renderer {
                     if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
                         rectangles.push_rounded(
                             pill,
-                            self.metrics.padding / 2.0,
+                            tokens::inner_radius(self.metrics),
                             palette::CHROME_HIGHLIGHT,
                         );
                     }
                     if notch.is_none() && current && focus == WorkspaceFocus::Panes {
                         rectangles.push_rounded_outline(
                             pill,
-                            self.metrics.padding / 2.0,
+                            tokens::inner_radius(self.metrics),
                             palette::ACCENT,
                         );
                     }
@@ -3319,11 +3333,12 @@ impl Renderer {
         } else {
             palette::CHROME_HIGHLIGHT
         };
+        let radius = tokens::inner_radius(self.metrics);
         if state.hovered {
-            rectangles.push_rounded(target, self.metrics.padding / 2.0, pill);
+            rectangles.push_rounded(target, radius, pill);
         }
         if state.focused {
-            rectangles.push_rounded_outline(target, self.metrics.padding / 2.0, palette::ACCENT);
+            rectangles.push_rounded_outline(target, radius, palette::ACCENT);
         }
         let (buffer, left, top) = ink_centred_glyph(
             &mut self.fonts.font_system,
@@ -3503,8 +3518,9 @@ impl RectangleBatch {
             self.clip = None;
             fill.into_iter().map(super::text_clip_bounds).collect()
         } else {
-            self.push_rounded(bounds, padding / 2.0, palette::DIALOG_BACKGROUND);
-            self.push_rounded_outline_width(bounds, padding / 2.0, stroke, palette::CARD_OUTLINE);
+            let radius = tokens::dialog_radius(padding);
+            self.push_rounded(bounds, radius, palette::DIALOG_BACKGROUND);
+            self.push_rounded_outline_width(bounds, radius, stroke, palette::CARD_OUTLINE);
             vec![text_bounds(bounds)]
         }
     }
@@ -3741,11 +3757,11 @@ mod tests {
             // The version's tooltip opens above it; a header item's below the header.
             let version = workspace.version.as_ref().unwrap();
             assert_eq!(
-                tooltip_edge(&workspace, version.rect, padding),
+                tooltip_edge(&workspace, version.rect, metrics),
                 TooltipEdge::Above(footer.rect.top - padding / 3.0)
             );
             assert_eq!(
-                tooltip_edge(&workspace, workspace.tabs[0].rect, padding),
+                tooltip_edge(&workspace, workspace.tabs[0].rect, metrics),
                 TooltipEdge::Below(workspace.header.bottom() + padding / 3.0)
             );
         }
@@ -3754,6 +3770,10 @@ mod tests {
     #[test]
     fn hint_popup_keeps_the_pointer_and_shows_a_row_in_full_above() {
         let padding = 9.0;
+        let metrics = CellMetrics {
+            padding,
+            ..CellMetrics::for_scale(1.0)
+        };
         let popup = SceneRect {
             left: 100.0,
             top: 400.0,
@@ -3789,15 +3809,15 @@ mod tests {
         assert_eq!(hit.at(99.0, 450.0), None);
         assert_eq!(hit.at(150.0, 399.0), None);
         // The full text sits just above, the popup's width; never into the header.
-        let detail = hint_detail_rect(popup, 33.2, padding, 40.0).unwrap();
+        let detail = hint_detail_rect(popup, 33.2, metrics, 40.0).unwrap();
         assert_eq!(detail.left, popup.left);
         assert_eq!(detail.width, popup.width);
         assert_eq!(detail.height, 34.0 + padding * 2.0);
         assert!((popup.top - detail.bottom() - padding / 3.0).abs() < 0.01);
         let header = detail.top - padding / 3.0;
-        assert_eq!(hint_detail_rect(popup, 33.2, padding, header), Some(detail));
-        assert_eq!(hint_detail_rect(popup, 33.2, padding, header + 1.0), None);
-        assert_eq!(hint_detail_rect(popup, 0.0, padding, 40.0), None);
+        assert_eq!(hint_detail_rect(popup, 33.2, metrics, header), Some(detail));
+        assert_eq!(hint_detail_rect(popup, 33.2, metrics, header + 1.0), None);
+        assert_eq!(hint_detail_rect(popup, 0.0, metrics, 40.0), None);
     }
 
     #[test]
@@ -3849,10 +3869,10 @@ mod tests {
             width,
             height: 100.0,
         };
-        let room = hint_detail_rect(popup, cut, padding, 0.0).unwrap();
+        let room = hint_detail_rect(popup, cut, metrics, 0.0).unwrap();
         let header = room.top - padding / 3.0;
-        assert!(hint_detail_rect(popup, cut, padding, header).is_some());
-        assert_eq!(hint_detail_rect(popup, wrapped, padding, header), None);
+        assert!(hint_detail_rect(popup, cut, metrics, header).is_some());
+        assert_eq!(hint_detail_rect(popup, wrapped, metrics, header), None);
     }
 
     #[test]

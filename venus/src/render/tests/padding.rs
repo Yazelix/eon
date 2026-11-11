@@ -641,7 +641,7 @@ fn expanded_padding_uses_the_continuous_pane_header_contour() {
         metrics,
         2.0,
     );
-    let top = workspace.header_viewport.top - crate::scene::title_tab_rise(metrics);
+    let top = workspace.header_viewport.top - crate::scene::tokens::title_tab_rise(metrics);
     let viewport = SceneRect {
         top,
         height: workspace.header_viewport.bottom() - top,

@@ -1,7 +1,10 @@
 use crate::{
     Color as SceneColor, DialogScene, DrawRow, DrawStyle, ImageKey, ImageResource, Scene,
     ScenePlacement, ScenePreview, SceneRect, WorkspaceFocus, WorkspaceScene,
-    scene::{CardFill, PaneOutline, chrome_title_metrics, rounded_radius},
+    scene::{
+        CardFill, PaneOutline, rounded_radius,
+        tokens::{self, chrome_title_metrics},
+    },
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, FontSystem, Metrics, Resolution,
@@ -1177,7 +1180,7 @@ impl Renderer {
                 3.0
             } else {
                 // Wrapped status lines are 1.25 rows tall, with an eighth of a row above and below.
-                self.notice_lines as f32 * 1.25 + 0.25
+                self.notice_lines as f32 * tokens::WRAPPED_LINE_ROWS + 0.25
             };
         let bottom = self.config.height as f32 - height - self.metrics.height * 0.5;
         let link_bottom = self.terminal.hyperlink.map(|(row, _)| {
@@ -2197,7 +2200,11 @@ impl Renderer {
         .1
         .ceil()
             + padding * 2.0;
-        let inset = if in_header { 0.0 } else { padding / 2.0 };
+        let inset = if in_header {
+            0.0
+        } else {
+            tokens::inner_inset(self.metrics)
+        };
         let height = self.metrics.height + inset * 2.0;
         if width > area.width - padding || height > area.height {
             return None;
@@ -2250,7 +2257,7 @@ impl Renderer {
         );
         rectangles.push_rounded(
             rect,
-            height / 2.0,
+            tokens::capsule_radius(height),
             if in_header {
                 palette::SCROLLBACK_PILL_HEADER
             } else {
@@ -2306,7 +2313,7 @@ impl Renderer {
                 * if hyperlink {
                     2.7
                 } else {
-                    1.25 * MAX_NOTICE_LINES as f32
+                    tokens::WRAPPED_LINE_ROWS * MAX_NOTICE_LINES as f32
                 },
             palette::NOTICE_TEXT,
             if hyperlink {
@@ -2735,7 +2742,7 @@ fn shape_styled_text(
 ) -> Buffer {
     let (font_size, line_height, attrs, monospace_width, wrap) = match kind {
         DrawStyleKind::PopupLabel => (
-            11.0 * metrics.scale,
+            tokens::popup_label_font_size(metrics),
             12.0 * metrics.scale,
             Attrs::new().family(Family::SansSerif),
             None,
@@ -2760,7 +2767,7 @@ fn shape_styled_text(
             if wrap == Wrap::None {
                 chrome_title_metrics(metrics).line_height
             } else {
-                metrics.height * 1.25
+                metrics.height * tokens::WRAPPED_LINE_ROWS
             },
             Attrs::new().family(Family::SansSerif),
             None,

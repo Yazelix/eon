@@ -326,7 +326,7 @@ fn every_column_card_carries_a_stack_tab_one_card_gap_below_the_bar() {
                         // The cap clears the bar's pills by one card gap.
                         let gap = tab.top - pills.bottom();
                         assert!(
-                            (gap - crate::scene::card_gap(metrics)).abs() <= 1.0,
+                            (gap - crate::scene::tokens::card_gap(metrics)).abs() <= 1.0,
                             "scale={scale}, gap={gap}"
                         );
                         // The first pane's title row sits one Stack band lower, plain.
@@ -3632,7 +3632,7 @@ fn all_native_dialog_titles_fit_inside_existing_dismissal_bounds() {
                             .expect("normal and narrow dialogs have existing title clearance");
                     assert!(tab.top >= viewer.bounds.top);
                     assert_eq!(tab.return_run, (card.bounds.top - tab.top) * 1.5);
-                    assert_eq!(card.radius, crate::scene::card_gap(metrics));
+                    assert_eq!(card.radius, crate::scene::tokens::card_gap(metrics));
                     assert!(
                         tab.start + tab.return_run + stroke <= card.bounds.right() - card.radius
                     );
@@ -3788,13 +3788,14 @@ fn clipped_sidebar_title_falls_back_when_its_card_edge_does_not_align() {
         0.0,
         |_, text| (text.into(), text.len() as f32 * metrics.width),
     );
-    workspace.pane_viewport.height = crate::scene::chrome_title_metrics(metrics).text_height / 2.0;
+    workspace.pane_viewport.height =
+        crate::scene::tokens::chrome_title_metrics(metrics).text_height / 2.0;
     let area = workspace.sidebar_area().unwrap();
     assert_ne!(
         workspace.card_rect(area, metrics, 1.0).top,
         crate::scene::title_rule_y(
             area.top,
-            crate::scene::chrome_title_metrics(metrics).text_height
+            crate::scene::tokens::chrome_title_metrics(metrics).text_height
         )
     );
     assert!(

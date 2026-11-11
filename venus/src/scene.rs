@@ -21,6 +21,14 @@ use std::{
 };
 use winit::dpi::PhysicalSize;
 
+pub(crate) mod tokens;
+
+use tokens::{
+    WRAPPED_LINE_ROWS, attention_row_gap, badge_size, card_gap, chrome_title_metrics,
+    dialog_padding, hint_hover_reach, icon_gap, inner_inset, pill_gap, popup_label_font_size,
+    popup_title_gutter, sidebar_heading_gap, stack_inset, title_tab_return, title_tab_rise,
+};
+
 /// Physical rectangle shared by workspace drawing, hit testing, and accessibility.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SceneRect {
@@ -311,7 +319,7 @@ impl TabBadge {
     /// Typography too small for a six-pixel badge shows no glyph, so it gets none; the tab's
     /// accessible name still carries its state.
     fn corner(pill: SceneRect, metrics: CellMetrics, gap: f32) -> Option<SceneRect> {
-        let size = metrics.padding.min(metrics.font_size * 0.75).round();
+        let size = metrics.padding.min(badge_size(metrics)).round();
         let overhang = (size / 4.0).min(gap / 2.0).floor();
         (size >= 6.0).then_some(SceneRect {
             left: pill.right() - size + overhang,
@@ -499,7 +507,7 @@ impl WorkspacePane {
     /// Title and scrollback stop before the action notch's return curve.
     pub(crate) fn header_content(&self, metrics: CellMetrics) -> SceneRect {
         let right = self.actions.map_or(self.rect.right(), |actions| {
-            actions[0].left - metrics.padding - title_tab_rise(metrics) * 1.5
+            actions[0].left - metrics.padding - title_tab_return(title_tab_rise(metrics))
         });
         SceneRect {
             width: (right - self.rect.left).max(0.0),
@@ -561,7 +569,7 @@ fn tab_labels(index: usize, tab_count: usize, directory: &[u8]) -> (String, Stri
 /// before the viewport's end.
 pub(crate) fn tab_max_width(metrics: CellMetrics, viewport_width: f32) -> f32 {
     (metrics.font_size * 17.5)
-        .min((viewport_width - card_gap(metrics) - metrics.padding / 3.0).max(1.0))
+        .min((viewport_width - card_gap(metrics) - pill_gap(metrics)).max(1.0))
 }
 
 /// One action in the native Eon workspace header: the workspace label, while it opens the
@@ -1208,7 +1216,7 @@ impl ShortcutHintsScene {
             group.rect.left = left;
             group.rect.width = *width;
             group.hover = SceneRect {
-                left: left - padding / 2.0,
+                left: left - hint_hover_reach(metrics),
                 top: frame.top,
                 width: width + padding,
                 height: frame.height,
@@ -1720,19 +1728,18 @@ impl DialogScene {
         let side = metrics.padding.min(width / 12.0);
         let available = (height - edge * 2.0).max(0.0);
         let footer_height = line * (kind.footer().len() as f32 + 0.75);
-        let padding_for = |width: f32| metrics.padding.min(width / 8.0);
-        let padding = padding_for(width - side * 2.0);
+        let padding = dialog_padding(metrics, width - side * 2.0);
         let chrome_height = padding + line * 3.0 + footer_height;
         let heading_height = line * 1.4;
         // Whole-pixel rows keep their edges on the pixel grid wherever they stack.
         let row_height = (line * 1.3).round();
         // Status text wraps onto lines this tall.
-        let wrapped_line = line * 1.25;
+        let wrapped_line = line * WRAPPED_LINE_ROWS;
         let group_gap = line * 0.5;
         let label_gap = metrics.padding * 1.5;
         let column_gap = metrics.padding * 2.5;
         // Headings, the subtitle and the footer use the smaller popup-label face.
-        let label_ratio = 11.0 * metrics.scale / chrome_title_metrics(metrics).font_size;
+        let label_ratio = popup_label_font_size(metrics) / chrome_title_metrics(metrics).font_size;
         let heading_for = |group: &ShortcutGroup| {
             if group.title.is_empty() {
                 0.0
@@ -1909,7 +1916,7 @@ impl DialogScene {
             width: dialog_width,
             height: dialog_height,
         };
-        let padding = padding_for(bounds.width);
+        let padding = dialog_padding(metrics, bounds.width);
         let title = SceneRect {
             left: bounds.left + padding,
             top: bounds.top + padding,
@@ -2371,7 +2378,7 @@ fn header_height(
 
 /// The space between neighbouring tab pills.
 fn tab_gap(metrics: CellMetrics, tab_height: f32) -> f32 {
-    (metrics.padding / 3.0).min(tab_row(metrics, tab_height) / 4.0)
+    pill_gap(metrics).min(tab_row(metrics, tab_height) / 4.0)
 }
 
 /// The tab hit targets' inset: one card gap at full header height. The first tab still lines
@@ -2406,11 +2413,6 @@ fn bar_edge(metrics: CellMetrics, tab_height: f32, card_top: f32) -> f32 {
     (band.start + band.end) / 2.0
 }
 
-/// How far a title tab's cap rises above its title row: a third of the title padding.
-pub(crate) fn title_tab_rise(metrics: CellMetrics) -> f32 {
-    metrics.padding / 3.0
-}
-
 /// Give the cap one snapped title pitch from the preceding rule, halfway down its row.
 fn band_cap_space(metrics: CellMetrics, panes: usize) -> f32 {
     if panes < 2 {
@@ -2443,15 +2445,6 @@ fn stack_label(index: usize, count: usize) -> String {
     }
 }
 
-/// The even gap around and between pane cards, which is also their corner radius: 8 logical
-/// pixels at default typography, always less than the label padding so no label meets a curve.
-pub(crate) fn card_gap(metrics: CellMetrics) -> f32 {
-    let radius = (metrics.padding * 2.0 / 3.0).round();
-    // Horizontal terminal padding keeps text clear of the rounded corners.
-    debug_assert!(metrics.padding >= radius);
-    radius
-}
-
 /// The width or height a terminal needs for one padded cell.
 fn minimum_terminal(metrics: CellMetrics, cell: f32) -> f32 {
     metrics.padding * 2.0 + cell
@@ -2471,22 +2464,6 @@ const SIDEBAR_MIN_CONTENT_CELLS: f32 = 80.0;
 pub(crate) const SIDEBAR_TITLE: &str = "Agents";
 pub(crate) const SIDEBAR_EMPTY: &str =
     "No agent needs attention. Agents that report their status show here while they work.";
-
-/// Shared typography for chrome titles and their descender-safe clip box.
-pub(crate) struct ChromeTitleMetrics {
-    pub font_size: f32,
-    pub line_height: f32,
-    pub text_height: f32,
-}
-
-pub(crate) fn chrome_title_metrics(metrics: CellMetrics) -> ChromeTitleMetrics {
-    let text_height = metrics.height.max(metrics.font_size * 1.25);
-    ChromeTitleMetrics {
-        font_size: metrics.font_size,
-        line_height: metrics.height,
-        text_height,
-    }
-}
 
 /// The Eon icon's square: two logical pixels shorter than the tab pills' `band`, its centre as
 /// far from the window's left as the band's from its top, in whole pixels.
@@ -2568,11 +2545,11 @@ fn attention_row(
     rect: SceneRect,
 ) -> SidebarRow {
     let line = metrics.height;
-    let row_gap = (metrics.padding / 2.0).round();
-    let glyph_size = (metrics.font_size * 0.75).round().max(1.0);
+    let row_gap = attention_row_gap(metrics);
+    let glyph_size = badge_size(metrics).round().max(1.0);
     let icon_size = metrics.font_size.round().max(1.0);
     let spacing = (metrics.width / 2.0).round();
-    let content_left = rect.left + metrics.padding / 2.0;
+    let content_left = rect.left + inner_inset(metrics);
     let top = rect.top;
     let pinned_name = pinned_name.filter(|name| !name.is_empty());
     let record = attention.record.as_ref();
@@ -2692,7 +2669,7 @@ fn attention_row(
         height: line * lines + row_gap,
         ..rect
     };
-    let right = (rect.right() - metrics.padding / 2.0).max(rect.left);
+    let right = (rect.right() - inner_inset(metrics)).max(rect.left);
     let popup_marker = popup.then(|| {
         let size = (metrics.font_size * 1.25)
             .round()
@@ -2742,7 +2719,7 @@ fn sidebar_contents(
     // The list starts where the empty state does, below the title.
     let list_top = card.top + padding + line * 1.5;
     let list = SceneRect {
-        left: card.left + padding / 2.0,
+        left: card.left + inner_inset(metrics),
         top: list_top,
         width: (card.width - padding).max(0.0),
         height: (card.bottom() - padding - list_top).max(0.0),
@@ -2772,7 +2749,7 @@ fn sidebar_contents(
             },
         });
         // A small gap sets the heading apart from its first row.
-        top += line + (padding / 3.0).round();
+        top += line + sidebar_heading_gap(metrics);
         let leaf = directory_leaf(&tab.directory);
         // Popup rows come first, then pane rows in pane order.
         let terminals = tab
@@ -3222,14 +3199,6 @@ fn quota_text(
     }
 }
 
-fn stack_inset(metrics: CellMetrics) -> f32 {
-    metrics.padding / 3.0
-}
-
-fn popup_title_gutter(metrics: CellMetrics) -> f32 {
-    metrics.padding / 2.0
-}
-
 fn pane_inset(metrics: CellMetrics) -> f32 {
     stack_inset(metrics).min(metrics.height / 4.0)
 }
@@ -3583,7 +3552,7 @@ impl WorkspaceScene {
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>();
-        let quota_padding = metrics.padding * 2.0 + metrics.font_size + metrics.padding / 2.0;
+        let quota_padding = metrics.padding * 2.0 + metrics.font_size + icon_gap(metrics);
         let mut quotas = quota_texts
             .into_iter()
             .map(|(item, provider, window, text)| {
@@ -3608,7 +3577,7 @@ impl WorkspaceScene {
         let quota_count = quotas.len();
         // A chip or reading before Shortcuts keeps the chips' own spacing from its round button:
         // each chip's outline sits `chip_inset` inside its slot, and the circle inside its own.
-        let chip_inset = (metrics.padding / 3.0).min(tab_height / 4.0);
+        let chip_inset = tokens::chip_inset(metrics).min(tab_height / 4.0);
         let button = tab_row(metrics, tab_height);
         let circle = (pill_band.end - pill_band.start).round().min(button);
         let before_shortcuts = (chip_inset - (button - circle) / 2.0).max(0.0);
@@ -3920,7 +3889,7 @@ impl WorkspaceScene {
         let (edge_badges, tab_label_clip) = edge_badges(&tabs, tab_viewport, gap);
         let active = &snapshot.tabs[active_tab];
         let popup = active_popup(snapshot);
-        let card_radius = card_gap(metrics);
+        let card_radius = tokens::card_radius(metrics);
         if popup.is_some() || active.columns.is_empty() {
             let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale).min(
                 (pane_viewport.width - minimum_terminal(metrics, metrics.width)).max(0.0) / 2.0,
@@ -4125,7 +4094,7 @@ impl WorkspaceScene {
                         && rect.top >= header_viewport.top
                         && rect.bottom() <= header_viewport.bottom())
                     .then(|| {
-                        let left = rect.right() - metrics.padding / 2.0 - button * 2.0;
+                        let left = rect.right() - inner_inset(metrics) - button * 2.0;
                         std::array::from_fn(|index| SceneRect {
                             left: left + button * index as f32,
                             top: rect.top,
@@ -4231,7 +4200,7 @@ impl WorkspaceScene {
         let button = chrome_title_metrics(metrics).text_height;
         let target = |row: SceneRect| {
             (row.width >= button + metrics.padding * 4.0).then(|| SceneRect {
-                left: row.right() - metrics.padding / 2.0 - button,
+                left: row.right() - inner_inset(metrics) - button,
                 top: row.top,
                 width: button,
                 height: button,
