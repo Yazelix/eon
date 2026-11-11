@@ -21,13 +21,13 @@
 
 - VEN-C8/C18: the expanded, lone or zoomed pane's header forms one continuous
   raised band across the fitted title and right Zoom/Restore and Close group.
-  Collapsed titles and their buttons are compact gaps in their row's line, with
-  one tab rise of space before the band below them; tight-clearance titles
-  retain compact gaps. Title focus colours
+  Collapsed titles sit in compact gaps in their row's line. When room permits,
+  the band starts one row's height below the preceding collapsed title line.
+  Tight-clearance titles retain compact gaps. Title focus colours
   its edge span; title hover and button focus use rounded pills. Pointer release,
   keyboard traversal and AccessKit share the existing exact-pane targets, local
   zoom and final-close path. Stack, popup, Agents and dialog tabs stay unchanged.
-  No wire change (`eon-7xryp`, `eon-ipc6f`, `eon-2ibdd`, `eon-u5uv2`).
+  No wire change (`eon-7xryp`, `eon-ipc6f`, `eon-2ibdd`, `eon-u5uv2`, `eon-xaq6c`).
 
 - Codex and Claude quota chips show pace colour and hover/accessibility text
   from 1% used, with no elapsed-time gate. Windows with no quota used are

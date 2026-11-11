@@ -269,14 +269,15 @@ tab's rise, a third of the title padding (24 px at the default font). The
 expanded pane's framed header, a lone and a zoomed pane's included, has one
 continuous raised band: the edge runs straight over the fitted title, empty
 middle and right action group between rounded outer corners. A collapsed pane
-has no band: its title and buttons sit in gaps in its row's line, and the last
-collapsed title sits in the column's bottom edge. Below a collapsed title the
-band starts one tab rise lower (4 px at the default font), which keeps its edge
-out of that title's row. A first pane's band rises into the stack band
-instead, and the same space then follows its terminal, so a column's terminal
-keeps one height whichever pane is expanded. Insufficient text/stroke clearance
-leaves the expanded title in a compact gap too. The column's sides run from the Stack line
-down to the first pane's rounded top corners in the neutral border colour and
+shows its title and any visible buttons in gaps in its row's line. The last
+collapsed title sits in the column's bottom edge. When room permits, the
+expanded band starts one collapsed row's height below the line of the
+collapsed title above it (20 px at the default font). A first pane's cap
+rises into the stack band and the reserved space follows its terminal, so
+a column's terminal keeps one height whichever pane is expanded. Tight text
+or stroke clearance leaves the expanded title in a compact gap. The column's
+sides run from the Stack line down to the first pane's rounded top corners in
+the neutral border colour and
 width, even while that pane is selected. Headers scroll below the band. On a
 window too short for the band, a first header and one padded terminal row, the
 band yields whole and the label goes.
@@ -336,9 +337,10 @@ then returns into the top edge with a tangent S curve spanning 1.5 times its
 rise. The curve begins beside the visible text, including after truncation.
 Stack, popup and Agents tab tops sit one card gap (8 px) below the bar's pills.
 Popup, Agents and dialog tabs add no height or terminal rows inside their cards.
-A pane band adds no height to its header row. In a column of several panes the
-space before the band takes one tab rise (4 px at the default font) from the
-terminal.
+Each pane header uses the shared title row height. A Stack with several panes
+reserves half a title row plus one tab rise (14 px at the default font) from
+the terminal.
+The reservation yields before the last padded terminal row on short windows.
 A tab keeps its stroke clear of text and neighbouring chrome; where that
 clearance cannot fit, the title keeps a compact gap in the top frame line.
 A title is omitted only when it cannot fit. A tab keeps full accessibility

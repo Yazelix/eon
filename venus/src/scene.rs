@@ -85,13 +85,17 @@ impl WorkspaceScene {
         };
         let grid_bottom = self.grid_bottom(terminal, metrics);
         let mut expanded_frame = panes[expanded].frame(terminal);
+        let next = panes.get(expanded + 1);
+        // The bottom stroke can use the space before the next header, including the reserve
+        // after a first pane's terminal.
+        let bottom_limit = next.map_or(expanded_frame.bottom(), |next| next.rect.top);
         // Scrolling may leave no room for a bottom stroke inside the fixed card.
-        let original_bottom = grid_safe_bottom(
-            expanded_frame.bottom().min(fill.bounds.bottom()),
+        let bottom_limit = grid_safe_bottom(
+            bottom_limit.min(fill.bounds.bottom()),
             grid_bottom,
             stroke_width,
         );
-        let bottom = panes.get(expanded + 1).map_or(original_bottom, |next| {
+        let bottom = next.map_or(bottom_limit, |next| {
             let target = title_rule_y(next.rect.top, next.rect.height) - next.rect.height;
             target
                 .max(painted_bottom(
@@ -100,7 +104,7 @@ impl WorkspaceScene {
                     stroke_width,
                     grid_bottom,
                 ))
-                .min(original_bottom)
+                .min(bottom_limit)
         });
         expanded_frame.height = (bottom - expanded_frame.top).max(0.0);
         let mut outlines = Vec::with_capacity(panes.len());
@@ -2407,15 +2411,13 @@ pub(crate) fn title_tab_rise(metrics: CellMetrics) -> f32 {
     metrics.padding / 3.0
 }
 
-/// The space a column of `panes` panes keeps for its expanded pane's band cap: one tab rise,
-/// rounded up to whole pixels so it moves no row off the pixel grid. The row above can still end
-/// on a fraction, so the renderer bounds the cap's snapped edge against that row. A lone pane's
-/// cap rises into the Stack band and needs none.
+/// Give the cap one snapped title pitch from the preceding rule, halfway down its row.
 fn band_cap_space(metrics: CellMetrics, panes: usize) -> f32 {
     if panes < 2 {
         0.0
     } else {
-        title_tab_rise(metrics).ceil()
+        let title_height = chrome_title_metrics(metrics).text_height;
+        (title_height.floor() - title_height / 2.0 + title_tab_rise(metrics)).ceil()
     }
 }
 
@@ -4069,12 +4071,9 @@ impl WorkspaceScene {
                     .position(|pane| pane.id == column.expanded)
                     .expect("EONW validates the expanded pane")
             };
-            // The expanded pane's band cap rises one tab rise above its title row. Below a
-            // collapsed title that rise takes its own space, which keeps the cap's line out of
-            // that title's row. A first pane's cap rises into the Stack band instead, and the
-            // same space then follows its terminal, so a column's terminal keeps one height
-            // whichever of its panes is expanded. On a window too short for it the space
-            // yields before the terminal's last padded row does.
+            // Reserve the same space for every expanded position to keep one terminal height.
+            // A first pane's cap rises into the Stack band, so its space follows the terminal.
+            // The space yields before the last padded terminal row.
             let title_rows = if zoomed { 1 } else { column.panes.len() } as f32 * pane_height;
             let cap = if zoomed {
                 0.0

@@ -53,12 +53,14 @@ installation, and proven contract changes.
 
 - The expanded pane's header forms one continuous band, with the fitted title
   at the left and Zoom/Restore and Close at the right. Collapsed panes in a
-  Stack show their title and buttons on one thin line each, and the band below
-  them starts 4 px lower so its edge clears their text. Keyboard title focus colours its
-  edge span; hover and button focus use rounded pills. Each button targets its
-  own pane, Close retains the final-pane confirmation, and Zoom is disabled in
-  a one-pane tab. Tab and Shift+Tab traverse the controls; Enter or Space
-  activates them (`eon-7xryp`, `eon-ipc6f`, `eon-2ibdd`, `eon-u5uv2`).
+  Stack show their titles on thin lines. The expanded band below a collapsed
+  title starts one row's height below its line when room permits. At the default
+  font, this costs one terminal row for two- and three-pane Stacks at 1920 × 1080
+  and seven-pane Stacks at 1280 × 800. Keyboard title focus colours its edge span,
+  and hover and button focus use rounded pills. Each button targets its own pane,
+  Close retains the final-pane confirmation, and Zoom is disabled in a one-pane
+  tab. Tab and Shift+Tab traverse the controls; Enter or Space
+  activates them (`eon-7xryp`, `eon-ipc6f`, `eon-2ibdd`, `eon-u5uv2`, `eon-xaq6c`).
 
 - `eon report` prints a Markdown bug report for the window it runs in: versions,
   the window, install route, distribution, compositor, configuration warnings

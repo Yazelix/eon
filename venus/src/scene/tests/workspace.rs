@@ -99,9 +99,9 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
                 scene.terminal,
                 SceneRect {
                     left: 296.0,
-                    top: 120.0,
+                    top: 130.0,
                     width: 1296.0,
-                    height: 732.0
+                    height: 722.0
                 }
             );
         }
@@ -229,8 +229,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
     }
     let metrics = CellMetrics::for_scale(1.0);
     let size = PhysicalSize::new(1280, 720);
-    // Four panes leave 3 spare pixels, one fewer than the tab rise before the band takes.
-    for (count, before, after) in [(1, 31, 31), (3, 28, 29), (4, 26, 27)] {
+    for (count, before, after) in [(1, 31, 31), (3, 28, 28), (4, 26, 27)] {
         let mut snapshot = snapshot.clone();
         snapshot.tabs[0].columns[0].panes.truncate(count);
         snapshot.tabs[0].selected_pane = Some("p1".into());
@@ -261,13 +260,8 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
         );
         assert_eq!(rows((metrics.height * 1.5).round()), before);
         assert_eq!(actual_rows, after);
-        // The terminal and the title rows fill the column, less the tab rise a column of
-        // several panes keeps for the band; with the first pane expanded it follows the terminal.
-        let cap = if count > 1 {
-            title_tab_rise(metrics).ceil()
-        } else {
-            0.0
-        };
+        // The reservation for a multi-pane column follows the first expanded pane's terminal.
+        let cap = if count > 1 { 14.0 } else { 0.0 };
         assert_eq!(scene.terminal.top, scene.panes[0].rect.bottom());
         assert_eq!(
             scene.terminal.height,
@@ -305,9 +299,8 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
 fn band_space_keeps_one_terminal_height_whichever_pane_is_expanded() {
     // Fractional scales sum fractional rows, so positions compare within a hundredth of a pixel.
     let near = |a: f32, b: f32| (a - b).abs() < 0.01;
-    for scale in [1.0, 1.125, 4.0 / 3.0] {
+    for (scale, cap) in [(1.0, 14.0), (1.125, 16.0), (4.0 / 3.0, 18.0), (2.0, 28.0)] {
         let metrics = CellMetrics::for_scale(scale);
-        let cap = title_tab_rise(metrics).ceil();
         let scenes: Vec<_> = (0..4)
             .map(|expanded| {
                 let mut snapshot = super::bar::one_pane_snapshot();
@@ -322,13 +315,19 @@ fn band_space_keeps_one_terminal_height_whichever_pane_is_expanded() {
                     .collect();
                 tab.selected_pane = Some(format!("p{}", expanded + 1));
                 tab.columns[0].expanded = format!("p{}", expanded + 1);
-                WorkspaceScene::from_snapshot(
+                let (_, overhead) = WorkspaceScene::initial_overhead(&snapshot, metrics);
+                let height = (overhead + metrics.padding * 2.0 + 28.0 * metrics.height).ceil();
+                let size = PhysicalSize::new(1280, height as u32);
+                let hints = ShortcutHintsScene::new(Vec::new(), size, metrics, None, None, |_| 0.0);
+                WorkspaceScene::from_snapshot_with_bar(
                     &snapshot,
-                    PhysicalSize::new(1280, 720),
+                    EonBar::default(),
+                    size,
                     metrics,
                     0.0,
                     0.0,
                     |_, text| (text.into(), text.len() as f32 * metrics.width),
+                    Some(hints),
                 )
             })
             .collect();
@@ -336,6 +335,13 @@ fn band_space_keeps_one_terminal_height_whichever_pane_is_expanded() {
             let panes = &scene.panes;
             assert_eq!(panes.len(), 4);
             assert_eq!(scene.terminal.height, scenes[0].terminal.height);
+            assert_eq!(
+                metrics
+                    .surface_size(scene.terminal.screen_size())
+                    .unwrap()
+                    .rows,
+                28
+            );
             assert!(near(scene.terminal.top, panes[expanded].rect.bottom()));
             // The last title row ends the column, or the terminal when the last pane is expanded.
             assert!(
@@ -364,6 +370,12 @@ fn band_space_keeps_one_terminal_height_whichever_pane_is_expanded() {
                     pair[1].rect.top,
                     pair[0].rect.bottom()
                 );
+                if space > 0.0 {
+                    assert_eq!(
+                        scene.hit_test(pair[0].rect.left + 1.0, pair[1].rect.top - space / 2.0),
+                        None
+                    );
+                }
             }
         }
     }

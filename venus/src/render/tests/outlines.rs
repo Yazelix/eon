@@ -1792,7 +1792,7 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
 fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
     use eon_workspace_protocol::v39::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
     let metrics = CellMetrics::for_scale(1.0);
-    for (pane_count, expanded) in [(4, 1), (4, 4), (3, 2), (1, 1)] {
+    for (pane_count, expanded) in [(4, 1), (4, 4), (4, 2), (1, 1)] {
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
@@ -1885,10 +1885,10 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                 .unwrap()
                 .intersection(current.pane_viewport)
                 .unwrap();
-            if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
-                assert_eq!(retained.rows, 30);
-                assert_eq!(displayed.bottom() - metrics.height, 630.0);
-                assert_eq!(displayed.bottom(), 648.0);
+            if pane_count == 4 && expanded == 2 && !before_zoom && !after_zoom {
+                assert_eq!(retained.rows, 29);
+                assert_eq!(displayed.bottom() - metrics.height, 646.0);
+                assert_eq!(displayed.bottom(), 664.0);
             }
             let paint = workspace_paint(&current, Some(&retained), &[], metrics);
             let cards = card_backdrops(&paint, Some(&retained), &[], metrics, 1.0);
@@ -1916,8 +1916,8 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                 .rows;
             let settled = workspace_paint(&current, Some(&resized), &[], metrics);
             assert!(matches!(settled, Cow::Borrowed(_)));
-            if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
-                assert_eq!(rules[0].0.bounds.bottom(), 649.0);
+            if pane_count == 4 && expanded == 2 && !before_zoom && !after_zoom {
+                assert_eq!(rules[1].0.bounds.bottom(), 665.0);
                 let settled_fill = settled.card_fill(settled.chrome, metrics, 1.0);
                 assert_eq!(
                     settled.pane_outlines(
@@ -1927,10 +1927,10 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                         1.0,
                         metrics,
                         1.0
-                    )[0]
+                    )[1]
                     .bounds
                     .bottom(),
-                    642.0
+                    662.0
                 );
             }
             let selected = paint.panes.iter().position(|pane| pane.selected).unwrap();
@@ -3883,9 +3883,7 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
     use eon_workspace_protocol::v39::{Column, Pane};
     let mut fonts = clipping_test_fonts();
     let mut swash = SwashCache::new();
-    // At 1.125 and 1.175 a collapsed row ends on half a pixel. The other font sizes give
-    // fractional title rows with a whole tab rise; at 1.75 the rows' sums round, and the space
-    // before the fourth pane's band reads a hair under that rise.
+    // Fractional title rows make the adjacent rules and cap snap at different pixel phases.
     for (scale, font_size) in [
         (1.0, 16.0),
         (1.125, 16.0),
@@ -3952,11 +3950,40 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                 )
                 .remove(0);
                 assert_eq!(tabs.len(), workspace.panes.len());
+                let exact_pitch = scale == 1.0 || scale == 2.0;
+                let tolerance = if exact_pitch { 0.0 } else { 1.0 };
                 if let Some(above) = selected.checked_sub(1) {
+                    let cap = tabs[selected].as_ref().unwrap().tab.top;
                     assert!(
-                        tabs[selected].as_ref().unwrap().tab.top
-                            >= workspace.panes[above].rect.bottom(),
+                        cap >= workspace.panes[above].rect.bottom(),
                         "the band's cap must stay out of the collapsed title row above it \
+                         (scale {scale}, font {font_size}, pane {selected})"
+                    );
+                    if let Some(earlier) = above.checked_sub(1) {
+                        let previous_rule = outlines[above].title_y.unwrap();
+                        let pitch = previous_rule - outlines[earlier].title_y.unwrap();
+                        let gap = cap - previous_rule;
+                        assert!(
+                            (gap - pitch).abs() <= tolerance,
+                            "upper gap {gap} differs from the collapsed pitch {pitch} \
+                             (scale {scale}, font {font_size}, pane {selected})"
+                        );
+                    }
+                }
+                if let Some(next) = outlines.get(selected + 1)
+                    && (selected == 0 || exact_pitch)
+                {
+                    let pitch = workspace.panes[selected + 1].rect.height;
+                    // The closing rule occupies the inside edge of the Stack's bottom stroke.
+                    let expected = if selected + 2 == outlines.len() {
+                        pitch - border
+                    } else {
+                        pitch
+                    };
+                    let gap = next.title_y.unwrap() - outlines[selected].bounds.bottom();
+                    assert!(
+                        (gap - expected).abs() <= tolerance,
+                        "lower gap {gap} differs from the expected pitch {expected} \
                          (scale {scale}, font {font_size}, pane {selected})"
                     );
                 }

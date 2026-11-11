@@ -675,6 +675,8 @@ re-proved when that platform or feature is next touched.
   standing rule: pane buttons draw and accept pointer actions only on the
   selected pane or a one-pane Stack; reserved geometry and semantic actions
   stay unchanged.
+  Amended on 2026-11-10 by `eon-xaq6c`, approved by eon-overseer under Lucca's
+  standing rule. The expanded pane's band follows the collapsed row pitch.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -757,12 +759,12 @@ re-proved when that platform or feature is next touched.
     or a lower middle rule. Title and scrollback fitting, header rows and
     button targets keep their existing geometry. A collapsed pane has no band:
     its title and any visible buttons are compact gaps in its row's line, and the final
-    collapsed title stays a compact gap in the column's bottom edge. Below a
-    collapsed title the band starts one tab rise lower, which keeps its edge out
-    of that title's row; with no collapsed title above it, that space follows
-    the expanded terminal, so a column's terminal height does not depend on
-    which of its panes is expanded; on a window too short for that space it
-    yields before a terminal cell does. Insufficient text/stroke clearance also
+    collapsed title stays a compact gap in the column's bottom edge. When room
+    permits, the band starts one collapsed row's height below the line of the
+    collapsed title above it. When the first pane in a multi-pane column is
+    expanded, that space follows the terminal, so a column's terminal height
+    does not depend on which of its panes is expanded. On a short window the
+    space yields before the last padded terminal row. Insufficient text/stroke clearance also
     leaves the expanded title in a compact gap. Each pane header reserves room
     for Zoom (Restore while zoomed) and Close at the right; the title and
     scrollback pill fit to their left even while the buttons are hidden. The
@@ -775,7 +777,7 @@ re-proved when that platform or feature is next touched.
     Pane-header keyboard actions and AccessKit actions retain their existing
     availability for every laid-out pane header. Decorative pixels outside a header row add no hit or
     accessibility area, and header decoration consumes no terminal rows; the
-    space before the expanded pane's band is reserved and can cost a column one
+    space reserved for the expanded pane's band can cost a column one
     terminal row. Each column card's top line
     carries VEN-C18's shared framed-title tab, labelled
     `Stack` when the tab has one column and `Stack 1`, `Stack 2`, ... from left

@@ -1436,11 +1436,9 @@ impl PaneTitleTab {
         };
         let own_ink = ink(pane);
         let rise = crate::scene::title_tab_rise(metrics);
-        // The cap stays clear of the collapsed title above it, and of the Stack band. Where
-        // the column kept its tab rise of space the cap also stays out of that title's row,
-        // whose edge is fractional at some scales; a window too short for the space leaves
-        // only the ink to bound it. Fractional rows sum to a hair under a whole rise, so the
-        // kept space compares within a hundredth of a pixel.
+        // With at least a tab rise of room, keep the cap out of the previous row too. A short
+        // window can shrink the gap below that threshold, leaving the ink and viewport bounds.
+        // Fractional row sums can round just below a whole rise.
         let limit = above
             .map(|above| {
                 let edge = above.rect.bottom();
