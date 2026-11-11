@@ -4834,6 +4834,65 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn a_close_after_a_failed_column_stop_retries_the_old_leases_busy() {
+        for stop in [false, true] {
+            let root = temporary_directory();
+            let (mut state, _) = finishing_window(&root);
+            sessions::stop_managed_sessions(&mut state.sessions, SESSION_CLEANUP_TIMEOUT).unwrap();
+            state.sessions.clear();
+            let tracked = sessions::tests::lease_race_host(&root, 1, "column");
+            let untracked = sessions::tests::lease_race_host(&root, 9, "column");
+            let mut runs = sessions::acquire_generation_sessions(
+                &root,
+                LaunchMode::Workspace,
+                "component-1",
+                &[],
+                None,
+                Instant::now() + SESSION_CLEANUP_TIMEOUT,
+            )
+            .unwrap();
+            let extra = runs.pop().unwrap();
+            state.sessions = runs;
+            let scope = column_scope(&mut state, &root, "p1");
+            assert_eq!(scope.untracked.len(), 1);
+            assert_eq!(
+                super::stop_consented_runs(&mut state, &scope, vec![extra])
+                    .unwrap_err()
+                    .code,
+                "column-close-failed"
+            );
+            assert_eq!(state.sessions.len(), 1);
+            // The next request runs immediately; the peer still owns the old lease until after Busy.
+            if stop {
+                assert_eq!(
+                    stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap(),
+                    ["terminal-1", "terminal-9"]
+                );
+            } else {
+                assert!(matches!(
+                    column_request(&mut state, &root, "p1", Some(&consent_of(&scope))).unwrap(),
+                    super::Response::Ended(_)
+                ));
+            }
+            assert!(state.sessions.is_empty());
+            assert_eq!(tracked.finish(), ["leased", "stop-refused", "stopped"]);
+            assert_eq!(
+                untracked.finish(),
+                [
+                    "leased",
+                    "stop-refused",
+                    "busy",
+                    "refused-closed",
+                    "old-ended",
+                    "leased",
+                    "stopped"
+                ]
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn failed_untracked_column_stops_stay_discoverable_and_keep_the_supervisor_available() {
         for keep_pane in [true, false] {
             let root = temporary_directory();

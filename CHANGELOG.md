@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing a column or stopping right after a failed close no longer fails
+  with "already managed" (`eon-k0okt`).
+
 - Managed Bash and Nushell omit the extra blank row before every Starship
   prompt, including the first prompt in a fresh pane.
   Eon's Starship default sets only `add_newline = false`; your own Starship

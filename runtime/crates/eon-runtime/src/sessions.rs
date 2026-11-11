@@ -458,13 +458,19 @@ fn validate_management_peer(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum LeaseAcquisition {
+    Acquired,
+    Busy,
+}
+
 /// Validates and acquires one stream, after the record and endpoints were checked.
 fn acquire_management_lease(
     stream: &mut UnixStream,
     expected: &LiveIdentity,
     record: ObjectIdentity,
     deadline: Instant,
-) -> Result<(), String> {
+) -> Result<LeaseAcquisition, String> {
     let unavailable = "cannot validate terminal management peer credentials";
     let sent = match platform::peer_identity(stream) {
         Ok(peer) => {
@@ -488,10 +494,7 @@ fn acquire_management_lease(
     // Busy can precede peer validation or Acquire: Darwin loses LOCAL_PEERPID on close.
     let reply = read_management_response(stream, deadline, "terminal lease acquisition");
     if matches!(&reply, Ok(ManagementServerMessage::Busy)) {
-        return Err(format!(
-            "terminal run {} is already managed",
-            expected.run_id
-        ));
+        return Ok(LeaseAcquisition::Busy);
     }
     sent?;
     match reply? {
@@ -504,7 +507,7 @@ fn acquire_management_lease(
         }
         _ => return Err("terminal returned the wrong lease result".into()),
     }
-    Ok(())
+    Ok(LeaseAcquisition::Acquired)
 }
 
 /// Leases `candidate`, whose Orbit log is found in `orbit_logs` when given.
@@ -513,30 +516,51 @@ fn acquire_management(
     orbit_logs: Option<&Path>,
     deadline: Instant,
 ) -> Result<RunningSession, String> {
-    let current = read_management_record(&candidate.record_path)?.ok_or_else(|| {
-        format!(
-            "terminal record {} disappeared",
-            candidate.record_path.display()
-        )
-    })?;
-    if current.object != candidate.record
-        || current.record != ManagementRecord::Live(candidate.identity.clone())
-    {
-        return Err(format!(
-            "terminal record {} changed before lease acquisition",
-            candidate.record_path.display()
-        ));
-    }
-    let management_path = Path::new(OsStr::from_bytes(&candidate.identity.management.path));
-    endpoint_matches(management_path, &candidate.identity.management)?;
-    let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
-    let mut stream = unix_connect_with_timeout(management_path, timeout).map_err(|error| {
-        format!(
-            "cannot connect to terminal management endpoint {}: {error}",
-            management_path.display()
-        )
-    })?;
-    acquire_management_lease(&mut stream, &candidate.identity, candidate.record, deadline)?;
+    let mut retried = false;
+    let stream = loop {
+        let current = read_management_record(&candidate.record_path)?.ok_or_else(|| {
+            format!(
+                "terminal record {} disappeared",
+                candidate.record_path.display()
+            )
+        })?;
+        if current.object != candidate.record
+            || current.record != ManagementRecord::Live(candidate.identity.clone())
+        {
+            return Err(format!(
+                "terminal record {} changed before lease acquisition",
+                candidate.record_path.display()
+            ));
+        }
+        let management_path = Path::new(OsStr::from_bytes(&candidate.identity.management.path));
+        endpoint_matches(management_path, &candidate.identity.management)?;
+        let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
+        let mut stream = unix_connect_with_timeout(management_path, timeout).map_err(|error| {
+            format!(
+                "cannot connect to terminal management endpoint {}: {error}",
+                management_path.display()
+            )
+        })?;
+        match acquire_management_lease(
+            &mut stream,
+            &candidate.identity,
+            candidate.record,
+            deadline,
+        )? {
+            LeaseAcquisition::Acquired => break stream,
+            LeaseAcquisition::Busy if !retried => {
+                // Orbit's host loop reaches our old lease's EOF before it accepts the retry.
+                drop(stream);
+                retried = true;
+            }
+            LeaseAcquisition::Busy => {
+                return Err(format!(
+                    "terminal run {} is already managed",
+                    candidate.identity.run_id
+                ));
+            }
+        }
+    };
     bound_io(&stream, stream.set_read_timeout(None))
         .and_then(|()| bound_io(&stream, stream.set_write_timeout(None)))
         .and_then(|()| stream.set_nonblocking(true))
@@ -2556,6 +2580,233 @@ pub(crate) mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    pub(crate) struct LeaseRaceHost {
+        control: UnixStream,
+        worker: Option<thread::JoinHandle<Vec<&'static str>>>,
+    }
+
+    impl LeaseRaceHost {
+        pub(crate) fn finish(mut self) -> Vec<&'static str> {
+            let _ = self.control.write_all(b"done");
+            self.worker.take().unwrap().join().unwrap()
+        }
+    }
+
+    impl Drop for LeaseRaceHost {
+        fn drop(&mut self) {
+            let _ = self.control.shutdown(std::net::Shutdown::Both);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    /// A real validated socket peer whose first Stop fails and whose old EOF is delayed.
+    pub(crate) fn lease_race_host(root: &Path, number: usize, case: &'static str) -> LeaseRaceHost {
+        let endpoint = root.join(if number == 1 {
+            "orbit.sock".into()
+        } else {
+            format!("terminal-{number}.sock")
+        });
+        let management_path = super::artifact_path(&endpoint, ".management");
+        let presentation = UnixListener::bind(&endpoint).unwrap();
+        let listener = UnixListener::bind(&management_path).unwrap();
+        for path in [&endpoint, &management_path] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let identity = LiveIdentity {
+            session_id: format!("terminal-{number}"),
+            run_id: format!("lease-race-{number}"),
+            component_generation: "component-1".into(),
+            record_generation: management::RECORD_GENERATION,
+            management_generation: management::VERSION,
+            process_id: std::process::id(),
+            process_start: crate::platform::process(std::process::id())
+                .unwrap()
+                .unwrap()
+                .start,
+            uid: super::effective_uid(),
+            presentation: EndpointIdentity {
+                path: endpoint.as_os_str().as_bytes().to_vec(),
+                object: super::object_identity(&fs::symlink_metadata(&endpoint).unwrap()),
+            },
+            management: EndpointIdentity {
+                path: management_path.as_os_str().as_bytes().to_vec(),
+                object: super::object_identity(&fs::symlink_metadata(&management_path).unwrap()),
+            },
+        };
+        let record = super::artifact_path(&endpoint, ".record");
+        fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&record)
+            .unwrap()
+            .write_all(
+                &management::encode_record(&ManagementRecord::Live(identity.clone())).unwrap(),
+            )
+            .unwrap();
+        let (control, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(SESSION_CLEANUP_TIMEOUT))
+            .unwrap();
+        let worker = thread::spawn(move || {
+            let mut events = Vec::new();
+            let accept = || {
+                let mut ready = [
+                    libc::pollfd {
+                        fd: listener.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                    libc::pollfd {
+                        fd: peer.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                ];
+                // SAFETY: both descriptors belong to this test fixture for the whole call.
+                assert!(
+                    unsafe { libc::poll(ready.as_mut_ptr(), 2, 5000) } > 0,
+                    "no acquisition"
+                );
+                assert_ne!(ready[0].revents & libc::POLLIN, 0, "fixture cancelled");
+                let (stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(SESSION_CLEANUP_TIMEOUT))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(SESSION_CLEANUP_TIMEOUT))
+                    .unwrap();
+                stream
+            };
+            let reply = |stream: &mut UnixStream, message| {
+                stream
+                    .write_all(&management::encode_server_message(&message).unwrap())
+                    .unwrap();
+            };
+            let acquire = |stream: &mut UnixStream| {
+                assert!(
+                    matches!(read_request(stream), ManagementClientMessage::Acquire { expected, .. } if expected == identity)
+                );
+            };
+            let busy = |stream: &mut UnixStream| {
+                acquire(stream);
+                reply(stream, ManagementServerMessage::Busy);
+                stream.shutdown(std::net::Shutdown::Write).unwrap();
+            };
+            let mut lease = accept();
+            if case == "busy-twice" || case == "record-replaced" {
+                if case == "record-replaced" {
+                    let replacement = record.with_extension("replacement");
+                    fs::copy(&record, &replacement).unwrap();
+                    fs::rename(replacement, &record).unwrap();
+                }
+                busy(&mut lease);
+                events.push("busy");
+                if case == "busy-twice" {
+                    let mut retry = accept();
+                    lease.set_nonblocking(true).unwrap();
+                    assert_eq!(
+                        lease.read(&mut [0]).unwrap(),
+                        0,
+                        "refused connection still open at retry"
+                    );
+                    events.push("refused-closed");
+                    busy(&mut retry);
+                    events.push("busy");
+                }
+                peer.read_exact(&mut [0; 4]).unwrap();
+                listener.set_nonblocking(true).unwrap();
+                assert_eq!(
+                    listener.accept().unwrap_err().kind(),
+                    io::ErrorKind::WouldBlock,
+                    "unexpected extra acquisition"
+                );
+                return events;
+            }
+            acquire(&mut lease);
+            reply(&mut lease, ManagementServerMessage::Lease(identity.clone()));
+            events.push("leased");
+            assert_eq!(read_request(&mut lease), ManagementClientMessage::Stop);
+            reply(
+                &mut lease,
+                ManagementServerMessage::Failure(management::Failure {
+                    code: management::FailureCode::InvalidRequest,
+                    detail: "injected stop failure".into(),
+                }),
+            );
+            events.push("stop-refused");
+            if number != 1 {
+                let mut refused = accept();
+                busy(&mut refused);
+                events.push("busy");
+                let mut retry = accept();
+                refused.set_nonblocking(true).unwrap();
+                assert_eq!(
+                    refused.read(&mut [0]).unwrap(),
+                    0,
+                    "refused connection still open at retry"
+                );
+                events.push("refused-closed");
+                assert_eq!(lease.read(&mut [0]).unwrap(), 0, "old lease did not end");
+                events.push("old-ended");
+                acquire(&mut retry);
+                reply(&mut retry, ManagementServerMessage::Lease(identity.clone()));
+                lease = retry;
+                events.push("leased");
+            }
+            assert_eq!(read_request(&mut lease), ManagementClientMessage::Stop);
+            let tombstone = Tombstone {
+                identity,
+                reason: TerminationReason::ExplicitStop,
+                outcome: ProcessOutcome::ExitCode(0),
+            };
+            fs::write(
+                &record,
+                management::encode_record(&ManagementRecord::Tombstone(tombstone.clone())).unwrap(),
+            )
+            .unwrap();
+            fs::remove_file(&endpoint).unwrap();
+            fs::remove_file(&management_path).unwrap();
+            reply(&mut lease, ManagementServerMessage::Stopped(tombstone));
+            drop(presentation);
+            events.push("stopped");
+            events
+        });
+        LeaseRaceHost {
+            control,
+            worker: Some(worker),
+        }
+    }
+
+    #[test]
+    fn lease_retry_preserves_busy_and_revalidates_the_record() {
+        for case in ["busy-twice", "record-replaced"] {
+            let root = temporary_directory();
+            let host = lease_race_host(&root, 9, case);
+            let result = super::acquire_generation_sessions(
+                &root,
+                super::LaunchMode::Workspace,
+                "component-1",
+                &[],
+                None,
+                Instant::now() + SESSION_CLEANUP_TIMEOUT,
+            );
+            let error = result.err().expect("fixture unexpectedly granted a lease");
+            if case == "busy-twice" {
+                assert_eq!(error, "terminal run lease-race-9 is already managed");
+                assert_eq!(host.finish(), ["busy", "refused-closed", "busy"]);
+            } else {
+                assert!(
+                    error.contains("changed before lease acquisition"),
+                    "{error}"
+                );
+                assert_eq!(host.finish(), ["busy"]);
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn management_busy_survives_peer_close_before_acquisition() {
         let root = temporary_directory();
@@ -2577,10 +2828,7 @@ pub(crate) mod tests {
                 session.record_object,
                 Instant::now() + Duration::from_secs(1),
             ),
-            Err(format!(
-                "terminal run {} is already managed",
-                identity.run_id
-            )),
+            Ok(super::LeaseAcquisition::Busy),
         );
         fs::remove_dir_all(root).unwrap();
     }
