@@ -1296,7 +1296,13 @@
               packages.${system}.${attribute} > "$out/share/eon-source-receipt.json"
           '';
           eonProduct = withSourceReceipt "default" eonPackage;
-          eonNoHelixProduct = withSourceReceipt "no-helix" eonNoHelixPackage;
+          # Check the receipt-bearing candidate to avoid a dependency cycle with the gated product.
+          eonNoHelixCandidate = withSourceReceipt "no-helix" eonNoHelixPackage;
+          eonNoHelixProduct = eonNoHelixCandidate.overrideAttrs (old: {
+            buildCommand = ''
+              test -e ${noHelixClosureCheck}
+            '' + old.buildCommand;
+          });
           requireProductVersion = product:
             assert lib.assertMsg (product ? version && product.version == eonCargo.package.version)
               "Eon product version must match eon/crates/eon/Cargo.toml";
@@ -1368,7 +1374,7 @@
           };
           noHelixClosureCheck = import ./nix/no-helix-closure.nix {
             inherit pkgs system helixPackage;
-            package = eonNoHelixProduct;
+            package = eonNoHelixCandidate;
           };
           recordDemo = kinestra.lib.${system}.mkRecorder {
             name = "record-eon-demo";
