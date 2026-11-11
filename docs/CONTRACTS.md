@@ -3187,6 +3187,10 @@ names its socket. CLI JSON names a session `session` and a terminal
     launch input for terminal padding as
     [Configuration behavior](CONFIGURATION.md#configuration-behavior)
     describes.
+  - `[panels] heading` accepts `notch` (default) or `connected`. Runtime resolves
+    it into Venus's workspace-only `--panel-heading` launch input. It applies
+    when a window opens or reopens; an open window retains its value. VEN-C18
+    owns the shared panel drawing; terminal grid allocation is unchanged.
   - The authoritative startup workspace Snapshot transfer and native readiness
     share one absolute thirty-second deadline, including large snapshots, so a
     busy machine does not close a slow but healthy window. A missed deadline

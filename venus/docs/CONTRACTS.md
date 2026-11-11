@@ -801,7 +801,7 @@ re-proved when that platform or feature is next touched.
     `Stack` when the tab has one column and `Stack 1`, `Stack 2`, ... from left
     to right when it has several (the panes' one-based `column` in `eon session
     --json`); without pane frames the label shows plain. Each Stack tab also
-    carries VEN-C18's right action notch, holding one Close button; the label
+    carries VEN-C18's right action notch in the default notch position, holding one Close button; the label
     fits to its left. A Stack shows no button while a pane is zoomed, and none
     where the button cannot fit at full size. The Stack band remains
     one chrome title row plus the tab's rise, a third of the title padding
@@ -1618,7 +1618,16 @@ re-proved when that platform or feature is next touched.
   using the shared chrome title metric. Popup labels use Venus's shared
   framed-title treatment: the same rounded tab, shaping, fitting, padding and
   outline policy as each column's Stack tab, the Agents sidebar and native titled
-  dialogs. The expanded pane's header uses VEN-C8's continuous band, collapsed
+  dialogs. Eon's `[panels] heading` selects `notch` (default) or
+  `connected`, resolved by Runtime and supplied as `--panel-heading` on workspace
+  open/reopen; existing windows retain their value. Connected replaces the
+  notches with a straight top edge at their height and the usual card radius,
+  with no heading fill or separator. Title/action positions, targets and terminal
+  allocation stay fixed, as does the compact fallback where the tab cannot fit.
+  The raised outline stays neutral through the existing card-corner switch point;
+  focus colour and width below that point are unchanged. With frames off, Stack
+  and Agents remain plain; popups and dialogs retain their frame policy.
+  The following notches describe the default position. The expanded pane's header uses VEN-C8's continuous band, collapsed
   pane titles use its compact gaps, and both retain the same chrome title
   metric. The outline rises seamlessly
   from the left border over the label and returns tangentially into the top

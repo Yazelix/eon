@@ -2,6 +2,302 @@ use super::*;
 use crate::DrawCursor;
 use orbit_protocol::CursorShape;
 
+// Explicit fixture database: these checks must not discover installed fonts.
+fn panel_heading_fonts() -> glyphon::FontSystem {
+    let mut db = glyphon::fontdb::Database::new();
+    db.load_font_file(std::path::Path::new(
+        &std::env::var_os("EON_VENUS_TEST_SANS_FONT").expect("run through nix develop -c eon-test"),
+    ))
+    .unwrap();
+    db.set_sans_serif_family("DejaVu Sans");
+    glyphon::FontSystem::new_with_locale_and_db("en-US".into(), db)
+}
+
+fn panel_heading_samples(
+    fonts: &mut glyphon::FontSystem,
+    metrics: CellMetrics,
+    stroke: f32,
+) -> Vec<(CardFill, Option<FrameTitleTab>, Option<SceneRect>)> {
+    use eon_workspace_protocol::v39::{Column, Pane, Sidebar};
+    let mut samples = Vec::new();
+    for (count, columns, zoom, narrow, frames, scroll) in [
+        (0, 0, false, false, true, 0.0),
+        (0, 0, false, false, false, 0.0),
+        (1, 1, false, false, true, 0.0),
+        (3, 2, false, false, true, 0.0),
+        (3, 1, false, false, true, 80.0),
+        (3, 1, true, false, true, 0.0),
+        (3, 1, false, true, true, 0.0),
+        (3, 1, false, false, false, 0.0),
+    ] {
+        let mut snapshot = popup_title_snapshot("Popup gyp", 40.0);
+        snapshot.sidebar = Sidebar::Open;
+        if count > 0 {
+            let tab = &mut snapshot.tabs[0];
+            tab.selected_popup = None;
+            tab.selected_pane = Some("p0-0".into());
+            tab.columns = (0..columns)
+                .map(|column| Column {
+                    expanded: format!("p{column}-0"),
+                    panes: (0..count)
+                        .map(|pane| Pane {
+                            id: format!("p{column}-{pane}"),
+                            label: format!("p{column}-{pane} gyp"),
+                            session: format!("s{column}-{pane}"),
+                            endpoint: b"/tmp/heading-test.sock".to_vec(),
+                            pinned_name: None,
+                            live: true,
+                            attention: None,
+                        })
+                        .collect(),
+                })
+                .collect();
+        }
+        let size = PhysicalSize::new(
+            ((if narrow { 240.0 } else { 3200.0 }) * metrics.scale) as u32,
+            (1600.0 * metrics.scale) as u32,
+        );
+        let workspace = WorkspaceScene::from_snapshot_with_zoom(
+            &snapshot,
+            crate::EonBar::default(),
+            size,
+            metrics,
+            0.0,
+            scroll,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+            None,
+            zoom,
+            crate::SidebarView::default(),
+        );
+        let tabs =
+            FrameTitleTab::workspace(fonts, metrics, &workspace, frames, (stroke, stroke * 2.0));
+        if count > 0 && frames {
+            let panes = PaneTitleTab::workspace(
+                fonts,
+                &mut SwashCache::new(),
+                metrics,
+                &workspace,
+                (stroke, stroke * 2.0),
+                None,
+            );
+            for (heading, panes) in tabs.iter().zip(&panes) {
+                if let (Some(heading), Some(Some(pane))) = (heading, panes.first()) {
+                    assert!(
+                        heading.row.bottom() <= pane.tab.top,
+                        "Stack heading must stay above the expanded pane's band"
+                    );
+                }
+            }
+        }
+        let backgrounds = vec![None; workspace.other_columns.len()];
+        let cards = card_backdrops(&workspace, None, &backgrounds, metrics, stroke * 2.0);
+        for (index, (tab, (card, _))) in tabs.into_iter().zip(cards).enumerate() {
+            let action = if count == 0 && index == 0 {
+                crate::HeadingAction::HidePopup
+            } else if index == 0 {
+                crate::HeadingAction::CloseStack(0)
+            } else if index < columns {
+                crate::HeadingAction::CloseStack(index)
+            } else {
+                crate::HeadingAction::HideSidebar
+            };
+            if let Some(card) = card {
+                samples.push((card, tab, workspace.heading_action(action)));
+            }
+        }
+    }
+    for (width, height) in [(1280, 800), (240, 200), (400, 32)] {
+        let viewer = crate::DialogScene::new(
+            crate::DialogKind::Shortcuts,
+            vec![],
+            PhysicalSize::new(width, height),
+            metrics,
+            0.0,
+            &crate::CellText(metrics),
+        );
+        if let Some((card, tab)) = FrameTitleTab::dialog(fonts, metrics, &viewer, stroke) {
+            samples.push((card, Some(tab), None));
+        }
+    }
+    samples
+}
+
+#[test]
+fn panel_heading_notch_draw_inputs_are_stable() {
+    let mut fonts = panel_heading_fonts();
+    // Recorded from the unchanged 4763d29 contour with the exact packaged font.
+    for (scale, expected) in [
+        (1.0_f32, 0xccc7c855e33caf7c_u64),
+        (1.125, 0x443cca70ed44ee3a),
+        (2.0, 0x2baa8760bc346a99),
+    ] {
+        let mut digest = 0xcbf29ce484222325_u64;
+        for size in [16.0, 48.0, 96.0] {
+            let factor = size / 16.0;
+            let metrics = CellMetrics {
+                width: (10.0 * factor * scale).round(),
+                height: (18.0 * factor * scale).round(),
+                font_size: size * scale,
+                padding: (12.0 * factor * scale).round(),
+                scale,
+            };
+            for border in [1, 3] {
+                let stroke = physical_outline_width(border, scale);
+                for (card, tab, _) in panel_heading_samples(&mut fonts, metrics, stroke) {
+                    let mut batch = RectangleBatch::new(6400, 3200);
+                    push_title_tab_backdrop(
+                        &mut batch,
+                        SceneRect {
+                            width: 6400.0,
+                            height: 3200.0,
+                            ..SceneRect::default()
+                        },
+                        &[(Some(card), palette::TERMINAL_FALLBACK)],
+                        0.8,
+                        std::slice::from_ref(&tab),
+                    );
+                    if let Some(tab) = tab {
+                        batch.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                        for byte in tab.title.label.bytes().chain(tab.title.width.to_le_bytes()) {
+                            digest = (digest ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+                        }
+                    }
+                    for byte in batch.bytes {
+                        digest = (digest ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+                    }
+                }
+            }
+        }
+        assert_eq!(digest, expected, "notch draw inputs at scale={scale}");
+    }
+}
+
+#[test]
+fn panel_heading_connected_uses_full_radius_and_clears_title_ink_and_buttons() {
+    let mut fonts = panel_heading_fonts();
+    let mut swash = SwashCache::new();
+    let mut checked = 0;
+    for scale in [1.0_f32, 1.125, 2.0] {
+        for size in [16.0, 48.0, 96.0] {
+            let metrics = CellMetrics {
+                width: (10.0 * size / 16.0 * scale).round(),
+                height: (18.0 * size / 16.0 * scale).round(),
+                font_size: size * scale,
+                padding: (12.0 * size / 16.0 * scale).round(),
+                scale,
+            };
+            for border in [1, 3] {
+                let stroke = physical_outline_width(border, scale);
+                for (card, tab, action) in panel_heading_samples(&mut fonts, metrics, stroke) {
+                    let Some(mut tab) = tab else { continue };
+                    let row = tab.row;
+                    tab.heading = PanelHeading::Connected;
+                    let top = tab.top;
+                    let expected = CardFill {
+                        bounds: SceneRect {
+                            top,
+                            height: card.bounds.bottom() - top,
+                            ..card.bounds
+                        },
+                        radius: card.radius,
+                    };
+                    let actual = title_tab_bands(card, &tab, 0.0);
+                    let expected = expected.bands().collect::<Vec<_>>();
+                    for band in &expected {
+                        assert!(uncovered(*band, &actual).is_empty(), "missing rounded fill");
+                    }
+                    for (index, band) in actual.iter().enumerate() {
+                        assert!(
+                            uncovered(*band, &expected).is_empty(),
+                            "fill outside rounded card"
+                        );
+                        assert!(
+                            actual[index + 1..]
+                                .iter()
+                                .all(|other| band.intersection(*other).is_none()),
+                            "double blending"
+                        );
+                    }
+                    let inner = title_tab_bands(card, &tab, stroke);
+                    let (_, (left, ink_top, right, ink_bottom)) =
+                        chrome::status_glyph_ink(&mut fonts, &mut swash, metrics, &tab.title.label);
+                    let ink = SceneRect {
+                        left: row.left + metrics.padding + left as f32,
+                        top: row.top + ink_top as f32,
+                        width: (right - left) as f32,
+                        height: (ink_bottom - ink_top) as f32,
+                    };
+                    for rect in [Some(ink), action].into_iter().flatten() {
+                        for y in rect.top.ceil() as i32..rect.bottom().floor() as i32 {
+                            for x in [rect.left.ceil() + 0.5, rect.right().floor() - 0.5] {
+                                assert!(
+                                    inner.iter().any(|band| band.contains(x, y as f32 + 0.5)),
+                                    "corner crosses ink/hover target: scale={scale}, size={size}, stroke={stroke}, rect={rect:?}, card={:?}",
+                                    card.bounds
+                                );
+                            }
+                        }
+                    }
+                    // The neutral/focus switch point stays on the original card's straight sides.
+                    let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
+                    let outline = title_tab_outline_rects(card, &tab, stroke);
+                    assert!(
+                        outline.iter().all(|(rect, _)| rect.bottom() <= cut),
+                        "outline exceeds cut {cut} at scale={scale}, size={size}"
+                    );
+                    assert!(
+                        outline
+                            .iter()
+                            .any(|(rect, _)| rect.contains(card.bounds.left + 0.5, cut - 0.5)),
+                        "side join missing: scale={scale}, size={size}, stroke={stroke}, top={}, cut={cut}, bounds={:?}",
+                        tab.top,
+                        card.bounds
+                    );
+                    if cut + stroke * 2.0 < card.bounds.bottom() - card.radius {
+                        let mut batch = RectangleBatch::new(6400, 3200);
+                        batch.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                        let lower = PaneOutline {
+                            bounds: card.bounds,
+                            clip: SceneRect {
+                                top: cut,
+                                height: card.bounds.bottom() - cut,
+                                ..card.bounds
+                            },
+                            radius: card.radius,
+                            title_y: None,
+                            expanded: true,
+                        };
+                        batch.push_pane_outlines(
+                            card,
+                            card.bounds,
+                            &[(lower, [SceneRect::default(); 2])],
+                            &[],
+                            None,
+                            Some(palette::ACCENT),
+                            stroke,
+                            stroke * 2.0,
+                        );
+                        let x = card.bounds.left + 0.5;
+                        assert_eq!(
+                            padding_pixel(&batch, x, cut - 0.5),
+                            Some(palette::CARD_OUTLINE)
+                        );
+                        assert_eq!(padding_pixel(&batch, x, cut + 0.5), Some(palette::ACCENT));
+                        let wider = card.bounds.left + stroke + 0.5;
+                        assert_eq!(padding_pixel(&batch, wider, cut - 0.5), None);
+                        assert_eq!(
+                            padding_pixel(&batch, wider, cut + 0.5),
+                            Some(palette::ACCENT)
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 50, "matrix must exercise framed headings");
+}
+
 #[test]
 fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
     let card = CardFill {
@@ -14,6 +310,7 @@ fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
         radius: 8.0,
     };
     let tab = FrameTitleTab {
+        heading: PanelHeading::Notch,
         top: 26.0,
         start: 100.0,
         left_radius: 14.0,
@@ -64,6 +361,7 @@ fn title_return_arcs_keep_normal_stroke_width_at_their_tangent_join() {
         radius: 8.0,
     };
     let tab = FrameTitleTab {
+        heading: PanelHeading::Notch,
         top: 26.0,
         start: 100.0,
         left_radius: 14.0,
@@ -2663,6 +2961,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                     radius: 8.0,
                 },
                 tab: FrameTitleTab {
+                    heading: PanelHeading::Notch,
                     top: top - 14.0,
                     start: 85.0,
                     left_radius: 14.0,

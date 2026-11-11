@@ -33,6 +33,7 @@ pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
 struct EonConfig {
     shell: ShellSettings,
     terminal: TerminalSettings,
+    panels: PanelSettings,
     bar: BarSettings,
     anima: AnimationSettings,
     session: SessionSettings,
@@ -55,7 +56,7 @@ struct EonConfig {
 impl EonConfig {
     fn validate(self, defaults: &Defaults) -> Result<(), String> {
         resolve_bar(self.bar, defaults)?;
-        resolve_terminal(self.terminal, defaults)?;
+        resolve_terminal(self.terminal, self.panels, defaults)?;
         resolve_popups(self.popups, defaults)?;
         shell_config(self.shell, defaults)?;
         resolve_agents(self.agents, defaults)?;
@@ -71,6 +72,7 @@ impl EonConfig {
             ("", &self.unknown),
             ("shell.", &self.shell.unknown),
             ("terminal.", &self.terminal.unknown),
+            ("panels.", &self.panels.unknown),
             ("bar.", &self.bar.unknown),
             ("anima.", &self.anima.unknown),
             ("session.", &self.session.unknown),
@@ -629,12 +631,40 @@ impl PaddingColor {
     }
 }
 
+/// The position of a panel's heading, resolved by Runtime before Venus starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PanelHeading {
+    Notch,
+    Connected,
+}
+
+impl PanelHeading {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Notch => "notch",
+            Self::Connected => "connected",
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+struct PanelSettings {
+    heading: Option<PanelHeading>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TerminalConfig {
     pub background_opacity: f32,
     pub background_blur: bool,
     pub padding_color: PaddingColor,
     pub pane_frames: bool,
+    // Stored with resolved launch settings; printed under [panels], not [terminal].
+    #[serde(skip_serializing)]
+    pub panel_heading: PanelHeading,
     pub detect_local_hosts: bool,
     pub focus_color: Option<String>,
     pub border_width: Option<u8>,
@@ -762,6 +792,10 @@ fn defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
             rows: defaults.terminal.rows,
             unknown: BTreeMap::new(),
         },
+        panels: PanelSettings {
+            heading: Some(defaults.terminal.panel_heading),
+            unknown: BTreeMap::new(),
+        },
         bar: BarSettings {
             widgets: Some(
                 defaults
@@ -878,8 +912,8 @@ fn format_defaults(mut config: serde_json::Value, json: bool) -> Result<String, 
     let mut output =
         String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
     let order = [
-        "bar", "terminal", "shell", "anima", "session", "sidebar", "agents", "editor", "updates",
-        "popups",
+        "bar", "terminal", "panels", "shell", "anima", "session", "sidebar", "agents", "editor",
+        "updates", "popups",
     ];
     let mut sections: Vec<_> = config.as_object().unwrap().iter().collect();
     sections.sort_by_key(|(section, _)| {
@@ -970,6 +1004,7 @@ fn defaults_table(
             "background_blur" => "Request compositor background blur.",
             "padding_color" => "How terminal padding takes its background colour.",
             "pane_frames" => "Draw rounded pane frames.",
+            "heading" => "Panel heading position: notch or connected. Applies on open or reopen.",
             "detect_local_hosts" => {
                 "Treat plain-text localhost, 127.0.0.1 and [::1] with a port as links."
             }
@@ -1297,11 +1332,13 @@ pub(crate) fn terminal_presentation(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<TerminalConfig, String> {
-    resolve_terminal(read_config(root, defaults, log)?.terminal, defaults)
+    let config = read_config(root, defaults, log)?;
+    resolve_terminal(config.terminal, config.panels, defaults)
 }
 
 fn resolve_terminal(
     settings: TerminalSettings,
+    panels: PanelSettings,
     defaults: &Defaults,
 ) -> Result<TerminalConfig, String> {
     let base = &defaults.terminal;
@@ -1312,6 +1349,7 @@ fn resolve_terminal(
         background_blur: settings.background_blur.unwrap_or(base.background_blur),
         padding_color: settings.padding_color.unwrap_or(base.padding_color),
         pane_frames: settings.pane_frames.unwrap_or(base.pane_frames),
+        panel_heading: panels.heading.unwrap_or(base.panel_heading),
         detect_local_hosts: settings
             .detect_local_hosts
             .unwrap_or(base.detect_local_hosts),
@@ -2800,6 +2838,7 @@ mod tests {
         let mut defaults = crate::fixtures::inputs().defaults;
         for explicit in [false, true] {
             if explicit {
+                defaults.terminal.panel_heading = super::PanelHeading::Connected;
                 defaults.terminal.focus_color = Some("preset:ice".into());
                 defaults.terminal.border_width = Some(2);
                 defaults.terminal.focus_border_width = Some(3);
@@ -2829,6 +2868,11 @@ mod tests {
                 serde_json::from_str(&super::print_defaults(&defaults, true).unwrap()).unwrap();
             let parsed: toml::Value = toml::from_str(&toml).unwrap();
             assert_eq!(serde_json::to_value(parsed).unwrap(), json);
+            assert_eq!(
+                json["panels"]["heading"],
+                defaults.terminal.panel_heading.as_str()
+            );
+            assert!(json["terminal"].get("panel_heading").is_none());
             assert!(json["popups"]["project"].get("command").is_none());
             // Files is Eon's packaged Yazi: only its key and label are settings.
             for key in ["command", "enabled", "keep_alive"] {
@@ -3076,6 +3120,9 @@ new_field = true
 [terminal]
 background_opacity = 0.37
 future_border_width = 2
+[panels]
+heading = "connected"
+future_fill = true
 [bar]
 widgets = ["cpu"]
 new_field = true
@@ -3110,6 +3157,7 @@ nested = { value = true }
         let config = super::read_config(&root, &defaults, Some(&log)).unwrap();
         assert_eq!(config.shell.starship, Some(false));
         assert_eq!(config.terminal.background_opacity, Some(0.37));
+        assert_eq!(config.panels.heading, Some(super::PanelHeading::Connected));
         assert_eq!(
             config.bar.widgets.as_deref(),
             Some(["cpu".to_owned()].as_slice())
@@ -3128,6 +3176,7 @@ nested = { value = true }
             "bar.new_field",
             "new_table",
             "new_top_level",
+            "panels.future_fill",
             "popup",
             "popups.agent.new_field",
             "session.new_field",

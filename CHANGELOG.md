@@ -10,6 +10,10 @@ installation, and proven contract changes.
   JSON results include the checked path, validity and structured error details
   (`eon-configurability-qkq8.13`, EON-C9).
 
+- `[panels] heading = "connected"` joins panel notches into a straight rounded
+  top edge, without moving titles, actions or terminal rows. The default is
+  `"notch"`; changes apply on window open or reopen (`eon-6ui6p`).
+
 - Closing a column or stopping right after a failed close no longer fails
   with "already managed" (`eon-k0okt`).
 - Selected tabs and the current Agents row share a brighter fill; keyboard

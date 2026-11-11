@@ -632,6 +632,7 @@ fn lone_pane_header_keeps_the_shared_fill_through_its_raised_cap() {
             radius: outline.radius,
         },
         tab: FrameTitleTab {
+            heading: PanelHeading::Notch,
             top,
             start: row.left + metrics.width * 8.0,
             left_radius: outline.bounds.top - top,

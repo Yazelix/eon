@@ -111,6 +111,9 @@ padding_color = "extend" # How terminal padding takes its background colour.
 pane_frames = true # Draw rounded pane frames.
 # rows: unset. Let the window choose initial rows when omitted.
 
+[panels]
+heading = "notch" # Panel heading position: notch or connected. Applies on open or reopen.
+
 [shell]
 atuin = true # Enable the managed Atuin history integration.
 carapace = true # Enable the managed Carapace completion integration.
@@ -417,7 +420,20 @@ The Hide buttons on popup and Agents headings and the Close button on each
 Stack tab follow the same rule: their size, glyph and labels are fixed and
 derive from the configured typography and title padding.
 
-Popup and Agents headings also carry a second notch at the right, mirroring the
+`[panels] heading` selects the heading position for Stacks, popups, Agents and
+native dialogs. `"notch"` (the default) keeps the double notches described below.
+`"connected"` joins them with a straight top edge at notch height and the card's
+usual rounded outer corners, enclosing the existing title and actions without a
+heading fill or separator. Titles, action targets, terminal rows and pane header
+bands keep their positions. Tight headings retain the same compact fallback.
+The raised top outline stays neutral at `border_width`; the selected pane's
+focus colour and width begin below the existing card-corner join. With pane
+frames off, Stack and Agents labels remain plain; popup and dialog frames follow
+the selected position. The setting applies when a window opens or reopens;
+existing windows retain their position until reopened.
+
+In the default notch position, popup and Agents headings carry a second notch
+at the right, mirroring the
 title's, with one Hide button (`–`); the name fits to its left. The popup's
 button hides the shown popup exactly as `eon popup hide POPUP` does, and the
 Agents button hides the sidebar as Alt+Shift+H and `eon sidebar hide` do. Hover
@@ -435,7 +451,7 @@ Most popups still hide on their own shortcut; Sessions' key confirms its
 selection instead, and quick search and Files switch to each other. Screen
 readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
 
-Each Stack tab carries the same right notch with one Close button (`×`),
+In the default notch position, each Stack tab carries the same right notch with one Close button (`×`),
 which always asks before it closes anything; [Usage](USAGE.md) describes its
 prompt.
 
@@ -469,7 +485,7 @@ Stack label darkens only as far as 4.5:1 contrast needs. Dialog tabs stay inside
 their existing dismissal bounds and use the dialog's opaque background; other
 tabs inherit their terminal background colour and opacity.
 
-The pane band and shared tab shapes are fixed and follow the configured font
+The pane band and the dimensions of both panel heading positions follow the configured font
 size and line height (defaults: 16 px and 1.125), existing title padding, and `border_width`
 (default: 1). A selected pane retains its `focus_border_width` and focus colour.
 Terminal-backed fills use `background_opacity` (default: 0.8). The fixed policy
@@ -481,9 +497,9 @@ and gives short windows a single clearance rule. The Stack tabs are
 fixed the same way: their labels (`Stack`, `Stack N`), the stack band (one title
 row plus a third of the title padding: 24 px at the defaults) and the card gap
 between the bar's pills and the tab tops (default: 8 px) derive from the font
-size, line height, title padding and card gap. A setting would add a second
-geometry policy whose only purpose is undoing one consistent look; `eon-whjhd`
-records the reason.
+size, line height, title padding and card gap. Their position is selected by
+`[panels] heading`; their dimensions stay derived from these shared metrics
+(`eon-whjhd`, `eon-6ui6p`).
 
 `padding_color` controls terminal padding in panes, popups and eonbase.
 `extend` uses the nearest edge cell's background on each side and

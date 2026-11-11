@@ -21,8 +21,8 @@ pub use model::{
     focused_terminal, labels_only_change,
 };
 pub use render::{
-    CellMetrics, FontSettings, FontSetup, ImageResync, PaddingColor, PresentOutcome, RenderError,
-    Renderer, read_eon_icon,
+    CellMetrics, FontSettings, FontSetup, ImageResync, PaddingColor, PanelHeading, PresentOutcome,
+    RenderError, Renderer, read_eon_icon,
 };
 pub use scene::{
     AttentionFilter, AttentionFilterChip, BarItem, CellText, Color, DialogKind, DialogScene,

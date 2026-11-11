@@ -1174,6 +1174,11 @@ impl FrameTitle {
 }
 
 impl FrameTitleTab {
+    fn with_heading(mut self, heading: super::PanelHeading) -> Self {
+        self.heading = heading;
+        self
+    }
+
     pub(super) fn popup(
         fonts: &mut FontSystem,
         metrics: CellMetrics,
@@ -1288,6 +1293,7 @@ impl FrameTitleTab {
             return None;
         }
         Some(Self {
+            heading: super::PanelHeading::Notch,
             top,
             start: right - right_radius,
             left_radius,
@@ -1667,6 +1673,9 @@ impl Renderer {
                 physical_outline_width(self.focus_border_width, self.metrics.scale),
             ),
         )
+        .into_iter()
+        .map(|tab| tab.map(|tab| tab.with_heading(self.panel_heading)))
+        .collect()
     }
 
     /// Steps every drawn working badge one frame by rewriting only its own uploaded vertices,
@@ -2436,7 +2445,8 @@ impl Renderer {
         let padding = tokens::dialog_padding(self.metrics, viewer.bounds.width);
         rectangles.clip = None;
         let stroke = physical_outline_width(self.border_width, self.metrics.scale);
-        let tab = FrameTitleTab::dialog(&mut self.fonts.font_system, self.metrics, viewer, stroke);
+        let tab = FrameTitleTab::dialog(&mut self.fonts.font_system, self.metrics, viewer, stroke)
+            .map(|(card, tab)| (card, tab.with_heading(self.panel_heading)));
         let occlusion = rectangles.push_dialog_frame(viewer.bounds, padding, tab.as_ref(), stroke);
         self.text_overlay = Some((first, occlusion));
 
@@ -3076,7 +3086,9 @@ impl Renderer {
                     self.metrics,
                     workspace,
                     stroke,
-                ) {
+                )
+                .map(|tab| tab.with_heading(self.panel_heading))
+                {
                     rectangles.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
                     let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
                     clip.top = cut;
@@ -6101,6 +6113,7 @@ mod tests {
                     crate::PaddingColor::Extend,
                     None,
                     true,
+                    crate::PanelHeading::Notch,
                     true,
                     SceneColor {
                         r: 178,

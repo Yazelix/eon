@@ -321,7 +321,20 @@ Agents can use `eon pane close PANE`; zoom is window-local view state.
 AccessKit retains both actions on every laid-out pane header whose targets
 fit, including headers whose mouse buttons are hidden.
 
-Popup and Agents headings also carry a second notch at the right, mirroring the
+`[panels] heading` selects the heading position for Stacks, popups, Agents and
+native dialogs. `"notch"` (the default) keeps the double notches described below.
+`"connected"` joins them with a straight top edge at notch height and the card's
+usual rounded outer corners, enclosing the existing title and actions without a
+heading fill or separator. Titles, action targets, terminal rows and pane header
+bands keep their positions. Tight headings retain the same compact fallback.
+The raised top outline stays neutral at `border_width`; the selected pane's
+focus colour and width begin below the existing card-corner join. With pane
+frames off, Stack and Agents labels remain plain; popup and dialog frames follow
+the selected position. The setting applies when a window opens or reopens;
+existing windows retain their position until reopened.
+
+In the default notch position, popup and Agents headings carry a second notch
+at the right, mirroring the
 title's, with one Hide button (`–`); the name fits to its left. The popup's
 button hides the shown popup exactly as `eon popup hide POPUP` does, and the
 Agents button hides the sidebar as Alt+Shift+H and `eon sidebar hide` do. Hover
@@ -339,7 +352,7 @@ Most popups still hide on their own shortcut; Sessions' key confirms its
 selection instead, and quick search and Files switch to each other. Screen
 readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
 
-Each Stack tab carries the same right notch with one Close button (`×`); the
+In the default notch position, each Stack tab carries the same right notch with one Close button (`×`); the
 label fits to its left. Every Stack shows it unless a pane is zoomed or the
 tab is too narrow for a full button; with pane frames off it sits beside the
 plain label with no notch or outline. Close always asks first, whatever the

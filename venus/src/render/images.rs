@@ -1747,6 +1747,7 @@ mod tests {
                     PaddingColor::Extend,
                     None,
                     true,
+                    crate::PanelHeading::Notch,
                     true,
                     SceneColor {
                         r: 178,

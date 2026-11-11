@@ -106,6 +106,26 @@ fn fragment_srgb(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Runtime-resolved position of panel headings; pane headers keep their own geometry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PanelHeading {
+    #[default]
+    Notch,
+    Connected,
+}
+
+impl std::str::FromStr for PanelHeading {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "notch" => Ok(Self::Notch),
+            "connected" => Ok(Self::Connected),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Physical cell layout used by rendering, input mapping, and resize requests.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CellMetrics {
@@ -563,6 +583,7 @@ struct FrameTitle {
 
 #[derive(Clone)]
 struct FrameTitleTab {
+    heading: PanelHeading,
     top: f32,
     start: f32,
     left_radius: f32,
@@ -641,6 +662,35 @@ impl PaneTitleTab {
 
 // Fill and stroke share the contour, including the tangent return into the top rule.
 fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<SceneRect> {
+    if tab.heading == PanelHeading::Connected {
+        let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
+        return CardFill {
+            bounds: SceneRect {
+                left: card.bounds.left + inset,
+                top: tab.top + inset,
+                width: (card.bounds.width - inset * 2.0).max(0.0),
+                height: (card.bounds.bottom() - tab.top - inset * 2.0).max(0.0),
+            },
+            radius: (rounded_radius(card.bounds, card.radius) - inset).max(0.0),
+        }
+        .bands()
+        // Outline sampling emits one raster row per band above the existing join.
+        .flat_map(|band| {
+            let rows = (cut - band.top).clamp(0.0, band.height) as u32;
+            (0..rows)
+                .map(move |row| SceneRect {
+                    top: band.top + row as f32,
+                    height: 1.0,
+                    ..band
+                })
+                .chain((band.height > rows as f32).then_some(SceneRect {
+                    top: band.top + rows as f32,
+                    height: band.height - rows as f32,
+                    ..band
+                }))
+        })
+        .collect();
+    }
     let (mut bands, body) = notch_bands(card, tab, tab.start, inset);
     if let Some(start) = tab.action {
         // The action notch is the title notch mirrored about the card's centre. Each row keeps
@@ -1089,6 +1139,7 @@ pub struct Renderer {
     background_opacity: f32,
     padding_color: PaddingColor,
     pane_frames: bool,
+    panel_heading: PanelHeading,
     detect_local_hosts: bool,
     focus_color: SceneColor,
     border_width: u8,
@@ -1156,6 +1207,7 @@ impl Renderer {
         padding_color: PaddingColor,
         cursor_tail: Option<(SceneColor, f32)>,
         pane_frames: bool,
+        panel_heading: PanelHeading,
         detect_local_hosts: bool,
         focus_color: SceneColor,
         border_width: u8,
@@ -1364,6 +1416,7 @@ impl Renderer {
             background_opacity,
             padding_color,
             pane_frames,
+            panel_heading,
             detect_local_hosts,
             focus_color,
             border_width,

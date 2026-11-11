@@ -98,6 +98,9 @@
       "font_fallbacks": [],
       "padding_color": "extend",
       "pane_frames": true
+    },
+    "panels": {
+      "heading": "notch"
     }
   },
   "warnings": []

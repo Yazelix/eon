@@ -570,6 +570,8 @@ fn venus_command(
             command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
         }
         command
+            .arg("--panel-heading")
+            .arg(terminal.panel_heading.as_str())
             .arg("--pane-frames")
             .arg(terminal.pane_frames.to_string())
             .arg("--warning-close-last-tab")
@@ -8572,6 +8574,67 @@ rows = 30
     }
 
     #[test]
+    fn configured_panel_heading_reaches_workspace_launches_and_rereads_on_reopen() {
+        let inputs = crate::fixtures::inputs();
+        let root = temporary_directory();
+        // The reopen path uses this same resolver and command projection.
+        for (source, expected) in [
+            ("", "notch"),
+            ("[panels]\nheading = 'connected'\n", "connected"),
+            ("[panels]\nheading = 'notch'\n", "notch"),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
+            for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
+                let command = venus_command(
+                    &inputs,
+                    &root,
+                    Path::new("/runtime.sock"),
+                    mode,
+                    &terminal,
+                    &inputs.defaults.bar(),
+                    "eon",
+                    true,
+                    true,
+                    true,
+                    true,
+                );
+                let args = command.get_args().collect::<Vec<_>>();
+                let values = args
+                    .windows(2)
+                    .filter(|pair| pair[0] == "--panel-heading")
+                    .map(|pair| pair[1])
+                    .collect::<Vec<_>>();
+                if mode == LaunchMode::Workspace {
+                    assert_eq!(values, [expected]);
+                } else {
+                    assert!(values.is_empty());
+                }
+            }
+        }
+        for value in [
+            "'inline'",
+            "'Connected'",
+            "true",
+            "0",
+            "'notch'\nheading = 'connected'",
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[panels]\nheading = {value}\n"),
+            )
+            .unwrap();
+            let error =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap_err();
+            assert!(error.contains("heading"), "{error}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn configured_pane_frames_reach_only_workspace_launches() {
         let inputs = crate::fixtures::inputs();
         let root = temporary_directory();
@@ -8723,6 +8786,8 @@ rows = 30
                 "95",
                 "--bar-items",
                 "cpu",
+                "--panel-heading",
+                "notch",
                 "--pane-frames",
                 "true",
                 "--warning-close-last-tab",

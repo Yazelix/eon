@@ -8,6 +8,10 @@
   grey roles, and zoomed tabs share the pane Restore mark `▣`
   (`eon-wuau8.3`, Lucca's 2026-11-10 approval and delegated contrast decisions).
 
+- VEN-C8/VEN-C18: `--panel-heading connected` uses a straight panel top at notch
+  height, retaining title/action placement and the existing compact fallback.
+  `notch` remains the default; pane header bands are unchanged (`eon-6ui6p`).
+
 - VEN-C21: bar widgets and the session label use the idle-tab capsule fill,
   CPU/RAM/disk percentages use the interface font in fixed slots, and Shortcuts
   draws a plain `?`. Session hover and press step up the tab fills; mint focus

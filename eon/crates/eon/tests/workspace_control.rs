@@ -242,6 +242,7 @@ fn config_check_validates_offline_without_changing_state() {
     for source in [
         "",
         stdout(&defaults),
+        "[panels]\nheading = 'connected'\n",
         "[terminal]\nfont_size = 18\n[bar]\ncpu_warning_percent = 85\n",
         "[terminal]\nfont_sise = 18\n",
     ] {
@@ -318,6 +319,7 @@ fn config_check_reports_validation_and_read_failures_as_data() {
     };
     for (source, detail) in [
         ("broken = [", "line 1"),
+        ("[panels]\nheading = 'inline'", "heading"),
         ("[terminal]\nfont_size = 'large'", "font_size"),
         ("[terminal]\nfont_size = 0", "terminal.font_size"),
         (
@@ -6946,6 +6948,7 @@ fn invalid_presentation_configuration_precedes_supervisor_generation_and_childre
             "[terminal]\ncursor_trail_duration = '2'\n",
             "cursor_trail_duration",
         ),
+        ("[panels]\nheading = 'inline'\n", "heading"),
         ("[terminal]\nfont_size = nan\n", "font_size"),
         ("[terminal]\nfont_size = 96.1\n", "font_size"),
         ("[terminal]\nline_height = 0.9\n", "line_height"),
@@ -7043,7 +7046,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--detect-local-hosts\ntrue\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--eon-icon\n/fixture/eon-icon.rgba\n--ram-notice-percent\n60\n--ram-warning-percent\n75\n--ram-critical-percent\n90\n--cpu-notice-percent\n60\n--cpu-warning-percent\n75\n--cpu-critical-percent\n90\n--cpu-average-seconds\n30\n--cpu-temperature-warning-celsius\n85\n--cpu-temperature-critical-celsius\n95\n--disk-notice-percent\n60\n--disk-warning-percent\n75\n--disk-critical-percent\n90\n--disk-path\n{}\n--bar-items\ncodex_quota_5h,codex_quota_7d,claude_quota_5h,claude_quota_7d,claude_quota_scoped,cpu,ram,disk,clock,version\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--number-keys\ntrue\n--workspace\n{}\n",
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--detect-local-hosts\ntrue\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--eon-icon\n/fixture/eon-icon.rgba\n--ram-notice-percent\n60\n--ram-warning-percent\n75\n--ram-critical-percent\n90\n--cpu-notice-percent\n60\n--cpu-warning-percent\n75\n--cpu-critical-percent\n90\n--cpu-average-seconds\n30\n--cpu-temperature-warning-celsius\n85\n--cpu-temperature-critical-celsius\n95\n--disk-notice-percent\n60\n--disk-warning-percent\n75\n--disk-critical-percent\n90\n--disk-path\n{}\n--bar-items\ncodex_quota_5h,codex_quota_7d,claude_quota_5h,claude_quota_7d,claude_quota_scoped,cpu,ram,disk,clock,version\n--panel-heading\nnotch\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--number-keys\ntrue\n--workspace\n{}\n",
             env!("CARGO_PKG_VERSION"),
             std::env::temp_dir().display(),
             control.display(),

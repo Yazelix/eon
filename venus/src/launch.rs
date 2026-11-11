@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use yazelix_venus::{BarItem, Color, FontSettings, LoadLevels, PaddingColor};
+use yazelix_venus::{BarItem, Color, FontSettings, LoadLevels, PaddingColor, PanelHeading};
 
 const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("magma", rgb(0xff3b30)),
@@ -23,7 +23,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--detect-local-hosts true|false] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--panel-heading notch|connected] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--detect-local-hosts true|false] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -34,6 +34,7 @@ pub(super) struct LaunchArguments {
     pub(super) startup_admission: bool,
     pub(super) decorations: bool,
     pub(super) pane_frames: bool,
+    pub(super) panel_heading: PanelHeading,
     /// Whether bare loopback hosts and ports are links (VEN-C5).
     pub(super) detect_local_hosts: bool,
     pub(super) focus_color: Color,
@@ -70,6 +71,7 @@ pub(super) fn launch_arguments(
     let mut workspace_socket = None;
     let mut decorations = true;
     let mut pane_frames = None;
+    let mut panel_heading = None;
     let mut detect_local_hosts = None;
     let mut focus_color = None;
     let mut border_width = None;
@@ -214,6 +216,8 @@ pub(super) fn launch_arguments(
             if disk_path.is_none() {
                 return Err(USAGE.into());
             }
+        } else if argument == "--panel-heading" {
+            option_value(&mut panel_heading, arguments.next())?;
         } else if argument == "--pane-frames" {
             option_value(&mut pane_frames, arguments.next())?;
         } else if argument == "--detect-local-hosts" {
@@ -510,6 +514,7 @@ pub(super) fn launch_arguments(
         startup_admission,
         decorations,
         pane_frames: pane_frames.unwrap_or(true),
+        panel_heading: panel_heading.unwrap_or_default(),
         detect_local_hosts: detect_local_hosts.unwrap_or(true),
         focus_color: focus_color.unwrap_or_else(|| rgb(0xb207fb)),
         border_width: border_width.unwrap_or(1),
@@ -1057,6 +1062,35 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn panel_heading_is_a_strict_single_position() {
+        let parse = |args: &[&str]| launch_arguments(args.iter().map(OsString::from), None);
+        assert_eq!(
+            parse(&["--workspace", "eon.sock"]).unwrap().panel_heading,
+            PanelHeading::Notch
+        );
+        for (value, expected) in [
+            ("notch", PanelHeading::Notch),
+            ("connected", PanelHeading::Connected),
+        ] {
+            assert_eq!(
+                parse(&["--panel-heading", value, "--workspace", "eon.sock"])
+                    .unwrap()
+                    .panel_heading,
+                expected
+            );
+        }
+        for args in [
+            vec!["--panel-heading"],
+            vec!["--panel-heading", "inline"],
+            vec!["--panel-heading", "Connected"],
+            vec!["--panel-heading", "true"],
+            vec!["--panel-heading", "notch", "--panel-heading", "connected"],
+        ] {
+            assert!(parse(&args).is_err(), "accepted {args:?}");
+        }
     }
 
     #[test]
