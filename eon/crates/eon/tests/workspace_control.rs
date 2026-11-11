@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -7679,7 +7679,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -7689,7 +7689,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -7700,7 +7700,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -7715,7 +7715,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -7733,14 +7733,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -7762,7 +7762,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -10292,7 +10292,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -12618,7 +12618,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v39::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v40::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -14199,9 +14199,154 @@ fn read_request(stream: &mut UnixStream) -> Vec<u8> {
     request
 }
 
+/// The CLI selects a prefix and sends its own component inputs to that owner.
+#[test]
+fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
+    for independent in [false, true] {
+        let root = temporary_directory();
+        let runtime = root.join("r");
+        let windows = runtime.join("w");
+        fs::create_dir_all(&windows).unwrap();
+        for directory in [&runtime, &windows] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let id = format!("g1-{:032x}", 17);
+        let (owner, prefix, full_id) = if independent {
+            (windows.join("abcd3000"), "abcd", "abcd3000".to_owned())
+        } else {
+            (runtime.clone(), "0000", id[3..].to_owned())
+        };
+        let listener = generation_listener(&owner, &id);
+        let target = root.join("new-venus");
+        let requested = target.clone();
+        let server = thread::spawn(move || {
+            loop {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = decode_request(&read_request(&mut stream)).unwrap();
+                let reload = match request.action {
+                    ProtocolAction::Workspace(Action::ReloadPresentation {
+                        venus,
+                        eonw,
+                        orbs,
+                        orbf,
+                    }) => {
+                        assert_eq!(Path::new(&venus), requested);
+                        assert_eq!(
+                            [eonw, orbs, orbf],
+                            [
+                                VERSION,
+                                orbit_protocol::session::VERSION,
+                                orbit_protocol::VERSION
+                            ]
+                        );
+                        true
+                    }
+                    ProtocolAction::Workspace(
+                        Action::InspectRuntime | Action::InspectPresentation,
+                    ) => false,
+                    action => panic!("unexpected window action: {action:?}"),
+                };
+                let mut info = previous_runtime(&id);
+                info.venus = Some(
+                    if reload {
+                        requested.to_str().unwrap()
+                    } else {
+                        "/old-venus"
+                    }
+                    .into(),
+                );
+                stream
+                    .write_all(
+                        &encode_lifecycle_response(&LifecycleResponse::Runtime(info)).unwrap(),
+                    )
+                    .unwrap();
+                if reload {
+                    break;
+                }
+            }
+        });
+        let command = || {
+            let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+            command
+                .env("EON_RUNTIME_DIR", &runtime)
+                .env_remove("EON_WINDOW_RUNTIME_DIR")
+                .env_remove("EON_TERMINAL")
+                .env("EON_VENUS", &target);
+            command
+        };
+        if !independent {
+            let missing = command()
+                .args(["window", "reload", "default", "--json"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                missing.status.code(),
+                Some(3),
+                "default must not substitute an older build: {missing:?}"
+            );
+            let missing: serde_json::Value = serde_json::from_slice(&missing.stdout).unwrap();
+            assert_eq!(missing["error"]["code"], "stale-target");
+        }
+        let listed = command().args(["window", "ls", "--json"]).output().unwrap();
+        assert!(listed.status.success(), "{listed:?}");
+        let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(listed["windows"][0]["venus"], "/old-venus");
+        let output = command()
+            .args(["window", "reload", prefix, "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(answer["venus"], target.to_str().unwrap());
+        assert_eq!(answer["window"], full_id);
+        server.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+/// What a fake supervisor of generation `id` from another build reports.
+#[test]
+fn window_reload_reports_an_ended_independent_target_as_json() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let windows = runtime.join("w");
+    fs::create_dir_all(&windows).unwrap();
+    for directory in [&runtime, &windows] {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let id = format!("g1-{:032x}", 17);
+    let owner = windows.join("abcd3000");
+    let listener = generation_listener(&owner, &id);
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        read_request(&mut stream);
+        drop(listener);
+        fs::remove_dir_all(owner.join("generations").join(&id)).unwrap();
+        stream
+            .write_all(
+                &encode_lifecycle_response(&LifecycleResponse::Runtime(previous_runtime(&id)))
+                    .unwrap(),
+            )
+            .unwrap();
+    });
+    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+        .args(["window", "reload", "abcd", "--json"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env_remove("EON_WINDOW_RUNTIME_DIR")
+        .env_remove("EON_TERMINAL")
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let failure: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(failure["error"]["code"], "stale-target");
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// What a fake supervisor of generation `id` from another build reports.
 fn previous_runtime(id: &str) -> Runtime {
     Runtime {
+        venus: None,
         generation: id.into(),
         name: None,
         started_at: 0,
@@ -18675,6 +18820,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
             let response = match &action {
                 ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime) => {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
+                        venus: None,
                         generation: server_id.clone(),
                         name: None,
                         started_at: 0,

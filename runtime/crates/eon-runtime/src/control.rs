@@ -5,7 +5,7 @@ use super::{
     workspace,
 };
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -241,13 +241,25 @@ fn prepare_action(
     caller: Option<String>,
     action: Action,
 ) -> Result<(bool, Vec<u8>, Duration), EndpointFailure> {
-    let timeout = CONTROL_TIMEOUT;
+    let timeout = if matches!(
+        action,
+        Action::Workspace(WorkspaceAction::ReloadPresentation { .. })
+    ) {
+        // Candidate, previous and own-build admission, plus bounded child teardown.
+        eon_workspace_protocol::PRESENTATION_ADMISSION_TIMEOUT
+            .saturating_mul(3)
+            .saturating_add(eon_workspace_protocol::SESSION_CLEANUP_TIMEOUT.saturating_mul(4))
+            .saturating_add(Duration::from_secs(1))
+    } else {
+        CONTROL_TIMEOUT
+    };
     let lifecycle = matches!(
         action,
         Action::Workspace(
             WorkspaceAction::InspectRuntime
                 | WorkspaceAction::InspectPresentation
                 | WorkspaceAction::Present { .. }
+                | WorkspaceAction::ReloadPresentation { .. }
         )
     );
     let request = encode_request(&Request {
@@ -876,7 +888,11 @@ pub(super) fn failure_status(code: &str) -> u8 {
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
         | "unknown-session" | "unknown-window" | "unknown-target" => MISSING,
         "ambiguous-window-id" => MISSING,
-        "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
+        "missing-supervisor"
+        | "supervisor-unavailable"
+        | "reload-refused"
+        | "reload-presentation-failed"
+        | "reload-rollback-failed" => UNREACHABLE,
         "person-typing" => TYPING,
         _ => FAILED,
     }
@@ -1231,16 +1247,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v39::TerminalHistory {
-                target: eon_workspace_protocol::v39::TerminalTarget {
+            super::Response::History(eon_workspace_protocol::v40::TerminalHistory {
+                target: eon_workspace_protocol::v40::TerminalTarget {
                     workspace: "s1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v39::TargetId::Pane("p1".into()),
+                    id: eon_workspace_protocol::v40::TargetId::Pane("p1".into()),
                     terminal: "terminal-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v39::Screen::Primary,
+                screen: eon_workspace_protocol::v40::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),

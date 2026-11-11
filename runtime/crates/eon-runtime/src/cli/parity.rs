@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v39::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v40::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -57,6 +57,7 @@ fn cli_path(action: &Action) -> CliPath {
                 return Lifecycle("window ls");
             }
             WorkspaceAction::Present { .. } => return Lifecycle("window attach"),
+            WorkspaceAction::ReloadPresentation { .. } => return Lifecycle("window reload"),
             WorkspaceAction::CreateTab => words(&["tab", "create"]),
             WorkspaceAction::NewWorkspace { name, focus } => [
                 words(&["session", "new"]),
@@ -213,6 +214,12 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::InspectRuntime,
         WorkspaceAction::InspectPresentation,
         WorkspaceAction::Present { workspace: true },
+        WorkspaceAction::ReloadPresentation {
+            venus: "/nix/store/fixture/bin/venus".into(),
+            eonw: 40,
+            orbs: 14,
+            orbf: 3,
+        },
         WorkspaceAction::CreateTab,
         WorkspaceAction::NewWorkspace {
             name: None,

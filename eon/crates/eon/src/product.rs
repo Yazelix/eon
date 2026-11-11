@@ -2,7 +2,7 @@ use eon_runtime::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v39::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v40::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");
@@ -18,6 +18,8 @@ pub(crate) fn inputs() -> Inputs {
         version: env!("CARGO_PKG_VERSION"),
         skill: include_str!("../../../skills/eon/SKILL.md"),
         component_report,
+        presentation_protocols: eon_manifest::presentation_protocols(MANIFEST)
+            .map_err(|error| error.to_string()),
         composed_components,
         assembly: env!("EON_WORKSPACE_DIGEST").as_bytes(),
         defaults: Defaults {

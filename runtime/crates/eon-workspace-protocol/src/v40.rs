@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v39 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v40 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -17,7 +17,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 39;
+pub const VERSION: u16 = 40;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -158,6 +158,12 @@ pub enum WorkspaceAction {
     InspectPresentation,
     Present {
         workspace: bool,
+    },
+    ReloadPresentation {
+        venus: String,
+        eonw: u16,
+        orbs: u16,
+        orbf: u16,
     },
     CreateTab,
     NewWorkspace {
@@ -853,6 +859,8 @@ pub struct Availability {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Runtime {
     pub generation: String,
+    /// The executable of the presenting Venus, or none while detached.
+    pub venus: Option<String>,
     pub name: Option<String>,
     pub started_at: u64,
     pub eon_version: String,
@@ -867,6 +875,7 @@ pub struct Runtime {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum LifecycleResponse {
     Runtime(Runtime),
     Failure(Failure),
@@ -1169,6 +1178,18 @@ fn encode_workspace_action(payload: &mut Encoder, action: &WorkspaceAction) -> R
             payload.byte(10);
             payload.byte(u8::from(*workspace));
         }
+        WorkspaceAction::ReloadPresentation {
+            venus,
+            eonw,
+            orbs,
+            orbf,
+        } => {
+            payload.byte(46);
+            payload.string(venus);
+            payload.number(*eonw);
+            payload.number(*orbs);
+            payload.number(*orbf);
+        }
         WorkspaceAction::InspectPresentation => payload.byte(11),
         WorkspaceAction::SetTabDirectory { tab, directory } => {
             identity("tab id", tab)?;
@@ -1450,6 +1471,12 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
             workspace: decode_bool(decoder, "presentation mode")?,
         },
         11 => WorkspaceAction::InspectPresentation,
+        46 => WorkspaceAction::ReloadPresentation {
+            venus: decoder.string("Venus path", MAX_DIRECTORY_BYTES)?,
+            eonw: decoder.number()?,
+            orbs: decoder.number()?,
+            orbf: decoder.number()?,
+        },
         12 => {
             let tab = decoder.string("tab id", MAX_ID_BYTES)?;
             identity("tab id", &tab)?;
@@ -1561,6 +1588,19 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
 
 fn validate_workspace_request(action: &WorkspaceAction) -> Result<()> {
     match action {
+        WorkspaceAction::ReloadPresentation {
+            venus,
+            eonw,
+            orbs,
+            orbf,
+        } => {
+            nonempty("Venus path", venus, MAX_DIRECTORY_BYTES)?;
+            if venus.as_bytes().contains(&0) || [*eonw, *orbs, *orbf].contains(&0) {
+                return Err(Error::InvalidValue {
+                    field: "reload presentation",
+                });
+            }
+        }
         WorkspaceAction::NewWorkspace {
             name: Some(name), ..
         } => validate_workspace_name(name)?,
@@ -3417,6 +3457,7 @@ pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>
                 .bytes
                 .extend_from_slice(&runtime.started_at.to_le_bytes());
             encode_busy(&mut payload, runtime.busy.as_ref());
+            encode_optional(&mut payload, &runtime.venus);
             RUNTIME
         }
         LifecycleResponse::Failure(failure) => {
@@ -3443,6 +3484,11 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
                 name: decode_window_name(&mut decoder)?,
                 started_at: decode_u64(&mut decoder)?,
                 busy: decode_busy(&mut decoder)?,
+                venus: if decode_bool(&mut decoder, "Venus path")? {
+                    Some(decoder.string("Venus path", MAX_DIRECTORY_BYTES)?)
+                } else {
+                    None
+                },
             };
             validate_runtime(&runtime)?;
             LifecycleResponse::Runtime(runtime)
@@ -3455,6 +3501,9 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
 }
 
 fn validate_runtime(runtime: &Runtime) -> Result<()> {
+    if let Some(venus) = &runtime.venus {
+        nonempty("Venus path", venus, MAX_DIRECTORY_BYTES)?;
+    }
     validate_window_name(runtime.name.as_deref())?;
     validate_busy(runtime.busy.as_ref())?;
     identity("generation", &runtime.generation)?;
@@ -3886,22 +3935,51 @@ mod tests {
     }
 
     #[test]
+    fn reload_presentation_roundtrips_and_rejects_invalid_bounds() {
+        let request = |venus: String, eonw| Request {
+            id: "reload-1".into(),
+            caller: None,
+            action: Action::Workspace(WorkspaceAction::ReloadPresentation {
+                venus,
+                eonw,
+                orbs: 14,
+                orbf: 3,
+            }),
+        };
+        let valid = request("/nix/store/build/bin/venus".into(), VERSION);
+        let bytes = encode_request(&valid).unwrap();
+        assert_eq!(decode_request(&bytes).unwrap(), valid);
+        for invalid in [
+            request(String::new(), VERSION),
+            request("x".repeat(MAX_DIRECTORY_BYTES + 1), VERSION),
+            request("a\0b".into(), VERSION),
+            request("/venus".into(), 0),
+        ] {
+            assert!(encode_request(&invalid).is_err());
+        }
+        let mut forged = bytes;
+        let eonw_offset = forged.len() - 6;
+        forged[eonw_offset..eonw_offset + 2].copy_from_slice(&0u16.to_le_bytes());
+        assert!(decode_request(&forged).is_err());
+    }
+
+    #[test]
     fn column_close_wire_binds_unique_bounded_runs() {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e57270001000700000002007231002d00",
+                "454f4e57280001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e57270001000700000002007231002d01",
+                "454f4e57280001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e57270001000b00000002007231002c0200703200",
+                "454f4e57280001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -3937,14 +4015,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57270001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e57280001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e5727008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e5728008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -4540,6 +4618,7 @@ mod tests {
     fn busy_terminals_round_trip_and_reject_forged_bounds() {
         let mut state = snapshot();
         let runtime = Runtime {
+            venus: None,
             generation: "g1".into(),
             name: None,
             started_at: 1,
@@ -4743,6 +4822,7 @@ mod tests {
             assert!(decode_response(&forged).is_err());
         }
         let runtime = Runtime {
+            venus: None,
             generation: "g1".into(),
             name: Some("🦀".repeat(64)),
             started_at: u64::MAX,
@@ -4767,16 +4847,17 @@ mod tests {
         );
         // An ASCII name can exceed the character bound without exceeding the byte bound.
         let mut forged = encode_lifecycle_response(&response).unwrap();
-        let name_offset = forged.len() - 1 - 8 - 256 - 2;
+        let name_offset = forged.len() - 2 - 8 - 256 - 2;
         forged[name_offset..name_offset + 2].copy_from_slice(&65u16.to_le_bytes());
         forged.splice(
-            name_offset + 2..forged.len() - 1 - 8,
+            name_offset + 2..forged.len() - 2 - 8,
             "a".repeat(65).bytes(),
         );
         let length = (forged.len() - HEADER_BYTES) as u32;
         forged[8..12].copy_from_slice(&length.to_le_bytes());
         assert!(decode_lifecycle_response(&forged).is_err());
         let bad = LifecycleResponse::Runtime(Runtime {
+            venus: None,
             name: Some("🦀".repeat(65)),
             ..runtime
         });
@@ -5266,14 +5347,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57270001000a00000002007231001202007431",
+                "454f4e57280001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57270001001000000002007231000c0200743104002f746d70",
+                "454f4e57280001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -5282,29 +5363,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572700010015000000020072310013020074310300676974010200753101",
+                "454f4e572800010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572700010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572800010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57270001000a00000002007231001702007032",
+                "454f4e57280001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572700010006000000020072310019",
+                "454f4e572800010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57270001000e00000002007231001a06002f746d702f61",
+                "454f4e57280001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57270001001000000002007231001b00020002006878010061",
+                "454f4e57280001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -5312,7 +5393,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57270001000f00000002007231002504002f746d70000001",
+                "454f4e57280001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -5320,44 +5401,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57270001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57280001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57270001000600000002007231001c",
+                "454f4e57280001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57270001000e00000002007231001d0200743102007032",
+                "454f4e57280001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57270001000600000002007231001e",
+                "454f4e57280001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57270001000600000002007231001f",
+                "454f4e57280001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57270001000a00000002007231002602007032",
+                "454f4e57280001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57270001000a00000002007231002902007032",
+                "454f4e57280001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57270001000a00000002007231002a02007032",
+                "454f4e57280001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -5366,7 +5447,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572700010012000000020072310027020070320000020000006869",
+                "454f4e572800010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -5374,7 +5455,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57270001000c000000020072310027020075310101",
+                "454f4e57280001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -5394,7 +5475,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57270001001700000002007231010e007465726d696e616c2d322e392d310201",
+            "454f4e57280001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -5511,7 +5592,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5727008100500100000100020002000100010000000200743100000041",
+                    "454f4e5728008100500100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -5528,7 +5609,7 @@ mod tests {
                     "00000000",
                 ),
             ),
-            (failure, "454f4e57270082000a00000004006275737902006e6f"),
+            (failure, "454f4e57280082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -5543,7 +5624,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572700860038000000",
+                    "454f4e572800860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -5566,7 +5647,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5727008d003c000000",
+                    "454f4e5728008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -5582,7 +5663,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572700870036000000",
+                    "454f4e572800870036000000",
                     "020073310200743100020070320a007465726d696e616c2d32",
                     "01020073310200743101020075310a007465726d696e616c2d33",
                     "012c01",
@@ -5595,7 +5676,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e5727008e0033000000",
+                    "454f4e5728008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -5606,7 +5687,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57270085000400000002006731",
+                "454f4e57280085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -5616,6 +5697,7 @@ mod tests {
 
         let (response, expected) = (
             LifecycleResponse::Runtime(Runtime {
+                venus: None,
                 generation: "g1".into(),
                 name: None,
                 started_at: 0,
@@ -5634,17 +5716,30 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e572700830030000000020067310500302e392e30270002006f6b010002",
+                "454f4e572800830031000000020067310500302e392e30280002006f6b010002",
                 "007331010500726561647900040062757379",
                 // v28: absent name, supervisor start in Unix milliseconds.
                 "000000000000000000",
                 // v29: absent busy list.
+                "00",
+                // v40: absent presenting Venus.
                 "00",
             ),
         );
         let bytes = encode_lifecycle_response(&response).unwrap();
         assert_eq!(hex(&bytes), expected, "{response:?}");
         assert_eq!(decode_lifecycle_response(&bytes).unwrap(), response);
+        let LifecycleResponse::Runtime(mut runtime) = response else {
+            unreachable!()
+        };
+        runtime.venus = Some(format!("/nix/store/{}", "v".repeat(200)));
+        let response = LifecycleResponse::Runtime(runtime.clone());
+        assert_eq!(
+            decode_lifecycle_response(&encode_lifecycle_response(&response).unwrap()).unwrap(),
+            response
+        );
+        runtime.venus = Some("v".repeat(MAX_DIRECTORY_BYTES + 1));
+        assert!(encode_lifecycle_response(&LifecycleResponse::Runtime(runtime)).is_err());
     }
 
     fn attention_queue_snapshot() -> Snapshot {
@@ -5719,7 +5814,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5727008100be00000001000100010000000100740000000000000000",
+                "454f4e5728008100be00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "0200733102007331010002007331013000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000001000100",
@@ -5759,7 +5854,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5727008100ef0000000100010001000000010074000000000000000000",
+                "454f4e5728008100ef0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001000100020073310100740100700101",
@@ -5810,6 +5905,7 @@ mod tests {
         assert_eq!(decode_response(&bytes).unwrap(), response);
 
         let runtime = LifecycleResponse::Runtime(Runtime {
+            venus: None,
             generation: "g1".into(),
             name: None,
             started_at: 0,
@@ -5831,12 +5927,13 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572700830063000000020067310500302e392e30270002006f6b0000",
+                "454f4e572800830064000000020067310500302e392e30280002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
             .to_owned()
                 + busy_bytes
+                + "00"
         );
         assert_eq!(decode_lifecycle_response(&bytes).unwrap(), runtime);
     }
@@ -6142,10 +6239,10 @@ mod tests {
             ),
             (&[43], Error::Truncated),
             (
-                &[46],
+                &[47],
                 Error::InvalidTag {
                     field: "action",
-                    value: 46,
+                    value: 47,
                 },
             ),
             (

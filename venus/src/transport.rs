@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -76,7 +76,7 @@ pub enum WorkspaceEvent {
     },
 }
 
-/// Bounded semantic-action handle for EONW v39.
+/// Bounded semantic-action handle for EONW v40.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<WorkerItem>,
     events: Arc<WorkspaceEventQueue>,
@@ -1428,7 +1428,7 @@ pub fn bench_tracing() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v39::{
+    use eon_workspace_protocol::v40::{
         InvokeIntent, Pane, Popup, PopupEntry, PopupKey, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -3048,7 +3048,7 @@ mod tests {
         Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v40::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -3071,7 +3071,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v39::Column {
+                columns: vec![eon_workspace_protocol::v40::Column {
                     panes: vec![Pane {
                         label: "pane-1".into(),
                         pinned_name: None,
@@ -3085,7 +3085,7 @@ mod tests {
                 }],
                 attention_rollup: None,
             }],
-            geometry: eon_workspace_protocol::v39::PopupGeometry {
+            geometry: eon_workspace_protocol::v40::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -3103,7 +3103,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v39::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v40::Sidebar::Open,
             attention_queue: Vec::new(),
         }
     }
@@ -3116,7 +3116,7 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v39::Column {
+            columns: vec![eon_workspace_protocol::v40::Column {
                 panes: vec![Pane {
                     label: "pane-2".into(),
                     pinned_name: None,

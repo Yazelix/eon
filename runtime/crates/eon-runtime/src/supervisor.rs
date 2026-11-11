@@ -24,7 +24,7 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     Action, Availability, BusyTerminals, CloseConsent, CloseEnd, CloseScope, CloseTerminal,
     Editing, Ended, FILES_ENTRY, Failure, InvokeIntent, LifecycleResponse, Request, Response,
     Runtime, Screen, Sent, Snapshot, TargetId, TerminalHistory, TerminalInput, TerminalText,
@@ -447,6 +447,7 @@ fn window_bar(
 #[allow(clippy::too_many_arguments)]
 fn venus_command(
     inputs: &Inputs,
+    venus: &Path,
     config: &Path,
     socket: &Path,
     mode: LaunchMode,
@@ -458,7 +459,7 @@ fn venus_command(
     animate_working_badge: bool,
     number_keys: bool,
 ) -> Command {
-    let mut command = Command::new(&inputs.venus);
+    let mut command = Command::new(venus);
     managed_environment::remove_agent_session(&mut command)
         .env_remove(TERMINAL_VARIABLE)
         .env_remove(TAB_VARIABLE);
@@ -611,11 +612,11 @@ enum FocusFailure {
 }
 
 impl NativeFocus {
-    /// Reads the reports `stream` holds now. A failure leaves focus unknown
-    /// and ends reports from this Venus.
-    fn poll(&mut self, stream: &UnixStream) -> Result<(), FocusFailure> {
+    /// True only after draining complete reports. A failure leaves focus unknown
+    /// and ends reports from this Venus; exhausting the budget leaves freshness uncertain.
+    fn poll(&mut self, stream: &UnixStream) -> Result<bool, FocusFailure> {
         if self.ended {
-            return Ok(());
+            return Ok(false);
         }
         let result = self.read(stream);
         if result.is_err() {
@@ -625,7 +626,7 @@ impl NativeFocus {
         result
     }
 
-    fn read(&mut self, stream: &UnixStream) -> Result<(), FocusFailure> {
+    fn read(&mut self, stream: &UnixStream) -> Result<bool, FocusFailure> {
         let mut buffer = [0; 64];
         let mut budget = FOCUS_READ_BUDGET;
         while budget > 0 {
@@ -633,7 +634,9 @@ impl NativeFocus {
             let count = match platform::read_available(stream, &mut buffer[..limit]) {
                 Ok(0) => return Err(FocusFailure::Ended),
                 Ok(count) => count,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(self.used == 0);
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => return Err(FocusFailure::Io(error)),
             };
@@ -651,12 +654,13 @@ impl NativeFocus {
                 }
             }
         }
-        Ok(())
+        Ok(false)
     }
 }
 
 struct PresentationProcess {
     child: Child,
+    executable: PathBuf,
     /// The name each terminal's Orbit admits to attach, read at spawn; none
     /// if it could not be read, which leaves every terminal unattached
     /// (EON-C11).
@@ -700,6 +704,7 @@ impl PresentationProcess {
         if env::var_os("RUST_BACKTRACE").is_none() {
             command.env("RUST_BACKTRACE", "1");
         }
+        let executable = PathBuf::from(command.get_program());
         let mut child = command
             .spawn()
             .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?;
@@ -716,6 +721,7 @@ impl PresentationProcess {
         let stderr = child.stderr.take().expect("Eon Desktop stderr is piped");
         let mut process = Self {
             child,
+            executable,
             name,
             control,
             log: Arc::clone(log),
@@ -739,7 +745,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v39::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v40::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -834,17 +840,20 @@ impl PresentationProcess {
     }
 
     /// Reads this Venus's native focus reports, recording once when they fail.
-    fn read_native_focus(&mut self) {
+    fn read_native_focus(&mut self) -> bool {
         let failure = match self.focus.poll(&self.control) {
-            Ok(()) => return,
+            Ok(fresh) => return fresh,
             Err(FocusFailure::Invalid) => "Eon Desktop focus reports are invalid".to_owned(),
             // Reports end with an exited Venus, which is no failure.
-            Err(FocusFailure::Ended) if matches!(self.child.try_wait(), Ok(Some(_))) => return,
+            Err(FocusFailure::Ended) if matches!(self.child.try_wait(), Ok(Some(_))) => {
+                return false;
+            }
             Err(FocusFailure::Ended) => "Eon Desktop focus reports ended".to_owned(),
             Err(FocusFailure::Io(error)) => format!("Eon Desktop focus reports failed: {error}"),
         };
         self.log
             .record(&format!("{failure}; treating the window as unfocused"));
+        false
     }
 
     /// Whether this Venus last reported that its native window has focus.
@@ -1088,6 +1097,7 @@ fn supervise(
     }
     let registration = if mode == LaunchMode::Workspace && !recovering {
         let starting = Runtime {
+            venus: None,
             generation: generation.into(),
             name: None,
             started_at,
@@ -1203,6 +1213,7 @@ fn supervise(
         });
         let command = venus_command(
             inputs,
+            &inputs.venus,
             config,
             &presentation_socket,
             mode,
@@ -1338,6 +1349,7 @@ fn supervise(
         workspaces,
         sessions,
         venus: None,
+        venus_path: None,
         initial_child,
         initial_status: startup_failed.then_some(1),
         stopping: startup_failed.then_some(StopReason::BootstrapFailure),
@@ -1361,6 +1373,7 @@ fn supervise(
             None => PresentationProcess::start(
                 venus_command(
                     inputs,
+                    &inputs.venus,
                     config,
                     &presentation_socket,
                     mode,
@@ -1565,6 +1578,8 @@ struct SupervisorState {
     sessions: Vec<RunningSession>,
     failed_starts: sessions::FailedStarts,
     venus: Option<PresentationProcess>,
+    /// Last accepted presentation, retained across detach and failed reload.
+    venus_path: Option<PathBuf>,
     initial_child: Vec<OsString>,
     initial_status: Option<i32>,
     stopping: Option<StopReason>,
@@ -2918,6 +2933,9 @@ fn reap_presentation(
         return Ok(false);
     };
     state.venus = None;
+    if !status.success() {
+        state.venus_path = None;
+    }
     if state.stopping.is_none() {
         // Dismissing a pending pair starts its tab's first terminal.
         dismiss_pending_pairs(state, inputs, config)?;
@@ -2931,6 +2949,152 @@ fn reap_presentation(
         }
     }
     Ok(true)
+}
+
+fn validate_reload(inputs: &Inputs, venus: &Path, versions: [u16; 3]) -> Result<(), String> {
+    let expected = inputs
+        .presentation_protocols
+        .as_ref()
+        .map_err(Clone::clone)?;
+    for ((name, requested), expected) in ["EONW", "ORBS", "ORBF"]
+        .into_iter()
+        .zip(versions)
+        .zip(expected)
+    {
+        if requested != *expected {
+            return Err(format!(
+                "Venus uses {name} {requested}, but this window uses {expected}; move to a fresh window"
+            ));
+        }
+    }
+    let metadata = fs::metadata(venus).map_err(|error| format!("cannot inspect Venus: {error}"))?;
+    if !venus.starts_with("/nix/store")
+        || fs::canonicalize(venus)
+            .map_err(|error| error.to_string())?
+            .as_os_str()
+            != venus.as_os_str()
+        || !metadata.is_file()
+        || metadata.permissions().mode() & 0o111 == 0
+        || metadata.permissions().mode() & 0o222 != 0
+    {
+        return Err("Venus must be a canonical immutable executable in /nix/store; bundle reload is unavailable".into());
+    }
+    Ok(())
+}
+
+fn reload_presentation(
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    runtime: &Path,
+    target: &Path,
+) -> Result<(), Failure> {
+    let focused = |state: &mut SupervisorState| {
+        if let Some(venus) = &mut state.venus {
+            return venus.read_native_focus() && venus.viewing();
+        }
+        false
+    };
+    if !focused(state) {
+        return Err(failure(
+            "reload-refused",
+            "Reload requires a focused Eon window; native focus is absent or unknown",
+        ));
+    }
+    if state
+        .venus
+        .as_ref()
+        .is_some_and(|venus| venus.executable == target)
+    {
+        return Ok(());
+    }
+    let terminal =
+        managed_environment::terminal_presentation(config, &inputs.defaults, Some(&state.log))
+            .map_err(|detail| failure("reload-refused", detail))?;
+    let bar = window_bar(LaunchMode::Workspace, config, inputs, Some(&state.log))
+        .map_err(|detail| failure("reload-refused", detail))?;
+    let command = |path: &Path| -> Result<Command, String> {
+        Ok(venus_command(
+            inputs,
+            path,
+            config,
+            &runtime.join("eon.sock"),
+            LaunchMode::Workspace,
+            &terminal,
+            &bar,
+            &state.application_id,
+            state.decorations,
+            managed_environment::warning_close_last_tab(
+                config,
+                &inputs.defaults,
+                Some(&state.log),
+            )?,
+            managed_environment::animate_working_badge(config, &inputs.defaults, Some(&state.log))?,
+            managed_environment::number_keys(config, &inputs.defaults, Some(&state.log))?,
+        ))
+    };
+    let candidate = command(target).map_err(|detail| failure("reload-refused", detail))?;
+    let previous = state.venus.as_ref().unwrap().executable.clone();
+    let rollback = command(&previous).map_err(|detail| failure("reload-refused", detail))?;
+    let fallback = command(&inputs.venus).map_err(|detail| failure("reload-refused", detail))?;
+    if !focused(state) {
+        return Err(failure(
+            "reload-refused",
+            "Eon lost keyboard focus before reload; nothing replaced",
+        ));
+    }
+    // Intentional replacement must not dismiss pending pickers or show a detach notice.
+    drop(state.venus.take());
+    let mut errors = Vec::new();
+    let mut attempted = Vec::new();
+    for (path, command) in [
+        (target.to_owned(), candidate),
+        (previous, rollback),
+        (inputs.venus.clone(), fallback),
+    ] {
+        if attempted.contains(&path) {
+            continue;
+        }
+        attempted.push(path.clone());
+        match PresentationProcess::start(
+            command,
+            true,
+            state.workspace_snapshot(),
+            PRESENTATION_ADMISSION_TIMEOUT,
+            &mut state.sessions,
+            &state.log,
+        ) {
+            Ok(venus) => {
+                state.venus = Some(venus);
+                state.venus_path = Some(path);
+                return if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(failure(
+                        "reload-presentation-failed",
+                        format!(
+                            "{}; presentation restored with {}",
+                            errors.join("; "),
+                            state.venus_path.as_ref().unwrap().display()
+                        ),
+                    ))
+                };
+            }
+            Err(error) => {
+                state
+                    .log
+                    .record(&format!("Venus reload {}: {error}", path.display()));
+                errors.push(error);
+            }
+        }
+    }
+    Err(failure(
+        "reload-rollback-failed",
+        format!(
+            "{}; terminals and layout remain live for window attach",
+            errors.join("; ")
+        ),
+    ))
 }
 
 pub(super) fn supervisor_lock_path(root: &Path, generation: &str) -> PathBuf {
@@ -3222,20 +3386,59 @@ fn dispatch_registered_request(
         )
     {
         let error = failure(
-            "stop-incomplete",
+            if matches!(
+                request.action,
+                Action::Workspace(WorkspaceAction::ReloadPresentation { .. })
+            ) {
+                "reload-refused"
+            } else {
+                "stop-incomplete"
+            },
             stop_incomplete(mode, state.window.as_deref(), generation),
         );
         return (
             match request.action {
-                Action::Workspace(WorkspaceAction::Present { .. }) => {
-                    ControlResponse::Lifecycle(LifecycleResponse::Failure(error))
-                }
+                Action::Workspace(
+                    WorkspaceAction::Present { .. } | WorkspaceAction::ReloadPresentation { .. },
+                ) => ControlResponse::Lifecycle(LifecycleResponse::Failure(error)),
                 _ => ControlResponse::Workspace(Response::Failure(error)),
             },
             false,
         );
     }
     match request {
+        Request {
+            action:
+                Action::Workspace(WorkspaceAction::ReloadPresentation {
+                    venus,
+                    eonw,
+                    orbs,
+                    orbf,
+                }),
+            ..
+        } => {
+            let result = if mode != LaunchMode::Workspace {
+                Err(failure(
+                    "reload-refused",
+                    "Reload is available only for full Eon windows",
+                ))
+            } else {
+                validate_reload(inputs, Path::new(&venus), [eonw, orbs, orbf])
+                    .map_err(|detail| failure("reload-refused", detail))
+                    .and_then(|()| {
+                        reload_presentation(state, inputs, config, runtime, Path::new(&venus))
+                    })
+            };
+            let response = match result {
+                Ok(()) => runtime_status(inputs, generation, state, mode, None)
+                    .map(LifecycleResponse::Runtime)
+                    .unwrap_or_else(|detail| {
+                        LifecycleResponse::Failure(failure("reload-presentation-failed", detail))
+                    }),
+                Err(error) => LifecycleResponse::Failure(error),
+            };
+            (ControlResponse::Lifecycle(response), false)
+        }
         Request {
             action:
                 Action::Workspace(
@@ -3330,6 +3533,7 @@ fn dispatch_registered_request(
                 let bar = window_bar(mode, config, inputs, Some(&state.log))?;
                 let command = venus_command(
                     inputs,
+                    state.venus_path.as_deref().unwrap_or(&inputs.venus),
                     config,
                     &socket,
                     mode,
@@ -3352,14 +3556,17 @@ fn dispatch_registered_request(
                 if let Some(quotas) = &mut state.quotas {
                     quotas.show(&bar.widgets);
                 }
-                state.venus = Some(PresentationProcess::start(
-                    command,
-                    terminal.requires_startup_admission(),
-                    state.workspace_snapshot(),
-                    PRESENTATION_ADMISSION_TIMEOUT,
-                    &mut state.sessions,
-                    &state.log,
-                )?);
+                state.venus = Some(
+                    PresentationProcess::start(
+                        command,
+                        terminal.requires_startup_admission(),
+                        state.workspace_snapshot(),
+                        PRESENTATION_ADMISSION_TIMEOUT,
+                        &mut state.sessions,
+                        &state.log,
+                    )
+                    .inspect_err(|_| state.venus_path = None)?,
+                );
                 Ok(())
             });
             match result.and_then(|()| {
@@ -3508,7 +3715,7 @@ fn dispatch_registered_request(
             ) && state
                 .attention
                 .as_ref()
-                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v39::Sidebar::Off)
+                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v40::Sidebar::Off)
             {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
@@ -4100,6 +4307,10 @@ fn runtime_status(
         return Err("supervisor has no live terminals".into());
     }
     Ok(Runtime {
+        venus: state
+            .venus
+            .as_ref()
+            .map(|venus| venus.executable.to_string_lossy().into_owned()),
         generation: generation.into(),
         name: state.workspaces.as_ref().map(WorkspaceSet::window_name),
         started_at: state.started_at,
@@ -4205,6 +4416,7 @@ mod tests {
             workspaces: None,
             sessions: Vec::new(),
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -4322,13 +4534,13 @@ mod tests {
         let inspected = crate::control::send_action_from_until(
             &socket,
             None,
-            Action::Workspace(eon_workspace_protocol::v39::WorkspaceAction::InspectRuntime),
+            Action::Workspace(eon_workspace_protocol::v40::WorkspaceAction::InspectRuntime),
             deadline,
         )
         .unwrap();
         assert!(
             matches!(inspected, crate::control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v39::LifecycleResponse::Runtime(runtime)
+            eon_workspace_protocol::v40::LifecycleResponse::Runtime(runtime)
         ) if !runtime.attach.available && runtime.attach.reason.contains("cleanup is incomplete"))
         );
         assert!(
@@ -4441,7 +4653,7 @@ mod tests {
 
     #[test]
     fn a_consent_matches_on_generation_runs_and_end_only() {
-        use eon_workspace_protocol::v39::{
+        use eon_workspace_protocol::v40::{
             CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
         };
         let mut scope = CloseScope {
@@ -4505,7 +4717,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_column_close_never_runs_without_a_consent_that_names_its_runs() {
-        use eon_workspace_protocol::v39::{CloseEnd, Side};
+        use eon_workspace_protocol::v40::{CloseEnd, Side};
         let root = temporary_directory();
         let (mut state, _) = finishing_window(&root);
         // A one-pane final column always asks, even once the default shell is idle.
@@ -4945,7 +5157,7 @@ mod tests {
             assert_eq!(error.code, "column-close-failed", "{context}: {error:?}");
             assert!(error.detail.contains("terminal-9"), "{context}: {error:?}");
             assert!(
-                eon_workspace_protocol::v39::encode_response(&super::Response::Failure(
+                eon_workspace_protocol::v40::encode_response(&super::Response::Failure(
                     error.clone()
                 ))
                 .is_ok(),
@@ -5139,7 +5351,7 @@ mod tests {
                 (
                     None,
                     crate::control::ControlResponse::Workspace(super::Response::Snapshot(snapshot)),
-                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v39::Sidebar::Off),
+                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v40::Sidebar::Off),
                 _ => panic!("unexpected sidebar result"),
             }
         }
@@ -5578,7 +5790,7 @@ mod tests {
     #[test]
     fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
         use crate::session_registry::{Operation, Registry, Worker};
-        use eon_workspace_protocol::v39::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v40::{Change, SubscriptionMessage, WorkspaceChange};
         let (root, inputs, mut state, old_peer) = subscribed_window();
         drop(old_peer);
         let registry_root = root.join("registry");
@@ -5689,19 +5901,20 @@ mod tests {
         let socket = root.join("eon.sock");
         let listener = control::ControlListener::bind(&socket).unwrap();
         let generation = "g1-00000000000000000000000000000001";
-        let starting = eon_workspace_protocol::v39::Runtime {
+        let starting = eon_workspace_protocol::v40::Runtime {
+            venus: None,
             generation: generation.into(),
             name: None,
             started_at: 1,
             eon_version: inputs.version.into(),
-            workspace_protocol: eon_workspace_protocol::v39::VERSION,
+            workspace_protocol: eon_workspace_protocol::v40::VERSION,
             component_report: inputs.component_report().unwrap().into(),
             sessions: Vec::new(),
-            attach: eon_workspace_protocol::v39::Availability {
+            attach: eon_workspace_protocol::v40::Availability {
                 available: false,
                 reason: "registering".into(),
             },
-            stop: eon_workspace_protocol::v39::Availability {
+            stop: eon_workspace_protocol::v40::Availability {
                 available: true,
                 reason: "starting".into(),
             },
@@ -5716,7 +5929,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v39::LifecycleResponse::Runtime(status),
+            eon_workspace_protocol::v40::LifecycleResponse::Runtime(status),
         ) = control::send_action(&socket, Action::Workspace(WorkspaceAction::InspectRuntime))
             .unwrap()
         else {
@@ -5754,7 +5967,7 @@ mod tests {
             control,
             session_registry::{Fault, Registry, Worker},
         };
-        use eon_workspace_protocol::v39::{Request, encode_request};
+        use eon_workspace_protocol::v40::{Request, encode_request};
         use std::io::Write;
         let (root, inputs, mut state, peer) = subscribed_window();
         let registry_root = root.join("registry");
@@ -5935,6 +6148,7 @@ mod tests {
             workspaces: Some(workspace),
             sessions: Vec::new(),
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -5982,16 +6196,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v39::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v40::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v39::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v40::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v39::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v40::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v39::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v39::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v40::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v40::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -6007,7 +6221,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v39::Filter {
+        let missing = eon_workspace_protocol::v40::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -6122,7 +6336,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v39::SubscriptionMessage;
+        use eon_workspace_protocol::v40::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -6149,6 +6363,7 @@ mod tests {
             workspaces: Some(workspace),
             sessions: Vec::new(),
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -6199,9 +6414,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v39::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v40::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v39::{
+        use eon_workspace_protocol::v40::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -6261,9 +6476,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v39::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v40::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v39::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v40::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -6282,8 +6497,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v39::SubscriptionMessage> {
-        use eon_workspace_protocol::v39::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v40::SubscriptionMessage> {
+        use eon_workspace_protocol::v40::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -6311,7 +6526,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v39::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v40::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -6346,6 +6561,7 @@ mod tests {
             workspaces: Some(workspace),
             sessions: vec![session],
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -6364,8 +6580,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v39::Filter {
-                        kinds: vec![eon_workspace_protocol::v39::EventKind::Attention],
+                    filter: eon_workspace_protocol::v40::Filter {
+                        kinds: vec![eon_workspace_protocol::v40::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -6470,6 +6686,7 @@ mod tests {
             workspaces: None,
             sessions: Vec::new(),
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -6564,13 +6781,570 @@ mod tests {
         (peer, original)
     }
 
+    #[cfg(target_os = "linux")]
+    fn reload_venus(root: &Path, name: &str) -> PathBuf {
+        let path = root.join(name);
+        fs::write(
+            &path,
+            "#!/bin/sh\nprintf 'ready-v1focus:1\\n'\nexec cat >/dev/null\n",
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reload_keeps_terminals_and_layout_and_restores_the_accepted_venus() {
+        use std::io::Write;
+        let root = temporary_directory();
+        let (mut fixture, _gate) = finishing_window(&root);
+        fs::write(root.join("config.toml"), "[terminal]\nfont_size = 16\n").unwrap();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.venus = reload_venus(&root, "venus-a");
+        let newer = reload_venus(&root, "venus-b");
+        let (mut focus, control) = attach_reporting_venus(&mut fixture.state);
+        fixture.state.venus.as_mut().unwrap().executable = inputs.venus.clone();
+        focus.write_all(b"focus:1\n").unwrap();
+        let before = fixture.state.workspaces.as_ref().unwrap().snapshot();
+        let run = fixture.state.sessions[0].run_id().to_owned();
+        let host_pid = orbit_pid(&fixture.state.sessions[0]);
+        let old_pid = fixture.state.venus.as_ref().unwrap().child.id();
+        super::reload_presentation(&mut fixture.state, &inputs, &root, &root, &newer).unwrap();
+        drop(control);
+        assert_eq!(fixture.state.venus.as_ref().unwrap().executable, newer);
+        assert_ne!(fixture.state.venus.as_ref().unwrap().child.id(), old_pid);
+        assert_eq!(fixture.state.sessions[0].run_id(), run);
+        assert_eq!(
+            fixture.state.workspaces.as_ref().unwrap().snapshot(),
+            before
+        );
+        let accepted_pid = fixture.state.venus.as_ref().unwrap().child.id();
+        super::reload_presentation(&mut fixture.state, &inputs, &root, &root, &newer).unwrap();
+        assert_eq!(
+            fixture.state.venus.as_ref().unwrap().child.id(),
+            accepted_pid
+        );
+        drop(fixture.state.venus.take());
+        let (response, ended) = super::dispatch_control_request(
+            super::Request {
+                id: "reattach-after-reload".into(),
+                caller: None,
+                action: Action::Workspace(WorkspaceAction::Present { workspace: true }),
+            },
+            &mut fixture.state,
+            &inputs,
+            &root,
+            &root,
+            "component-1",
+        );
+        assert!(!ended);
+        assert!(
+            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v40::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
+        );
+        let failed = super::reload_presentation(
+            &mut fixture.state,
+            &inputs,
+            &root,
+            &root,
+            &root.join("absent"),
+        )
+        .unwrap_err();
+        assert_eq!(failed.code, "reload-presentation-failed");
+        assert_eq!(fixture.state.venus_path.as_ref(), Some(&newer));
+        assert_eq!(fixture.state.sessions[0].run_id(), run);
+        assert_eq!(
+            fixture.state.workspaces.as_ref().unwrap().snapshot(),
+            before
+        );
+        // An unavailable last accepted artifact falls back to this supervisor's own Venus.
+        fs::remove_file(&newer).unwrap();
+        let failed = super::reload_presentation(
+            &mut fixture.state,
+            &inputs,
+            &root,
+            &root,
+            &root.join("absent"),
+        )
+        .unwrap_err();
+        assert_eq!(failed.code, "reload-presentation-failed");
+        assert_eq!(fixture.state.venus_path.as_ref(), Some(&inputs.venus));
+        fs::remove_file(&inputs.venus).unwrap();
+        let failed = super::reload_presentation(
+            &mut fixture.state,
+            &inputs,
+            &root,
+            &root,
+            &root.join("absent"),
+        )
+        .unwrap_err();
+        assert_eq!(failed.code, "reload-rollback-failed");
+        assert!(fixture.state.venus.is_none());
+        assert_eq!(fixture.state.sessions[0].run_id(), run);
+        assert_eq!(orbit_pid(&fixture.state.sessions[0]), host_pid);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reload_refuses_unknown_or_unfocused_and_keeps_pending_pickers() {
+        use std::io::Write;
+        let (root, inputs, mut state, _subscriber) = subscribed_window();
+        let (notices, shown) = crate::notification::Notices::record_shows();
+        state.notices = notices;
+        let mut attention = crate::attention::Attention::new(true);
+        attention.handled(&Action::SetSidebar { open: false }, None, &[], false, false);
+        state.attention = Some(attention);
+        let (mut focus, control) = attach_reporting_venus(&mut state);
+        let target = reload_venus(&root, "venus-b");
+        let before = state.workspaces.as_ref().unwrap().snapshot();
+        assert!(before.tabs[0].pending);
+        let original = state.venus.as_ref().unwrap().child.id();
+        for report in [None, Some(b"focus:0\n")] {
+            if let Some(report) = report {
+                focus.write_all(report).unwrap();
+            }
+            assert_eq!(
+                super::reload_presentation(&mut state, &inputs, &root, &root, &target)
+                    .unwrap_err()
+                    .code,
+                "reload-refused"
+            );
+            assert_eq!(state.venus.as_ref().unwrap().child.id(), original);
+        }
+        focus.write_all(b"focus:1\n").unwrap();
+        super::reload_presentation(&mut state, &inputs, &root, &root, &target).unwrap();
+        drop(control);
+        assert_eq!(state.workspaces.as_ref().unwrap().snapshot(), before);
+        assert_eq!(
+            state.attention.as_ref().unwrap().sidebar(),
+            eon_workspace_protocol::v40::Sidebar::Closed
+        );
+        assert!(shown().is_none());
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reload_crash_or_failed_reattach_returns_to_the_own_build() {
+        use eon_workspace_protocol::v40::LifecycleResponse;
+        use std::{io::Write, os::unix::fs::OpenOptionsExt, thread};
+        for outcome in [9, 0] {
+            let root = temporary_directory();
+            let (mut fixture, _agent_gate) = finishing_window(&root);
+            fs::write(root.join("config.toml"), "[terminal]\nfont_size = 16\n").unwrap();
+            let mut inputs = crate::fixtures::inputs();
+            inputs.venus = reload_venus(&root, "own-venus");
+            let command = venus_command(
+                &inputs,
+                &inputs.venus,
+                &root,
+                &root.join("eon.sock"),
+                super::LaunchMode::Workspace,
+                &inputs.defaults.terminal,
+                &inputs.defaults.bar(),
+                "eon",
+                false,
+                true,
+                true,
+                true,
+            );
+            fixture.state.venus = Some(
+                super::PresentationProcess::start(
+                    command,
+                    true,
+                    fixture.state.workspace_snapshot(),
+                    super::PRESENTATION_ADMISSION_TIMEOUT,
+                    &mut fixture.state.sessions,
+                    &fixture.state.log,
+                )
+                .unwrap(),
+            );
+            let gate = root.join("venus-exit");
+            assert!(
+                Command::new("mkfifo")
+                    .arg(&gate)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let failed = root.join("fail-admission");
+            let newer = root.join("newer-venus");
+            fs::write(&newer, format!("#!/bin/sh\n[ ! -e '{}' ] || exit 7\nprintf 'ready-v1focus:1\\n'\nread -r _ <'{}'\nexit {outcome}\n", failed.display(), gate.display())).unwrap();
+            fs::set_permissions(&newer, fs::Permissions::from_mode(0o700)).unwrap();
+            let layout = fixture.state.workspaces.as_ref().unwrap().snapshot();
+            let run = fixture.state.sessions[0].run_id().to_owned();
+            let host = orbit_pid(&fixture.state.sessions[0]);
+            super::reload_presentation(&mut fixture.state, &inputs, &root, &root, &newer).unwrap();
+            assert_eq!(fixture.state.venus_path.as_ref(), Some(&newer));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(&gate)
+                {
+                    Ok(mut writer) => {
+                        writer.write_all(b"exit\n").unwrap();
+                        break;
+                    }
+                    Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "Venus did not reach its exit gate"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("cannot release Venus: {error}"),
+                }
+            }
+            while fixture
+                .state
+                .venus
+                .as_mut()
+                .unwrap()
+                .exited()
+                .unwrap()
+                .is_none()
+            {
+                assert!(Instant::now() < deadline, "Venus did not exit");
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(super::reap_presentation(&mut fixture.state, &inputs, &root).unwrap());
+            let present = |state: &mut SupervisorState| {
+                super::dispatch_control_request(
+                    super::Request {
+                        id: super::request_id(),
+                        caller: None,
+                        action: Action::Workspace(WorkspaceAction::Present { workspace: true }),
+                    },
+                    state,
+                    &inputs,
+                    &root,
+                    &root,
+                    "component-1",
+                )
+            };
+            if outcome == 0 {
+                assert_eq!(
+                    fixture.state.venus_path.as_ref(),
+                    Some(&newer),
+                    "clean detach keeps the accepted build"
+                );
+                fs::write(&failed, "fail").unwrap();
+                let (response, ended) = present(&mut fixture.state);
+                assert!(!ended);
+                assert!(matches!(
+                    response,
+                    super::ControlResponse::Lifecycle(LifecycleResponse::Failure(_))
+                ));
+            }
+            assert!(
+                fixture.state.venus_path.is_none(),
+                "failed presentation must not pin a broken reload target"
+            );
+            let (response, ended) = present(&mut fixture.state);
+            assert!(!ended);
+            assert!(
+                matches!(response, super::ControlResponse::Lifecycle(LifecycleResponse::Runtime(info)) if info.venus.as_deref() == inputs.venus.to_str())
+            );
+            assert_eq!(fixture.state.sessions[0].run_id(), run);
+            assert_eq!(orbit_pid(&fixture.state.sessions[0]), host);
+            assert_eq!(
+                fixture.state.workspaces.as_ref().unwrap().snapshot(),
+                layout
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reload_attachment_process() {
+        use orbit_protocol::session::{self as orbs, ClientMessage, ServerMessage};
+        use std::io::{Read, Write};
+        use std::thread;
+        let Some(endpoint) = std::env::var_os("EON_RELOAD_ATTACH_ENDPOINT") else {
+            return;
+        };
+        let result = std::env::var_os("EON_RELOAD_ATTACH_RESULT").unwrap();
+        let mut startup = vec![0; eon_workspace_protocol::v40::HEADER_BYTES];
+        std::io::stdin().read_exact(&mut startup).unwrap();
+        let length = eon_workspace_protocol::v40::declared_message_len(&startup).unwrap();
+        startup.resize(length, 0);
+        std::io::stdin()
+            .read_exact(&mut startup[eon_workspace_protocol::v40::HEADER_BYTES..])
+            .unwrap();
+        assert!(matches!(
+            eon_workspace_protocol::v40::decode_response(&startup).unwrap(),
+            eon_workspace_protocol::v40::Response::Snapshot(_)
+        ));
+        let read = |stream: &mut UnixStream| {
+            let mut bytes = vec![0; orbs::HEADER_BYTES];
+            stream.read_exact(&mut bytes).unwrap();
+            let length = orbs::server_message_len(&bytes).unwrap().unwrap();
+            bytes.resize(length, 0);
+            stream.read_exact(&mut bytes[orbs::HEADER_BYTES..]).unwrap();
+            orbs::decode_server_message(&bytes).unwrap()
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            assert!(
+                Instant::now() < deadline,
+                "rollback Venus was never admitted"
+            );
+            let mut stream = UnixStream::connect(&endpoint).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .write_all(&orbs::encode_client_message(&ClientMessage::Hello).unwrap())
+                .unwrap();
+            match read(&mut stream) {
+                ServerMessage::Attached => break stream,
+                ServerMessage::Busy => thread::sleep(Duration::from_millis(5)),
+                answer => panic!("unexpected attachment answer: {answer:?}"),
+            }
+        };
+        let marker = format!("reload-{}", std::process::id());
+        stream
+            .write_all(
+                &orbs::encode_client_message(&ClientMessage::Paste(marker.as_bytes().to_vec()))
+                    .unwrap(),
+            )
+            .unwrap();
+        loop {
+            if let ServerMessage::Frame(frame) = read(&mut stream)
+                && frame.rows.iter().any(|row| {
+                    row.cells
+                        .iter()
+                        .map(|cell| cell.text.as_str())
+                        .collect::<String>()
+                        .contains(&marker)
+                })
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "rollback input never reached the PTY"
+            );
+        }
+        fs::write(result, std::process::id().to_string()).unwrap();
+        std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reload_rolls_back_spawned_candidates_that_fail_admission() {
+        use std::io::Write;
+        use std::{os::unix::fs::OpenOptionsExt, thread};
+        let root = temporary_directory();
+        let (mut fixture, _gate) = finishing_window(&root);
+        let mut inputs = crate::fixtures::inputs();
+        let attached = root.join("attached");
+        let executable = std::env::current_exe().unwrap();
+        inputs.venus = root.join("attaching-venus");
+        fs::write(&inputs.venus, format!(
+            "#!/bin/sh\nprintf 'ready-v1focus:1\\n'\nEON_RELOAD_ATTACH_ENDPOINT='{}' EON_RELOAD_ATTACH_RESULT='{}' exec '{}' --exact supervisor::tests::reload_attachment_process --nocapture >/dev/null\n",
+            fixture.state.sessions[0].endpoint.display(), attached.display(), executable.display()
+        )).unwrap();
+        fs::set_permissions(&inputs.venus, fs::Permissions::from_mode(0o700)).unwrap();
+        let command = venus_command(
+            &inputs,
+            &inputs.venus,
+            &root,
+            &root.join("eon.sock"),
+            super::LaunchMode::Workspace,
+            &inputs.defaults.terminal,
+            &inputs.defaults.bar(),
+            "eon",
+            false,
+            true,
+            true,
+            true,
+        );
+        fixture.state.venus = Some(
+            super::PresentationProcess::start(
+                command,
+                true,
+                fixture.state.workspace_snapshot(),
+                super::PRESENTATION_ADMISSION_TIMEOUT,
+                &mut fixture.state.sessions,
+                &fixture.state.log,
+            )
+            .unwrap(),
+        );
+        let wait_for_attachment = |pid: u32| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while fs::read_to_string(&attached).ok().as_deref() != Some(&pid.to_string()) {
+                assert!(
+                    Instant::now() < deadline,
+                    "Venus {pid} did not attach and echo input"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        wait_for_attachment(fixture.state.venus.as_ref().unwrap().child.id());
+        let layout = fixture.state.workspaces.as_ref().unwrap().snapshot();
+        let run = fixture.state.sessions[0].run_id().to_owned();
+        let host = orbit_pid(&fixture.state.sessions[0]);
+        for (name, failure) in [
+            ("exit", "exit 9"),
+            ("malformed", "printf notready; exec cat >/dev/null"),
+        ] {
+            let gate = root.join(format!("{name}-gate"));
+            assert!(
+                Command::new("mkfifo")
+                    .arg(&gate)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let started = root.join(format!("{name}-pid"));
+            let candidate = root.join(name);
+            fs::write(
+                &candidate,
+                format!(
+                    "#!/bin/sh\nprintf '%s' \"$$\" >'{}'\nread -r _ <'{}'\n{failure}\n",
+                    started.display(),
+                    gate.display()
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&candidate, fs::Permissions::from_mode(0o700)).unwrap();
+            let old_pid = fixture.state.venus.as_ref().unwrap().child.id();
+            fs::remove_file(&attached).unwrap();
+            let release = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let pid = loop {
+                    if let Some(pid) = fs::read_to_string(&started)
+                        .ok()
+                        .and_then(|value| value.parse::<u32>().ok())
+                    {
+                        break pid;
+                    }
+                    assert!(Instant::now() < deadline, "candidate did not spawn");
+                    thread::sleep(Duration::from_millis(5));
+                };
+                assert!(crate::platform::process(old_pid).unwrap().is_none());
+                loop {
+                    match fs::OpenOptions::new()
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&gate)
+                    {
+                        Ok(mut writer) => {
+                            writer.write_all(b"fail\n").unwrap();
+                            break;
+                        }
+                        Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                            assert!(
+                                Instant::now() < deadline,
+                                "candidate never waited at admission"
+                            );
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("cannot release admission gate: {error}"),
+                    }
+                }
+                pid
+            });
+            let error =
+                super::reload_presentation(&mut fixture.state, &inputs, &root, &root, &candidate)
+                    .unwrap_err();
+            let candidate_pid = release.join().unwrap();
+            assert_eq!(error.code, "reload-presentation-failed");
+            assert!(crate::platform::process(candidate_pid).unwrap().is_none());
+            let restored = fixture.state.venus.as_ref().unwrap();
+            assert_ne!(restored.child.id(), old_pid);
+            assert_eq!(restored.executable, inputs.venus);
+            wait_for_attachment(restored.child.id());
+            assert_eq!(fixture.state.sessions[0].run_id(), run);
+            assert_eq!(orbit_pid(&fixture.state.sessions[0]), host);
+            assert_eq!(
+                fixture.state.workspaces.as_ref().unwrap().snapshot(),
+                layout
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reload_refuses_a_backlog_or_partial_native_focus_report() {
+        use std::io::Write;
+        let (root, inputs, mut state, _subscriber) = subscribed_window();
+        let (mut focus, control) = attach_reporting_venus(&mut state);
+        let target = reload_venus(&root, "venus-b");
+        let original = state.venus.as_ref().unwrap().child.id();
+        let before = state.workspaces.as_ref().unwrap().snapshot();
+        // Both old checks would stop on focus:1, leaving the final loss unread.
+        focus.write_all(&b"focus:0\nfocus:1\n".repeat(100)).unwrap();
+        focus.write_all(b"focus:0\n").unwrap();
+        for _ in 0..3 {
+            assert_eq!(
+                super::reload_presentation(&mut state, &inputs, &root, &root, &target)
+                    .unwrap_err()
+                    .code,
+                "reload-refused"
+            );
+            assert_eq!(state.venus.as_ref().unwrap().child.id(), original);
+        }
+        focus.write_all(b"focus:1\nfocus:").unwrap();
+        assert_eq!(
+            super::reload_presentation(&mut state, &inputs, &root, &root, &target)
+                .unwrap_err()
+                .code,
+            "reload-refused"
+        );
+        assert_eq!(state.workspaces.as_ref().unwrap().snapshot(), before);
+        drop(control);
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reload_validates_each_protocol_and_the_immutable_target_before_retirement() {
+        let inputs = crate::fixtures::inputs();
+        let versions = *inputs.presentation_protocols.as_ref().unwrap();
+        for index in 0..3 {
+            let mut wrong = versions;
+            wrong[index] += 1;
+            assert!(
+                super::validate_reload(&inputs, Path::new("/absent"), wrong)
+                    .unwrap_err()
+                    .contains(["EONW", "ORBS", "ORBF"][index])
+            );
+        }
+        let root = temporary_directory();
+        let path = reload_venus(&root, "venus");
+        assert!(
+            super::validate_reload(&inputs, &path, versions)
+                .unwrap_err()
+                .contains("/nix/store")
+        );
+        let bash = Command::new("bash")
+            .args(["-c", "command -v bash"])
+            .output()
+            .unwrap();
+        let bash = fs::canonicalize(String::from_utf8(bash.stdout).unwrap().trim()).unwrap();
+        super::validate_reload(&inputs, &bash, versions).unwrap();
+        let noncanonical = bash
+            .parent()
+            .unwrap()
+            .join(".")
+            .join(bash.file_name().unwrap());
+        assert!(super::validate_reload(&inputs, &noncanonical, versions).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// The pane's attention and the window's queue, as Inspect shows them.
     #[cfg(target_os = "linux")]
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v39::Attention>,
-        Vec<eon_workspace_protocol::v39::QueueEntry>,
+        Option<eon_workspace_protocol::v40::Attention>,
+        Vec<eon_workspace_protocol::v40::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -6589,10 +7363,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v39::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v40::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v39::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v40::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -6612,10 +7386,10 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v39::AttentionState {
-        use eon_workspace_protocol::v39::AttentionState;
+    ) -> eon_workspace_protocol::v40::AttentionState {
+        use eon_workspace_protocol::v40::AttentionState;
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
-        let changed = |attention: &Option<eon_workspace_protocol::v39::Attention>| {
+        let changed = |attention: &Option<eon_workspace_protocol::v40::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -6675,7 +7449,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v39::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v40::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -6795,7 +7569,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v39::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v40::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -6895,6 +7669,7 @@ mod tests {
             workspaces: Some(workspace),
             sessions: vec![session],
             venus: Some(venus),
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -6983,6 +7758,7 @@ mod tests {
             workspaces: Some(workspace),
             sessions: vec![pair],
             venus: Some(venus),
+            venus_path: None,
             initial_child: ["/bin/sh", "-c", "exec sleep 30"]
                 .into_iter()
                 .map(OsString::from)
@@ -7133,6 +7909,7 @@ mod tests {
             workspaces: None,
             sessions,
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -7343,6 +8120,7 @@ mod tests {
             workspaces: None,
             sessions,
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -7458,6 +8236,7 @@ mod tests {
             workspaces: None,
             sessions,
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -7519,6 +8298,7 @@ mod tests {
             workspaces: None,
             sessions: vec![session],
             venus: None,
+            venus_path: None,
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
@@ -7767,7 +8547,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v39::{
+        use eon_workspace_protocol::v40::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -7776,7 +8556,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v40::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -7820,7 +8600,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v39::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v40::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
@@ -7944,6 +8724,7 @@ mod tests {
         let launch_input = |inputs: &crate::Inputs, mode: LaunchMode, flag: &str| {
             let command = venus_command(
                 inputs,
+                &inputs.venus,
                 &root,
                 Path::new("/runtime.sock"),
                 mode,
@@ -8231,6 +9012,7 @@ rows = 30
                     .unwrap();
             let command = venus_command(
                 &inputs,
+                &inputs.venus,
                 &root,
                 Path::new("/orbit.sock"),
                 mode,
@@ -8286,6 +9068,7 @@ rows = 30
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
+                    &inputs.venus,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
@@ -8323,6 +9106,7 @@ rows = 30
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
+                    &inputs.venus,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
@@ -8351,6 +9135,7 @@ rows = 30
         assert!(
             venus_command(
                 &inputs,
+                &inputs.venus,
                 &root,
                 Path::new("/runtime.sock"),
                 LaunchMode::Workspace,
@@ -8391,6 +9176,7 @@ rows = 30
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
+                    &inputs.venus,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
@@ -8455,6 +9241,7 @@ rows = 30
                 for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                     let command = venus_command(
                         &inputs,
+                        &inputs.venus,
                         &root,
                         Path::new("/runtime.sock"),
                         mode,
@@ -8513,6 +9300,7 @@ rows = 30
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
+                    &inputs.venus,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
@@ -8551,6 +9339,7 @@ rows = 30
             );
             let command = venus_command(
                 &inputs,
+                &inputs.venus,
                 &root,
                 Path::new("/runtime.sock"),
                 LaunchMode::Workspace,
@@ -8590,6 +9379,7 @@ rows = 30
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
+                    &inputs.venus,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
@@ -8650,6 +9440,7 @@ rows = 30
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
+                    &inputs.venus,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
@@ -8704,6 +9495,7 @@ rows = 30
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
+                    &inputs.venus,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
@@ -8749,6 +9541,7 @@ rows = 30
 
         let workspace = venus_command(
             &inputs,
+            &inputs.venus,
             config,
             socket,
             LaunchMode::Workspace,
@@ -8804,6 +9597,7 @@ rows = 30
 
         let terminal = venus_command(
             &inputs,
+            &inputs.venus,
             config,
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
@@ -8847,6 +9641,7 @@ rows = 30
 
         let undecorated = venus_command(
             &inputs,
+            &inputs.venus,
             config,
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,

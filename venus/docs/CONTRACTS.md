@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v39 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v40 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -932,7 +932,7 @@ re-proved when that platform or feature is next touched.
     once.
     A Stack's Close button always asks first, whatever the Stack runs, however
     many panes it holds and whatever the `--warning-close-last-tab` launch
-    argument is. It sends one EONW v39 column close (EON-C8) naming that
+    argument is. It sends one EONW v40 column close (EON-C8) naming that
     column's expanded `pN` with no consent, which stops nothing, and when
     Runtime answers `Confirm` Venus shows the close prompt worded from that
     answer alone. For the end `column`: "Close Stack N?" ("Close Stack?" with

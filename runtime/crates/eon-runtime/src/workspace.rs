@@ -1,7 +1,7 @@
 use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
 use super::session_registry::{Completion, Operation, Registration, Registry};
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
     InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY,
@@ -305,7 +305,7 @@ impl WorkspaceSet {
     }
 
     fn pending_allowance(&self) -> Result<usize, Failure> {
-        if self.workspaces.len() >= eon_workspace_protocol::v39::MAX_WORKSPACES
+        if self.workspaces.len() >= eon_workspace_protocol::v40::MAX_WORKSPACES
             || self.ids.next_workspace == usize::MAX
         {
             return Err(action_error(
@@ -420,7 +420,7 @@ impl WorkspaceSet {
         match action {
             Action::Workspace(WorkspaceAction::NewWorkspace { name, .. }) => {
                 if let Some(name) = name {
-                    eon_workspace_protocol::v39::validate_workspace_name(name)
+                    eon_workspace_protocol::v40::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -435,7 +435,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v39::validate_workspace_name(name)
+                    eon_workspace_protocol::v40::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -576,7 +576,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v39::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v40::WorkspaceInfo {
                 id: workspace.id.clone(),
                 persistent_id: workspace.persistent_id.clone(),
                 registration_error: workspace.registration_error.clone(),
@@ -724,13 +724,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v39::pane_label_character(character) {
+                if eon_workspace_protocol::v40::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v39::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v40::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -885,7 +885,7 @@ impl WorkspaceSet {
                     .map(str::trim)
                     .filter(|name| !name.is_empty());
                 if let Some(name) = name {
-                    eon_workspace_protocol::v39::validate_pane_name(name)
+                    eon_workspace_protocol::v40::validate_pane_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = self.workspaces[index]
@@ -901,7 +901,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v39::validate_workspace_name(name)
+                    eon_workspace_protocol::v40::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -956,7 +956,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v39::validate_workspace_name(&name)
+                    eon_workspace_protocol::v40::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -1379,7 +1379,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v39::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v40::WorkspaceInfo {
                 id: self.id.clone(),
                 persistent_id: self.persistent_id.clone(),
                 registration_error: self.registration_error.clone(),
@@ -1688,6 +1688,7 @@ impl Workspace {
             | WorkspaceAction::InspectRuntime
             | WorkspaceAction::InspectPresentation
             | WorkspaceAction::Present { .. }
+            | WorkspaceAction::ReloadPresentation { .. }
             | WorkspaceAction::CloseTab { .. } => {
                 return Err(action_error(
                     "unavailable",
@@ -3546,8 +3547,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v39::WindowState) -> &'static str {
-    use eon_workspace_protocol::v39::WindowState;
+fn window_state(state: eon_workspace_protocol::v40::WindowState) -> &'static str {
+    use eon_workspace_protocol::v40::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -3557,7 +3558,7 @@ fn window_state(state: eon_workspace_protocol::v39::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v39::WindowEntry,
+    entry: &eon_workspace_protocol::v40::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -3690,7 +3691,7 @@ pub(crate) fn list_human(snapshot: &Snapshot) -> String {
 /// One session object, shared by inspection and event output.
 pub(crate) fn json_workspace(
     output: &mut String,
-    workspace: &eon_workspace_protocol::v39::WorkspaceInfo,
+    workspace: &eon_workspace_protocol::v40::WorkspaceInfo,
     shown: bool,
 ) {
     output.push_str(&format!(
@@ -3707,7 +3708,7 @@ pub(crate) fn json_workspace(
     output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
 }
 
-pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v39::WorkspaceInfo) -> String {
+pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v40::WorkspaceInfo) -> String {
     let mut output = String::from("\"persistent_id\":");
     json_option(&mut output, workspace.persistent_id.as_deref());
     output.push_str(",\"registration_error\":");
@@ -3834,7 +3835,7 @@ pub(crate) fn resolve_target<'a>(
 ) -> Result<usize, Failure> {
     match target {
         WorkspaceTarget::Selector(selector) => {
-            eon_workspace_protocol::v39::validate_workspace_name(selector)
+            eon_workspace_protocol::v40::validate_workspace_name(selector)
                 .map_err(|error| action_error("malformed-action", error.to_string()))?;
             resolve_selector(workspaces.map(|(id, name, _)| (id, name)), selector)
         }
@@ -3899,13 +3900,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v39::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v40::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v39::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v39::ALT, "Alt"),
-        (eon_workspace_protocol::v39::SHIFT, "Shift"),
-        (eon_workspace_protocol::v39::SUPER, "Super"),
+        (eon_workspace_protocol::v40::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v40::ALT, "Alt"),
+        (eon_workspace_protocol::v40::SHIFT, "Shift"),
+        (eon_workspace_protocol::v40::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -3965,7 +3966,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v39::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v40::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn c38_set(root: &Path) -> (Registry, WorkspaceSet) {
         let registry = Registry::in_test_directory(root.join("sessions"));
@@ -4679,8 +4680,8 @@ mod tests {
             ("s1", "s3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v39::encode_response(
-            &eon_workspace_protocol::v39::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v40::encode_response(
+            &eon_workspace_protocol::v40::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -4690,7 +4691,7 @@ mod tests {
                 "ambiguous",
                 None,
                 Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector(
+                    workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector(
                         "work".into(),
                     ),
                 }),
@@ -4705,7 +4706,7 @@ mod tests {
             "same",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s3".into()),
+                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s3".into()),
             }),
             prepared,
             |_| panic!("a switch starts nothing"),
@@ -4778,7 +4779,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v39::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v40::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -4834,8 +4835,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v39::encode_response(
-            &eon_workspace_protocol::v39::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v40::encode_response(
+            &eon_workspace_protocol::v40::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -4907,8 +4908,8 @@ mod tests {
         assert_eq!(error.code, "terminal-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v39::encode_response(
-            &eon_workspace_protocol::v39::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v40::encode_response(
+            &eon_workspace_protocol::v40::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "s1");
@@ -4922,7 +4923,7 @@ mod tests {
             "name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v39::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v40::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s2".into(),
@@ -4935,7 +4936,7 @@ mod tests {
             "live-id",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -4946,7 +4947,7 @@ mod tests {
             "absent-id-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v39::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v40::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s99".into(),
@@ -4959,7 +4960,7 @@ mod tests {
             "switch-name",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s99".into()),
+                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s99".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -4970,7 +4971,7 @@ mod tests {
             "rename-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v39::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v40::WorkspaceTarget::Selector(
                     "s99".into(),
                 )),
                 name: "s100".into(),
@@ -5017,7 +5018,7 @@ mod tests {
         );
         for (request, workspace) in [("third", "s3"), ("second", "s2")] {
             let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector(workspace.into()),
             });
             set.dispatch(request, None, switch, prepared, |_| Ok(()))
                 .unwrap();
@@ -5161,7 +5162,7 @@ mod tests {
             "show-second",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -5561,7 +5562,7 @@ mod tests {
             focus: false,
         });
         let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s2".into()),
         });
         set.dispatch("create", None, create.clone(), prepared, |_| Ok(()))
             .unwrap();
@@ -5854,7 +5855,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v39::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v40::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -5923,7 +5924,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v39::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v40::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -5984,7 +5985,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v39::{
+        use eon_workspace_protocol::v40::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, QuotaWindow,
         };
@@ -6089,7 +6090,7 @@ mod tests {
             reason: QuotaFailureReason::InvalidWindow,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v39::QueueEntry {
+            eon_workspace_protocol::v40::QueueEntry {
                 workspace: "s1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -6098,7 +6099,7 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v39::QueueEntry {
+            eon_workspace_protocol::v40::QueueEntry {
                 workspace: "s2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -6370,8 +6371,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v39::encode_response(
-            &eon_workspace_protocol::v39::Response::Snapshot(after),
+        eon_workspace_protocol::v40::encode_response(
+            &eon_workspace_protocol::v40::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -7993,7 +7994,7 @@ mod tests {
         };
         let switch = |workspace: &str| {
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v39::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector(workspace.into()),
             })
         };
         // Opens the picker over the shown terminal and returns its terminal.
@@ -8813,8 +8814,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "terminal-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v39::encode_response(
-            &eon_workspace_protocol::v39::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v40::encode_response(
+            &eon_workspace_protocol::v40::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -8877,8 +8878,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v39::encode_response(
-                &eon_workspace_protocol::v39::Response::Snapshot(state),
+            eon_workspace_protocol::v40::encode_response(
+                &eon_workspace_protocol::v40::Response::Snapshot(state),
             )
             .unwrap();
         }

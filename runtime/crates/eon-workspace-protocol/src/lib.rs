@@ -5,7 +5,7 @@
 //! the little-endian version) no revision changes.
 
 pub mod stop;
-pub mod v39;
+pub mod v40;
 
 use std::time::Duration;
 

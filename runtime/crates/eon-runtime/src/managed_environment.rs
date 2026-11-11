@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -4057,7 +4057,7 @@ label = "Browse"
 
     #[test]
     fn editor_popup_settings_round_trip_and_count_against_the_catalog_limit() {
-        use eon_workspace_protocol::v39::MAX_ENTRIES;
+        use eon_workspace_protocol::v40::MAX_ENTRIES;
 
         let mut defaults = crate::fixtures::inputs().defaults;
         let editor = PopupDefinition {

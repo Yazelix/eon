@@ -96,6 +96,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   - Eon validates one compatible component set, launches only that set, crosses
     each required Ready boundary before publication, and reports every exact
     external component revision and the generation of its in-tree build.
+    EON-C11 Reload may replace only Venus with the requesting build's immutable
+    store artifact at exactly equal EONW/ORBS/ORBF versions; the other
+    components and their owner retain their existing identities.
   - `assets/eon.png` is the transparent canonical application icon; Nix derives
     exact hicolor sizes and the Eon Bar's icon image from it, and installed
     desktop metadata names `eon`.
@@ -814,7 +817,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     a terminal that ended naturally during the request is reconciled as an
     exit. Venus maps Alt+W directly to the selected pane without a mode;
     `eon pane close PANE` sends the same target-bearing EONW action.
-  - Closing a column sends EONW v39's `CloseColumn { pane, consent }`, which
+  - Closing a column sends EONW v40's `CloseColumn { pane, consent }`, which
     closes every pane of the column that holds the named live pane, in one
     request. What it would stop is its scope: that column's panes' terminals,
     with the end `column`; or, when the column is its tab's only column and
@@ -898,7 +901,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v39 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v40 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1445,7 +1448,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   (EON-C11, Routing).
   Quoted amendment direction approved on 2026-11-08 by Lucca
   ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
-  EONW v39 carries each session's persistent ID beside its window-local
+  EONW v40 carries each session's persistent ID beside its window-local
   `sN`. Ordinary inspection and `session ls` include `persistent_id` and
   `registration_error`. `persistent_id` is null only for an existing recovered
   member whose registration is pending or failed; `registration_error` is null
@@ -1871,7 +1874,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v39 and accepted Orbit management operations.
+- **Consumes:** Current EONW v40 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1883,7 +1886,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v39 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v40 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -1991,8 +1994,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v39 `attention` is needs input. Rows run by
-  EONW v39 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v40 `attention` is needs input. Rows run by
+  EONW v40 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -2333,6 +2336,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   not upgrade the contract's overall proof status.
 
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-11 by `eon-u199d.1`, approved by eon-overseer under
+  Lucca's auto-decide mandate: explicit Venus-only Reload. Its isolated
+  installed proof and user documentation remain pending in `eon-u199d.2`.
   Amended on 2026-10-30
   (approved by Lucca, relayed by eon-overseer) by
   `eon-agent-parity-a9g0.15`: only the Venus a supervisor starts attaches to
@@ -2535,6 +2541,48 @@ names its socket. CLI JSON names a session `session` and a terminal
     process, Orbit attachment, or terminal. A detach keeps every session of
     the window, and a Venus that Present starts shows the last shown session
     (EON-C33; its installed proof is `eon-workspace-switching-shn4.9`).
+  - **Reload.** `eon window reload ID [--json]` asks one full-Eon window's
+    supervisor to replace Venus with the requesting CLI's own Venus. ID uses
+    the window ID/prefix rules of `eon window ls`; Reload never delegates
+    across EONW versions. The target must be a canonical, non-writable
+    executable file in `/nix/store`; relocated bundle paths refuse. The
+    requesting Venus's EONW, ORBS and ORBF requirements must exactly match
+    the running owner's. A mismatch names the need for a fresh window; every
+    refusal leaves the old Venus untouched. Unknown or unfocused native
+    keyboard focus refuses; the supervisor reads focus again immediately
+    before retiring Venus and sends no activation request. Focus can still
+    change after that check: the interval includes up to five seconds retiring
+    the old process, two failed 30-second admissions and their teardown before
+    the own-build fallback starts, whose admission has another 30-second
+    allowance. The complete sequence has a CLI reply budget of 111 seconds,
+    not a native mapping deadline. `eon-u199d.2` measures both the normal
+    replacement gap and the rollback gap.
+
+    Reload keeps the supervisor, generation, original launcher and component
+    set, Orbit hosts, PTYs, terminals, complete Runtime layout, selected
+    session/tab/pane/popup, pending pickers and Agents state. The supervisor
+    starts the replacement itself and names its PID and process start through
+    AttachAllow. Retirement bypasses ordinary detach's picker dismissal and
+    notice. Queued window actions and event publication wait through the
+    transition, while Orbit hosts keep running. Dialogs, confirmations,
+    zoom, inbox view, IME, terminal text selection and window position reset.
+    Success means the existing `ready-v1` admission, not a fresh terminal
+    frame; later attachment failures follow ordinary presentation recovery.
+
+    Failed startup/admission restarts the last accepted Venus, falling back
+    to the supervisor's own Venus. Failed rollback keeps Runtime and terminals
+    alive for an attach retry. Present after clean detach uses the last accepted
+    Venus in this supervisor. An unsuccessful exit or failed Present admission
+    clears that override, so the next Present uses the supervisor's own Venus.
+    An identical presenting target is unchanged.
+    Runtime inspection and `eon window ls --json` carry `venus`, its actual
+    presenting executable path or null while detached. Reload success JSON
+    is `{"window":ID,"generation":GENERATION,"venus":PATH}`. Failure uses
+    the existing failure object: `reload-refused`, `reload-presentation-failed`
+    when presentation was restored, or `reload-rollback-failed`, each exit 4.
+    Invalid syntax exits 2; unknown/stale window IDs exit 3. eonbase refuses
+    Reload. Only a supervisor that implements Reload can perform it; an older
+    window first needs one manual move to that baseline.
   - Dead exact residue is removed only after the recorded process is absent or
     dead; a later launch may then create one fresh run.
   - A current launch overlapping clean exit of the final terminal waits for the
@@ -3157,7 +3205,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v39 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v40 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -4278,7 +4326,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v39, request and response). EON-C39 exposes a stream of its changes.
+  (EONW v40, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -5478,7 +5526,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   session for the product concept.
   Quoted amendment direction approved on 2026-11-08 by Lucca
   ("2 we fix and push", relayed by eon-overseer) for `eon-remote-workspaces-52i4.5`:
-  EONW v39 initial and gap snapshots and session events carry the same
+  EONW v40 initial and gap snapshots and session events carry the same
   local-handle/persistent-ID mapping and `registration_error` as ordinary
   inspection, including a null ID for an unregistered recovered member.
   Confirming registration for an already published recovered member emits
@@ -5507,7 +5555,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v39 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v40 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -5689,9 +5737,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v39 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v40 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v39; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v40; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

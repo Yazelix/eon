@@ -16,7 +16,7 @@ use super::{
     },
     workspace::{failure_json, json_escape, terminal_text, validate_initial_directory},
 };
-use eon_workspace_protocol::v39::Failure;
+use eon_workspace_protocol::v40::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
@@ -709,6 +709,106 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
             let generation = window_generation(inputs, &id, &root)?;
             attach_generation(inputs, &root, Some(&generation), Some(&shown))
         }
+    }
+}
+
+/// Reload targets one exact owner; it never delegates to another executable.
+pub(super) fn reload_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Result<i32, Error> {
+    use super::control::{ControlResponse, EndpointFailureKind, send_action};
+    use eon_workspace_protocol::v40::{Action, LifecycleResponse, WorkspaceAction};
+    let argument = window_id_argument(argument)?;
+    let (window, shown) = match select_window(inputs, argument) {
+        Ok(selected) => selected,
+        Err(error) => return Ok(report_failure(&error, json)?),
+    };
+    let base = base_runtime_directory("eon");
+    let (root, generation, full_id) = match window {
+        Window::Default => (base, current_generation(inputs)?, DEFAULT_WINDOW.to_owned()),
+        Window::Other(generation) => {
+            let full_id = generation[3..].to_owned();
+            (base, generation, full_id)
+        }
+        Window::Independent { root, id } => {
+            let generation = match window_generation(inputs, &id, &root) {
+                Ok(generation) => generation,
+                Err(error) => {
+                    let code = if running_generations(inputs, &root, false)
+                        .is_ok_and(|records| records.is_empty())
+                    {
+                        "stale-target"
+                    } else {
+                        "supervisor-unavailable"
+                    };
+                    return Ok(report_failure(&failure(code, error.message), json)?);
+                }
+            };
+            (root, generation, id)
+        }
+    };
+    let [eonw, orbs, orbf] = *inputs
+        .presentation_protocols
+        .as_ref()
+        .map_err(Clone::clone)?;
+    let venus = inputs
+        .venus
+        .to_str()
+        .ok_or_else(|| Error::usage("Venus path is not UTF-8"))?
+        .to_owned();
+    let socket = generation_directory(&root, &generation).join("eon.sock");
+    let response = match send_action(
+        &socket,
+        Action::Workspace(WorkspaceAction::ReloadPresentation {
+            venus,
+            eonw,
+            orbs,
+            orbf,
+        }),
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            return Ok(report_failure(
+                &failure(
+                    if error.kind == EndpointFailureKind::Dead {
+                        "stale-target"
+                    } else {
+                        "supervisor-unavailable"
+                    },
+                    error.detail,
+                ),
+                json,
+            )?);
+        }
+    };
+    match response {
+        ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime))
+            if runtime.generation == generation =>
+        {
+            if json {
+                write_stdout(format!(
+                    "{{\"window\":\"{}\",\"generation\":\"{}\",\"venus\":{}}}\n",
+                    json_escape(&full_id),
+                    json_escape(&runtime.generation),
+                    runtime.venus.as_deref().map_or_else(
+                        || "null".into(),
+                        |path| format!("\"{}\"", json_escape(path))
+                    )
+                ))?;
+            } else {
+                write_stdout(format!(
+                    "Window {} presents Venus {}\n",
+                    terminal_text(&shown),
+                    terminal_text(runtime.venus.as_deref().unwrap_or("unavailable"))
+                ))?;
+            }
+            Ok(0)
+        }
+        ControlResponse::Lifecycle(LifecycleResponse::Failure(error)) => {
+            Ok(report_failure(&error, json)?)
+        }
+        _ => Ok(report_failure(
+            &failure("supervisor-unavailable", "wrong window or reload reply"),
+            json,
+        )?),
     }
 }
 

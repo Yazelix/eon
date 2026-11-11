@@ -23,7 +23,7 @@ use super::{
         terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
     MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
     TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
@@ -52,6 +52,8 @@ pub struct Inputs {
     pub skill: &'static str,
     /// This build's whole component graph, which supervisors report and launches compare.
     pub component_report: Result<String, String>,
+    /// Venus's exact EONW, ORBS and ORBF requirements from the component graph.
+    pub presentation_protocols: Result<[u16; 3], String>,
     /// The components this composition includes, which `eon versions` prints:
     /// `component_report` without the tools the package leaves out.
     pub composed_components: Result<String, String>,
@@ -759,6 +761,14 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         [command, action, id] if command == "window" && action == "attach" => {
             Ok(windows::attach_window(inputs, Some(id))?)
         }
+        [command, action, id] if command == "window" && action == "reload" => {
+            Ok(windows::reload_window(inputs, id, false)?)
+        }
+        [command, action, id, flag]
+            if command == "window" && action == "reload" && flag == "--json" =>
+        {
+            Ok(windows::reload_window(inputs, id, true)?)
+        }
         [command, action, which]
             if command == "window"
                 && action == "stop"
@@ -1058,6 +1068,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Open an independent window",
             ),
             ("window attach [ID]", "Reopen a window (no ID: default)"),
+            (
+                "window reload ID [--json]",
+                "Reload Venus in a focused window",
+            ),
             (
                 "window stop ID|previous|all [--json]",
                 "End a window, the old-version",
@@ -2147,7 +2161,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v39::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v40::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2780,7 +2794,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v39::validate_pane_name(name)
+        eon_workspace_protocol::v40::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -3084,7 +3098,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v39::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v40::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -4062,7 +4076,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v39::{
+        use eon_workspace_protocol::v40::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4312,7 +4326,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v39::{
+        use eon_workspace_protocol::v40::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };

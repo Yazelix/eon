@@ -4,13 +4,18 @@ use crate::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v39::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v40::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
         version: "fixture-product",
         skill: "fixture-skill",
         component_report: Ok("fixture-components".into()),
+        presentation_protocols: Ok([
+            eon_workspace_protocol::v40::VERSION,
+            orbit_protocol::session::VERSION,
+            orbit_protocol::VERSION,
+        ]),
         composed_components: Ok("fixture-components".into()),
         codexbar: "missing-fixture-codexbar".into(),
         assembly: b"fixture-assembly",

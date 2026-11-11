@@ -141,6 +141,32 @@ pub fn version_reports(input: &str, omitted: &[&str]) -> Result<(String, String)
     target_reports(input, target, omitted)
 }
 
+/// The exact workspace, attachment and frame versions Venus consumes.
+pub fn presentation_protocols(input: &str) -> Result<[u16; 3], Error> {
+    let manifest = parse(input)?;
+    validate(&manifest)?;
+    let venus = manifest
+        .components
+        .iter()
+        .find(|component| component.id == "venus")
+        .ok_or_else(|| Error("missing Venus component".into()))?;
+    let version = |component: &str, name: &str| {
+        venus
+            .requires
+            .iter()
+            .filter(|requirement| requirement.component == component)
+            .flat_map(|requirement| &requirement.interfaces)
+            .find(|interface| interface.id == name)
+            .and_then(|interface| u16::try_from(interface.version).ok())
+            .ok_or_else(|| Error(format!("missing or invalid Venus {name} requirement")))
+    };
+    Ok([
+        version("eon-workspace-protocol", "EONW")?,
+        version("orbit", "ORBS")?,
+        version("orbit", "ORBF")?,
+    ])
+}
+
 fn target_reports(input: &str, target: &str, omitted: &[&str]) -> Result<(String, String), Error> {
     let manifest = parse(input)?;
     validate(&manifest)?;
@@ -537,6 +563,15 @@ mod tests {
         component_mut(&mut required_revision, "venus")["requires"][0]["revision"] =
             Value::String("1".repeat(40));
         assert!(parse_and_validate(&serde_json::to_string(&required_revision).unwrap()).is_err());
+    }
+
+    #[test]
+    fn presentation_protocols_come_from_the_validated_graph() {
+        assert_eq!(
+            super::presentation_protocols(CANONICAL).unwrap(),
+            [40, 14, 3]
+        );
+        assert!(super::presentation_protocols("{}").is_err());
     }
 
     #[test]

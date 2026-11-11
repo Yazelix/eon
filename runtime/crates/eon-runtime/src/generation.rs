@@ -16,7 +16,7 @@ use super::windows::{
 };
 use super::workspace::{json_escape, terminal_text};
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v39::{
+use eon_workspace_protocol::v40::{
     Action, Availability, BusyTerminals, Failure, MAX_RUNNING_WINDOWS, Response, WindowEntry,
     WindowState, WorkspaceAction,
 };
@@ -613,6 +613,7 @@ pub(super) struct GenerationRecord {
     eon_version: Option<String>,
     workspace_protocol: Option<u16>,
     component_report: Option<String>,
+    venus: Option<String>,
     pub(super) sessions: Vec<String>,
     /// Its busy terminals (EON-C11), known for a live full-Eon window.
     busy: Option<BusyTerminals>,
@@ -919,6 +920,7 @@ fn inspect_generation(
                 eon_version: Some(info.eon_version),
                 workspace_protocol: Some(info.workspace_protocol),
                 component_report: Some(info.component_report),
+                venus: info.venus,
                 sessions: info.sessions,
                 busy: info.busy,
                 attach: info.attach,
@@ -1014,6 +1016,7 @@ fn failed_generation(
         eon_version: None,
         workspace_protocol: error.protocol,
         component_report: None,
+        venus: None,
         sessions: Vec::new(),
         busy: None,
         attach: Availability {
@@ -1212,7 +1215,10 @@ pub(super) fn window_json(
         }
         output.push_str(&format!("\"{}\"", json_escape(session)));
     }
-    output.push_str("],\"busy\":");
+    output.push_str(&format!(
+        "],\"venus\":{},\"busy\":",
+        json_option(record.venus.as_deref())
+    ));
     super::workspace::json_busy(&mut output, record.busy.as_ref(), labels);
     output.push_str(&format!(
         ",\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"executable\":{},\"detail\":\"{}\",\"component_report\":{}}}",
@@ -1884,7 +1890,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v39::{
+        use eon_workspace_protocol::v40::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -1912,11 +1918,12 @@ mod tests {
                 reason: "terminal-only supervisor".into(),
             };
             let response = LifecycleResponse::Runtime(Runtime {
+                venus: None,
                 generation: id.into(),
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v39::VERSION,
+                workspace_protocol: eon_workspace_protocol::v40::VERSION,
                 component_report: "fixture".into(),
                 sessions: vec!["terminal-1".into()],
                 attach: available.clone(),
@@ -2029,7 +2036,7 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v39::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v40::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         let sessions = ["terminal-1".to_owned(), "terminal-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {
@@ -2092,7 +2099,7 @@ mod tests {
 
     #[test]
     fn window_json_leaves_out_labels_only_when_asked() {
-        use eon_workspace_protocol::v39::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v40::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         record.name = Some("client-acme-window".into());
         record.busy = Some(BusyTerminals {
