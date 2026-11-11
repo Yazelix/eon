@@ -882,6 +882,21 @@ effect at the next prompt. Eon never edits your file or exports the fallback to 
 so Starship's configuration commands keep their native behavior. Other shells
 and user-owned prompts receive no Eon Starship default.
 
+Managed Bash reports command start and exit status through OSC 133 C/D marks,
+including commands that fail or are interrupted. Pipelines report the shell's
+final status. Eon preserves your prompt and tool hooks, and skips its Bash
+marks when the prompt or its directly named hooks already contain C/D
+reporting. Bash sends its marks to the prompt terminal or `/dev/tty`, so they
+stay out of redirected output; with no terminal it emits none. Bash supplies
+no prompt-start A mark. Managed Nushell uses its own
+OSC 133 reporting, including when Eon starts from a VS Code terminal;
+`TERM_PROGRAM` stays available to programs with its inherited value. Native
+Nushell user autoload runs afterward and can override shell integration settings.
+An OSC 133 opt-out in Nushell's `config.nu`,
+`$env.config.shell_integration.osc133 = false`, is kept.
+Eon disables Nushell's native OSC 133 before every prompt, including the first, when
+stdout is not a terminal, so those marks stay out of pipes and captures.
+
 Managed Nushell supports `clip copy` and `clip paste` through the native
 clipboard. Interactive `eon-nu` terminals also provide `clc`
 and `clp` aliases. User autoload files run afterward and can override them.

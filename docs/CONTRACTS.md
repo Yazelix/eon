@@ -1203,6 +1203,39 @@ names its socket. CLI JSON names a session `session` and a terminal
     discovery and editing behavior. Explicit `STARSHIP_CONFIG` values,
     including empty or missing-file paths, remain untouched. Atuin continues
     to honor `ATUIN_NOBIND`.
+  - Interactive managed shells report command boundaries with OSC 133: `C`
+    before a submitted command and `D;<status>` when the shell regains control.
+    A stopped Bash job can therefore report `D;148` without having exited.
+    A pipeline is one submission with the shell's native final status. Bash supplies
+    missing marks without replacing prompt text or existing tool hooks, and
+    defers when prompt variables or their directly named hooks already contain
+    C or D reporting. It emits no completion before a command has started.
+    If a user rc replaces only the completion hook, Bash restores it at the
+    next command start and reports the pending status before the new `C`.
+    A syntax error rejected by Bash's outer parser emits neither mark;
+    ble.sh's forced evaluation of invalid input is a submission and reports
+    `C` followed by `D;2`.
+    Bash writes marks to its prompt descriptor (stderr) when it is a terminal,
+    otherwise to `/dev/tty` when available, and emits nothing when neither is
+    available. Marks never enter redirected stdout or stderr.
+    Bash deliberately supplies no `A` prompt mark: adding one would change
+    ORB-C15's foreground-return lifetime rule. Nushell supplies its own marks;
+    managed init selects native OSC 133 instead of OSC 633 regardless of
+    `TERM_PROGRAM`, without changing that environment variable. Native user
+    autoload remains last. Because Nushell sends native marks through stdout,
+    managed init disables OSC 133 when stdout is not a terminal before every
+    prompt, including the first, and preserves a native `config.nu` opt-out.
+    It supplies no separate emitter or `/dev/tty` fallback for Nushell.
+    Nested interactive shells share the terminal stream,
+    so their C/D pairs may nest inside the outer command's pair. Native Nu
+    also emits `C` for an empty submission, then a prompt without `D`, and
+    emits `D` with its previous status for Ctrl+C at an idle prompt. These
+    marks do not establish a foreground job: an unmatched `C` ends at the
+    next prompt, and a `D` without an open `C` is not a command completion.
+    Status remains signed and shell-native (for an interrupted external
+    command, Bash reports 130 and Nushell reports -2). Except for completion-hook
+    recovery, Bash completion is reported on return to a prompt; shell exit or
+    exec without another prompt remains terminal-lifetime data owned by Orbit.
   - Managed Nushell enables native `clip copy` and `clip paste`. Its interactive
     startup supplies `clc` and `clp` aliases for those commands; native user
     autoload may override the aliases afterward.
@@ -1277,6 +1310,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     `session_path_contains_one_managed_prefix`,
     `shell_configuration_is_strict_and_defaults_without_a_file` and
     `managed_invocation_names_are_bounded`.
+  - **Command marks:** EON-C9 amendment for `eon-xjzr4.2` approved by the
+    overseer on 2026-11-11 under Lucca's auto-decide mandate, including the
+    native-Nushell suppression policy approved at 16:55 UTC. The Linux
+    `managed-command-path` check exercises real managed-shell prompts,
+    failures, interruption, pipelines, user hooks and nested shells;
+    exact candidate proof is recorded in that bead.
   - **Mise:** `eon-nf7g` adds to `managed-command-path` a fake host mise that
     both shells activate, and that each skips when it is missing, fails, or
     `mise = false`; Nushell's pre_prompt hook and its condition are evaluated

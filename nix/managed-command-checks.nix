@@ -5,6 +5,9 @@
   eonPackage,
 }:
 let
+  shellPromptCheck = pkgs.runCommandCC "eon-shell-prompt-check" { nativeBuildInputs = [ pkgs.rustc ]; } ''
+    rustc --edition=2024 -D warnings ${./managed-shell-check.rs} -o "$out"
+  '';
   starshipBashCheck = pkgs.writeText "eon-starship-check.bash" ''
     set -e
     starship_precmd
@@ -214,6 +217,10 @@ pkgs.runCommand "eon-managed-command-path-check" { } ''
   test "$(PATH="$PATH:${fakeMise}/bin" mise_hooks)" = "$no_mise_hooks" \
     || fail "Nushell added a mise hook with [shell] mise = false"
   ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+    ${shellPromptCheck} ${eonPackage} ${pkgs.util-linux}/bin/script \
+      ${pkgs.bash-preexec}/share/bash/bash-preexec.sh ${pkgs.blesh}/share/blesh/ble.sh \
+      ${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.gnused pkgs.gnugrep pkgs.gawk pkgs.ncurses pkgs.procps pkgs.bashInteractive ]} \
+      ${pkgs.bash}/bin/bash
 
     # Eon's Helix is built without Steel (EON-C9): hx runs no init.scm, from a
     # repository's .helix or from Eon's Helix directory. Helix needs a

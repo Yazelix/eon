@@ -102,6 +102,10 @@ let
   nuBase = pkgs.writeText "eon-nu-base" ''
     const _eon_shell_init = path self ../../init
     $env.config.show_banner = false
+    $env.config.shell_integration.osc633 = false
+    $env.config.hooks.pre_prompt = ($env.config.hooks.pre_prompt? | default [] | append {||
+      if not (is-terminal --stdout) { $env.config.shell_integration.osc133 = false }
+    })
     alias clc = clip copy
     alias clp = clip paste
   '';
@@ -219,6 +223,59 @@ let
       && _eon_mise=$(type -P mise); then
       _eon_mise=$("$_eon_mise" activate bash 2>/dev/null) && [[ -n $_eon_mise ]] && eval "$_eon_mise"
     fi
+    _eon_has_command_marks() {
+      local hooks="''${PS0-} $PS1 ''${PROMPT_COMMAND[*]-} ''${preexec_functions[*]-} ''${precmd_functions[*]-}"
+      local text=$hooks name IFS=$' \t\n'
+      for name in ''${hooks//[^a-zA-Z0-9_]/ }; do
+        text+=$(declare -f "$name")
+      done
+      [[ $text == *'133;C'* || $text == *'133;D'* ]]
+    }
+    if declare -F _eon_command_start >/dev/null || ! _eon_has_command_marks; then
+      _eon_ps0="\''${ _eon_command_start \"\$_\"; }"
+      _eon_command_mark() {
+        if [[ -t 2 ]]; then
+          printf '\e]133;%s\e\\' "$1" >&2
+        else
+          { printf '\e]133;%s\e\\' "$1" > /dev/tty; } 2>/dev/null || :
+        fi
+      }
+      _eon_command_start() {
+        local status=$? last_argument=$_
+        if [[ -z ''${BLE_ATTACHED-} && " ''${PROMPT_COMMAND[*]-} " != *' _eon_command_end '* \
+            && ''${PROMPT_COMMAND[*]-} != *'__bp_precmd_invoke_cmd'* ]]; then
+          PROMPT_COMMAND=(_eon_command_end "''${PROMPT_COMMAND[@]}")
+          # A user rc can replace the completion hook while a command runs.
+          _eon_command_end "$status"
+        fi
+        if [[ ''${_eon_command_running-} != 1 ]]; then
+          _eon_command_mark C
+          _eon_command_running=1
+        fi
+        : "$last_argument"
+      }
+      _eon_command_end() {
+        local status=''${1-$?}
+        if [[ ''${_eon_command_running-} == 1 ]]; then
+          _eon_command_mark "D;$status"
+          unset _eon_command_running
+        fi
+        # Prompt tools may replace PS0 after startup.
+        [[ ''${PS0-} == *"$_eon_ps0"* ]] || PS0+=$_eon_ps0
+      }
+      # Atuin's enter_accept invokes preexec_functions without expanding PS0.
+      [[ " ''${preexec_functions[*]-} " == *' _eon_command_start '* ]] \
+        || preexec_functions+=(_eon_command_start)
+      if declare -F blehook >/dev/null; then
+        [[ $(blehook PRECMD) == *'_eon_command_end'* ]] || blehook PRECMD+=_eon_command_end
+      elif [[ ''${bash_preexec_imported-} || ''${__bp_imported-} ]]; then
+        [[ " ''${precmd_functions[*]-} " == *' _eon_command_end '* ]] \
+          || precmd_functions+=(_eon_command_end)
+      elif [[ " ''${PROMPT_COMMAND[*]-} " != *' _eon_command_end '* ]]; then
+        PROMPT_COMMAND=(_eon_command_end "''${PROMPT_COMMAND[@]}")
+      fi
+    fi
+    unset -f _eon_has_command_marks
     unset _eon_bin _eon_shell_init _eon_default_ps1 _eon_default_ps2 _eon_mise
   '';
 

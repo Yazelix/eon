@@ -21,6 +21,10 @@ installation, and proven contract changes.
   heading numbers are dimmer than their names, hint and dialog text use
   grey roles, and zoomed tabs share the pane Restore mark `▣`
   (`eon-wuau8.3`, Lucca's 2026-11-10 approval and delegated contrast decisions).
+- Managed Bash reports command start and exit status with OSC 133 C/D marks.
+  Its marks stay on the terminal when command output is redirected.
+  Managed Nushell uses its native OSC 133 marks even when Eon is launched
+  from a VS Code terminal (`eon-xjzr4.2`, EON-C9).
 
 - Managed Bash and Nushell omit the extra blank row before every Starship
   prompt, including the first prompt in a fresh pane.
