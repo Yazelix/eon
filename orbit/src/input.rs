@@ -245,6 +245,113 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dead_key_composition_and_completion_follow_the_keyboard_mode() {
+        let surface = session::SurfaceSize {
+            cols: 8,
+            rows: 2,
+            screen_width: 80,
+            screen_height: 36,
+            cell_width: 10,
+            cell_height: 18,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+        };
+        for mode in [0, 1, 3, 5, 31] {
+            let mut terminal = Terminal::new(8, 2).unwrap();
+            if mode != 0 {
+                terminal.vt_write(format!("\x1b[>{mode}u").as_bytes());
+            }
+            // Venus drops dead starts; this separately checks the encoder's composing flag.
+            let mut dead = session::KeyEvent {
+                action: session::KeyAction::Press,
+                key: session::PhysicalKey::DIGIT_6,
+                modifiers: session::Modifiers::SHIFT,
+                consumed_modifiers: session::Modifiers::empty(),
+                composing: true,
+                text: None,
+                unshifted_codepoint: Some('6'),
+            };
+            for action in [
+                session::KeyAction::Press,
+                session::KeyAction::Repeat,
+                session::KeyAction::Release,
+            ] {
+                dead.action = action;
+                assert!(
+                    encode_input(&terminal, surface, ClientMessage::Key(dead.clone()))
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+            for (key, text, base, shifted, kitty) in [
+                (session::PhysicalKey::E, "ê", 'e', false, "\x1b[101;;234u"),
+                (session::PhysicalKey::A, "ã", 'a', false, "\x1b[97;;227u"),
+                (session::PhysicalKey::E, "é", 'e', false, "\x1b[101;;233u"),
+                (session::PhysicalKey::E, "è", 'e', false, "\x1b[101;;232u"),
+                (session::PhysicalKey::A, "ä", 'a', false, "\x1b[97;;228u"),
+                (
+                    session::PhysicalKey::SPACE,
+                    "^",
+                    ' ',
+                    true,
+                    "\x1b[32:94;2;94u",
+                ),
+                (
+                    session::PhysicalKey::SPACE,
+                    "~",
+                    ' ',
+                    true,
+                    "\x1b[32:126;2;126u",
+                ),
+                (session::PhysicalKey::SPACE, "'", ' ', false, "\x1b[32;;39u"),
+                (session::PhysicalKey::SPACE, "`", ' ', false, "\x1b[32;;96u"),
+                (
+                    session::PhysicalKey::SPACE,
+                    "\"",
+                    ' ',
+                    true,
+                    "\x1b[32:34;2;34u",
+                ),
+            ] {
+                let modifiers = if shifted {
+                    session::Modifiers::SHIFT
+                } else {
+                    session::Modifiers::empty()
+                };
+                let event = session::KeyEvent {
+                    action: session::KeyAction::Press,
+                    key,
+                    modifiers,
+                    consumed_modifiers: modifiers,
+                    composing: false,
+                    text: Some(text.into()),
+                    unshifted_codepoint: Some(base),
+                };
+                assert_eq!(
+                    encode_input(&terminal, surface, ClientMessage::Key(event)).unwrap(),
+                    if mode == 31 {
+                        kitty.as_bytes()
+                    } else {
+                        text.as_bytes()
+                    },
+                    "mode {mode}, text {text}"
+                );
+            }
+            if mode != 0 {
+                dead.action = session::KeyAction::Press;
+                dead.composing = false;
+                dead.modifiers = session::Modifiers::CTRL.union(session::Modifiers::SHIFT);
+                assert_eq!(
+                    encode_input(&terminal, surface, ClientMessage::Key(dead)).unwrap(),
+                    b"\x1b[54;6u"
+                );
+            }
+        }
+    }
+
     /// A Kitty-mode release reports a key the encoder can name, and never
     /// falls back to its text for one it cannot (ORB-C5).
     #[test]

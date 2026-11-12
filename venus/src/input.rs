@@ -138,21 +138,45 @@ impl InputState {
 
     #[must_use]
     pub fn key(&self, event: &WinitKeyEvent) -> Option<ClientMessage> {
-        if !self.key_is_current(event.physical_key, event.state, event.repeat) {
+        self.key_event(
+            event.physical_key,
+            &event.logical_key,
+            event.state,
+            event.repeat,
+            event.text.as_deref(),
+            event.key_without_modifiers(),
+        )
+    }
+
+    fn key_event(
+        &self,
+        key: WinitPhysicalKey,
+        logical_key: &Key,
+        state: ElementState,
+        repeat: bool,
+        text: Option<&str>,
+        unmodified: Key,
+    ) -> Option<ClientMessage> {
+        if !self.key_is_current(key, state, repeat) {
             return None;
         }
-        let code = match event.physical_key {
+        // A compose start has no text, but its unshifted key could leak through kitty.
+        if state == ElementState::Pressed
+            && !repeat
+            && matches!(logical_key, Key::Dead(_))
+            && (self.modifiers == Modifiers::empty() || self.modifiers == Modifiers::SHIFT)
+        {
+            return None;
+        }
+        let code = match key {
             WinitPhysicalKey::Code(code) => Some(code),
             WinitPhysicalKey::Unidentified(_) => None,
         };
-        let text = event.text.as_deref().and_then(key_text);
-        let (unshifted_codepoint, consumed_modifiers) = layout_metadata(
-            self.modifiers,
-            text.as_deref(),
-            event.key_without_modifiers(),
-        );
+        let text = text.and_then(key_text);
+        let (unshifted_codepoint, consumed_modifiers) =
+            layout_metadata(self.modifiers, text.as_deref(), unmodified);
         Some(ClientMessage::Key(KeyEvent {
-            action: match (event.state, event.repeat) {
+            action: match (state, repeat) {
                 (ElementState::Released, _) => KeyAction::Release,
                 (ElementState::Pressed, true) => KeyAction::Repeat,
                 (ElementState::Pressed, false) => KeyAction::Press,
@@ -1149,6 +1173,304 @@ mod tests {
                 (Some(' '), expected)
             );
         }
+    }
+
+    #[test]
+    fn dead_key_sequences_deliver_only_the_completed_text() {
+        use ElementState::{Pressed, Released};
+        use KeyCode as K;
+        use winit::keyboard::NativeKey;
+
+        for (dead, accent, shift, base, letter, text, bare) in [
+            (K::Digit6, '^', true, Some('6'), K::KeyE, "ê", "^"),
+            (K::Backquote, '~', true, None, K::KeyA, "ã", "~"),
+            (K::Quote, '´', false, None, K::KeyE, "é", "'"),
+            (K::Backquote, '`', false, None, K::KeyE, "è", "`"),
+            (K::Quote, '¨', true, None, K::KeyA, "ä", "\""),
+        ] {
+            for space in [false, true] {
+                for release_first in [false, true] {
+                    let mut input = InputState::default();
+                    input.set_modifiers(if shift {
+                        ModifiersState::SHIFT
+                    } else {
+                        ModifiersState::empty()
+                    });
+                    let dead = WinitPhysicalKey::Code(dead);
+                    let unidentified = Key::Unidentified(NativeKey::Xkb(0xfe52));
+                    let dead_unmodified = || {
+                        base.map_or_else(
+                            || unidentified.clone(),
+                            |ch| Key::Character(ch.to_string().into()),
+                        )
+                    };
+                    assert!(
+                        input
+                            .key_event(
+                                dead,
+                                &Key::Dead(Some(accent)),
+                                Pressed,
+                                false,
+                                None,
+                                dead_unmodified()
+                            )
+                            .is_none(),
+                        "dead {accent} reached the terminal"
+                    );
+                    // winit feeds compose only on a fresh press, not repeats/releases.
+                    for state in [Pressed, Released] {
+                        if state == Released && !release_first {
+                            continue;
+                        }
+                        assert!(
+                            input
+                                .key_event(
+                                    dead,
+                                    &unidentified,
+                                    state,
+                                    state == Pressed,
+                                    None,
+                                    dead_unmodified()
+                                )
+                                .is_none()
+                        );
+                    }
+                    let (key, unmodified, expected) = if space {
+                        (K::Space, Key::Named(NamedKey::Space), bare.to_owned())
+                    } else {
+                        let base = if letter == K::KeyE { "e" } else { "a" };
+                        (letter, Key::Character(base.into()), text.to_owned())
+                    };
+                    input.set_modifiers(if space && shift {
+                        ModifiersState::SHIFT
+                    } else {
+                        ModifiersState::empty()
+                    });
+                    let key = WinitPhysicalKey::Code(key);
+                    let logical = if space {
+                        Key::Named(NamedKey::Space)
+                    } else {
+                        Key::Character(expected.clone().into())
+                    };
+                    let message = input.key_event(
+                        key,
+                        &logical,
+                        Pressed,
+                        false,
+                        Some(&expected),
+                        unmodified.clone(),
+                    );
+                    let Some(ClientMessage::Key(event)) = message else {
+                        panic!("completion of {accent} was lost");
+                    };
+                    assert_eq!(event.text.as_deref(), Some(expected.as_str()));
+                    assert_eq!(event.action, KeyAction::Press);
+                    assert!(!event.composing);
+                    assert_eq!(
+                        event.consumed_modifiers,
+                        if space && shift {
+                            Modifiers::SHIFT
+                        } else {
+                            Modifiers::empty()
+                        }
+                    );
+                    input.commit_key(key, Pressed);
+                    if !release_first {
+                        assert!(
+                            input
+                                .key_event(
+                                    dead,
+                                    &unidentified,
+                                    Released,
+                                    false,
+                                    None,
+                                    dead_unmodified()
+                                )
+                                .is_none()
+                        );
+                    }
+                    assert!(
+                        input
+                            .key_event(key, &unmodified, Released, false, None, unmodified.clone())
+                            .is_some()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dead_key_cancellation_and_plain_keys_keep_native_semantics() {
+        use ElementState::Pressed;
+        use KeyCode as K;
+        use winit::keyboard::NativeKey;
+        let mut input = InputState::default();
+        let digit = WinitPhysicalKey::Code(K::Digit6);
+        for (modifiers, text) in [(ModifiersState::empty(), "6"), (ModifiersState::SHIFT, "^")] {
+            input.set_modifiers(modifiers);
+            let Some(ClientMessage::Key(event)) = input.key_event(
+                digit,
+                &Key::Character(text.into()),
+                Pressed,
+                false,
+                Some(text),
+                Key::Character("6".into()),
+            ) else {
+                panic!("plain us key was lost");
+            };
+            assert_eq!(event.text.as_deref(), Some(text));
+            assert_eq!(event.unshifted_codepoint, Some('6'));
+        }
+
+        // XKB cancels ^q without text, composes ^^ as ^, and keeps named keys.
+        for (key, logical, text, unmodified) in [
+            (
+                K::KeyQ,
+                Key::Unidentified(NativeKey::Xkb(u32::from('q'))),
+                None,
+                Key::Character("q".into()),
+            ),
+            (
+                K::Digit6,
+                Key::Character("^".into()),
+                Some("^"),
+                Key::Character("6".into()),
+            ),
+            (
+                K::Backspace,
+                Key::Named(NamedKey::Backspace),
+                None,
+                Key::Named(NamedKey::Backspace),
+            ),
+            (
+                K::Escape,
+                Key::Named(NamedKey::Escape),
+                None,
+                Key::Named(NamedKey::Escape),
+            ),
+        ] {
+            let mut input = InputState::default();
+            input.set_modifiers(ModifiersState::SHIFT);
+            assert!(
+                input
+                    .key_event(
+                        digit,
+                        &Key::Dead(Some('^')),
+                        Pressed,
+                        false,
+                        None,
+                        Key::Character("6".into())
+                    )
+                    .is_none()
+            );
+            input.set_modifiers(if key == K::Digit6 {
+                ModifiersState::SHIFT
+            } else {
+                ModifiersState::empty()
+            });
+            let Some(ClientMessage::Key(event)) = input.key_event(
+                WinitPhysicalKey::Code(key),
+                &logical,
+                Pressed,
+                false,
+                text,
+                unmodified,
+            ) else {
+                panic!("composition completion/cancellation was lost");
+            };
+            assert_eq!(event.text.as_deref(), text);
+            assert_eq!(event.key, physical_key(key));
+            assert!(!event.composing);
+        }
+    }
+
+    #[test]
+    fn dead_key_chords_and_ime_commits_keep_their_semantics() {
+        use ElementState::{Pressed, Released};
+        let key = WinitPhysicalKey::Code(KeyCode::Digit6);
+        for modifier in [
+            ModifiersState::CONTROL,
+            ModifiersState::ALT,
+            ModifiersState::SUPER,
+        ] {
+            let mut input = InputState::default();
+            input.set_modifiers(modifier | ModifiersState::SHIFT);
+            let Some(ClientMessage::Key(event)) = input.key_event(
+                key,
+                &Key::Dead(Some('^')),
+                Pressed,
+                false,
+                None,
+                Key::Character("6".into()),
+            ) else {
+                panic!("a modifier chord was lost");
+            };
+            assert_eq!(event.modifiers, input.modifiers());
+            assert_eq!(event.key, PhysicalKey::DIGIT_6);
+            assert_eq!(event.unshifted_codepoint, Some('6'));
+            assert!(!event.composing);
+            input.commit_key(key, Pressed);
+            input.set_modifiers(ModifiersState::empty());
+            assert!(
+                input
+                    .key_event(
+                        key,
+                        &Key::Dead(Some('^')),
+                        Pressed,
+                        true,
+                        None,
+                        Key::Character("6".into())
+                    )
+                    .is_some()
+            );
+            assert!(
+                input
+                    .key_event(
+                        key,
+                        &Key::Dead(Some('^')),
+                        Released,
+                        false,
+                        None,
+                        Key::Character("6".into())
+                    )
+                    .is_some()
+            );
+        }
+
+        let mut input = InputState::default();
+        assert_eq!(input.ime(Ime::Enabled), Ok(None));
+        assert_eq!(input.ime(Ime::Preedit("^".into(), Some((1, 1)))), Ok(None));
+        assert!(
+            input
+                .key_event(
+                    key,
+                    &Key::Dead(Some('^')),
+                    Pressed,
+                    false,
+                    None,
+                    Key::Character("6".into())
+                )
+                .is_none()
+        );
+        let Ok(Some(ClientMessage::Key(event))) = input.ime(Ime::Commit("ê".into())) else {
+            panic!("expected one IME commit");
+        };
+        assert_eq!(event.text.as_deref(), Some("ê"));
+        assert_eq!(event.key, PhysicalKey::UNIDENTIFIED);
+        assert!(!event.composing);
+        assert!(input.preedit().is_empty());
+        assert!(
+            input
+                .key_event(
+                    key,
+                    &Key::Character("6".into()),
+                    Pressed,
+                    false,
+                    Some("6"),
+                    Key::Character("6".into())
+                )
+                .is_some()
+        );
     }
 
     #[test]

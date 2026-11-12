@@ -16,6 +16,8 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   out the build stage. Older supervisors without stage metadata retain an
   unmarked version label when reloading Venus (`eon-eb6pf`).
 
+- Linux dead-key sequences such as Shift+6 then e under `us+intl` type only
+  the composed character in kitty-protocol programs (`eon-5si0a`).
 - Packaged Helix uses carbonfox, soft wrapping, a bufferline for multiple
   buffers, cursorline, colored modes, an insert bar cursor and indent guides.
   These nova-helix defaults sit below user and trusted workspace settings;
