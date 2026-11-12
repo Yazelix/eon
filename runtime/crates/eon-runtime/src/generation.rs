@@ -16,7 +16,7 @@ use super::windows::{
 };
 use super::workspace::{json_escape, terminal_text};
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v41::{
+use eon_workspace_protocol::v42::{
     Action, Availability, BusyTerminals, Failure, MAX_RUNNING_WINDOWS, Response, WindowEntry,
     WindowState, WorkspaceAction,
 };
@@ -1885,7 +1885,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v41::{
+        use eon_workspace_protocol::v42::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -1918,7 +1918,7 @@ mod tests {
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v41::VERSION,
+                workspace_protocol: eon_workspace_protocol::v42::VERSION,
                 component_report: "fixture".into(),
                 sessions: vec!["terminal-1".into()],
                 attach: available.clone(),
@@ -2031,7 +2031,7 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v41::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v42::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         let sessions = ["terminal-1".to_owned(), "terminal-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {
@@ -2094,7 +2094,7 @@ mod tests {
 
     #[test]
     fn window_json_leaves_out_labels_only_when_asked() {
-        use eon_workspace_protocol::v41::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v42::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         record.name = Some("client-acme-window".into());
         record.busy = Some(BusyTerminals {

@@ -23,7 +23,7 @@ use super::{
         terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v41::{
+use eon_workspace_protocol::v42::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
     MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
     TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
@@ -1156,8 +1156,8 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("", "holds a pane; without --yes, list"),
             ("", "what it would stop"),
             (
-                "pane rename PANE NAME [--json]",
-                "Pin a pane name; empty clears",
+                "pane rename PANE NAME [--tag TAG] [--json]",
+                "Pin a name and optionally tag",
             ),
             (
                 "pane rename PANE --clear [--json]",
@@ -2199,7 +2199,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v41::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v42::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2607,7 +2607,7 @@ fn parse_workspace_target_arguments(
             break;
         }
         // Named operands stay literal, even `--window`.
-        if argument == "--name" || argument == "--dir" {
+        if argument == "--name" || argument == "--dir" || argument == "--tag" {
             values.push(argument.clone());
             values.extend(arguments.next().cloned());
             continue;
@@ -2813,8 +2813,10 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
     let mut json = false;
     let mut clear = false;
     let mut literal = false;
+    let mut tag = None;
     let mut values = Vec::new();
-    for argument in arguments {
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
         let value = argument
             .to_str()
             .ok_or_else(|| Error::usage("pane rename requires UTF-8"))?;
@@ -2822,23 +2824,34 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
             "--" if !literal => literal = true,
             "--json" if !literal && !json => json = true,
             "--clear" if !literal && !clear => clear = true,
+            "--tag" if !literal && tag.is_none() => {
+                tag = Some(
+                    arguments
+                        .next()
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| Error::usage("--tag requires a UTF-8 tag"))?
+                        .trim(),
+                );
+            }
             value if !literal && value.starts_with('-') => return Err(Error::usage(EON_USAGE)),
             _ => values.push(value),
         }
     }
     let (pane, name) = match values.as_slice() {
-        [pane] if clear => (*pane, None),
-        [pane, name] if !clear => (*pane, Some(name.trim()).filter(|name| !name.is_empty())),
+        [pane] if clear && tag.is_none() => (*pane, None),
+        [pane, name] if !clear => (
+            *pane,
+            Some(name.trim()).filter(|name| !name.is_empty() || tag.is_some()),
+        ),
         _ => return Err(Error::usage(EON_USAGE)),
     };
-    if let Some(name) = name {
-        eon_workspace_protocol::v41::validate_pane_name(name)
-            .map_err(|error| Error::usage(error.to_string()))?;
-    }
+    eon_workspace_protocol::v42::validate_pane_rename(name, tag)
+        .map_err(|error| Error::usage(error.to_string()))?;
     Ok((
         Action::RenamePane {
             pane: pane.into(),
             name: name.map(str::to_owned),
+            tag: tag.map(str::to_owned),
         },
         json,
     ))
@@ -3136,7 +3149,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v41::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v42::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -3394,7 +3407,8 @@ mod tests {
                 (
                     Action::RenamePane {
                         pane: "p1".into(),
-                        name: expected.map(str::to_owned)
+                        name: expected.map(str::to_owned),
+                        tag: None,
                     },
                     json
                 )
@@ -3419,6 +3433,51 @@ mod tests {
         assert_eq!(parse_name_output(b"\0").unwrap(), "");
         assert!(parse_name_output(b"name\0extra\0").is_err());
         assert!(parse_name_output(b"name\n").is_err());
+    }
+
+    #[test]
+    fn pane_tag_parser_handles_literal_values_and_empty_names() {
+        let parse = |args: &[&str]| {
+            let (args, target) = parse_workspace_target_arguments(
+                &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            )?;
+            assert!(target.window.is_none());
+            parse_control_arguments(&args)
+        };
+        for tag in ["work", "", "-x", "--json", "--window", "--", "--tag"] {
+            assert_eq!(
+                parse(&["pane", "rename", "p1", "", "--tag", tag, "--json"]).unwrap(),
+                (
+                    Action::RenamePane {
+                        pane: "p1".into(),
+                        name: Some("".into()),
+                        tag: Some(tag.into())
+                    },
+                    true
+                )
+            );
+            assert_eq!(
+                parse(&["pane", "rename", "--tag", tag, "--", "p1", "--clear"]).unwrap(),
+                (
+                    Action::RenamePane {
+                        pane: "p1".into(),
+                        name: Some("--clear".into()),
+                        tag: Some(tag.into())
+                    },
+                    false
+                )
+            );
+        }
+        for args in [
+            vec!["pane", "rename", "p1", "name", "--tag"],
+            vec!["pane", "rename", "p1", "name", "--tag", "x", "--tag", "y"],
+            vec!["pane", "rename", "p1", "--clear", "--tag", "x"],
+            vec!["pane", "rename", "p1", "--tag", "x"],
+            vec!["pane", "rename", "p1", "name", "--tag", "bad\u{200b}tag"],
+            vec!["pane", "rename", "p1", "--", "name", "--tag", "x"],
+        ] {
+            assert_eq!(parse(&args).unwrap_err().status, 2, "{args:?}");
+        }
     }
 
     #[test]
@@ -4114,7 +4173,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v41::{
+        use eon_workspace_protocol::v42::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4122,6 +4181,7 @@ mod tests {
             id: id.into(),
             label: id.into(),
             pinned_name: None,
+            tag: None,
             session: session.into(),
             endpoint: b"/runtime/orbit.sock".to_vec(),
             live: true,
@@ -4364,7 +4424,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v41::{
+        use eon_workspace_protocol::v42::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4399,6 +4459,7 @@ mod tests {
                         id: "p1".into(),
                         label: "p1".into(),
                         pinned_name: None,
+                        tag: None,
                         session: "s1".into(),
                         endpoint: b"/runtime/orbit.sock".to_vec(),
                         live: true,

@@ -4,7 +4,7 @@
 //! publishes and serves subscribers; nothing here touches a connection.
 
 use super::{supervisor::request_id, workspace::resolve_selector};
-use eon_workspace_protocol::v41::{
+use eon_workspace_protocol::v42::{
     self as eonw, AttentionState as State, Failure, Snapshot, TargetId, TerminalTarget,
 };
 use std::{
@@ -599,7 +599,10 @@ impl Projection {
                     {
                         events.push(next.pane_event(PaneChange::Moved, terminal));
                     }
-                    if old_pane.label != pane.label || old_pane.pinned_name != pane.pinned_name {
+                    if old_pane.label != pane.label
+                        || old_pane.pinned_name != pane.pinned_name
+                        || old_pane.tag != pane.tag
+                    {
                         events.push(next.pane_event(PaneChange::Renamed, terminal));
                     }
                     if old_pane.live && !pane.live {
@@ -1166,7 +1169,7 @@ impl Events {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use eon_workspace_protocol::v41::{
+    use eon_workspace_protocol::v42::{
         AttentionRecord, BusyTerminal, Column, PopupGeometry, QueueEntry, Sidebar, WorkspaceInfo,
     };
     use std::collections::BTreeMap;
@@ -1176,6 +1179,7 @@ pub(super) mod tests {
             id: id.into(),
             label: id.into(),
             pinned_name: None,
+            tag: None,
             session: session.into(),
             endpoint: format!("/runtime/{session}.sock").into_bytes(),
             live: true,
@@ -1307,6 +1311,36 @@ pub(super) mod tests {
             Vec::new(),
         );
         Projection::new(&snapshots, Vec::new())
+    }
+
+    #[test]
+    fn pane_tags_emit_one_rename_with_full_data_and_no_event_when_unchanged() {
+        let before = base();
+        let mut tagged = before.clone();
+        pane_mut(&mut tagged, "p1").tag = Some("work \"🦀\"".into());
+        let events = before.diff(&tagged);
+        assert_eq!(described(&events), ["pane-renamed p1"]);
+        let Event::Pane(PaneChange::Renamed, item) = &events[0] else {
+            panic!()
+        };
+        let mut json = String::new();
+        crate::workspace::json_pane(&mut json, &item.pane, item.column, item.expanded);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()["tag"],
+            "work \"🦀\""
+        );
+        assert!(tagged.diff(&tagged.clone()).is_empty());
+        let mut renamed = tagged.clone();
+        let pane = pane_mut(&mut renamed, "p1");
+        pane.label = "p1  review".into();
+        pane.pinned_name = Some("review".into());
+        assert_eq!(described(&tagged.diff(&renamed)), ["pane-renamed p1"]);
+        assert_eq!(
+            pane_mut(&mut renamed, "p1").tag.as_deref(),
+            Some("work \"🦀\"")
+        );
+        pane_mut(&mut renamed, "p1").tag = Some("changed".into());
+        assert_eq!(described(&tagged.diff(&renamed)), ["pane-renamed p1"]);
     }
 
     /// Makes `tab` the active tab of `workspace`.
@@ -2937,7 +2971,7 @@ pub(super) mod tests {
         projection.queue = queue;
     }
 
-    /// What the v41 codec checks of a pane or popup event: but for a close,
+    /// What the v42 codec checks of a pane or popup event: but for a close,
     /// its `column` and `expanded` and its `chosen` agree with the order it
     /// carries, and only a close may carry the empty order of a gone tab.
     fn assert_placed(event: &Event) {

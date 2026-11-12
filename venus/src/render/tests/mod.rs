@@ -216,13 +216,13 @@ fn clipping_test_fonts() -> FontSetup {
 }
 
 fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRect) {
-    use eon_workspace_protocol::v41::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v42::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let metrics = CellMetrics::for_scale(1.0);
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v41::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -242,6 +242,7 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
+                    tag: None,
                     id: "p1".into(),
                     session: "s1".into(),
                     endpoint: b"/tmp/s1.sock".to_vec(),
@@ -310,12 +311,12 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
 
 fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
     use crate::scene::{EonBar, ShortcutHintsScene};
-    use eon_workspace_protocol::v41::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v42::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v41::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -336,6 +337,7 @@ fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
                     .map(|index| Pane {
                         label: format!("p{index}"),
                         pinned_name: None,
+                        tag: None,
                         id: format!("p{index}"),
                         session: format!("s{index}"),
                         endpoint: format!("/tmp/{index}.sock").into_bytes(),

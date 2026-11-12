@@ -2,7 +2,7 @@ use super::super::{
     control as endpoint, sessions::bound_io, supervisor::request_id, workspace as projection,
 };
 use super::*;
-use eon_workspace_protocol::v41::{self as wire, EventKind, Filter, Resume};
+use eon_workspace_protocol::v42::{self as wire, EventKind, Filter, Resume};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use std::os::fd::{AsFd, BorrowedFd};
 
@@ -971,10 +971,11 @@ mod tests {
             },
             active_tab: "t1".into(),
         };
-        let tabs = wire::Tabs {
+        let mut tabs = wire::Tabs {
             workspace: "s1".into(),
             tabs: vec![tab("t1", vec![vec![pane("p1", "terminal-1")]], vec![])],
         };
+        tabs.tabs[0].columns[0].panes[0].tag = Some("work \"🦀\"".into());
         let snapshot = wire::WindowSnapshot {
             workspaces: vec![entry],
             attention_queue: vec![],
@@ -1007,6 +1008,7 @@ mod tests {
         assert_eq!(lines[0]["sessions"][0]["shown"], true);
         assert_eq!(lines[0]["tabs"][0]["session"], "s1");
         assert_eq!(lines[0]["tabs"][0]["panes"][0]["terminal"], "terminal-1");
+        assert_eq!(lines[0]["tabs"][0]["panes"][0]["tag"], "work \"🦀\"");
         assert_eq!(lines[1]["snapshot"]["tabs"], lines[0]["tabs"]);
         assert_eq!(lines[0]["busy"]["omitted"], 0);
         assert_eq!(lines[2]["reason"], "targets-gone");

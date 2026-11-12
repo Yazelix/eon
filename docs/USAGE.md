@@ -228,7 +228,7 @@ Nix store. `--json` reports `window`, `generation` and the presenting `venus`
 path on success, together with `"accepted":true`, `"replaced":null` and
 `"config_reloaded":null`. `accepted` confirms that the supervisor accepted
 the request. Both null values mean the reply cannot confirm whether Venus
-was replaced or configuration was reread; they do not mean false. EONW v41
+was replaced or configuration was reread; they do not mean false. EONW v42
 does not report those outcomes. Failure still returns an error object.
 The text reply acknowledges the request, reports the presenting path and
 says replacement and config rereading are unconfirmed. Quota polling follows
@@ -1478,6 +1478,21 @@ clears it, and Escape cancels. Pins follow pane moves and survive presentation
 detach/reattach, but end with the pane or supervisor and are not recovered.
 `eon session --json` and action replies expose each pane's full `label` and
 nullable `pinned_name`, including panes without agent-attention records.
+
+Add `--tag TAG` to a rename to set a separate plain-text work identifier:
+`eon pane rename p1 review --tag eon-xvz5c`. Tags are trimmed and use the same
+80-character / 320-byte plain-text bounds as names. `--tag ''` clears the tag;
+ordinary rename and `--clear` preserve it. Supply NAME when using `--tag`, even
+an empty name to restore automatic naming while setting the tag. `--clear`
+cannot be combined with `--tag`. A tag value may start with `-`; place `--tag TAG`
+before the literal `--` when NAME looks like an option. Invalid names or tags
+leave both fields unchanged.
+
+Pane JSON exposes nullable `tag` beside `pinned_name`, including in subscription
+snapshots, gaps and pane events. A tag change emits `pane-renamed`. Tags follow
+the same lifetime as pins and are not interpreted as Beads IDs. Setting a tag
+requires a fresh window using the matching CLI, Runtime and Venus build;
+existing windows keep their original build and terminals.
 
 ## Subscribe to events
 

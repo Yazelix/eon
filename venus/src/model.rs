@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
-use eon_workspace_protocol::v41::{
+use eon_workspace_protocol::v42::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
 use orbit_protocol::FrameReducer;
@@ -309,7 +309,7 @@ fn attention_states(tabs: &[Tab]) -> Vec<Option<AttentionState>> {
         .collect()
 }
 
-/// Topology comparison excludes pane labels, pins and EON-C31 attention. Text-only
+/// Topology comparison excludes pane labels, pins, tags and EON-C31 attention. Text-only
 /// refreshes keep notices and disturb no navigation, scroll or attachment.
 fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
     tabs.iter()
@@ -320,6 +320,7 @@ fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
                 pane.attention = None;
                 pane.label.clear();
                 pane.pinned_name = None;
+                pane.tag = None;
             }
             for popup in &mut tab.popups {
                 popup.attention = None;
@@ -329,7 +330,7 @@ fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
         .collect()
 }
 
-/// Whether the view differs only in labels, pins or attention, the bar label's badge included,
+/// Whether the view differs only in labels, pins, tags or attention, the bar label's badge included,
 /// ignoring workspace metadata the Eon Bar's workspace label does not show. The caller
 /// separately checks pure label changes and moving sidebar rows.
 #[must_use]
@@ -346,7 +347,7 @@ pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         && bar_workspace(current) == bar_workspace(next)
 }
 
-/// Label/pin updates change painted text without changing any input geometry; the workspace
+/// Label/pin/tag updates change painted text without changing any input geometry; the workspace
 /// label's text sizes it, so it is geometry.
 #[must_use]
 pub fn labels_only_change(current: &Snapshot, next: &Snapshot) -> bool {
@@ -363,6 +364,7 @@ pub fn labels_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         {
             pane.label.clear();
             pane.pinned_name = None;
+            pane.tag = None;
         }
         snapshot
     };
@@ -1080,7 +1082,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v41::{
+    use eon_workspace_protocol::v42::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, PopupKey,
         Shortcut, Tab,
     };
@@ -1112,6 +1114,7 @@ mod tests {
                         id: "p1".into(),
                         label: "p1  shell".into(),
                         pinned_name: None,
+                        tag: None,
                         session: "terminal-1".into(),
                         endpoint: b"/tmp/p1.sock".to_vec(),
                         live: true,
@@ -1142,6 +1145,14 @@ mod tests {
             .active_attachment()
             .map(|(endpoint, live)| (endpoint.to_vec(), live));
         let before = snapshot.clone();
+        snapshot.tabs[0].columns[0].panes[0].tag = Some("work".into());
+        assert!(labels_only_change(&before, &snapshot));
+        assert!(attention_only_change(&before, &snapshot));
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
+            (true, false)
+        );
+        assert_eq!(model.notice(), Some("keep this notice"));
         snapshot.tabs[0].columns[0].panes[0].label = "p1  Review · ../repo".into();
         snapshot.tabs[0].columns[0].panes[0].pinned_name = Some("Review".into());
         assert!(labels_only_change(&before, &snapshot));
@@ -1244,7 +1255,7 @@ mod tests {
         Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v41::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -1262,10 +1273,11 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v41::Column {
+                    columns: vec![eon_workspace_protocol::v42::Column {
                         panes: vec![Pane {
                             label: "pane-1".into(),
                             pinned_name: None,
+                            tag: None,
                             id: "pane-1".into(),
                             session: "terminal-1".into(),
                             endpoint: b"/run/eon/orbit.sock".to_vec(),
@@ -1283,10 +1295,11 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v41::Column {
+                    columns: vec![eon_workspace_protocol::v42::Column {
                         panes: vec![Pane {
                             label: "pane-2".into(),
                             pinned_name: None,
+                            tag: None,
                             id: "pane-2".into(),
                             session: "terminal-2".into(),
                             endpoint: b"/run/eon/nova.sock".to_vec(),
@@ -1298,7 +1311,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v41::PopupGeometry {
+            geometry: eon_workspace_protocol::v42::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1764,7 +1777,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v41::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -1803,7 +1816,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v41::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v42::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let wire =
@@ -1837,6 +1850,7 @@ mod tests {
         let pane = |id: &str, live| Pane {
             label: id.into(),
             pinned_name: None,
+            tag: None,
             id: id.into(),
             session: format!("terminal-{id}"),
             endpoint: format!("/run/eon/{id}.sock").into_bytes(),
@@ -1850,7 +1864,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v41::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -1885,7 +1899,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v41::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v42::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();

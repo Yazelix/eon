@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v41::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v42::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -139,13 +139,20 @@ fn cli_path(action: &Action) -> CliPath {
         }
         Action::ClosePane { pane } => words(&["pane", "close", pane]),
         Action::CloseColumn { pane, .. } => words(&["column", "close", pane]),
-        Action::RenamePane { pane, name: None } => {
-            words(&["pane", "rename", "--clear", "--", pane])
+        Action::RenamePane { pane, name, tag } => {
+            let mut arguments = words(&["pane", "rename"]);
+            if let Some(tag) = tag {
+                arguments.extend(words(&["--tag", tag]));
+            }
+            if name.is_none() {
+                arguments.push("--clear".into());
+            }
+            arguments.extend(words(&["--", pane]));
+            if let Some(name) = name {
+                arguments.push(name.into());
+            }
+            arguments
         }
-        Action::RenamePane {
-            pane,
-            name: Some(name),
-        } => words(&["pane", "rename", "--", pane, name]),
         Action::MovePaneSideways(side) => words(&[
             "pane",
             "move",
@@ -216,7 +223,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::Present { workspace: true },
         WorkspaceAction::ReloadPresentation {
             venus: "/nix/store/fixture/bin/venus".into(),
-            eonw: eon_workspace_protocol::v41::VERSION,
+            eonw: eon_workspace_protocol::v42::VERSION,
             orbs: 14,
             orbf: 3,
         },
@@ -283,10 +290,22 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::RenamePane {
             pane: text("p1"),
             name: None,
+            tag: None,
         },
         Action::RenamePane {
             pane: text("p1"),
             name: Some(text("-Review")),
+            tag: None,
+        },
+        Action::RenamePane {
+            pane: text("p1"),
+            name: Some(text("--clear")),
+            tag: Some(text("--json")),
+        },
+        Action::RenamePane {
+            pane: text("p1"),
+            name: Some(text("")),
+            tag: Some(text("")),
         },
         Action::MovePaneSideways(Side::Left),
         Action::MovePaneSideways(Side::Right),

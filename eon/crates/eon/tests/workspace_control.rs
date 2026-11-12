@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v41::{
+use eon_workspace_protocol::v42::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -7570,9 +7570,22 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
     };
     let before = read(&["session", "--json"]);
-    let named = read(&["pane", "rename", "p1", "  Review pane labels  ", "--json"]);
+    assert_eq!(
+        before["tabs"][0]["panes"][0].get("tag"),
+        Some(&serde_json::Value::Null)
+    );
+    let named = read(&[
+        "pane",
+        "rename",
+        "p1",
+        "  Review pane labels  ",
+        "--tag",
+        "  eon-xvz5c  ",
+        "--json",
+    ]);
     let pane = &named["tabs"][0]["panes"][0];
     assert_eq!(pane["pinned_name"], "Review pane labels");
+    assert_eq!(pane["tag"], "eon-xvz5c");
     assert!(
         pane["label"]
             .as_str()
@@ -7596,6 +7609,10 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
         read(&["pane", "rename", "p1", "  ", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
         serde_json::Value::Null
     );
+    assert_eq!(
+        read(&["session", "--json"])["tabs"][0]["panes"][0]["tag"],
+        "eon-xvz5c"
+    );
     let literal = invoke(
         &binary,
         &runtime,
@@ -7611,7 +7628,15 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
         &binary,
         &runtime,
         &config,
-        &["pane", "rename", "p999", "x", "--json"],
+        &[
+            "pane",
+            "rename",
+            "p999",
+            "x",
+            "--tag",
+            "different",
+            "--json",
+        ],
     );
     assert_eq!(missing.status.code(), Some(3));
     assert!(stdout(&missing).contains("unknown-pane"));
@@ -7622,9 +7647,43 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
         &["pane", "rename", "p1", "bad\u{202e}name", "--json"],
     );
     assert_eq!(malformed.status.code(), Some(2));
+    for args in [
+        vec![
+            "pane",
+            "rename",
+            "p1",
+            "changed",
+            "--tag",
+            "bad\u{200b}tag",
+            "--json",
+        ],
+        vec![
+            "pane",
+            "rename",
+            "p1",
+            "bad\nname",
+            "--tag",
+            "changed",
+            "--json",
+        ],
+        vec!["pane", "rename", "p1", "--clear", "--tag", "changed"],
+        vec!["pane", "rename", "p1", "changed", "--tag"],
+        vec![
+            "pane", "rename", "p1", "changed", "--tag", "a", "--tag", "b",
+        ],
+    ] {
+        assert_eq!(
+            invoke(&binary, &runtime, &config, &args).status.code(),
+            Some(2)
+        );
+    }
     assert_eq!(
         read(&["session", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
         "--clear"
+    );
+    assert_eq!(
+        read(&["session", "--json"])["tabs"][0]["panes"][0]["tag"],
+        "eon-xvz5c"
     );
     let tools = root.join("tools");
     fs::create_dir(&tools).unwrap();
@@ -7678,6 +7737,35 @@ esac
         assert_eq!(
             read(&["session", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
             expected.map_or(serde_json::Value::Null, |value| value.into())
+        );
+        assert_eq!(
+            read(&["session", "--json"])["tabs"][0]["panes"][0]["tag"],
+            "eon-xvz5c"
+        );
+    }
+    for tag in [
+        "-x",
+        "--json",
+        "--window",
+        "--",
+        "--tag",
+        "tag \"quoted\" \\ 🦀",
+        "",
+        "   ",
+    ] {
+        let snapshot = read(&["pane", "rename", "p1", "", "--tag", tag, "--json"]);
+        assert!(snapshot["tabs"][0]["panes"][0]["pinned_name"].is_null());
+        assert_eq!(
+            snapshot["tabs"][0]["panes"][0]["tag"],
+            if tag.trim().is_empty() {
+                serde_json::Value::Null
+            } else {
+                tag.into()
+            }
+        );
+        assert_eq!(
+            snapshot["tabs"][0]["panes"],
+            read(&["session", "--json"])["tabs"][0]["panes"]
         );
     }
     fs::write(&stop, "").unwrap();
@@ -7777,7 +7865,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -7787,7 +7875,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -7798,7 +7886,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -7813,7 +7901,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -7831,14 +7919,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -7860,7 +7948,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -10390,7 +10478,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -12730,7 +12818,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v41::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v42::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }

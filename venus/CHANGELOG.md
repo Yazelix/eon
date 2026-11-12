@@ -5,6 +5,9 @@
 - VEN-C30: attention badges adapt every glyph colour for 3:1 before stale
   dimming, with no backing on opaque surfaces and a quiet opaque rounded
   square on translucent rows (`eon-wuau8.7`, delegated approval 2026-11-12).
+- Consume canonical EONW v42 pane tags. Tag-only refreshes preserve workspace
+  navigation and attachments; tags remain data for the later Agents row
+  presentation change (`eon-xvz5c`). Reserved Stop is unchanged.
 
 - Consume canonical EONW v41, which distinguishes Editor-popup edits from
   earlier builds that assume pane creation (`eon-xodrj.5`). The message layout

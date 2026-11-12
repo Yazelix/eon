@@ -1625,7 +1625,7 @@ mod tests {
     fn images_draw_in_panes_and_popups_and_refusals_keep_the_renderer() {
         use super::super::{FontSettings, FontSetup, PaddingColor, PresentOutcome, Renderer};
         use crate::{WorkspaceFocus, WorkspaceScene};
-        use eon_workspace_protocol::v41::{
+        use eon_workspace_protocol::v42::{
             ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Sidebar,
             Snapshot, Tab, WorkspaceInfo,
         };
@@ -1686,6 +1686,7 @@ mod tests {
                         panes: vec![Pane {
                             label: "p1".into(),
                             pinned_name: None,
+                            tag: None,
                             id: "p1".into(),
                             session: "s1".into(),
                             endpoint: b"/tmp/s1.sock".to_vec(),

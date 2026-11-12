@@ -569,7 +569,7 @@ mod tests {
     fn presentation_protocols_come_from_the_validated_graph() {
         assert_eq!(
             super::presentation_protocols(CANONICAL).unwrap(),
-            [41, 14, 3]
+            [42, 14, 3]
         );
         assert!(super::presentation_protocols("{}").is_err());
     }

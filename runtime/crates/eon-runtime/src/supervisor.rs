@@ -24,7 +24,7 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v41::{
+use eon_workspace_protocol::v42::{
     Action, Availability, BusyTerminals, CloseConsent, CloseEnd, CloseScope, CloseTerminal,
     Editing, Ended, FILES_ENTRY, Failure, InvokeIntent, LifecycleResponse, Request, Response,
     Runtime, Screen, Sent, Snapshot, TargetId, TerminalHistory, TerminalInput, TerminalText,
@@ -755,7 +755,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v41::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v42::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -3776,7 +3776,7 @@ fn dispatch_registered_request(
             ) && state
                 .attention
                 .as_ref()
-                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v41::Sidebar::Off)
+                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v42::Sidebar::Off)
             {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
@@ -4680,13 +4680,13 @@ mod tests {
         let inspected = crate::control::send_action_from_until(
             &socket,
             None,
-            Action::Workspace(eon_workspace_protocol::v41::WorkspaceAction::InspectRuntime),
+            Action::Workspace(eon_workspace_protocol::v42::WorkspaceAction::InspectRuntime),
             deadline,
         )
         .unwrap();
         assert!(
             matches!(inspected, crate::control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v41::LifecycleResponse::Runtime(runtime)
+            eon_workspace_protocol::v42::LifecycleResponse::Runtime(runtime)
         ) if !runtime.attach.available && runtime.attach.reason.contains("cleanup is incomplete"))
         );
         assert!(
@@ -4799,7 +4799,7 @@ mod tests {
 
     #[test]
     fn a_consent_matches_on_generation_runs_and_end_only() {
-        use eon_workspace_protocol::v41::{
+        use eon_workspace_protocol::v42::{
             CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
         };
         let mut scope = CloseScope {
@@ -4863,7 +4863,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_column_close_never_runs_without_a_consent_that_names_its_runs() {
-        use eon_workspace_protocol::v41::{CloseEnd, Side};
+        use eon_workspace_protocol::v42::{CloseEnd, Side};
         let root = temporary_directory();
         let (mut state, _) = finishing_window(&root);
         // A one-pane final column always asks, even once the default shell is idle.
@@ -5303,7 +5303,7 @@ mod tests {
             assert_eq!(error.code, "column-close-failed", "{context}: {error:?}");
             assert!(error.detail.contains("terminal-9"), "{context}: {error:?}");
             assert!(
-                eon_workspace_protocol::v41::encode_response(&super::Response::Failure(
+                eon_workspace_protocol::v42::encode_response(&super::Response::Failure(
                     error.clone()
                 ))
                 .is_ok(),
@@ -5497,7 +5497,7 @@ mod tests {
                 (
                     None,
                     crate::control::ControlResponse::Workspace(super::Response::Snapshot(snapshot)),
-                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v41::Sidebar::Off),
+                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v42::Sidebar::Off),
                 _ => panic!("unexpected sidebar result"),
             }
         }
@@ -5936,7 +5936,7 @@ mod tests {
     #[test]
     fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
         use crate::session_registry::{Operation, Registry, Worker};
-        use eon_workspace_protocol::v41::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v42::{Change, SubscriptionMessage, WorkspaceChange};
         let (root, inputs, mut state, old_peer) = subscribed_window();
         drop(old_peer);
         let registry_root = root.join("registry");
@@ -6047,20 +6047,20 @@ mod tests {
         let socket = root.join("eon.sock");
         let listener = control::ControlListener::bind(&socket).unwrap();
         let generation = "g1-00000000000000000000000000000001";
-        let starting = eon_workspace_protocol::v41::Runtime {
+        let starting = eon_workspace_protocol::v42::Runtime {
             venus: None,
             generation: generation.into(),
             name: None,
             started_at: 1,
             eon_version: inputs.version.into(),
-            workspace_protocol: eon_workspace_protocol::v41::VERSION,
+            workspace_protocol: eon_workspace_protocol::v42::VERSION,
             component_report: inputs.component_report().unwrap().into(),
             sessions: Vec::new(),
-            attach: eon_workspace_protocol::v41::Availability {
+            attach: eon_workspace_protocol::v42::Availability {
                 available: false,
                 reason: "registering".into(),
             },
-            stop: eon_workspace_protocol::v41::Availability {
+            stop: eon_workspace_protocol::v42::Availability {
                 available: true,
                 reason: "starting".into(),
             },
@@ -6075,7 +6075,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v41::LifecycleResponse::Runtime(status),
+            eon_workspace_protocol::v42::LifecycleResponse::Runtime(status),
         ) = control::send_action(&socket, Action::Workspace(WorkspaceAction::InspectRuntime))
             .unwrap()
         else {
@@ -6113,7 +6113,7 @@ mod tests {
             control,
             session_registry::{Fault, Registry, Worker},
         };
-        use eon_workspace_protocol::v41::{Request, encode_request};
+        use eon_workspace_protocol::v42::{Request, encode_request};
         use std::io::Write;
         let (root, inputs, mut state, peer) = subscribed_window();
         let registry_root = root.join("registry");
@@ -6342,16 +6342,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v41::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v42::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v41::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v42::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v41::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v42::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v41::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v41::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v42::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v42::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -6367,7 +6367,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v41::Filter {
+        let missing = eon_workspace_protocol::v42::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -6482,7 +6482,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v41::SubscriptionMessage;
+        use eon_workspace_protocol::v42::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -6560,9 +6560,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v41::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v42::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v41::{
+        use eon_workspace_protocol::v42::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -6622,9 +6622,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v41::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v42::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v41::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v42::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -6643,8 +6643,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v41::SubscriptionMessage> {
-        use eon_workspace_protocol::v41::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v42::SubscriptionMessage> {
+        use eon_workspace_protocol::v42::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -6672,7 +6672,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v41::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v42::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -6726,8 +6726,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v41::Filter {
-                        kinds: vec![eon_workspace_protocol::v41::EventKind::Attention],
+                    filter: eon_workspace_protocol::v42::Filter {
+                        kinds: vec![eon_workspace_protocol::v42::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -7165,7 +7165,7 @@ mod tests {
         );
         assert!(!ended);
         assert!(
-            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v41::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
+            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v42::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
         );
         let failed = super::reload_presentation(
             &mut fixture.state,
@@ -7242,7 +7242,7 @@ mod tests {
         assert_eq!(state.workspaces.as_ref().unwrap().snapshot(), before);
         assert_eq!(
             state.attention.as_ref().unwrap().sidebar(),
-            eon_workspace_protocol::v41::Sidebar::Closed
+            eon_workspace_protocol::v42::Sidebar::Closed
         );
         assert!(shown().is_none());
         drop(state);
@@ -7252,7 +7252,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn reload_crash_or_failed_reattach_returns_to_the_own_build() {
-        use eon_workspace_protocol::v41::LifecycleResponse;
+        use eon_workspace_protocol::v42::LifecycleResponse;
         use std::{io::Write, os::unix::fs::OpenOptionsExt, thread};
         for outcome in [9, 0] {
             let root = temporary_directory();
@@ -7392,16 +7392,16 @@ mod tests {
             return;
         };
         let result = std::env::var_os("EON_RELOAD_ATTACH_RESULT").unwrap();
-        let mut startup = vec![0; eon_workspace_protocol::v41::HEADER_BYTES];
+        let mut startup = vec![0; eon_workspace_protocol::v42::HEADER_BYTES];
         std::io::stdin().read_exact(&mut startup).unwrap();
-        let length = eon_workspace_protocol::v41::declared_message_len(&startup).unwrap();
+        let length = eon_workspace_protocol::v42::declared_message_len(&startup).unwrap();
         startup.resize(length, 0);
         std::io::stdin()
-            .read_exact(&mut startup[eon_workspace_protocol::v41::HEADER_BYTES..])
+            .read_exact(&mut startup[eon_workspace_protocol::v42::HEADER_BYTES..])
             .unwrap();
         assert!(matches!(
-            eon_workspace_protocol::v41::decode_response(&startup).unwrap(),
-            eon_workspace_protocol::v41::Response::Snapshot(_)
+            eon_workspace_protocol::v42::decode_response(&startup).unwrap(),
+            eon_workspace_protocol::v42::Response::Snapshot(_)
         ));
         let read = |stream: &mut UnixStream| {
             let mut bytes = vec![0; orbs::HEADER_BYTES];
@@ -7668,8 +7668,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v41::Attention>,
-        Vec<eon_workspace_protocol::v41::QueueEntry>,
+        Option<eon_workspace_protocol::v42::Attention>,
+        Vec<eon_workspace_protocol::v42::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -7688,10 +7688,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v41::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v42::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v41::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v42::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -7711,10 +7711,10 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v41::AttentionState {
-        use eon_workspace_protocol::v41::AttentionState;
+    ) -> eon_workspace_protocol::v42::AttentionState {
+        use eon_workspace_protocol::v42::AttentionState;
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
-        let changed = |attention: &Option<eon_workspace_protocol::v41::Attention>| {
+        let changed = |attention: &Option<eon_workspace_protocol::v42::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -7774,7 +7774,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v41::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v42::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -7894,7 +7894,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v41::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v42::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -8872,7 +8872,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v41::{
+        use eon_workspace_protocol::v42::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -8881,7 +8881,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v41::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -8907,6 +8907,7 @@ mod tests {
                         panes: vec![Pane {
                             label: format!("p{number}"),
                             pinned_name: None,
+                            tag: None,
                             id: format!("p{number}"),
                             session: format!("terminal-{number}"),
                             endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),
@@ -8925,7 +8926,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v41::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v42::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

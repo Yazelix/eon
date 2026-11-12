@@ -616,7 +616,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     windows start their tab and pane identity counters at 1 under EON-C15's
     lifecycle-lock creation rule. Displayed identity numbers can be long and
     need not be contiguous after supervisor replacement.
-  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed session and changes no session, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Session inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
+  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed session and changes no session, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Session inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records. Each pane also has EON-C10's optional tag, with its rename, validation, lifecycle and JSON rules.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and draws each pane as its own card,
     stacked without gaps in its column's allocated card area: a rounded border
@@ -831,7 +831,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     a terminal that ended naturally during the request is reconciled as an
     exit. Venus maps Alt+W directly to the selected pane without a mode;
     `eon pane close PANE` sends the same target-bearing EONW action.
-  - Closing a column sends EONW v41's `CloseColumn { pane, consent }`, which
+  - Closing a column sends EONW v42's `CloseColumn { pane, consent }`, which
     closes every pane of the column that holds the named live pane, in one
     request. What it would stop is its scope: that column's panes' terminals,
     with the end `column`; or, when the column is its tab's only column and
@@ -918,7 +918,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v41 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v42 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1537,7 +1537,25 @@ names its socket. CLI JSON names a session `session` and a terminal
   - Eon returns one complete typed result from the sole live session owner;
     human-readable CLI output and deterministic structured output project the
     same result.
-  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed session and changes no session, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Session inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
+  - `eon pane rename PANE NAME [--tag TAG] [--json]` pins a name and optionally
+    sets a separate per-pane tag. `eon pane rename PANE --clear [--json]`
+    restores automatic naming. `--` permits an option-looking NAME. Names and
+    tags are trimmed; an empty result clears that field, so `--tag ''` clears
+    the tag. Tags use the pin's plain-text bounds: at most 80 Unicode characters
+    and 320 UTF-8 bytes; controls and invisible format characters are refused.
+    Runtime validates the whole mutation before changing either field;
+    invalid input or an unknown pane changes neither. Rename addresses an
+    explicit pane anywhere in the addressed session and changes no session,
+    tab, pane or popup selection or desktop focus. Window rename and clear
+    actions use the same mutation. Omitting `--tag`, including ordinary rename
+    and clear-name actions, preserves the tag. Runtime owns the tag separately
+    from the pin and automatic label; Eon treats it as plain text.
+    Pins and tags follow pane moves, survive presentation detach and reattach,
+    and end with the pane or supervisor; recovery does not restore them.
+    Each canonical EONW pane record carries the optional tag. `eon session
+    --json`, action replies, subscription snapshots/gaps and pane events expose
+    `tag` beside `pinned_name`, as a string or null wherever the pin travels,
+    independently of attention records; `label` remains available.
   - Session results carry ordered tab, pane, and terminal identities, active
     and selected identities, liveness, exact raw tab launch-directory bytes,
     and exact opaque Orbit endpoint bytes. Lifecycle results carry generation,
@@ -1641,7 +1659,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     caller, with the tab directory as its working directory: the pane runs
     `[editor] command` with FILE's absolute path appended as its last argument.
     The result names the popup or pane that shows FILE. The editor's argv and
-    socket are runtime policy and do not cross EONW. EONW v41 distinguishes
+    socket are runtime policy and do not cross EONW. EONW v42 distinguishes
     this edit result from earlier builds that assume pane creation.
   - `eon pane create [--json] -- COMMAND [ARGS...]`, run from an Eon terminal,
     opens a new pane exactly where `pane create` would for that caller, with
@@ -1917,7 +1935,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v41 and accepted Orbit management operations.
+- **Consumes:** Current EONW v42 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1929,7 +1947,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v41 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v42 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -2038,8 +2056,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v41 `attention` is needs input. Rows run by
-  EONW v41 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v42 `attention` is needs input. Rows run by
+  EONW v42 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -2630,7 +2648,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     presenting executable path or null while detached. Reload success JSON
     is `{"window":ID,"generation":GENERATION,"venus":PATH,"accepted":true,"replaced":null,"config_reloaded":null}`.
     `accepted:true` confirms that the supervisor accepted the request. On
-    EONW v41, `replaced:null` and `config_reloaded:null` mean this reply does
+    EONW v42, `replaced:null` and `config_reloaded:null` mean this reply does
     not confirm Venus replacement or configuration rereading; neither null
     means false. A supervisor implementing `eon-u199d.3` replaces Venus with
     current configuration arguments on success. Earlier supervisors still
@@ -3318,7 +3336,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v41 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v42 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -4484,7 +4502,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 8, EON-C8 topology, and EON-C10
-  (EONW v41, request and response). EON-C39 exposes a stream of its changes.
+  (EONW v42, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no screen, transcript or provider-state parsing; Runtime recognizes only
@@ -5720,7 +5738,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v41 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v42 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -5781,9 +5799,10 @@ names its socket. CLI JSON names a session `session` and a terminal
       session's tab IDs in order.
     - `pane`: `pane-created`, `pane-moved`, `pane-renamed`, `pane-ended`,
       `pane-closed` and `pane-selected`, each with its `session`, `tab`
-      and the pane. Each `pane` event, `pane-renamed` included, also carries
-      `columns`, the tab's columns in order as `{panes, expanded}` with pane
-      IDs.
+      and the pane, including EON-C10's nullable `tag`. A change to the pane's
+      label, pin or tag emits `pane-renamed`, including a tag-only change.
+      Each `pane` event, `pane-renamed` included, also carries `columns`, the
+      tab's columns in order as `{panes, expanded}` with pane IDs.
     - `popup`: `popup-created`, `popup-shown`, `popup-hidden` and
       `popup-closed`, each with its `session`, `tab` and the popup.
     - `attention`: the terminal's `session`, `tab`, `pane` or `popup` (the
@@ -5902,9 +5921,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v41 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v42 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v41; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v42; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

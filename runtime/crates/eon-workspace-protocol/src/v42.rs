@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v41 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v42 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -17,7 +17,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 41;
+pub const VERSION: u16 = 42;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -243,6 +243,8 @@ pub enum Action {
     RenamePane {
         pane: String,
         name: Option<String>,
+        /// Omitted preserves the tag; an empty value clears it.
+        tag: Option<String>,
     },
     /// Move the selected pane into the neighbouring column on `Side`.
     MovePaneSideways(Side),
@@ -406,6 +408,7 @@ pub struct Pane {
     pub id: String,
     pub label: String,
     pub pinned_name: Option<String>,
+    pub tag: Option<String>,
     pub session: String,
     pub endpoint: Vec<u8>,
     pub live: bool,
@@ -1034,14 +1037,13 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
                 encode_close_end(&mut payload, consent.end);
             }
         }
-        Action::RenamePane { pane, name } => {
+        Action::RenamePane { pane, name, tag } => {
             identity("pane id", pane)?;
-            if let Some(name) = name {
-                validate_pane_name(name)?;
-            }
+            validate_pane_rename(name.as_deref(), tag.as_deref())?;
             payload.byte(RENAME_PANE);
             payload.string(pane);
             encode_optional(&mut payload, name);
+            encode_optional(&mut payload, tag);
         }
         Action::MovePaneSideways(side) => payload.byte(match side {
             Side::Left => MOVE_PANE_LEFT,
@@ -1279,6 +1281,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         RENAME_PANE => Some(Action::RenamePane {
             pane: decoder.string("pane id", MAX_ID_BYTES)?,
             name: decode_pane_name(&mut decoder)?,
+            tag: decode_pane_tag(&mut decoder)?,
         }),
         MOVE_PANE_LEFT => Some(Action::MovePaneSideways(Side::Left)),
         MOVE_PANE_RIGHT => Some(Action::MovePaneSideways(Side::Right)),
@@ -1364,11 +1367,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                     validate_close_consent(consent)?;
                 }
             }
-            Action::RenamePane { pane, name } => {
+            Action::RenamePane { pane, name, tag } => {
                 identity("pane id", pane)?;
-                if let Some(name) = name {
-                    validate_pane_name(name)?;
-                }
+                validate_pane_rename(name.as_deref(), tag.as_deref())?;
             }
             Action::Edit { file } => validate_file(file)?,
             Action::CreateCommandPane { argv, .. } => validate_command(argv)?,
@@ -1515,14 +1516,34 @@ pub fn pane_label_character(character: char) -> bool {
 
 /// Validate a bounded plain-text pin; Runtime trims it and clears an empty result.
 pub fn validate_pane_name(name: &str) -> Result<()> {
+    validate_pane_text("pane name", name)
+}
+
+/// Validate both fields before Runtime normalizes or changes either one.
+pub fn validate_pane_rename(name: Option<&str>, tag: Option<&str>) -> Result<()> {
+    if name.is_none() && tag.is_some() {
+        return Err(Error::InvalidValue {
+            field: "pane rename",
+        });
+    }
+    if let Some(name) = name {
+        validate_pane_name(name)?;
+    }
+    if let Some(tag) = tag {
+        validate_pane_text("pane tag", tag)?;
+    }
+    Ok(())
+}
+
+fn validate_pane_text(field: &'static str, name: &str) -> Result<()> {
     if name.len() > MAX_PANE_NAME_BYTES {
         return Err(Error::FieldTooLong {
-            field: "pane name",
+            field,
             length: name.len(),
         });
     }
     if name.chars().count() > MAX_PANE_NAME_CHARS || !name.chars().all(pane_label_character) {
-        return Err(Error::InvalidValue { field: "pane name" });
+        return Err(Error::InvalidValue { field });
     }
     Ok(())
 }
@@ -1533,6 +1554,12 @@ fn decode_pane_name(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
     } else {
         None
     })
+}
+
+fn decode_pane_tag(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
+    decode_bool(decoder, "pane tag")?
+        .then(|| decoder.string("pane tag", MAX_PANE_NAME_BYTES))
+        .transpose()
 }
 
 fn validate_pane_label(pane: &Pane) -> Result<()> {
@@ -1546,6 +1573,12 @@ fn validate_pane_label(pane: &Pane) -> Result<()> {
         validate_pane_name(pin)?;
         if pin.is_empty() || pin != pin.trim() {
             return Err(Error::InvalidValue { field: "pane name" });
+        }
+    }
+    if let Some(tag) = &pane.tag {
+        validate_pane_text("pane tag", tag)?;
+        if tag.is_empty() || tag != tag.trim() {
+            return Err(Error::InvalidValue { field: "pane tag" });
         }
     }
     if pane.label == pane.id
@@ -2336,6 +2369,7 @@ fn encode_pane(encoder: &mut Encoder, pane: &Pane) {
     encoder.byte(u8::from(pane.live));
     encoder.string(&pane.label);
     encode_optional(encoder, &pane.pinned_name);
+    encode_optional(encoder, &pane.tag);
     encode_attention(encoder, pane.attention.as_ref());
 }
 
@@ -2491,6 +2525,7 @@ fn decode_pane(decoder: &mut Decoder<'_>) -> Result<Pane> {
         live: decode_bool(decoder, "liveness")?,
         label: decoder.string("pane label", MAX_PANE_LABEL_BYTES)?,
         pinned_name: decode_pane_name(decoder)?,
+        tag: decode_pane_tag(decoder)?,
         attention: decode_attention(decoder)?,
     })
 }
@@ -3968,18 +4003,18 @@ mod tests {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e57290001000700000002007231002d00",
+                "454f4e572a0001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e57290001000700000002007231002d01",
+                "454f4e572a0001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e57290001000b00000002007231002c0200703200",
+                "454f4e572a0001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -4015,14 +4050,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57290001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e572a0001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e5729008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e572a008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -4275,6 +4310,7 @@ mod tests {
         Pane {
             label: id.into(),
             pinned_name: None,
+            tag: None,
             id: id.into(),
             session: format!("s{id}"),
             endpoint: format!("/{id}").into_bytes(),
@@ -4873,8 +4909,94 @@ mod tests {
         payload.string("p1");
         payload.byte(1);
         payload.string("Review pane labels");
+        payload.byte(1);
+        payload.string("eon-xvz5c");
         let decoded = decode_request(&frame(REQUEST, payload.bytes).unwrap());
         assert!(decoded.is_ok(), "{decoded:?}");
+    }
+
+    #[test]
+    fn pane_tags_round_trip_and_refuse_forged_or_unnormalized_text() {
+        for tag in [
+            None,
+            Some("".into()),
+            Some("work".into()),
+            Some("🦀".repeat(80)),
+        ] {
+            let request = Request {
+                id: "tag".into(),
+                caller: None,
+                action: Action::RenamePane {
+                    pane: "p1".into(),
+                    name: Some("".into()),
+                    tag: tag.clone(),
+                },
+            };
+            assert_eq!(
+                decode_request(&encode_request(&request).unwrap()).unwrap(),
+                request
+            );
+            let mut state = snapshot();
+            state.tabs[0].columns[0].panes[0].tag = tag.filter(|value| !value.is_empty());
+            let response = Response::Snapshot(state);
+            assert_eq!(
+                decode_response(&encode_response(&response).unwrap()).unwrap(),
+                response
+            );
+        }
+        for tag in [
+            "x".repeat(81),
+            "🦀".repeat(81),
+            "bad\ntext".into(),
+            "bad\u{202e}text".into(),
+            "bad\u{17b4}text".into(),
+        ] {
+            let request = Request {
+                id: "tag".into(),
+                caller: None,
+                action: Action::RenamePane {
+                    pane: "p1".into(),
+                    name: Some("ok".into()),
+                    tag: Some(tag.clone()),
+                },
+            };
+            assert!(encode_request(&request).is_err());
+            let mut payload = Encoder::default();
+            payload.string("tag");
+            payload.byte(0);
+            payload.byte(RENAME_PANE);
+            payload.string("p1");
+            payload.byte(1);
+            payload.string("ok");
+            payload.byte(1);
+            payload.string(&tag);
+            assert!(decode_request(&frame(REQUEST, payload.bytes).unwrap()).is_err());
+        }
+        for tag in ["", " work", "work ", "bad\u{200b}tag"] {
+            let mut state = snapshot();
+            state.tabs[0].columns[0].panes[0].tag = Some(tag.into());
+            assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+            assert!(decode_response(&forge(&state)).is_err());
+        }
+        let request = Request {
+            id: "tag".into(),
+            caller: None,
+            action: Action::RenamePane {
+                pane: "p1".into(),
+                name: None,
+                tag: Some("work".into()),
+            },
+        };
+        assert!(encode_request(&request).is_err());
+        let mut payload = Encoder::default();
+        payload.string("tag");
+        payload.byte(0);
+        payload.byte(RENAME_PANE);
+        payload.string("p1");
+        payload.byte(0);
+        payload.byte(1);
+        payload.string("work");
+        assert!(decode_request(&frame(REQUEST, payload.bytes).unwrap()).is_err());
     }
 
     #[test]
@@ -4886,6 +5008,7 @@ mod tests {
                 action: Action::RenamePane {
                     pane: "p1".into(),
                     name,
+                    tag: None,
                 },
             };
             assert_eq!(
@@ -4906,6 +5029,7 @@ mod tests {
                 action: Action::RenamePane {
                     pane: "p1".into(),
                     name: Some(name.clone()),
+                    tag: None,
                 },
             };
             assert!(encode_request(&request).is_err());
@@ -5347,14 +5471,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57290001000a00000002007231001202007431",
+                "454f4e572a0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57290001001000000002007231000c0200743104002f746d70",
+                "454f4e572a0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -5363,29 +5487,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572900010015000000020072310013020074310300676974010200753101",
+                "454f4e572a00010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572900010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572a00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57290001000a00000002007231001702007032",
+                "454f4e572a0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572900010006000000020072310019",
+                "454f4e572a00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57290001000e00000002007231001a06002f746d702f61",
+                "454f4e572a0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57290001001000000002007231001b00020002006878010061",
+                "454f4e572a0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -5393,7 +5517,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57290001000f00000002007231002504002f746d70000001",
+                "454f4e572a0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -5401,44 +5525,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57290001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e572a0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57290001000600000002007231001c",
+                "454f4e572a0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57290001000e00000002007231001d0200743102007032",
+                "454f4e572a0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57290001000600000002007231001e",
+                "454f4e572a0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57290001000600000002007231001f",
+                "454f4e572a0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57290001000a00000002007231002602007032",
+                "454f4e572a0001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57290001000a00000002007231002902007032",
+                "454f4e572a0001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57290001000a00000002007231002a02007032",
+                "454f4e572a0001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -5447,7 +5571,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572900010012000000020072310027020070320000020000006869",
+                "454f4e572a00010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -5455,7 +5579,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57290001000c000000020072310027020075310101",
+                "454f4e572a0001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -5475,7 +5599,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57290001001700000002007231010e007465726d696e616c2d322e392d310201",
+            "454f4e572a0001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -5592,24 +5716,24 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5729008100500100000100020002000100010000000200743100000041",
+                    "454f4e572a008100530100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
-                    "02007031000002007032030073703203002f7032010200703200000200703303",
-                    "0073703303002f70330102007033000102ff0500636f6465780600656f6e2d39",
-                    "6101007401006d01000000000000000002000100020075310300676974030073",
-                    "753103002f753100010100640000000000000001002c0100002a01f401000000",
-                    "0000000001015a00000000000000020060270000070000602700003c00010500",
-                    "4661626c6500015f00000000000000010102007331020073310100",
+                    "0200703100000002007032030073703203002f70320102007032000000020070",
+                    "33030073703303002f7033010200703300000102ff0500636f6465780600656f",
+                    "6e2d396101007401006d01000000000000000002000100020075310300676974",
+                    "030073753103002f753100010100640000000000000001002c0100002a01f401",
+                    "0000000000000001015a00000000000000020060270000070000602700003c00",
+                    "0105004661626c6500015f00000000000000010102007331020073",
                     // s1's local/persistent IDs, absent name, tab count, rollup and rank.
-                    "0200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100",
-                    "0100",
+                    "3101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100",
+                    "0001",
                     // v27's empty attention queue, v28's absent running summary,
                     // then v29's absent busy list.
-                    "00000000",
+                    "00010000000000",
                 ),
             ),
-            (failure, "454f4e57290082000a00000004006275737902006e6f"),
+            (failure, "454f4e572a0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -5624,7 +5748,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572900860038000000",
+                    "454f4e572a00860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -5647,7 +5771,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5729008d003c000000",
+                    "454f4e572a008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -5663,7 +5787,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572900870036000000",
+                    "454f4e572a00870036000000",
                     "020073310200743100020070320a007465726d696e616c2d32",
                     "01020073310200743101020075310a007465726d696e616c2d33",
                     "012c01",
@@ -5676,7 +5800,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e5729008e0033000000",
+                    "454f4e572a008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -5687,7 +5811,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57290085000400000002006731",
+                "454f4e572a0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -5716,7 +5840,7 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e572900830031000000020067310500302e392e30290002006f6b010002",
+                "454f4e572a00830031000000020067310500302e392e302a0002006f6b010002",
                 "007331010500726561647900040062757379",
                 // v28: absent name, supervisor start in Unix milliseconds.
                 "000000000000000000",
@@ -5814,14 +5938,14 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5729008100be00000001000100010000000100740000000000000000",
+                "454f4e572a008100bf00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
-                "010128000000000000000001000000000000000000000000010000000002",
-                "0200733102007331010002007331013000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000001000100",
+                "000101280000000000000000010000000000000000000000000100000000",
+                "0202007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001",
                 // u16 count, workspace, tab, target, then needs-input permission at 40%.
-                "0100020073310100740100700101280000000000000000010000000000000000000000",
+                "0001000200733101007401007001012800000000000000000100000000000000000000",
                 // v29's absent busy list.
-                "00",
+                "0000",
             ),
         );
         assert_eq!(decode_response(&bytes).unwrap(), snapshot);
@@ -5854,15 +5978,15 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5729008100ef0000000100010001000000010074000000000000000000",
+                "454f4e572a008100f00000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
-                "0001012800000000000000000100000000000000000000000001000000000202",
-                "007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001000100020073310100740100700101",
-                "2800000000000000000100000000000000000000010108003132333461626364",
-                "0200673101040068657265012a00000000000000010300000101000002006732",
-                "000000010700",
+                "0000010128000000000000000001000000000000000000000000010000000002",
+                "020073310200733101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100010001000200733101007401007001",
+                "0128000000000000000001000000000000000000000101080031323334616263",
+                "640200673101040068657265012a000000000000000103000001010000020067",
+                "320000000107",
                 // v29's absent busy list.
-                "00",
+                "0000",
             )
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
@@ -5927,7 +6051,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572900830064000000020067310500302e392e30290002006f6b0000",
+                "454f4e572a00830064000000020067310500302e392e302a0002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -6834,8 +6958,8 @@ mod tests {
 
     #[test]
     fn every_legal_snapshot_fits_the_frame_budget() {
-        // Upper bound: every session takes the larger popup form, every tab
-        // reserves both selections and the most columns, and both quotas carry
+        // Bound panes and popups separately; charge selected-popup IDs to popups.
+        // Every tab reserves the most columns, and both quotas carry
         // every window with a reset and the longest scope, and a failure.
         let id = 2 + MAX_ID_BYTES;
         let entry_id = 2 + MAX_ENTRY_ID_BYTES;
@@ -6859,6 +6983,19 @@ mod tests {
             + 8
             + 1
             + 2;
+        // Workspace IDs are s + a positive u64; projections and queue entries
+        // refer to validated summaries. Other IDs keep their generic bound.
+        let workspace_id = 2 + 1 + u64::MAX.to_string().len();
+        let pane_bytes = 2 * id
+            + 2
+            + MAX_ENDPOINT_BYTES
+            + 1
+            + 2
+            + MAX_PANE_LABEL_BYTES
+            + 2 * (1 + 2 + MAX_PANE_NAME_BYTES)
+            + attention;
+        let popup_bytes = 2 * id + entry_id + 2 + MAX_ENDPOINT_BYTES + attention;
+        let surface = pane_bytes.max(popup_bytes + id);
         let upper_bound = HEADER_BYTES
             + 2
             + MAX_TABS * (2 + MAX_COLUMNS * 4)
@@ -6867,26 +7004,15 @@ mod tests {
             + 2
             + MAX_ENTRIES * (entry_id + 2 + MAX_LABEL_BYTES + 1 + 1 + 2 + MAX_KEY_BYTES + entry_id)
             + 2
-            + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2 + 1)
-            + MAX_SESSIONS
-                * (id
-                    + entry_id
-                    + id
-                    + 2
-                    + MAX_ENDPOINT_BYTES
-                    + attention
-                    + 1
-                    + 2
-                    + MAX_PANE_LABEL_BYTES
-                    + 1
-                    + 2
-                    + MAX_PANE_NAME_BYTES)
+            + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 + id + 2 + 2 + 1)
+            + MAX_SESSIONS * surface
             + 2 * quota
             + 1
-            + 2 * id
+            + 2 * workspace_id
             + 2
             + MAX_WORKSPACES
-                * (2 * id
+                * (workspace_id
+                    + id
                     + 2
                     + id
                     + 2
@@ -6898,7 +7024,7 @@ mod tests {
                     + 1
                     + 1)
             + 2
-            + MAX_SESSIONS * (3 * id + attention)
+            + MAX_SESSIONS * (workspace_id + 2 * id + attention)
             + 1
             + (1 + MAX_RUNNING_WINDOWS) * (1 + 2 + 8 + id + 1 + 2 + 256 + 1 + 8 + 1 + 2 + 1)
             + 1
@@ -6914,161 +7040,164 @@ mod tests {
             let name = format!("{prefix}{n}");
             format!("{name}{}", "x".repeat(length - name.len()))
         };
-        let mut state = snapshot();
-        // The longest entry form is one overridden by the longest id.
-        let default = Shortcut {
-            modifiers: SHIFT | CTRL | ALT | SUPER,
-            key: "BracketRight".into(),
-        };
-        let first = name("entry", 0, MAX_ENTRY_ID_BYTES);
-        state.entries = (0..MAX_ENTRIES)
-            .map(|n| PopupEntry {
-                id: name("entry", n, MAX_ENTRY_ID_BYTES),
-                label: "x".repeat(MAX_LABEL_BYTES),
-                shortcut: if n == 0 {
-                    PopupKey::Bound(default.clone())
-                } else {
-                    PopupKey::Overridden {
-                        default: default.clone(),
-                        by: first.clone(),
-                    }
-                },
-            })
-            .collect();
-        // Each tab holds two single-pane columns and two popups, each of them
-        // needing input with the longest record text.
-        let attention = Some(Attention {
-            state: AttentionState::NeedsInput,
-            record: Some(AttentionRecord {
-                kind: Some(AttentionKind::Permission),
-                progress: Some(100),
-                app: "a".repeat(MAX_APP_BYTES),
-                name: "n".repeat(MAX_NAME_BYTES),
-                title: "t".repeat(MAX_TITLE_BYTES),
-                message: "m".repeat(MAX_STATUS_MESSAGE_BYTES),
-                changed_at: u64::MAX,
-                stale: true,
-                others: MAX_OTHER_RECORDS,
-            }),
-        });
-        let per_tab = MAX_SESSIONS / MAX_TABS;
-        state.tabs = (0..MAX_TABS)
-            .map(|t| {
-                let surface = |i: usize| {
-                    let n = t * per_tab + i;
-                    let session = name("s", n, MAX_ID_BYTES);
-                    let endpoint = name("/", n, MAX_ENDPOINT_BYTES).into_bytes();
-                    (n, session, endpoint)
-                };
-                let columns: Vec<_> = (0..per_tab / 2)
-                    .map(|i| {
-                        let (n, session, endpoint) = surface(i);
-                        let id = name("p", n, MAX_ID_BYTES);
-                        Column {
-                            expanded: id.clone(),
-                            panes: vec![Pane {
-                                label: format!("{id}  {}", "🦀".repeat(MAX_PANE_NAME_CHARS)),
-                                pinned_name: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
-                                id,
+        for all_panes in [false, true] {
+            let mut state = snapshot();
+            // The longest entry form is one overridden by the longest id.
+            let default = Shortcut {
+                modifiers: SHIFT | CTRL | ALT | SUPER,
+                key: "BracketRight".into(),
+            };
+            let first = name("entry", 0, MAX_ENTRY_ID_BYTES);
+            state.entries = (0..MAX_ENTRIES)
+                .map(|n| PopupEntry {
+                    id: name("entry", n, MAX_ENTRY_ID_BYTES),
+                    label: "x".repeat(MAX_LABEL_BYTES),
+                    shortcut: if n == 0 {
+                        PopupKey::Bound(default.clone())
+                    } else {
+                        PopupKey::Overridden {
+                            default: default.clone(),
+                            by: first.clone(),
+                        }
+                    },
+                })
+                .collect();
+            // Exercise both mixed surfaces and the larger all-pane form, with
+            // maximum pins/tags and attention on every terminal.
+            let attention = Some(Attention {
+                state: AttentionState::NeedsInput,
+                record: Some(AttentionRecord {
+                    kind: Some(AttentionKind::Permission),
+                    progress: Some(100),
+                    app: "a".repeat(MAX_APP_BYTES),
+                    name: "n".repeat(MAX_NAME_BYTES),
+                    title: "t".repeat(MAX_TITLE_BYTES),
+                    message: "m".repeat(MAX_STATUS_MESSAGE_BYTES),
+                    changed_at: u64::MAX,
+                    stale: true,
+                    others: MAX_OTHER_RECORDS,
+                }),
+            });
+            let per_tab = MAX_SESSIONS / MAX_TABS;
+            state.tabs = (0..MAX_TABS)
+                .map(|t| {
+                    let surface = |i: usize| {
+                        let n = t * per_tab + i;
+                        let session = name("s", n, MAX_ID_BYTES);
+                        let endpoint = name("/", n, MAX_ENDPOINT_BYTES).into_bytes();
+                        (n, session, endpoint)
+                    };
+                    let columns: Vec<_> = (0..if all_panes { per_tab } else { per_tab / 2 })
+                        .map(|i| {
+                            let (n, session, endpoint) = surface(i);
+                            let id = name("p", n, MAX_ID_BYTES);
+                            Column {
+                                expanded: id.clone(),
+                                panes: vec![Pane {
+                                    label: format!("{id}  {}", "🦀".repeat(MAX_PANE_NAME_CHARS)),
+                                    pinned_name: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
+                                    tag: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
+                                    id,
+                                    session,
+                                    endpoint,
+                                    live: true,
+                                    attention: attention.clone(),
+                                }],
+                            }
+                        })
+                        .collect();
+                    let popups: Vec<_> = (if all_panes { per_tab } else { per_tab / 2 }..per_tab)
+                        .map(|i| {
+                            let (n, session, endpoint) = surface(i);
+                            Popup {
+                                id: name("u", n, MAX_ID_BYTES),
+                                entry: state.entries[i].id.clone(),
                                 session,
                                 endpoint,
-                                live: true,
                                 attention: attention.clone(),
-                            }],
-                        }
-                    })
-                    .collect();
-                let popups: Vec<_> = (per_tab / 2..per_tab)
-                    .map(|i| {
-                        let (n, session, endpoint) = surface(i);
-                        Popup {
-                            id: name("u", n, MAX_ID_BYTES),
-                            entry: state.entries[i].id.clone(),
-                            session,
-                            endpoint,
-                            attention: attention.clone(),
-                        }
-                    })
-                    .collect();
-                Tab {
-                    id: name("t", t, MAX_ID_BYTES),
-                    directory: vec![b'/'; MAX_DIRECTORY_BYTES],
-                    pending: false,
-                    selected_pane: Some(columns[0].expanded.clone()),
-                    selected_popup: Some(popups[0].id.clone()),
-                    columns,
-                    popups,
-                    attention_rollup: Some(AttentionState::NeedsInput),
-                }
-            })
-            .collect();
-        state.active_tab = state.tabs[0].id.clone();
-        state.workspaces = (1..=MAX_WORKSPACES)
-            .map(|index| WorkspaceInfo {
-                id: format!("s{index}"),
-                persistent_id: Some(format!("{index:0128x}")),
-                registration_error: Some(Failure {
-                    code: "e".repeat(MAX_ID_BYTES),
-                    detail: "e".repeat(MAX_DETAIL_BYTES),
-                }),
-                name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
-                tab_count: MAX_TABS,
-                attention: Some(AttentionState::NeedsInput),
-                recency: (index - 1) as u8,
-            })
-            .collect();
-        // The largest valid workspace id is shorter than MAX_ID_BYTES.
-        state.workspaces[MAX_WORKSPACES - 1].id = format!("s{}", u64::MAX);
-        state.attention_queue = (0..MAX_SESSIONS)
-            .map(|index| QueueEntry {
-                workspace: state.workspaces[MAX_WORKSPACES - 1].id.clone(),
-                tab: name("t", index / per_tab, MAX_ID_BYTES),
-                target: name("p", index, MAX_ID_BYTES),
-                attention: attention.clone().unwrap(),
-            })
-            .collect();
-        state.running = Some(RunningWindows {
-            this: WindowEntry {
-                generation: "g".repeat(MAX_ID_BYTES),
-                ..window_entry()
-            },
-            others: Some(
-                (0..MAX_RUNNING_WINDOWS)
-                    .map(|n| WindowEntry {
-                        window: Some(format!("{n:08x}")),
-                        generation: "g".repeat(MAX_ID_BYTES),
-                        ..window_entry()
+                            }
+                        })
+                        .collect();
+                    Tab {
+                        id: name("t", t, MAX_ID_BYTES),
+                        directory: vec![b'/'; MAX_DIRECTORY_BYTES],
+                        pending: false,
+                        selected_pane: Some(columns[0].expanded.clone()),
+                        selected_popup: popups.first().map(|popup| popup.id.clone()),
+                        columns,
+                        popups,
+                        attention_rollup: Some(AttentionState::NeedsInput),
+                    }
+                })
+                .collect();
+            state.active_tab = state.tabs[0].id.clone();
+            state.workspaces = (1..=MAX_WORKSPACES)
+                .map(|index| WorkspaceInfo {
+                    id: format!("s{index}"),
+                    persistent_id: Some(format!("{index:0128x}")),
+                    registration_error: Some(Failure {
+                        code: "e".repeat(MAX_ID_BYTES),
+                        detail: "e".repeat(MAX_DETAIL_BYTES),
+                    }),
+                    name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
+                    tab_count: MAX_TABS,
+                    attention: Some(AttentionState::NeedsInput),
+                    recency: (index - 1) as u8,
+                })
+                .collect();
+            // The largest valid workspace id is shorter than MAX_ID_BYTES.
+            state.workspaces[MAX_WORKSPACES - 1].id = format!("s{}", u64::MAX);
+            state.attention_queue = (0..MAX_SESSIONS)
+                .map(|index| QueueEntry {
+                    workspace: state.workspaces[MAX_WORKSPACES - 1].id.clone(),
+                    tab: name("t", index / per_tab, MAX_ID_BYTES),
+                    target: name("p", index, MAX_ID_BYTES),
+                    attention: attention.clone().unwrap(),
+                })
+                .collect();
+            state.running = Some(RunningWindows {
+                this: WindowEntry {
+                    generation: "g".repeat(MAX_ID_BYTES),
+                    ..window_entry()
+                },
+                others: Some(
+                    (0..MAX_RUNNING_WINDOWS)
+                        .map(|n| WindowEntry {
+                            window: Some(format!("{n:08x}")),
+                            generation: "g".repeat(MAX_ID_BYTES),
+                            ..window_entry()
+                        })
+                        .collect(),
+                ),
+                omitted: u16::MAX,
+            });
+            state.busy = Some(BusyTerminals {
+                terminals: (0..MAX_BUSY_TERMINALS)
+                    .map(|n| BusyTerminal {
+                        target: TerminalTarget {
+                            workspace: "w".repeat(MAX_ID_BYTES),
+                            tab: "t".repeat(MAX_ID_BYTES),
+                            id: TargetId::Popup("u".repeat(MAX_ID_BYTES)),
+                            terminal: name("s", n, MAX_ID_BYTES),
+                        },
+                        name: "🦀".repeat(MAX_PANE_LABEL_BYTES / 4),
                     })
                     .collect(),
-            ),
-            omitted: u16::MAX,
-        });
-        state.busy = Some(BusyTerminals {
-            terminals: (0..MAX_BUSY_TERMINALS)
-                .map(|n| BusyTerminal {
-                    target: TerminalTarget {
-                        workspace: "w".repeat(MAX_ID_BYTES),
-                        tab: "t".repeat(MAX_ID_BYTES),
-                        id: TargetId::Popup("u".repeat(MAX_ID_BYTES)),
-                        terminal: name("s", n, MAX_ID_BYTES),
-                    },
-                    name: "🦀".repeat(MAX_PANE_LABEL_BYTES / 4),
-                })
-                .collect(),
-            omitted: (MAX_SESSIONS - MAX_BUSY_TERMINALS) as u16,
-        });
-        let response = Response::Snapshot(state.clone());
-        let bytes = encode_response(&response).unwrap();
-        assert!(bytes.len() <= upper_bound);
-        assert_eq!(decode_response(&bytes).unwrap(), response);
+                omitted: (MAX_SESSIONS - MAX_BUSY_TERMINALS) as u16,
+            });
+            let response = Response::Snapshot(state.clone());
+            let bytes = encode_response(&response).unwrap();
+            assert!(bytes.len() <= upper_bound);
+            assert_eq!(decode_response(&bytes).unwrap(), response);
 
-        // The bound rests on the session limit, which neither side lets a
-        // snapshot exceed.
-        let extra = popup("extra", &state.entries[per_tab].id);
-        state.tabs[0].popups.push(extra);
-        let error = encode_response(&Response::Snapshot(state.clone())).unwrap_err();
-        assert_eq!(field(error), "sessions");
-        assert!(decode_response(&forge(&state)).is_err());
+            // The bound rests on the session limit, which neither side lets a
+            // snapshot exceed.
+            let extra = popup("extra", &state.entries[per_tab].id);
+            state.tabs[0].popups.push(extra);
+            let error = encode_response(&Response::Snapshot(state.clone())).unwrap_err();
+            assert_eq!(field(error), "sessions");
+            assert!(decode_response(&forge(&state)).is_err());
+        }
     }
 
     /// What every older supervisor does with the Reserved Stop: it reads the

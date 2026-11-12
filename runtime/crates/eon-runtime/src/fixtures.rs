@@ -4,7 +4,7 @@ use crate::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v41::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v42::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
@@ -12,7 +12,7 @@ pub(crate) fn inputs() -> Inputs {
         skill: "fixture-skill",
         component_report: Ok("fixture-components".into()),
         presentation_protocols: Ok([
-            eon_workspace_protocol::v41::VERSION,
+            eon_workspace_protocol::v42::VERSION,
             orbit_protocol::session::VERSION,
             orbit_protocol::VERSION,
         ]),

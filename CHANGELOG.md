@@ -21,6 +21,13 @@ installation, and proven contract changes.
   with every glyph colour adapted for contrast. Translucent rows use a quiet
   rounded square instead of the near-black disc; stale dimming is preserved
   (`eon-wuau8.7`).
+- `eon pane rename PANE NAME --tag TAG` sets a separate plain-text pane tag;
+  `--tag ''` clears it, and name-only renames preserve it. Pane JSON and
+  subscription snapshots, gaps and events expose nullable `tag`; tag changes
+  emit `pane-renamed` without changing selection or focus. Eon 0.1.24 uses
+  EONW v42 for the tag-bearing schema and requires a fresh matching-version
+  window. Existing windows retain their original build and live terminals
+  (`eon-xvz5c`, EON-C8/C10/C39).
 
 - Files Enter and `eon edit` open files in the packaged Helix Editor popup,
   keeping its buffers and unsaved edits. `[editor] open_in = "pane"` selects
