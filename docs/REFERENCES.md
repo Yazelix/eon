@@ -326,6 +326,24 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
 
 ## Agent work orchestration
 
+### How does host-wide slot policy stay independent of terminal and project overrides?
+
+- **Owner:** Eon Runtime resolves canonical paths and policy; Eon supplies defaults.
+- **Read first:** [EON-C43](CONTRACTS.md#eon-c43--per-user-host-wide-heavy-run-admission),
+  [getpwuid_r](https://man7.org/linux/man-pages/man3/getpwuid.3.html) for OS account
+  lookup, buffer lifetime, missing entries and ERANGE, and the existing
+  [test sandbox](../nix/test-sandbox.nix).
+- **Read additionally only if:** For scheduling/lifecycle work, inspect the
+  heavy.sh/rota comparison and approved decisions recorded on
+  `eon-eon-agent-lr8sx.21.1`; those references do not authorize copying legacy
+  adapters or accessing the live queue in tests.
+- **Preserve / reject:** Use the effective UID's OS account home, byte-safe paths,
+  product-supplied defaults and compiled-test-only root injection. Reject
+  HOME/XDG/Eon-root selection, production test knobs and parallel queue roots.
+  Private passwd/NSS and canonical-home mounts precede real-CLI tests; changing
+  HOME alone does not isolate an account-scoped queue. Public commands remain
+  Planned until their implementation/proof slice.
+
 ### How should Eon integrate existing coding agents without parsing terminal output or treating a provider conversation as Eon work?
 
 - **Owner:** Eon provider adapter

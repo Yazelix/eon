@@ -1,6 +1,7 @@
 use eon_runtime::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
-    PopupDefinition, ReleaseStage, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
+    PopupDefinition, ReleaseStage, ShellConfig, SlotClass, SlotPolicy, StartupAnimation,
+    TerminalAccess, TerminalConfig,
 };
 use eon_workspace_protocol::v42::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
@@ -25,6 +26,26 @@ pub(crate) fn inputs() -> Inputs {
             .map_err(|error| error.to_string()),
         composed_components,
         assembly: env!("EON_WORKSPACE_DIGEST").as_bytes(),
+        slot_policy: SlotPolicy {
+            count: 2,
+            default_class: SlotClass::Heavy,
+            nix_max_running: 1,
+            priority_burst: 1,
+            nice: 19,
+            cargo_jobs: 6,
+            test_threads: 2,
+            wait_timeout_seconds: 0,
+            poll_seconds: 5,
+            status_interval_seconds: 60,
+            wait_alert_seconds: 2700,
+            max_load_per_cpu: 0.75,
+            min_available_memory_percent: 20.0,
+            min_available_memory_mib: 4096,
+            max_memory_pressure_percent: 10.0,
+            max_io_pressure_percent: 50.0,
+            guard_clear_seconds: 20,
+            quiet_max_seconds: 5400,
+        },
         defaults: Defaults {
             bar_widgets: &[
                 "codex_quota_5h",

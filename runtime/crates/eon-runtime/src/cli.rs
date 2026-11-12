@@ -78,6 +78,8 @@ pub struct Inputs {
     pub composed_components: Result<String, String>,
     pub assembly: &'static [u8],
     pub defaults: managed_environment::Defaults,
+    /// Defaults for the separate canonical-account EON-C43 host policy.
+    pub slot_policy: super::slots::SlotPolicy,
     pub orbit: PathBuf,
     pub venus: PathBuf,
     pub anima: PathBuf,

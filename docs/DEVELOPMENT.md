@@ -70,6 +70,24 @@ shell has an unproven macOS branch without namespaces: it refuses while an Eon
 supervisor of the same user runs, gives the suites a private HOME, TMPDIR and
 runtime root, and skips the Linux-only installer suite.
 
+On Linux, `eon-test` also mounts private passwd/NSS files: the effective user's
+OS account home is `/tmp/eon-slot-account`, distinct from `HOME=/tmp/home`.
+Existing canonical-account `.config/eon` and `.local/state/eon` directories are
+hidden with private mounts. Writable checkout, Cargo cache and target paths
+inside those directories or containing them are refused before directory
+creation or fetching, even when the canonical Eon directory does not exist yet.
+Other caller-supplied paths, including `ORBIT_BIN`, remain visible read-only.
+A synthetic sentinel check verifies mount ordering and write isolation before
+any test executable runs; it never places a sentinel in the real account home.
+This protects EON-C43's internal host-policy tests; `eon slot` remains Planned.
+
+Pure slot-policy and injected-home tests run in every supported test harness.
+Canonical-home disk tests run only when the OS database and mounts identify the
+private Linux account; otherwise they print a skip reason and access no slot
+policy/state. This includes direct Cargo and Nix package-test harnesses, whose
+OS account database is not remapped by this runner. The macOS runner is unchanged,
+and canonical slot-home resolution returns an explicit Unsupported error there.
+
 ## macOS proof harness
 
 `nix run .#mac-proof -- remote --host USER@HOST --out DIR`, run on Linux inside

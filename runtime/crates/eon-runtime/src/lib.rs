@@ -18,6 +18,7 @@ mod running;
 mod scrollback;
 mod session_registry;
 mod sessions;
+mod slots;
 mod subscriptions;
 mod supervisor;
 mod windows;
@@ -32,6 +33,7 @@ pub use managed_environment::{
     UpdateSettings, update_target,
 };
 pub use report::{ReportFacts, report_facts};
+pub use slots::{SlotClass, SlotPolicy};
 
 #[cfg(test)]
 mod fixtures;

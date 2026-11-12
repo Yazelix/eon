@@ -137,7 +137,7 @@ let
 in
 pkgs.writeShellApplication {
   name = "eon-test";
-  runtimeInputs = pkgs.lib.optional pkgs.stdenv.isLinux pkgs.bubblewrap ++ [
+  runtimeInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.getent ] ++ [
     pkgs.cargo-nextest
     pkgs.coreutils
     pkgs.git
@@ -155,8 +155,53 @@ pkgs.writeShellApplication {
     root=$(git rev-parse --show-toplevel)
     cd "$root"
     export CARGO_HOME="''${CARGO_HOME:-$HOME/.cargo}"
-    mkdir -p "$CARGO_HOME"
-    writable=(--bind "$root" "$root" --bind "$CARGO_HOME" "$CARGO_HOME")
+
+    # HOME cannot isolate the EON-C43 policy/queue: production uses the OS account.
+    account=$(getent passwd "$(id -u)") || {
+      echo "eon-test: cannot resolve the OS account home" >&2
+      exit 1
+    }
+    IFS=: read -r account_name _ account_uid account_gid _ account_home _ <<< "$account"
+    case $account_home in
+      /*) ;;
+      *) echo "eon-test: OS account home must be absolute" >&2; exit 1 ;;
+    esac
+    protected=()
+    hidden=()
+    for directory in "$account_home/.config/eon" "$account_home/.local/state/eon"; do
+      directory=$(realpath -m -- "$directory")
+      protected+=("$directory")
+      if [ -d "$directory" ]; then
+        hidden+=(--tmpfs "$directory")
+      elif [ -e "$directory" ]; then
+        echo "eon-test: canonical Eon path is not a directory: $directory" >&2
+        exit 1
+      fi
+    done
+
+    writable_path_allowed() {
+      local directory=''${1%/} excluded
+      shift
+      for excluded in "$@"; do
+        excluded=''${excluded%/}
+        case $directory/ in "$excluded/"*) return 1 ;; esac
+        case $excluded/ in "$directory/"*) return 1 ;; esac
+      done
+      return 0
+    }
+
+    # Pure path checks cover absent policy directories without touching real state.
+    probe_protected=(/tmp/eon-test-writable-check/.config/eon /tmp/eon-test-writable-check/.local/state/eon)
+    for directory in /tmp/eon-test-writable-check /tmp/eon-test-writable-check/.config \
+      "''${probe_protected[@]}" /tmp/eon-test-writable-check/.local/state/eon/target /; do
+      if writable_path_allowed "$directory" "''${probe_protected[@]}"; then
+        echo "eon-test: writable-parent isolation self-check failed: $directory" >&2
+        exit 1
+      fi
+    done
+    writable_path_allowed /tmp/eon-test-writable-check/.config/eon-other "''${probe_protected[@]}" || exit 1
+
+    writable_paths=("$root" "$CARGO_HOME")
     for target in "''${CARGO_TARGET_DIR:-}" "''${CARGO_BUILD_TARGET_DIR:-}"; do
       if [ -n "$target" ]; then
         # Cargo resolves a relative target directory against the repository.
@@ -164,10 +209,30 @@ pkgs.writeShellApplication {
           /*) ;;
           *) target=$root/$target ;;
         esac
-        mkdir -p "$target"
-        writable+=(--bind "$target" "$target")
+        writable_paths+=("$target")
       fi
     done
+    writable=()
+    normalized_writable=()
+    for directory in "''${writable_paths[@]}"; do
+      directory=$(realpath -m -- "$directory")
+      if ! writable_path_allowed "$directory" "''${protected[@]}"; then
+        echo "eon-test: writable path $directory overlaps canonical Eon policy/state" >&2
+        exit 1
+      fi
+      normalized_writable+=("$directory")
+    done
+    # Validate all paths before creating any of them or fetching crates.
+    for directory in "''${normalized_writable[@]}"; do
+      mkdir -p "$directory"
+      writable+=(--bind "$directory" "$directory")
+    done
+
+    sandbox_private=$(mktemp -d)
+    trap 'rm -rf "$sandbox_private"' EXIT
+    printf '%s:x:%s:%s:Eon isolated test account:/tmp/eon-slot-account:/bin/sh\n' \
+      "$account_name" "$account_uid" "$account_gid" > "$sandbox_private/passwd"
+    printf 'passwd: files\ngroup: files\n' > "$sandbox_private/nsswitch.conf"
 
     # The sandbox has no network, so fetch the locked crates first.
     cargo fetch --locked
@@ -198,14 +263,40 @@ pkgs.writeShellApplication {
       esac
     done < <(env -0)
 
+    probe_mounts=()
     sandbox() {
       bwrap --die-with-parent --new-session --unshare-all \
         --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run \
         "''${writable[@]}" --dir /tmp/home \
-        --perms 0700 --dir /tmp/run \
+        --perms 0700 --dir /tmp/run --perms 0700 --dir /tmp/eon-slot-account \
+        --ro-bind "$sandbox_private/passwd" /etc/passwd \
+        --ro-bind "$sandbox_private/nsswitch.conf" /etc/nsswitch.conf \
+        "''${probe_mounts[@]}" "''${hidden[@]}" \
         "''${environment[@]}" --setenv HOME /tmp/home --setenv XDG_RUNTIME_DIR /tmp/run \
         --chdir "$root" -- "$@"
     }
+
+    # Exercise the same mount ordering with synthetic sentinels, never live state.
+    for suffix in .config/eon .local/state/eon; do
+      mkdir -p "$sandbox_private/probe/$suffix"
+      printf 'outside\n' > "$sandbox_private/probe/$suffix/sentinel"
+    done
+    probe_mounts=(--ro-bind "$sandbox_private/probe" /tmp/eon-test-hidden)
+    host_hidden=("''${hidden[@]}")
+    hidden+=(--tmpfs /tmp/eon-test-hidden/.config/eon --tmpfs /tmp/eon-test-hidden/.local/state/eon)
+    # shellcheck disable=SC2016 # Variables below belong to the isolated child.
+    sandbox bash -c '
+      for suffix in .config/eon .local/state/eon; do
+        path=/tmp/eon-test-hidden/$suffix/sentinel
+        test ! -e "$path" || exit 1
+        printf "inside\n" > "$path" || exit 1
+      done
+    ' || { echo "eon-test: canonical-home mount isolation failed" >&2; exit 1; }
+    for suffix in .config/eon .local/state/eon; do
+      test "$(cat "$sandbox_private/probe/$suffix/sentinel")" = outside || exit 1
+    done
+    probe_mounts=()
+    hidden=("''${host_hidden[@]}")
 
     # Eon Runtime's lease tests run the Orbit at ORBIT_BIN: this workspace's,
     # unless the caller names another.
