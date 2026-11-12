@@ -496,11 +496,14 @@ Rows retain their state, app icon, age, source pane ID or popup label and
 needs-input message; their accessible names include the pin when present.
 
 Popup-source rows from the shown session in the sidebar and attention inbox use
-the same fill as pane rows. A thin rounded-square outline larger than the label
-text sits at the padded right edge, vertically centered across the row; title,
-detail and message text stop before it. Its corners are proportional to its
-size. Its stroke follows popup cards' neutral `border_width`, with no filled
-title bar or interior. The mark takes the title color and the stale-row palette.
+the same fill as pane rows. Two thin overlapping rounded-square outlines form
+a window mark larger than the label text at the padded right edge, vertically
+centered across the row; title, detail and message text stop before it. The
+front square sits above and to the right, hiding the rear square's overlapping
+stroke. Corners are proportional to each square's size, and interiors stay
+hollow. The stroke follows popup cards' neutral `border_width`, reduced only
+when it would fill the smaller squares. The mark takes the title color and
+the stale-row palette (`eon-5bft1`, Lucca's "1 ok, do it" approval).
 Row text retains at least 4.5:1 contrast against the terminal or
 highlight background, including stale text. Resting row text and marks darken when the terminal
 background needs contrast, as Stack labels do. The mark's size scales with the

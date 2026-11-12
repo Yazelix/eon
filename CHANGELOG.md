@@ -49,9 +49,9 @@ installation, and proven contract changes.
   to keep 4.5:1 contrast on the capsule fill, approved by eon-overseer under
   Lucca's standing delegation on 2026-11-11 (`eon-wuau8.2`, VEN-C21).
 
-- Popup agents in Agents and the attention inbox carry a thin rounded-square
-  outline in place of the heavy window mark. Its stroke follows `border_width`
-  (`eon-wpbjz`).
+- Popup agents in Agents and the attention inbox carry two overlapping rounded
+  squares to read as stacked windows. Their thin stroke follows `border_width`,
+  reduced only when it would fill the smaller squares (`eon-wpbjz`, `eon-5bft1`).
 - Pane header bands keep Eon's shared background and opacity when a terminal
   paints its top row a different colour. Terminal padding still follows
   `padding_color` (`eon-jg86j`).

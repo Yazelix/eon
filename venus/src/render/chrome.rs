@@ -894,24 +894,45 @@ fn badge_inside(badge: TabBadge, clip: Option<SceneRect>) -> bool {
     })
 }
 
-/// The popup marker's thin rounded square stays distinct from circular attention glyphs.
+/// Stacked hollow windows distinguish popup agents from checkboxes and round attention glyphs.
 fn push_popup_marker(
     rectangles: &mut RectangleBatch,
     rect: SceneRect,
     stroke: f32,
     color: SceneColor,
 ) {
-    let rect = SceneRect {
-        left: rect.left.round(),
+    let size = rect.width.min(rect.height).floor();
+    if size <= 0.0 {
+        return;
+    }
+    let side = (size * 2.0 / 3.0).round();
+    let offset = size - side;
+    let front = SceneRect {
+        left: rect.left.round() + offset,
         top: rect.top.round(),
-        ..rect
+        width: side,
+        height: side,
     };
-    rectangles.push_rounded_outline_width(
-        rect,
-        tokens::popup_marker_radius(rect.width),
-        stroke,
-        color,
-    );
+    let back = SceneRect {
+        left: rect.left.round(),
+        top: front.top + offset,
+        ..front
+    };
+    let radius = tokens::popup_marker_radius(side);
+    // Keep tiny squares hollow when the configured card stroke would fill them.
+    let stroke = stroke.min(((side - 1.0) / 2.0).floor().max(1.0));
+    let mask = super::CardFill {
+        bounds: front,
+        radius,
+    }
+    .bands()
+    .collect::<Vec<_>>();
+    for (rect, alpha) in super::rounded_outline_rects(back, radius, stroke) {
+        for rect in super::uncovered(rect, &mask) {
+            rectangles.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
+        }
+    }
+    rectangles.push_rounded_outline_width(front, radius, stroke, color);
 }
 
 /// Paint the row and badge together, returning text colours readable on that surface.
@@ -5303,7 +5324,7 @@ mod tests {
     }
 
     #[test]
-    fn popup_marker_is_a_crisp_rounded_card_outline() {
+    fn popup_marker_is_two_crisp_hollow_windows_with_the_back_occluded() {
         let mut snapshot = popup_sidebar_snapshot();
         let attention = snapshot.tabs[0].popups[0].attention.as_mut().unwrap();
         attention.state = AttentionState::NeedsInput;
@@ -5316,6 +5337,8 @@ mod tests {
             (2.0, 32.0, 38.0, 24.0),
             (1.0, 16.0, 18.0, 13.0),
             (1.0, 6.0, 7.0, 5.0),
+            (1.125, 6.75, 8.0, 6.0),
+            (2.0, 12.0, 14.0, 10.0),
         ] {
             let metrics = CellMetrics {
                 scale,
@@ -5341,10 +5364,24 @@ mod tests {
                 top: marker.top.round(),
                 ..marker
             };
+            let side = (rect.width * 2.0 / 3.0).round();
+            let offset = rect.width - side;
+            let front = SceneRect {
+                left: rect.left + offset,
+                width: side,
+                height: side,
+                ..rect
+            };
+            let back = SceneRect {
+                left: rect.left,
+                top: rect.top + offset,
+                ..front
+            };
             for border in 1..=3 {
-                let stroke = physical_outline_width(border, scale);
+                let full_stroke = physical_outline_width(border, scale);
+                let stroke = full_stroke.min(((side - 1.0) / 2.0).floor());
                 let mut batch = RectangleBatch::new(2048, 2048);
-                push_popup_marker(&mut batch, marker, stroke, color);
+                push_popup_marker(&mut batch, marker, full_stroke, color);
                 let ink = batch
                     .bytes
                     .chunks_exact(VERTEX_SIZE as usize * 6)
@@ -5360,6 +5397,9 @@ mod tests {
                             height: (value(0, 1) - value(2, 1)) * 1024.0,
                         };
                         assert_eq!((quad.top.fract(), quad.bottom().fract()), (0.0, 0.0));
+                        if quad.height > 1.0 {
+                            assert_eq!((quad.left.fract(), quad.right().fract()), (0.0, 0.0));
+                        }
                         assert!(quad.left >= rect.left && quad.right() <= rect.right());
                         assert!(quad.top >= rect.top && quad.bottom() <= rect.bottom());
                         (quad, value(0, 5))
@@ -5371,32 +5411,60 @@ mod tests {
                         .map(|(_, alpha)| alpha)
                         .sum::<f32>()
                 };
-                for pixel in 0..rect.width as u32 {
-                    let offset = pixel as f32 + 0.5;
-                    let expected = if offset < stroke || offset >= rect.width - stroke {
+                let old_top = rect.left + (rect.width / 4.0).round() + 0.5;
+                assert_eq!(
+                    coverage(old_top, rect.top + 0.5),
+                    0.0,
+                    "single checkbox outline"
+                );
+                for pixel in 0..side as u32 {
+                    let position = pixel as f32 + 0.5;
+                    let expected = if position < stroke || position >= side - stroke {
                         1.0
                     } else {
                         0.0
                     };
                     assert_eq!(
-                        coverage(rect.left + rect.width / 2.0, rect.top + offset),
+                        coverage(front.left + side / 2.0, front.top + position),
                         expected,
-                        "vertical stroke/interior at scale {scale}, border {border}, offset {offset}"
+                        "front vertical at scale {scale}, border {border}, pixel {pixel}"
                     );
                     assert_eq!(
-                        coverage(rect.left + offset, rect.top + rect.height / 2.0),
+                        coverage(front.left + position, front.top + side / 2.0),
                         expected,
-                        "horizontal stroke/interior at scale {scale}, border {border}, offset {offset}"
+                        "front horizontal at scale {scale}, border {border}, pixel {pixel}"
                     );
                 }
-                for x in [rect.left + 0.5, rect.right() - 0.5] {
-                    for y in [rect.top + 0.5, rect.bottom() - 0.5] {
-                        assert!(coverage(x, y) < 1.0, "square corner remains");
+                let radius = (side / 4.0).round();
+                for x in stroke as u32..(side - stroke) as u32 {
+                    for y in stroke as u32..(side - stroke) as u32 {
+                        let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+                        let dx = (radius - x + 0.5).max(x + 0.5 - (side - radius)).max(0.0);
+                        let dy = (radius - y + 0.5).max(y + 0.5 - (side - radius)).max(0.0);
+                        if dx * dx + dy * dy <= (radius - stroke).max(0.0).powi(2) {
+                            assert_eq!(
+                                coverage(front.left + x, front.top + y),
+                                0.0,
+                                "rear stroke inside front at scale {scale}, border {border}"
+                            );
+                        }
                     }
                 }
-                let quarter = (rect.width / 4.0).round() + 0.5;
-                assert_eq!(coverage(rect.left + quarter, rect.top + 0.5), 1.0);
-                assert_eq!(coverage(rect.right() - quarter, rect.bottom() - 0.5), 1.0);
+                assert_eq!(
+                    coverage(back.left + stroke / 2.0, back.top + side / 2.0),
+                    1.0
+                );
+                assert_eq!(
+                    coverage(back.left + side / 2.0, back.bottom() - stroke / 2.0),
+                    1.0
+                );
+                assert_eq!(coverage(back.left + side / 2.0, back.top + side / 2.0), 0.0);
+                for (x, y) in [
+                    (front.right() - 0.5, front.top + 0.5),
+                    (back.left + 0.5, back.bottom() - 0.5),
+                ] {
+                    assert!(coverage(x, y) < 1.0, "square corner remains");
+                }
                 for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
                     for (component, channel) in [color.r, color.g, color.b].into_iter().enumerate()
                     {

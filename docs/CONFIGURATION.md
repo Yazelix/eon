@@ -334,9 +334,11 @@ Eon Bar widgets are filled capsules without neutral outlines; `border_width`
 does not affect them. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
 are omitted, leaving Venus's built-in widths in use. With the example's widths,
-physical widths are `max(1, round(width * scale))`:
+physical widths are normally `max(1, round(width * scale))`:
 at scale 1.3 they draw at 1 and 1 physical pixels, and at scale 2 at 2
-and 2. Pane frames off hides pane and sidebar outlines and title rules;
+and 2. The popup marker alone reduces a stroke that would fill its smaller
+squares, keeping both hollow: at font size 6, scale 1 and `border_width = 3`,
+the marker uses 2 physical pixels. Pane frames off hides pane and sidebar outlines and title rules;
 popups keep their outline. These settings apply to full-Eon surfaces;
 eonbase receives neither override. F6 title focus uses the pane header's configured
 stroke; other focus pills keep their one-physical-pixel outlines. The current

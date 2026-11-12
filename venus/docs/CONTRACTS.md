@@ -2336,7 +2336,10 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
   `eon-cq38r`: EONW v39; Hide sets the sidebar closed through `SetSidebar`.
   Amended on 2026-11-11 by `eon-wpbjz`, approved by Lucca through
-  eon-overseer: the popup marker is a thin rounded-square outline.
+  eon-overseer: the popup marker became a thin rounded-square outline.
+  Amended by `eon-5bft1`, approved by Lucca on 2026-11-11 ("1 ok, do it"):
+  two overlapping rounded-square outlines. On 2026-11-12 eon-overseer
+  approved reducing the marker stroke only when it would fill the squares.
   Presentation amended by `eon-wuau8.3`, approved by Lucca on 2026-11-10
   (selection, accents and labels), with zoom and contrast decisions relayed
   by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
@@ -2424,12 +2427,14 @@ re-proved when that platform or feature is next touched.
     - Within a tab, a row whose source terminal is a popup comes first; pane
       rows follow in pane order.
     - **Popup marker.** In the shown session, a row whose source terminal is a
-      popup always shows a thin rounded-square outline at the row's right edge,
+      popup always shows two thin overlapping rounded-square outlines at the row's right edge,
       inside its padding and vertically centered across the row, larger than
       the label text. In both the sidebar and attention inbox, every text line stops
       before the marker, and the accessible label adds "popup". The marker
-      has the popup cards' neutral stroke width (`border_width`) and rounded
-      corners proportional to its size, with no filled title bar or interior. It
+      uses the popup cards' neutral stroke width (`border_width`), reduced
+      only when it would fill the smaller squares. Corners are proportional
+      to each square's size; interiors stay hollow, and the front square
+      hides the rear square's overlapping stroke. It
       takes the title color, dimmed with a stale record; resting row text and
       marks adapt for contrast against the terminal background. Popup and pane rows
       use the same surfaces in resting, hover, current and keyboard-focus states;

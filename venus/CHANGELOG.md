@@ -23,9 +23,10 @@
   remains. The shared critical/pace red meets 4.5:1 on the capsule fill
   (`eon-wuau8.2`, Lucca's 2026-11-10 approval and delegated contrast amendment).
 
-- VEN-C30: popup-source agent rows draw a thin rounded-square outline at the
-  existing right edge, using the neutral card stroke (`border_width`) without
-  a filled title bar (`eon-wpbjz`).
+- VEN-C30: popup-source agent rows draw two overlapping rounded-square outlines
+  at the existing right edge. The front square hides the rear stroke; both
+  use the neutral card stroke (`border_width`), reduced only when it would
+  fill the smaller squares (`eon-wpbjz`, `eon-5bft1`).
 - VEN-C8: pane header bands retain the shared column background and opacity;
   terminal edge backgrounds extend only into terminal padding, including popup
   margins and frameless gutters, below the terminal's top edge. No wire or
