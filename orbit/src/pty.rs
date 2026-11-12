@@ -47,6 +47,13 @@ use std::{
 /// one maximum paste plus a bracketed-paste frame.
 const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 
+const DEFAULT_FOREGROUND: RgbColor = RgbColor {
+    r: 255,
+    g: 255,
+    b: 255,
+};
+const DEFAULT_BACKGROUND: RgbColor = RgbColor { r: 0, g: 0, b: 0 };
+
 /// The pause before reading a hung-up PTY again.
 const PTY_EIO_RETRY_DELAY: Duration = Duration::from_millis(10);
 
@@ -192,6 +199,11 @@ impl Orbit {
         rows: u16,
     ) -> io::Result<Self> {
         let mut terminal = Terminal::new(cols, rows).map_err(|_| errno(libc::EIO))?;
+        // libghostty's render snapshot updates either colour only when both exist.
+        terminal
+            .set_default_fg_color(Some(DEFAULT_FOREGROUND))
+            .and_then(|terminal| terminal.set_default_bg_color(Some(DEFAULT_BACKGROUND)))
+            .map_err(|_| errno(libc::EIO))?;
         // Grapheme clustering (mode 2027) is on, as in Ghostty, and a reset keeps it.
         terminal
             .set_default_mode(Mode::GRAPHEME_CLUSTER, true)

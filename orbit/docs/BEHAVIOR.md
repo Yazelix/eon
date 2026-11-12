@@ -74,6 +74,16 @@ both failures. The real-PTY palette-reset check has the child override colors
 to the supplied 16 and xterm's defaults above them. Installing the palette as
 current colors instead of defaults made it fail.
 
+The default foreground is white and the default background is black. OSC 10
+and 11 change either independently; OSC 110 and 111 reset it to its default
+without changing the other. OSC 10/11 queries answer the effective colors,
+including those defaults before any program changes them. Reattachment's
+first full frame carries the current colors. The lifecycle regression
+`default_colors_follow_independent_osc_updates_resets_and_reattachment`
+checks these effects through the real PTY and canonical frames. Terminal
+hosts started before this initialization fix keep the previous behavior until
+the terminal restarts; supervisor recovery reuses that same host.
+
 A start replaces a stale socket pathname, a private socket nobody listens on,
 under a lock on its private directory, so one of two racing starts wins
 (ORB-C1). The other fails with status 1 and the message "socket

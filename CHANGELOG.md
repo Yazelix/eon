@@ -16,6 +16,12 @@ installation, and proven contract changes.
 - The Agents sidebar scrolls overflowing rows with the mouse wheel and
   touchpad. A slim neutral thumb shows overflow and position; keyboard
   navigation continues to reveal its focused row (`eon-r1scq`).
+- Terminals started with this build render independent OSC 10/11 foreground
+  and background changes, including light terminal and Agents sidebar fills.
+  OSC 110/111 restore white/black, and OSC 10/11 queries answer those defaults
+  so programs can detect the dark background. Existing terminals retain the
+  old Orbit host's behaviour until they restart; supervisor recovery reuses
+  that host (`eon-mocfv`).
 
 - Panel headings default to `"connected"`; `[panels] heading = "notch"` remains
   a supported choice. Omitted settings use connected on window open, reopen or

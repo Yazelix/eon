@@ -780,6 +780,87 @@ fn frame_text(frame: &Frame) -> String {
 }
 
 #[test]
+fn default_colors_follow_independent_osc_updates_resets_and_reattachment() -> TestResult {
+    let dir = TestDir::new("default-colors")?;
+    let socket = dir.0.join("orbit.sock");
+    let replies = dir.0.join("replies");
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/bash")
+            .arg("-c")
+            .arg(concat!(
+                "stty -echo -icanon; ",
+                "printf '\\033]10;?\\033\\\\\\033]11;?\\033\\\\\\033[6n'; ",
+                "IFS= read -r -t 5 -d R reply || exit 1; ",
+                "printf '%sR' \"$reply\" > \"$ORBIT_COLOR_REPLIES\"; ",
+                "stty sane; exec /bin/sh",
+            ))
+            .env("ORBIT_COLOR_REPLIES", &replies)
+            .spawn()?,
+    );
+    let black = Rgb::BLACK;
+    let white = Rgb {
+        r: 255,
+        g: 255,
+        b: 255,
+    };
+    let light = Rgb {
+        r: 238,
+        g: 238,
+        b: 238,
+    };
+    let dark = Rgb {
+        r: 16,
+        g: 24,
+        b: 32,
+    };
+    let mut client = Client::attach(&socket)?;
+    assert_eq!(client.frame.colors.background, black);
+    assert_eq!(client.frame.colors.foreground, white);
+    let initial_replies = wait_file_text(&replies)?;
+    eprintln!("initial colour replies: {initial_replies:?}");
+
+    client
+        .paste("printf '\\033]11;rgb:eeee/eeee/eeee\\033\\\\\\033]2;light-background\\033\\\\'")?;
+    client.enter()?;
+    client.wait_title("light-background")?;
+    assert_eq!(client.frame.colors.background, light);
+    assert_eq!(client.frame.colors.foreground, white);
+    drop(client);
+
+    let mut client = Client::attach(&socket)?;
+    assert_eq!(client.frame.title, "light-background");
+    assert_eq!(client.frame.colors.background, light);
+    assert_eq!(client.frame.colors.foreground, white);
+    client.paste("printf '\\033]111\\033\\\\\\033]2;background-reset\\033\\\\'")?;
+    client.enter()?;
+    client.wait_title("background-reset")?;
+    assert_eq!(client.frame.colors.background, black);
+    assert_eq!(client.frame.colors.foreground, white);
+
+    client
+        .paste("printf '\\033]10;rgb:1010/1818/2020\\033\\\\\\033]2;foreground-only\\033\\\\'")?;
+    client.enter()?;
+    client.wait_title("foreground-only")?;
+    assert_eq!(client.frame.colors.background, black);
+    assert_eq!(client.frame.colors.foreground, dark);
+    client.paste("printf '\\033]11;rgb:eeee/eeee/eeee\\033\\\\\\033]110\\033\\\\\\033]2;foreground-reset\\033\\\\'")?;
+    client.enter()?;
+    client.wait_title("foreground-reset")?;
+    assert_eq!(client.frame.colors.background, light);
+    assert_eq!(client.frame.colors.foreground, white);
+    assert_eq!(
+        initial_replies,
+        "\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R"
+    );
+    drop(client);
+    assert!(server.shutdown()?.success());
+    Ok(())
+}
+
+#[test]
 fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
     const PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
     const fn rgb(r: u8, g: u8, b: u8) -> Rgb {
