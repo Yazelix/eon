@@ -2347,6 +2347,9 @@ re-proved when that platform or feature is next touched.
   by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
   Pointer scrolling and its overflow thumb amended by `eon-r1scq`, approved
   by eon-overseer under Lucca's standing delegation on 2026-11-12; proof pending.
+  Attention badge backing presentation amended by `eon-wuau8.7`, approved
+  by eon-overseer under Lucca's standing delegation on 2026-11-12;
+  installed acceptance pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2454,8 +2457,11 @@ re-proved when that platform or feature is next touched.
       one-physical-pixel outline, inset one pixel on a current row so both
       remain visible, adjusted only as needed for 3:1 against the row fill.
       Current text starts in the primary role and retains 4.5:1, including
-      stale text; its badge keeps the bar's dark disc at rest. Highlighted
-      badges use the highlight's backing, or the bar's disc when adapted. Rows
+      stale text. Attention badges draw no backing on an opaque surface. Each
+      glyph colour, before stale dimming, adapts only as needed for 3:1 against
+      that surface. Under a translucent terminal background, a row badge sits
+      on an opaque rounded square in the card colour adapted to 1.5:1, and its
+      glyph adapts to 3:1 against the square. Rows
       have no mint pressed flash. Rows in other tabs never take the current
       outline. Its accessible label adds "current" (`eon-wuau8.4`, approved by
       Lucca on 2026-11-11: "ahhh i like it").

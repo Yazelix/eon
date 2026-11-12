@@ -824,12 +824,12 @@ pub(super) struct Spinners {
 /// What an attention badge's glyph sits on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Backing {
-    /// A disc of this color, drawn under the glyph.
-    Disc(SceneColor),
+    /// An opaque bar pill and the darker bar around its overhanging badge.
+    BarPill(SceneColor),
     /// An opaque surface of this color, already painted.
     Surface(SceneColor),
-    /// A translucent card, whose painted color depends on what lies behind the window.
-    Translucent,
+    /// A translucent card's nominal color; its painted color also depends on the desktop.
+    Translucent(SceneColor),
 }
 
 impl Backing {
@@ -838,7 +838,7 @@ impl Backing {
         if opacity >= 1.0 {
             Self::Surface(fill)
         } else {
-            Self::Translucent
+            Self::Translucent(fill)
         }
     }
 }
@@ -862,34 +862,35 @@ impl Spinners {
         self.slots.clear();
     }
 
-    /// Draws `badge` on `backing`. Working and background dots take the focus color, blended by
-    /// the least that keeps 3:1 contrast, the cursor outline's bound, with the color under them.
-    /// On a translucent card that color is unknown, so they take the bar's disc, as on a tab.
+    /// Draws a bare glyph at 3:1 before stale dimming, or on a quiet opaque square when the
+    /// translucent surface is unknown. Spinner ticks keep the same resolved color.
     fn push_badge(&mut self, badge: TabBadge, backing: Backing, rectangles: &mut RectangleBatch) {
         if !badge_inside(badge, rectangles.clip) {
             return;
         }
-        let dots = matches!(
-            badge.state,
-            AttentionState::Working | AttentionState::Background
-        );
-        let (disc, under) = match backing {
-            Backing::Disc(color) => (Some(color), color),
-            Backing::Surface(color) => (None, color),
-            Backing::Translucent if dots => {
-                (Some(palette::BAR_BACKGROUND), palette::BAR_BACKGROUND)
+        let base = match badge.state {
+            AttentionState::NeedsInput => palette::ATTENTION_NEEDS_INPUT,
+            AttentionState::Error => palette::ATTENTION_ERROR,
+            AttentionState::Finished => palette::ATTENTION_FINISHED,
+            AttentionState::Working | AttentionState::Background => self.focus,
+            AttentionState::Idle | AttentionState::Unavailable => palette::ATTENTION_IDLE,
+        };
+        let (base, under) = match backing {
+            Backing::BarPill(color) => {
+                (blend_to_contrast(base, palette::BAR_BACKGROUND, 3.0), color)
             }
-            // Other glyphs keep their own colors and need no disc.
-            Backing::Translucent => (None, palette::BAR_BACKGROUND),
+            Backing::Surface(color) => (base, color),
+            Backing::Translucent(color) => {
+                let square = blend_to_contrast(color, color, 1.5);
+                rectangles.push_rounded(
+                    badge.rect,
+                    tokens::badge_backing_radius(badge.rect.width),
+                    square,
+                );
+                (base, square)
+            }
         };
-        if let Some(disc) = disc {
-            rectangles.push_rounded(badge.rect, tokens::capsule_radius(badge.rect.width), disc);
-        }
-        let color = if dots {
-            blend_to_contrast(self.focus, under, 3.0)
-        } else {
-            self.focus
-        };
+        let color = blend_to_contrast(base, under, 3.0);
         if badge.state == AttentionState::Working && self.phase.is_some() {
             self.slots.push(SpinnerSlot {
                 offset: rectangles.bytes.len(),
@@ -898,6 +899,31 @@ impl Spinners {
             });
         }
         push_badge_glyph(rectangles, badge, self.phase, color);
+    }
+
+    fn push_edge_badge(
+        &mut self,
+        badge: TabBadge,
+        pills: impl IntoIterator<Item = (SceneRect, SceneColor)>,
+        rectangles: &mut RectangleBatch,
+    ) {
+        let fill = pills
+            .into_iter()
+            .filter(|(pill, _)| {
+                super::CardFill {
+                    bounds: *pill,
+                    radius: tokens::capsule_radius(pill.height),
+                }
+                .bands()
+                .any(|band| band.intersection(badge.rect).is_some())
+            })
+            .map(|(_, fill)| fill)
+            .max_by(|left, right| {
+                contrast_ratio(*left, palette::BAR_BACKGROUND)
+                    .total_cmp(&contrast_ratio(*right, palette::BAR_BACKGROUND))
+            })
+            .unwrap_or(palette::BAR_BACKGROUND);
+        self.push_badge(badge, Backing::BarPill(fill), rectangles);
     }
 }
 
@@ -998,14 +1024,7 @@ fn push_attention_row_surface(
         let focus = blend_to_contrast(palette::ACCENT, fill.unwrap_or(background), 3.0);
         rectangles.push_rounded_outline(outline, outline_radius, focus);
     }
-    let backing = match fill {
-        // Adapted fills keep fixed attention colours readable on the tab badges' dark disc.
-        Some(fill) if fill != palette::CHROME_HIGHLIGHT => Backing::Disc(palette::BAR_BACKGROUND),
-        Some(fill) => Backing::Disc(fill),
-        // The current row keeps its dark badge backing when its selection fill is absent.
-        None if row.current => Backing::Disc(palette::BAR_BACKGROUND),
-        None => surface,
-    };
+    let backing = fill.map_or(surface, Backing::Surface);
     spinners.push_badge(row.glyph, backing, rectangles);
     let (title, detail) = if row.current {
         (palette::PRIMARY_TEXT, palette::PRIMARY_TEXT)
@@ -1022,15 +1041,15 @@ fn push_attention_row_surface(
     )
 }
 
-/// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
+/// Draws one attention badge's glyph in its resolved `color`: ◆ needs input, ✕ error, ✓ finished, the
 /// braille frame at `phase` for working, or the first frame without one, three still dots for
-/// background, both in `working`, and, in sidebar rows, ○ idle and · unavailable. Quads keep the
+/// background, and, in sidebar rows, ○ idle and · unavailable. Quads keep the
 /// glyphs independent of fonts.
 fn push_badge_glyph(
     rectangles: &mut RectangleBatch,
     badge: TabBadge,
     phase: Option<usize>,
-    working: SceneColor,
+    color: SceneColor,
 ) {
     // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
     let ring = (badge.rect.width / 12.0).floor();
@@ -1049,51 +1068,27 @@ fn push_badge_glyph(
     match badge.state {
         AttentionState::NeedsInput => rectangles.push_quad(
             [at(0.5, 0.0), at(1.0, 0.5), at(0.5, 1.0), at(0.0, 0.5)],
-            palette::ATTENTION_NEEDS_INPUT,
+            color,
             alpha,
         ),
         AttentionState::Error => {
-            rectangles.push_stroke(
-                at(0.1, 0.1),
-                at(0.9, 0.9),
-                stroke,
-                palette::ATTENTION_ERROR,
-                alpha,
-            );
-            rectangles.push_stroke(
-                at(0.9, 0.1),
-                at(0.1, 0.9),
-                stroke,
-                palette::ATTENTION_ERROR,
-                alpha,
-            );
+            rectangles.push_stroke(at(0.1, 0.1), at(0.9, 0.9), stroke, color, alpha);
+            rectangles.push_stroke(at(0.9, 0.1), at(0.1, 0.9), stroke, color, alpha);
         }
         AttentionState::Finished => {
-            rectangles.push_stroke(
-                at(0.05, 0.55),
-                at(0.4, 0.88),
-                stroke,
-                palette::ATTENTION_FINISHED,
-                alpha,
-            );
-            rectangles.push_stroke(
-                at(0.4, 0.88),
-                at(0.95, 0.15),
-                stroke,
-                palette::ATTENTION_FINISHED,
-                alpha,
-            );
+            rectangles.push_stroke(at(0.05, 0.55), at(0.4, 0.88), stroke, color, alpha);
+            rectangles.push_stroke(at(0.4, 0.88), at(0.95, 0.15), stroke, color, alpha);
         }
         AttentionState::Working => push_dots(
             rectangles,
             glyph,
             (2, 3),
             SPINNER_FRAMES[phase.unwrap_or(0)],
-            working,
+            color,
             alpha,
         ),
         // Background never animates (VEN-C21), so it takes no phase.
-        AttentionState::Background => push_dots(rectangles, glyph, (3, 1), 0b111, working, alpha),
+        AttentionState::Background => push_dots(rectangles, glyph, (3, 1), 0b111, color, alpha),
         AttentionState::Idle | AttentionState::Unavailable => {
             // A thin ring for idle and a small round dot for unavailable, each drawn as 16 joined
             // segments.
@@ -1119,7 +1114,7 @@ fn push_badge_glyph(
                         point(inner, end),
                         point(inner, start),
                     ],
-                    palette::ATTENTION_IDLE,
+                    color,
                     alpha,
                 );
             }
@@ -1773,17 +1768,30 @@ fn push_session_label_surface(
     visual: SceneRect,
     state: HeaderButtonState,
 ) {
-    push_bar_widget(rectangles, visual);
     let radius = tokens::capsule_radius(visual.height);
-    if state.enabled {
-        if state.pressed {
-            rectangles.push_rounded(visual, radius, palette::SESSION_PRESSED);
-        } else if state.hovered {
-            rectangles.push_rounded(visual, radius, palette::TAB_HOVER);
-        }
-        if state.focused {
-            rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
-        }
+    rectangles.push_rounded(visual, radius, session_label_fill(state));
+    if state.enabled && state.focused {
+        rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+    }
+}
+
+fn session_label_fill(state: HeaderButtonState) -> SceneColor {
+    if state.enabled && state.pressed {
+        palette::SESSION_PRESSED
+    } else if state.enabled && state.hovered {
+        palette::TAB_HOVER
+    } else {
+        palette::TAB_IDLE
+    }
+}
+
+fn tab_fill(selected: bool, hovered: bool) -> SceneColor {
+    if selected {
+        palette::TAB_SELECTED
+    } else if hovered {
+        palette::TAB_HOVER
+    } else {
+        palette::TAB_IDLE
     }
 }
 
@@ -2900,13 +2908,10 @@ impl Renderer {
             let visual = workspace.bar_pill_rect(tab.rect, self.metrics);
             let radius = tokens::capsule_radius(visual.height);
             // Each tab state steps up from the last so that the pills stand out from the bar.
-            let fill = if tab.selected {
-                palette::TAB_SELECTED
-            } else if self.header.hovers(WorkspaceFocus::Tabs, &tab.id) {
-                palette::TAB_HOVER
-            } else {
-                palette::TAB_IDLE
-            };
+            let fill = tab_fill(
+                tab.selected,
+                self.header.hovers(WorkspaceFocus::Tabs, &tab.id),
+            );
             rectangles.push_rounded(visual, radius, fill);
             if tab.selected && focus == WorkspaceFocus::Tabs {
                 rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
@@ -2934,12 +2939,20 @@ impl Renderer {
             }
             if let Some(badge) = tab.badge {
                 self.spinners
-                    .push_badge(badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
+                    .push_badge(badge, Backing::BarPill(fill), rectangles);
             }
         }
         for badge in &workspace.edge_badges {
-            self.spinners
-                .push_badge(*badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
+            let pills = workspace.tabs.iter().map(|tab| {
+                (
+                    workspace.bar_pill_rect(tab.rect, self.metrics),
+                    tab_fill(
+                        tab.selected,
+                        self.header.hovers(WorkspaceFocus::Tabs, &tab.id),
+                    ),
+                )
+            });
+            self.spinners.push_edge_badge(*badge, pills, rectangles);
         }
         rectangles.clip = None;
         if let Some(icon) = workspace.eon_icon {
@@ -2963,16 +2976,13 @@ impl Renderer {
         if let Some(label) = &workspace.workspace_label {
             let control = WorkspaceHeaderControl::Workspaces;
             let visual = workspace.bar_pill_rect(label.rect, self.metrics);
-            push_session_label_surface(
-                rectangles,
-                visual,
-                HeaderButtonState {
-                    hovered: self.header.hovers(WorkspaceFocus::Header(control), ""),
-                    pressed: self.header.pressed_header == Some(control),
-                    focused: focus == WorkspaceFocus::Header(control),
-                    enabled: workspace.has_control(control),
-                },
-            );
+            let state = HeaderButtonState {
+                hovered: self.header.hovers(WorkspaceFocus::Header(control), ""),
+                pressed: self.header.pressed_header == Some(control),
+                focused: focus == WorkspaceFocus::Header(control),
+                enabled: workspace.has_control(control),
+            };
+            push_session_label_surface(rectangles, visual, state);
             self.push_chip_label(
                 &label.label,
                 chip_label_box(workspace, label.rect, self.metrics),
@@ -2984,8 +2994,11 @@ impl Renderer {
                 },
             );
             if let Some(badge) = label.badge {
-                self.spinners
-                    .push_badge(badge, Backing::Disc(palette::BAR_BACKGROUND), rectangles);
+                self.spinners.push_badge(
+                    badge,
+                    Backing::BarPill(session_label_fill(state)),
+                    rectangles,
+                );
             }
         }
         // Quota chips and readings share the tabs' band.
@@ -3726,7 +3739,7 @@ mod tests {
         assert_eq!(scroll_thumb(tiny, 1.0, 0.0, 300.0).height, tiny.height);
     }
 
-    /// Venus's focus color when Eon passes none (`--focus-color`), readable on the bar disc.
+    /// Venus's focus color when Eon passes none (`--focus-color`), readable on the dark bar.
     const DEFAULT_FOCUS: SceneColor = SceneColor {
         r: 0xb2,
         g: 0x07,
@@ -3746,6 +3759,17 @@ mod tests {
         SceneColor { r: 0, g: 255, b: 0 },
         SceneColor { r: 0, g: 0, b: 255 },
     ];
+
+    fn vertex_color(vertex: &[u8]) -> SceneColor {
+        let rgb = [2, 3, 4].map(|i| {
+            (f32::from_ne_bytes(vertex[i * 4..i * 4 + 4].try_into().unwrap()) * 255.0).round() as u8
+        });
+        SceneColor {
+            r: rgb[0],
+            g: rgb[1],
+            b: rgb[2],
+        }
+    }
 
     /// The ink box of `buffer` as glyphon draws it from `left` and `top`: left, top, right and
     /// bottom in physical pixels.
@@ -5079,8 +5103,11 @@ mod tests {
                     b: 255,
                 };
                 for (surface, background) in [
-                    (Backing::Translucent, palette::TERMINAL_FALLBACK),
-                    (Backing::Translucent, white),
+                    (
+                        Backing::Translucent(palette::TERMINAL_FALLBACK),
+                        palette::TERMINAL_FALLBACK,
+                    ),
+                    (Backing::Translucent(white), white),
                     (
                         Backing::Surface(palette::TERMINAL_FALLBACK),
                         palette::TERMINAL_FALLBACK,
@@ -5190,17 +5217,7 @@ mod tests {
     #[test]
     fn sidebar_rows_keep_current_and_keyboard_outlines_distinct_and_content_readable() {
         let snapshot = popup_sidebar_snapshot();
-        let vertex_color = |vertex: &[u8]| {
-            let rgb = [2, 3, 4].map(|i| {
-                (f32::from_ne_bytes(vertex[i * 4..i * 4 + 4].try_into().unwrap()) * 255.0).round()
-                    as u8
-            });
-            SceneColor {
-                r: rgb[0],
-                g: rgb[1],
-                b: rgb[2],
-            }
-        };
+
         // The approved outline stays the same on hover; 3:1 is against the sidebar background.
         assert!(contrast_ratio(DEFAULT_FOCUS, palette::CHROME_HIGHLIGHT) < 3.0);
         assert_ne!(DEFAULT_FOCUS, palette::CHROME_HIGHLIGHT);
@@ -5322,14 +5339,7 @@ mod tests {
                                     );
                                 }
                                 let outline_end = expected.bytes.len();
-                                let backing = match fill {
-                                    Some(fill) if fill != palette::CHROME_HIGHLIGHT => {
-                                        Backing::Disc(palette::BAR_BACKGROUND)
-                                    }
-                                    Some(fill) => Backing::Disc(fill),
-                                    None if current => Backing::Disc(palette::BAR_BACKGROUND),
-                                    None => surface,
-                                };
+                                let backing = fill.map_or(surface, Backing::Surface);
                                 let mut badge = RectangleBatch::new(size.width, size.height);
                                 badge.clip = Some(row.rect);
                                 Spinners::new(false, focus)
@@ -5363,20 +5373,19 @@ mod tests {
                                         "{background:?}, {text:?}"
                                     );
                                 }
-                                // Current/highlighted badges keep all fixed glyph colours readable.
-                                if current || fill.is_some() {
-                                    let disc = match backing {
-                                        Backing::Disc(color) | Backing::Surface(color) => color,
-                                        Backing::Translucent => unreachable!(),
-                                    };
-                                    for vertex in badge.bytes.chunks_exact(VERTEX_SIZE as usize) {
-                                        let color = vertex_color(vertex);
-                                        if color != disc {
-                                            assert!(
-                                                contrast_ratio(color, disc) >= 3.0,
-                                                "{state:?}: {color:?} on {disc:?}"
-                                            );
-                                        }
+                                let under = match backing {
+                                    Backing::Surface(color) | Backing::BarPill(color) => color,
+                                    Backing::Translucent(color) => {
+                                        blend_to_contrast(color, color, 1.5)
+                                    }
+                                };
+                                for vertex in badge.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                                    let color = vertex_color(vertex);
+                                    if color != under {
+                                        assert!(
+                                            contrast_ratio(color, under) >= 3.0,
+                                            "{state:?}: {color:?} on {under:?}"
+                                        );
                                     }
                                 }
                             }
@@ -5559,130 +5568,223 @@ mod tests {
     }
 
     #[test]
-    fn working_dots_take_the_focus_color_and_stay_readable_on_their_surface() {
-        use super::super::cells::contrast_ratio;
-        // The colors a badge draws in, its disc first, and the color a tick rewrites.
-        let drawn = |state, focus, backing| {
-            let mut spinners = Spinners::new(true, focus);
-            let mut rectangles = RectangleBatch::new(800, 600);
-            let badge = TabBadge {
-                state,
-                dimmed: false,
-                rect: SceneRect {
-                    width: 12.0,
-                    height: 12.0,
-                    ..SceneRect::default()
-                },
-            };
-            spinners.push_badge(badge, backing, &mut rectangles);
-            let channel = |bytes: &[u8]| {
-                (f32::from_ne_bytes(bytes.try_into().unwrap()) * 255.0).round() as u8
-            };
-            let mut colors = rectangles
-                .bytes
-                .chunks_exact(24)
-                .map(|vertex| SceneColor {
-                    r: channel(&vertex[8..12]),
-                    g: channel(&vertex[12..16]),
-                    b: channel(&vertex[16..20]),
-                })
-                .collect::<Vec<_>>();
-            colors.dedup();
-            (colors, spinners.slots.first().map(|slot| slot.color))
+    fn attention_badges_use_bare_opaque_surfaces_and_quiet_square_fallbacks() {
+        for (state, base) in [
+            (AttentionState::NeedsInput, palette::ATTENTION_NEEDS_INPUT),
+            (AttentionState::Error, palette::ATTENTION_ERROR),
+            (AttentionState::Finished, palette::ATTENTION_FINISHED),
+            (AttentionState::Working, DEFAULT_FOCUS),
+            (AttentionState::Background, DEFAULT_FOCUS),
+            (AttentionState::Idle, palette::ATTENTION_IDLE),
+            (AttentionState::Unavailable, palette::ATTENTION_IDLE),
+        ] {
+            for focus in FOCUS_COLORS {
+                let base = if matches!(state, AttentionState::Working | AttentionState::Background)
+                {
+                    focus
+                } else {
+                    base
+                };
+                for background in [
+                    palette::BAR_BACKGROUND,
+                    palette::TAB_IDLE,
+                    palette::TAB_HOVER,
+                    palette::TAB_SELECTED,
+                    palette::SESSION_PRESSED,
+                    palette::DIALOG_BACKGROUND,
+                    SceneColor {
+                        r: 119,
+                        g: 119,
+                        b: 119,
+                    },
+                    SceneColor {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                    },
+                ] {
+                    for opacity in [0.8, 1.0] {
+                        for dimmed in [false, true] {
+                            let badge = TabBadge {
+                                state,
+                                dimmed,
+                                rect: SceneRect {
+                                    width: 12.0,
+                                    height: 12.0,
+                                    ..SceneRect::default()
+                                },
+                            };
+                            let mut expected_square = RectangleBatch::new(800, 600);
+                            let under = if opacity < 1.0 {
+                                let square = blend_to_contrast(background, background, 1.5);
+                                assert_ne!(square, palette::BAR_BACKGROUND);
+                                expected_square.push_rounded(badge.rect, 3.0, square);
+                                square
+                            } else {
+                                background
+                            };
+                            let color = blend_to_contrast(base, under, 3.0);
+                            assert!(contrast_ratio(color, under) >= 3.0);
+                            let mut glyph = RectangleBatch::new(800, 600);
+                            push_badge_glyph(&mut glyph, badge, Some(0), color);
+                            let mut actual = RectangleBatch::new(800, 600);
+                            let mut spinners = Spinners::new(true, focus);
+                            spinners.push_badge(
+                                badge,
+                                Backing::card(background, opacity),
+                                &mut actual,
+                            );
+                            let offset = expected_square.bytes.len();
+                            let valid = actual.bytes.len() == offset + glyph.bytes.len()
+                                && actual.bytes.starts_with(&expected_square.bytes)
+                                && actual.bytes[offset..].chunks_exact(24).all(|vertex| {
+                                    let alpha =
+                                        f32::from_ne_bytes(vertex[20..24].try_into().unwrap());
+                                    vertex_color(vertex) == color
+                                        && (alpha == 0.0
+                                            || alpha == if dimmed { 0.45 } else { 1.0 })
+                                });
+                            assert!(
+                                valid,
+                                "{state:?}, focus={focus:?}, background={background:?}, opacity={opacity}, dimmed={dimmed}"
+                            );
+                            assert_eq!(
+                                spinners.slots.first().map(|slot| (slot.offset, slot.color)),
+                                (state == AttentionState::Working).then_some((offset, color)),
+                                "{state:?}, focus={focus:?}, background={background:?}, opacity={opacity}, dimmed={dimmed}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn overflow_badges_adapt_only_to_pills_beneath_them() {
+        let pill = SceneRect {
+            left: 10.0,
+            top: 10.0,
+            width: 100.0,
+            height: 24.0,
         };
+        let badge = TabBadge {
+            state: AttentionState::Error,
+            dimmed: false,
+            rect: SceneRect {
+                left: 40.0,
+                top: 8.0,
+                width: 12.0,
+                height: 12.0,
+            },
+        };
+        let far = SceneRect {
+            left: 200.0,
+            ..pill
+        };
+        let check = |badge, pills, color| {
+            let mut actual = RectangleBatch::new(800, 600);
+            Spinners::new(false, DEFAULT_FOCUS).push_edge_badge(badge, pills, &mut actual);
+            let mut expected = RectangleBatch::new(800, 600);
+            push_badge_glyph(&mut expected, badge, None, color);
+            assert_eq!(
+                actual.bytes, expected.bytes,
+                "only intersecting pill fills may adapt the glyph"
+            );
+        };
+        for fill in [palette::TAB_IDLE, palette::TAB_HOVER, palette::TAB_SELECTED] {
+            check(
+                badge,
+                [(pill, fill), (far, palette::TAB_SELECTED)],
+                blend_to_contrast(palette::ATTENTION_ERROR, fill, 3.0),
+            );
+        }
+        check(
+            badge,
+            [(far, palette::TAB_SELECTED); 2],
+            palette::ATTENTION_ERROR,
+        );
+        // A rounded pill's empty corner is bar, even where its bounding box intersects.
+        check(
+            TabBadge {
+                rect: SceneRect {
+                    left: 4.0,
+                    top: 4.0,
+                    ..badge.rect
+                },
+                ..badge
+            },
+            [
+                (
+                    SceneRect {
+                        height: 48.0,
+                        ..pill
+                    },
+                    palette::TAB_SELECTED,
+                ),
+                (far, palette::TAB_SELECTED),
+            ],
+            palette::ATTENTION_ERROR,
+        );
+    }
+
+    #[test]
+    fn bar_badges_contrast_with_both_the_pill_and_the_bar() {
+        for focus in FOCUS_COLORS {
+            for fill in [
+                palette::TAB_IDLE,
+                palette::TAB_HOVER,
+                palette::TAB_SELECTED,
+                palette::SESSION_PRESSED,
+            ] {
+                for state in [
+                    AttentionState::NeedsInput,
+                    AttentionState::Error,
+                    AttentionState::Finished,
+                    AttentionState::Working,
+                    AttentionState::Background,
+                ] {
+                    let badge = TabBadge {
+                        state,
+                        dimmed: false,
+                        rect: SceneRect {
+                            width: 12.0,
+                            height: 12.0,
+                            ..SceneRect::default()
+                        },
+                    };
+                    let mut rectangles = RectangleBatch::new(800, 600);
+                    Spinners::new(true, focus).push_badge(
+                        badge,
+                        Backing::BarPill(fill),
+                        &mut rectangles,
+                    );
+                    for vertex in rectangles.bytes.chunks_exact(24) {
+                        let color = vertex_color(vertex);
+                        for surface in [fill, palette::BAR_BACKGROUND] {
+                            assert!(
+                                contrast_ratio(color, surface) >= 3.0,
+                                "{state:?}, focus={focus:?}, {color:?} on {surface:?}"
+                            );
+                        }
+                        if fill == palette::TAB_SELECTED {
+                            for surface in [palette::TAB_IDLE, palette::TAB_HOVER] {
+                                assert!(contrast_ratio(color, surface) >= 3.0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn focus_color_adaptation_reaches_three_to_one_without_unnecessary_blending() {
         let gray = |value| SceneColor {
             r: value,
             g: value,
             b: value,
         };
-        let custom = SceneColor {
-            r: 0x2b,
-            g: 0xd4,
-            b: 0xff,
-        };
-        let navy = SceneColor {
-            r: 0x1a,
-            g: 0x1a,
-            b: 0x8c,
-        };
-        // On a tab's disc and on a dark opaque card a readable focus color is drawn as
-        // configured, the default included.
-        for focus in [DEFAULT_FOCUS, custom] {
-            assert_eq!(
-                drawn(
-                    AttentionState::Working,
-                    focus,
-                    Backing::Disc(palette::BAR_BACKGROUND)
-                ),
-                (vec![palette::BAR_BACKGROUND, focus], Some(focus))
-            );
-            let card = Backing::card(palette::TERMINAL_FALLBACK, 1.0);
-            assert_eq!(
-                drawn(AttentionState::Working, focus, card),
-                (vec![focus], Some(focus))
-            );
-            assert_eq!(
-                drawn(AttentionState::Background, focus, card),
-                (vec![focus], None)
-            );
-        }
-        // Elsewhere the dots blend by the least that reads at 3:1 on what is under them, and a
-        // tick rewrites that color: the default on a hovered row's highlight, navy on a dark
-        // terminal's card and on the inbox, white on a white terminal, and the default on a gray
-        // one.
-        for (focus, backing, under) in [
-            (
-                DEFAULT_FOCUS,
-                Backing::Disc(palette::CHROME_HIGHLIGHT),
-                palette::CHROME_HIGHLIGHT,
-            ),
-            (navy, Backing::card(gray(25), 1.0), gray(25)),
-            (
-                navy,
-                Backing::Surface(palette::DIALOG_BACKGROUND),
-                palette::DIALOG_BACKGROUND,
-            ),
-            (gray(255), Backing::card(gray(255), 1.0), gray(255)),
-            (DEFAULT_FOCUS, Backing::card(gray(119), 1.0), gray(119)),
-        ] {
-            let color = blend_to_contrast(focus, under, 3.0);
-            assert_ne!(color, focus, "{backing:?}");
-            assert!(contrast_ratio(color, under) >= 3.0, "{backing:?}");
-            let disc = matches!(backing, Backing::Disc(_)).then_some(under);
-            assert_eq!(
-                drawn(AttentionState::Working, focus, backing),
-                (disc.into_iter().chain([color]).collect(), Some(color)),
-                "{backing:?}"
-            );
-        }
-        // A translucent card's color depends on the desktop behind it, so working and background
-        // dots get the bar's disc; other glyphs stay bare.
-        let translucent = Backing::card(gray(255), 0.8);
-        let on_bar = blend_to_contrast(navy, palette::BAR_BACKGROUND, 3.0);
-        assert!(contrast_ratio(on_bar, palette::BAR_BACKGROUND) >= 3.0);
-        assert_eq!(
-            drawn(AttentionState::Working, navy, translucent),
-            (vec![palette::BAR_BACKGROUND, on_bar], Some(on_bar))
-        );
-        assert_eq!(
-            drawn(AttentionState::Background, navy, translucent),
-            (vec![palette::BAR_BACKGROUND, on_bar], None)
-        );
-        assert_eq!(
-            drawn(AttentionState::NeedsInput, navy, translucent),
-            (vec![palette::ATTENTION_NEEDS_INPUT], None)
-        );
-        // Other attention states keep their own colors.
-        for (state, color) in [
-            (AttentionState::NeedsInput, palette::ATTENTION_NEEDS_INPUT),
-            (AttentionState::Error, palette::ATTENTION_ERROR),
-            (AttentionState::Finished, palette::ATTENTION_FINISHED),
-        ] {
-            assert_eq!(
-                drawn(state, custom, Backing::Disc(palette::BAR_BACKGROUND)),
-                (vec![palette::BAR_BACKGROUND, color], None)
-            );
-        }
         // Any focus color, black and white included, reads at 3:1 on any surface: one that
         // already does is kept, any other blends no further than it needs, which the search over
         // increasing blends guarantees.
@@ -7024,7 +7126,7 @@ mod tests {
                         &row,
                         workspace.sidebar_list,
                         false,
-                        Backing::Translucent,
+                        Backing::Translucent(palette::TERMINAL_FALLBACK),
                         palette::TERMINAL_FALLBACK,
                         &mut RectangleBatch::new(1600, 900),
                     );

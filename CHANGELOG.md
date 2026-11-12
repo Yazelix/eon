@@ -17,6 +17,10 @@ installation, and proven contract changes.
   exempt interpreter remains a documented limit (`eon-v0gvq`).
 - CPU, RAM and disk chip percentages align to the right padding while their
   icons and chip widths stay fixed (`eon-wuau8.5`).
+- Attention badges draw directly on opaque tab, bar and sidebar/inbox surfaces,
+  with every glyph colour adapted for contrast. Translucent rows use a quiet
+  rounded square instead of the near-black disc; stale dimming is preserved
+  (`eon-wuau8.7`).
 
 - Files Enter and `eon edit` open files in the packaged Helix Editor popup,
   keeping its buffers and unsaved edits. `[editor] open_in = "pane"` selects

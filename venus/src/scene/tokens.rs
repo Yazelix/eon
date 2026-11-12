@@ -8,7 +8,7 @@ use crate::render::CellMetrics;
 
 // Radii.
 /// The radius that rounds a shape `thickness` across into a pill or a disc: tab pills, the bar's
-/// chips and controls, badge discs, the scrollback pill, and the dialog's scroll track.
+/// chips and controls, the scrollback pill, and the dialog's scroll track.
 pub(crate) const fn capsule_radius(thickness: f32) -> f32 {
     thickness / 2.0
 }
@@ -21,6 +21,11 @@ pub(crate) const fn card_radius(metrics: CellMetrics) -> f32 {
 
 /// The popup marker's rounded-square corners, snapped to physical pixel rows.
 pub(crate) const fn popup_marker_radius(size: f32) -> f32 {
+    (size / 4.0).round()
+}
+
+/// The translucent-card badge backing's rounded-square corners, snapped to physical pixels.
+pub(crate) const fn badge_backing_radius(size: f32) -> f32 {
     (size / 4.0).round()
 }
 

@@ -9,8 +9,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> SceneColor {
 }
 
 // Surfaces.
-/// The opaque chrome surface: the Eon Bar, the frame around the cards, idle bar controls, and the
-/// disc behind an attention badge on the bar.
+/// The opaque chrome surface: the Eon Bar, the frame around the cards and idle bar controls.
 pub(super) const BAR_BACKGROUND: SceneColor = rgb(10, 13, 20);
 /// The terminal background before Orbit sends one: the window with no terminal, and a card or
 /// strip whose terminal has no frame yet.
@@ -19,7 +18,7 @@ pub(super) const TERMINAL_FALLBACK: SceneColor = rgb(10, 13, 20);
 /// pane, popups, the agent sidebar and the dialog.
 pub(super) const CARD_OUTLINE: SceneColor = rgb(86, 106, 126);
 /// The fill under a hovered, pressed or keyboard-selected chrome item: sidebar rows, pane header
-/// titles and bar controls, and the disc behind a sidebar badge on such a row.
+/// titles and bar controls.
 pub(super) const CHROME_HIGHLIGHT: SceneColor = rgb(40, 54, 70);
 /// The fill under a bar control the pointer hovers.
 pub(super) const CONTROL_HOVER: SceneColor = rgb(30, 40, 54);

@@ -313,16 +313,21 @@ an explicit cursor color.
 
 `focus_color` colours the selected pane's whole outline in the selected column
 when pane frames are on, the current Agents row's outline, and the working and
-background dots of agent attention badges on tabs and in the agent sidebar.
-Where the colour would read below 3:1 contrast on what lies under the dots,
-such as a dark custom colour on the bar or a white one on a white terminal
-background, the dots blend it toward black or white just enough to reach 3:1.
-Under a translucent
-terminal background (`background_opacity` below 1), resting sidebar rows
-depend on the desktop behind the window, so their dots sit on the bar's dark
-disc, as on a tab. The 3:1 holds for a current agent's badge; a stale agent's
-badge is dimmed on purpose and reads below it. The other badges keep their
-own colours. It accepts
+background dots of agent attention badges on tabs, in the agent sidebar and
+in the attention inbox. Each attention glyph starts in its state colour;
+working and background dots start in `focus_color`. Every glyph blends toward
+black or white only as far as needed for 3:1 against its surface, before stale
+dimming. Stale badges keep their intentional 0.45 alpha and may read below 3:1.
+Badges draw no backing on opaque tabs, the bar, or opaque sidebar and inbox
+rows. Bar corner badges retain contrast against both their pill and the
+surrounding bar; overflow badges use the visible tab fills beneath them.
+Under a translucent terminal background (`background_opacity` below 1,
+default 0.8), an unhighlighted row's surface depends on the desktop behind the
+window. Its badge uses an opaque rounded square in the nominal card colour
+adapted to 1.5:1 against that colour, with the glyph adapted to 3:1 against
+the square. The square's corner radius is one quarter of the badge size,
+rounded to physical pixels. This automatic backing and contrast recipe follows
+the fixed chrome palette policy (`eon-wuau8.7`). `focus_color` accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
 invalid. The setting is omitted by default, leaving Venus's built-in focus
 colour in use. The example selects `custom:#b207fb`. F6 keyboard focus colours a framed pane title's edge span mint;

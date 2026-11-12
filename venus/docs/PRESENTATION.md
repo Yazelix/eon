@@ -528,10 +528,19 @@ on every row, adapted only as needed for 1.5:1 against the background; the
 current outline keeps its colour. Keyboard focus adds a mint one-pixel outline,
 inset one pixel on the current row so both remain visible, adapted only as
 needed for 3:1 against the row fill. Rows have no mint pressed flash. Current
-text uses the primary role, adjusted for 4.5:1 contrast; its badge keeps the
-bar's dark disc at rest. Highlighted badges use the highlight's backing, or the
-bar's disc when adapted. Accessible names
+text uses the primary role, adjusted for 4.5:1 contrast. Accessible names
 include "popup" and, for the current row, "current".
+
+Attention badges on tabs, the bar, and opaque sidebar/inbox row surfaces draw
+no backing. Each glyph colour, before stale dimming, adapts only as needed
+for 3:1 against its surface; working and background dots start in the configured
+focus colour. An unhighlighted row on a translucent terminal background uses
+an opaque rounded square in the nominal card colour adapted to 1.5:1 against
+that colour, and its glyph adapts to 3:1 against the square. Square corners
+have a radius of one quarter of the badge size, rounded to physical pixels.
+Stale glyphs keep their intentional 0.45 alpha after colour adaptation.
+Bar corner badges retain contrast against both their pill and the surrounding
+bar; overflow badges adapt against the visible tab fills beneath them.
 
 Sidebar tab headings use a dimmed number followed by a primary name, each
 adapted to retain 4.5:1 contrast against the sidebar's terminal background.
