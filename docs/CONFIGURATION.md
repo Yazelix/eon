@@ -254,9 +254,13 @@ running supervisor; updating the installation does not change it.
 
 Header widgets and the session label use the unselected tab's filled capsule,
 without resting outlines. CPU, RAM and disk percentages share the interface
-font with tab labels and quota chips; each keeps a fixed slot sized for its
-widest value. The icon and value stay left-aligned. The Shortcuts button is a
-plain `?` with the other bar controls' hover and mint keyboard-focus treatment.
+font with tab labels and quota chips; each reserves its widest value through
+99%. Only 100% widens a chip by the extra digit and reflows it and the chips
+to its left. Falling below 100% shrinks that chip and reverses the reflow.
+Each icon keeps its left inset inside its chip. Its percentage aligns to the
+right inset, leaving at least 2 logical pixels between icon and percentage.
+The Shortcuts button is a plain `?` with the other bar controls' hover and
+mint keyboard-focus treatment.
 These fills and glyphs follow the fixed chrome palette and typography policy;
 there is no separate widget style setting. Clock and version keep their
 bottom-corner monospace text and cyan colour.

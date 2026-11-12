@@ -654,7 +654,7 @@ pub struct DiskUse {
     /// The accessible value: every fact in one sentence.
     pub(crate) description: String,
     pub(crate) load: Load,
-    percent: u64,
+    pub(crate) percent: u64,
 }
 
 impl DiskUse {

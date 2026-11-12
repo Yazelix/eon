@@ -2279,12 +2279,11 @@ mod tests {
                 for (_, label) in &labels {
                     assert_eq!(label.rect.left, left);
                     left = label.rect.right();
-                    // The injected interface measure reserves four characters for percentages.
+                    // Ordinary readings reserve three interface characters, through 99%.
                     assert_eq!(
                         label.rect.width,
-                        metrics.font_size
-                            + crate::scene::tokens::icon_gap(metrics)
-                            + 40.0 * metrics.scale
+                        crate::scene::tokens::reading_icon_reserve(metrics)
+                            + 30.0 * metrics.scale
                             + metrics.padding * 2.0
                     );
                 }

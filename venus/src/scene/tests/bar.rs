@@ -2248,11 +2248,8 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         shown.tooltip,
         "Disk \u{b7} /\n50.0 GiB free of 1000.0 GiB\nNearly full"
     );
-    // The injected text measure reserves 40 pixels for the widest percentage.
-    assert_eq!(
-        shown.rect.width,
-        metrics.font_size + tokens::icon_gap(metrics) + 40.0 + metrics.padding * 2.0
-    );
+    // Default icon 16 + gap 2 + injected two-digit percentage 30 + padding 24.
+    assert_eq!(shown.rect.width, 72.0);
     assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
     assert_eq!(
         scene.hit_test(
@@ -2443,31 +2440,36 @@ fn eon_icon_leads_the_bar_and_survives_tab_overflow() {
 }
 
 #[test]
-fn reading_slots_keep_the_widest_interface_value_without_moving_neighbours() {
+fn reading_slots_only_grow_and_reflow_at_one_hundred_percent() {
     let snapshot = one_pane_snapshot();
     for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
-        // A proportional face can make a two-digit reading wider than 100%.
+        // Inject a widest two-digit value and one extra 11-pixel digit at 100%.
         let widest = 53.5 * scale as f32;
-        let reserved =
-            metrics.font_size + tokens::icon_gap(metrics) + widest + metrics.padding * 2.0;
         for logical_width in [400, 900, 1800] {
             let mut previous = None;
-            for percent in [9, 88, 100] {
+            for readings in [
+                [8, 61, 67],
+                [61, 8, 99],
+                [100, 61, 67],
+                [8, 100, 67],
+                [8, 61, 100],
+            ] {
+                let [cpu_percent, ram_percent, disk_percent] = readings;
                 let cpu = crate::CpuUse {
-                    percent,
-                    label: format!("\u{f4bc} {percent}%"),
+                    percent: cpu_percent,
+                    label: format!("\u{f4bc} {cpu_percent}%"),
                     tooltip: "CPU".into(),
                     description: "CPU".into(),
                     load: Load::Normal,
                 };
                 let ram = crate::RamUse::parse(&format!(
                     "MemTotal: 100000 kB\nMemAvailable: {} kB\n",
-                    (100 - percent) * 1000
+                    (100 - ram_percent) * 1000
                 ))
                 .unwrap()
                 .rated(crate::LoadLevels::default());
-                let disk = DiskUse::of(100, 100 - percent, 100 - percent, 4096, "/")
+                let disk = DiskUse::of(100, 100 - disk_percent, 100 - disk_percent, 4096, "/")
                     .unwrap()
                     .rated(crate::LoadLevels::default());
                 let scene = WorkspaceScene::from_snapshot_with_bar(
@@ -2482,11 +2484,13 @@ fn reading_slots_keep_the_widest_interface_value_without_moving_neighbours() {
                     metrics,
                     0.0,
                     0.0,
-                    |_, text| {
+                    |kind, text| {
                         (
                             text.to_owned(),
-                            if text == "100%" {
+                            if kind == HeaderText::Reading {
                                 widest
+                            } else if text == "100%" {
+                                64.5 * scale as f32
                             } else {
                                 text.chars().count() as f32 * 10.0 * scale as f32
                             },
@@ -2494,9 +2498,13 @@ fn reading_slots_keep_the_widest_interface_value_without_moving_neighbours() {
                     },
                     None,
                 );
-                let slots = [&scene.cpu, &scene.ram, &scene.disk].map(|label| {
-                    label.as_ref().map(|label| {
-                        assert_eq!(label.rect.width, reserved);
+                let labels = [&scene.cpu, &scene.ram, &scene.disk];
+                let slots: [_; 3] = std::array::from_fn(|index| {
+                    labels[index].as_ref().map(|label| {
+                        if scale == 1.0 {
+                            let width = if readings[index] == 100 { 106.5 } else { 95.5 };
+                            assert_eq!(label.rect.width, width);
+                        }
                         label.rect
                     })
                 });
@@ -2506,10 +2514,32 @@ fn reading_slots_keep_the_widest_interface_value_without_moving_neighbours() {
                     scene.controls.each_ref().map(|control| control.rect),
                     scene.drag_region,
                 );
-                if let Some(previous) = &previous {
-                    assert_eq!(&positions, previous);
+                if readings.iter().all(|percent| *percent < 100) {
+                    if let Some(previous) = &previous {
+                        assert_eq!(&positions, previous);
+                    }
+                    previous = Some(positions);
+                } else if logical_width == 1800 {
+                    let previous = previous.as_ref().unwrap();
+                    for index in 0..3 {
+                        let before = previous.0[index].unwrap();
+                        let after = slots[index].unwrap();
+                        let growth = if readings[index] == 100 {
+                            11.0 * scale as f32
+                        } else {
+                            0.0
+                        };
+                        assert!((after.width - before.width - growth).abs() < 0.01);
+                        let wider = readings[index..]
+                            .iter()
+                            .filter(|percent| **percent == 100)
+                            .count();
+                        let shift = wider as f32 * 11.0 * scale as f32;
+                        assert!((after.left - (before.left - shift)).abs() < 0.01);
+                    }
+                    assert_eq!(positions.1, previous.1);
+                    assert_eq!(positions.2, previous.2);
                 }
-                previous = Some(positions);
                 if logical_width == 1800 {
                     assert!(slots.iter().all(Option::is_some));
                 }

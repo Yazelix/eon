@@ -1815,7 +1815,7 @@ fn push_bar_control_surface(
 }
 
 pub(super) fn measure_reading_width(fonts: &mut FontSystem, metrics: CellMetrics) -> f32 {
-    (0..=100)
+    (0..100)
         .map(|percent| fit_header_text(fonts, metrics, &format!("{percent}%"), f32::INFINITY).1)
         .fold(0.0, f32::max)
 }
@@ -3091,7 +3091,7 @@ impl Renderer {
                 DrawStyleKind::Monospace,
                 label.rect,
             );
-            let value_left = left + self.metrics.font_size + tokens::icon_gap(self.metrics);
+            let value_left = left + tokens::reading_icon_reserve(self.metrics);
             let first_text = self.text.len();
             self.push_chip_label(
                 value.trim_start(),
@@ -6080,6 +6080,64 @@ mod tests {
     }
 
     #[test]
+    fn reading_icons_fit_compact_reservation_across_terminal_fonts() {
+        for family in [None, Some("DejaVu Sans Mono")] {
+            for size in [6.0, 16.0, 96.0] {
+                let mut fonts = FontSetup::new(&FontSettings {
+                    family: family.map(str::to_owned),
+                    size,
+                    ..FontSettings::default()
+                })
+                .unwrap();
+                let symbol_face = fonts
+                    .font_system
+                    .db()
+                    .query(&fontdb::Query {
+                        families: &[Family::Name(NERD_FONT_FAMILY)],
+                        ..Default::default()
+                    })
+                    .expect("the packaged symbol face");
+                for scale in [1.0, 1.25, 2.0] {
+                    let metrics = fonts.metrics(scale);
+                    let cell = fitted_cell_font(
+                        &mut fonts.font_system,
+                        metrics,
+                        fonts.family,
+                        fonts.configured,
+                    );
+                    for icon in [
+                        crate::system::CPU_ICON,
+                        crate::system::RAM_ICON,
+                        crate::system::DISK_ICON,
+                    ] {
+                        let buffer = shape_styled_text(
+                            &mut fonts.font_system,
+                            metrics,
+                            cell,
+                            &icon.to_string(),
+                            1000.0,
+                            metrics.height,
+                            DrawStyleKind::Monospace,
+                        );
+                        let run = buffer.layout_runs().next().unwrap();
+                        assert!(
+                            run.glyphs
+                                .iter()
+                                .all(|glyph| glyph.glyph_id != 0 && glyph.font_id == symbol_face)
+                        );
+                        let ink = drawn_ink(&mut fonts.font_system, &buffer, 0.0, 0.0);
+                        assert!(ink.2 > ink.0);
+                        assert!(
+                            (ink.2 as f32) <= metrics.font_size,
+                            "{icon} at {family:?}, size {size}, scale {scale}: ink {ink:?} leaves its em-wide icon slot"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn readings_keep_bundled_symbol_attrs_and_interface_percentage_widths() {
         // No host font discovery: the explicit database contains one known sans file.
         // Symbols need their named attributes even when that face is absent from a test DB.
@@ -6113,7 +6171,7 @@ mod tests {
                 }
                 let widest = measure_reading_width(&mut fonts, metrics);
                 let mut measured_max: f32 = 0.0;
-                for percent in 0..=100 {
+                for percent in 0..100 {
                     let value = format!("{percent}%");
                     let buffer = shape_styled_text(
                         &mut fonts,
@@ -6134,6 +6192,9 @@ mod tests {
                     measured_max = measured_max.max(run.line_w);
                 }
                 assert_eq!(measured_max, widest);
+                let full = fit_header_text(&mut fonts, metrics, "100%", f32::INFINITY).1;
+                let digit = fit_header_text(&mut fonts, metrics, "0", f32::INFINITY).1;
+                assert!((full - widest - digit).abs() < 0.01);
             }
         }
     }
@@ -6226,21 +6287,30 @@ mod tests {
                 renderer.resize(size, scale);
                 let metrics = renderer.metrics();
                 let mut previous = None;
-                for percent in [5, 50, 100] {
+                for readings in [
+                    [8, 61, 67],
+                    [61, 8, 99],
+                    [8, 61, 100],
+                    [61, 100, 8],
+                    [100, 8, 61],
+                    [100, 100, 100],
+                ] {
+                    let [cpu_percent, ram_percent, disk_percent] = readings;
                     let cpu = crate::CpuUse {
-                        percent,
-                        label: format!("{} {percent}%", crate::system::CPU_ICON),
+                        percent: cpu_percent,
+                        label: format!("{} {cpu_percent}%", crate::system::CPU_ICON),
                         tooltip: "CPU".into(),
                         description: "CPU".into(),
                         load: Load::Normal,
                     };
                     let ram = crate::RamUse::parse(&format!(
                         "MemTotal: 100000 kB\nMemAvailable: {} kB\n",
-                        (100 - percent) * 1000
+                        (100 - ram_percent) * 1000
                     ))
                     .unwrap();
                     let disk =
-                        crate::DiskUse::of(100, 100 - percent, 100 - percent, 4096, "/").unwrap();
+                        crate::DiskUse::of(100, 100 - disk_percent, 100 - disk_percent, 4096, "/")
+                            .unwrap();
                     let workspace = WorkspaceScene::from_snapshot_with_bar(
                         &snapshot,
                         EonBar {
@@ -6257,6 +6327,7 @@ mod tests {
                             crate::HeaderText::Reading => {
                                 (text.to_owned(), renderer.reading_width())
                             }
+                            crate::HeaderText::Fact => renderer.measure_header_text(text),
                             _ => renderer.fit_tab_text(text),
                         },
                         None,
@@ -6272,8 +6343,12 @@ mod tests {
                         &title_tabs,
                         &pane_tabs,
                     );
-                    let positions = [&workspace.cpu, &workspace.ram, &workspace.disk].map(|chip| {
-                        let chip = chip.as_ref().expect("room for all three reading chips");
+                    let chips = [&workspace.cpu, &workspace.ram, &workspace.disk];
+                    let positions: [_; 3] = std::array::from_fn(|index| {
+                        let chip = chips[index]
+                            .as_ref()
+                            .expect("room for all three reading chips");
+                        let percent = readings[index];
                         let icon = chip.label.chars().next().unwrap().to_string();
                         let index = renderer
                             .text
@@ -6291,7 +6366,31 @@ mod tests {
                         assert_eq!(line.text, format!("{percent}%"));
                         let right = value.left + line.line_w;
                         let padded_right = chip.rect.right() - metrics.padding;
-                        let value_left = icon.left + metrics.font_size + tokens::icon_gap(metrics);
+                        let value_left = icon.left + tokens::reading_icon_reserve(metrics);
+                        let icon_width = icon.buffer.layout_runs().next().unwrap().line_w;
+                        let gap = (value.left - icon.left - icon_width) / scale as f32;
+                        let bound = if percent < 10 { 13.0 } else { 3.0 };
+                        assert!(
+                            gap <= bound + 0.01,
+                            "{percent}% at scale {scale}: gap {gap}, bound {bound}"
+                        );
+                        let icon_ink = drawn_ink(
+                            &mut renderer.fonts.font_system,
+                            &icon.buffer,
+                            icon.left,
+                            icon.top,
+                        );
+                        let value_ink = drawn_ink(
+                            &mut renderer.fonts.font_system,
+                            &value.buffer,
+                            value.left,
+                            value.top,
+                        );
+                        let ink_gap = value_ink.0 - icon_ink.2;
+                        assert!(
+                            (ink_gap as f32) >= 2.0 * scale as f32 - 1.0,
+                            "{percent}% at scale {scale}: ink gap {ink_gap} below minimum"
+                        );
                         assert!(
                             (right - padded_right).abs() < 0.01,
                             "{percent}% at scale {scale}: right {right}, expected {padded_right}"
@@ -6302,16 +6401,21 @@ mod tests {
                             "value overlaps the icon gap"
                         );
                         assert_eq!(value.bound_left, (value_left - 0.5).ceil() as i32);
-                        if percent == 100 {
-                            // In packaged DejaVu Sans, 100% fills the reserved percentage slot.
+                        if percent >= 10 {
+                            // Two digits fill the ordinary slot; 100% fills the wider slot.
                             assert!((value.left - value_left).abs() < 0.01);
                         }
                         (chip.rect, icon.left, padded_right)
                     });
-                    if let Some(previous) = previous {
-                        assert_eq!(positions, previous, "reading changes must not move chips");
+                    if readings.iter().all(|percent| *percent < 100) {
+                        if let Some(previous) = previous {
+                            assert_eq!(
+                                positions, previous,
+                                "readings below 100% must not move chips"
+                            );
+                        }
+                        previous = Some(positions);
                     }
-                    previous = Some(positions);
                 }
             }
             renderer.resize(PhysicalSize::new(1600, 900), 1.0);
@@ -6571,6 +6675,13 @@ mod tests {
                         .create_window(Window::default_attributes())
                         .unwrap(),
                 );
+                let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
+                fonts
+                    .set_header_font_file(std::path::Path::new(
+                        &std::env::var_os("EON_VENUS_TEST_SANS_FONT")
+                            .expect("run in nix develop with the exact packaged sans fixture"),
+                    ))
+                    .unwrap();
                 let mut renderer = pollster::block_on(Renderer::new(
                     window,
                     event_loop,
@@ -6589,7 +6700,7 @@ mod tests {
                     2,
                     true,
                     None,
-                    FontSetup::resolve(&FontSettings::default(), test_sans()).unwrap(),
+                    fonts,
                 ))
                 .unwrap();
                 let snapshot = Snapshot {

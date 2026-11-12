@@ -18,6 +18,9 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 
 - Linux dead-key sequences such as Shift+6 then e under `us+intl` type only
   the composed character in kitty-protocol programs (`eon-5si0a`).
+- CPU, RAM and disk chips reserve `99%`, bringing common readings closer to
+  their icons. Only 100% widens a chip and reflows it and the chips to its left;
+  icons keep their left inset (`eon-lfz2u`).
 - Packaged Helix uses carbonfox, soft wrapping, a bufferline for multiple
   buffers, cursorline, colored modes, an insert bar cursor and indent guides.
   These nova-helix defaults sit below user and trusted workspace settings;

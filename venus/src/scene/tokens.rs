@@ -91,6 +91,11 @@ pub(crate) const fn icon_gap(metrics: CellMetrics) -> f32 {
     metrics.padding / 2.0
 }
 
+/// The bundled reading icon's em and its compact gap before the percentage.
+pub(crate) const fn reading_icon_reserve(metrics: CellMetrics) -> f32 {
+    metrics.font_size + metrics.padding / 6.0
+}
+
 /// How far a hint keycap's hover area reaches past the keycap on each side.
 pub(crate) const fn hint_hover_reach(metrics: CellMetrics) -> f32 {
     metrics.padding / 2.0

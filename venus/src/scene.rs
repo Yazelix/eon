@@ -758,7 +758,7 @@ pub enum HeaderText<'a> {
     Tab(&'a str),
     /// An exact Eon Bar fact.
     Fact,
-    /// The widest interface-font percentage, cached for the renderer typography and scale.
+    /// The widest percentage below 100%, cached for the renderer typography and scale.
     Reading,
     /// Text fitted to at most this many pixels.
     Fit(f32),
@@ -3947,11 +3947,9 @@ impl WorkspaceScene {
         // readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| quotas.len() == quota_count && shown(item);
-        // The percentage width is measured once per renderer typography and scale.
-        let reading_width = metrics.font_size
-            + tokens::icon_gap(metrics)
-            + header_text(HeaderText::Reading, "100%").1
-            + metrics.padding * 2.0;
+        let value_width = header_text(HeaderText::Reading, "99%").1;
+        // Cache 100% too, so measurement replay can handle reaching it without a cache miss.
+        let full_value_width = header_text(HeaderText::Fact, "100%").1.max(value_width);
         let mut labels = [
             bar.cpu.filter(|_| reading(BarItem::Cpu)).map(|cpu| {
                 (
@@ -3959,6 +3957,7 @@ impl WorkspaceScene {
                     cpu.tooltip.clone(),
                     cpu.description.clone(),
                     cpu.load,
+                    cpu.percent,
                 )
             }),
             bar.ram.filter(|_| reading(BarItem::Ram)).map(|ram| {
@@ -3967,6 +3966,7 @@ impl WorkspaceScene {
                     ram.tooltip.clone(),
                     ram.description.clone(),
                     ram.load,
+                    ram.percent,
                 )
             }),
             bar.disk.filter(|_| reading(BarItem::Disk)).map(|disk| {
@@ -3975,21 +3975,30 @@ impl WorkspaceScene {
                     disk.tooltip.clone(),
                     disk.description.clone(),
                     disk.load,
+                    disk.percent,
                 )
             }),
         ]
         .map(|label| {
-            label.map(|(label, tooltip, description, load)| WorkspaceLabel {
-                rect: SceneRect {
-                    width: reading_width,
-                    height: tab_height,
-                    ..SceneRect::default()
+            label.map(
+                |(label, tooltip, description, load, percent)| WorkspaceLabel {
+                    rect: SceneRect {
+                        width: tokens::reading_icon_reserve(metrics)
+                            + if percent == 100 {
+                                full_value_width
+                            } else {
+                                value_width
+                            }
+                            + metrics.padding * 2.0,
+                        height: tab_height,
+                        ..SceneRect::default()
+                    },
+                    label,
+                    tooltip,
+                    description,
+                    load,
                 },
-                label,
-                tooltip,
-                description,
-                load,
-            })
+            )
         });
         // The first reading to show before Shortcuts also takes the space before its button,
         // unless a quota chip already took it.
