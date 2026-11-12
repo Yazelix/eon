@@ -8,3 +8,4 @@ publish = false
 libc = "=0.2.189"
 libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs.git", rev = "9b598d6528c08c013407052767bb2e885ba869ba" }
 orbit-protocol = { path = "crates/protocol" }
+rustix = { version = "=1.1.4", default-features = false, features = ["event", "fs", "net", "param", "process", "std", "termios", "time"] }

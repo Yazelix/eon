@@ -434,7 +434,7 @@ impl Orbit {
             u16::try_from(u32::from(cells).saturating_mul(cell)).unwrap_or(u16::MAX)
         };
         platform::set_window_size(
-            self.master.as_raw_fd(),
+            &self.master,
             size.cols,
             size.rows,
             pixels(size.cols, size.cell_width),
@@ -830,7 +830,7 @@ impl Orbit {
 
     /// The terminal's foreground process group, if it has one.
     pub(crate) fn foreground_group(&self) -> Option<platform::pid_t> {
-        platform::foreground_group(self.master.as_raw_fd())
+        platform::foreground_group(&self.master)
     }
 
     /// Whether the direct child's own group leads the terminal's foreground,

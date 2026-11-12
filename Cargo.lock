@@ -3515,6 +3515,7 @@ dependencies = [
  "libc",
  "libghostty-vt",
  "orbit-protocol",
+ "rustix 1.1.4",
 ]
 
 [[package]]

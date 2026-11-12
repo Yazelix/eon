@@ -41,24 +41,25 @@ use std::{
     fs::File,
     io::{self, Read, Write},
     os::{
-        fd::{AsRawFd, IntoRawFd, RawFd},
+        fd::{AsFd, AsRawFd, BorrowedFd},
         unix::{net::UnixStream, process::CommandExt},
     },
     path::Path,
     process::{Child, Command, ExitStatus},
-    sync::atomic::{AtomicI32, Ordering},
+    rc::Rc,
+    sync::{
+        OnceLock,
+        atomic::{AtomicI32, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
-/// The worker's decision pipe, watched in every wait: it becomes readable
-/// between questions only when the worker has died.
-static WORKER: AtomicI32 = AtomicI32::new(-1);
 /// The termination signal the host received, or 0.
 static TERMINATION_SIGNAL: AtomicI32 = AtomicI32::new(0);
 /// Both ends of the pipe a termination signal writes to. Every wait watches
 /// the read end, so a signal that lands just before a wait still ends it.
-static SIGNAL_READ: AtomicI32 = AtomicI32::new(-1);
+static SIGNAL_PIPE: OnceLock<(File, File)> = OnceLock::new();
 static SIGNAL_WRITE: AtomicI32 = AtomicI32::new(-1);
 
 extern "C" fn note_termination(number: c_int) {
@@ -68,14 +69,13 @@ extern "C" fn note_termination(number: c_int) {
 
 /// A terminated host contains the child and removes the socket pathname.
 fn install_termination_handlers() -> io::Result<()> {
-    if SIGNAL_READ.load(Ordering::Relaxed) == -1 {
-        // Both ends live for the whole process.
-        let (read, write) = platform::pipe(true)?;
-        SIGNAL_READ.store(read.into_raw_fd(), Ordering::Relaxed);
-        SIGNAL_WRITE.store(write.into_raw_fd(), Ordering::Relaxed);
+    if SIGNAL_PIPE.get().is_none() {
+        let _ = SIGNAL_PIPE.set(platform::pipe(true)?);
     }
+    let (read, write) = SIGNAL_PIPE.get().unwrap();
+    SIGNAL_WRITE.store(write.as_raw_fd(), Ordering::Relaxed);
     // A session starts with no termination pending.
-    platform::drain(SIGNAL_READ.load(Ordering::Relaxed));
+    platform::drain(read);
     // SAFETY: The handler only writes an atomic integer and one byte to a
     // pipe.
     unsafe { platform::on_termination(note_termination) }
@@ -218,7 +218,7 @@ struct Bounds {
 struct Bend {
     worker: Child,
     facts: File,
-    decisions: File,
+    decisions: Rc<File>,
     unread: Vec<u8>,
     /// One read's buffer, as large as a Linux pipe's default capacity, so
     /// one read takes everything the worker has written.
@@ -242,7 +242,7 @@ impl Bend {
         Ok(Self {
             worker,
             facts,
-            decisions,
+            decisions: Rc::new(decisions),
             unread: Vec::new(),
             chunk: vec![0; 1 << 16],
         })
@@ -257,7 +257,7 @@ impl Bend {
     /// leaves the answer incomplete is checked, so a worker that keeps
     /// writing without finishing its answer is cut off too.
     fn line(&mut self, deadline: Instant) -> io::Result<String> {
-        let pipe = self.decisions.as_raw_fd();
+        let pipe = self.decisions.as_fd();
         loop {
             terminated()?;
             if let Some(end) = self.unread.iter().position(|&byte| byte == b'\n') {
@@ -265,8 +265,8 @@ impl Bend {
                 line.pop();
                 return String::from_utf8(line).map_err(|_| protocol());
             }
-            if poll_fds(&[(pipe, platform::POLLIN)], Some(deadline))?[0] != 0 {
-                match self.decisions.read(&mut self.chunk) {
+            if poll_fds(&[(Some(pipe), platform::POLLIN)], None, Some(deadline))?[0] != 0 {
+                match self.decisions.as_ref().read(&mut self.chunk) {
                     Ok(0) => return Err(io::Error::from_raw_os_error(libc::EPIPE)),
                     Ok(read) => self.unread.extend_from_slice(&self.chunk[..read]),
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -350,14 +350,17 @@ impl Bend {
 /// check for termination, and a worker that died ends it with EPIPE. The wait
 /// for the worker's answer passes the decision pipe in `fds`, where being
 /// readable means an answer.
-fn poll_fds(fds: &[(RawFd, i16)], deadline: Option<Instant>) -> io::Result<Vec<i16>> {
-    let worker = WORKER.load(Ordering::Relaxed);
-    // poll skips a negative descriptor.
-    let worker = if fds.iter().any(|&(fd, _)| fd == worker) {
-        -1
-    } else {
-        worker
-    };
+fn poll_fds(
+    fds: &[(Option<BorrowedFd<'_>>, i16)],
+    worker: Option<&File>,
+    deadline: Option<Instant>,
+) -> io::Result<Vec<i16>> {
+    let worker = worker
+        .filter(|worker| {
+            !fds.iter()
+                .any(|&(fd, _)| fd.is_some_and(|fd| fd.as_raw_fd() == worker.as_raw_fd()))
+        })
+        .map(AsFd::as_fd);
     let timeout = deadline.map_or(-1, |deadline| {
         i32::try_from(
             deadline
@@ -368,7 +371,10 @@ fn poll_fds(fds: &[(RawFd, i16)], deadline: Option<Instant>) -> io::Result<Vec<i
     });
     let ready = platform::poll(
         fds.iter().copied().chain([
-            (SIGNAL_READ.load(Ordering::Relaxed), platform::POLLIN),
+            (
+                SIGNAL_PIPE.get().map(|(read, _)| read.as_fd()),
+                platform::POLLIN,
+            ),
             (worker, platform::POLLIN),
         ]),
         timeout,
@@ -389,8 +395,13 @@ fn poll_fds(fds: &[(RawFd, i16)], deadline: Option<Instant>) -> io::Result<Vec<i
     Ok(revents)
 }
 
-fn wait_fd(fd: RawFd, events: i16, deadline: Option<Instant>) -> io::Result<()> {
-    poll_fds(&[(fd, events)], deadline).map(drop)
+fn wait_fd(
+    fd: BorrowedFd<'_>,
+    events: i16,
+    worker: Option<&File>,
+    deadline: Option<Instant>,
+) -> io::Result<()> {
+    poll_fds(&[(Some(fd), events)], worker, deadline).map(drop)
 }
 
 fn terminated() -> io::Result<()> {
@@ -470,6 +481,8 @@ impl HistoryCompression {
 
 struct Host {
     bounds: Bounds,
+    /// The worker's decision pipe, also watched between questions for its death.
+    worker: Option<Rc<File>>,
     listener: Listener,
     orbit: Orbit,
     /// The attached interactive client.
@@ -550,6 +563,7 @@ impl Host {
         bench_trace("ready_published", "");
         Ok(Self {
             bounds,
+            worker: None,
             listener,
             orbit,
             client: None,
@@ -822,7 +836,7 @@ impl Host {
                 };
                 sources.push((
                     Source::ManagementConnection,
-                    connection.stream.as_raw_fd(),
+                    Some(connection.stream.as_fd()),
                     events,
                 ));
                 timers.push((Source::ManagementDeadline, connection.deadline()));
@@ -831,7 +845,7 @@ impl Host {
             if management.incoming.is_none() {
                 sources.push((
                     Source::ManagementListener,
-                    management.listener.listener.as_raw_fd(),
+                    Some(management.listener.listener.as_fd()),
                     platform::POLLIN,
                 ));
             }
@@ -840,7 +854,7 @@ impl Host {
             Some(client) => {
                 sources.push((
                     Source::Client,
-                    client.stream.as_raw_fd(),
+                    Some(client.stream.as_fd()),
                     client.wait_events(),
                 ));
                 if client.half_closed() {
@@ -853,11 +867,15 @@ impl Host {
             None => self.probe.set(None),
         }
         if self.pty_open {
-            sources.push((Source::Pty, self.orbit.master.as_raw_fd(), pty_events));
+            sources.push((Source::Pty, Some(self.orbit.master.as_fd()), pty_events));
         }
         timers.push((Source::Hold, self.orbit.hold.deadline()));
         for (peer, deadline) in &self.closing {
-            sources.push((Source::Closing, peer.stream.as_raw_fd(), platform::POLLOUT));
+            sources.push((
+                Source::Closing,
+                Some(peer.stream.as_fd()),
+                platform::POLLOUT,
+            ));
             timers.push((Source::Closing, deadline.deadline()));
         }
         // The observer is read for its close or a message it may not send,
@@ -869,10 +887,10 @@ impl Host {
                 } else {
                     platform::POLLOUT
                 };
-            sources.push((Source::Observer, observer.stream.as_raw_fd(), events));
+            sources.push((Source::Observer, Some(observer.stream.as_fd()), events));
         }
         if let Some(peer) = &self.peer {
-            sources.push((Source::Peer, peer.stream.as_raw_fd(), platform::POLLIN));
+            sources.push((Source::Peer, Some(peer.stream.as_fd()), platform::POLLIN));
             timers.push((
                 Source::PeerDeadline,
                 self.peer_deadline.as_ref().and_then(Timer::deadline),
@@ -883,7 +901,7 @@ impl Host {
         if self.crowded.is_none() {
             sources.push((
                 Source::Listener,
-                self.listener.listener.as_raw_fd(),
+                Some(self.listener.listener.as_fd()),
                 platform::POLLIN,
             ));
         }
@@ -905,10 +923,10 @@ impl Host {
             .compression
             .deadline(&self.orbit.terminal, Instant::now())
             .map_or(deadline, |at| deadline.min(at));
-        let mut revents = poll_fds(&fds, Some(deadline))?;
+        let mut revents = poll_fds(&fds, self.worker.as_deref(), Some(deadline))?;
         let now = Instant::now();
         for &(source, at) in &armed {
-            sources.push((source, -1, 0));
+            sources.push((source, None, 0));
             revents.push(if now >= at { platform::POLLIN } else { 0 });
         }
         let Some(index) = next_ready(&revents, self.turn) else {
@@ -1109,8 +1127,13 @@ impl Host {
         let mut peer = self.peer.take().ok_or_else(protocol)?;
         loop {
             match peer.send_role(Role::Metadata) {
-                Ok(Step::Blocked(fd)) => {
-                    wait_fd(fd, platform::POLLOUT, None)?;
+                Ok(Step::Blocked(_)) => {
+                    wait_fd(
+                        peer.stream.as_fd(),
+                        platform::POLLOUT,
+                        self.worker.as_deref(),
+                        None,
+                    )?;
                     terminated()?;
                 }
                 Ok(Step::Done) => {
@@ -1679,8 +1702,13 @@ impl Host {
         let mut client = self.peer.take().ok_or_else(protocol)?;
         client.output_bound = self.bounds.output_bytes as usize;
         client.resources.bound = self.bounds.resource_bytes as usize;
-        while let Step::Blocked(fd) = client.send_role(Role::Interactive)? {
-            wait_fd(fd, platform::POLLOUT, None)?;
+        while let Step::Blocked(_) = client.send_role(Role::Interactive)? {
+            wait_fd(
+                client.stream.as_fd(),
+                platform::POLLOUT,
+                self.worker.as_deref(),
+                None,
+            )?;
             terminated()?;
         }
         self.orbit.extractor.attach();
@@ -1718,11 +1746,16 @@ impl Host {
         }
         if let Some(mut client) = self.client.take() {
             let deadline = Instant::now() + Duration::from_millis(self.bounds.finish_ms.into());
-            while let Step::Blocked(fd) = client.send_exited(status)? {
+            while let Step::Blocked(_) = client.send_exited(status)? {
                 if Instant::now() >= deadline {
                     break;
                 }
-                wait_fd(fd, platform::POLLOUT, Some(deadline))?;
+                wait_fd(
+                    client.stream.as_fd(),
+                    platform::POLLOUT,
+                    self.worker.as_deref(),
+                    Some(deadline),
+                )?;
             }
         }
         self.finish_observer(status);
@@ -1758,7 +1791,10 @@ impl Host {
                 return;
             }
             let timeout = i32::try_from(left.as_millis().max(1)).unwrap_or(i32::MAX);
-            let _ = platform::poll([(observer.stream.as_raw_fd(), platform::POLLOUT)], timeout);
+            let _ = platform::poll(
+                [(Some(observer.stream.as_fd()), platform::POLLOUT)],
+                timeout,
+            );
             if observer.flush_observer().is_err() {
                 return;
             }
@@ -1811,12 +1847,12 @@ impl Host {
             }
             child
         };
-        if hang_up(&self.orbit, platform::SIGHUP).is_ok()
+        if hang_up(&self.orbit, platform::Signal::HUP).is_ok()
             && reaped_by(&mut self.orbit, Instant::now() + Duration::from_millis(500))
         {
             return Ok(true);
         }
-        let killed = hang_up(&self.orbit, platform::SIGKILL);
+        let killed = hang_up(&self.orbit, platform::Signal::KILL);
         let reaped = reaped_by(&mut self.orbit, Instant::now() + Duration::from_secs(2));
         if !reaped {
             killed?;
@@ -1867,7 +1903,6 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
     bench_trace("worker_spawn_start", "");
     let mut bend = Bend::spawn(worker, &WORKER_ARGUMENTS)?;
     bench_trace("worker_spawned", "");
-    WORKER.store(bend.decisions.as_raw_fd(), Ordering::Relaxed);
     let opened = bend.bounds().and_then(|bounds| {
         bench_trace("worker_bounds", "");
         Host::open(bounds, serve)
@@ -1885,6 +1920,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
             return Err(error);
         }
     };
+    host.worker = Some(Rc::clone(&bend.decisions));
     match host.serve(&mut bend) {
         Ok(()) => {
             drop(bend.facts);
@@ -1990,14 +2026,7 @@ pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
     let Some((socket, blocking)) = socket else {
         return;
     };
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: time is a valid timespec and CLOCK_MONOTONIC has no input state.
-    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut time) } != 0 {
-        return;
-    }
+    let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
     let nanos = time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64;
     let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     let packet = format!(
@@ -2335,6 +2364,16 @@ mod tests {
         let mut refused = Bend::spawn(Path::new(env!("ORBIT_BUILT_WORKER")), &none).unwrap();
         assert!(refused.bounds().is_err());
         assert_eq!(refused.worker.wait().unwrap().code(), Some(1));
+        let (reader, _writer) = platform::pipe(false).unwrap();
+        let worker = Rc::clone(&refused.decisions);
+        drop(refused);
+        let error = poll_fds(
+            &[(Some(reader.as_fd()), platform::POLLIN)],
+            Some(&worker),
+            Some(Instant::now() + Duration::from_secs(1)),
+        )
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EPIPE));
     }
 
     /// The built worker leads each PTY turn's answer with the program status

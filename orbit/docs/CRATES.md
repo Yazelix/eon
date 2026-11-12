@@ -58,37 +58,54 @@ dependency gate, and Beads retain the full candidate evidence.
 
 ### Platform-specific PTY and local-runtime mechanics
 
-- **Selected shape:** Direct `libc` 0.2.189 calls in the host's one platform
-  seam, [`src/platform.rs`](../src/platform.rs); the other modules use `libc`
-  only for errno names
+- **Selected shape:** `rustix` 1.1.4, pinned `=1.1.4` with default features off
+  and `event`, `fs`, `net`, `param`, `process`, `std`, `termios` and `time`, plus
+  `std::io::pipe`, in the host's one platform seam,
+  [`src/platform.rs`](../src/platform.rs). `libc` 0.2.189 remains for PTY creation,
+  fork setup, signal handlers, peer credentials, Darwin foreground groups and
+  process information, and errno names; the host's opt-in trace uses rustix's
+  monotonic clock
 - **Status:** Selected for ordinary and managed Sessions on x86_64 Linux,
   with the proof status of [ORB-C1](CONTRACTS.md) and [ORB-C13](CONTRACTS.md);
   the old Orbit's own `src/platform.rs` seam was also proved on Apple Silicon macOS,
   and [ORB-C14](CONTRACTS.md) records this host's macOS status
-- **Credible alternatives:** Handwritten C ABI with no crate; `pty-process` 0.5.3; `nix`
-  0.31.3 with narrow `fs`, `poll`, `process`, `signal`, and `term` features; `portable-pty`
-  0.9.0; `rustix` 1.1.4 with `rustix-openpty` 0.2.0
+- **Credible alternatives:** Retain direct libc; handwritten C ABI with no crate;
+  `pty-process` 0.5.3; `nix` 0.31.3 with narrow `fs`, `poll`, `process`, `signal`,
+  and `term` features; `portable-pty` 0.9.0; `rustix-openpty` 0.2.0; `signal-hook`
 - **Why:** The host's mechanisms own PTY setup, process groups, descriptors, polling,
   signals, socket paths and permissions, and platform EOF classification; the Bend worker
-  sees only facts. The host keeps the old Orbit's direct-`libc` choice, and its OS branches
-  are pipe creation, the worker's and child's death signal, a zero-length send's flags,
-  peer credentials and process-start identities. The measurements below were taken on
-  the old Orbit. Ghostty confirms the physical PTY split; portable-pty's trait
-  model and eleven-package normal dependency graph are broader than Orbit needs. The
-  measured `nix` shape adds `nix` and `cfg-if` plus a build dependency without reducing net
-  owned LOC; the rustix shape adds `rustix-openpty`, `rustix`, and `linux-raw-sys`, with
-  more packages needed for signals. At the accepted PTY candidate, the direct shape kept
-  Cargo unchanged and occupied 336 lines in `src/platform.rs`; `src/main.rs` was 579 lines,
-  and total owned Rust was 1,554 lines. A focused `pty-process` scratch candidate passed all
-  13 tests and the canonical checks, removed 44 owned lines, and added `pty-process`,
-  `rustix`, and `linux-raw-sys` to the normal Linux graph. The accepted proof retains the
-  no-manifest candidate; adopting `pty-process` remains a separate user-approved crate gate.
-  Pre-consolidation native Apple Silicon proof confirmed Darwin's zero-length master-read
-  closure maps to the existing platform-neutral `Closed` outcome without a second PTY implementation. The same
-  seam uses Darwin `getpeereid` and `proc_pidinfo(PROC_PIDTBSDINFO)` for the existing
-  management peer and opaque process-start identities without changing management policy or
-  adding a dependency.
-- **Evidence:** Retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
+  sees only facts. Safe rustix calls own UID, descriptor flags, polling, terminal
+  geometry, Linux foreground groups, clocks, signal sending and empty socket sends;
+  std supplies owned close-on-exec pipe ends on Linux and Darwin. This replaces
+  21 of the 22 unsafe inventory sites and Linux's half of the foreground-group
+  lookup, without moving PTY authority or lifecycle policy. Darwin retains its
+  guarded libc foreground lookup: rustix 1.1.4 constructs an invalid NonZero PID
+  from a valid zero/no-group result before the caller can check it. `eon-ojwmi`
+  tracks replacing this seam when a sound wrapper is available.
+  The Rust diff adds 112 net lines, including descriptor ownership and
+  regression checks; no additional runtime abstraction or platform backend is
+  introduced.
+  Lucca approved replacing the direct-libc decision in `eon-c828u` (2026-11-10).
+  The workspace already locks rustix, bitflags 2.13.1, errno 0.3.14 and Linux's
+  linux-raw-sys 0.12.1; the lockfile adds only Orbit's rustix edge, no package or
+  version. Linux adds rustix and linux-raw-sys to Orbit's normal graph; Darwin
+  adds rustix and errno. Bitflags and libc are already in Orbit's graph through
+  its existing dependencies. Build cost is unmeasured.
+  Rustix is licensed MIT OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception. Exit is
+  a per-call replacement; version changes require a bead and Linux/Darwin proof.
+  No signal-registration dependency or PTY abstraction is needed.
+  The earlier `orb-bi4.2` gate measured a separate Orbit lockfile: its rustix
+  candidate also included rustix-openpty and new packages, while direct libc
+  kept Cargo unchanged. Those historical package/LOC comparisons do not describe
+  the consolidated graph. Portable-pty's trait model and eleven-package graph
+  remain broader than needed; the measured nix shape added nix, cfg-if and a
+  build dependency without reducing net owned LOC. A later pty-process trial
+  passed 13 tests and removed 44 lines but added three normal packages; adopting
+  it remains a separate gate. Darwin's zero-length master-read closure still
+  maps to `Closed`, with no second PTY implementation; its peer and process-start
+  identity mechanisms retain their existing platform seam.
+- **Evidence:** Safe-wrapper gate and inventory in `eon-c828u.9`, parent approval
+  in `eon-c828u`; retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
   and libc sources plus the portability disposition are recorded in `orb-pmp`;
   post-candidate `pty-process` evidence is recorded there for a future decision. The
   old Orbit's native ORB-C14 run is recorded in `eon-orb-c14-mac-reproof-l8rz`, and the
@@ -96,11 +113,12 @@ dependency gate, and Beads retain the full candidate evidence.
 
 ### Linux PTY Session shutdown
 
-- **Selected shape:** Existing direct `libc` 0.2.189 process-group signals in the host's
+- **Selected shape:** `rustix` 1.1.4 process-group signals in the host's
   [`src/platform.rs`](../src/platform.rs) and direct-child reaping in
   [`src/pty.rs`](../src/pty.rs) and [`src/host.rs`](../src/host.rs)
-- **Status:** Selected replacement candidate in `orb-portable-pty-shutdown-ke1`; no
-  manifest, feature, normal-graph, helper-service, privilege, namespace, or build change
+- **Status:** Selected replacement candidate in `orb-portable-pty-shutdown-ke1`;
+  safe signal sending in `eon-c828u.9` uses the platform dependency above, with
+  no helper service, privilege or namespace requirement
 - **Credible alternatives:** Retain mandatory cgroup v2; make cgroup cleanup optional; SID
   or `/proc` traversal with subreaping and pidfds; Linux 6.9+ group pidfds; privileged
   namespace or systemd supervision; a new process-management crate

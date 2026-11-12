@@ -4,60 +4,39 @@
 //! names for the errors the host builds and classifies.
 
 use crate::errno;
+use rustix::{fs::OFlags, io::FdFlags};
 use std::{
     ffi::c_int,
     fs::File,
     io,
     os::{
-        fd::{AsRawFd, FromRawFd, RawFd},
+        fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
         unix::net::UnixStream,
     },
     ptr,
 };
 
+pub(crate) use libc::pid_t;
 pub(crate) use libc::{O_CLOEXEC, O_NOFOLLOW, O_NONBLOCK, POLLERR, POLLHUP, POLLIN, POLLOUT};
-pub(crate) use libc::{SIGHUP, SIGKILL, pid_t};
+pub(crate) use rustix::process::Signal;
 
 const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY as libc::c_ulong;
 
-const TIOCSWINSZ_REQUEST: libc::c_ulong = libc::TIOCSWINSZ as libc::c_ulong;
-
 /// This process's effective user ID.
 pub(crate) fn effective_uid() -> u32 {
-    // SAFETY: geteuid has no preconditions.
-    unsafe { libc::geteuid() }
+    rustix::process::geteuid().as_raw()
 }
 
 /// A pipe whose ends close on exec, nonblocking if asked.
 pub(crate) fn pipe(nonblocking: bool) -> io::Result<(File, File)> {
-    let mut fds = [0; 2];
-    #[cfg(target_os = "linux")]
-    {
-        let flags = libc::O_CLOEXEC | if nonblocking { libc::O_NONBLOCK } else { 0 };
-        // SAFETY: pipe2 initializes both descriptors on success.
-        if unsafe { libc::pipe2(fds.as_mut_ptr(), flags) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
+    let (reader, writer) = io::pipe()?;
+    let reader = File::from(OwnedFd::from(reader));
+    let writer = File::from(OwnedFd::from(writer));
+    if nonblocking {
+        set_fd_flags(&reader, OFlags::NONBLOCK)?;
+        set_fd_flags(&writer, OFlags::NONBLOCK)?;
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        // SAFETY: pipe initializes both descriptors on success. The host is
-        // single-threaded, so no fork can see them before they close on exec.
-        if unsafe { libc::pipe(fds.as_mut_ptr()) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        for fd in fds {
-            // SAFETY: fcntl only changes the flags of the owned descriptors.
-            let status = if nonblocking { libc::O_NONBLOCK } else { 0 };
-            if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } == -1
-                || unsafe { libc::fcntl(fd, libc::F_SETFL, status) } == -1
-            {
-                return Err(io::Error::last_os_error());
-            }
-        }
-    }
-    // SAFETY: The pipe transferred ownership of both descriptors.
-    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
+    Ok((reader, writer))
 }
 
 /// Writes one byte to `fd`; async-signal-safe, for a signal handler's wake.
@@ -67,10 +46,10 @@ pub(crate) fn wake(fd: RawFd) {
 }
 
 /// Reads the nonblocking `fd` until it is empty.
-pub(crate) fn drain(fd: RawFd) {
+pub(crate) fn drain(fd: impl AsFd) {
+    let fd = fd.as_fd();
     let mut drained = [0u8; 64];
-    // SAFETY: read fills the owned buffer from the nonblocking pipe.
-    while unsafe { libc::read(fd, drained.as_mut_ptr().cast(), drained.len()) } > 0 {}
+    while matches!(rustix::io::read(fd, &mut drained), Ok(1..)) {}
 }
 
 /// Runs `handler` on SIGINT, SIGTERM and SIGHUP.
@@ -91,25 +70,39 @@ pub(crate) unsafe fn on_termination(handler: extern "C" fn(c_int)) -> io::Result
 }
 
 /// Waits up to `timeout` milliseconds, or forever when it is -1, for one of
-/// `fds`' events; returns each descriptor's ready events in order. poll skips
-/// a negative descriptor.
-pub(crate) fn poll(
-    fds: impl IntoIterator<Item = (RawFd, i16)>,
+/// `fds`' events; returns each slot's ready events in order. An absent
+/// descriptor is skipped, as poll skips a negative descriptor.
+pub(crate) fn poll<'fd>(
+    fds: impl IntoIterator<Item = (Option<BorrowedFd<'fd>>, i16)>,
     timeout: i32,
 ) -> io::Result<Vec<i16>> {
+    use rustix::event::{PollFd, PollFlags, Timespec};
+    let fds: Vec<_> = fds.into_iter().collect();
     let mut pollfds: Vec<_> = fds
-        .into_iter()
-        .map(|(fd, events)| libc::pollfd {
-            fd,
-            events,
-            revents: 0,
+        .iter()
+        .filter_map(|&(fd, events)| {
+            Some(PollFd::from_borrowed_fd(
+                fd?,
+                PollFlags::from_bits_retain(events as _),
+            ))
         })
         .collect();
-    // SAFETY: poll reads and writes the owned pollfds.
-    if unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, timeout) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(pollfds.iter().map(|pollfd| pollfd.revents).collect())
+    let timeout = (timeout >= 0).then(|| Timespec {
+        tv_sec: (timeout / 1000).into(),
+        tv_nsec: ((timeout % 1000) * 1_000_000).into(),
+    });
+    rustix::event::poll(&mut pollfds, timeout.as_ref())?;
+    let mut ready = pollfds.iter();
+    Ok(fds
+        .iter()
+        .map(|(fd, _)| {
+            if fd.is_some() {
+                ready.next().unwrap().revents().bits() as _
+            } else {
+                0
+            }
+        })
+        .collect())
 }
 
 /// Moves the fact pipe's reader to descriptor 3 and the decision pipe's
@@ -171,52 +164,51 @@ pub(crate) fn open_pty(cols: u16, rows: u16) -> io::Result<(File, File)> {
     let master = unsafe { File::from_raw_fd(master) };
     // SAFETY: Successful openpty transferred ownership of both descriptors.
     let slave = unsafe { File::from_raw_fd(slave) };
-    set_fd_flags(master.as_raw_fd(), libc::O_NONBLOCK)?;
-    set_fd_flags(slave.as_raw_fd(), 0)?;
+    set_fd_flags(&master, OFlags::NONBLOCK)?;
+    set_fd_flags(&slave, OFlags::empty())?;
     Ok((master, slave))
 }
 
-fn set_fd_flags(fd: i32, status: i32) -> io::Result<()> {
-    // SAFETY: fcntl operates on an owned live descriptor.
-    let old_status = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if old_status == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, old_status | status) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: fcntl operates on an owned live descriptor.
-    let old_descriptor = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if old_descriptor == -1
-        || unsafe { libc::fcntl(fd, libc::F_SETFD, old_descriptor | libc::FD_CLOEXEC) } == -1
-    {
-        return Err(io::Error::last_os_error());
-    }
+fn set_fd_flags(fd: impl AsFd, status: OFlags) -> io::Result<()> {
+    let fd = fd.as_fd();
+    let old_status = rustix::fs::fcntl_getfl(fd)?;
+    rustix::fs::fcntl_setfl(fd, old_status | status)?;
+    let old_descriptor = rustix::io::fcntl_getfd(fd)?;
+    rustix::io::fcntl_setfd(fd, old_descriptor | FdFlags::CLOEXEC)?;
     Ok(())
 }
 
 /// Tells the PTY master's terminal its size in cells and pixels.
 pub(crate) fn set_window_size(
-    master: RawFd,
+    master: impl AsFd,
     cols: u16,
     rows: u16,
     width: u16,
     height: u16,
 ) -> io::Result<()> {
-    let winsize = libc::winsize {
+    let winsize = rustix::termios::Winsize {
         ws_row: rows,
         ws_col: cols,
         ws_xpixel: width,
         ws_ypixel: height,
     };
-    // SAFETY: ioctl writes the size to the owned PTY master.
-    if unsafe { libc::ioctl(master, TIOCSWINSZ_REQUEST, &winsize) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
+    rustix::termios::tcsetwinsize(master, winsize).map_err(Into::into)
 }
 
 /// The PTY master's foreground process group, if it has one.
-pub(crate) fn foreground_group(master: RawFd) -> Option<pid_t> {
-    // SAFETY: tcgetpgrp reads the owned PTY master.
-    let group = unsafe { libc::tcgetpgrp(master) };
+#[cfg(target_os = "linux")]
+pub(crate) fn foreground_group(master: impl AsFd) -> Option<pid_t> {
+    rustix::termios::tcgetpgrp(master)
+        .ok()
+        .map(|group| group.as_raw_pid())
+}
+
+/// The PTY master's foreground process group, if it has one.
+#[cfg(target_os = "macos")]
+pub(crate) fn foreground_group(master: impl AsFd) -> Option<pid_t> {
+    // SAFETY: the borrowed descriptor stays live, and libc preserves a zero PID.
+    // Keep this until eon-ojwmi: rustix 1.1.4 makes zero an invalid NonZero PID.
+    let group = unsafe { libc::tcgetpgrp(master.as_fd().as_raw_fd()) };
     (group > 0).then_some(group)
 }
 
@@ -281,13 +273,8 @@ struct Clock {
 #[cfg(target_os = "linux")]
 impl Clock {
     fn now() -> Option<Self> {
-        // SAFETY: sysconf has no preconditions.
-        let second = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok()?;
-        // SAFETY: clock_gettime fills the zeroed time.
-        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
-        if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &raw mut time) } == -1 {
-            return None;
-        }
+        let second = rustix::param::clock_ticks_per_second();
+        let time = rustix::time::clock_gettime(rustix::time::ClockId::Boottime);
         let now = u64::try_from(time.tv_sec).ok()? * second
             + u64::try_from(time.tv_nsec).ok()? * second / 1_000_000_000;
         Some(Self { now, second })
@@ -430,44 +417,41 @@ pub(crate) unsafe fn configure_child(parent: pid_t) -> io::Result<()> {
 
 /// Signals the child's process group, or the child itself before its setsid
 /// completes; a child already gone is no error.
-pub(crate) fn signal(pid: pid_t, signal: i32) -> io::Result<()> {
-    // SAFETY: The child PID remains owned until it is reaped.
-    if unsafe { libc::kill(-pid, signal) } == 0 {
-        return Ok(());
-    }
-    let group_error = io::Error::last_os_error();
-    if group_error.raw_os_error() != Some(libc::ESRCH) {
-        return Err(group_error);
-    }
-    // SAFETY: Before setsid completes, the direct child is the fallback target.
-    if unsafe { libc::kill(pid, signal) } == 0 {
-        return Ok(());
-    }
-    let child_error = io::Error::last_os_error();
-    if child_error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(())
-    } else {
-        Err(child_error)
+pub(crate) fn signal(pid: pid_t, signal: Signal) -> io::Result<()> {
+    use rustix::{io::Errno, process};
+    let pid = positive_pid(pid).ok_or_else(|| errno(libc::EINVAL))?;
+    match process::kill_process_group(pid, signal) {
+        Ok(()) => Ok(()),
+        Err(Errno::SRCH) => match process::kill_process(pid, signal) {
+            Ok(()) | Err(Errno::SRCH) => Ok(()),
+            Err(error) => Err(error.into()),
+        },
+        Err(error) => Err(error.into()),
     }
 }
 
 /// Signals a process group; an absent group is ignored.
-pub(crate) fn signal_group(group: pid_t, signal: i32) {
-    // SAFETY: kill only sends a signal; an absent group is ESRCH.
-    unsafe { libc::kill(-group, signal) };
+pub(crate) fn signal_group(group: pid_t, signal: Signal) {
+    if let Some(group) = positive_pid(group) {
+        let _ = rustix::process::kill_process_group(group, signal);
+    }
+}
+
+fn positive_pid(pid: pid_t) -> Option<rustix::process::Pid> {
+    if pid <= 0 {
+        return None;
+    }
+    rustix::process::Pid::from_raw(pid)
 }
 
 /// A zero-length send, which fails only once the peer can no longer read.
 /// It never raises SIGPIPE on Linux.
 pub(crate) fn send_nothing(stream: &UnixStream) -> io::Result<()> {
     #[cfg(target_os = "linux")]
-    let flags = libc::MSG_NOSIGNAL;
+    let flags = rustix::net::SendFlags::NOSIGNAL;
     #[cfg(not(target_os = "linux"))]
-    let flags = 0;
-    // SAFETY: A zero-length send reads nothing from the empty buffer.
-    if unsafe { libc::send(stream.as_raw_fd(), [0u8; 1].as_ptr().cast(), 0, flags) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
+    let flags = rustix::net::SendFlags::empty();
+    rustix::net::send(stream, &[], flags)?;
     Ok(())
 }
 
@@ -629,6 +613,95 @@ pub(crate) fn process_start_identity(pid: u32) -> io::Result<u64> {
         .and_then(|info| started(&info))
         .filter(|identity| *identity != 0)
         .ok_or_else(|| errno(libc::EPROTO))
+}
+
+#[cfg(test)]
+mod descriptor_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    #[test]
+    fn a_fresh_pty_has_no_foreground_group() {
+        let (master, _slave) = open_pty(80, 24).unwrap();
+        assert_eq!(foreground_group(&master), None);
+    }
+
+    #[test]
+    fn signals_validate_ids_and_fall_back_to_the_direct_child() {
+        use std::{os::unix::process::ExitStatusExt, process::Command};
+
+        for pid in [0, -1, i32::MIN] {
+            assert!(positive_pid(pid).is_none());
+            assert_eq!(
+                signal(pid, Signal::CONT).unwrap_err().raw_os_error(),
+                Some(libc::EINVAL)
+            );
+        }
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let result = signal(child.id().try_into().unwrap(), Signal::KILL);
+        if result.is_err() {
+            child.kill().unwrap();
+        }
+        let status = child.wait().unwrap();
+        result.unwrap();
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn polling_skips_slots_and_drain_reads_until_empty() {
+        let (mut reader, mut writer) = pipe(true).unwrap();
+        let slots = [
+            (None, POLLIN),
+            (Some(reader.as_fd()), POLLIN),
+            (None, POLLOUT),
+        ];
+        assert_eq!(poll(slots, 0).unwrap(), [0, 0, 0]);
+        writer.write_all(&[b'x'; 200]).unwrap();
+        assert_eq!(poll(slots, 0).unwrap(), [0, POLLIN, 0]);
+        drain(&reader);
+        assert_eq!(poll(slots, 0).unwrap(), [0, 0, 0]);
+        assert_eq!(
+            reader.read(&mut [0]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(writer);
+        drain(&reader);
+        assert_eq!(reader.read(&mut [0]).unwrap(), 0);
+    }
+
+    #[test]
+    fn pipes_keep_descriptor_flags_and_deliver_eof() {
+        for nonblocking in [false, true] {
+            let (mut reader, mut writer) = pipe(nonblocking).unwrap();
+            for end in [&reader, &writer] {
+                assert!(
+                    rustix::io::fcntl_getfd(end)
+                        .unwrap()
+                        .contains(FdFlags::CLOEXEC)
+                );
+                assert_eq!(
+                    rustix::fs::fcntl_getfl(end)
+                        .unwrap()
+                        .contains(OFlags::NONBLOCK),
+                    nonblocking
+                );
+            }
+            set_fd_flags(&reader, OFlags::empty()).unwrap();
+            if nonblocking {
+                assert_eq!(
+                    reader.read(&mut [0]).unwrap_err().kind(),
+                    io::ErrorKind::WouldBlock
+                );
+            }
+            writer.write_all(b"pipe").unwrap();
+            let mut bytes = [0; 4];
+            reader.read_exact(&mut bytes).unwrap();
+            assert_eq!(&bytes, b"pipe");
+            set_fd_flags(&reader, OFlags::NONBLOCK).unwrap();
+            drop(writer);
+            assert_eq!(reader.read(&mut bytes).unwrap(), 0);
+        }
+    }
 }
 
 #[cfg(test)]
