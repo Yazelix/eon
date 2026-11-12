@@ -112,7 +112,7 @@ pane_frames = true # Draw rounded pane frames.
 # rows: unset. Let the window choose initial rows when omitted.
 
 [panels]
-heading = "notch" # Panel heading position: notch or connected. Applies on open or reopen.
+heading = "notch" # Panel heading position: notch or connected. Applies on open, reopen or reload.
 
 [shell]
 atuin = true # Enable the managed Atuin history integration.
@@ -234,7 +234,7 @@ and disk use, the local clock and `EON <version>`. The Eon logo at the bar's
 left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
-list above. The list applies when a window next opens or reopens. Unknown names
+list above. The list applies when a window next opens, reopens or reloads. Unknown names
 are ignored with a warning; repeated known names are a configuration error. Narrow windows hide the Eon
 logo first, then disk, RAM and CPU, whatever the order, then quota chips one by
 one, the one closest to the tabs first; in the shortcut hints the version hides
@@ -280,7 +280,7 @@ resolved warning. Explicitly inverted levels fail. For example,
 `cpu_warning_percent = 95` alone resolves to 60/95/95; `ram_warning_percent = 50`
 with `ram_critical_percent = 85` resolves to 50/50/85. `cpu_average_seconds`
 accepts 2 through 600. The defaults are listed above. Like `widgets`, they
-apply when a window next opens or reopens, and an out-of-range value is a
+apply when a window next opens, reopens or reloads, and an out-of-range value is a
 configuration error.
 
 CPU hover also names the CPU, gives its temperature when available, the
@@ -298,7 +298,7 @@ paths are configuration errors. A path that doesn't exist is not an error: the
 chip shows no reading. The chip uses the same notice, warning and critical
 grades described above. The 30-second
 refresh is fixed, since disk use changes slowly. Like the other `[bar]` keys,
-they apply when a window next opens or reopens.
+they apply when a window next opens, reopens or reloads.
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
 running window, so `eon window attach` reopens with the same color; a new
@@ -434,8 +434,8 @@ bands keep their positions. Tight headings retain the same compact fallback.
 The raised top outline stays neutral at `border_width`; the selected pane's
 focus colour and width begin below the existing card-corner join. With pane
 frames off, Stack and Agents labels remain plain; popup and dialog frames follow
-the selected position. The setting applies when a window opens or reopens;
-existing windows retain their position until reopened.
+the selected position. The setting applies when a window opens, reopens or
+reloads with `eon window reload ID`.
 
 In the default notch position, popup and Agents headings carry a second notch
 at the right, mirroring the
@@ -556,6 +556,8 @@ sizing.
 The terminal settings apply when a surface opens or reopens. Shell settings are
 read for each terminal. Invalid startup configuration creates no fresh terminal;
 a failed replacement leaves existing terminals and commands alive.
+In full Eon, [`eon window reload ID`](USAGE.md#reload-window-configuration)
+rereads presentation settings by replacing Venus while terminals keep running.
 
 On a fresh full-Eon window, Anima plays after the desktop is ready and before
 the first tab's quick search. Press any key other than its previous/next style
@@ -672,7 +674,7 @@ chips one by one, the one closest to the tabs first, before tabs and controls.
 
 Eon reads a provider's quota only while `[bar] widgets` lists at least one of
 its quota widgets, checked
-when a window opens or reopens. A chip listed again shows its provider's
+when a window opens, reopens or accepts a reload. A chip listed again shows its provider's
 stored reading at once, if there is one, and otherwise appears after its
 provider's next read.
 

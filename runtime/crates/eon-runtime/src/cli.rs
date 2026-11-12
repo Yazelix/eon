@@ -1070,8 +1070,9 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("window attach [ID]", "Reopen a window (no ID: default)"),
             (
                 "window reload ID [--json]",
-                "Reload Venus in a focused window",
+                "Reread config and replace Venus",
             ),
+            ("", "in a focused window"),
             (
                 "window stop ID|previous|all [--json]",
                 "End a window, the old-version",

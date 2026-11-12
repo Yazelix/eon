@@ -199,6 +199,37 @@ nix profile remove eon
 nix profile add --refresh github:Yazelix/eon/main
 ```
 
+### Reload window configuration
+
+After editing `config.toml`, focus the window and run:
+
+```sh
+eon window reload ID
+```
+
+Use the ID or prefix from `eon window ls`. Reload rereads presentation settings,
+including `[panels] heading`, and replaces Venus even when the build is
+unchanged. It also selects the requesting CLI's Venus after an upgrade when
+its protocols match the running window. The supervisor, terminals, running
+commands, layout and selected tab/pane/popup survive. Venus-local view state,
+including dialogs, zoom and terminal text selection, resets; see
+[EON-C11](CONTRACTS.md#eon-c11--runtime-generations-and-presentation).
+
+Invalid configuration refuses before replacing Venus. If the replacement fails
+startup admission, Eon restores Venus with its last accepted launch arguments
+and reports failure. Reload refuses when the window lacks keyboard focus,
+when protocols differ, or when the requesting Venus is outside the immutable
+Nix store. `--json` reports `window`, `generation` and the presenting `venus`
+path on success, or an error object on failure.
+The text reply acknowledges the request and reports the presenting path;
+the reply alone cannot confirm that Venus was replaced. Quota polling follows
+the accepted `[bar] widgets`; a failed reload retains its previous selection.
+
+Popup definitions added while the supervisor is running still need a fresh
+window. Supervisors started before the same-build reload fix (`eon-u199d.3`)
+keep their old behavior: an identical Venus path skips config rereading. Move
+those windows to a fresh window once to use the fix.
+
 ### Stop terminals
 
 Click the Eon icon at the top left for the **Window menu**: this window and

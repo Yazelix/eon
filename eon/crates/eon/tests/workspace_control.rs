@@ -14199,10 +14199,10 @@ fn read_request(stream: &mut UnixStream) -> Vec<u8> {
     request
 }
 
-/// The CLI selects a prefix and sends its own component inputs to that owner.
+/// An accepted reload reply names the presenting path without confirming replacement.
 #[test]
 fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
-    for independent in [false, true] {
+    for (independent, json) in [(false, false), (false, true), (true, false), (true, true)] {
         let root = temporary_directory();
         let runtime = root.join("r");
         let windows = runtime.join("w");
@@ -14247,14 +14247,8 @@ fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
                     action => panic!("unexpected window action: {action:?}"),
                 };
                 let mut info = previous_runtime(&id);
-                info.venus = Some(
-                    if reload {
-                        requested.to_str().unwrap()
-                    } else {
-                        "/old-venus"
-                    }
-                    .into(),
-                );
+                // A supervisor can accept a reload while leaving the presenting path unchanged.
+                info.venus = Some(requested.to_str().unwrap().into());
                 stream
                     .write_all(
                         &encode_lifecycle_response(&LifecycleResponse::Runtime(info)).unwrap(),
@@ -14290,15 +14284,31 @@ fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
         let listed = command().args(["window", "ls", "--json"]).output().unwrap();
         assert!(listed.status.success(), "{listed:?}");
         let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
-        assert_eq!(listed["windows"][0]["venus"], "/old-venus");
-        let output = command()
-            .args(["window", "reload", prefix, "--json"])
-            .output()
-            .unwrap();
+        assert_eq!(listed["windows"][0]["venus"], target.to_str().unwrap());
+        let mut reload = command();
+        reload.args(["window", "reload", prefix]);
+        if json {
+            reload.arg("--json");
+        }
+        let output = reload.output().unwrap();
         assert!(output.status.success(), "{output:?}");
-        let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(answer["venus"], target.to_str().unwrap());
-        assert_eq!(answer["window"], full_id);
+        if json {
+            let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(answer["venus"], target.to_str().unwrap());
+            assert_eq!(answer["window"], full_id);
+        } else {
+            let answer = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                answer.starts_with("Reload accepted for window "),
+                "{answer}"
+            );
+            assert!(answer.contains(&format!("presenting Venus {}", target.display())));
+            assert!(answer.contains("does not confirm replacement"), "{answer}");
+            assert!(
+                answer.contains("Older supervisors may skip same-path reloads"),
+                "{answer}"
+            );
+        }
         server.join().unwrap();
         fs::remove_dir_all(root).unwrap();
     }

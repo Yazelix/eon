@@ -1004,7 +1004,9 @@ fn defaults_table(
             "background_blur" => "Request compositor background blur.",
             "padding_color" => "How terminal padding takes its background colour.",
             "pane_frames" => "Draw rounded pane frames.",
-            "heading" => "Panel heading position: notch or connected. Applies on open or reopen.",
+            "heading" => {
+                "Panel heading position: notch or connected. Applies on open, reopen or reload."
+            }
             "detect_local_hosts" => {
                 "Treat plain-text localhost, 127.0.0.1 and [::1] with a port as links."
             }

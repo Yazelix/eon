@@ -9,6 +9,12 @@ installation, and proven contract changes.
   colour instead of a grey fill. Hover keeps its dark fill, and keyboard focus
   adds a mint outline one pixel inside the current outline; tabs keep their
   selected fill (`eon-wuau8.4`, Lucca's 2026-11-11 approval).
+- `eon window reload ID` rereads configuration and replaces Venus even when
+  its build is unchanged. Invalid configuration leaves the window untouched;
+  failed startup restores the accepted Venus launch arguments. Terminals and
+  layout survive. Windows whose supervisors predate this fix need one move
+  to a fresh window; those supervisors still skip same-path reload
+  (`eon-u199d.3`, EON-C11).
 
 - `eon config check [--json]` checks configuration for settings Eon would reject
   at startup or during later use, without a running supervisor or state changes.
@@ -17,7 +23,7 @@ installation, and proven contract changes.
 
 - `[panels] heading = "connected"` joins panel notches into a straight rounded
   top edge, without moving titles, actions or terminal rows. The default is
-  `"notch"`; changes apply on window open or reopen (`eon-6ui6p`).
+  `"notch"`; changes apply on window open, reopen or reload (`eon-6ui6p`).
 
 - Closing a column or stopping right after a failed close no longer fails
   with "already managed" (`eon-k0okt`).

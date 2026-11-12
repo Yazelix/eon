@@ -2336,6 +2336,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   not upgrade the contract's overall proof status.
 
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-12 by `eon-u199d.3`, approved by eon-overseer under
+  Lucca's standing mandate: same-build reload rereads configuration and
+  rollback restores accepted Venus launch arguments. Installed proof is
+  pending the overseer's isolated post-refresh observation.
   Amended on 2026-11-11 by `eon-u199d.1`, approved by eon-overseer under
   Lucca's auto-decide mandate: explicit Venus-only Reload. Its isolated
   installed proof and user documentation remain pending in `eon-u199d.2`.
@@ -2542,7 +2546,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     the window, and a Venus that Present starts shows the last shown session
     (EON-C33; its installed proof is `eon-workspace-switching-shn4.9`).
   - **Reload.** `eon window reload ID [--json]` asks one full-Eon window's
-    supervisor to replace Venus with the requesting CLI's own Venus. ID uses
+    supervisor to replace Venus with the requesting CLI's own Venus, with
+    arguments from the current configuration, even at the same executable
+    path. Invalid configuration refuses before retiring the old Venus. ID uses
     the window ID/prefix rules of `eon window ls`; Reload never delegates
     across EONW versions. The target must be a canonical, non-writable
     executable file in `/nix/store`; relocated bundle paths refuse. The
@@ -2569,15 +2575,23 @@ names its socket. CLI JSON names a session `session` and a terminal
     Success means the existing `ready-v1` admission, not a fresh terminal
     frame; later attachment failures follow ordinary presentation recovery.
 
-    Failed startup/admission restarts the last accepted Venus, falling back
-    to the supervisor's own Venus. Failed rollback keeps Runtime and terminals
+    Failed startup/admission restarts the last accepted Venus with its saved
+    accepted launch arguments, falling back to the supervisor's own Venus
+    with those arguments. Rollback never rebuilds arguments from the edited
+    configuration. Failed rollback keeps Runtime and terminals
     alive for an attach retry. Present after clean detach uses the last accepted
     Venus in this supervisor. An unsuccessful exit or failed Present admission
     clears that override, so the next Present uses the supervisor's own Venus.
-    An identical presenting target is unchanged.
     Runtime inspection and `eon window ls --json` carry `venus`, its actual
     presenting executable path or null while detached. Reload success JSON
-    is `{"window":ID,"generation":GENERATION,"venus":PATH}`. Failure uses
+    is `{"window":ID,"generation":GENERATION,"venus":PATH}`; success from a
+    fixed supervisor means Venus was replaced with current configuration
+    arguments. Supervisors predating `eon-u199d.3` still skip same-path reload;
+    those windows need one move to a fresh window for this fix. The CLI's text
+    acknowledges the request and reports the presenting path without claiming
+    confirmed replacement. Accepted replacement updates EON-C27 quota polling
+    to the resolved bar widgets; refusal or rollback retains the previous
+    polling selection. Failure uses
     the existing failure object: `reload-refused`, `reload-presentation-failed`
     when presentation was restored, or `reload-rollback-failed`, each exit 4.
     Invalid syntax exits 2; unknown/stale window IDs exit 3. eonbase refuses
@@ -3740,7 +3754,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Consumer, trigger and result:** Full Eon reads quota through independent,
   noninteractive CodexBar CLI calls for Codex (`--source cli`) and Claude
   (`--source oauth`) only while `[bar] widgets` (EON-C32) lists at least one of
-  that provider's quota widgets. The list is checked whenever a window opens or reopens: a
+  that provider's quota widgets. The list is checked whenever a window opens,
+  reopens, or accepts an EON-C11 reload: a
   newly listed provider starts reading, and a newly unlisted one stops, ending
   any read in progress, and drops its last reading. Codex reads start at least
   one minute apart and Claude reads at least five minutes apart, including

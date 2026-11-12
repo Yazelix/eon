@@ -459,10 +459,7 @@ fn venus_command(
     animate_working_badge: bool,
     number_keys: bool,
 ) -> Command {
-    let mut command = Command::new(venus);
-    managed_environment::remove_agent_session(&mut command)
-        .env_remove(TERMINAL_VARIABLE)
-        .env_remove(TAB_VARIABLE);
+    let mut command = venus_process_command(venus, config, mode);
     if !decorations {
         command.arg("--no-decorations");
     }
@@ -567,9 +564,6 @@ fn venus_command(
             }
         }
         command.arg("--bar-items").arg(bar.widgets.join(","));
-        if let Ok(executable) = env::current_exe() {
-            command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
-        }
         command
             .arg("--panel-heading")
             .arg(terminal.panel_heading.as_str())
@@ -584,7 +578,20 @@ fn venus_command(
             .arg("--workspace");
     }
     command.arg(socket);
-    command.env("EON_CONFIG_HOME", config);
+    command
+}
+
+fn venus_process_command(venus: &Path, config: &Path, mode: LaunchMode) -> Command {
+    let mut command = Command::new(venus);
+    managed_environment::remove_agent_session(&mut command)
+        .env_remove(TERMINAL_VARIABLE)
+        .env_remove(TAB_VARIABLE)
+        .env("EON_CONFIG_HOME", config);
+    if mode == LaunchMode::Workspace
+        && let Ok(executable) = env::current_exe()
+    {
+        command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
+    }
     command
 }
 
@@ -661,6 +668,7 @@ impl NativeFocus {
 struct PresentationProcess {
     child: Child,
     executable: PathBuf,
+    arguments: Vec<OsString>,
     /// The name each terminal's Orbit admits to attach, read at spawn; none
     /// if it could not be read, which leaves every terminal unattached
     /// (EON-C11).
@@ -705,6 +713,7 @@ impl PresentationProcess {
             command.env("RUST_BACKTRACE", "1");
         }
         let executable = PathBuf::from(command.get_program());
+        let arguments = command.get_args().map(OsStr::to_owned).collect();
         let mut child = command
             .spawn()
             .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?;
@@ -722,6 +731,7 @@ impl PresentationProcess {
         let mut process = Self {
             child,
             executable,
+            arguments,
             name,
             control,
             log: Arc::clone(log),
@@ -3001,42 +3011,44 @@ fn reload_presentation(
             "Reload requires a focused Eon window; native focus is absent or unknown",
         ));
     }
-    if state
-        .venus
-        .as_ref()
-        .is_some_and(|venus| venus.executable == target)
-    {
-        return Ok(());
-    }
+    let path = config.join(managed_environment::CONFIG_FILE);
+    managed_environment::read_configuration(&path)
+        .and_then(|source| {
+            managed_environment::validate_configuration_text(&source, &path, &inputs.defaults)
+        })
+        .map_err(|detail| failure("reload-refused", detail))?;
     let terminal =
         managed_environment::terminal_presentation(config, &inputs.defaults, Some(&state.log))
             .map_err(|detail| failure("reload-refused", detail))?;
     let bar = window_bar(LaunchMode::Workspace, config, inputs, Some(&state.log))
         .map_err(|detail| failure("reload-refused", detail))?;
-    let command = |path: &Path| -> Result<Command, String> {
-        Ok(venus_command(
-            inputs,
-            path,
-            config,
-            &runtime.join("eon.sock"),
-            LaunchMode::Workspace,
-            &terminal,
-            &bar,
-            &state.application_id,
-            state.decorations,
-            managed_environment::warning_close_last_tab(
-                config,
-                &inputs.defaults,
-                Some(&state.log),
-            )?,
-            managed_environment::animate_working_badge(config, &inputs.defaults, Some(&state.log))?,
-            managed_environment::number_keys(config, &inputs.defaults, Some(&state.log))?,
-        ))
-    };
-    let candidate = command(target).map_err(|detail| failure("reload-refused", detail))?;
-    let previous = state.venus.as_ref().unwrap().executable.clone();
-    let rollback = command(&previous).map_err(|detail| failure("reload-refused", detail))?;
-    let fallback = command(&inputs.venus).map_err(|detail| failure("reload-refused", detail))?;
+    let candidate = venus_command(
+        inputs,
+        target,
+        config,
+        &runtime.join("eon.sock"),
+        LaunchMode::Workspace,
+        &terminal,
+        &bar,
+        &state.application_id,
+        state.decorations,
+        managed_environment::warning_close_last_tab(config, &inputs.defaults, Some(&state.log))
+            .map_err(|detail| failure("reload-refused", detail))?,
+        managed_environment::animate_working_badge(config, &inputs.defaults, Some(&state.log))
+            .map_err(|detail| failure("reload-refused", detail))?,
+        managed_environment::number_keys(config, &inputs.defaults, Some(&state.log))
+            .map_err(|detail| failure("reload-refused", detail))?,
+    );
+    let accepted = state.venus.as_ref().unwrap();
+    let previous = accepted.executable.clone();
+    let mut rollback = venus_process_command(&previous, config, LaunchMode::Workspace);
+    rollback.args(&accepted.arguments);
+    // Both launch paths use flags resolved by this supervisor.
+    let fallback = (previous != inputs.venus).then(|| {
+        let mut command = venus_process_command(&inputs.venus, config, LaunchMode::Workspace);
+        command.args(&accepted.arguments);
+        (inputs.venus.clone(), command)
+    });
     if !focused(state) {
         return Err(failure(
             "reload-refused",
@@ -3046,16 +3058,10 @@ fn reload_presentation(
     // Intentional replacement must not dismiss pending pickers or show a detach notice.
     drop(state.venus.take());
     let mut errors = Vec::new();
-    let mut attempted = Vec::new();
-    for (path, command) in [
-        (target.to_owned(), candidate),
-        (previous, rollback),
-        (inputs.venus.clone(), fallback),
-    ] {
-        if attempted.contains(&path) {
-            continue;
-        }
-        attempted.push(path.clone());
+    for (path, command) in [(target.to_owned(), candidate), (previous, rollback)]
+        .into_iter()
+        .chain(fallback)
+    {
         match PresentationProcess::start(
             command,
             true,
@@ -3068,6 +3074,9 @@ fn reload_presentation(
                 state.venus = Some(venus);
                 state.venus_path = Some(path);
                 return if errors.is_empty() {
+                    if let Some(quotas) = &mut state.quotas {
+                        quotas.show(&bar.widgets);
+                    }
                     Ok(())
                 } else {
                     Err(failure(
@@ -6795,6 +6804,185 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn reload_same_build_rereads_config_and_rolls_back_to_accepted_arguments() {
+        for reject_connected in [false, true] {
+            let root = temporary_directory();
+            let (mut fixture, _gate) = finishing_window(&root);
+            let mut inputs = crate::fixtures::inputs();
+            inputs.venus = root.join("venus");
+            fs::write(
+                &inputs.venus,
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$0.$$.args\"\n\
+                 if [ -e \"$0.reject-connected\" ]; then\n\
+                   for arg; do [ \"$arg\" != connected ] || exit 9; done\n\
+                 fi\nprintf 'ready-v1focus:1\\n'\nexec cat >/dev/null\n",
+            )
+            .unwrap();
+            fs::set_permissions(&inputs.venus, fs::Permissions::from_mode(0o700)).unwrap();
+            let backend = root.join("codexbar");
+            script(&backend, "printf broken");
+            let initial_widgets: &[&str] = if reject_connected {
+                &["codex_quota_5h"]
+            } else {
+                &[]
+            };
+            fixture.state.quotas = Some(super::quota::Quotas::start(&backend, initial_widgets));
+            let quota_failure = |state: &SupervisorState| {
+                let mut snapshot = state.workspaces.as_ref().unwrap().snapshot();
+                state.quotas.as_ref().unwrap().apply(&mut snapshot);
+                snapshot.codex_quota_failure
+            };
+            let wait_for_quota = |state: &SupervisorState| {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while quota_failure(state).is_none() {
+                    assert!(Instant::now() < deadline, "quota provider did not start");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            };
+            if reject_connected {
+                wait_for_quota(&fixture.state);
+            }
+            let config = root.join("config.toml");
+            fs::write(
+                &config,
+                format!("[panels]\nheading = 'notch'\n[bar]\nwidgets = {initial_widgets:?}\n"),
+            )
+            .unwrap();
+            let terminal = crate::managed_environment::terminal_presentation(
+                &root,
+                &inputs.defaults,
+                Some(&fixture.state.log),
+            )
+            .unwrap();
+            let command = venus_command(
+                &inputs,
+                &inputs.venus,
+                &root,
+                &root.join("eon.sock"),
+                LaunchMode::Workspace,
+                &terminal,
+                &window_bar(LaunchMode::Workspace, &root, &inputs, None).unwrap(),
+                &fixture.state.application_id,
+                fixture.state.decorations,
+                true,
+                true,
+                true,
+            );
+            fixture.state.venus = Some(
+                super::PresentationProcess::start(
+                    command,
+                    true,
+                    fixture.state.workspace_snapshot(),
+                    super::PRESENTATION_ADMISSION_TIMEOUT,
+                    &mut fixture.state.sessions,
+                    &fixture.state.log,
+                )
+                .unwrap(),
+            );
+            let arguments =
+                |pid| fs::read_to_string(root.join(format!("venus.{pid}.args"))).unwrap();
+            let old_pid = fixture.state.venus.as_ref().unwrap().child.id();
+            let accepted_arguments = arguments(old_pid);
+            assert!(accepted_arguments.contains("--panel-heading\nnotch\n"));
+            let layout = fixture.state.workspaces.as_ref().unwrap().snapshot();
+            let run = fixture.state.sessions[0].run_id().to_owned();
+            let host = orbit_pid(&fixture.state.sessions[0]);
+            if reject_connected {
+                fs::write(root.join("venus.reject-connected"), "").unwrap();
+            }
+            let widgets: &[&str] = if reject_connected {
+                &[]
+            } else {
+                &["codex_quota_5h"]
+            };
+            fs::write(
+                &config,
+                format!("[panels]\nheading = 'connected'\n[bar]\nwidgets = {widgets:?}\n"),
+            )
+            .unwrap();
+            let result = super::reload_presentation(
+                &mut fixture.state,
+                &inputs,
+                &root,
+                &root,
+                &inputs.venus,
+            );
+            if reject_connected {
+                assert_eq!(result.unwrap_err().code, "reload-presentation-failed");
+            } else {
+                result.unwrap();
+            }
+            let reloaded = fixture.state.venus.as_ref().unwrap();
+            let new_pid = reloaded.child.id();
+            assert_ne!(new_pid, old_pid);
+            assert_eq!(reloaded.executable, inputs.venus);
+            if reject_connected {
+                assert_eq!(arguments(new_pid), accepted_arguments);
+            } else {
+                assert!(arguments(new_pid).contains("--panel-heading\nconnected\n"));
+            }
+            wait_for_quota(&fixture.state);
+            let attempts: Vec<_> = fs::read_dir(&root)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.extension()
+                        .is_some_and(|extension| extension == "args")
+                })
+                .map(|path| fs::read_to_string(path).unwrap())
+                .collect();
+            assert_eq!(attempts.len(), if reject_connected { 3 } else { 2 });
+            assert!(
+                attempts
+                    .iter()
+                    .any(|args| args.contains("--panel-heading\nconnected\n"))
+            );
+            for invalid in [
+                "broken = [",
+                "[panels]\nheading = 'invalid'",
+                "[shell]\ncommand = []",
+            ] {
+                fs::write(&config, invalid).unwrap();
+                let error = super::reload_presentation(
+                    &mut fixture.state,
+                    &inputs,
+                    &root,
+                    &root,
+                    &inputs.venus,
+                )
+                .unwrap_err();
+                assert_eq!(error.code, "reload-refused", "{invalid}: {error:?}");
+                assert!(error.detail.contains(config.to_str().unwrap()), "{error:?}");
+                assert_eq!(fixture.state.venus.as_ref().unwrap().child.id(), new_pid);
+                assert!(quota_failure(&fixture.state).is_some());
+            }
+            if !reject_connected {
+                fs::write(
+                    &config,
+                    "[panels]\nheading = 'connected'\n[bar]\nwidgets = []\n",
+                )
+                .unwrap();
+                super::reload_presentation(
+                    &mut fixture.state,
+                    &inputs,
+                    &root,
+                    &root,
+                    &inputs.venus,
+                )
+                .unwrap();
+                assert!(quota_failure(&fixture.state).is_none());
+            }
+            assert_eq!(fixture.state.sessions[0].run_id(), run);
+            assert_eq!(orbit_pid(&fixture.state.sessions[0]), host);
+            assert_eq!(
+                fixture.state.workspaces.as_ref().unwrap().snapshot(),
+                layout
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn reload_keeps_terminals_and_layout_and_restores_the_accepted_venus() {
         use std::io::Write;
         let root = temporary_directory();
@@ -6821,7 +7009,7 @@ mod tests {
         );
         let accepted_pid = fixture.state.venus.as_ref().unwrap().child.id();
         super::reload_presentation(&mut fixture.state, &inputs, &root, &root, &newer).unwrap();
-        assert_eq!(
+        assert_ne!(
             fixture.state.venus.as_ref().unwrap().child.id(),
             accepted_pid
         );
