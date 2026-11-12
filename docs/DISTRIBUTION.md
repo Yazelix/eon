@@ -43,9 +43,11 @@ input in `eon/crates/eon/src/product.rs` supplies the stage independently of
 that number. Release preparation changes that constant with the Cargo version:
 `ReleaseStage::Alpha`, `ReleaseStage::Beta`, or `ReleaseStage::Stable`. The bar
 shows `EON α0.1.24`, `EON β0.2.0`, or `EON 1.0.0`, respectively; CLI version
-output keeps its numeric form. Eon is in alpha before v0.2.0 and in beta from v0.2.0:
-in both stages commands, configuration and behavior may still change, and the
-changelog records what did. `eon-igae` holds the scope for entering beta.
+output keeps its numeric form. v0.2.0 is the first beta; before its GitHub release is
+published, it is a prepared candidate. Its download commands require
+publication. In alpha and beta, commands, configuration and behavior may still
+change, and the changelog records what did. `eon-igae` holds the scope for
+entering beta.
 1.0.0 has no scheduled date: user reports, not a plan, decide when it comes.
 [EON-C28](CONTRACTS.md#eon-c28--1x-stability) states what 1.x would keep stable.
 Orbit, Venus and Eon Runtime keep their own package versions, and EONW its
@@ -163,6 +165,10 @@ composition graph is selected; the one hosted job is the manually dispatched
 with no promised support response time. Failed staging leaves the prior
 installation usable. Upgrades retain executables and payloads needed by live
 work or defer replacement; no Orbit/machine restart persistence is promised.
+
+The release workflow and local parity build select the same
+[archive route](INSTALLER.md#release-assets): the full route with a recorded
+Accelerando grant, or the route without Accelerando when no grant exists.
 
 The accepted cost envelope uses provisional estimates of 0.5–1.0 GB per archive,
 1.8–3.0 GB per extracted payload and 6.4–11.0 GB for two payloads, staging and

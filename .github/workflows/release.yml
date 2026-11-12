@@ -9,6 +9,14 @@ on:
       tag:
         description: Release tag, v<package version> or v<package version>-<suffix> for a pre-release
         required: true
+      release_attribute:
+        description: Use release only with the recorded Accelerando redistribution grant
+        type: choice
+        required: true
+        default: release-without-accelerando
+        options:
+          - release-without-accelerando
+          - release
 
 permissions: {}
 
@@ -27,6 +35,8 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    env:
+      RELEASE_ATTRIBUTE: ${{ inputs.release_attribute }}
     steps:
       # The runner's root filesystem also holds /nix; drop preinstalled
       # toolchains Eon never uses so the bundle build has room.
@@ -81,7 +91,12 @@ jobs:
           fi
 
       - name: Build the release files
-        run: nix build --print-build-logs --out-link "$RUNNER_TEMP/release" .#release
+        run: |
+          case "$RELEASE_ATTRIBUTE" in
+            release|release-without-accelerando) ;;
+            *) echo "::error::Unknown release attribute: $RELEASE_ATTRIBUTE"; exit 1 ;;
+          esac
+          nix build --print-build-logs --out-link "$RUNNER_TEMP/release" ".#$RELEASE_ATTRIBUTE"
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -94,5 +109,5 @@ jobs:
         run: |
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease="${PRERELEASE:-false}" \
             --target "$GITHUB_SHA" --title "$TAG" \
-            --notes "Unsigned draft: add SHA256SUMS.sig before publishing (docs/INSTALLER.md#release-assets)." \
+            --notes "Release attribute: .#$RELEASE_ATTRIBUTE. Unsigned draft: compare SHA256SUMS with a local build of this attribute at the same commit, then add SHA256SUMS.sig before publishing (docs/INSTALLER.md#release-assets)." \
             "$RUNNER_TEMP"/release/*

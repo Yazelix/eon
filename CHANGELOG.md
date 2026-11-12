@@ -3,8 +3,14 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## Unreleased
+## v0.2.0
 
+First beta. Until its GitHub release is published, this section describes the
+prepared candidate.
+
+- The Linux install instructions include the release public key. Without a
+  recorded Accelerando redistribution grant, the Linux archive omits
+  Accelerando and its fonts; Game of Life stays available (`eon-igae.18`).
 - The Eon Bar prefixes alpha and beta versions with α or β (`EON α0.1.24`,
   `EON β0.2.0`); stable versions have no symbol. Hover and screen readers spell
   out the build stage. Older supervisors without stage metadata retain an

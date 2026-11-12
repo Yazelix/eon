@@ -4,7 +4,7 @@ use eon_runtime::{
 };
 use eon_workspace_protocol::v42::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
-pub(crate) const RELEASE_STAGE: ReleaseStage = ReleaseStage::Alpha;
+pub(crate) const RELEASE_STAGE: ReleaseStage = ReleaseStage::Beta;
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");

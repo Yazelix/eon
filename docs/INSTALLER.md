@@ -19,9 +19,12 @@ commands are unnecessary on the target machine. `ssh-keygen`, `curl` and
 
 ## Install a release
 
+The v0.2.0 beta commands below work once its GitHub release is published;
+before publication, v0.2.0 is a prepared candidate.
+
 A release's directory, `https://github.com/Yazelix/eon/releases/download/vVERSION/`,
 holds the exact archive `eon-VERSION-x86_64-linux.tar.zst`, the installer,
-`SHA256SUMS` over both and its OpenSSH signature `SHA256SUMS.sig`
+the source companion, `SHA256SUMS` and its OpenSSH signature `SHA256SUMS.sig`
 ([release assets](#release-assets)). The installer trusts one thing: the
 signer record you pass with `--signers`. It must authorize identity
 `eon-release` in signature namespace `eon-bundle`.
@@ -31,7 +34,7 @@ in the [README](../README.md#linux-without-nix):
 
 ```sh
 mkdir -p "$HOME/.config/eon"
-echo 'eon-release namespaces="eon-bundle" ssh-ed25519 RELEASE_PUBLIC_KEY' > "$HOME/.config/eon/allowed_signers"
+echo 'eon-release namespaces="eon-bundle" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBOa/SOSVHjSVJiUD3cMiMH+BMeB/87JzMgi+Da8QChX' > "$HOME/.config/eon/allowed_signers"
 chmod 600 "$HOME/.config/eon/allowed_signers"
 ```
 
@@ -162,8 +165,17 @@ payloads or promises rollback. Use the explicit installer rollback below.
 A release carries `eon-VERSION-x86_64-linux.tar.zst`, its copyleft source
 companion `eon-VERSION-x86_64-linux-sources.tar.zst`, the static installer as
 `eon-install-x86_64-linux`, `SHA256SUMS` over all three and the maintainer's
-`SHA256SUMS.sig`. `nix build .#release` builds the artifacts and checksum list
-from one revision. The binary notices name the source companion, say that it is
+`SHA256SUMS.sig`. Nix builds the artifacts and checksum list from one revision.
+At the cut, check the rights holder's Accelerando redistribution grant for the
+exact pinned font and glyph bytes. With that recorded grant, select
+`release_attribute=release` (`.#release`). Without it, select
+`release_attribute=release-without-accelerando` (`.#release-without-accelerando`):
+the archive omits Accelerando and its fonts; Game of Life remains available.
+The workflow defaults to this route. Both routes retain the notice/source
+checks, and the full route rejects a missing grant. Record the selected
+attribute and grant disposition with the release evidence.
+
+The binary notices name the source companion, say that it is
 attached to the same release as the archive, and give the releases page; see
 [source and relink instructions](MANUAL-BUNDLE.md#installer-and-publication-handoff).
 The installer downloads the exact binary archive name; source is an optional
@@ -178,18 +190,21 @@ attestation for each, and attaches them to a draft release. The tag must be
 package version; an existing tag must name the dispatched commit. A release
 tags its exact proven `edge` commit ([Git Workflow](AGENT-RULES.md#git-workflow)),
 so push the tag first and dispatch the workflow on it. The draft is unsigned.
-Before signing, the maintainer who holds the release key compares its
-`SHA256SUMS` with one from a local `nix build .#release` of the same commit. If
+The draft notes name the selected release attribute. Before signing, the
+maintainer who holds the release key compares its `SHA256SUMS` with one from
+a local build of that same attribute at the same commit. If
 they differ, do not sign: stop and file a bead, since bit-for-bit parity of the
 hosted and local builds is unproven until a rehearsal shows it. Otherwise sign
-offline and publish:
+offline and publish. This maintainer procedure requires the release owner's
+explicit go-ahead:
 
 ```sh
+release_attribute=release-without-accelerando # use release only with the recorded grant
 git push origin vVERSION
-gh workflow run release.yml -R Yazelix/eon --ref vVERSION -f tag=vVERSION
+gh workflow run release.yml -R Yazelix/eon --ref vVERSION -f tag=vVERSION -f release_attribute="$release_attribute"
 # Once that run has succeeded; each step runs only if the previous one passed.
 gh release download vVERSION -R Yazelix/eon -p SHA256SUMS &&
-  git checkout vVERSION && nix build .#release &&
+  git checkout vVERSION && nix build ".#$release_attribute" &&
   diff SHA256SUMS result/SHA256SUMS &&
   ssh-keygen -Y sign -f RELEASE_KEY -n eon-bundle SHA256SUMS &&
   gh release upload vVERSION -R Yazelix/eon SHA256SUMS.sig &&
@@ -254,9 +269,9 @@ the installer refuses to adopt an unmarked directory.
 
 ## Limits of the published install
 
-The Nix-free install was qualified narrowly
-(`eon-qualify-nix-free-linux-public-beta-lm9p`; `eon-igae.15.3` for the
-v0.2.0 release assets):
+The retained Nix-free qualification used earlier development archives
+(`eon-qualify-nix-free-linux-public-beta-lm9p`). These checks do not qualify
+later release assets; each candidate needs its own proof (`eon-igae.15.3`):
 
 - **Machines:** checked only in QEMU virtual machines with software rendering
   (Mesa lavapipe). A physical GPU is expected to work but is not yet tested
@@ -264,9 +279,8 @@ v0.2.0 release assets):
   tested.
 - **Desktops:** checked under Sway only. GNOME, KDE and COSMIC sessions are
   expected to work but are not yet tested from the archive.
-- **Distributions:** the v0.2.0 release assets were checked on Fedora 44; an
-  earlier build was checked on Fedora 44 and Ubuntu 26.04.1. Other
-  distributions that meet the
+- **Distributions:** earlier development archives were checked on Fedora 44
+  and Ubuntu 26.04.1. Other distributions that meet the
   [host prerequisites](MANUAL-BUNDLE.md#execution-and-host-boundary) are
   expected to work but are not yet tested. Only x86_64 is built.
 - **glibc:** nothing checks the 2.39 floor at install or launch; on an older

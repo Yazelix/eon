@@ -9,9 +9,10 @@ VERSION is the Eon package version. From v0.2.0 each
 [GitHub release](https://github.com/Yazelix/eon/releases) publishes it with
 the installer, `SHA256SUMS` and its signature
 ([release assets](INSTALLER.md#release-assets)). `nix build .#manual-bundle`
-produces the same archive from source, and `nix build .#release` adds the
-installer and `SHA256SUMS`. Nix builds the artifact; the extracted entrypoint
-requires no installed Nix, store, daemon or evaluator. The archive targets
+produces the full archive from source. The
+[selected release route](INSTALLER.md#release-assets) adds the source
+companion, installer and `SHA256SUMS`. Nix builds the artifact; the extracted
+entrypoint requires no installed Nix, store, daemon or evaluator. The archive targets
 x86_64 Linux native Wayland. The [installer](INSTALLER.md#install-a-release)
 is the usual way to install it and lists the
 [limits](INSTALLER.md#limits-of-the-published-install) of the published
@@ -192,11 +193,15 @@ The archive omits the Helix grammars for Blueprint, Drools, GNU assembler
 Those languages have no syntax
 highlighting in the archive; the Nix package keeps its grammars.
 
-The default archive includes Accelerando and its fonts. Its release check
-requires the rights holder's grant for the exact font and glyph bytes.
-`nix build .#manual-bundle-without-accelerando` builds the alternative archive
-without those fonts or the Accelerando program; its default font fallback list
-contains only Symbols Nerd Font Mono. Game of Life remains available.
+With the rights holder's recorded grant for the exact font and glyph bytes,
+the full route (`.#manual-bundle`, `.#release`) includes Accelerando and its
+fonts. Without that grant, the release uses `.#release-without-accelerando`;
+`nix build .#manual-bundle-without-accelerando` builds its binary archive.
+That route omits the Accelerando program and fonts, and its default font
+fallback list contains only Symbols Nerd Font Mono. Game of Life remains
+available. Both routes preserve the notice/source checks; the full release
+route rejects a missing grant. Check and record the chosen route at the cut
+as described in [release assets](INSTALLER.md#release-assets).
 
 Manual-download copy: Download the immutable Linux archive, `SHA256SUMS` and
 `SHA256SUMS.sig` from the release. Verify them with the Eon release public key

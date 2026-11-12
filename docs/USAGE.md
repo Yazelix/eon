@@ -2,7 +2,9 @@
 
 ## Supported environment
 
-Eon is in alpha. On Linux it installs without Nix or through Nix. The
+v0.2.0 is Eon's first beta; before publication it is a prepared candidate.
+Its download commands require the GitHub release to be published.
+On Linux it installs without Nix or through Nix. The
 supported product target is **x86_64 Linux on native Wayland**. From v0.2.0, Apple Silicon Macs
 with macOS 14 or later run Eon as a preview; the
 [README](../README.md#status-and-limits) lists its known issues.
@@ -36,7 +38,7 @@ machine ends live terminal process state.
 
 On Linux, the [README](../README.md#linux-without-nix) and the
 [installer guide](INSTALLER.md#install-a-release) install Eon without Nix.
-With Nix, install the latest release, 0.1.16:
+With Nix, install the latest release:
 
 ```sh
 nix profile add --refresh github:Yazelix/eon/main
@@ -1388,6 +1390,10 @@ supervisor started after you update Eon removes these names; detaching and
 reattaching a window, or recovering it, keeps the old environment.
 
 ### Accelerando glyphs
+
+This animation is available in builds that include Accelerando. Without a
+recorded redistribution grant, the Linux release archive omits the animation
+and its fonts; Game of Life stays available. See [release routes](INSTALLER.md#release-assets).
 
 In Eon's native terminal, `eon anima accelerando` shows the 8,192-glyph alien
 alphabet in long green trails; add `--symbols` to mix in letters, digits and

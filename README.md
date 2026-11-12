@@ -43,21 +43,21 @@ with macOS 14 or later also works, through Nix, as a
 
 ### Linux, without Nix
 
-Every release publishes a Linux archive and a small static installer as
+From v0.2.0, releases publish a Linux archive and a small static installer as
 [GitHub release assets](https://github.com/Yazelix/eon/releases), with SHA-256
 checksums signed by the Eon release key and GitHub build attestations for the
-archive, the installer and the checksum file. Your system needs glibc 2.39 or
-newer, a Vulkan driver, `curl`, and `ssh-keygen` from OpenSSH 8.9 or newer
-([all prerequisites](docs/MANUAL-BUNDLE.md#execution-and-host-boundary)).
-Install 0.2.0:
+archive, its source companion, the installer and the checksum file. Your system
+needs glibc 2.39 or newer, a Vulkan driver, `curl`, and `ssh-keygen` from
+OpenSSH 8.9 or newer ([all prerequisites](docs/MANUAL-BUNDLE.md#execution-and-host-boundary)).
+These v0.2.0 beta install commands work once its GitHub release is published:
 
 ```sh
 v=0.2.0
 base=https://github.com/Yazelix/eon/releases/download/v$v
 mkdir -p ~/.config/eon && cd "$(mktemp -d)"
-echo 'eon-release namespaces="eon-bundle" ssh-ed25519 RELEASE_PUBLIC_KEY' > ~/.config/eon/allowed_signers
-curl -fL --remote-name-all "$base/eon-install-x86_64-linux" "$base/SHA256SUMS" "$base/SHA256SUMS.sig"
-ssh-keygen -Y verify -f ~/.config/eon/allowed_signers -I eon-release -n eon-bundle -s SHA256SUMS.sig < SHA256SUMS &&
+echo 'eon-release namespaces="eon-bundle" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBOa/SOSVHjSVJiUD3cMiMH+BMeB/87JzMgi+Da8QChX' > ~/.config/eon/allowed_signers
+curl -fL --remote-name-all "$base/eon-install-x86_64-linux" "$base/SHA256SUMS" "$base/SHA256SUMS.sig" &&
+  ssh-keygen -Y verify -f ~/.config/eon/allowed_signers -I eon-release -n eon-bundle -s SHA256SUMS.sig < SHA256SUMS &&
   sha256sum -c --ignore-missing SHA256SUMS &&
   chmod +x eon-install-x86_64-linux &&
   ./eon-install-x86_64-linux install "$base/eon-$v-x86_64-linux.tar.zst" --signers ~/.config/eon/allowed_signers
@@ -83,7 +83,7 @@ checking and extracting the archive by hand.
 ### With Nix
 
 With Git and Nix with flakes enabled, on Linux or an Apple Silicon Mac,
-install the latest release, 0.1.16:
+install the latest release:
 
 ```sh
 nix profile add --refresh github:Yazelix/eon/main
@@ -161,8 +161,9 @@ coverage.
 
 ## Status and limits
 
-Eon is in alpha: commands, configuration and behavior may still change between
-releases. v0.2.0 enters beta. On Linux it installs without Nix or through Nix;
+v0.2.0 is Eon's first beta. Before its GitHub release is published, it is a
+prepared candidate. Commands, configuration and behavior may still change
+between releases. On Linux it installs without Nix or through Nix;
 the Mac preview installs through Nix. It was proved on COSMIC and private Sway
 before the move to one repository. Here, installed checks so far run on a
 private headless Sway, plus a brief COSMIC launch check; the full desktop
@@ -171,11 +172,11 @@ proofs and the bounded Orca
 await re-proof. Other compositors, non-systemd hosts and proprietary NVIDIA
 drivers are unproved. Restarting the machine ends live terminals.
 
-**Linux without Nix:** this release was checked from its GitHub release on
-Fedora 44, and an earlier build on Ubuntu 26.04, both in virtual machines with
-software rendering under Sway. GNOME, KDE and COSMIC sessions, physical GPUs
-and other distributions with glibc 2.39 or newer are expected to work but are
-not yet tested from the archive; reports welcome. The archive leaves out
+**Linux without Nix:** earlier development archives were checked on Fedora 44
+and Ubuntu 26.04, in virtual machines with software rendering under Sway.
+Those checks do not qualify later release assets. GNOME, KDE and COSMIC
+sessions, physical GPUs and other distributions with glibc 2.39 or newer are
+expected to work but are not yet tested from the archive; reports welcome. The archive leaves out
 eonbase, which stays Nix-only. The installer guide lists
 [every limit](docs/INSTALLER.md#limits-of-the-published-install).
 
