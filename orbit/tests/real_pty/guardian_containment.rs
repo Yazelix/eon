@@ -200,7 +200,7 @@ pub fn run() {
             OsStr::new("-c"),
             OsStr::new("trap '' HUP; while :; do sleep 1; done"),
         ],
-        &["--management-v7", "session-1", "run-1", "component-1"],
+        &["--management-v8", "session-1", "run-1", "component-1"],
     );
     let fault = run_command(&line, &[("ORBIT_GUARDIAN_FAULT", Path::new("1"))], 8.0);
     let output = String::from_utf8_lossy(&fault.stdout);

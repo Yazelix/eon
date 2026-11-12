@@ -3,6 +3,8 @@
 //! finished and what has been seen. Orbit owns the records; this owns their
 //! meaning.
 
+mod helpers;
+
 use super::sessions::{self, ProgramStatusRead, RunningSession};
 use eon_workspace_protocol::v41::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
@@ -258,6 +260,18 @@ pub(super) struct Attention {
     /// One instant and its wall-clock Unix milliseconds, which turn every
     /// fixed change time into the same `changed_at` in each snapshot.
     epoch: (Instant, u64),
+    helper_worker: Option<helpers::Worker>,
+    helper_pending: Vec<HelperPending>,
+    helper_sample: u64,
+}
+
+struct HelperPending {
+    sample: u64,
+    session: String,
+    run: String,
+    status: ProgramStatus,
+    replied: Instant,
+    deadline: Instant,
 }
 
 impl Attention {
@@ -276,6 +290,9 @@ impl Attention {
             next_poll: now,
             sidebar: if enabled { Sidebar::Open } else { Sidebar::Off },
             epoch: (now, wall),
+            helper_worker: None,
+            helper_pending: Vec::new(),
+            helper_sample: 0,
         }
     }
 
@@ -293,6 +310,24 @@ impl Attention {
         sessions: &mut [RunningSession],
         now: Instant,
     ) {
+        let results: Vec<_> = self
+            .helper_worker
+            .as_ref()
+            .map(|worker| worker.receiver.try_iter().collect())
+            .unwrap_or_default();
+        for (sample, helpers) in results {
+            if let Some(index) = self.helper_pending.iter().position(|p| p.sample == sample) {
+                let pending = self.helper_pending.swap_remove(index);
+                self.apply_helper_result(targets, sessions, pending, helpers);
+            }
+        }
+        for pending in std::mem::take(&mut self.helper_pending) {
+            if Instant::now() >= pending.deadline {
+                self.apply_helper_result(targets, sessions, pending, false);
+            } else {
+                self.helper_pending.push(pending);
+            }
+        }
         let due = now >= self.next_poll;
         if due {
             self.next_poll = now + POLL_INTERVAL;
@@ -301,17 +336,83 @@ impl Attention {
             if !targets.iter().any(|target| target.session == session.id) {
                 continue;
             }
+            if self
+                .helper_pending
+                .iter()
+                .any(|pending| pending.session == session.id && pending.run == session.run_id())
+            {
+                continue;
+            }
             if due {
                 let _ = sessions::send_program_status(session, now + POLL_DEADLINE);
             }
+            let deadline = sessions::program_status_deadline(session).unwrap_or(now);
             if let Ok(ProgramStatusRead::Reply(status)) = sessions::read_program_status(session) {
+                if helpers::needs_inspection(&status) && Instant::now() < deadline {
+                    if self.helper_worker.is_none() {
+                        self.helper_worker = helpers::Worker::start();
+                    }
+                    self.helper_sample += 1;
+                    if self.helper_worker.as_ref().is_some_and(|worker| {
+                        worker.submit(self.helper_sample, status.clone(), deadline)
+                    }) {
+                        self.helper_pending.push(HelperPending {
+                            sample: self.helper_sample,
+                            session: session.id.clone(),
+                            run: session.run_id().to_owned(),
+                            status,
+                            replied: now,
+                            deadline,
+                        });
+                        continue;
+                    }
+                }
                 self.apply(targets, &session.id, session.run_id(), status, now);
             }
         }
     }
 
+    fn apply_helper_result(
+        &mut self,
+        targets: &[Target],
+        sessions: &[RunningSession],
+        mut pending: HelperPending,
+        helpers: bool,
+    ) {
+        if targets
+            .iter()
+            .any(|target| target.session == pending.session)
+            && sessions.iter().any(|session| {
+                session.id == pending.session
+                    && session.run_id() == pending.run
+                    && !session.is_finished()
+            })
+        {
+            if helpers && Instant::now() < pending.deadline {
+                pending.status.background = 0;
+            }
+            self.apply(
+                targets,
+                &pending.session,
+                &pending.run,
+                pending.status,
+                pending.replied,
+            );
+        }
+    }
+
     /// Drops the attention of removed targets and of ended or replaced runs.
     pub(super) fn retain(&mut self, targets: &[Target], sessions: &[RunningSession]) {
+        self.helper_pending.retain(|pending| {
+            targets
+                .iter()
+                .any(|target| target.session == pending.session)
+                && sessions.iter().any(|session| {
+                    session.id == pending.session
+                        && session.run_id() == pending.run
+                        && !session.is_finished()
+                })
+        });
         self.recovered.retain(|(run, _)| {
             sessions
                 .iter()
@@ -902,6 +1003,7 @@ mod tests {
         ProgramStatus {
             count: records.len() as u16,
             background: 0,
+            processes: Default::default(),
             foreground: Foreground::Child,
             update,
             terminal_title: String::new(),
@@ -1949,6 +2051,7 @@ mod tests {
         let crowded = ProgramStatus {
             count: 2,
             background: 0,
+            processes: Default::default(),
             foreground: Foreground::Child,
             update: 7,
             terminal_title: String::new(),
@@ -1981,6 +2084,7 @@ mod tests {
             let churning = ProgramStatus {
                 count: 2,
                 background: 0,
+                processes: Default::default(),
                 foreground: Foreground::Child,
                 update,
                 terminal_title: String::new(),
@@ -3162,6 +3266,392 @@ mod tests {
     /// Each reply's foreground reaches the terminal: `other` while a
     /// job-control job leads the PTY, `child` once the shell has it back
     /// (ORB-C15, since management v5).
+    #[test]
+    fn helper_inspection_only_delays_done_or_idle_records() {
+        use orbit_protocol::management::{ProcessIdentity, ProgramProcesses};
+        for state in [Working, Blocked, Error, Done, Idle] {
+            let mut reply = status(1, vec![record("", state, None, 1)]);
+            reply.background = 1;
+            reply.processes = ProgramProcesses {
+                background: vec![ProcessIdentity { pid: 2, start: 1 }],
+                complete: true,
+                foreground: Some(ProcessIdentity { pid: 1, start: 1 }),
+            };
+            assert_eq!(
+                helpers::needs_inspection(&reply),
+                cfg!(target_os = "linux") && matches!(state, Done | Idle)
+            );
+        }
+    }
+
+    #[test]
+    fn helper_verdicts_respect_the_deadline_run_and_removed_target() {
+        let root = crate::supervisor::temporary_directory();
+        let (session, _peer, _) = crate::sessions::tests::tombstoned_session(
+            &root,
+            1,
+            orbit_protocol::management::TerminationReason::ExplicitStop,
+        );
+        let sessions = [session];
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["terminal-1"], &[], None)])]);
+        let now = Instant::now();
+        let pending = |run: &str, deadline| HelperPending {
+            sample: 1,
+            session: "terminal-1".into(),
+            run: run.into(),
+            status: ProgramStatus {
+                background: 1,
+                ..status(1, vec![record("", Done, Some(Working), 1)])
+            },
+            replied: now,
+            deadline,
+        };
+        let mut attention = Attention::new(true);
+        attention.apply_helper_result(
+            &targets,
+            &sessions,
+            pending("old-run", now + POLL_DEADLINE),
+            true,
+        );
+        attention.apply_helper_result(&[], &sessions, pending("run-1", now + POLL_DEADLINE), true);
+        assert!(
+            attention.terminals.is_empty(),
+            "a late result revived a removed run/target"
+        );
+        attention.apply_helper_result(&targets, &sessions, pending("run-1", now), true);
+        assert_eq!(
+            state(&attention, &targets, "terminal-1", now),
+            Some(State::Background)
+        );
+        attention.apply_helper_result(
+            &targets,
+            &sessions,
+            pending("run-1", now + POLL_DEADLINE),
+            true,
+        );
+        assert_eq!(
+            state(&attention, &targets, "terminal-1", now),
+            Some(State::Finished)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn agent_background_monitor() {
+        use std::{os::unix::process::CommandExt, process::Command};
+        let Some(script) = std::env::var_os("EON_TEST_AGENT_MONITOR_SCRIPT") else {
+            return;
+        };
+        // SAFETY: this guarded helper runs in a test-owned child process.
+        assert!(unsafe { libc::setsid() } > 0);
+        panic!(
+            "monitor exec failed: {}",
+            Command::new("bash").arg(script).exec()
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn agent_helpers_do_not_hide_background_jobs() {
+        use std::{io::Write, process::Command};
+        // The second case keeps Codex in a launcher's foreground group and
+        // starts a real job before the agent's first report.
+        for preexisting in [false, true] {
+            let root = crate::supervisor::temporary_directory();
+            let bin = root.join("packages/standalone/releases/0.167.2-test/bin");
+            let node = root.join("resources/cua_node/bin");
+            fs::create_dir_all(&bin).unwrap();
+            fs::create_dir_all(&node).unwrap();
+            let output = Command::new("bash")
+                .args(["-c", "printf %s \"$BASH\""])
+                .output()
+                .unwrap();
+            let bash = std::path::PathBuf::from(String::from_utf8(output.stdout).unwrap());
+            for path in [
+                bin.join("codex"),
+                bin.join("codex-code-mode-host"),
+                node.join("node"),
+                node.join("node_repl"),
+                bin.join(".claude-wrapped"),
+            ] {
+                fs::copy(&bash, path).unwrap();
+            }
+            for name in ["control", "helper", "quiet", "job"] {
+                assert!(
+                    Command::new("mkfifo")
+                        .arg(root.join(name))
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+            }
+            let wrapper =
+                root.join("resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs");
+            fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+            fs::write(
+                &wrapper,
+                format!("\"{}/node_repl\" <&5 &\nwait\n", node.display()),
+            )
+            .unwrap();
+            let other = root.join("lookalike/codex-code-mode-host");
+            fs::create_dir_all(other.parent().unwrap()).unwrap();
+            fs::copy(&bash, &other).unwrap();
+            let claude_script = root.join("claude-script");
+            fs::write(
+                &claude_script,
+                format!(
+                    r#"(exec -a ugrep "{}/.claude-wrapped" -c 'read -r _ <"{}/job"') &
+child=$!
+trap 'kill "$child"; wait "$child"' TERM
+wait "$child"
+"#,
+                    bin.display(),
+                    root.display()
+                ),
+            )
+            .unwrap();
+            let monitor_script = root.join("monitor-script");
+            fs::write(
+                &monitor_script,
+                format!(
+                    r#"timeout 60 tail -f /dev/null &
+child=$!
+printf '%s' "$$" >"{}/monitor-pid"
+trap 'kill "$child"; wait "$child"' TERM
+wait "$child"
+"#,
+                    root.display()
+                ),
+            )
+            .unwrap();
+            let helper_script = root.join("helper-script");
+            fs::write(
+                &helper_script,
+                format!(
+                    r#"while read -r command <&3; do
+case "$command" in
+job) "{}" -c 'read -r _ <"{}/job"' & job=$! ;;
+stop) kill "$job"; wait "$job" ;;
+esac
+done
+"#,
+                    bash.display(),
+                    root.display()
+                ),
+            )
+            .unwrap();
+            let agent = root.join("agent-script");
+            let start_job = if preexisting {
+                format!(
+                    "\"{}\" -c 'read -r _ <\"{}/job\"' & job=$!\n",
+                    bash.display(),
+                    root.display()
+                )
+            } else {
+                String::new()
+            };
+            fs::write(
+                &agent,
+                format!(
+                    r#"set -m
+exec 3<>"{root}/helper" 4<>"{root}/control" 5<>"{root}/quiet"
+printf '%s' "$$" >"{root}/provider-pid"
+"{bin}/codex-code-mode-host" <"{helper_script}" &
+"{node}/node_repl" <&5 &
+"{node}/node" "{wrapper}" &
+{start_job}
+printf '\033]7501;state=idle:app=codex\007'
+while read -r command <&4; do
+case "$command" in
+working|done|idle) printf '\033]7501;state=%s:app=codex\007' "$command" ;;
+lazy) "{bin}/codex-code-mode-host" <&5 & ;;
+job) "{bash}" -c 'read -r _ <"{root}/job"' & job=$! ;;
+stop) kill "$job"; wait "$job" ;;
+helper-job) printf 'job\n' >&3 ;;
+helper-stop) printf 'stop\n' >&3 ;;
+lookalike) "{root}/lookalike/codex-code-mode-host" <&5 & job=$! ;;
+arguments) "{bin}/codex-code-mode-host" -c 'read -r _ <"{root}/job"' & job=$! ;;
+claude) "{bin}/.claude-wrapped" "{root}/claude-script" & job=$! ;;
+monitor) set +m
+EON_TEST_AGENT_MONITOR_SCRIPT="{root}/monitor-script" "{test_binary}" --exact attention::tests::agent_background_monitor --nocapture &
+set -m
+while [ ! -f "{root}/monitor-pid" ]; do read -r -t 0.01 _ <&5; done
+read -r job <"{root}/monitor-pid" ;;
+many) jobs=(); for n in {{1..12}}; do
+"{bash}" -c 'read -r _ <"{root}/job"' & jobs+=("$!"); done ;;
+stop-many) for pid in "${{jobs[@]}}"; do kill "$pid"; wait "$pid"; done ;;
+
+
+esac
+done
+"#,
+                    root = root.display(),
+                    bin = bin.display(),
+                    node = node.display(),
+                    helper_script = helper_script.display(),
+                    wrapper = wrapper.display(),
+                    bash = bash.display(),
+                    test_binary = std::env::current_exe().unwrap().display()
+                ),
+            )
+            .unwrap();
+            let script = if preexisting {
+                format!(
+                    "'{}' '{}' '{}' & wait",
+                    bin.join("codex").display(),
+                    agent.display(),
+                    "a".repeat(5000)
+                )
+            } else {
+                format!(
+                    "exec '{}' '{}'",
+                    bin.join("codex").display(),
+                    agent.display()
+                )
+            };
+            let mut sessions = vec![crate::sessions::tests::leased_orbit(&root, &script)];
+            let (targets, _) =
+                targets(&[snapshot("t", vec![tab("t", &["terminal-1"], &[], None)])]);
+            let mut attention = Attention::new(true);
+            // Wait beyond grace using the authoritative raw count. A fixed
+            // delay can accept a false idle before the agent has started.
+            let raw_count = |sessions: &mut [RunningSession], minimum| {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    let now = Instant::now();
+                    sessions::send_program_status(&mut sessions[0], now + POLL_DEADLINE).unwrap();
+                    if let ProgramStatusRead::Reply(reply) =
+                        sessions::read_program_status(&mut sessions[0]).unwrap()
+                        && reply.background >= minimum
+                    {
+                        return reply;
+                    }
+                    assert!(now < deadline, "fake processes never settled");
+                    thread::sleep(Duration::from_millis(25));
+                }
+            };
+            let raw = raw_count(&mut sessions, if preexisting { 5 } else { 4 });
+            if preexisting {
+                let provider: u32 = fs::read_to_string(root.join("provider-pid"))
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                assert_ne!(raw.processes.foreground.unwrap().pid, provider);
+            }
+            if !preexisting {
+                let inspect = |reply: &ProgramStatus| {
+                    helpers::only_helpers(reply, Instant::now() + Duration::from_secs(2))
+                };
+                assert!(
+                    inspect(&raw),
+                    "the measured helper roles were not recognized"
+                );
+                let mut stale = raw.clone();
+                stale.processes.background[0].start += 1;
+                assert!(!inspect(&stale));
+                stale = raw.clone();
+                stale.processes.foreground.as_mut().unwrap().start += 1;
+                assert!(!inspect(&stale));
+                stale = raw.clone();
+                stale.processes.complete = false;
+                assert!(!inspect(&stale));
+                stale = raw.clone();
+                stale.processes.background.pop();
+                assert!(!inspect(&stale));
+                stale = raw.clone();
+                stale.background = 255;
+                assert!(!inspect(&stale));
+                assert!(!helpers::only_helpers(&raw, Instant::now()));
+            }
+            let mut control = fs::OpenOptions::new()
+                .write(true)
+                .open(root.join("control"))
+                .unwrap();
+            let expect = |attention: &mut Attention, sessions: &mut [RunningSession], expected| {
+                eprintln!("preexisting={preexisting}, expected={expected:?}");
+                poll_until(attention, &targets, sessions, |attention| {
+                    state(attention, &targets, "terminal-1", Instant::now()) == Some(expected)
+                });
+            };
+            expect(
+                &mut attention,
+                &mut sessions,
+                if preexisting {
+                    State::Background
+                } else {
+                    State::Idle
+                },
+            );
+            writeln!(control, "working").unwrap();
+            expect(&mut attention, &mut sessions, State::Working);
+            writeln!(control, "done").unwrap();
+            expect(
+                &mut attention,
+                &mut sessions,
+                if preexisting {
+                    State::Background
+                } else {
+                    State::Finished
+                },
+            );
+            attention.observe(Some("terminal-1".into()), true);
+            if preexisting {
+                writeln!(control, "stop").unwrap();
+            }
+            expect(&mut attention, &mut sessions, State::Idle);
+            attention.observe(None, false);
+            writeln!(control, "lazy").unwrap();
+            raw_count(&mut sessions, 5);
+            let previous = attention.helper_sample;
+            attention.next_poll = Instant::now();
+            poll_until(&mut attention, &targets, &mut sessions, |attention| {
+                attention.helper_sample > previous
+                    && attention.helper_pending.is_empty()
+                    && state(attention, &targets, "terminal-1", Instant::now()) == Some(State::Idle)
+            });
+            // A later real job remains background across another working turn.
+            writeln!(control, "job").unwrap();
+            expect(&mut attention, &mut sessions, State::Background);
+            writeln!(control, "working").unwrap();
+            expect(&mut attention, &mut sessions, State::Working);
+            writeln!(control, "done").unwrap();
+            expect(&mut attention, &mut sessions, State::Background);
+            writeln!(control, "stop").unwrap();
+            expect(&mut attention, &mut sessions, State::Finished);
+            attention.observe(Some("terminal-1".into()), true);
+            expect(&mut attention, &mut sessions, State::Idle);
+            // A child in the helper's own group is work, not infrastructure.
+            writeln!(control, "helper-job").unwrap();
+            expect(&mut attention, &mut sessions, State::Background);
+            writeln!(control, "helper-stop").unwrap();
+            expect(&mut attention, &mut sessions, State::Idle);
+            // Names/extra arguments do not exempt real work; Claude's own
+            // utility binary and a detached Monitor-shaped chain count too.
+            for command in ["lookalike", "arguments", "claude", "monitor"] {
+                eprintln!("preexisting={preexisting}, job={command}");
+                writeln!(control, "{command}").unwrap();
+                expect(&mut attention, &mut sessions, State::Background);
+                writeln!(control, "stop").unwrap();
+                expect(&mut attention, &mut sessions, State::Idle);
+            }
+            writeln!(control, "many").unwrap();
+            let incomplete = raw_count(&mut sessions, 17);
+            assert_eq!(incomplete.processes.background.len(), 16);
+            assert!(!incomplete.processes.complete);
+            expect(&mut attention, &mut sessions, State::Background);
+            writeln!(control, "stop-many").unwrap();
+            expect(&mut attention, &mut sessions, State::Idle);
+            // Replacement invalidates the positive installation identity.
+            let host = bin.join("codex-code-mode-host");
+            fs::rename(&host, bin.join("retired-host")).unwrap();
+            fs::copy(&bash, &host).unwrap();
+            expect(&mut attention, &mut sessions, State::Background);
+            crate::sessions::stop_managed_sessions(&mut sessions, Duration::from_secs(5)).unwrap();
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn the_poller_reads_a_real_foreground() {
         let root = crate::supervisor::temporary_directory();

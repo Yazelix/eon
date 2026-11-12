@@ -1589,21 +1589,21 @@ impl Host {
                 Decision::ManageLease => self.managed()?.lease()?,
                 Decision::ManageStatus => self.managed()?.status()?,
                 Decision::ManageProgramStatus => {
-                    let mut status = self
-                        .orbit
-                        .status
-                        .reply(title_and_directory(&self.orbit.terminal).0, Instant::now());
                     // One sample gives the foreground, reported for every
                     // reply, and the group the background count starts from,
                     // counted only while the terminal holds records (ORB-C15).
                     let group = self.orbit.foreground_group();
+                    let census = if self.orbit.status.has_records() && self.orbit.child.is_some() {
+                        platform::background_processes(self.orbit.pid as platform::pid_t, group)
+                    } else {
+                        Default::default()
+                    };
+                    let mut status = self.orbit.status.reply(
+                        title_and_directory(&self.orbit.terminal).0,
+                        Instant::now(),
+                        census,
+                    );
                     status.foreground = self.orbit.foreground_of(group).into();
-                    if status.count > 0 && self.orbit.child.is_some() {
-                        status.background = platform::background_processes(
-                            self.orbit.pid as platform::pid_t,
-                            group,
-                        );
-                    }
                     self.managed()?.program_status(status)?
                 }
                 Decision::ManageRefuse => self.managed()?.refuse()?,

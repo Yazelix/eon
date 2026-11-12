@@ -6,6 +6,14 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Management generation 8 adds up to 16 counted PID/start identities, their
+  completeness flag and the optional foreground leader identity to ProgramStatus
+  within 4 KiB (ORB-C15). The raw background count and 512/255 bounds stay.
+  Status packing reserves process metadata, guaranteeing six full records at
+  14 held records and three at 256. `--management-v8` replaces v7 without an
+  alias; Runtime and test consumers move together. ORBS, ORBF and EONW stay
+  unchanged (`eon-v0gvq`).
+
 - ORB-C13 distinguishes Eon's fifteen-second new-terminal start allowance
   from five-second recovery and fresh five-second failed-start rollback.
   Ready marking and management-only authority after marking are unchanged

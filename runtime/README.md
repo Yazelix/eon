@@ -14,6 +14,13 @@ Eon's actual executable calls `eon_runtime::run(inputs)`. The concrete root
 exports construct `Inputs`, defaults and managed-program inputs; the ten
 mechanism modules remain private. `run` returns the product label and exit
 result. Eon retains process exit/error handling.
+Agent attention consumes management v8's neutral background-process census.
+On Linux one bounded worker validates the four measured Codex/ChatGPT helper
+roles before excluding those processes from background interpretation. A
+separate job, unknown identity or deadline miss keeps background. EONW stays
+v41; Darwin keeps the raw-count interpretation. EON-C31 lists the support
+limits and follow-ups.
+
 The private CLI prints grouped Eon help for standalone `-h` and `--help`, and
 one family's or command's lines of it after one or two command words,
 with terminal-only color and concise usage errors; child options remain forwarded.

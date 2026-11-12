@@ -219,13 +219,27 @@ const BACKGROUND_WALK: usize = 512;
 /// that descend, by parent process, from a member of the `foreground` group,
 /// are outside it, are neither stopped nor zombies, and started at least 1 s
 /// ago. A walk that reaches 512 processes or counts 255 reports 255.
-pub(crate) fn background_processes(child: pid_t, foreground: Option<pid_t>) -> u8 {
+pub(crate) fn background_processes(
+    child: pid_t,
+    foreground: Option<pid_t>,
+) -> (u8, orbit_protocol::management::ProgramProcesses) {
+    use orbit_protocol::management::{
+        MAX_BACKGROUND_IDENTITIES, ProcessIdentity, ProgramProcesses,
+    };
+    let mut census = ProgramProcesses::default();
     let (Some(foreground), Some(clock)) = (foreground, Clock::now()) else {
-        return 0;
+        return (0, census);
     };
     let Some(root) = process(child, &clock) else {
-        return 0;
+        return (0, census);
     };
+    census.complete = true;
+    census.foreground = process(foreground, &clock).and_then(|leader| {
+        (leader.group == foreground && leader.start != 0).then_some(ProcessIdentity {
+            pid: foreground.try_into().ok()?,
+            start: leader.start,
+        })
+    });
     // Each pending process and whether its children descend from a member.
     let mut pending = vec![(child, root.group == foreground)];
     let (mut walked, mut count) = (0, 0u8);
@@ -233,7 +247,8 @@ pub(crate) fn background_processes(child: pid_t, foreground: Option<pid_t>) -> u
         for pid in children(parent, BACKGROUND_WALK - walked) {
             walked += 1;
             if walked == BACKGROUND_WALK {
-                return u8::MAX;
+                census.complete = false;
+                return (u8::MAX, census);
             }
             // A process that exited, or whose pid was reused, is skipped.
             let Some(process) = process(pid, &clock).filter(|process| process.parent == parent)
@@ -243,18 +258,34 @@ pub(crate) fn background_processes(child: pid_t, foreground: Option<pid_t>) -> u
             let member = process.group == foreground;
             if below && !member && process.running && process.settled {
                 count += 1;
+                if census.background.len() < MAX_BACKGROUND_IDENTITIES
+                    && process.start != 0
+                    && !census
+                        .background
+                        .iter()
+                        .any(|identity| identity.pid == pid as u32)
+                {
+                    census.background.push(ProcessIdentity {
+                        pid: pid as u32,
+                        start: process.start,
+                    });
+                } else {
+                    census.complete = false;
+                }
                 if count == u8::MAX {
-                    return count;
+                    census.complete = false;
+                    return (count, census);
                 }
             }
             pending.push((pid, below || member));
         }
     }
-    count
+    (count, census)
 }
 
 /// One process as the background count reads it.
 struct Process {
+    start: u64,
     parent: pid_t,
     group: pid_t,
     /// Neither stopped nor a zombie.
@@ -319,6 +350,7 @@ fn process(pid: pid_t, clock: &Clock) -> Option<Process> {
     let fields = stat(&pid.to_string()).ok()?;
     let started: u64 = fields.get(19)?.parse().ok()?;
     Some(Process {
+        start: started,
         parent: fields.get(1)?.parse().ok()?,
         group: fields.get(2)?.parse().ok()?,
         running: !matches!(fields.first()?.as_str(), "T" | "t" | "Z" | "X"),
@@ -382,6 +414,7 @@ fn started(info: &libc::proc_bsdinfo) -> Option<u64> {
 fn process(pid: pid_t, clock: &Clock) -> Option<Process> {
     let info = bsd_info(pid)?;
     Some(Process {
+        start: started(&info)?,
         parent: info.pbi_ppid.try_into().ok()?,
         group: info.pbi_pgid.try_into().ok()?,
         running: !matches!(info.pbi_status, libc::SSTOP | libc::SZOMB),

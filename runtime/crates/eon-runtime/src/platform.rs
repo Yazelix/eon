@@ -78,6 +78,92 @@ pub(crate) struct Process {
     pub(crate) ended: bool,
 }
 
+/// Kernel evidence for advisory helper recognition, never a signalling target.
+#[cfg(target_os = "linux")]
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct HelperProcess {
+    pub identity: orbit_protocol::management::ProcessIdentity,
+    pub parent: u32,
+    pub group: u32,
+    pub executable: PathBuf,
+    pub executable_object: (u64, u64),
+    pub arguments: Vec<Vec<u8>>,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn helper_process(pid: u32, read_arguments: bool) -> Option<HelperProcess> {
+    use std::{fs, io::Read, os::unix::fs::MetadataExt};
+    let directory = PathBuf::from(format!("/proc/{pid}"));
+    let bounded = |name: &str| -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        fs::File::open(directory.join(name))
+            .ok()?
+            .take(4097)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        (bytes.len() <= 4096).then_some(bytes)
+    };
+    let stat = || -> Option<(u64, u32, u32)> {
+        let bytes = bounded("stat")?;
+        let end = bytes.iter().rposition(|&byte| byte == b')')?;
+        let fields: Vec<_> = std::str::from_utf8(&bytes[end + 1..])
+            .ok()?
+            .split_whitespace()
+            .collect();
+        if matches!(*fields.first()?, "T" | "t" | "Z" | "X") {
+            return None;
+        }
+        Some((
+            fields.get(19)?.parse().ok()?,
+            fields.get(1)?.parse().ok()?,
+            fields.get(2)?.parse().ok()?,
+        ))
+    };
+    let before = stat()?;
+    let executable = fs::read_link(directory.join("exe")).ok()?;
+    let object = |path: &Path| -> Option<(u64, u64)> {
+        let metadata = fs::metadata(path).ok()?;
+        metadata
+            .is_file()
+            .then_some((metadata.dev(), metadata.ino()))
+    };
+    let identity = object(&directory.join("exe"))?;
+    // Deleted or replaced installations do not supply a positive role identity.
+    if !executable.is_absolute() || object(&executable)? != identity {
+        return None;
+    }
+    let arguments = if read_arguments {
+        let arguments = bounded("cmdline")?;
+        if arguments.last() != Some(&0) {
+            return None;
+        }
+        arguments[..arguments.len() - 1]
+            .split(|&byte| byte == 0)
+            .map(<[u8]>::to_vec)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if stat()? != before
+        || fs::read_link(directory.join("exe")).ok()? != executable
+        || object(&directory.join("exe"))? != identity
+        || object(&executable)? != identity
+    {
+        return None;
+    }
+    Some(HelperProcess {
+        identity: orbit_protocol::management::ProcessIdentity {
+            pid,
+            start: before.0,
+        },
+        parent: before.1,
+        group: before.2,
+        executable,
+        executable_object: identity,
+        arguments,
+    })
+}
+
 /// The pid and uid of the stream's peer.
 #[cfg(target_os = "linux")]
 pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
@@ -244,6 +330,77 @@ mod tests {
         peer.shutdown(Shutdown::Write).unwrap();
         assert_eq!(read_available(&stream, &mut buffer).unwrap(), 0);
         assert_eq!(flags(), blocking);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn helper_observation_changes_when_the_same_pid_execs_a_replacement() {
+        use std::{
+            os::unix::ffi::OsStrExt,
+            process::{Command, Stdio},
+            thread,
+            time::{Duration, Instant},
+        };
+
+        let root = temporary_directory();
+        let output = Command::new("bash")
+            .args(["-c", "printf %s \"$BASH\""])
+            .output()
+            .unwrap();
+        let bash = std::path::PathBuf::from(String::from_utf8(output.stdout).unwrap());
+        let executable = root.join("helper");
+        let replacement = root.join("replacement");
+        fs::copy(&bash, &executable).unwrap();
+        fs::copy(&bash, &replacement).unwrap();
+        let mut child = Command::new(&executable)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        // Spawn may still expose the parent image or an empty cmdline before exec.
+        let observe = || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(process) = super::helper_process(pid, true).filter(|process| {
+                    process.executable == executable
+                        && process.arguments.len() == 1
+                        && process.arguments[0] == executable.as_os_str().as_bytes()
+                }) {
+                    break Some(process);
+                }
+                if Instant::now() >= deadline {
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+        };
+        let observations = (|| -> io::Result<_> {
+            let before = observe().ok_or_else(|| io::Error::other("initial helper evidence"))?;
+            fs::rename(&replacement, &executable)?;
+            writeln!(
+                child
+                    .stdin
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("missing helper input"))?,
+                "exec \"{}\"",
+                executable.display()
+            )?;
+            let after = observe().ok_or_else(|| io::Error::other("replacement helper evidence"))?;
+            Ok((before, after))
+        })();
+        let killed = child.kill();
+        let reaped = child.wait();
+        let removed = fs::remove_dir_all(root);
+        killed.unwrap();
+        reaped.unwrap();
+        removed.unwrap();
+        let (before, after) = observations.unwrap();
+        assert_eq!(before.identity, after.identity);
+        assert_eq!(before.executable, after.executable);
+        assert!(before.arguments == after.arguments);
+        assert!(before != after, "replacement kept the old observation");
     }
 
     #[cfg(target_os = "linux")]

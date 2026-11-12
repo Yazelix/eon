@@ -785,6 +785,13 @@ the panes' rows in pane order. A row shows:
 - how long ago the state changed (`now`, `4m`, `2h`, `3d`);
 - the pane (`p3`) or popup it runs in.
 
+On Linux, the four measured Codex code-mode/ChatGPT REPL helpers alone leave
+the row finished or idle. Builds, servers and watchers started as separate
+processes keep the dots, including those started by a helper. Other MCP
+servers or installation layouts, replaced helper executables and Darwin keep
+the raw background behavior. Work inside an exempt REPL itself, without a
+child process, cannot be distinguished by this observation.
+
 A needs-input row adds the agent's question. `+2` counts the terminal's other
 status records. A dimmed row marked `status stale` has not reported for more
 than 3 seconds. An Agent popup whose agent does not report shows `status

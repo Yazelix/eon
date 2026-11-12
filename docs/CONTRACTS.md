@@ -2678,7 +2678,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime generation identity/selection, namespaces, discovery,
   Present, explicit Stop and exact owned residue; Eon supplies immutable
   assembly/default/validator/graph/Cargo/Nix-generated inputs.
-- **Consumes:** Orbit management v7 (`ORB-C15` foreground), `ORB-C3`
+- **Consumes:** Orbit management v8 (`ORB-C15` foreground), `ORB-C3`
   admission, EON-C31 polling, and Venus `VEN-C14`.
 - **Boundary:** No manager daemon, persisted topology, machine-restart recovery,
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
@@ -3010,7 +3010,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
-- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v7, and Venus `VEN-C14`.
+- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v8, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
@@ -4119,7 +4119,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C31 — Agent attention
 
-- **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-21
+- **Status:** Candidate on x86_64 Linux Wayland: eon-v0gvq helper interpretation
+  awaits installed proof. The prior contract was approved by Lucca on 2026-10-21
   (draft 15 on `eon-agent-sidebar-yx8.1`, which records decisions D1–D11 and
   Q1–Q8, every Q with its recommendation). `eon-agent-sidebar-yx8.6`
   implements the Runtime model; `eon-agent-sidebar-yx8.7` carries it over
@@ -4213,12 +4214,43 @@ names its socket. CLI JSON names a session `session` and a terminal
     | error | `error` whose raise is unseen |
     | finished | `done`, or a raised `idle`, whose raise is unseen |
     | working | `working`, with `progress` |
-    | background | `done` or `idle` whose terminal's reply counts background processes (ORB-C15) |
+    | background | `done` or `idle` with counted background processes other than validated supported infrastructure (ORB-C15) |
     | idle | any other `idle`; or `done`/`error`/raised `idle` whose raise has been seen |
     | unavailable | an Agent popup with no records |
 
-    Background takes precedence over finished and idle for that record: while the count is
-    above 0 the record maps to background, not finished or idle.
+    Background applies to a done or idle record when its terminal has counted
+    background processes other than validated supported agent infrastructure.
+    Runtime alone identifies infrastructure using the counted
+    PID/start identities, the foreground identity and current executable,
+    arguments and parent evidence. It excludes only the matching process itself.
+    Any counted process without a validated infrastructure role, any incomplete
+    observation, or a count at the saturation bound keeps background. Startup
+    time and turn age do not identify infrastructure. When no such work remains,
+    existing finish/idle, raise and seen rules apply unchanged.
+
+    Supported infrastructure roles, observed on Linux with Codex 0.167.2 and
+    ChatGPT's @oai/cua-repl 0.1.2, are:
+
+    1. no-argument `bin/codex-code-mode-host` in the foreground Codex parent's
+       standalone installation;
+    2. the ChatGPT package's no-argument `resources/cua_node/bin/node_repl`
+       directly parented by that Codex;
+    3. that package's `resources/cua_node/bin/node` running exactly
+       `resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs`,
+       directly parented by that Codex; and
+    4. that wrapper's no-argument `node_repl` child from the same package and
+       executable object as role 2.
+
+    The provider parent need not lead the foreground group: Runtime validates
+    its PID/start, full executable path
+    `<prefix>/packages/standalone/releases/<release>-<target>/bin/codex`
+    verified against that installation's on-disk `bin/codex`, its current
+    executable object, and the supplied group leader identity. Its process group equals
+    the supplied foreground leader PID. Matching only a name, basename or app
+    field is insufficient. Each role also requires the
+    executable/argument/package relationships and parent checks listed in
+    items 1-4 above. No Claude Code
+    process role is exempt.
 
   - **Seen.** Seen is keyed by (run, `id`, raise). A raise becomes seen when a
     Venus is attached, its native window is focused, and its exact terminal is
@@ -4405,10 +4437,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     - in the Agent popup the agent is the PTY child, so its exit ends the Orbit run, and its
       `done` and `error` records end with the run, even though the spec says they survive
       process exit;
-    - the ProgramStatus reply holds 7 records at their bounds, more when they are shorter, and as
-      few as 3 when a terminal holds many, so a terminal with as many `blocked`, `error` or `done`
-      records as fit (Claude subagents, for example) can crowd out a raised `idle` from the reply.
-      That finish never shows.
+    - the ProgramStatus reply holds 6 records at their bounds (with the process
+      identities and foreground identity at their bounds), more when they or
+      that metadata are shorter, and as few as 3 when a terminal holds many,
+      so a terminal with as many `blocked`, `error` or `done` records as fit
+      (Claude subagents, for example) can crowd out a raised `idle` from the
+      reply. That finish never shows.
 
     All three are accepted for 1.0. In the first two the user is usually interacting with that
     terminal; the third needs an unusual number of records.
@@ -4417,11 +4451,21 @@ names its socket. CLI JSON names a session `session` and a terminal
     of that cycle does not show when the cached raise was already seen, or when a `working`
     record changed after the cached `done`. Polls at 2 Hz make this rare. This is accepted
     for 1.0.
-  - **Background work Orbit cannot count.** Work that leaves the process tree (a double fork,
-    Claude Code's "Move to background and exit") or that runs no process (Claude Code's
-    ScheduleWakeup and cron waits) is not counted, so its terminal shows finished or idle. A
-    helper that lives past 1 s outside the agent's process group counts as background work;
-    none was found in Claude Code 2.1.303 with Lucca's configuration. This is accepted for 1.0.
+  - **Background-work observation limits.** Work that leaves the process tree
+    (a double fork, or Claude Code's Move to background and exit) or runs no
+    process (ScheduleWakeup and cron waits) is not counted. Three supported
+    REPL/CUA roles rely on the observed ChatGPT package layout; they do not
+    establish helper recognition for arbitrary Codex installations. Unknown stdio
+    MCP servers, other provider/helper package layouts and deleted or replaced
+    executable objects remain background when counted. An in-place ChatGPT
+    update can therefore restore the dots until the agent restarts.
+    Work carried out inside an exempt process itself, such as a server listening
+    inside `node_repl` without a separate child, does not keep background.
+    Helper recognition is not implemented on Darwin: a positive raw count continues to mask
+    done/idle there. Foreground working, blocked and error precedence remains
+    unchanged. These helper-recognition limits await separate evidence and
+    follow-up scope: `eon-0blzi` owns explicit agent-reported helper/work provenance;
+    `eon-prlw4` owns Darwin helper recognition.
   - **Window focus.** Attachment alone does not make a raise seen. A selected
     terminal's raise stays unseen while its native window is unfocused or
     native focus is unknown. Focus reports are observations, not a request to
@@ -4439,12 +4483,13 @@ names its socket. CLI JSON names a session `session` and a terminal
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
+- **Consumes:** ORB-C15, ORB-C13 generation 8, EON-C8 topology, and EON-C10
   (EONW v41, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
-  - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
-    `app` for display (VEN-C30);
+  - no screen, transcript or provider-state parsing; Runtime recognizes only
+    the process roles listed above and passes `app` and `name` through unchanged;
+    Venus maps `app` for display (VEN-C30);
   - no notifications or sound (eon-iwmz consumes this later);
   - no agent launching, orchestration or worktrees;
   - agents under tmux report nothing; this is documented.

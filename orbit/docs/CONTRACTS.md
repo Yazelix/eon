@@ -293,7 +293,7 @@ PTY pixel size rule needs no wire change.
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14,
-  and management v7 lease input; Venus and Eon consume it in this repository.
+  and management v8 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
   Lease input carries no other keys, chords, mouse, focus or resize; raw bytes
   are never written. Orbit tells an attached client's input from lease input,
@@ -879,7 +879,7 @@ PTY pixel size rule needs no wire change.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v7, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
+- **Consumes:** Canonical management v8, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -1028,7 +1028,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C15 — Program status records
 
-- **Status:** Proved
+- **Status:** Candidate (eon-v0gvq management v8 census awaits installed proof)
 - **Consumer:**
   - a program in an Orbit terminal that speaks the Program Status Protocol
     (OSC 7501, rev 0.4), such as Claude Code 2.1.295 or later, or Codex 0.163
@@ -1102,6 +1102,20 @@ PTY pixel size rule needs no wire change.
     title: Orbit gives it no status meaning. A process that leaves the tree,
     such as a double fork that init adopts, is not counted. Linux reads
     `/proc`; macOS uses libproc, unproved until ORB-C14's native proof.
+    Each reply also identifies the counted processes by PID and kernel
+    process-start identity, in the same sample and under the same 512-process
+    walk and 255-count bounds. It carries at most 16 distinct identities and
+    an explicit completeness flag. Completeness is false if a counted identity
+    could not be obtained, the identity list would exceed 16, or the walk or
+    count reaches its bound. A count of 255 remains conservative and
+    potentially incomplete. A consumer must not infer the absence of
+    background work from an incomplete list. An unavailable process-start
+    identity leaves that counted process unidentified.
+    The reply also carries the sampled foreground group leader's PID and start
+    identity, or none when that identity cannot be established.
+    These facts give no process an agent, helper, idle or finished meaning.
+    Orbit does not exclude helpers and does not expose process command lines
+    or environments.
   - **Foreground.** Each `ProgramStatus` reply also carries the terminal's
     foreground: `child` when the PTY's foreground process group is the
     child's own group, `other` when it is another group, and `unknown` when
@@ -1143,25 +1157,31 @@ PTY pixel size rule needs no wire change.
     heartbeat. The spec forbids requiring re-sends and leaves to the terminal
     when to stop showing `done` or `error`; EON-C31 decides that.
   - **ProgramStatus reply.** One request gets one reply of at most 4 KiB. It
-    carries the record count, the background process count, the foreground,
-    the terminal's latest update sequence, the terminal title, the creation
-    sequence of each record omitted for size, and as many records as fit in a
+    carries the record count, the background process count, up to 16 counted
+    process identities, their completeness flag, the optional foreground group
+    leader identity, the foreground, the terminal's latest update sequence,
+    the terminal title, the creation sequence of each record omitted for size,
+    and as many records as fit in a
     neutral fill order: first `blocked`, `error` and `done`, most recent
     change first; then every other record, most recent change first.
     Each record carries its full `id`, `state`, `kind`, `progress`, `app`
     (32 bytes or less), `title` (96 or less) and `msg` (256 or less), its
     update sequence, creation sequence, change sequence, previous state and
     both ages. Orbit truncates only `title` and `msg`, at UTF-8 boundaries.
-    The omitted creation sequences count toward the 4 KiB and let a reader
-    tell a record omitted for size from one Orbit no longer holds. The
-    terminal title is the window title that ORBS metadata publishes (OSC 0
+    The process identities, their completeness flag, the optional foreground
+    identity and omitted creation sequences count toward the 4 KiB; omitted
+    creation sequences let a reader tell a record omitted for size from one
+    Orbit no longer holds. The terminal title is the window title that ORBS
+    metadata publishes (OSC 0
     and 2), empty when the terminal has none or its title is not valid
     UTF-8. Orbit removes its control characters and the invisible characters
     it removes from record text, and cuts it to 64 bytes at a UTF-8
     boundary. It is a neutral terminal fact, not a record, and Orbit gives
     it no status meaning. With every record and
-    the terminal title at their bounds, a reply carries up to 7 records while
-    the terminal holds 14 or fewer, and at least 3 when it holds 256.
+    the terminal title at their bounds, the reply fits six records while the
+    terminal holds 14 or fewer, even with all 16 process identities and the
+    foreground identity present, and at least three when the terminal holds
+    256. More records fit when their text or process metadata is smaller.
 - **Important failures:**
   - Orbit ignores any report over 4096 bytes.
   - Past 256 records, Orbit evicts the least-recently-updated one.
@@ -1577,7 +1597,7 @@ PTY pixel size rule needs no wire change.
     reply;
   - its Rust host, which extracts the text with libghostty's plain-text
     formatter;
-  - canonical `orbit-protocol` management v7.
+  - canonical `orbit-protocol` management v8.
 - **Consumes:** ORB-C13 (lease, validation, slow-peer rule), ORB-C4 (held
   updates), ORB-C3 (title and directory values).
 - **Boundary:**

@@ -10,6 +10,11 @@ installation, and proven contract changes.
   These nova-helix defaults sit below user and trusted workspace settings;
   configure overrides in `$(eon config dir)/helix/config.toml`
   (`eon-nova-helix-defaults-8zqa`).
+- Linux agent attention excludes the four measured persistent Codex helpers
+  from background interpretation, so helper-only agents show finished or idle.
+  Separate builds, servers and watchers keep the dots. Unrecognized helpers,
+  custom MCP servers and Darwin retain raw-count behavior; work inside an
+  exempt interpreter remains a documented limit (`eon-v0gvq`).
 
 - Files Enter and `eon edit` open files in the packaged Helix Editor popup,
   keeping its buffers and unsaved edits. `[editor] open_in = "pane"` selects

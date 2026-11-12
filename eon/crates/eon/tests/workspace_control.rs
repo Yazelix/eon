@@ -2112,7 +2112,7 @@ fn managed_orbit_helper() {
     let presentation = PathBuf::from(&arguments[serve + 1]);
     let management_argument = arguments
         .iter()
-        .position(|argument| argument == OsStr::new("--management-v7"))
+        .position(|argument| argument == OsStr::new("--management-v8"))
         .unwrap();
     let session_id = arguments[management_argument + 1]
         .to_str()
@@ -2357,6 +2357,7 @@ fn managed_orbit_helper() {
                                     ManagementServerMessage::ProgramStatus(ProgramStatus {
                                         count: 0,
                                         background: 0,
+                                        processes: Default::default(),
                                         foreground: foreground.unwrap(),
                                         update: 0,
                                         terminal_title: String::new(),

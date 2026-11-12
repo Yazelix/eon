@@ -127,6 +127,9 @@ pub(crate) struct Records {
 }
 
 impl Records {
+    pub(crate) fn has_records(&self) -> bool {
+        !self.records.is_empty()
+    }
     /// Carries out Bend's `StatusLifetime` for a turn: with `edge`, the
     /// foreground return drops the working and blocked records before any of
     /// the turn's output; then the turn's reports and clears apply in stream
@@ -198,13 +201,19 @@ impl Records {
         }
     }
 
-    /// The `ProgramStatus` reply, without its background count or foreground,
-    /// which the host fills in: the terminal title, sanitized and cut to its
+    /// The `ProgramStatus` reply using the host's neutral process census:
+    /// the terminal title, sanitized and cut to its
     /// bound, and as many records as fit in one 4 KiB message beside the
     /// creation sequences of the rest, first blocked, error and done, then the
     /// rest, each group most recent change first, with each record's `title`
     /// and `msg` cut to their reply bounds.
-    pub(crate) fn reply(&self, title: &str, now: Instant) -> protocol::ProgramStatus {
+    pub(crate) fn reply(
+        &self,
+        title: &str,
+        now: Instant,
+        census: (u8, protocol::ProgramProcesses),
+    ) -> protocol::ProgramStatus {
+        let (background, processes) = census;
         let terminal_title = truncated(
             &title
                 .chars()
@@ -226,6 +235,7 @@ impl Records {
         // that fits gives its own back.
         let mut room = protocol::MAX_MESSAGE_BYTES
             - protocol::PROGRAM_STATUS_HEADER_BYTES
+            - protocol::program_processes_len(&processes)
             - terminal_title.len()
             - order.len() * protocol::PROGRAM_OMITTED_BYTES;
         let mut records = Vec::new();
@@ -240,7 +250,8 @@ impl Records {
         }
         protocol::ProgramStatus {
             count: self.records.len() as u16,
-            background: 0,
+            background,
+            processes,
             foreground: protocol::Foreground::Unknown,
             update: self.update,
             terminal_title,
@@ -583,7 +594,9 @@ mod tests {
             report(&format!("state=working:id=i/w2:title={title}")),
         ];
         fixture.turn(&[&reports.concat()], false);
-        let reply = fixture.records.reply("", Instant::now());
+        let reply = fixture
+            .records
+            .reply("", Instant::now(), Default::default());
         let ids: Vec<_> = reply
             .records
             .iter()
@@ -611,7 +624,9 @@ mod tests {
             .map(|n| report(&format!("state=working:id=r{n}:msg={}", "bW1t".repeat(100))))
             .collect();
         fixture.turn(&[&reports], false);
-        let reply = fixture.records.reply("", Instant::now());
+        let reply = fixture
+            .records
+            .reply("", Instant::now(), Default::default());
         assert_eq!((reply.count, reply.records.len()), (20, 12));
         assert_eq!(reply.omitted, [8, 7, 6, 5, 4, 3, 2, 1]);
         assert_eq!(reply.records[0].id, "r19");
@@ -636,7 +651,10 @@ mod tests {
         fixture.turn(&["\x1b]0;\u{202e}eon\u{200b}-9a\x07"], false);
         let title = std::str::from_utf8(fixture.terminal.title().unwrap()).unwrap();
         assert_eq!(
-            fixture.records.reply(title, Instant::now()).terminal_title,
+            fixture
+                .records
+                .reply(title, Instant::now(), Default::default())
+                .terminal_title,
             "eon-9a"
         );
         let cut = format!("{}é", "a".repeat(63));
@@ -644,13 +662,16 @@ mod tests {
         let title = std::str::from_utf8(fixture.terminal.title().unwrap()).unwrap();
         assert_eq!(title, cut);
         assert_eq!(
-            fixture.records.reply(title, Instant::now()).terminal_title,
+            fixture
+                .records
+                .reply(title, Instant::now(), Default::default())
+                .terminal_title,
             "a".repeat(63)
         );
         assert_eq!(
             fixture
                 .records
-                .reply("a\tb\x1bc\u{7f}", Instant::now())
+                .reply("a\tb\x1bc\u{7f}", Instant::now(), Default::default())
                 .terminal_title,
             "abc"
         );
@@ -662,10 +683,18 @@ mod tests {
             .map(|n| report(&format!("state=working:id=r{n}:msg={}", "bW1t".repeat(84))))
             .collect();
         fixture.turn(&[&reports], false);
-        assert_eq!(fixture.records.reply("", Instant::now()).records.len(), 13);
+        assert_eq!(
+            fixture
+                .records
+                .reply("", Instant::now(), Default::default())
+                .records
+                .len(),
+            13
+        );
         let reply = fixture.records.reply(
             &"a".repeat(protocol::MAX_TERMINAL_TITLE_BYTES),
             Instant::now(),
+            Default::default(),
         );
         assert_eq!((reply.count, reply.records.len()), (20, 12));
         assert!(

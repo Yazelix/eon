@@ -222,8 +222,9 @@ sample taken when the host reads it; Bend leads its answer with that sample's
 `StatusLifetime`, then answers `ManageProgramStatus`, for which the host
 builds the reply from the records, the terminal title, the foreground it
 samples then and, while it holds a record, the background process count it
-also samples then, or `ManageRefuse`, for which it sends Busy and keeps the
-lease.
+also samples then, with its bounded PID/start identities, completeness flag
+and optional foreground group leader identity. Process metadata shares the
+4 KiB record packing allowance. `ManageRefuse` sends Busy and keeps the lease.
 
 Management v6's other requests arrive as fact `Management`. The host reads at
 most one request at a time, within the largest request's bound (one lease

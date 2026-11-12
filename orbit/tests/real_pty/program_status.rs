@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MANAGED: [&str; 4] = ["--management-v7", "session-3", "run-3", "component-3"];
+const MANAGED: [&str; 4] = ["--management-v8", "session-3", "run-3", "component-3"];
 
 /// A managed run of a bash script, with `env` and a lease on its management
 /// socket.
@@ -113,7 +113,11 @@ fn prompt_marks_drop_in_stream_order() {
         &[("ORBIT_GATE", gate.path())],
     );
     let empty = status(&mut lease);
-    assert_eq!((empty.count, empty.omitted.len(), empty.records.len()), (0, 0, 0), "{empty:?}");
+    assert_eq!(
+        (empty.count, empty.omitted.len(), empty.records.len()),
+        (0, 0, 0),
+        "{empty:?}"
+    );
     assert_eq!(empty.terminal_title, "");
     gate.release();
     let status = until_reported(&mut lease, "d");
@@ -158,7 +162,11 @@ fn foreground_returns_drop_once() {
     job.release();
     until_leads(server.child, true);
     let returned = status(&mut lease);
-    assert_eq!((returned.count, returned.records.len()), (0, 0), "{returned:?}");
+    assert_eq!(
+        (returned.count, returned.records.len()),
+        (0, 0),
+        "{returned:?}"
+    );
     assert_eq!(returned.update, before.update + 1, "the drop is an update");
     assert_eq!(returned.foreground, Foreground::Child, "{returned:?}");
 
@@ -206,7 +214,10 @@ fn age(pid: i32) -> Duration {
         tv_nsec: 0,
     };
     // SAFETY: clock_gettime fills the owned time.
-    assert_eq!(unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut now) }, 0);
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut now) },
+        0
+    );
     let now = now.tv_sec as f64 + now.tv_nsec as f64 / 1e9;
     Duration::from_secs_f64((now - started / ticks).max(0.0))
 }
@@ -220,7 +231,12 @@ fn bsd_info(pid: i32) -> libc::proc_bsdinfo {
     let size = std::mem::size_of_val(&info) as libc::c_int;
     let read =
         unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 1, (&raw mut info).cast(), size) };
-    assert_eq!(read, size, "proc_pidinfo {pid}: {}", std::io::Error::last_os_error());
+    assert_eq!(
+        read,
+        size,
+        "proc_pidinfo {pid}: {}",
+        std::io::Error::last_os_error()
+    );
     info
 }
 
@@ -342,7 +358,10 @@ fn background_processes_count() {
         unreachable!()
     };
     if cfg!(target_os = "linux") {
-        assert_eq!(fs::read(format!("/proc/{first}/comm")).expect("comm"), b"bg\xe7\xb7\n");
+        assert_eq!(
+            fs::read(format!("/proc/{first}/comm")).expect("comm"),
+            b"bg\xe7\xb7\n"
+        );
     }
     let deadline = Instant::now() + Duration::from_secs(10);
     while !is_stopped(stopped) || age(first) < Duration::from_millis(1100) {
@@ -350,7 +369,11 @@ fn background_processes_count() {
         sleep(0.02);
     }
     let unrecorded = status(&mut lease);
-    assert_eq!((unrecorded.count, unrecorded.background), (0, 0), "{unrecorded:?}");
+    assert_eq!(
+        (unrecorded.count, unrecorded.background),
+        (0, 0),
+        "{unrecorded:?}"
+    );
 
     gate.release();
     let recorded = until_reported(&mut lease, "");
@@ -363,7 +386,34 @@ fn background_processes_count() {
     } else {
         eprintln!("program_status: the reply came too late to check the 1 s grace");
     }
-    until_background(&mut lease, 2);
+    let counted = until_background(&mut lease, 2);
+    assert!(counted.processes.complete, "{counted:?}");
+    let started = |pid: u32| {
+        #[cfg(target_os = "linux")]
+        {
+            stat_fields(pid.try_into().unwrap())[19].parse().unwrap()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            process_start(pid)
+        }
+    };
+    let mut identities = counted.processes.background.clone();
+    identities.sort_by_key(|identity| identity.pid);
+    let mut expected = [first, second].map(|pid| {
+        let pid = u32::try_from(pid).unwrap();
+        orbit_protocol::management::ProcessIdentity {
+            pid,
+            start: started(pid),
+        }
+    });
+    expected.sort_by_key(|identity| identity.pid);
+    assert_eq!(identities, expected);
+    let leader = counted
+        .processes
+        .foreground
+        .expect("live foreground leader");
+    assert_eq!(leader.start, started(leader.pid));
     sleep(0.2);
     assert_eq!(status(&mut lease).background, 2, "the others never count");
 
@@ -483,8 +533,10 @@ fn detached_turns_end_at_a_return() {
         let job = format!("job{round}");
         let before = until_reported(&mut lease, &job);
         assert!(
-            before.records.iter().any(|record| record.id == job
-                && record.kind == Some(ProgramKind::Question)),
+            before
+                .records
+                .iter()
+                .any(|record| record.id == job && record.kind == Some(ProgramKind::Question)),
             "{before:?}"
         );
 

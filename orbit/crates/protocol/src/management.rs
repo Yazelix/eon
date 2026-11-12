@@ -6,7 +6,7 @@ use std::fmt;
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;
 pub const RECORD_GENERATION: u16 = 1;
 pub const HEADER_BYTES: usize = 12;
 /// Every message's bound, except a `Visible` or `History` reply's and an
@@ -18,6 +18,7 @@ pub const MAX_DETAIL_BYTES: usize = 1024;
 const MAX_PATH_BYTES: usize = 1024;
 /// The most program status records a terminal holds (ORB-C15).
 pub const MAX_PROGRAM_RECORDS: u16 = 256;
+pub const MAX_BACKGROUND_IDENTITIES: usize = 16;
 pub const MAX_PROGRAM_ID_BYTES: usize = 128;
 pub const MAX_PROGRAM_APP_BYTES: usize = 32;
 /// The reply's bounds on `title` and `msg`; Orbit truncates longer text at a
@@ -183,6 +184,8 @@ pub struct ProgramStatus {
     /// The terminal's background processes, at most 255; 0 while it holds
     /// no records.
     pub background: u8,
+    /// Neutral process evidence from the same bounded background census.
+    pub processes: ProgramProcesses,
     /// The terminal's foreground when Orbit built the reply.
     pub foreground: Foreground,
     pub update: u64,
@@ -190,6 +193,57 @@ pub struct ProgramStatus {
     pub terminal_title: String,
     pub omitted: Vec<u64>,
     pub records: Vec<ProgramRecord>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub start: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProgramProcesses {
+    pub background: Vec<ProcessIdentity>,
+    /// Every counted identity is present and neither walk nor count saturated.
+    pub complete: bool,
+    /// The sampled foreground group leader, which need not be the provider.
+    pub foreground: Option<ProcessIdentity>,
+}
+
+pub fn program_processes_len(processes: &ProgramProcesses) -> usize {
+    3 + processes.background.len() * 12 + usize::from(processes.foreground.is_some()) * 12
+}
+
+fn validate_program_processes(
+    count: u16,
+    background: u8,
+    processes: &ProgramProcesses,
+) -> Result<()> {
+    if processes.background.len() > MAX_BACKGROUND_IDENTITIES
+        || processes.background.len() > usize::from(background)
+        || (processes.complete
+            && (background == u8::MAX || processes.background.len() != usize::from(background)))
+        || (count == 0 && background != 0)
+    {
+        return Err(Error::InvalidValue {
+            field: "program processes",
+        });
+    }
+    for (index, identity) in processes.background.iter().enumerate() {
+        validate_process(identity.pid, identity.start)?;
+        if processes.background[..index]
+            .iter()
+            .any(|other| other.pid == identity.pid)
+        {
+            return Err(Error::InvalidValue {
+                field: "duplicate process",
+            });
+        }
+    }
+    if let Some(identity) = processes.foreground {
+        validate_process(identity.pid, identity.start)?;
+    }
+    Ok(())
 }
 
 /// Which process group leads a terminal's PTY (ORB-C15), a neutral terminal
@@ -1048,8 +1102,20 @@ pub const PROGRAM_OMITTED_BYTES: usize = 8;
 
 fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()> {
     validate_program_counts(status.count, status.omitted.len(), status.records.len())?;
+    validate_program_processes(status.count, status.background, &status.processes)?;
     out.u16(status.count);
     out.u8(status.background);
+    out.u8(status.processes.background.len() as u8);
+    out.u8(u8::from(status.processes.complete));
+    out.u8(u8::from(status.processes.foreground.is_some()));
+    if let Some(identity) = status.processes.foreground {
+        out.u32(identity.pid);
+        out.u64(identity.start);
+    }
+    for identity in &status.processes.background {
+        out.u32(identity.pid);
+        out.u64(identity.start);
+    }
     out.u8(match status.foreground {
         Foreground::Unknown => 0,
         Foreground::Child => 1,
@@ -1110,6 +1176,33 @@ fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()
 fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     let count = input.u16()?;
     let background = input.u8()?;
+    let identities = usize::from(input.u8()?);
+    if identities > MAX_BACKGROUND_IDENTITIES {
+        return Err(Error::InvalidValue {
+            field: "program processes",
+        });
+    }
+    let complete = decode_bool(input, "process completeness")?;
+    let foreground_process = if decode_bool(input, "foreground process")? {
+        Some(ProcessIdentity {
+            pid: input.u32()?,
+            start: input.u64()?,
+        })
+    } else {
+        None
+    };
+    let mut processes = ProgramProcesses {
+        background: Vec::with_capacity(identities),
+        complete,
+        foreground: foreground_process,
+    };
+    for _ in 0..identities {
+        processes.background.push(ProcessIdentity {
+            pid: input.u32()?,
+            start: input.u64()?,
+        });
+    }
+    validate_program_processes(count, background, &processes)?;
     let foreground = match input.u8()? {
         0 => Foreground::Unknown,
         1 => Foreground::Child,
@@ -1179,6 +1272,7 @@ fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     Ok(ProgramStatus {
         count,
         background,
+        processes,
         foreground,
         update,
         terminal_title,

@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v7 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v8 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -133,7 +133,7 @@ same way.
 
 ## Management record
 
-`--management-v7` makes the run managed (ORB-C13).
+`--management-v8` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -1137,9 +1137,9 @@ order, the cuts and the omitted creation sequences, and reversing the groups
 made it fail; `records_keep_neutral_facts` checks that a record keeps its
 creation sequence through a state change and gets a new one after a clear.
 The protocol test `program_status_replies_keep_their_bounds` shows that
-seven records at their bounds fit and an eighth does not, and that three fit
-beside 253 creation sequences and a fourth does not, each beside a 64-byte
-terminal title.
+six records at their bounds fit beside eight omitted creation sequences,
+and seven do not, with the maximum process census. Three fit beside 253
+creation sequences and a fourth does not, each beside a 64-byte terminal title.
 
 The reply also carries the terminal title, the window title that ORBS
 metadata publishes, without control or invisible format characters and cut
@@ -1169,24 +1169,25 @@ threads in file reads, on the host loop. It reads the stat fields after the
 process name as bytes, since a name the kernel cut mid-character is not
 UTF-8. The macOS path compiles in a scratch crate against `libc` for
 `aarch64-apple-darwin` (recorded on `eon-agent-background-work-yte0.1`) and
-is otherwise unproved (ORB-C14). The protocol test
-`program_status_replies_keep_their_bounds` carries a count of 255 through the
-codec, and the one byte it adds to the header still leaves room for seven
-records at their bounds.
+is otherwise unproved (ORB-C14). Management v8 also carries up to 16 counted
+PID/start identities, their completeness flag, and the optional foreground
+group leader identity. Missing identities, a seventeenth identity or either
+walk/count bound makes the list incomplete; it never changes the raw count.
+The identities have no agent/helper meaning in Orbit. Metadata shares the
+4 KiB bound: `program_status_replies_keep_their_bounds` checks six full
+records beside eight omitted sequences (3747 bytes) and three beside 253
+(4015 bytes) with the maximum 207-byte census envelope.
 
 Every reply also carries the terminal's foreground, sampled with `tcgetpgrp`
 on the PTY as the host builds it, records or not: `child` when the PTY's
 foreground process group is the child's own, `other` when it is another
 group, and `unknown` when there is none or the sample fails. It takes one
-byte after the background count (since management v5). With it, seven records at
-their bounds beside seven omitted creation sequences and a 64-byte terminal
-title fill exactly 4096 bytes: `program_status_replies_keep_their_bounds`
-encodes that reply and refuses an eighth omitted sequence, and
+byte after the process census (the foreground tag dates to management v5).
 `program_status_carries_the_foreground` pins each value's byte, round-trips
 it and refuses any other tag. Orbit gives the foreground no status meaning.
 
 The real-PTY program-status check reads the records through a
-`--management-v7` lease:
+`--management-v8` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
   and a `working` report leaves the `done` record and the last report. The

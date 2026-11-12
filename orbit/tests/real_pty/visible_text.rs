@@ -11,7 +11,7 @@ use orbit_protocol::{
 };
 use std::{fs, io::Write, path::PathBuf, time::Instant};
 
-const MANAGED: [&str; 4] = ["--management-v7", "session-5", "run-5", "component-5"];
+const MANAGED: [&str; 4] = ["--management-v8", "session-5", "run-5", "component-5"];
 
 /// A managed run whose bash child, in raw mode without echo, runs each
 /// command line the check sends through a FIFO while `cat` copies the

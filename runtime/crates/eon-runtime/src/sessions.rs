@@ -1027,9 +1027,9 @@ pub(super) struct RunningSession {
     /// in flight on it (EON-C31 Polling).
     lease: UnixStream,
     request: Option<LeaseRequest>,
-    /// A whole `ProgramStatus` reply that a read or send waited behind, kept
-    /// for the attention poller.
-    answered_status: Option<Vec<u8>>,
+    /// A whole `ProgramStatus` reply and its original deadline, kept for the
+    /// attention poller when a read or send waited behind it.
+    answered_status: Option<(Vec<u8>, Instant)>,
     /// The last `AttachAllow` outcome for the presenting Venus (EON-C11).
     naming: Option<Naming>,
     stop_sent: bool,
@@ -1304,11 +1304,24 @@ pub(super) fn send_program_status(
     Ok(true)
 }
 
+/// The original request budget available for helper inspection.
+pub(super) fn program_status_deadline(session: &RunningSession) -> Option<Instant> {
+    session
+        .answered_status
+        .as_ref()
+        .map(|(_, deadline)| *deadline)
+        .or_else(|| {
+            session.request.as_ref().and_then(|request| {
+                matches!(request.kind, RequestKind::ProgramStatus).then_some(request.deadline)
+            })
+        })
+}
+
 /// Reads the kept or in-flight `ProgramStatus` reply without blocking.
 pub(super) fn read_program_status(
     session: &mut RunningSession,
 ) -> Result<ProgramStatusRead, String> {
-    if let Some(reply) = session.answered_status.take() {
+    if let Some((reply, _)) = session.answered_status.take() {
         return decode_program_status(&reply);
     }
     let Some(
@@ -1571,7 +1584,8 @@ fn terminal_request(
                 },
             ) => match advance_request(&mut session.lease, request) {
                 ReplyProgress::Complete => {
-                    session.answered_status = Some(std::mem::take(&mut request.reply));
+                    session.answered_status =
+                        Some((std::mem::take(&mut request.reply), request.deadline));
                     session.request = None;
                 }
                 ReplyProgress::WouldBlock => {}
@@ -2122,7 +2136,7 @@ fn orbit_command(
     managed_environment::remove_agent_session(&mut orbit_command)
         .arg("serve")
         .arg(socket)
-        .arg("--management-v7")
+        .arg("--management-v8")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -4354,10 +4368,12 @@ pub(crate) mod tests {
 
         // A ProgramStatus in flight is answered first and kept for the
         // attention poller, which sends nothing new until it reads it.
-        assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
+        let status_deadline = Instant::now() + Duration::from_millis(250);
+        assert!(super::send_program_status(&mut session, status_deadline).unwrap());
         let status = management::ProgramStatus {
             count: 0,
             background: 0,
+            processes: Default::default(),
             foreground: management::Foreground::Child,
             update: 7,
             terminal_title: String::new(),
@@ -4380,6 +4396,10 @@ pub(crate) mod tests {
             ]
         );
         assert!(!super::send_program_status(&mut session, Instant::now()).unwrap());
+        assert_eq!(
+            super::program_status_deadline(&session),
+            Some(status_deadline)
+        );
         assert!(matches!(
             super::read_program_status(&mut session),
             Ok(ProgramStatusRead::Reply(kept)) if kept == status
@@ -4388,6 +4408,7 @@ pub(crate) mod tests {
             super::read_program_status(&mut session),
             Ok(ProgramStatusRead::Missed)
         ));
+        assert_eq!(super::program_status_deadline(&session), None);
         // An AttachAllow in flight is answered and names its process first.
         let name = AttachName::of(std::process::id()).unwrap();
         name_presentation(std::slice::from_mut(&mut session), Some(name), false, &log);
@@ -4695,6 +4716,7 @@ pub(crate) mod tests {
                 management::ProgramStatus {
                     count: 0,
                     background: 0,
+                    processes: Default::default(),
                     foreground: management::Foreground::Child,
                     update: 1,
                     terminal_title: String::new(),
@@ -4970,7 +4992,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v7",
+                "--management-v8",
                 "terminal-1",
                 "run-1",
                 "component-1",
@@ -5067,7 +5089,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v7",
+                "--management-v8",
                 "terminal-2",
                 "run-2",
                 "component-2",

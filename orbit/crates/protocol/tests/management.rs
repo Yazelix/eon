@@ -141,6 +141,7 @@ fn management_messages_and_records_round_trip_canonically() {
         ServerMessage::ProgramStatus(ProgramStatus {
             count: 3,
             background: 2,
+            processes: Default::default(),
             foreground: Foreground::Other,
             update: 9,
             terminal_title: "eon-9a 🪐".into(),
@@ -288,9 +289,8 @@ fn management_codec_rejects_incompatible_or_noncanonical_bytes() {
 
 /// Orbit fills a reply by `PROGRAM_STATUS_HEADER_BYTES`, `program_record_len`
 /// and `PROGRAM_OMITTED_BYTES`, so they must match the encoding; at the
-/// reply's text bounds seven records fit in 4 KiB, beside the creation
-/// sequences of seven more with no byte to spare, and three beside the
-/// creation sequences of 253 more (ORB-C15).
+/// reply's text and process bounds six records fit in 4 KiB beside eight
+/// omitted creation sequences, and three beside 253 (ORB-C15).
 #[test]
 fn program_status_replies_keep_their_bounds() {
     let full = ProgramRecord {
@@ -305,6 +305,13 @@ fn program_status_replies_keep_their_bounds() {
         ServerMessage::ProgramStatus(ProgramStatus {
             count: (records.len() + omitted) as u16,
             background: u8::MAX,
+            processes: management::ProgramProcesses {
+                background: (1..=16)
+                    .map(|pid| management::ProcessIdentity { pid, start: 1 })
+                    .collect(),
+                complete: false,
+                foreground: Some(management::ProcessIdentity { pid: 20, start: 1 }),
+            },
             foreground: Foreground::Child,
             update: 1,
             terminal_title: title.clone(),
@@ -312,32 +319,15 @@ fn program_status_replies_keep_their_bounds() {
             records,
         })
     };
-    let seven = management::encode_server_message(&reply(vec![full.clone(); 7], 0)).unwrap();
-    assert_eq!(
-        seven.len(),
-        management::PROGRAM_STATUS_HEADER_BYTES
-            + title.len()
-            + 7 * management::program_record_len(&full)
-    );
+    let six = management::encode_server_message(&reply(vec![full.clone(); 6], 8)).unwrap();
+    assert_eq!(six.len(), 3747);
     assert!(matches!(
-        management::encode_server_message(&reply(vec![full.clone(); 8], 0)),
-        Err(Error::PayloadTooLarge { .. })
-    ));
-    let fourteen = management::encode_server_message(&reply(vec![full.clone(); 7], 7)).unwrap();
-    assert_eq!(fourteen.len(), management::MAX_MESSAGE_BYTES);
-    assert!(matches!(
-        management::encode_server_message(&reply(vec![full.clone(); 7], 8)),
+        management::encode_server_message(&reply(vec![full.clone(); 7], 7)),
         Err(Error::PayloadTooLarge { .. })
     ));
     let three = reply(vec![full.clone(); 3], 253);
     let bytes = management::encode_server_message(&three).unwrap();
-    assert_eq!(
-        bytes.len(),
-        management::PROGRAM_STATUS_HEADER_BYTES
-            + title.len()
-            + 3 * management::program_record_len(&full)
-            + 253 * management::PROGRAM_OMITTED_BYTES
-    );
+    assert_eq!(bytes.len(), 4015);
     assert_eq!(management::decode_server_message(&bytes).unwrap(), three);
     assert!(matches!(
         management::encode_server_message(&reply(vec![full.clone(); 4], 252)),
@@ -356,6 +346,7 @@ fn program_status_replies_keep_their_bounds() {
             refused(ProgramStatus {
                 count: 1,
                 background: 0,
+                processes: Default::default(),
                 foreground: Foreground::Child,
                 update: 1,
                 terminal_title: String::new(),
@@ -369,6 +360,7 @@ fn program_status_replies_keep_their_bounds() {
         refused(ProgramStatus {
             count: 2,
             background: 0,
+            processes: Default::default(),
             foreground: Foreground::Child,
             update: 1,
             terminal_title: String::new(),
@@ -381,6 +373,7 @@ fn program_status_replies_keep_their_bounds() {
         refused(ProgramStatus {
             count: 0,
             background: 0,
+            processes: Default::default(),
             foreground: Foreground::Child,
             update: 1,
             terminal_title: "a".repeat(management::MAX_TERMINAL_TITLE_BYTES + 1),
@@ -391,15 +384,15 @@ fn program_status_replies_keep_their_bounds() {
     ));
 }
 
-/// Management v4's new messages keep their exact bytes under generation 7,
+/// Management v4's new messages keep their exact bytes under generation 8,
 /// except lease input, which carries its quiet window after its kind (since
-/// v6), and v7 adds ReadHistory and History: the header's generation, each
+/// v6); v7 added ReadHistory and History; v8 adds the process census: the header's generation, each
 /// kind's tag, and its payload.
 #[test]
-fn management_v7_messages_have_canonical_bytes() {
-    assert_eq!(management::VERSION, 7);
+fn management_v8_messages_have_canonical_bytes() {
+    assert_eq!(management::VERSION, 8);
     let framed = |kind: u8, payload: &[u8]| {
-        let mut bytes = b"ORBM\x07\x00".to_vec();
+        let mut bytes = b"ORBM\x08\x00".to_vec();
         bytes.extend([kind, 0]);
         bytes.extend((payload.len() as u32).to_le_bytes());
         bytes.extend(payload);
@@ -509,10 +502,80 @@ fn management_v7_messages_have_canonical_bytes() {
 /// after the background count (since management v5): each value keeps its tag and
 /// round-trips, and a decoder refuses any other tag.
 #[test]
+fn process_census_is_bounded_complete_and_identity_checked() {
+    use management::{ProcessIdentity, ProgramProcesses};
+    let identity = |pid| ProcessIdentity { pid, start: 10 };
+    let status = ProgramStatus {
+        count: 1,
+        background: 2,
+        processes: ProgramProcesses {
+            background: vec![identity(2), identity(3)],
+            complete: true,
+            foreground: Some(identity(1)),
+        },
+        foreground: Foreground::Child,
+        update: 1,
+        terminal_title: String::new(),
+        omitted: Vec::new(),
+        records: vec![program_record("", ProgramState::Idle)],
+    };
+    let message = ServerMessage::ProgramStatus(status.clone());
+    let bytes = management::encode_server_message(&message).unwrap();
+    assert_eq!(management::decode_server_message(&bytes).unwrap(), message);
+    for processes in [
+        ProgramProcesses {
+            background: vec![identity(2)],
+            ..status.processes.clone()
+        },
+        ProgramProcesses {
+            background: vec![identity(2), identity(2)],
+            ..status.processes.clone()
+        },
+        ProgramProcesses {
+            background: vec![identity(0), identity(2)],
+            ..status.processes.clone()
+        },
+        ProgramProcesses {
+            background: (1..=17).map(identity).collect(),
+            complete: false,
+            foreground: None,
+        },
+    ] {
+        assert!(
+            management::encode_server_message(&ServerMessage::ProgramStatus(ProgramStatus {
+                processes,
+                ..status.clone()
+            }))
+            .is_err()
+        );
+    }
+    for offset in [management::HEADER_BYTES + 4, management::HEADER_BYTES + 5] {
+        let mut bad = bytes.clone();
+        bad[offset] = 2;
+        assert!(management::decode_server_message(&bad).is_err());
+    }
+    let saturated = ProgramStatus {
+        background: 255,
+        ..status.clone()
+    };
+    assert!(management::encode_server_message(&ServerMessage::ProgramStatus(saturated)).is_err());
+    let incomplete = ServerMessage::ProgramStatus(ProgramStatus {
+        background: 255,
+        processes: ProgramProcesses {
+            complete: false,
+            ..status.processes
+        },
+        ..status
+    });
+    assert!(management::encode_server_message(&incomplete).is_ok());
+}
+
+#[test]
 fn program_status_carries_the_foreground() {
     let status = |foreground| ProgramStatus {
         count: 1,
         background: 2,
+        processes: Default::default(),
         foreground,
         update: 9,
         terminal_title: "t".into(),
@@ -521,13 +584,14 @@ fn program_status_carries_the_foreground() {
     };
     let mut payload = 1u16.to_le_bytes().to_vec();
     payload.push(2);
+    payload.extend([0, 0, 0]);
     payload.push(2);
     payload.extend(9u64.to_le_bytes());
     payload.extend(1u16.to_le_bytes());
     payload.push(b't');
     payload.extend(1u16.to_le_bytes());
     payload.extend(4u64.to_le_bytes());
-    let mut golden = b"ORBM\x07\x00".to_vec();
+    let mut golden = b"ORBM\x08\x00".to_vec();
     golden.extend([71, 0]);
     golden.extend((payload.len() as u32).to_le_bytes());
     golden.extend(&payload);
@@ -537,7 +601,7 @@ fn program_status_carries_the_foreground() {
         golden
     );
 
-    let at = management::HEADER_BYTES + 2 + 1;
+    let at = management::HEADER_BYTES + 2 + 1 + 3;
     for (foreground, tag) in [
         (Foreground::Unknown, 0),
         (Foreground::Child, 1),
