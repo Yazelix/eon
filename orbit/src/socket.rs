@@ -623,6 +623,8 @@ enum Received {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ClientState {
     Open,
+    /// A complete request arrived before the client's disconnect.
+    Request,
     /// The client has gone; its attachment ends.
     Closed,
     /// The client's output passed its bound.
@@ -673,6 +675,8 @@ enum Session {
     Attached(Role),
     AbortedHello,
     Disconnected,
+    /// An attached interactive client's reply failed; its queued input still drains.
+    DrainingInput,
     /// A message did not fit the interactive client's output bound.
     Pressured,
     /// Exited is queued; the output drains before Bend closes the socket.
@@ -856,7 +860,10 @@ impl Peer {
         message: impl FnOnce() -> io::Result<(ServerMessage, u64)>,
     ) -> io::Result<bool> {
         // Let the current Bend effect finish; wake reports the lost or pressured peer.
-        if matches!(self.session, Session::Disconnected | Session::Pressured) {
+        if matches!(
+            self.session,
+            Session::Disconnected | Session::DrainingInput | Session::Pressured
+        ) {
             return Ok(false);
         }
         if !matches!(self.session, Session::Attached(Role::Interactive)) || self.request.is_some() {
@@ -921,7 +928,12 @@ impl Peer {
         match flush_lanes(output, resources, |bytes| stream.write(bytes)) {
             Ok(true) => Ok(()),
             Ok(false) => {
-                self.session = Session::Disconnected;
+                self.session = match self.session {
+                    Session::Attached(Role::Interactive) | Session::DrainingInput => {
+                        Session::DrainingInput
+                    }
+                    _ => Session::Disconnected,
+                };
                 Ok(())
             }
             Err(code) => {
@@ -950,13 +962,16 @@ impl Peer {
                     _ => Step::Done,
                 })
             }
-            Session::Disconnected | Session::Pressured => Ok(Step::Done),
+            Session::Disconnected | Session::DrainingInput | Session::Pressured => Ok(Step::Done),
             _ => Err(errno(libc::EPROTO)),
         }
     }
 
     fn recv_request(&mut self) -> io::Result<Received> {
-        if !matches!(self.session, Session::Attached(Role::Interactive)) {
+        if !matches!(
+            self.session,
+            Session::Attached(Role::Interactive) | Session::DrainingInput
+        ) {
             return Err(errno(libc::EPROTO));
         }
         if self.request.is_some() || self.refused.is_some() {
@@ -1008,24 +1023,30 @@ impl Peer {
         Received::Message
     }
 
-    /// Writes queued output and reports an attachment that has already ended
-    /// or passed its bound, before the host waits on the client.
+    /// Writes queued output and reports an ended or pressured attachment before waiting.
+    /// A previously attached interactive client's failed reply leaves its buffered input
+    /// readable, one request per turn, before the full close is reported.
     pub(crate) fn prepare_wait(&mut self) -> io::Result<ClientState> {
-        match self.session {
-            Session::Disconnected => return Ok(ClientState::Closed),
-            Session::Pressured => return Ok(ClientState::Pressured),
-            Session::Attached(Role::Interactive) => {}
-            _ => return Err(errno(libc::EPROTO)),
-        }
         if self.request.is_some() {
             return Err(errno(libc::EBUSY));
         }
-        self.flush_output()?;
-        Ok(if matches!(self.session, Session::Disconnected) {
-            ClientState::Closed
-        } else {
-            ClientState::Open
-        })
+        match self.session {
+            Session::Disconnected => return Ok(ClientState::Closed),
+            Session::DrainingInput => {}
+            Session::Pressured => return Ok(ClientState::Pressured),
+            Session::Attached(Role::Interactive) => self.flush_output()?,
+            _ => return Err(errno(libc::EPROTO)),
+        }
+        if !matches!(self.session, Session::DrainingInput) {
+            return Ok(ClientState::Open);
+        }
+        // A failed reply must not discard input already queued before a full close.
+        match self.recv_request() {
+            Ok(Received::Message) => Ok(ClientState::Request),
+            Ok(Received::Closed | Received::Blocked) => Ok(ClientState::Closed),
+            Err(error) if peer_disconnected(&error) => Ok(ClientState::Closed),
+            Err(error) => Err(error),
+        }
     }
 
     /// The events the host waits for: requests until the client closes its
@@ -1067,7 +1088,11 @@ impl Peer {
     pub(crate) fn drain(&mut self) -> bool {
         self.resources.drop_unstarted();
         let _ = self.flush_output();
-        self.drained() || matches!(self.session, Session::Disconnected | Session::Failed)
+        self.drained()
+            || matches!(
+                self.session,
+                Session::Disconnected | Session::DrainingInput | Session::Failed
+            )
     }
 
     /// Whether a client whose write side closed has closed its read side too.
@@ -1378,15 +1403,49 @@ mod tests {
     }
 
     #[test]
-    fn failed_interactive_send_reports_full_close_before_the_wait() {
-        let (stream, peer) = UnixStream::pair().unwrap();
+    fn disconnect_before_attached_never_reads_pipelined_input() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        for aborted in [false, true] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            peer.write_all(&session::encode_client_message(&ClientMessage::Hello).unwrap())
+                .unwrap();
+            peer.write_all(
+                &session::encode_client_message(&ClientMessage::Focus(session::FocusEvent::Lost))
+                    .unwrap(),
+            )
+            .unwrap();
+            peer.shutdown(Shutdown::Both).unwrap();
+            drop(peer);
+            let mut socket = Peer::new(stream);
+            if aborted {
+                assert_eq!(socket.abort_hello(), FirstMessage::Hello);
+            } else {
+                assert_eq!(socket.recv_role().unwrap(), Some(FirstMessage::Hello));
+            }
+            assert_eq!(socket.send_role(Role::Interactive).unwrap(), Step::Done);
+            assert_eq!(socket.prepare_wait().unwrap(), ClientState::Closed);
+            assert!(socket.request.is_none());
+        }
+    }
+
+    #[test]
+    fn failed_interactive_send_keeps_queued_input_before_full_close() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let lost = ClientMessage::Focus(session::FocusEvent::Lost);
+        peer.write_all(&session::encode_client_message(&lost).unwrap())
+            .unwrap();
         drop(peer);
         let mut socket = Peer::new(stream);
         socket.session = Session::Attached(Role::Interactive);
         socket.output_bound = 1 << 20;
         socket.send_server(|| Ok(ServerMessage::Accepted)).unwrap();
-        assert!(matches!(socket.session, Session::Disconnected));
+        assert!(matches!(socket.session, Session::DrainingInput));
         socket.send_server(|| Err(errno(libc::EIO))).unwrap();
+        assert_eq!(socket.prepare_wait().unwrap(), ClientState::Request);
+        assert_eq!(socket.request.take(), Some(lost));
         assert_eq!(socket.prepare_wait().unwrap(), ClientState::Closed);
     }
 

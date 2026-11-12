@@ -26,6 +26,10 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 - CPU, RAM and disk chips reserve `99%`, bringing common readings closer to
   their icons. Only 100% widens a chip and reflows it and the chips to its left;
   icons keep their left inset (`eon-lfz2u`).
+- Focus reports queued before a terminal attachment closes reach the program
+  even when a preceding request's reply fails during disconnect. This preserves
+  focus-out delivery for programs that save on focus loss (`eon-lobng`).
+
 - Packaged Helix uses carbonfox, soft wrapping, a bufferline for multiple
   buffers, cursorline, colored modes, an insert bar cursor and indent guides.
   These nova-helix defaults sit below user and trusted workspace settings;

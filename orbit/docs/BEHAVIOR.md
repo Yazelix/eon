@@ -861,6 +861,15 @@ and the third is accepted before final output and Exited reach the half-closed
 client. The request half-close check holds child output after enabled Focus and
 Resize until the client closes its write side. An accepted PTY write or Resize
 keeps that client attached for later child output; a full close detaches.
+An attached client's complete requests queued before a full close are applied
+even when a preceding reply detects the disconnect. The same request-half-close check sends
+ReturnToLive followed by focus-out without waiting for replies, closes both
+socket directions, and checks that the child receives CSI O only with focus
+reporting enabled; another attachment then reaches the surviving session.
+The socket unit test `failed_interactive_send_keeps_queued_input_before_full_close`
+checks that a failed reply preserves an attached client's queued input;
+`disconnect_before_attached_never_reads_pipelined_input` keeps clients that never
+reached Attached outside that drain path.
 The reconnect check proves the server survives a partial Hello, a close before
 Attached, and a partial request. Three interactive clients then attach in
 sequence; the check preserves the child PID and detached title, and confirms a

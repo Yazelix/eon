@@ -765,6 +765,7 @@ impl Host {
         if let Some(client) = self.client.as_mut() {
             match client.prepare_wait()? {
                 ClientState::Open => {}
+                ClientState::Request => return self.request(),
                 ClientState::Closed => return Ok(Some(Fact::Closed { full: true })),
                 ClientState::Pressured => return Ok(Some(Fact::Pressured)),
             }
