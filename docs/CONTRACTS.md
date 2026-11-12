@@ -6888,3 +6888,172 @@ reference to existing pane creation, not by the unapproved targeting beads.
     contract; a JSON field it needs amends EON-C10.
 - **Proof:** None; planned. Each child records its own.
 - **Open proof:** Everything.
+
+## EON-C43 — Per-user host-wide heavy-run admission
+
+- **Status:** Planned. Approved by Lucca on 2026-11-12, relayed by
+  eon-overseer in `eon-eon-agent-lr8sx.21.1` comment 7407
+  (2026-11-12T19:18:06Z): “you decide” over eon-desk's yes, approving
+  decisions 1–7 of plan SHA-256
+  `e38eca87e900c1cea2c78547b3db8fd7fffa53261070529f95d1d4bb678b3677`.
+  Implementation and runtime proof are pending. Delivery is phased: thin
+  guarded run/list/reconcile precedes watch, priority and full quiet commands;
+  unimplemented surfaces/defaults remain explicitly Planned, never advertised
+  as available. Existing quiet protection is preserved at live cutover.
+- **Consumer:** A person or cooperating local agent running a heavy foreground
+  command, in any project or terminal, under the same operating-system user.
+- **Trigger:**
+  - `eon slot run [--class heavy|nix|priority] [--project LABEL] [--owner LABEL]
+    [--wait-timeout SECONDS] [--quiet ID] -- COMMAND [ARG...]`;
+  - `eon slot list [--json]` or `eon slot watch [--json]`;
+  - `eon slot reconcile ID [--stop-owned] [--json]`;
+  - `eon slot quiet reserve --start RFC3339 --seconds N --owner LABEL [--json]`,
+    `eon slot quiet list [--json]`, or `eon slot quiet finish ID [--json]`.
+- **Result:**
+  - **One host scope per user.** Every invocation of this command uses the
+    same private queue and policy, independent of cwd, project, Eon window,
+    provider account, HOME/XDG overrides and Eon configuration/runtime-root
+    overrides. On Linux its canonical account home comes from the OS user
+    database: configuration is `<account-home>/.config/eon/slots.toml` and
+    state is `<account-home>/.local/state/eon/slots`. There is no production
+    alternate-root selector. It requires no running Eon supervisor. It prints
+    these paths in listing output so inconsistent participation is diagnosable.
+  - **Admission and ordering.** Queue registration assigns a monotonically
+    increasing sequence under one short cross-process admission lock. Each
+    waiter retains its ticket while waiting. New grants respect configured
+    global foreground capacity and class limits; holders may temporarily
+    exceed a subsequently reduced limit without being preempted. FIFO holds
+    within a class across projects. Only eligible class heads compete; the
+    oldest ordinary head wins, with priority grants limited by the configured
+    burst when ordinary work can run. Quiet reservations are an explicit
+    separate exclusive admission mode. There is no general front-of-line
+    override. Conditional progress assumes holders eventually finish, the
+    host guard clears and quiet reservations leave ordinary admission time;
+    no fixed maximum start delay or completion time is promised.
+  - **Guard before grant.** Immediately before each grant, the admission owner
+    reads host load, available memory and configured memory/I/O pressure
+    limits. It admits only after all enabled conditions have remained clear
+    for the configured interval. Missing, malformed or inaccessible required
+    observations refuse new starts, never imply an idle machine. Load/quiet/
+    capacity waits hold no heavy slot; no command runs and then waits for
+    admission. Policy changes are reread while queued. Invalid policy holds
+    new grants with a visible error. Reducing capacity never kills a holder.
+    A quiet exemption or priority class never bypasses the host guard.
+  - **Execution and lifetime.** Run executes exact argv without shell parsing,
+    with cwd and standard streams preserved, configured nice value and child
+    environment limits. Caller argv remains the caller's responsibility;
+    Eon does not rewrite arbitrary Cargo, Nix or test-runner syntax. One
+    non-inherited flock-compatible lock per slot protects the holder. Normal
+    exit or interruption reconciles the owned foreground process group before
+    releasing its capacity. TERM/CONT then bounded KILL/reap is limited to
+    proven owned identities; unrelated processes are never signalled. A
+    wrapper crash releases its kernel lock, but a record of possibly surviving
+    work remains unknown and prevents reusing that capacity until its end can
+    be established. Kernel lock release alone is not proof that work ended.
+    Deliberately detached children and external build daemons are outside
+    process-group containment. Nested acquisition by an existing holder's
+    command fails before queueing; an environment marker alone proves no
+    ownership and cannot authorize bypass.
+  - **Recovery by CLI.** `reconcile ID` takes the same admission lock and
+    reports recorded identities, current lock/process observations and its
+    result. It releases a stale capacity reservation only after proving the
+    wrapper/owned work ended and the slot lock is free; boot changes and PID
+    reuse are checked, not treated as a matching live process. Live, unreadable
+    or ambiguous work remains held with an actionable reason. `--stop-owned`
+    may terminate a surviving foreground group only when its ownership is
+    proven and its wrapper has ended; it confirms completion before release.
+    It refuses to stop a live wrapper or signal any recycled/unproven identity.
+    There is no unconditional force-release or silent timeout that admits over
+    possibly running work. Successful reconciliation writes an atomic outcome;
+    `--json` returns schema 1, ID, released/held and evidence/reason codes.
+    Inspection/reconciliation remains available when admission is held.
+  - **Quiet reservations.** A valid non-overlapping reservation holds new
+    ordinary grants during its recorded UTC interval without stopping running
+    work. A run selecting its active reservation ID waits for all prior
+    holders/unknown work to drain and takes exclusive capacity. Only one timed
+    run may hold that reservation at once. Ordinary work and other priority
+    runs cannot overlap it. A booking that has expired before a timed run
+    starts refuses that start. A timed run may enqueue before its reservation
+    and visibly wait until its start. If it overruns the interval after admission,
+    ordinary admission stays held until its completion/reconciliation; a
+    premature finish request is refused. A reservation ID selects a lease,
+    not an authentication boundary between programs of the same user. No
+    clean benchmark or timely start is promised against unqueued activity.
+  - **Visible waiting.** On queueing, reason changes and each configured
+    heartbeat, stderr reports ticket ID, class, project/owner labels, age,
+    queue position and blocking reason; it reports the grant and exit too.
+    At the alert threshold it emits one overdue-wait alert per ticket.
+    Human and JSON listing/watch expose the same typed state: `schema: 1`,
+    effective capacity/guard facts and thresholds, quiet reservations, holders,
+    waiters, sequence/age and reason codes. Position is per class, not a
+    promise of start time. Watch emits a snapshot then changes and overdue
+    alerts; a newly attached watcher reports already overdue tickets once.
+    These paths work without a supervisor and never focus a window. Listing
+    does not create or repair state; absent state is an empty queue. Faulted
+    records/observations are explicit unknown/error data, not omitted holders.
+    Host load/pressure facts are shown even when no ticket or holder exists.
+    Output states that attribution to managed versus unqueued work is unknown;
+    when the host guard is active with no known/unknown managed work, it marks
+    `host_busy_without_holders`. This is not a process/intruder diagnosis: load
+    can remain elevated after earlier work exits. It never fabricates an
+    unqueued load value by subtracting holder count from load average.
+  - **Private state.** Persisted formats carry a version; state directories
+    are private (0700), files private (0600), writes atomic and reads bounded.
+    Owner/type/symlink checks protect lock/state paths. Exact boot/process
+    identity and ticket locks fence dead tickets and PID reuse; unreadable or
+    ambiguous live state is preserved and blocks unsafe grants. Incompatible
+    live state refuses admission rather than creating a second queue. Do not
+    replace a live lock inode or discard state because its version differs.
+    Queue/grant/exit records retain IDs, attribution, timing and outcomes;
+    public output/history omit arbitrary argv, environment values and command
+    output. The executable basename may identify the command; labels are
+    caller-supplied and must not contain secrets. Unix paths use C10's
+    string-or-byte-array representation. JSON failures use error.code/detail.
+- **Important failures:** Invalid syntax/configuration, unknown classes,
+  invalid/overlapping reservations and invalid option combinations exit 2;
+  operational/state/probe/spawn/nesting refusal exits 1. Optional admission
+  timeout expires with 124, removes only that queued ticket and starts no
+  command. A wait of zero means no admission deadline; waits remain visible
+  and interruptible. SIGINT/SIGTERM/SIGHUP while queued cancels only this
+  ticket and exits 128+signal. After a start, the foreground command's exit
+  status or 128+signal passes through after confirmed cleanup; interrupted
+  wrappers use 128+signal after cleanup. Unknown cleanup exits 125 and leaves
+  capacity held logically for reconciliation. Pre-start state writes must
+  succeed before the command can execute. Loss of diagnostic stdout/stderr
+  never detaches or abandons owned work. No implicit unqueued fallback exists.
+  Reconcile exits 0 only for verified release/already-released state; held or
+  refused recovery exits 1 with its evidence/reason. Unknown cleanup during
+  --stop-owned retains 125 and the logical reservation.
+- **Owner:** Eon Runtime owns host admission, process/lock identity, queue and
+  quiet state, configuration resolution and typed inspection. Eon owns product
+  defaults and distribution. Starcompass/the user's coordinator selects which
+  work is heavy, when to reserve quiet time and which work deserves priority;
+  project tooling supplies command-specific parallelism limits.
+- **Boundary:** Full Eon CLI, initially implemented/proved on x86_64 Linux;
+  unsupported platforms fail explicitly until their own proof. EON-C7's
+  existing platform status is unchanged. The queue mechanism is independent
+  of Nix and works through both approved full-Eon delivery tracks (Nix and the
+  Linux Nix-free archive); generic command examples require neither Nix nor
+  Cargo. No new architecture/distribution claim is made without its proof.
+  Per-user, across projects on this
+  machine; no cross-user/global administrator service, remote workers,
+  service-manager requirement, preemption, automatic detection/adoption of
+  arbitrary processes, thermal controller, hard CPU/RAM quota or all-descendant
+  kill guarantee. Cooperation by every launcher is required. This is host
+  command admission, separate from EON-C40's provider admission, quota and
+  attempt lifecycle; it changes no C40 timer or scheduling promise. No task
+  graph, automatic bead consumption or recurring-work scheduler is introduced.
+- **Consumes:** EON-C4 and EON-C7; existing C10 error/path conventions only,
+  without a supervisor or EONW request. EON-C9's override-selected window
+  configuration does not select this host-wide queue's policy.
+- **Proof:** None. Planning only at Eon
+  `1390bc25d35ca7c9d49371c3c0520ae2dba85c56`; references are not runtime proof.
+- **Open proof:** Class FIFO/bounded priority and capacity; host guard failures
+  and recovery without slot occupation; spawn/publication/crash/cancel races,
+  PID reuse and nested refusal; group cleanup and CLI unknown reconciliation,
+  including live-holder refusal and safe --stop-owned recovery;
+  mixed-project, outside-Eon and isolated-env participation in one queue;
+  corrupt/private/versioned state; byte-safe structured listing/watch; quiet
+  drain, exclusion, expiration and overrun; full applicable Rust/Nix delivery
+  surfaces and one isolated installed observation using an overseer-provided
+  candidate. Model-language choice and model checking remain pending.
