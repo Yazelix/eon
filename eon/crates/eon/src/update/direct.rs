@@ -427,20 +427,18 @@ fn transact(
         .open(before.prefix.join(".eon-update.lock"));
     let _lock = match lock {
         Ok(lock) => {
-            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                let error = std::io::Error::last_os_error();
-                if error.kind() == std::io::ErrorKind::WouldBlock {
-                    report.refuse(
+            if let Err(error) = lock.try_lock() {
+                match error {
+                    fs::TryLockError::WouldBlock => report.refuse(
                         "operation-busy",
                         "resolve",
                         "Another Eon update owns this prefix".into(),
-                    );
-                } else {
-                    report.fail(
+                    ),
+                    fs::TryLockError::Error(error) => report.fail(
                         "selection-failed",
                         "resolve",
                         format!("Cannot lock prefix: {error}"),
-                    );
+                    ),
                 }
                 return;
             }

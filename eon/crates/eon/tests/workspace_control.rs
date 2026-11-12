@@ -19321,10 +19321,7 @@ esac
         .write(true)
         .open(prefix.join(".eon-update.lock"))
         .unwrap();
-    assert_eq!(
-        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-        0
-    );
+    lock.try_lock().unwrap();
     let output = install(true, true, "select", true);
     assert_eq!(output.status.code(), Some(4), "{output:?}");
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

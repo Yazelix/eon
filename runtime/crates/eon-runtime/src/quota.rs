@@ -442,15 +442,13 @@ fn open_schedule(path: &Path) -> io::Result<fs::File> {
     // second leaves this worker on its in-memory schedule rather than blocked (EON-C27).
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        // SAFETY: flock locks this open file, and closing it releases the lock.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-            return Ok(file);
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error.into()),
         }
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::WouldBlock || Instant::now() >= deadline {
-            return Err(error);
-        }
-        thread::sleep(Duration::from_millis(5));
     }
 }
 

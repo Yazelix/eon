@@ -8,7 +8,6 @@ use std::{
     os::unix::{
         ffi::OsStrExt,
         fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-        io::AsRawFd,
         net::UnixListener,
     },
     path::{Path, PathBuf},
@@ -200,8 +199,7 @@ pub fn run() {
             .mode(0o600)
             .open(&record_path)
             .expect("retained record");
-        // SAFETY: the descriptor is open for the duration of the call.
-        assert_eq!(unsafe { libc::flock(claimed.as_raw_fd(), libc::LOCK_EX) }, 0);
+        claimed.lock().unwrap();
         run_command(
             &server_command(&path, &[OsStr::new("/bin/true")], &MANAGED),
             &[],
