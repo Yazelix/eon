@@ -29,7 +29,15 @@ const QUOTA_ICON_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
 /// The last row of a keycap popup that cannot show every column: the Shortcuts viewer lists them.
-const HINT_POPUP_MORE: (&str, &str) = ("Alt+/", "lists all");
+static HINT_POPUP_MORE: std::sync::LazyLock<(String, &str)> = std::sync::LazyLock::new(|| {
+    use eon_workspace_protocol::shortcuts::{Action, Platform, shortcut};
+    (
+        shortcut(Action::ToggleViewer)
+            .trigger
+            .display_label_for(Platform::CURRENT),
+        "lists all",
+    )
+});
 
 /// The edge of the bar a tooltip opens from: below the header at this top, or above the
 /// shortcut hints with this bottom.
@@ -196,7 +204,7 @@ fn hint_popup_layout<'a>(
             lines.remove(if title { last - 1 } else { last });
         }
         lines.push(HintPopupLine::Row(
-            HINT_POPUP_MORE.0,
+            HINT_POPUP_MORE.0.as_str(),
             HINT_POPUP_MORE.1,
             None,
         ));
@@ -2221,7 +2229,7 @@ impl Renderer {
             .header_controls()
             .find(|control| self.header.hovers(WorkspaceFocus::Header(control.kind), ""))
         {
-            (control.label, control.rect)
+            (control.label.as_str(), control.rect)
         } else {
             return;
         };
@@ -3046,7 +3054,7 @@ impl Renderer {
                 label.rect,
             );
         }
-        for control in workspace.controls {
+        for control in &workspace.controls {
             if control.rect.width <= 0.0 {
                 continue;
             }
@@ -3079,7 +3087,7 @@ impl Renderer {
                 &mut self.swash_cache,
                 self.metrics,
                 workspace,
-                &control,
+                control,
             );
             if let Some((buffer, left, top)) = placed {
                 let bounds = super::text_clip_bounds(control.rect);
@@ -4115,7 +4123,7 @@ mod tests {
         // one pixel and the padding one: Actions is its title's 7 wide, Popups its rows' 1 + 1 +
         // 4, so both take 1 + 7 + 1 + 6 + 1.
         let measure = |text: &str| text.chars().count() as f32;
-        let more = Row(HINT_POPUP_MORE.0, HINT_POPUP_MORE.1, None);
+        let more = Row(HINT_POPUP_MORE.0.as_str(), HINT_POPUP_MORE.1, None);
         fn lines(columns: Vec<HintPopupColumn<'_>>) -> Vec<Vec<HintPopupLine<'_>>> {
             columns.into_iter().map(|column| column.lines).collect()
         }

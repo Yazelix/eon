@@ -1,8 +1,8 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v41::{
-    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, Direction as WorkspaceDirection,
-    PopupEntry, Sidebar, WorkspaceAction as CommonAction,
+    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, PopupEntry, Sidebar,
+    WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
     PlacementState,
@@ -66,12 +66,17 @@ use scroll::{
 };
 
 use shortcuts::{
-    HintPopupLatch, NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, command_q,
-    copy_paste_modifiers, detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
-    native_pointer_shortcut, paste_shortcut, popup_shortcut, position_key_action, quit_retry_chord,
+    HintPopupLatch, NativeShortcutAction, NativeShortcutExt, ShortcutDirection, WORKSPACES_ENTRY,
+    command_q, detach_chord, invoke_popup, native_key_shortcut, native_pointer_shortcut,
+    paste_shortcut, popup_shortcut, position_key_action, quit_retry_chord, shortcut,
     shortcut_groups, shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip,
     workspace_shortcut,
 };
+
+#[cfg(test)]
+use eon_workspace_protocol::v41::Direction as WorkspaceDirection;
+#[cfg(test)]
+use shortcuts::{copy_paste_modifiers, native_key_shortcut_for};
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
 /// A working badge steps one braille frame at most 10 times a second (VEN-C21, AP-PERF-001).
@@ -126,17 +131,8 @@ impl Drop for BenchInput {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NativePlatform {
-    Linux,
-    Macos,
-}
-
-const NATIVE_PLATFORM: NativePlatform = if cfg!(target_os = "macos") {
-    NativePlatform::Macos
-} else {
-    NativePlatform::Linux
-};
+use eon_workspace_protocol::shortcuts::Platform as NativePlatform;
+const NATIVE_PLATFORM: NativePlatform = NativePlatform::CURRENT;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeClipboard {
@@ -252,16 +248,13 @@ fn link_hint_for(platform: NativePlatform, uri: &str, entries: &[PopupEntry]) ->
     let open = format!(
         "{}\n{} Open",
         uri.escape_default(),
-        NativeShortcutTrigger::OpenLink.display_label_for(platform),
+        shortcut(NativeShortcutAction::OpenLink)
+            .trigger
+            .display_label_for(platform),
     );
-    let copy = PhysicalKey::Code(KeyCode::KeyC);
-    if native_key_shortcut_for(platform, copy, copy_paste_modifiers(platform), entries)
-        .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy)
-    {
-        format!(
-            "{open} · {} Copy",
-            NativeShortcutTrigger::Copy.display_label_for(platform)
-        )
+    let copy = shortcut(NativeShortcutAction::Copy);
+    if copy.overriding_popup(platform, entries).is_none() {
+        format!("{open} · {} Copy", copy.trigger.display_label_for(platform))
     } else {
         open
     }
@@ -4273,7 +4266,7 @@ impl Application {
                 && matches!(
                     fixed.map(|shortcut| shortcut.action),
                     Some(NativeShortcutAction::TraverseChrome(
-                        WorkspaceDirection::Up | WorkspaceDirection::Down
+                        ShortcutDirection::Up | ShortcutDirection::Down
                     ))
                 )
             {
@@ -4282,10 +4275,10 @@ impl Application {
             }
             if focus == WorkspaceFocus::Sidebar
                 && let Some(NativeShortcutAction::TraverseChrome(
-                    direction @ (WorkspaceDirection::Up | WorkspaceDirection::Down),
+                    direction @ (ShortcutDirection::Up | ShortcutDirection::Down),
                 )) = fixed.map(|shortcut| shortcut.action)
             {
-                let down = direction == WorkspaceDirection::Down;
+                let down = direction == ShortcutDirection::Down;
                 if let Some(row) = self.workspace_scene().and_then(|scene| {
                     step_sidebar_row(scene.sidebar_rows(), self.sidebar_row.as_deref(), down)
                         .map(str::to_owned)
@@ -4300,7 +4293,7 @@ impl Application {
                 (
                     WorkspaceFocus::Tabs,
                     Some(NativeShortcutAction::TraverseChrome(
-                        direction @ (WorkspaceDirection::Left | WorkspaceDirection::Right),
+                        direction @ (ShortcutDirection::Left | ShortcutDirection::Right),
                     )),
                 ) => Some(direction),
                 (
@@ -4308,7 +4301,7 @@ impl Application {
                     | WorkspaceFocus::PaneAction(_)
                     | WorkspaceFocus::HeadingAction(HeadingAction::CloseStack(_)),
                     Some(NativeShortcutAction::TraverseChrome(
-                        direction @ (WorkspaceDirection::Up | WorkspaceDirection::Down),
+                        direction @ (ShortcutDirection::Up | ShortcutDirection::Down),
                     )),
                 ) => Some(direction),
                 _ => None,
@@ -4321,7 +4314,9 @@ impl Application {
                 ) {
                     self.set_workspace_focus(WorkspaceFocus::Panes);
                 }
-                self.send_workspace(CommonAction::Focus(direction));
+                self.send_workspace(CommonAction::Focus(shortcuts::workspace_direction(
+                    direction,
+                )));
             }
         }
         true

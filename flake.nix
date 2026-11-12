@@ -228,6 +228,7 @@
               ./components
               ./docs/CONFIGURATION.md
               ./docs/USAGE.md
+              ./venus/docs/INTERACTION.md
               ./eon/skills/eon/SKILL.md
               ./nix/shell-environment.nix
               ./nix/macos-app.nix

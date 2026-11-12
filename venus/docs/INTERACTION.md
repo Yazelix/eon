@@ -174,7 +174,8 @@ the chrome toggles; custom popups follow the built-in ones. The popup is never
 taller than the room between the header and the bar: a section with more rows
 than fit continues in the next column under an empty title line, so rows line
 up. When its columns are wider than the room (40 ems at most), the columns that
-do not fit give way and the last one shown ends with `Alt+/ lists all`, which
+do not fit give way and the last one shown ends with `Alt+/ lists all`
+(`Option+/ lists all` on macOS), which
 takes a full column's last row, or its title when only one row sits under it.
 
 The popup stays open while the pointer is over it or the gap below it, and the

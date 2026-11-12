@@ -1206,7 +1206,7 @@ fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
         }
         assert!(scene.controls[2].rect.right() <= width as f32);
         assert_eq!(
-            scene.controls.map(|control| scene.hit_test(
+            scene.controls.each_ref().map(|control| scene.hit_test(
                 control.rect.left + control.rect.width / 2.0,
                 control.rect.height / 2.0
             )),
@@ -2498,7 +2498,7 @@ fn reading_slots_keep_the_widest_interface_value_without_moving_neighbours() {
                 let positions = (
                     slots,
                     scene.tabs.iter().map(|tab| tab.rect).collect::<Vec<_>>(),
-                    scene.controls.map(|control| control.rect),
+                    scene.controls.each_ref().map(|control| control.rect),
                     scene.drag_region,
                 );
                 if let Some(previous) = &previous {
@@ -3070,7 +3070,7 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
                 },
                 hints,
             );
-            let [_, shortcuts, close] = scene.controls;
+            let [_, shortcuts, close] = &scene.controls;
             let height = scene.header.height;
             let edge = bar_edge(metrics, height, scene.pane_viewport.top);
             // Close's glyph centre is as far from the window's right edge as from its top, its
@@ -3091,7 +3091,7 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
             if let Some(ram) = &scene.ram {
                 let chip_inset = (metrics.padding / 3.0).min(height / 4.0);
                 assert_eq!(ram.rect.right(), shortcuts.rect.left);
-                let square = scene.control_glyph_rect(&shortcuts, metrics);
+                let square = scene.control_glyph_rect(shortcuts, metrics);
                 let gap = square.left - (ram.rect.right() - chip_inset);
                 assert!((gap - 2.0 * chip_inset).abs() <= 0.5, "{scale}: {gap}");
                 assert_eq!(
@@ -3135,7 +3135,7 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
             // and stays inside its full target.
             let pill = scene.bar_pill_rect(scene.tabs[0].rect, metrics);
             let pill_centre = pill.top + pill.height / 2.0;
-            let square = scene.control_glyph_rect(&shortcuts, metrics);
+            let square = scene.control_glyph_rect(shortcuts, metrics);
             assert_eq!(
                 (square.width, square.height),
                 (pill.height.round(), pill.height.round())
@@ -3683,4 +3683,48 @@ fn pane_buttons_follow_tab_selection_and_keep_every_reserved_target() {
         );
         snapshot.tabs[0].columns[1].panes.push(pane("p5"));
     }
+}
+
+#[test]
+fn header_and_viewer_dismissal_labels_follow_shared_chords_and_policy() {
+    use eon_workspace_protocol::shortcuts::{Action, Platform, PopupPolicy, shortcut};
+    use eon_workspace_protocol::v41::{PopupKey, Shortcut};
+    for (control, action, label) in [
+        (WorkspaceHeaderControl::NewTab, Action::CreateTab, "New tab"),
+        (
+            WorkspaceHeaderControl::Shortcuts,
+            Action::ToggleViewer,
+            "Keyboard shortcuts",
+        ),
+        (
+            WorkspaceHeaderControl::CloseTab,
+            Action::CloseTab,
+            "Close tab",
+        ),
+    ] {
+        let descriptor = shortcut(action);
+        let chord = descriptor.trigger.primary_chord(Platform::CURRENT);
+        let expected = format!("{label} — {}", chord.display(Platform::CURRENT));
+        assert_eq!(control.label(&[]), expected);
+        let popup = PopupEntry {
+            id: "takes-key".into(),
+            label: "Takes key".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                key: chord.key.into(),
+                modifiers: chord.modifiers,
+            }),
+        };
+        assert_eq!(
+            control.label(&[popup]),
+            if descriptor.popup_policy() == PopupPolicy::Overridable {
+                label.to_owned()
+            } else {
+                expected
+            }
+        );
+    }
+    let toggle = shortcut(Action::ToggleViewer)
+        .trigger
+        .display_label_for(Platform::CURRENT);
+    assert!(DialogKind::Shortcuts.footer().join(" ").contains(&toggle));
 }

@@ -1,4 +1,11 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
+pub(super) use eon_workspace_protocol::shortcuts::{
+    Action as NativeShortcutAction, Direction as ShortcutDirection, FIXED_SHORTCUTS, PAIRED_ROWS,
+    Shortcut as NativeShortcut, Side as ShortcutSide, Trigger as NativeShortcutTrigger, shortcut,
+};
+use eon_workspace_protocol::shortcuts::{
+    PopupPolicy, display_chord as physical_shortcut_label_for, key_label as physical_key_label,
+};
 use eon_workspace_protocol::v41::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, PopupKey,
     Side, Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
@@ -20,393 +27,35 @@ pub(super) fn paste_shortcut(
             .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Paste)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum NativeShortcutAction {
-    ToggleViewer,
-    ToggleInbox,
-    ToggleHints,
-    ToggleSidebar,
-    NextAttention,
-    PreviousAttention,
-    ToggleZoom,
-    NewWindow,
-    Detach,
-    Quit,
-    FocusTabPosition,
-    ShowWorkspacePosition,
-    NextTab,
-    PreviousTab,
-    Focus(WorkspaceDirection),
-    Move(WorkspaceDirection),
-    MovePaneSideways(Side),
-    CreatePane,
-    CreateColumn,
-    CreateTab,
-    CloseTab,
-    ClosePane,
-    CycleFocus,
-    ReturnToTerminal,
-    TraverseChrome(WorkspaceDirection),
-    Copy,
-    Paste,
-    OpenLink,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum NativeShortcutTrigger {
-    Key(KeyCode, session::Modifiers),
-    AltDigits,
-    AltShiftDigits,
-    Copy,
-    Paste,
-    OpenLink,
-    /// Alt+Shift+Q. On macOS Command+Q quits too, through the close request (`command_q`).
-    Quit,
-}
-
-impl NativeShortcutTrigger {
-    pub(super) fn display_label_for(self, platform: NativePlatform) -> String {
-        match self {
-            Self::Key(code, modifiers) => physical_shortcut_label_for(
-                platform,
-                wire_modifiers(modifiers),
-                &format!("{code:?}"),
-            ),
-            Self::AltDigits => match platform {
-                NativePlatform::Linux => "Alt+1…9 / Alt+0".into(),
-                NativePlatform::Macos => "Option+1…9 / Option+0".into(),
-            },
-            Self::AltShiftDigits => match platform {
-                NativePlatform::Linux => "Alt+Shift+1…9 / Alt+Shift+0".into(),
-                NativePlatform::Macos => "Option+Shift+1…9 / Option+Shift+0".into(),
-            },
-            Self::Copy => physical_shortcut_label_for(
-                platform,
-                wire_modifiers(copy_paste_modifiers(platform)),
-                "KeyC",
-            ),
-            Self::Paste => format!(
-                "{} or Paste",
-                physical_shortcut_label_for(
-                    platform,
-                    wire_modifiers(copy_paste_modifiers(platform)),
-                    "KeyV",
-                )
-            ),
-            Self::OpenLink => physical_shortcut_label_for(
-                platform,
-                wire_modifiers(open_link_modifiers(platform)),
-                "click",
-            ),
-            Self::Quit => {
-                let quit = physical_shortcut_label_for(platform, wire_modifiers(ALT_SHIFT), "KeyQ");
-                match platform {
-                    NativePlatform::Linux => quit,
-                    NativePlatform::Macos => format!("{quit} or Command+Q"),
-                }
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct NativeShortcut {
-    group: &'static str,
-    pub(super) label: &'static str,
-    pub(super) trigger: NativeShortcutTrigger,
-    pub(super) action: NativeShortcutAction,
-}
-
+#[cfg(test)]
 pub(super) const ALT_SHIFT: session::Modifiers =
     session::Modifiers::ALT.union(session::Modifiers::SHIFT);
+#[cfg(test)]
 pub(super) const CTRL_ALT: session::Modifiers =
     session::Modifiers::CTRL.union(session::Modifiers::ALT);
+#[cfg(test)]
 pub(super) const CTRL_SHIFT: session::Modifiers =
     session::Modifiers::CTRL.union(session::Modifiers::SHIFT);
-const CTRL_ALT_SHIFT: session::Modifiers = CTRL_ALT.union(session::Modifiers::SHIFT);
-pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
-    NativeShortcut::key(
-        "Navigate",
-        "Focus next tab",
-        KeyCode::Tab,
-        session::Modifiers::CTRL,
-        NativeShortcutAction::NextTab,
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Focus previous tab",
-        KeyCode::Tab,
-        CTRL_SHIFT,
-        NativeShortcutAction::PreviousTab,
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Focus left column or previous tab",
-        KeyCode::KeyH,
-        session::Modifiers::ALT,
-        NativeShortcutAction::Focus(WorkspaceDirection::Left),
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Focus right column or next tab",
-        KeyCode::KeyL,
-        session::Modifiers::ALT,
-        NativeShortcutAction::Focus(WorkspaceDirection::Right),
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Focus pane above",
-        KeyCode::KeyK,
-        session::Modifiers::ALT,
-        NativeShortcutAction::Focus(WorkspaceDirection::Up),
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Focus pane below",
-        KeyCode::KeyJ,
-        session::Modifiers::ALT,
-        NativeShortcutAction::Focus(WorkspaceDirection::Down),
-    ),
-    // After the HJKL focus keys, so the merged focus hint ends with 1..9.
-    NativeShortcut {
-        group: "Navigate",
-        label: "Focus tab by position",
-        trigger: NativeShortcutTrigger::AltDigits,
-        action: NativeShortcutAction::FocusTabPosition,
-    },
-    NativeShortcut {
-        group: "Navigate",
-        label: "Show session by position",
-        trigger: NativeShortcutTrigger::AltShiftDigits,
-        action: NativeShortcutAction::ShowWorkspacePosition,
-    },
-    NativeShortcut::key(
-        "Navigate",
-        "Jump to the next agent needing attention",
-        KeyCode::KeyG,
-        session::Modifiers::ALT,
-        NativeShortcutAction::NextAttention,
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Jump to the previous agent needing attention",
-        KeyCode::KeyG,
-        ALT_SHIFT,
-        NativeShortcutAction::PreviousAttention,
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Show the attention inbox",
-        KeyCode::KeyQ,
-        session::Modifiers::ALT,
-        NativeShortcutAction::ToggleInbox,
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Cycle terminal, agent sidebar, tabs, and panes",
-        KeyCode::F6,
-        session::Modifiers::empty(),
-        NativeShortcutAction::CycleFocus,
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Return focus to the terminal",
-        KeyCode::Escape,
-        session::Modifiers::empty(),
-        NativeShortcutAction::ReturnToTerminal,
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Left column or previous tab while tabs are focused",
-        KeyCode::ArrowLeft,
-        session::Modifiers::empty(),
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Left),
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Right column or next tab while tabs are focused",
-        KeyCode::ArrowRight,
-        session::Modifiers::empty(),
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Right),
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Previous pane or agent row while panes or the sidebar are focused",
-        KeyCode::ArrowUp,
-        session::Modifiers::empty(),
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Up),
-    ),
-    NativeShortcut::key(
-        "Navigate",
-        "Next pane or agent row while panes or the sidebar are focused",
-        KeyCode::ArrowDown,
-        session::Modifiers::empty(),
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Down),
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Create pane",
-        KeyCode::KeyM,
-        session::Modifiers::ALT,
-        NativeShortcutAction::CreatePane,
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Create column",
-        KeyCode::KeyM,
-        CTRL_ALT,
-        NativeShortcutAction::CreateColumn,
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Create tab",
-        KeyCode::KeyT,
-        ALT_SHIFT,
-        NativeShortcutAction::CreateTab,
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Close active tab",
-        KeyCode::KeyW,
-        ALT_SHIFT,
-        NativeShortcutAction::CloseTab,
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Close selected pane",
-        KeyCode::KeyW,
-        session::Modifiers::ALT,
-        NativeShortcutAction::ClosePane,
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Zoom selected pane or restore columns",
-        KeyCode::KeyZ,
-        ALT_SHIFT,
-        NativeShortcutAction::ToggleZoom,
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Move tab left",
-        KeyCode::KeyH,
-        CTRL_ALT_SHIFT,
-        NativeShortcutAction::Move(WorkspaceDirection::Left),
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Move tab right",
-        KeyCode::KeyL,
-        CTRL_ALT_SHIFT,
-        NativeShortcutAction::Move(WorkspaceDirection::Right),
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Move pane to left column",
-        KeyCode::KeyH,
-        CTRL_ALT,
-        NativeShortcutAction::MovePaneSideways(Side::Left),
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Move pane to right column",
-        KeyCode::KeyL,
-        CTRL_ALT,
-        NativeShortcutAction::MovePaneSideways(Side::Right),
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Move pane up",
-        KeyCode::KeyK,
-        CTRL_ALT,
-        NativeShortcutAction::Move(WorkspaceDirection::Up),
-    ),
-    NativeShortcut::key(
-        "Tabs and panes",
-        "Move pane down",
-        KeyCode::KeyJ,
-        CTRL_ALT,
-        NativeShortcutAction::Move(WorkspaceDirection::Down),
-    ),
-    NativeShortcut::key(
-        "Host",
-        "Open new Eon window",
-        KeyCode::KeyN,
-        ALT_SHIFT,
-        NativeShortcutAction::NewWindow,
-    ),
-    NativeShortcut::key(
-        "Host",
-        "Detach: hide the window, keep terminals running",
-        KeyCode::KeyD,
-        ALT_SHIFT,
-        NativeShortcutAction::Detach,
-    ),
-    NativeShortcut {
-        group: "Host",
-        label: "Quit: close the window, stop its terminals",
-        trigger: NativeShortcutTrigger::Quit,
-        action: NativeShortcutAction::Quit,
-    },
-    NativeShortcut::key(
-        "Host",
-        "Show or close shortcuts",
-        KeyCode::Slash,
-        session::Modifiers::ALT,
-        NativeShortcutAction::ToggleViewer,
-    ),
-    NativeShortcut::key(
-        "Host",
-        "Show or hide shortcut hints",
-        KeyCode::KeyB,
-        ALT_SHIFT,
-        NativeShortcutAction::ToggleHints,
-    ),
-    NativeShortcut::key(
-        "Host",
-        "Show or hide the agent sidebar",
-        KeyCode::KeyH,
-        ALT_SHIFT,
-        NativeShortcutAction::ToggleSidebar,
-    ),
-    NativeShortcut {
-        group: "Host",
-        label: "Copy selected text or focused link",
-        trigger: NativeShortcutTrigger::Copy,
-        action: NativeShortcutAction::Copy,
-    },
-    NativeShortcut {
-        group: "Host",
-        label: "Paste",
-        trigger: NativeShortcutTrigger::Paste,
-        action: NativeShortcutAction::Paste,
-    },
-    NativeShortcut {
-        group: "Host",
-        label: "Open link",
-        trigger: NativeShortcutTrigger::OpenLink,
-        action: NativeShortcutAction::OpenLink,
-    },
-];
 
-impl NativeShortcut {
-    const fn key(
-        group: &'static str,
-        label: &'static str,
-        code: KeyCode,
+/// Native context and popup projection of the shared descriptors.
+pub(super) trait NativeShortcutExt {
+    fn bound(self, sidebar: Sidebar, running: bool) -> bool;
+    fn overriding_popup(
+        self,
+        platform: NativePlatform,
+        entries: &[PopupEntry],
+    ) -> Option<&PopupEntry>;
+    fn taken_keys(self, platform: NativePlatform, entries: &[PopupEntry]) -> Vec<String>;
+    fn matches_pointer(
+        self,
+        platform: NativePlatform,
+        button: MouseButton,
         modifiers: session::Modifiers,
-        action: NativeShortcutAction,
-    ) -> Self {
-        Self {
-            group,
-            label,
-            trigger: NativeShortcutTrigger::Key(code, modifiers),
-            action,
-        }
-    }
+    ) -> bool;
+}
 
-    /// Whether the binding exists: `[sidebar] enabled = false` unbinds the sidebar toggle, and
-    /// a window without a running-windows summary (eonbase) has no Quit.
-    pub(super) fn bound(self, sidebar: Sidebar, running: bool) -> bool {
+impl NativeShortcutExt for NativeShortcut {
+    fn bound(self, sidebar: Sidebar, running: bool) -> bool {
         match self.action {
             NativeShortcutAction::ToggleSidebar => sidebar != Sidebar::Off,
             NativeShortcutAction::Quit => running,
@@ -414,86 +63,40 @@ impl NativeShortcut {
         }
     }
 
-    fn matches_key(
-        self,
-        platform: NativePlatform,
-        key: PhysicalKey,
-        modifiers: session::Modifiers,
-    ) -> bool {
-        match self.trigger {
-            NativeShortcutTrigger::Key(code, expected) => {
-                key == PhysicalKey::Code(code) && modifiers == expected
-            }
-            NativeShortcutTrigger::AltDigits => {
-                modifiers == session::Modifiers::ALT && digit_key(key)
-            }
-            NativeShortcutTrigger::AltShiftDigits => modifiers == ALT_SHIFT && digit_key(key),
-            NativeShortcutTrigger::Copy => {
-                key == PhysicalKey::Code(KeyCode::KeyC)
-                    && modifiers == copy_paste_modifiers(platform)
-            }
-            NativeShortcutTrigger::Paste => {
-                key == PhysicalKey::Code(KeyCode::Paste)
-                    || key == PhysicalKey::Code(KeyCode::KeyV)
-                        && modifiers == copy_paste_modifiers(platform)
-            }
-            NativeShortcutTrigger::OpenLink => false,
-            NativeShortcutTrigger::Quit => {
-                key == PhysicalKey::Code(KeyCode::KeyQ) && modifiers == ALT_SHIFT
-            }
-        }
-    }
-
-    /// The configured popup that takes this binding's key. Eon reserves the viewer toggle,
-    /// tab positions and focus keys, so no popup takes those.
     fn overriding_popup(
         self,
         platform: NativePlatform,
         entries: &[PopupEntry],
     ) -> Option<&PopupEntry> {
-        let (code, modifiers) = match self.trigger {
-            NativeShortcutTrigger::Key(code, modifiers)
-                if !matches!(
-                    self.action,
-                    NativeShortcutAction::ToggleViewer | NativeShortcutAction::Focus(_)
-                ) =>
-            {
-                (code, modifiers)
-            }
-            NativeShortcutTrigger::Copy => (KeyCode::KeyC, copy_paste_modifiers(platform)),
-            NativeShortcutTrigger::Paste => (KeyCode::KeyV, copy_paste_modifiers(platform)),
-            // On macOS Quit has two keys, and a popup on one leaves the other (`taken_keys`).
-            NativeShortcutTrigger::Quit if platform == NativePlatform::Linux => {
-                (KeyCode::KeyQ, ALT_SHIFT)
-            }
-            _ => return None,
-        };
-        popup_entry(entries, code, modifiers)
+        if self.popup_policy() != PopupPolicy::Overridable
+            || matches!(
+                self.trigger,
+                NativeShortcutTrigger::AltShiftDigits | NativeShortcutTrigger::OpenLink
+            )
+            || self.trigger == NativeShortcutTrigger::Quit && platform == NativePlatform::Macos
+        {
+            return None;
+        }
+        let chord = self.trigger.primary_chord(platform);
+        popup_entry_key(entries, chord.key, chord.modifiers)
     }
 
-    /// Each key of a several-key binding that a configured popup takes, as "<key> overridden by
-    /// <popup>"; the binding keeps its other keys: the workspace positions (VEN-C20), and on
-    /// macOS Quit's Option+Shift+Q and Command+Q (VEN-C8).
     fn taken_keys(self, platform: NativePlatform, entries: &[PopupEntry]) -> Vec<String> {
-        let keys: Vec<(KeyCode, session::Modifiers)> = match self.trigger {
-            NativeShortcutTrigger::AltShiftDigits => {
-                DIGIT_KEYS.iter().map(|code| (*code, ALT_SHIFT)).collect()
-            }
-            NativeShortcutTrigger::Quit if platform == NativePlatform::Macos => vec![
-                (KeyCode::KeyQ, ALT_SHIFT),
-                (KeyCode::KeyQ, session::Modifiers::SUPER),
-            ],
-            _ => return Vec::new(),
-        };
-        keys.into_iter()
-            .filter_map(|(code, modifiers)| {
-                let entry = popup_entry(entries, code, modifiers)?;
-                let key = physical_shortcut_label_for(
-                    platform,
-                    wire_modifiers(modifiers),
-                    &format!("{code:?}"),
-                );
-                Some(format!("{key} overridden by {}", entry.label))
+        if self.trigger != NativeShortcutTrigger::AltShiftDigits
+            && !(self.trigger == NativeShortcutTrigger::Quit && platform == NativePlatform::Macos)
+        {
+            return Vec::new();
+        }
+        self.trigger
+            .chords(platform)
+            .into_iter()
+            .filter_map(|chord| {
+                let entry = popup_entry_key(entries, chord.key, chord.modifiers)?;
+                Some(format!(
+                    "{} overridden by {}",
+                    chord.display(platform),
+                    entry.label
+                ))
             })
             .collect()
     }
@@ -504,24 +107,34 @@ impl NativeShortcut {
         button: MouseButton,
         modifiers: session::Modifiers,
     ) -> bool {
-        matches!(self.trigger, NativeShortcutTrigger::OpenLink)
+        self.trigger == NativeShortcutTrigger::OpenLink
             && button == MouseButton::Left
             && modifiers == open_link_modifiers(platform)
     }
 }
 
+#[cfg(test)]
 pub(super) fn copy_paste_modifiers(platform: NativePlatform) -> session::Modifiers {
-    match platform {
-        NativePlatform::Linux => CTRL_SHIFT,
-        NativePlatform::Macos => session::Modifiers::SUPER,
-    }
+    native_modifiers(
+        shortcut(NativeShortcutAction::Copy)
+            .trigger
+            .primary_chord(platform)
+            .modifiers,
+    )
 }
 
 fn open_link_modifiers(platform: NativePlatform) -> session::Modifiers {
-    match platform {
-        NativePlatform::Linux => session::Modifiers::CTRL,
-        NativePlatform::Macos => session::Modifiers::SUPER,
-    }
+    native_modifiers(
+        shortcut(NativeShortcutAction::OpenLink)
+            .trigger
+            .primary_chord(platform)
+            .modifiers,
+    )
+}
+
+pub(super) fn native_modifiers(modifiers: u8) -> session::Modifiers {
+    session::Modifiers::from_bits(u16::from(modifiers))
+        .expect("shared modifier bits are native base modifiers")
 }
 
 pub(super) fn command_q(
@@ -540,10 +153,15 @@ pub(super) fn command_q_for(
     modifiers: session::Modifiers,
     entries: &[PopupEntry],
 ) -> bool {
-    platform == NativePlatform::Macos
-        && key == PhysicalKey::Code(KeyCode::KeyQ)
-        && modifiers == session::Modifiers::SUPER
-        && popup_entry(entries, KeyCode::KeyQ, modifiers).is_none()
+    let Some(chord) = shortcut(NativeShortcutAction::Quit)
+        .trigger
+        .secondary_chord(platform)
+    else {
+        return false;
+    };
+    matches!(key, PhysicalKey::Code(code) if format!("{code:?}") == chord.key)
+        && modifiers == native_modifiers(chord.modifiers)
+        && popup_entry_key(entries, chord.key, chord.modifiers).is_none()
 }
 
 pub(super) fn native_key_shortcut(
@@ -562,41 +180,32 @@ pub(super) fn native_key_shortcut_for(
     modifiers: session::Modifiers,
     entries: &[PopupEntry],
 ) -> Option<&'static NativeShortcut> {
+    let PhysicalKey::Code(code) = key else {
+        return None;
+    };
+    let key = format!("{code:?}");
+    let bits = wire_modifiers(modifiers);
+    // Ordinary shortcuts compare the exact native modifier state; Paste is unconditional.
+    if code != KeyCode::Paste && native_modifiers(bits) != modifiers {
+        return None;
+    }
     FIXED_SHORTCUTS.iter().find(|shortcut| {
-        let position_taken = || match key {
-            PhysicalKey::Code(code) => popup_entry(entries, code, modifiers).is_some(),
-            PhysicalKey::Unidentified(_) => false,
-        };
-        shortcut.matches_key(platform, key, modifiers)
+        let primary = shortcut.trigger.primary_chord(platform);
+        // macOS's secondary Quit chord is routed through its close request instead.
+        let primary_quit = shortcut.action != NativeShortcutAction::Quit
+            || key == primary.key && bits == primary.modifiers;
+        shortcut.trigger.matches_key(platform, &key, bits)
+            && primary_quit
             && shortcut.overriding_popup(platform, entries).is_none()
             && !(matches!(
                 shortcut.trigger,
                 NativeShortcutTrigger::AltShiftDigits | NativeShortcutTrigger::Quit
-            ) && position_taken())
+            ) && popup_entry_key(entries, &key, bits).is_some())
     })
 }
 
-/// The digit keys in the positions they name: 1..9, then 0 for the tenth.
-const DIGIT_KEYS: [KeyCode; 10] = [
-    KeyCode::Digit1,
-    KeyCode::Digit2,
-    KeyCode::Digit3,
-    KeyCode::Digit4,
-    KeyCode::Digit5,
-    KeyCode::Digit6,
-    KeyCode::Digit7,
-    KeyCode::Digit8,
-    KeyCode::Digit9,
-    KeyCode::Digit0,
-];
-
-/// The zero-based position a digit key names.
 fn digit_position(code: KeyCode) -> Option<usize> {
-    DIGIT_KEYS.iter().position(|digit| *digit == code)
-}
-
-fn digit_key(key: PhysicalKey) -> bool {
-    matches!(key, PhysicalKey::Code(code) if digit_position(code).is_some())
+    eon_workspace_protocol::shortcuts::digit_position(&format!("{code:?}"))
 }
 
 /// The detach chord's label, unless a configured popup takes its key.
@@ -615,9 +224,12 @@ pub(super) fn detach_chord(entries: &[PopupEntry]) -> Option<String> {
 /// Alt+Shift+Q's label, unless a configured popup takes the key. macOS's Command+Q is a close
 /// request, which detaches after a failed Stop, so it never retries one.
 pub(super) fn quit_retry_chord(entries: &[PopupEntry]) -> Option<String> {
-    popup_entry(entries, KeyCode::KeyQ, ALT_SHIFT)
+    let chord = shortcut(NativeShortcutAction::Quit)
+        .trigger
+        .primary_chord(NATIVE_PLATFORM);
+    popup_entry_key(entries, chord.key, chord.modifiers)
         .is_none()
-        .then(|| physical_shortcut_label_for(NATIVE_PLATFORM, wire_modifiers(ALT_SHIFT), "KeyQ"))
+        .then(|| chord.display(NATIVE_PLATFORM))
 }
 
 pub(super) fn native_pointer_shortcut(
@@ -656,20 +268,6 @@ pub(super) fn shortcut_groups_for(
     shortcut_groups_with(platform, entries, sidebar, running, true)
 }
 
-/// Opposite arrow keys the viewer lists on one row; a popup taking either key splits them.
-pub(super) const PAIRED_ROWS: [(NativeShortcutAction, NativeShortcutAction, &str); 2] = [
-    (
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Left),
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Right),
-        "Previous or next column or tab while tabs are focused",
-    ),
-    (
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Up),
-        NativeShortcutAction::TraverseChrome(WorkspaceDirection::Down),
-        "Previous or next pane or agent row while one is focused",
-    ),
-];
-
 /// The viewer's groups; `number_keys = false` leaves out the workspace position keys (VEN-C8).
 fn shortcut_groups_with(
     platform: NativePlatform,
@@ -694,7 +292,7 @@ fn shortcut_groups_with(
         shortcut.overriding_popup(platform, entries).is_none()
             && shortcut.taken_keys(platform, entries).is_empty()
     };
-    let mut groups = ["Navigate", "Tabs and panes", "Host"]
+    let mut groups = eon_workspace_protocol::shortcuts::GROUPS
         .into_iter()
         .map(|title| {
             let shortcuts = FIXED_SHORTCUTS
@@ -819,7 +417,7 @@ pub(super) fn shortcut_hints_for(
             continue;
         }
         use NativeShortcutAction as Action;
-        use WorkspaceDirection::{Down, Left, Right, Up};
+        use ShortcutDirection::{Down, Left, Right, Up};
         // The bar's label, the popup's short label (keys without modifiers have no popup), and
         // the priority to keep the hint.
         let (label, short, priority) = match shortcut.action {
@@ -859,10 +457,11 @@ pub(super) fn shortcut_hints_for(
             _ => 2,
         };
         let (modifiers, key) = match shortcut.trigger {
-            NativeShortcutTrigger::Key(code, modifiers) => {
-                (wire_modifiers(modifiers), format!("{code:?}"))
-            }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v41::ALT, "1..9".into()),
+            NativeShortcutTrigger::Key(code, modifiers) => (modifiers, code.to_owned()),
+            NativeShortcutTrigger::AltDigits => (
+                shortcut.trigger.primary_chord(platform).modifiers,
+                "1..9".into(),
+            ),
             _ => continue,
         };
         let modifier_names = physical_modifiers_label_for(platform, modifiers, false);
@@ -954,57 +553,29 @@ pub(super) fn shortcut_hints_for(
     hints
 }
 
-fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &str) -> String {
-    let modifiers = physical_modifiers_label_for(platform, modifiers, false);
-    let key = physical_key_label(key);
-    if modifiers.is_empty() {
-        key.into()
-    } else {
-        format!("{modifiers}+{key}")
-    }
-}
-
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v41 as wire;
-
-    let mut parts = Vec::with_capacity(5);
-    let labels = match (platform, compact) {
-        (NativePlatform::Linux, true) => ["C", "A", "S", "Super"],
-        (NativePlatform::Macos, true) => ["C", "A", "S", "Cmd"],
-        (NativePlatform::Linux, false) => ["Ctrl", "Alt", "Shift", "Super"],
-        (NativePlatform::Macos, false) => ["Control", "Option", "Shift", "Command"],
+    if !compact {
+        return eon_workspace_protocol::shortcuts::modifier_names(platform, modifiers);
+    }
+    use eon_workspace_protocol::shortcuts::{ALT, CTRL, SHIFT, SUPER};
+    let labels = match platform {
+        NativePlatform::Linux => ["C", "A", "S", "Super"],
+        NativePlatform::Macos => ["C", "A", "S", "Cmd"],
     };
-    for (bit, label) in [wire::CTRL, wire::ALT, wire::SHIFT, wire::SUPER]
+    [CTRL, ALT, SHIFT, SUPER]
         .into_iter()
         .zip(labels)
-    {
-        if modifiers & bit != 0 {
-            parts.push(label);
-        }
-    }
-    parts.join(if compact { "" } else { "+" })
+        .filter_map(|(bit, label)| (modifiers & bit != 0).then_some(label))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
-fn physical_key_label(key: &str) -> &str {
-    match key {
-        key if key.starts_with("Key") => &key[3..],
-        key if key.starts_with("Digit") => &key[5..],
-        "ArrowLeft" => "Left",
-        "ArrowRight" => "Right",
-        "ArrowUp" => "Up",
-        "ArrowDown" => "Down",
-        "Backquote" => "`",
-        "Backslash" => "\\",
-        "BracketLeft" => "[",
-        "BracketRight" => "]",
-        "Comma" => ",",
-        "Equal" => "=",
-        "Minus" => "-",
-        "Period" => ".",
-        "Quote" => "'",
-        "Semicolon" => ";",
-        "Slash" => "/",
-        key => key,
+pub(super) fn workspace_direction(direction: ShortcutDirection) -> WorkspaceDirection {
+    match direction {
+        ShortcutDirection::Left => WorkspaceDirection::Left,
+        ShortcutDirection::Right => WorkspaceDirection::Right,
+        ShortcutDirection::Up => WorkspaceDirection::Up,
+        ShortcutDirection::Down => WorkspaceDirection::Down,
     }
 }
 
@@ -1039,12 +610,17 @@ pub(super) fn workspace_shortcut(
     let shortcut = native_key_shortcut(PhysicalKey::Code(code), modifiers, entries)
         .filter(|shortcut| shortcut.bound(sidebar, false))?;
     let action = match shortcut.action {
-        NativeShortcutAction::Focus(direction) => CommonAction::Focus(direction),
-        NativeShortcutAction::Move(direction) => CommonAction::Move(direction),
+        NativeShortcutAction::Focus(direction) => {
+            CommonAction::Focus(workspace_direction(direction))
+        }
+        NativeShortcutAction::Move(direction) => CommonAction::Move(workspace_direction(direction)),
         NativeShortcutAction::CreatePane => CommonAction::CreatePane { focus: true },
         NativeShortcutAction::CreateColumn => return Some(WorkspaceAction::CreateColumn),
         NativeShortcutAction::MovePaneSideways(side) => {
-            return Some(WorkspaceAction::MovePaneSideways(side));
+            return Some(WorkspaceAction::MovePaneSideways(match side {
+                ShortcutSide::Left => Side::Left,
+                ShortcutSide::Right => Side::Right,
+            }));
         }
         NativeShortcutAction::CreateTab => CommonAction::CreateTab,
         NativeShortcutAction::CloseTab => CommonAction::CloseTab {
@@ -1207,9 +783,14 @@ fn popup_entry(
     code: KeyCode,
     modifiers: session::Modifiers,
 ) -> Option<&PopupEntry> {
-    let modifiers = wire_modifiers(modifiers);
-    // winit's physical KeyCode names are the canonical names in EONW v9.
-    let key = format!("{code:?}");
+    popup_entry_key(entries, &format!("{code:?}"), wire_modifiers(modifiers))
+}
+
+fn popup_entry_key<'a>(
+    entries: &'a [PopupEntry],
+    key: &str,
+    modifiers: u8,
+) -> Option<&'a PopupEntry> {
     entries.iter().find(|entry| {
         entry
             .shortcut
@@ -2037,7 +1618,7 @@ mod tests {
                 (KeyCode::Digit3, NativeShortcutAction::FocusTabPosition),
                 (
                     KeyCode::KeyK,
-                    NativeShortcutAction::Focus(WorkspaceDirection::Up),
+                    NativeShortcutAction::Focus(ShortcutDirection::Up),
                 ),
             ] {
                 assert_eq!(

@@ -23,6 +23,10 @@ installation, and proven contract changes.
   old Orbit host's behaviour until they restart; supervisor recovery reuses
   that host (`eon-mocfv`).
 
+- Shortcut tooltips, viewer dismissal text, hint overflow and accessible
+  descriptions use the same defaults as key matching, including macOS's
+  Option/Control/Command names (`eon-configurability-qkq8.2`).
+
 - Panel headings default to `"connected"`; `[panels] heading = "notch"` remains
   a supported choice. Omitted settings use connected on window open, reopen or
   reload (`eon-j7ii2`, Lucca's 2026-11-11 decision).

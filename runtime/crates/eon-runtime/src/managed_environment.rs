@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use eon_workspace_protocol::shortcuts::{PopupPolicy, popup_policy};
 use eon_workspace_protocol::v41::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
@@ -1732,12 +1733,13 @@ fn resolve_popup_entries(
                     entry.id
                 )
             })?;
+            let policy = popup_policy(shortcut.modifiers, &shortcut.key);
             // `config_warnings` names a configured popup on a focus key.
-            if pass && focus_shortcut(&shortcut) {
+            if pass && policy == PopupPolicy::Focus {
                 entry.shortcut = PopupKey::Unbound;
                 continue;
             }
-            if reserved_shortcut(&shortcut) || focus_shortcut(&shortcut) {
+            if policy != PopupPolicy::Overridable {
                 return Err(format!(
                     "popups.{}.keybinding is reserved for an Eon shortcut",
                     entry.id
@@ -1763,33 +1765,6 @@ fn resolve_popup_entries(
         }
     }
     Ok(())
-}
-
-/// Alt+Slash and Alt+0 through Alt+9, which no 1.x release enlarges (EON-C20): a popup
-/// on one fails the load. A popup takes the key of any other fixed Venus binding but
-/// the focus keys.
-fn reserved_shortcut(shortcut: &Shortcut) -> bool {
-    shortcut.modifiers == ALT
-        && matches!(
-            shortcut.key.as_str(),
-            "Digit0"
-                | "Digit1"
-                | "Digit2"
-                | "Digit3"
-                | "Digit4"
-                | "Digit5"
-                | "Digit6"
-                | "Digit7"
-                | "Digit8"
-                | "Digit9"
-                | "Slash"
-        )
-}
-
-/// Alt+H, Alt+J, Alt+K and Alt+L, which move focus and which no 1.x release enlarges
-/// (EON-C20): a configured popup on one loads without a key, and a default on one fails.
-fn focus_shortcut(shortcut: &Shortcut) -> bool {
-    shortcut.modifiers == ALT && matches!(shortcut.key.as_str(), "KeyH" | "KeyJ" | "KeyK" | "KeyL")
 }
 
 pub(crate) fn prepare_popup_command(
@@ -2457,7 +2432,9 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
     let focus = config.popups.iter().filter_map(|(id, settings)| {
         let keybinding = settings.keybinding.as_deref()?;
         ((settings.enabled != Some(false) || id == "files")
-            && parse_shortcut("", keybinding).is_ok_and(|shortcut| focus_shortcut(&shortcut)))
+            && parse_shortcut("", keybinding).is_ok_and(|shortcut| {
+                popup_policy(shortcut.modifiers, &shortcut.key) == PopupPolicy::Focus
+            }))
         .then(|| {
             format!(
                 "eon: popups.{id}.keybinding {} in {path} is reserved for moving focus; popup {id} loads without a key",

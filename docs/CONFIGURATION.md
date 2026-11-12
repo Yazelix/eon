@@ -788,6 +788,10 @@ Alt+K and Alt+L are reserved for moving focus: a popup configured on one of
 them still loads but gets no key, and Eon logs a configuration warning naming
 the popup and the key.
 
+Configuration uses physical names such as `Alt+Slash` on every platform.
+Window labels use `/` for Slash and, on macOS, Option, Control and Command
+for Alt, Ctrl and Super. These labels refer to the same physical chords.
+
 Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`
 to select another runtime root. Relative `EON_CONFIG_HOME` values resolve once
 against the launch directory. Eon otherwise uses the standard XDG locations and

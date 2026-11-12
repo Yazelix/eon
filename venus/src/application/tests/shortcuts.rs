@@ -1,7 +1,8 @@
 use super::*;
 use crate::application::shortcuts::{
-    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, PAIRED_ROWS, command_q_for,
-    native_pointer_shortcut_for, shortcut_groups_for,
+    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, NativeShortcutTrigger, PAIRED_ROWS,
+    ShortcutSide, command_q_for, native_modifiers, native_pointer_shortcut_for,
+    shortcut_groups_for,
 };
 use eon_workspace_protocol::v41::{InvokeIntent, Side, Tab};
 
@@ -248,10 +249,38 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
             display
         );
         match shortcut.trigger {
-            NativeShortcutTrigger::Key(code, modifiers) => assert!(std::ptr::eq(
-                key_shortcut(PhysicalKey::Code(code), modifiers),
-                shortcut
-            )),
+            NativeShortcutTrigger::Key(name, modifiers) => {
+                let code = [
+                    KeyCode::Tab,
+                    KeyCode::KeyH,
+                    KeyCode::KeyL,
+                    KeyCode::KeyK,
+                    KeyCode::KeyJ,
+                    KeyCode::KeyG,
+                    KeyCode::KeyQ,
+                    KeyCode::F6,
+                    KeyCode::Escape,
+                    KeyCode::ArrowLeft,
+                    KeyCode::ArrowRight,
+                    KeyCode::ArrowUp,
+                    KeyCode::ArrowDown,
+                    KeyCode::KeyM,
+                    KeyCode::KeyT,
+                    KeyCode::KeyW,
+                    KeyCode::KeyZ,
+                    KeyCode::KeyN,
+                    KeyCode::KeyD,
+                    KeyCode::Slash,
+                    KeyCode::KeyB,
+                ]
+                .into_iter()
+                .find(|code| format!("{code:?}") == name)
+                .unwrap();
+                assert!(std::ptr::eq(
+                    key_shortcut(PhysicalKey::Code(code), native_modifiers(modifiers)),
+                    shortcut
+                ));
+            }
             NativeShortcutTrigger::AltDigits => {
                 for code in [KeyCode::Digit1, KeyCode::Digit9, KeyCode::Digit0] {
                     assert!(std::ptr::eq(
@@ -450,11 +479,11 @@ fn macos_uses_command_for_standard_host_actions_only() {
     assert_eq!(action(KeyCode::KeyV, CTRL_SHIFT), None);
     assert_eq!(
         action(KeyCode::KeyH, Modifiers::ALT),
-        Some(NativeShortcutAction::Focus(WorkspaceDirection::Left))
+        Some(NativeShortcutAction::Focus(ShortcutDirection::Left))
     );
     assert_eq!(
         action(KeyCode::KeyH, CTRL_ALT),
-        Some(NativeShortcutAction::MovePaneSideways(Side::Left))
+        Some(NativeShortcutAction::MovePaneSideways(ShortcutSide::Left))
     );
     assert_eq!(
         native_pointer_shortcut_for(NativePlatform::Macos, MouseButton::Left, Modifiers::SUPER,)
@@ -1013,4 +1042,73 @@ fn dialog_texts_measured_at_other_metrics_give_way_to_the_estimate() {
         stale.lines("Focus", 50.0),
         CellText(scaled).lines("Focus", 50.0)
     );
+}
+
+#[test]
+fn literal_shortcut_defaults_preserve_both_platforms() {
+    use std::fmt::Write;
+
+    for (platform, expected) in [
+        (
+            NativePlatform::Linux,
+            include_str!("../../../tests/fixtures/shortcuts-linux.txt"),
+        ),
+        (
+            NativePlatform::Macos,
+            include_str!("../../../tests/fixtures/shortcuts-macos.txt"),
+        ),
+    ] {
+        let mut actual = String::from(
+            "# d2afbb1 literal defaults and viewer rows; do not regenerate from the shared table.\n[actions]\n",
+        );
+        for descriptor in FIXED_SHORTCUTS {
+            writeln!(
+                actual,
+                "{:?}\t{}",
+                descriptor.action,
+                descriptor.trigger.display_label_for(platform)
+            )
+            .unwrap();
+        }
+        actual.push_str("[viewer]\n");
+        for group in shortcut_groups_for(
+            platform,
+            &[],
+            eon_workspace_protocol::v41::Sidebar::Open,
+            true,
+        ) {
+            writeln!(actual, "[{}]", group.title).unwrap();
+            for row in group.rows {
+                writeln!(actual, "{}\t{}", row.shortcut, row.action).unwrap();
+            }
+        }
+        assert_eq!(actual, expected, "{platform:?} shortcut defaults changed");
+    }
+}
+
+#[test]
+fn ordinary_shortcuts_keep_exact_modifiers_and_native_paste_stays_unconditional() {
+    use orbit_protocol::session::Modifiers;
+    for platform in [NativePlatform::Linux, NativePlatform::Macos] {
+        for extra in [
+            Modifiers::CAPS_LOCK,
+            Modifiers::NUM_LOCK,
+            Modifiers::ALT_SIDE,
+        ] {
+            assert!(
+                native_key_shortcut_for(
+                    platform,
+                    PhysicalKey::Code(KeyCode::KeyH),
+                    Modifiers::ALT.union(extra),
+                    &[]
+                )
+                .is_none()
+            );
+            assert_eq!(
+                native_key_shortcut_for(platform, PhysicalKey::Code(KeyCode::Paste), extra, &[])
+                    .map(|shortcut| shortcut.action),
+                Some(NativeShortcutAction::Paste)
+            );
+        }
+    }
 }

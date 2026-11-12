@@ -1,0 +1,80 @@
+# d2afbb1 literal defaults and viewer rows; do not regenerate from the shared table.
+[actions]
+NextTab	Control+Tab
+PreviousTab	Control+Shift+Tab
+Focus(Left)	Option+H
+Focus(Right)	Option+L
+Focus(Up)	Option+K
+Focus(Down)	Option+J
+FocusTabPosition	Option+1…9 / Option+0
+ShowWorkspacePosition	Option+Shift+1…9 / Option+Shift+0
+NextAttention	Option+G
+PreviousAttention	Option+Shift+G
+ToggleInbox	Option+Q
+CycleFocus	F6
+ReturnToTerminal	Escape
+TraverseChrome(Left)	Left
+TraverseChrome(Right)	Right
+TraverseChrome(Up)	Up
+TraverseChrome(Down)	Down
+CreatePane	Option+M
+CreateColumn	Control+Option+M
+CreateTab	Option+Shift+T
+CloseTab	Option+Shift+W
+ClosePane	Option+W
+ToggleZoom	Option+Shift+Z
+Move(Left)	Control+Option+Shift+H
+Move(Right)	Control+Option+Shift+L
+MovePaneSideways(Left)	Control+Option+H
+MovePaneSideways(Right)	Control+Option+L
+Move(Up)	Control+Option+K
+Move(Down)	Control+Option+J
+NewWindow	Option+Shift+N
+Detach	Option+Shift+D
+Quit	Option+Shift+Q or Command+Q
+ToggleViewer	Option+/
+ToggleHints	Option+Shift+B
+ToggleSidebar	Option+Shift+H
+Copy	Command+C
+Paste	Command+V or Paste
+OpenLink	Command+click
+[viewer]
+[Navigate]
+Control+Tab	Focus next tab
+Control+Shift+Tab	Focus previous tab
+Option+H	Focus left column or previous tab
+Option+L	Focus right column or next tab
+Option+K	Focus pane above
+Option+J	Focus pane below
+Option+1…9 / Option+0	Focus tab by position
+Option+Shift+1…9 / Option+Shift+0	Show session by position
+Option+G	Jump to the next agent needing attention
+Option+Shift+G	Jump to the previous agent needing attention
+Option+Q	Show the attention inbox
+F6	Cycle terminal, agent sidebar, tabs, and panes
+Escape	Return focus to the terminal
+Left / Right	Previous or next column or tab while tabs are focused
+Up / Down	Previous or next pane or agent row while one is focused
+[Tabs and panes]
+Option+M	Create pane
+Control+Option+M	Create column
+Option+Shift+T	Create tab
+Option+Shift+W	Close active tab
+Option+W	Close selected pane
+Option+Shift+Z	Zoom selected pane or restore columns
+Control+Option+Shift+H	Move tab left
+Control+Option+Shift+L	Move tab right
+Control+Option+H	Move pane to left column
+Control+Option+L	Move pane to right column
+Control+Option+K	Move pane up
+Control+Option+J	Move pane down
+[Host]
+Option+Shift+N	Open new Eon window
+Option+Shift+D	Detach: hide the window, keep terminals running
+Option+Shift+Q or Command+Q	Quit: close the window, stop its terminals
+Option+/	Show or close shortcuts
+Option+Shift+B	Show or hide shortcut hints
+Option+Shift+H	Show or hide the agent sidebar
+Command+C	Copy selected text or focused link
+Command+V or Paste	Paste
+Command+click	Open link

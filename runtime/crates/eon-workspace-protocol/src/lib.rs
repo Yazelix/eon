@@ -4,6 +4,7 @@
 //! Stop, whose bytes and the six-byte prefix of every message (`EONW` and
 //! the little-endian version) no revision changes.
 
+pub mod shortcuts;
 pub mod stop;
 pub mod v41;
 

@@ -1998,7 +1998,7 @@ impl Renderer {
                 for column in &workspace.other_columns {
                     target(&format!("column-{}", column.index), column.terminal);
                 }
-                for control in workspace.controls {
+                for control in &workspace.controls {
                     target(&format!("control-{:?}", control.kind), control.rect);
                 }
             }

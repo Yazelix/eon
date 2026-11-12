@@ -94,6 +94,11 @@ Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
 fixed bindings and every enabled popup binding. Escape, Alt+/ or a
 click outside it closes it.
 
+Window labels use the platform's modifier names: on macOS, Option replaces
+Alt and Control replaces Ctrl, including header tooltips and the viewer's
+dismissal hint. Configuration keeps the physical-key spelling described in
+[Configuration](CONFIGURATION.md#popups).
+
 ### Update
 
 Check whether your install has an update:

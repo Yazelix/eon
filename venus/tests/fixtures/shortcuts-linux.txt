@@ -1,0 +1,80 @@
+# d2afbb1 literal defaults and viewer rows; do not regenerate from the shared table.
+[actions]
+NextTab	Ctrl+Tab
+PreviousTab	Ctrl+Shift+Tab
+Focus(Left)	Alt+H
+Focus(Right)	Alt+L
+Focus(Up)	Alt+K
+Focus(Down)	Alt+J
+FocusTabPosition	Alt+1…9 / Alt+0
+ShowWorkspacePosition	Alt+Shift+1…9 / Alt+Shift+0
+NextAttention	Alt+G
+PreviousAttention	Alt+Shift+G
+ToggleInbox	Alt+Q
+CycleFocus	F6
+ReturnToTerminal	Escape
+TraverseChrome(Left)	Left
+TraverseChrome(Right)	Right
+TraverseChrome(Up)	Up
+TraverseChrome(Down)	Down
+CreatePane	Alt+M
+CreateColumn	Ctrl+Alt+M
+CreateTab	Alt+Shift+T
+CloseTab	Alt+Shift+W
+ClosePane	Alt+W
+ToggleZoom	Alt+Shift+Z
+Move(Left)	Ctrl+Alt+Shift+H
+Move(Right)	Ctrl+Alt+Shift+L
+MovePaneSideways(Left)	Ctrl+Alt+H
+MovePaneSideways(Right)	Ctrl+Alt+L
+Move(Up)	Ctrl+Alt+K
+Move(Down)	Ctrl+Alt+J
+NewWindow	Alt+Shift+N
+Detach	Alt+Shift+D
+Quit	Alt+Shift+Q
+ToggleViewer	Alt+/
+ToggleHints	Alt+Shift+B
+ToggleSidebar	Alt+Shift+H
+Copy	Ctrl+Shift+C
+Paste	Ctrl+Shift+V or Paste
+OpenLink	Ctrl+click
+[viewer]
+[Navigate]
+Ctrl+Tab	Focus next tab
+Ctrl+Shift+Tab	Focus previous tab
+Alt+H	Focus left column or previous tab
+Alt+L	Focus right column or next tab
+Alt+K	Focus pane above
+Alt+J	Focus pane below
+Alt+1…9 / Alt+0	Focus tab by position
+Alt+Shift+1…9 / Alt+Shift+0	Show session by position
+Alt+G	Jump to the next agent needing attention
+Alt+Shift+G	Jump to the previous agent needing attention
+Alt+Q	Show the attention inbox
+F6	Cycle terminal, agent sidebar, tabs, and panes
+Escape	Return focus to the terminal
+Left / Right	Previous or next column or tab while tabs are focused
+Up / Down	Previous or next pane or agent row while one is focused
+[Tabs and panes]
+Alt+M	Create pane
+Ctrl+Alt+M	Create column
+Alt+Shift+T	Create tab
+Alt+Shift+W	Close active tab
+Alt+W	Close selected pane
+Alt+Shift+Z	Zoom selected pane or restore columns
+Ctrl+Alt+Shift+H	Move tab left
+Ctrl+Alt+Shift+L	Move tab right
+Ctrl+Alt+H	Move pane to left column
+Ctrl+Alt+L	Move pane to right column
+Ctrl+Alt+K	Move pane up
+Ctrl+Alt+J	Move pane down
+[Host]
+Alt+Shift+N	Open new Eon window
+Alt+Shift+D	Detach: hide the window, keep terminals running
+Alt+Shift+Q	Quit: close the window, stop its terminals
+Alt+/	Show or close shortcuts
+Alt+Shift+B	Show or hide shortcut hints
+Alt+Shift+H	Show or hide the agent sidebar
+Ctrl+Shift+C	Copy selected text or focused link
+Ctrl+Shift+V or Paste	Paste
+Ctrl+click	Open link

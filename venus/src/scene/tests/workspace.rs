@@ -905,6 +905,11 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
 
 #[test]
 fn shortcut_viewer_sizes_to_its_rows_and_flows_into_columns_between_the_bars() {
+    let close_hint = if cfg!(target_os = "macos") {
+        "Esc or Option+/ to close"
+    } else {
+        "Esc or Alt+/ to close"
+    };
     let metrics = CellMetrics::for_scale(1.0);
     let measure = crate::CellText(metrics);
     let group = |title: &str, rows: usize| {
@@ -926,7 +931,7 @@ fn shortcut_viewer_sizes_to_its_rows_and_flows_into_columns_between_the_bars() {
     );
     assert!(short.bounds.width < 640.0 && short.bounds.height < 400.0);
     assert_eq!(short.max_scroll, 0.0);
-    assert_eq!(short.footer(), ["Esc or Alt+/ to close"]);
+    assert_eq!(short.footer(), [close_hint]);
     let label = short.groups[0].rows[0].label_width;
     assert!(label >= measure.width("Alt+Shift+Z") && label < measure.width("Alt+Shift+Z") + 2.0);
     // A list taller than one column flows into balanced columns instead of scrolling.
@@ -940,7 +945,7 @@ fn shortcut_viewer_sizes_to_its_rows_and_flows_into_columns_between_the_bars() {
         &measure,
     );
     assert_eq!(long.max_scroll, 0.0);
-    assert_eq!(long.footer(), ["Esc or Alt+/ to close"]);
+    assert_eq!(long.footer(), [close_hint]);
     let mut lefts = long
         .groups
         .iter()

@@ -4003,26 +4003,7 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
 }
 
 fn shortcut_text(shortcut: &eon_workspace_protocol::v41::Shortcut) -> String {
-    let mut parts = Vec::new();
-    for (bit, name) in [
-        (eon_workspace_protocol::v41::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v41::ALT, "Alt"),
-        (eon_workspace_protocol::v41::SHIFT, "Shift"),
-        (eon_workspace_protocol::v41::SUPER, "Super"),
-    ] {
-        if shortcut.modifiers & bit != 0 {
-            parts.push(name.to_string());
-        }
-    }
-    parts.push(
-        shortcut
-            .key
-            .strip_prefix("Key")
-            .or_else(|| shortcut.key.strip_prefix("Digit"))
-            .unwrap_or(&shortcut.key)
-            .to_string(),
-    );
-    parts.join("+")
+    eon_workspace_protocol::shortcuts::config_chord(shortcut.modifiers, &shortcut.key)
 }
 
 pub(crate) fn json_option(output: &mut String, value: Option<&str>) {

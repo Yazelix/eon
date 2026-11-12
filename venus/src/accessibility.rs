@@ -301,9 +301,14 @@ impl Snapshot {
                 DialogKind::Shortcuts => {
                     let mut dialog = Node::new(Role::Dialog);
                     dialog.set_label("Eon shortcuts");
-                    dialog.set_description(
-                        "Native Eon surface shortcuts. Use arrows or Page Up and Page Down to scroll; press Escape or Alt+Slash to close.",
-                    );
+                    let toggle = eon_workspace_protocol::shortcuts::shortcut(
+                        eon_workspace_protocol::shortcuts::Action::ToggleViewer,
+                    )
+                    .trigger
+                    .display_label_for(eon_workspace_protocol::shortcuts::Platform::CURRENT);
+                    dialog.set_description(format!(
+                        "Native Eon surface shortcuts. Use arrows or Page Up and Page Down to scroll; press Escape or {toggle} to close.",
+                    ));
                     dialog
                 }
                 DialogKind::QuitOtherWindow { .. } => {
@@ -469,7 +474,7 @@ impl Snapshot {
                 children.insert(0, WINDOW_MENU);
             }
             // Quota chips, labels and Shortcuts follow their visual order, which Eon chooses.
-            let shortcuts = workspace.controls[1];
+            let shortcuts = &workspace.controls[1];
             let mut items = workspace
                 .quotas
                 .iter()
@@ -655,7 +660,7 @@ impl Snapshot {
                     continue;
                 }
                 let mut node = Node::new(Role::Button);
-                node.set_label(control.label);
+                node.set_label(control.label.as_str());
                 if control.kind == WorkspaceHeaderControl::CloseTab
                     && let Some(tab) = workspace.tabs.iter().find(|tab| tab.selected)
                 {
@@ -3403,6 +3408,18 @@ mod tests {
         assert_eq!(node(&update, WINDOW).children(), &[DIALOG]);
         assert_eq!(node(&update, DIALOG).role(), Role::Dialog);
         assert!(node(&update, DIALOG).is_modal());
+        let toggle = eon_workspace_protocol::shortcuts::shortcut(
+            eon_workspace_protocol::shortcuts::Action::ToggleViewer,
+        )
+        .trigger
+        .display_label_for(eon_workspace_protocol::shortcuts::Platform::CURRENT);
+        assert!(
+            node(&update, DIALOG)
+                .description()
+                .unwrap()
+                .contains(&toggle)
+        );
+
         assert_eq!(update.focus, DIALOG);
         tree_node_id(&update, "Host");
         assert!(
@@ -4458,22 +4475,28 @@ mod tests {
         let mut snapshot = Snapshot::new(PhysicalSize::new(800, 600));
         snapshot.set_workspace(Some(&workspace));
 
-        for (id, control, label) in [
+        let (new_tab_label, shortcuts_label, close_tab_label) = if cfg!(target_os = "macos") {
             (
-                NEW_TAB,
-                WorkspaceHeaderControl::NewTab,
+                "New tab — Option+Shift+T",
+                "Keyboard shortcuts — Option+/",
+                "Close tab — Option+Shift+W",
+            )
+        } else {
+            (
                 "New tab — Alt+Shift+T",
-            ),
+                "Keyboard shortcuts — Alt+/",
+                "Close tab — Alt+Shift+W",
+            )
+        };
+
+        for (id, control, label) in [
+            (NEW_TAB, WorkspaceHeaderControl::NewTab, new_tab_label),
             (
                 SHORTCUTS,
                 WorkspaceHeaderControl::Shortcuts,
-                "Keyboard shortcuts — Alt+/",
+                shortcuts_label,
             ),
-            (
-                CLOSE_TAB,
-                WorkspaceHeaderControl::CloseTab,
-                "Close tab — Alt+Shift+W",
-            ),
+            (CLOSE_TAB, WorkspaceHeaderControl::CloseTab, close_tab_label),
         ] {
             let update = snapshot.tree();
             let control_node = node(&update, id);
@@ -4484,7 +4507,7 @@ mod tests {
                 Some(rect(
                     workspace
                         .controls
-                        .into_iter()
+                        .iter()
                         .find(|candidate| candidate.kind == control)
                         .unwrap()
                         .rect,
@@ -4562,10 +4585,7 @@ mod tests {
         snapshot.set_workspace(Some(&taken));
         let update = snapshot.tree();
         assert_eq!(node(&update, NEW_TAB).label(), Some("New tab"));
-        assert_eq!(
-            node(&update, CLOSE_TAB).label(),
-            Some("Close tab — Alt+Shift+W")
-        );
+        assert_eq!(node(&update, CLOSE_TAB).label(), Some(close_tab_label));
     }
 
     #[test]

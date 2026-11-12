@@ -3,10 +3,12 @@ use crate::{
     model::{active_popup, focused_terminal, presented_panes},
     render::CellMetrics,
 };
+#[cfg(test)]
+use eon_workspace_protocol::v41::{ALT, SHIFT};
 use eon_workspace_protocol::v41::{
-    ALT, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
-    CloseScope, CodexQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, SHIFT, Sidebar, Snapshot,
-    Tab, TargetId,
+    Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
+    CloseScope, CodexQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, Sidebar, Snapshot, Tab,
+    TargetId,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -592,23 +594,29 @@ pub enum WorkspaceHeaderControl {
 impl WorkspaceHeaderControl {
     /// The tooltip and accessible name, which drop the chord when a configured popup takes
     /// this control's key (VEN-C20). Eon reserves Alt+/.
-    fn label(self, entries: &[PopupEntry]) -> &'static str {
-        let taken = |key: &str| {
-            entries.iter().any(|entry| {
-                entry.shortcut.bound().is_some_and(|shortcut| {
-                    shortcut.modifiers == ALT | SHIFT && shortcut.key == key
-                })
-            })
-        };
-        match self {
-            Self::WindowMenu => "Window menu",
+    fn label(self, entries: &[PopupEntry]) -> String {
+        use eon_workspace_protocol::shortcuts::{Action, Platform, PopupPolicy, shortcut};
+        let (label, action) = match self {
+            Self::WindowMenu => return "Window menu".into(),
             // The workspace label names itself from its popup entry.
-            Self::Workspaces => "",
-            Self::NewTab if taken("KeyT") => "New tab",
-            Self::NewTab => "New tab — Alt+Shift+T",
-            Self::Shortcuts => "Keyboard shortcuts — Alt+/",
-            Self::CloseTab if taken("KeyW") => "Close tab",
-            Self::CloseTab => "Close tab — Alt+Shift+W",
+            Self::Workspaces => return String::new(),
+            Self::NewTab => ("New tab", Action::CreateTab),
+            Self::Shortcuts => ("Keyboard shortcuts", Action::ToggleViewer),
+            Self::CloseTab => ("Close tab", Action::CloseTab),
+        };
+        let descriptor = shortcut(action);
+        let chord = descriptor.trigger.primary_chord(Platform::CURRENT);
+        let taken = descriptor.popup_policy() == PopupPolicy::Overridable
+            && entries.iter().any(|entry| {
+                entry
+                    .shortcut
+                    .bound()
+                    .is_some_and(|key| key.modifiers == chord.modifiers && key.key == chord.key)
+            });
+        if taken {
+            label.into()
+        } else {
+            format!("{label} — {}", chord.display(Platform::CURRENT))
         }
     }
 
@@ -624,13 +632,13 @@ impl WorkspaceHeaderControl {
 }
 
 /// Geometry for one fixed Eon workspace-header action.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WorkspaceControl {
     pub(crate) kind: WorkspaceHeaderControl,
     pub(crate) rect: SceneRect,
     /// The horizontal centre of the control's glyph and painted button.
     pub(crate) centre: f32,
-    pub(crate) label: &'static str,
+    pub(crate) label: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1377,7 +1385,15 @@ pub fn attention_inbox_hints() -> Vec<ShortcutHint> {
 }
 
 /// How the Shortcuts viewer closes, its whole footer while every row shows.
-const SHORTCUTS_CLOSE: &str = "Esc or Alt+/ to close";
+fn shortcuts_close() -> String {
+    use eon_workspace_protocol::shortcuts::{Action, Platform, shortcut};
+    format!(
+        "Esc or {} to close",
+        shortcut(Action::ToggleViewer)
+            .trigger
+            .display_label_for(Platform::CURRENT)
+    )
+}
 
 /// What the one native dialog shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1508,7 +1524,7 @@ impl DialogKind {
     #[must_use]
     pub(crate) fn footer(&self) -> Vec<String> {
         match self {
-            Self::Shortcuts => vec![format!("Wheel or ↑↓ to scroll · {SHORTCUTS_CLOSE}")],
+            Self::Shortcuts => vec![format!("Wheel or ↑↓ to scroll · {}", shortcuts_close())],
             Self::WindowMenu => {
                 vec!["↑↓ or Tab to choose · Enter to activate · Esc to close".into()]
             }
@@ -1740,7 +1756,7 @@ impl DialogScene {
     #[must_use]
     pub(crate) fn footer(&self) -> Vec<String> {
         if self.kind == DialogKind::Shortcuts && self.max_scroll == 0.0 {
-            vec![SHORTCUTS_CLOSE.into()]
+            vec![shortcuts_close()]
         } else {
             self.kind.footer()
         }
@@ -4674,7 +4690,7 @@ impl WorkspaceScene {
 
     #[must_use]
     pub fn hit_test(&self, x: f32, y: f32) -> Option<WorkspaceHit<'_>> {
-        if let Some(control) = self.window_menu
+        if let Some(control) = &self.window_menu
             && control.rect.contains(x, y)
         {
             return Some(WorkspaceHit::Control(control.kind));
@@ -4697,7 +4713,7 @@ impl WorkspaceScene {
         {
             return Some(WorkspaceHit::Control(WorkspaceHeaderControl::Workspaces));
         }
-        for control in self.controls {
+        for control in &self.controls {
             if control.rect.contains(x, y) {
                 return Some(WorkspaceHit::Control(control.kind));
             }
@@ -4813,8 +4829,8 @@ impl WorkspaceScene {
             .any(|control| control.kind == kind && control.rect.width > 0.0)
     }
 
-    pub(crate) fn header_controls(&self) -> impl Iterator<Item = WorkspaceControl> + '_ {
-        self.window_menu.into_iter().chain(self.controls)
+    pub(crate) fn header_controls(&self) -> impl Iterator<Item = &WorkspaceControl> + '_ {
+        self.window_menu.iter().chain(self.controls.iter())
     }
 
     pub(crate) fn with_displayed_grids(
