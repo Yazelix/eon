@@ -3,6 +3,8 @@ use super::super::{
 };
 use super::*;
 use eon_workspace_protocol::v40::{self as wire, EventKind, Filter, Resume};
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
+use std::os::fd::{AsFd, BorrowedFd};
 
 pub(super) struct Options {
     pub(super) filter: Filter,
@@ -117,7 +119,8 @@ pub(super) fn execute(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, Er
     if previous == libc::SIG_ERR {
         return Err(lost(std::io::Error::last_os_error()));
     }
-    let stdout = Output::watch(libc::STDOUT_FILENO).map_err(lost)?;
+    let output = std::io::stdout();
+    let stdout = Output::watch(output.as_fd()).map_err(lost)?;
     let result = if stdout.closed().map_err(lost)? {
         Ok(0)
     } else {
@@ -197,9 +200,9 @@ const PROBE_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Standard output, watched for a reader that goes away while the stream waits.
 #[derive(Default)]
-struct Output {
+struct Output<'fd> {
     /// The descriptor when it is watched.
-    fd: Option<i32>,
+    fd: Option<BorrowedFd<'fd>>,
     socket: bool,
     /// When the output is next probed. Darwin reports a socket output that is
     /// readable, or hung up while its reader still reads (the reader shut down
@@ -209,19 +212,15 @@ struct Output {
     probe_at: std::cell::Cell<Option<Instant>>,
 }
 
-impl Output {
+impl<'fd> Output<'fd> {
     /// Linux reports a gone reader on any output. Darwin watches only a pipe or
     /// socket: its poll would wake for a file's or a terminal's readable data.
-    fn watch(fd: i32) -> std::io::Result<Self> {
-        let mut status = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: fstat writes one stat into the buffer it is given.
-        if unsafe { libc::fstat(fd, status.as_mut_ptr()) } < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: fstat succeeded, so it initialized the stat.
-        let kind = unsafe { status.assume_init() }.st_mode & libc::S_IFMT;
-        let socket = kind == libc::S_IFSOCK;
-        let watched = !cfg!(target_vendor = "apple") || socket || kind == libc::S_IFIFO;
+    fn watch(fd: BorrowedFd<'fd>) -> std::io::Result<Self> {
+        let status = rustix::fs::fstat(fd)?;
+        let kind = rustix::fs::FileType::from_raw_mode(status.st_mode);
+        let socket = kind == rustix::fs::FileType::Socket;
+        let watched =
+            !cfg!(target_vendor = "apple") || socket || kind == rustix::fs::FileType::Fifo;
         Ok(Self {
             fd: watched.then_some(fd),
             socket,
@@ -233,15 +232,10 @@ impl Output {
     /// asked. Darwin's kqueue-backed poll registers nothing for no events; a
     /// read-band request registers the read filter, which reports a gone
     /// reader as a hangup. Linux never sets read-band on an output.
-    fn poll(&self) -> libc::pollfd {
-        libc::pollfd {
-            fd: self
-                .fd
-                .filter(|_| self.probe_at.get().is_none())
-                .unwrap_or(-1),
-            events: libc::POLLRDBAND,
-            revents: 0,
-        }
+    fn poll(&self) -> Option<PollFd<'fd>> {
+        self.fd
+            .filter(|_| self.probe_at.get().is_none())
+            .map(|fd| PollFd::from_borrowed_fd(fd, PollFlags::RDBAND))
     }
 
     /// How long poll may wait before the output is due a probe.
@@ -252,11 +246,11 @@ impl Output {
     }
 
     /// Whether what poll reported means the reader is gone.
-    fn gone(&self, revents: libc::c_short) -> std::io::Result<bool> {
-        let Some(fd) = self.fd.filter(|_| revents != 0) else {
+    fn gone(&self, revents: PollFlags) -> std::io::Result<bool> {
+        let Some(fd) = self.fd.filter(|_| !revents.is_empty()) else {
             return Ok(false);
         };
-        if cfg!(target_vendor = "apple") && self.socket && revents & libc::POLLERR == 0 {
+        if cfg!(target_vendor = "apple") && self.socket && !revents.contains(PollFlags::ERR) {
             if Self::unread(fd)? {
                 return Ok(true);
             }
@@ -279,16 +273,13 @@ impl Output {
 
     /// A zero-length send fails only once the peer cannot read. A send that
     /// would block or was interrupted proves nothing; the next probe asks again.
-    fn unread(fd: i32) -> std::io::Result<bool> {
-        // SAFETY: a zero-length send reads nothing from the buffer.
-        if unsafe { libc::send(fd, [0u8; 1].as_ptr().cast(), 0, 0) } == 0 {
-            return Ok(false);
-        }
-        let error = std::io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::EPIPE | libc::ECONNRESET | libc::ENOTCONN) => Ok(true),
-            Some(libc::EAGAIN | libc::EINTR) => Ok(false),
-            _ => Err(error),
+    fn unread(fd: BorrowedFd<'_>) -> std::io::Result<bool> {
+        use rustix::io::Errno;
+        match rustix::net::send(fd, &[], rustix::net::SendFlags::empty()) {
+            Ok(_) => Ok(false),
+            Err(Errno::PIPE | Errno::CONNRESET | Errno::NOTCONN) => Ok(true),
+            Err(Errno::AGAIN | Errno::INTR) => Ok(false),
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -296,14 +287,15 @@ impl Output {
         if let (Some(fd), Some(_)) = (self.fd, self.probe_at.get()) {
             return Self::unread(fd);
         }
-        let mut poll = self.poll();
+        let Some(output) = self.poll() else {
+            return Ok(false);
+        };
+        let mut ready = [output];
         loop {
-            if unsafe { libc::poll(&mut poll, 1, 0) } >= 0 {
-                return self.gone(poll.revents);
-            }
-            let error = std::io::Error::last_os_error();
-            if error.kind() != std::io::ErrorKind::Interrupted {
-                return Err(error);
+            match poll(&mut ready, Some(&Timespec::default())) {
+                Ok(_) => return self.gone(ready[0].revents()),
+                Err(rustix::io::Errno::INTR) => {}
+                Err(error) => return Err(error.into()),
             }
         }
     }
@@ -346,7 +338,6 @@ fn read_message(
     stdout: &Output,
     deadline: Option<Instant>,
 ) -> std::io::Result<wire::SubscriptionMessage> {
-    use std::os::fd::AsRawFd;
     let mut bytes = vec![0; wire::HEADER_BYTES];
     let mut filled = 0;
     loop {
@@ -361,31 +352,28 @@ fn read_message(
             }
             bytes.resize(length, 0);
         }
-        let mut fds = [
-            libc::pollfd {
-                fd: stream.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            stdout.poll(),
-        ];
+        let input = PollFd::new(&*stream, PollFlags::IN);
+        let output = stdout.poll();
+        let count = if output.is_some() { 2 } else { 1 };
+        let mut fds = [input.clone(), output.unwrap_or(input)];
         let wait = deadline
             .map(|deadline| deadline.saturating_duration_since(Instant::now()))
             .into_iter()
             .chain(stdout.probe_after())
             .min();
         // Rounded up, so a wait that times out has reached its deadline.
-        let timeout = wait.map_or(-1, |wait| {
-            i32::try_from(wait.as_nanos().div_ceil(1_000_000)).unwrap_or(i32::MAX)
-        });
-        let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
-        if result < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.kind() == std::io::ErrorKind::Interrupted {
-                continue;
+        let timeout = wait.map(|wait| {
+            let millis = i32::try_from(wait.as_nanos().div_ceil(1_000_000)).unwrap_or(i32::MAX);
+            Timespec {
+                tv_sec: i64::from(millis / 1000),
+                tv_nsec: i64::from(millis % 1000) * 1_000_000,
             }
-            return Err(error);
-        }
+        });
+        let result = match poll(&mut fds[..count], timeout.as_ref()) {
+            Ok(result) => result,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        };
         // Due even while input keeps arriving.
         if stdout.probe()? {
             return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
@@ -399,10 +387,10 @@ fn read_message(
                 "subscription handshake timed out",
             ));
         }
-        if stdout.gone(fds[1].revents)? {
+        if count == 2 && stdout.gone(fds[1].revents())? {
             return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
         }
-        if fds[0].revents == 0 {
+        if fds[0].revents().is_empty() {
             continue;
         }
         match stream.read(&mut bytes[filled..]) {
@@ -1154,16 +1142,16 @@ mod tests {
         use std::os::fd::AsRawFd;
         let root = super::super::super::supervisor::temporary_directory();
         let file = std::fs::File::create(root.join("output")).unwrap();
-        let output = Output::watch(file.as_raw_fd()).unwrap();
+        let output = Output::watch(file.as_fd()).unwrap();
         assert_eq!(output.fd.is_none(), cfg!(target_vendor = "apple"));
         assert!(!output.closed().unwrap());
         std::fs::remove_dir_all(root).unwrap();
         let (reader, writer) = std::io::pipe().unwrap();
         let (peer, socket) = std::os::unix::net::UnixStream::pair().unwrap();
         let outputs =
-            [writer.as_raw_fd(), socket.as_raw_fd()].map(|fd| (fd, Output::watch(fd).unwrap()));
+            [writer.as_fd(), socket.as_fd()].map(|fd| (fd.as_raw_fd(), Output::watch(fd).unwrap()));
         for (fd, output) in &outputs {
-            assert_eq!(output.fd, Some(*fd));
+            assert_eq!(output.fd.map(|fd| fd.as_raw_fd()), Some(*fd));
             assert!(!output.closed().unwrap());
         }
         drop((reader, peer));
@@ -1182,10 +1170,9 @@ mod tests {
     #[test]
     fn a_reader_that_only_stops_writing_still_receives_the_stream() {
         use std::io::Read;
-        use std::os::fd::AsRawFd;
         use wire::SubscriptionMessage as M;
         let (mut peer, socket) = std::os::unix::net::UnixStream::pair().unwrap();
-        let output = Output::watch(socket.as_raw_fd()).unwrap();
+        let output = Output::watch(socket.as_fd()).unwrap();
         peer.shutdown(std::net::Shutdown::Write).unwrap();
         assert!(!output.closed().unwrap());
         let (mut reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1205,7 +1192,6 @@ mod tests {
     #[test]
     fn a_reader_that_stops_writing_and_then_closes_ends_the_stream() {
         use std::io::Read;
-        use std::os::fd::AsRawFd;
         use std::sync::atomic::{AtomicBool, Ordering};
         // A frame far longer than what arrives of it in the test.
         let frame = wire::encode_subscription_message(&wire::SubscriptionMessage::Failure(
@@ -1214,17 +1200,17 @@ mod tests {
         .unwrap();
         for dribbling in [false, true] {
             let (mut peer, socket) = std::os::unix::net::UnixStream::pair().unwrap();
-            let output = Output::watch(socket.as_raw_fd()).unwrap();
             peer.shutdown(std::net::Shutdown::Write).unwrap();
-            // As Darwin's hangup for that half-close leaves it, so Linux, which
-            // would report the full close itself, proves the probe too.
-            output.probe_at.set(Some(Instant::now()));
             let (mut reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
             writer
                 .write_all(&wire::encode_subscription_message(&subscribed(None)).unwrap())
                 .unwrap();
             let (done, finished) = std::sync::mpsc::channel();
             let stream = thread::spawn(move || {
+                let output = Output::watch(socket.as_fd()).unwrap();
+                // As Darwin's hangup for that half-close leaves it, so Linux, which
+                // would report the full close itself, proves the probe too.
+                output.probe_at.set(Some(Instant::now()));
                 let result = consume(&mut reader, &mut &socket, &mut Vec::new(), &output, true);
                 done.send(stream_result(result).map_err(|error| error.status))
                     .unwrap();

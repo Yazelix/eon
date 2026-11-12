@@ -11,17 +11,19 @@ use std::{
 /// System-wide monotonic time, including suspend, shared by replacement processes.
 pub(crate) fn boot_time() -> io::Result<Duration> {
     #[cfg(target_os = "linux")]
-    let clock = libc::CLOCK_BOOTTIME;
+    let time = rustix::time::clock_gettime_dynamic(rustix::time::DynamicClockId::Boottime)?;
     #[cfg(target_os = "macos")]
-    let clock = libc::CLOCK_MONOTONIC_RAW;
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
+    let time = {
+        let mut time = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: writable timespec; rustix 1.1.4 lacks Darwin's suspend-inclusive raw clock.
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &raw mut time) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        time
     };
-    // SAFETY: time is writable timespec storage; clock is a supported system clock.
-    if unsafe { libc::clock_gettime(clock, &raw mut time) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
     let seconds = u64::try_from(time.tv_sec)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "negative boot time"))?;
     let nanos = u32::try_from(time.tv_nsec)
@@ -63,20 +65,9 @@ pub(crate) fn fallback_runtime_directory(product: &str, uid: u32) -> PathBuf {
 /// blocking mode its other users share: `WouldBlock` when it holds nothing,
 /// and 0 at its end.
 pub(crate) fn read_available(stream: &UnixStream, buffer: &mut [u8]) -> io::Result<usize> {
-    // SAFETY: buffer is writable for its whole length.
-    let read = unsafe {
-        libc::recv(
-            stream.as_raw_fd(),
-            buffer.as_mut_ptr().cast(),
-            buffer.len(),
-            libc::MSG_DONTWAIT,
-        )
-    };
-    if read < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(read as usize)
-    }
+    rustix::net::recv(stream, buffer, rustix::net::RecvFlags::DONTWAIT)
+        .map(|(_, read)| read)
+        .map_err(Into::into)
 }
 
 /// What the kernel reports about a process that still has its pid.
@@ -90,9 +81,14 @@ pub(crate) struct Process {
 /// The pid and uid of the stream's peer.
 #[cfg(target_os = "linux")]
 pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
-    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // SAFETY: credentials points to writable ucred storage of the declared length.
+    // SAFETY: credentials and length are valid writable storage. libc preserves legal PID 0,
+    // which rustix 1.1.4 cannot represent (eon-ojwmi).
     if unsafe {
         libc::getsockopt(
             stream.as_raw_fd(),
@@ -248,6 +244,22 @@ mod tests {
         peer.shutdown(Shutdown::Write).unwrap();
         assert_eq!(read_available(&stream, &mut buffer).unwrap(), 0);
         assert_eq!(flags(), blocking);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn peer_identity_preserves_a_zero_pid() {
+        // An unconnected socket exposes the same zero PID as a namespace-hidden peer.
+        let stream = UnixStream::from(
+            rustix::net::socket_with(
+                rustix::net::AddressFamily::UNIX,
+                rustix::net::SocketType::STREAM,
+                rustix::net::SocketFlags::CLOEXEC,
+                None,
+            )
+            .unwrap(),
+        );
+        assert_eq!(super::peer_identity(&stream).unwrap(), (0, u32::MAX));
     }
 
     #[test]

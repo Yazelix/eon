@@ -3,13 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     env,
-    ffi::{CString, OsStr, OsString},
+    ffi::{OsStr, OsString},
     fs,
     io::{self, Read, Write},
-    os::{
-        fd::AsRawFd,
-        unix::{ffi::OsStrExt, process::CommandExt},
-    },
+    os::unix::{ffi::OsStrExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::OnceLock,
@@ -1805,13 +1802,13 @@ fn popup_executable(
     let program = Path::new(program);
     let executable = |path: &Path| {
         fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
-            && CString::new(path.as_os_str().as_bytes()).is_ok_and(|path| {
-                // SAFETY: path is NUL-terminated and kept alive for the call.
-                unsafe {
-                    libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS)
-                        == 0
-                }
-            })
+            && rustix::fs::accessat(
+                rustix::fs::CWD,
+                path,
+                rustix::fs::Access::EXEC_OK,
+                rustix::fs::AtFlags::EACCESS,
+            )
+            .is_ok()
     };
     if program.is_absolute() || program.components().count() > 1 {
         let path = directory.join(program);
@@ -1988,13 +1985,8 @@ fn user_manager_environment(program: &OsStr, timeout: Duration) -> Option<String
         .ok()?;
     let mut output = child.stdout.take().expect("piped user manager output");
     let answer = (|| {
-        let fd = output.as_raw_fd();
-        // SAFETY: fcntl changes only the flags of this live pipe.
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-        if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1
-        {
-            return None;
-        }
+        let flags = rustix::fs::fcntl_getfl(&output).ok()?;
+        rustix::fs::fcntl_setfl(&output, flags | rustix::fs::OFlags::NONBLOCK).ok()?;
         let deadline = Instant::now() + timeout;
         let mut bytes = Vec::new();
         let mut eof = false;
@@ -2023,11 +2015,10 @@ fn user_manager_environment(program: &OsStr, timeout: Duration) -> Option<String
         }
         None
     })();
-    // SAFETY: only the process group created above is targeted, including any helper
-    // still holding the pipe.
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
+    let _ = rustix::process::kill_process_group(
+        rustix::process::Pid::from_child(&child),
+        rustix::process::Signal::KILL,
+    );
     let _ = child.wait();
     answer
 }

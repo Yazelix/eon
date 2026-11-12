@@ -496,9 +496,7 @@ fn parse_name_output(output: &[u8]) -> Result<&str, String> {
 }
 
 fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<(), String> {
-    let mut terminal = std::mem::MaybeUninit::<libc::termios>::uninit();
-    let terminal = (unsafe { libc::tcgetattr(libc::STDIN_FILENO, terminal.as_mut_ptr()) } == 0)
-        .then(|| unsafe { terminal.assume_init() });
+    let terminal = rustix::termios::tcgetattr(std::io::stdin()).ok();
     let result = (|| {
         let mut child = Command::new(&inputs.anima)
             .arg(style)
@@ -516,7 +514,10 @@ fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<()
                 };
             }
             if Instant::now() >= deadline {
-                unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+                let _ = rustix::process::kill_process(
+                    rustix::process::Pid::from_child(&child),
+                    rustix::process::Signal::TERM,
+                );
                 let grace = Instant::now() + Duration::from_millis(250);
                 while Instant::now() < grace {
                     if child
@@ -537,7 +538,11 @@ fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<()
     })();
     if result.is_err() {
         if let Some(terminal) = terminal {
-            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &terminal) };
+            let _ = rustix::termios::tcsetattr(
+                std::io::stdin(),
+                rustix::termios::OptionalActions::Now,
+                &terminal,
+            );
         }
         let mut stdout = std::io::stdout();
         let _ = stdout.write_all(b"\x1b[?1049l");
@@ -2088,31 +2093,27 @@ const STDIN_DATA_WAIT_MS: libc::c_int = 100;
 /// within `STDIN_DATA_WAIT_MS`. Terminals, devices such as /dev/null, and ended inputs are not
 /// read or waited on.
 fn stdin_holds_data() -> bool {
-    // SAFETY: stat holds only integers, so all zeros is a valid value.
-    let mut status = unsafe { std::mem::zeroed::<libc::stat>() };
-    // SAFETY: fstat fills the valid local stat buffer.
-    if unsafe { libc::fstat(libc::STDIN_FILENO, &mut status) } != 0 {
+    let input = std::io::stdin();
+    let Ok(status) = rustix::fs::fstat(&input) else {
         return false;
-    }
-    match status.st_mode & libc::S_IFMT {
-        libc::S_IFREG => {
-            // SAFETY: a zero move from the current offset reads it without changing it.
-            let offset = unsafe { libc::lseek(libc::STDIN_FILENO, 0, libc::SEEK_CUR) };
-            offset >= 0 && status.st_size > offset
+    };
+    match rustix::fs::FileType::from_raw_mode(status.st_mode) {
+        rustix::fs::FileType::RegularFile => {
+            rustix::fs::seek(&input, rustix::fs::SeekFrom::Current(0))
+                .is_ok_and(|offset| u64::try_from(status.st_size).is_ok_and(|size| size > offset))
         }
-        libc::S_IFIFO | libc::S_IFSOCK => {
-            let mut input = libc::pollfd {
-                fd: libc::STDIN_FILENO,
-                events: libc::POLLIN,
-                revents: 0,
+        rustix::fs::FileType::Fifo | rustix::fs::FileType::Socket => {
+            let mut ready = [rustix::event::PollFd::new(
+                &input,
+                rustix::event::PollFlags::IN,
+            )];
+            let timeout = rustix::event::Timespec {
+                tv_sec: i64::from(STDIN_DATA_WAIT_MS / 1000),
+                tv_nsec: i64::from(STDIN_DATA_WAIT_MS % 1000) * 1_000_000,
             };
-            // SAFETY: poll reads and writes the one valid local pollfd. It returns early when
-            // bytes arrive or the writer has ended; its result only bounds the wait.
-            unsafe { libc::poll(&mut input, 1, STDIN_DATA_WAIT_MS) };
-            let mut waiting: libc::c_int = 0;
-            // SAFETY: FIONREAD writes the waiting byte count into the valid local int.
-            let read = unsafe { libc::ioctl(libc::STDIN_FILENO, libc::FIONREAD, &mut waiting) };
-            read == 0 && waiting > 0
+            // The result only bounds the wait; bytes may arrive before it ends.
+            let _ = rustix::event::poll(&mut ready, Some(&timeout));
+            rustix::io::ioctl_fionread(&input).is_ok_and(|waiting| waiting > 0)
         }
         _ => false,
     }

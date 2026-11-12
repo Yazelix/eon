@@ -953,8 +953,7 @@ pub(super) fn prepare_runtime(path: &Path) -> Result<(), String> {
 }
 
 pub(super) fn effective_uid() -> u32 {
-    // SAFETY: geteuid has no preconditions and no failure state.
-    unsafe { libc::geteuid() }
+    rustix::process::geteuid().as_raw()
 }
 
 fn recovered_workspace_sessions(

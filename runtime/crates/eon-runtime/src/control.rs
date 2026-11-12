@@ -14,12 +14,9 @@ use eon_workspace_protocol::v40::{
 use std::{
     fs,
     io::{Read, Write},
-    os::{
-        fd::AsRawFd,
-        unix::{
-            fs::{FileTypeExt, MetadataExt, PermissionsExt},
-            net::{UnixListener, UnixStream},
-        },
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -797,15 +794,18 @@ fn write_reply(stream: &mut UnixStream, mut reply: &[u8], deadline: Instant) {
         else {
             return;
         };
-        let mut writable = libc::pollfd {
-            fd: stream.as_raw_fd(),
-            events: libc::POLLOUT,
-            revents: 0,
+        let mut writable = [rustix::event::PollFd::new(
+            stream,
+            rustix::event::PollFlags::OUT,
+        )];
+        let millis = wait.as_millis().max(1) as i64;
+        let timeout = rustix::event::Timespec {
+            tv_sec: millis / 1000,
+            tv_nsec: millis % 1000 * 1_000_000,
         };
         // Poll's readiness waits for more room than a write needs, so the
         // write is tried again however poll returns.
-        // SAFETY: writable is one valid pollfd for this borrowed live stream.
-        unsafe { libc::poll(&mut writable, 1, wait.as_millis().max(1) as libc::c_int) };
+        let _ = rustix::event::poll(&mut writable, Some(&timeout));
     }
 }
 

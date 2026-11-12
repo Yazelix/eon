@@ -23,7 +23,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{self, Read, Write},
-    os::fd::{AsRawFd, OwnedFd},
+    os::fd::OwnedFd,
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -389,22 +389,23 @@ pub(super) fn bound_io(stream: &UnixStream, set: io::Result<()>) -> io::Result<(
     };
     // Darwin rejects socket options after peer close; I/O then returns
     // buffered data, EOF or EPIPE without blocking.
-    let mut readiness = libc::pollfd {
-        fd: stream.as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
+    let mut readiness = [rustix::event::PollFd::new(
+        stream,
+        rustix::event::PollFlags::IN,
+    )];
     loop {
-        // SAFETY: readiness is one valid pollfd for this borrowed live stream.
-        let result = unsafe { libc::poll(&mut readiness, 1, 0) };
-        if result >= 0 {
-            if readiness.revents & libc::POLLHUP != 0 {
-                return Ok(());
+        match rustix::event::poll(&mut readiness, Some(&rustix::event::Timespec::default())) {
+            Ok(_) => {
+                if readiness[0]
+                    .revents()
+                    .contains(rustix::event::PollFlags::HUP)
+                {
+                    return Ok(());
+                }
+                break;
             }
-            break;
-        }
-        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
-            break;
+            Err(rustix::io::Errno::INTR) => {}
+            Err(_) => break,
         }
     }
     Err(error)
@@ -1239,17 +1240,17 @@ fn send_drained_request(
             {
                 // Wakes when the lease is ready, or every 50 ms to see
                 // whether the request was dropped.
-                let mut ready = libc::pollfd {
-                    fd: lease.as_raw_fd(),
-                    events: if detached.unsent.is_empty() {
-                        libc::POLLIN
-                    } else {
-                        libc::POLLOUT
-                    },
-                    revents: 0,
+                let events = if detached.unsent.is_empty() {
+                    rustix::event::PollFlags::IN
+                } else {
+                    rustix::event::PollFlags::OUT
                 };
-                // SAFETY: ready is one valid pollfd for this live lease clone.
-                unsafe { libc::poll(&mut ready, 1, 50) };
+                let mut ready = [rustix::event::PollFd::new(&lease, events)];
+                let timeout = rustix::event::Timespec {
+                    tv_sec: 0,
+                    tv_nsec: 50_000_000,
+                };
+                let _ = rustix::event::poll(&mut ready, Some(&timeout));
             }
             (detached.unsent, detached.reply)
         })
@@ -2187,26 +2188,16 @@ fn endpoint_removed(path: &Path, expected: ObjectIdentity) -> Result<bool, Strin
 fn reap_untracked_child(process_id: u32, deadline: Instant) -> Result<(), String> {
     let pid = i32::try_from(process_id)
         .ok()
-        .filter(|pid| *pid > 0)
+        .and_then(rustix::process::Pid::from_raw)
         .ok_or("invalid ended terminal process identity")?;
     loop {
         // Discovery can precede the failed-start owner's next reap.
         // Recovered runs return ECHILD; only an exact child can be reaped.
-        let mut status = 0;
-        // SAFETY: status is writable; WNOHANG sends no signal and cannot wait on a non-child.
-        let result = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-        if result > 0 {
-            return Ok(());
-        }
-        if result < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ECHILD) {
-                return Ok(());
-            }
-            if error.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(format!("cannot reap ended terminal: {error}"));
+        match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
+            Ok(Some(_)) | Err(rustix::io::Errno::CHILD) => return Ok(()),
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(format!("cannot reap ended terminal: {error}")),
+            Ok(None) => {}
         }
         operation_timeout(deadline, "terminal process reaping")?;
         thread::sleep(Duration::from_millis(25));

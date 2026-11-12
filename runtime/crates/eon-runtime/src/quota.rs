@@ -7,12 +7,9 @@ use serde_json::Value;
 use std::{
     fs,
     io::{self, Read, Seek, SeekFrom, Write},
-    os::{
-        fd::AsRawFd,
-        unix::{
-            fs::{DirBuilderExt, OpenOptionsExt},
-            process::CommandExt,
-        },
+    os::unix::{
+        fs::{DirBuilderExt, OpenOptionsExt},
+        process::CommandExt,
     },
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
@@ -827,13 +824,9 @@ fn fetch(
         .map_err(|_| Failure::Start)?;
     let mut output = child.stdout.take().expect("piped quota output");
     let result = (|| {
-        let fd = output.as_raw_fd();
-        // SAFETY: fcntl changes only the flags of this live pipe.
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-        if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1
-        {
-            return Err(Failure::Start);
-        }
+        let flags = rustix::fs::fcntl_getfl(&output).map_err(|_| Failure::Start)?;
+        rustix::fs::fcntl_setfl(&output, flags | rustix::fs::OFlags::NONBLOCK)
+            .map_err(|_| Failure::Start)?;
         let deadline = Instant::now() + timeout;
         let mut bytes = Vec::new();
         let mut eof = false;
@@ -876,10 +869,10 @@ fn fetch(
             thread::sleep(Duration::from_millis(10));
         }
     })();
-    // SAFETY: only the process group created above is targeted, including provider helpers.
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
+    let _ = rustix::process::kill_process_group(
+        rustix::process::Pid::from_child(&child),
+        rustix::process::Signal::KILL,
+    );
     let _ = child.wait();
     result
 }

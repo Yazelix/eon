@@ -1670,19 +1670,14 @@ pub(super) fn confirm(question: &str, cancelled: &str) -> Result<Option<i32>, St
     eprint!("{question}");
     let mut answer = Vec::new();
     loop {
-        let mut byte = 0u8;
-        // SAFETY: read writes at most one byte into the valid local buffer.
-        let result = unsafe { libc::read(libc::STDIN_FILENO, (&mut byte as *mut u8).cast(), 1) };
+        let mut byte = [0u8];
+        let result = rustix::io::read(std::io::stdin(), &mut byte);
         match result {
-            0 => break,
-            1 if byte == b'\n' => break,
-            1 => answer.push(byte),
-            _ => {
-                let error = std::io::Error::last_os_error();
-                if error.kind() != std::io::ErrorKind::Interrupted {
-                    return Err(format!("cannot read stop confirmation: {error}"));
-                }
-            }
+            Ok(0) => break,
+            Ok(_) if byte[0] == b'\n' => break,
+            Ok(_) => answer.push(byte[0]),
+            Err(rustix::io::Errno::INTR) => {}
+            Err(error) => return Err(format!("cannot read stop confirmation: {error}")),
         }
     }
     match confirmation_status(&answer, std::io::stdin().is_terminal()) {

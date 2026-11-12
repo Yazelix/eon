@@ -440,14 +440,11 @@ pub fn bench_trace(stage: &str, detail: impl std::fmt::Display) {
         Some(socket)
     });
     let Some(socket) = socket else { return };
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: time is a valid timespec and CLOCK_MONOTONIC has no input state.
-    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut time) } != 0 {
+    let Ok(time) = rustix::time::clock_gettime_dynamic(rustix::time::DynamicClockId::Known(
+        rustix::time::ClockId::Monotonic,
+    )) else {
         return;
-    }
+    };
     let nanos = time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64;
     let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     let packet = format!(

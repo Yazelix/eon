@@ -10,10 +10,12 @@ use eon_workspace_protocol::v40::{
     SubscriptionMessage, Tabs, WindowSnapshot, WorkspaceEntry, WorkspaceInfo,
     encode_subscription_message,
 };
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::{
     collections::VecDeque,
     io::{ErrorKind, Read, Write},
-    os::{fd::AsRawFd, unix::net::UnixStream},
+    os::unix::net::UnixStream,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -304,13 +306,12 @@ impl Subscriber {
         let Some(stream) = &self.stream else {
             return false;
         };
-        let mut poll = libc::pollfd {
-            fd: stream.as_raw_fd(),
-            events: libc::POLLOUT,
-            revents: 0,
-        };
-        // SAFETY: polls one descriptor this subscriber owns, without waiting.
-        unsafe { libc::poll(&mut poll, 1, 0) == 1 && poll.revents & libc::POLLOUT != 0 }
+        let mut poll = [rustix::event::PollFd::new(
+            stream,
+            rustix::event::PollFlags::OUT,
+        )];
+        rustix::event::poll(&mut poll, Some(&rustix::event::Timespec::default())) == Ok(1)
+            && poll[0].revents().contains(rustix::event::PollFlags::OUT)
     }
 
     /// Queues the due gap at `seq` with a fresh snapshot of `projection`
