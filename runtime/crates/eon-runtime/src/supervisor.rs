@@ -9556,7 +9556,8 @@ rows = 30
         let root = temporary_directory();
         // The reopen path uses this same resolver and command projection.
         for (source, expected) in [
-            ("", "notch"),
+            ("", "connected"),
+            ("[panels]\n", "connected"),
             ("[panels]\nheading = 'connected'\n", "connected"),
             ("[panels]\nheading = 'notch'\n", "notch"),
         ] {
@@ -9768,7 +9769,7 @@ rows = 30
                 "--bar-items",
                 "cpu",
                 "--panel-heading",
-                "notch",
+                "connected",
                 "--pane-frames",
                 "true",
                 "--warning-close-last-tab",

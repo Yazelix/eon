@@ -573,13 +573,15 @@ final-pane confirmation. After a keyboard Close, focus returns to the selected
 pane's title. Escape cancels that prompt; Enter closes its held target.
 Agents can use `eon pane close PANE`; zoom is window-local view state.
 
-Popup and Agents headings also carry a second notch at the right, mirroring the
-title's, with one Hide button (`–`); the name fits to its left. The popup's
+Panel headings default to `"connected"`, a straight rounded top enclosing the
+title and actions. Popup and Agents headings have one Hide button (`–`) at the
+right, with the name to its left. With `[panels] heading = "notch"`, the button
+sits in a second notch mirroring the title's. The popup's
 button hides the shown popup exactly as `eon popup hide POPUP` does, and the
 Agents button hides the sidebar as Alt+Shift+H and `eon sidebar hide` do. Hover
 fills the button's pill, a held press turns it accent, and releasing over it
 activates it; a press held while another popup takes the heading does nothing.
-With pane frames off, the popup keeps its outline and both notches, and the
+With pane frames off, the popup keeps its selected heading outline, and the
 Agents button shows beside its plain label with no notch or outline. With
 frames on, a heading without clearance for its tab keeps a compact title and
 the button sits in its own gap in the top edge. A heading too narrow for a
@@ -591,11 +593,12 @@ Most popups still hide on their own shortcut; Sessions' key confirms its
 selection instead, and quick search and Files switch to each other. Screen
 readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
 
-Each Stack tab carries the same right notch with one Close button (`×`); the
-label fits to its left. Every Stack shows it unless a pane is zoomed or the
-tab is too narrow for a full button; with pane frames off it sits beside the
-plain label with no notch or outline. Close always asks first, whatever the
-Stack runs, even for one idle pane, and whatever `warning_close_last_tab` is.
+Each Stack tab has one Close button (`×`), in the same right notch when
+`heading = "notch"`; the label fits to its left. Every Stack shows it unless a
+pane is zoomed or the tab is too narrow for a full button; with pane frames off
+it sits beside the plain label with no notch or outline. Close always asks
+first, whatever the Stack runs, even for one idle pane, and whatever
+`warning_close_last_tab` is.
 The prompt lists every terminal the close would stop, one row each, marks the
 ones still running with `· running`, and for the last Stack of the last tab
 says that it closes the session or quits the window. Esc keeps the Stack.

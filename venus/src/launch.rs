@@ -1069,7 +1069,7 @@ mod tests {
         let parse = |args: &[&str]| launch_arguments(args.iter().map(OsString::from), None);
         assert_eq!(
             parse(&["--workspace", "eon.sock"]).unwrap().panel_heading,
-            PanelHeading::Notch
+            PanelHeading::Connected
         );
         for (value, expected) in [
             ("notch", PanelHeading::Notch),

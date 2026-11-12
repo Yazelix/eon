@@ -109,8 +109,8 @@ fn fragment_srgb(input: VertexOutput) -> @location(0) vec4<f32> {
 /// Runtime-resolved position of panel headings; pane headers keep their own geometry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PanelHeading {
-    #[default]
     Notch,
+    #[default]
     Connected,
 }
 

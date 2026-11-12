@@ -60,7 +60,7 @@ pub(crate) fn inputs() -> Inputs {
                 background_blur: true,
                 padding_color: PaddingColor::Extend,
                 pane_frames: true,
-                panel_heading: crate::PanelHeading::Notch,
+                panel_heading: crate::PanelHeading::Connected,
                 detect_local_hosts: true,
                 focus_color: None,
                 border_width: None,

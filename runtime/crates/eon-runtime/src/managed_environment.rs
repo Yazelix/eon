@@ -2840,7 +2840,7 @@ mod tests {
         let mut defaults = crate::fixtures::inputs().defaults;
         for explicit in [false, true] {
             if explicit {
-                defaults.terminal.panel_heading = super::PanelHeading::Connected;
+                defaults.terminal.panel_heading = super::PanelHeading::Notch;
                 defaults.terminal.focus_color = Some("preset:ice".into());
                 defaults.terminal.border_width = Some(2);
                 defaults.terminal.focus_border_width = Some(3);

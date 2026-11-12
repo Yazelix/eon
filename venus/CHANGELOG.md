@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C8/VEN-C18: panel headings default to `connected`; `notch` remains a
+  supported setting. Both drawings and pane header bands are unchanged
+  (`eon-j7ii2`, Lucca's 2026-11-11 decision).
+
 - VEN-C30: the current Agents row uses a one-physical-pixel focus-colour outline
   without a selection fill. Hover and keyboard focus keep their dark fill on
   every row; mint keyboard focus sits one pixel inside the current outline.
@@ -15,7 +19,7 @@
 
 - VEN-C8/VEN-C18: `--panel-heading connected` uses a straight panel top at notch
   height, retaining title/action placement and the existing compact fallback.
-  `notch` remains the default; pane header bands are unchanged (`eon-6ui6p`).
+  Pane header bands are unchanged (`eon-6ui6p`).
 
 - VEN-C21: bar widgets and the session label use the idle-tab capsule fill,
   CPU/RAM/disk percentages use the interface font in fixed slots, and Shortcuts

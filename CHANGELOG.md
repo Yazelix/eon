@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Panel headings default to `"connected"`; `[panels] heading = "notch"` remains
+  a supported choice. Omitted settings use connected on window open, reopen or
+  reload (`eon-j7ii2`, Lucca's 2026-11-11 decision).
+
 - The current Agents row uses a one-pixel outline in the configured focus
   colour instead of a grey fill. Hover keeps its dark fill, and keyboard focus
   adds a mint outline one pixel inside the current outline; tabs keep their
@@ -22,8 +26,8 @@ installation, and proven contract changes.
   (`eon-configurability-qkq8.13`, EON-C9).
 
 - `[panels] heading = "connected"` joins panel notches into a straight rounded
-  top edge, without moving titles, actions or terminal rows. The default is
-  `"notch"`; changes apply on window open, reopen or reload (`eon-6ui6p`).
+  top edge, without moving titles, actions or terminal rows. Changes apply on
+  window open, reopen or reload (`eon-6ui6p`).
 
 - Closing a column or stopping right after a failed close no longer fails
   with "already managed" (`eon-k0okt`).

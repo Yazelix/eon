@@ -156,11 +156,12 @@ before window creation. Eon supplies its corresponding `[terminal]` settings
 only for workspace launches when configured.
 
 Pass `--panel-heading notch|connected` for panel heading geometry (VEN-C18).
-The default is `notch`. `connected` joins the notches at their top height with
+The default is `connected`, which joins the notches at their top height with
 the card's usual rounded corners; title and action positions do not change.
 Missing, duplicate or invalid values fail before window creation. Eon Runtime
 resolves `[panels] heading` and supplies it only on workspace launches, including
-reopens. A running Venus retains its launch value and reads no configuration.
+reopens and reloads. A running Venus retains its launch value and reads no
+configuration.
 
 Pass `--warning-close-last-tab false` to send a final-tab close at once instead
 of first showing the close prompt (VEN-C8). The default is `true`. Missing,
