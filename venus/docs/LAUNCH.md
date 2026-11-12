@@ -66,12 +66,17 @@ For an Eon workspace, select workspace mode with only the EONW socket:
 cargo run --locked -- --workspace /path/to/eon.sock
 ```
 
-The supervising Eon may pass `--eon-version VERSION` to identify its running
-product. Absence hides the native label; the input is workspace-only, at most
-128 ASCII letters/digits or `.`, `-`, `+`, and starts with a digit. It is an
-immutable launch fact, not a lookup of the installed executable or Venus version.
+The supervising Eon may pass `--eon-version VERSION` with
+`--eon-release-stage alpha|beta|stable` to identify its running product. A stage
+requires a version; both inputs are workspace-only and given at most once.
+Unknown stages fail launch. Older supervisors may supply only a version,
+which shows without a stage glyph so they can reload Venus. No version hides
+the native label. The version is at most 128 ASCII letters/digits or `.`, `-`,
+`+`, and starts with a digit. It is an immutable launch fact, as is the stage:
+Venus never infers a stage from version
+digits or suffixes, or looks up the installed executable or Venus version.
 Eon owns the `[bar] widgets` preference. Narrow layouts hide the full label
-when there is insufficient spare header space.
+when there is insufficient spare space beside the bottom shortcut hints.
 
 The supervising Eon may pass `--eon-icon ABSOLUTE_PATH`, the Eon icon that
 leads the Eon Bar. The input is workspace-only and given at most once; a

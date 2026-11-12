@@ -11,7 +11,9 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use yazelix_venus::{BarItem, Color, FontSettings, LoadLevels, PaddingColor, PanelHeading};
+use yazelix_venus::{
+    BarItem, Color, FontSettings, LoadLevels, PaddingColor, PanelHeading, ReleaseStage,
+};
 
 const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("magma", rgb(0xff3b30)),
@@ -23,7 +25,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--panel-heading notch|connected] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--detect-local-hosts true|false] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--panel-heading notch|connected] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION [--eon-release-stage alpha|beta|stable]] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--detect-local-hosts true|false] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -45,6 +47,7 @@ pub(super) struct LaunchArguments {
     /// Whether Alt+Shift+1..9 and Alt+Shift+0 show workspaces 1..10 (VEN-C8).
     pub(super) number_keys: bool,
     pub(super) eon_version: Option<String>,
+    pub(super) eon_release_stage: ReleaseStage,
     /// The file holding the Eon icon's RGBA image: `--eon-icon`, read once at startup.
     pub(super) eon_icon: Option<PathBuf>,
     pub(super) bar_items: Vec<BarItem>,
@@ -80,6 +83,7 @@ pub(super) fn launch_arguments(
     let mut animate_working_badge = None;
     let mut number_keys = None;
     let mut eon_version = None;
+    let mut eon_release_stage = None;
     let mut eon_icon: Option<PathBuf> = None;
     let mut bar_items = None;
     let mut ram_notice_percent = None;
@@ -138,6 +142,18 @@ pub(super) fn launch_arguments(
             }) {
                 return Err(USAGE.into());
             }
+        } else if argument == "--eon-release-stage" {
+            if eon_release_stage.is_some() {
+                return Err(USAGE.into());
+            }
+            eon_release_stage = Some(
+                match arguments.next().as_deref().and_then(|value| value.to_str()) {
+                    Some("alpha") => ReleaseStage::Alpha,
+                    Some("beta") => ReleaseStage::Beta,
+                    Some("stable") => ReleaseStage::Stable,
+                    _ => return Err(USAGE.into()),
+                },
+            );
         } else if argument == "--bar-items" {
             if bar_items.is_some() {
                 return Err(USAGE.into());
@@ -453,7 +469,9 @@ pub(super) fn launch_arguments(
         disk_warning_percent,
         disk_critical_percent,
     };
-    if load_levels.cpu_temperature_critical_celsius < load_levels.cpu_temperature_warning_celsius
+    if (eon_release_stage.is_some() && eon_version.is_none())
+        || load_levels.cpu_temperature_critical_celsius
+            < load_levels.cpu_temperature_warning_celsius
         || ((eon_version.is_some() || eon_icon.is_some() || bar_items.is_some() || load_given)
             && workspace_socket.is_none())
     {
@@ -523,6 +541,7 @@ pub(super) fn launch_arguments(
         animate_working_badge: animate_working_badge.unwrap_or(true),
         number_keys: number_keys.unwrap_or(true),
         eon_version,
+        eon_release_stage: eon_release_stage.unwrap_or_default(),
         eon_icon,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
         load_levels,
@@ -1019,10 +1038,101 @@ mod tests {
     }
 
     #[test]
+    fn supervising_version_without_stage_stays_unmarked_for_reload() {
+        let arguments = launch_arguments(
+            [
+                "--eon-version",
+                "9.8.7-alpha.2+proof",
+                "--workspace",
+                "eon.sock",
+            ]
+            .map(OsString::from),
+            None,
+        )
+        .unwrap();
+        let version = arguments.eon_version.as_deref().unwrap();
+        assert_eq!(version, "9.8.7-alpha.2+proof");
+        assert_eq!(
+            arguments.eon_release_stage.version_label(version),
+            "EON 9.8.7-alpha.2+proof"
+        );
+        assert_eq!(
+            arguments.eon_release_stage.version_name(version),
+            "Eon 9.8.7-alpha.2+proof"
+        );
+    }
+
+    #[test]
+    fn release_stage_is_explicit_workspace_metadata() {
+        for (stage, expected) in [
+            ("alpha", ReleaseStage::Alpha),
+            ("beta", ReleaseStage::Beta),
+            ("stable", ReleaseStage::Stable),
+        ] {
+            let parsed = launch_arguments(
+                [
+                    "--eon-version",
+                    "9.8.7-alpha.2+proof",
+                    "--eon-release-stage",
+                    stage,
+                    "--workspace",
+                    "eon.sock",
+                ]
+                .map(OsString::from),
+                None,
+            )
+            .unwrap();
+            assert_eq!(parsed.eon_release_stage, expected);
+        }
+        for arguments in [
+            vec!["--eon-release-stage", "alpha", "--workspace", "eon.sock"],
+            vec![
+                "--eon-version",
+                "0.1.24",
+                "--eon-release-stage",
+                "unknown",
+                "--workspace",
+                "eon.sock",
+            ],
+            vec![
+                "--eon-version",
+                "0.1.24",
+                "--eon-release-stage",
+                "alpha",
+                "--eon-release-stage",
+                "beta",
+                "--workspace",
+                "eon.sock",
+            ],
+            vec![
+                "--eon-version",
+                "0.1.24",
+                "--eon-release-stage",
+                "alpha",
+                "orbit.sock",
+            ],
+            vec!["--eon-version", "0.1.24", "--eon-release-stage"],
+        ] {
+            assert!(
+                launch_arguments(arguments.iter().map(OsString::from), None).is_err(),
+                "accepted {arguments:?}"
+            );
+        }
+    }
+
+    #[test]
     fn eon_version_is_bounded_workspace_identity() {
         let parse = |version: &str| {
             launch_arguments(
-                ["--eon-version", version, "--workspace", "eon.sock"].map(OsString::from),
+                [
+                    "--eon-version",
+                    version,
+                    "--eon-release-stage",
+                    "stable",
+                    "--workspace",
+                    "eon.sock",
+                ]
+                .map(OsString::from),
                 None,
             )
         };

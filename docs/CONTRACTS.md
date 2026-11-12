@@ -4695,8 +4695,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   quota widgets select Codex and Claude windows (EON-C27), `cpu`
   and `ram` the whole-machine CPU and memory use labels, `disk` the used
   percentage of the filesystem holding the configured path, `clock` the local
-  24-hour clock, and `version` the read-only `EON <version>` label of the
-  supervisor serving the window. The Eon icon at the bar's leading
+  24-hour clock, and `version` the read-only `EON` label of the supervisor
+  serving the window, with an optional stage glyph before its version:
+  `α` for alpha, `β` for beta, and no glyph for stable. The Eon icon at the bar's leading
   edge is not a widget: whatever the list, it shows when Eon has one and the
   bar has room for it (VEN-C21). A widget left out doesn't show, and
   `widgets = []` leaves only the icon, tabs and controls. Omitting the
@@ -4739,7 +4740,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   handling, preserving live terminals.
 - **Owner:** Eon owns the settings, their names and defaults. Runtime parses
   and validates them and passes the recognized list to Venus as `--bar-items`,
-  with `--eon-version` only when `version` is listed, the Eon icon's path
+  with `--eon-release-stage` beside `--eon-version` only when `version` is
+  listed, the Eon icon's path
   (`--eon-icon`) whenever Eon has one, the RAM levels only when
   `ram` is listed, the CPU levels only when `cpu` is listed, and the disk
   levels and resolved path only when `disk` is listed. Venus owns placement,

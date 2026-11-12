@@ -2,10 +2,10 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
-    CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PaneTitleTab, PlacedText,
-    RectangleBatch, Renderer, SceneColor,
+    CellFont, CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PaneTitleTab,
+    PlacedText, RectangleBatch, Renderer, SceneColor,
     cells::{blend_to_contrast, contrast_ratio},
-    palette, physical_outline_width, shaping,
+    palette, physical_outline_width, shape_styled_text, shaping,
 };
 use crate::{
     DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
@@ -1919,6 +1919,32 @@ pub(super) fn bottom_title_row(row: SceneRect, bottom: f32, text_height: f32) ->
     }
 }
 
+fn measure_monospace_text(
+    fonts: &mut FontSystem,
+    metrics: CellMetrics,
+    cell_font: CellFont,
+    text: &str,
+) -> f32 {
+    let buffer = shape_styled_text(
+        fonts,
+        metrics,
+        cell_font,
+        text,
+        f32::INFINITY,
+        metrics.height,
+        DrawStyleKind::Monospace,
+    );
+    buffer
+        .layout_runs()
+        .map(|run| {
+            run.glyphs
+                .iter()
+                .fold(run.line_w, |right, glyph| right.max(glyph.x + glyph.w))
+        })
+        .fold(0.0, f32::max)
+        .ceil()
+}
+
 impl Renderer {
     pub fn set_hovered_header(&mut self, header: Option<(WorkspaceFocus, String)>) {
         self.header.hovered_header = header;
@@ -2119,6 +2145,16 @@ impl Renderer {
     /// Measure an exact, non-truncated Eon Bar fact label with header typography.
     pub fn measure_header_text(&mut self, label: &str) -> (String, f32) {
         self.fit_header_text(label, f32::INFINITY)
+    }
+
+    /// Measure the complete label in the same monospace typography used to draw it.
+    pub fn measure_monospace_text(&mut self, text: &str) -> f32 {
+        measure_monospace_text(
+            &mut self.fonts.font_system,
+            self.metrics,
+            self.cell_font,
+            text,
+        )
     }
 
     /// Lines `text` takes in dialog row typography wrapped to `width` pixels, as a dialog row
@@ -5967,6 +6003,69 @@ mod tests {
                 glyph.data
             };
             assert_eq!(quota(Some(&image)), quota(None));
+        }
+    }
+
+    #[test]
+    fn version_stage_measurement_includes_greek_fallback() {
+        for family in [None, Some(NERD_FONT_FAMILY)] {
+            let mut fonts = FontSetup::new(&FontSettings {
+                family: family.map(str::to_owned),
+                ..FontSettings::default()
+            })
+            .unwrap();
+            let primary = family.map(|family| {
+                fonts
+                    .font_system
+                    .db()
+                    .query(&fontdb::Query {
+                        families: &[Family::Name(family)],
+                        ..Default::default()
+                    })
+                    .unwrap()
+            });
+            for scale in [1.0, 1.25, 2.0] {
+                let metrics = fonts.metrics(scale);
+                let cell_font =
+                    fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+                for text in ["EON α0.1.24", "EON β0.2.0", "EON 1.0.0"] {
+                    let width =
+                        measure_monospace_text(&mut fonts.font_system, metrics, cell_font, text);
+                    let buffer = shape_styled_text(
+                        &mut fonts.font_system,
+                        metrics,
+                        cell_font,
+                        text,
+                        width,
+                        metrics.height,
+                        DrawStyleKind::Monospace,
+                    );
+                    let runs: Vec<_> = buffer.layout_runs().collect();
+                    assert_eq!(runs.len(), 1, "{family:?} {scale} {text}");
+                    assert!(
+                        runs[0].line_w <= width,
+                        "{family:?} {scale} {text}: line {}, width {width}",
+                        runs[0].line_w
+                    );
+                    for glyph in runs[0].glyphs {
+                        assert!(
+                            glyph.glyph_id != 0 && glyph.x + glyph.w <= width + 0.01,
+                            "{family:?} {scale} {text}: width {width}, glyph {glyph:?}"
+                        );
+                    }
+                    if let Some(primary) = primary.filter(|_| text.contains(['α', 'β'])) {
+                        let greek = runs[0]
+                            .glyphs
+                            .iter()
+                            .find(|glyph| glyph.start == 4)
+                            .unwrap();
+                        assert_ne!(
+                            greek.font_id, primary,
+                            "the symbol-only primary needs Greek fallback"
+                        );
+                    }
+                }
+            }
         }
     }
 

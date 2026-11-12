@@ -182,12 +182,18 @@ order, selection, and popups; Venus draws the visible scene.
   Wednesday 21 October 2026, UTC−03:00`; hover lists the date then the offset,
   `Wednesday 21 October 2026` and `UTC−03:00`. When the local time zone
   cannot be determined, no clock shows, never UTC in its place.
-- `EON <version>` names the supervising Eon that serves the window, in regular
+- The version label names the supervising Eon that serves the window: alpha
+  reads `EON α0.1.24`, beta `EON β0.2.0`, and stable `EON 1.0.0` with no
+  symbol. The stage comes from immutable product build metadata, independently
+  of the version number. Stage and version share regular
   terminal monospace and softened cyan, at the right end of the bottom shortcut
   hints, one padding from the window edge; it hides with the hints, and in
-  windows too narrow for it beside their keycaps. Hover reads `Eon version
-  0.1.18`, above the label, and its accessible label names the version too. Updating the installation does
-  not relabel a running supervisor. Without a version from Eon, no label shows.
+  windows too narrow for it beside their keycaps. Hover and the accessible name
+  spell out the stage: `Eon alpha 0.1.24`, `Eon beta 0.2.0`, or `Eon 1.0.0`.
+  Hover opens above the label. Updating the installation does
+  not relabel a running supervisor. A version from an older supervisor without
+  stage metadata stays unmarked, including after reloading Venus. Without a
+  version from Eon, no label shows.
 - Each item's hover is a short list, one fact per line: the first line names
   the item, except the clock's, whose date is self-evident, and the rest give
   only facts its chip does not show. Normal states stay quiet; stale data,

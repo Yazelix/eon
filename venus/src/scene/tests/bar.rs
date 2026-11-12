@@ -3117,7 +3117,7 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
             if let Some(label) = &scene.version {
                 let hints = scene.hints.as_ref().unwrap();
                 assert_eq!(label.label, "EON 9.8.7");
-                assert_eq!(label.tooltip, "Eon version 9.8.7");
+                assert_eq!(label.tooltip, "Eon 9.8.7");
                 assert!(label.rect.top >= hints.rect.top);
                 assert!((label.rect.right() - (width - metrics.padding)).abs() < 0.01);
             }

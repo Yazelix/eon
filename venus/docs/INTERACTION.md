@@ -156,7 +156,8 @@ cluster centred on the window's centre line, one padding apart; keys without
 modifiers follow inside the cluster, written out (`Escape terminal`, and the
 arrows while the tabs, panes or sidebar have focus). While the attention inbox
 is open, the cluster is only its keys. The clock sits at the bar's left end
-and `EON <version>` at its right end, each one padding from the window edge
+and the version label (`EON α0.1.24`, `EON β0.2.0`, or `EON 1.0.0`)
+at its right end, each one padding from the window edge
 and both plain text in the version's softened cyan,
 while `clock` and `version` are in `[bar] widgets`; they hide with the bar,
 and their tooltips open above them. Neither takes focus or acts on a press.

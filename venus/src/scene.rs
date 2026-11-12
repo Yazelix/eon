@@ -804,10 +804,40 @@ impl BarItem {
     ];
 }
 
+/// The supervising product's explicit build stage, independent of its version string.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReleaseStage {
+    Alpha,
+    Beta,
+    #[default]
+    Stable,
+}
+
+impl ReleaseStage {
+    pub fn version_label(self, version: &str) -> String {
+        let symbol = match self {
+            Self::Alpha => "α",
+            Self::Beta => "β",
+            Self::Stable => "",
+        };
+        format!("EON {symbol}{version}")
+    }
+
+    pub fn version_name(self, version: &str) -> String {
+        let stage = match self {
+            Self::Alpha => " alpha",
+            Self::Beta => " beta",
+            Self::Stable => "",
+        };
+        format!("Eon{stage} {version}")
+    }
+}
+
 /// The Eon Bar items in order, and the values Venus has for them.
 pub struct EonBar<'a> {
     pub items: &'a [BarItem],
     pub version: Option<&'a str>,
+    pub release_stage: ReleaseStage,
     /// Whether Eon supplied a readable icon to lead the bar.
     pub icon: bool,
     pub cpu: Option<&'a CpuUse>,
@@ -827,6 +857,7 @@ impl Default for EonBar<'_> {
         Self {
             items: &BarItem::DEFAULT,
             version: None,
+            release_stage: ReleaseStage::Stable,
             icon: false,
             cpu: None,
             ram: None,
@@ -4025,9 +4056,9 @@ impl WorkspaceScene {
             .zip(bar.version)
             .map(|(rect, version)| WorkspaceLabel {
                 rect,
-                label: format!("EON {version}"),
-                tooltip: format!("Eon version {version}"),
-                description: format!("Running Eon version {version}"),
+                label: bar.release_stage.version_label(version),
+                tooltip: bar.release_stage.version_name(version),
+                description: String::new(),
                 load: Load::Normal,
             });
         let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);

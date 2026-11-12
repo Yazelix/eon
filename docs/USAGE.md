@@ -457,10 +457,13 @@ A reading that can't be taken shows no label rather than 0%. A 24-hour clock
 showing local time sits at the left end of the bottom hints bar, as plain text
 in the version label's softened cyan, and hides with it; hover it for the date
 and UTC offset, and it stays hidden if the local time zone can't be
-determined. The `EON <version>` label, in
-softened cyan, sits at the right end of the bottom hints bar and hides with it;
-it names the running supervisor, so updating the installation doesn't change
-it, and its hover opens above it. The Eon logo leads the bar, before the tabs.
+determined. The version label (`EON α0.1.24` for alpha, `EON β0.2.0`
+for beta, or `EON 1.0.0` for stable), in softened cyan, sits at the right end
+of the bottom hints bar and hides with it. It names the running supervisor,
+so updating the installation doesn't change it. Older supervisors without
+stage metadata retain an unmarked version label when Venus reloads. Hover
+and screen readers spell out a supplied stage, such as `Eon alpha 0.1.24`;
+hover opens above the label. The Eon logo leads the bar, before the tabs.
 `[bar] widgets` chooses which of these show and in what order (see
 [Configuration](CONFIGURATION.md#configuration-behavior)). When the bar runs
 short of space the Eon logo hides first; then disk, RAM and CPU, before any

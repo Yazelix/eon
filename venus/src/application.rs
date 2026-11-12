@@ -43,12 +43,12 @@ use yazelix_venus::{
     DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, FrameTimings, HeaderText,
     HeadingAction, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels, LocalClock,
     LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor,
-    PaneHeaderAction, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
-    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction, WorkspaceEvent,
-    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
-    WorkspaceTransport, active_popup, attention_only_change, bench_trace, bench_tracing,
-    focused_terminal, labels_only_change, read_eon_icon, shown_workspace, validate_copy_uri,
-    validate_open_uri, wrapped_lines,
+    PaneHeaderAction, PresentOutcome, RamUse, ReleaseStage, Renderer, Scene, SceneRect,
+    SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction,
+    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
+    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, bench_trace,
+    bench_tracing, focused_terminal, labels_only_change, read_eon_icon, shown_workspace,
+    validate_copy_uri, validate_open_uri, wrapped_lines,
 };
 
 mod geometry;
@@ -1293,6 +1293,7 @@ struct Application {
     /// Whether Alt+Shift+1..9 and Alt+Shift+0 show workspaces; Eon's `--number-keys` (VEN-C8).
     number_keys: bool,
     eon_version: Option<String>,
+    eon_release_stage: ReleaseStage,
     /// The Eon icon's RGBA image, read once at startup; none when Eon supplied no readable one.
     eon_icon: Option<Arc<[u8]>>,
     bar_items: Vec<BarItem>,
@@ -1406,6 +1407,7 @@ impl Application {
             animate_working_badge,
             number_keys,
             eon_version,
+            eon_release_stage,
             eon_icon,
             bar_items,
             load_levels,
@@ -1451,6 +1453,7 @@ impl Application {
             animate_working_badge,
             number_keys,
             eon_version,
+            eon_release_stage,
             eon_icon,
             bar_items,
             load_levels,
@@ -1760,6 +1763,7 @@ impl Application {
                 EonBar {
                     items: &self.bar_items,
                     version: self.eon_version.as_deref(),
+                    release_stage: self.eon_release_stage,
                     icon: self.eon_icon.is_some(),
                     cpu: self.cpu.as_ref(),
                     ram: self.ram.as_ref(),
@@ -2696,6 +2700,15 @@ impl Application {
         let state = self.window.as_mut()?;
         let snapshot = self.workspace_model.snapshot()?;
         let zoom = WorkspaceScene::zoom_visible(snapshot, zoom);
+        let version_width = self
+            .eon_version
+            .as_deref()
+            .filter(|_| self.hints_visible && self.bar_items.contains(&BarItem::Version))
+            .map(|version| {
+                state
+                    .renderer
+                    .measure_monospace_text(&self.eon_release_stage.version_label(version))
+            });
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
                 if self.attention_inbox.open {
@@ -2711,13 +2724,7 @@ impl Application {
                 },
                 state.renderer.size(),
                 state.renderer.metrics(),
-                // The version label is ASCII drawn in terminal cells.
-                self.eon_version
-                    .as_deref()
-                    .filter(|_| self.bar_items.contains(&BarItem::Version))
-                    .map(|version| {
-                        format!("EON {version}").len() as f32 * state.renderer.metrics().width
-                    }),
+                version_width,
                 // The clock's `HH:MM` is drawn in cells too.
                 self.clock
                     .as_ref()
@@ -2736,6 +2743,7 @@ impl Application {
             EonBar {
                 items: &self.bar_items,
                 version: self.eon_version.as_deref(),
+                release_stage: self.eon_release_stage,
                 icon: self.eon_icon.is_some(),
                 cpu: self.cpu.as_ref(),
                 ram: self.ram.as_ref(),

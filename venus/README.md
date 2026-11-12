@@ -29,7 +29,9 @@ cargo run --locked -- --workspace /path/to/eon.sock
 In full Eon, **Alt+Shift+N** opens an independent Eon window. The native
 Shortcuts viewer lists it; Eon supplies the exact launcher executable.
 
-Eon can supply its running version through `--eon-version` in workspace mode.
+Eon supplies its running version and release stage together through
+`--eon-version` and `--eon-release-stage alpha|beta|stable` in workspace mode.
+A version without stage metadata remains unmarked for older-supervisor reloads.
 The read-only label uses spare header space and yields before tabs and controls.
 `--bar-items` lets Eon choose which bar items show and in what order, the
 `--*-percent` load levels set when the CPU, RAM and disk chips turn orange or

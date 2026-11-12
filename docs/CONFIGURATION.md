@@ -231,13 +231,16 @@ over it. v0.1.20 renamed `[workspace]` to `[session]` and
 right between the tabs and the Shortcuts button, except `clock` and `version`,
 which sit at the left and right ends of the bottom shortcut hints while they
 show, wherever they are in the list: the Codex and Claude quota chips, CPU, RAM
-and disk use, the local clock and `EON <version>`. The Eon logo at the bar's
-left end is not a widget and shows whatever the list holds. Each name
+and disk use, the local clock and the version label (`EON α0.1.24`,
+`EON β0.2.0`, or `EON 1.0.0`). The release stage is a fixed build identity,
+not a preference; omit `version` to hide the entire label. The Eon logo at the
+bar's left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
-list above. The list applies when a window next opens, reopens or reloads. Unknown names
-are ignored with a warning; repeated known names are a configuration error. Narrow windows hide the Eon
-logo first, then disk, RAM and CPU, whatever the order, then quota chips one by
+list above. The list applies when a window next opens, reopens or reloads.
+Unknown names are ignored with a warning; repeated known names are a
+configuration error. Narrow windows hide the Eon logo first, then disk, RAM
+and CPU, whatever the order, then quota chips one by
 one, the one closest to the tabs first; in the shortcut hints the version hides
 first and then the clock, once the keycaps no longer fit beside them. The logo
 also hides whenever the tabs would not all fit beside it, however wide the

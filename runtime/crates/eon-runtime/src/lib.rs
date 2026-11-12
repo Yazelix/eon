@@ -23,7 +23,7 @@ mod supervisor;
 mod windows;
 mod workspace;
 
-pub use cli::{Inputs, run};
+pub use cli::{Inputs, ReleaseStage, run};
 pub use control::Error;
 pub use generation::current_generation as build_identity;
 pub use managed_environment::{

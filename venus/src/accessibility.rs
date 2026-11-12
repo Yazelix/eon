@@ -650,7 +650,11 @@ impl Snapshot {
             ] {
                 if let Some(label) = label {
                     let mut node = Node::new(Role::Label);
-                    node.set_value(label.description.as_str());
+                    if id == VERSION {
+                        node.set_label(label.tooltip.as_str());
+                    } else {
+                        node.set_value(label.description.as_str());
+                    }
                     node.set_bounds(rect(label.rect));
                     nodes.push((id, node));
                 }
@@ -1662,6 +1666,56 @@ mod tests {
     }
 
     #[test]
+    fn version_label_and_accessible_name_spell_out_release_stage() {
+        let snapshot = crate::scene::tests::bar::one_pane_snapshot();
+        let metrics = CellMetrics::for_scale(1.0);
+        let size = PhysicalSize::new(1280, 800);
+        let measure = |text: &str| text.chars().count() as f32 * metrics.width;
+        for (stage, symbol, word) in [
+            (crate::ReleaseStage::Alpha, "α", " alpha"),
+            (crate::ReleaseStage::Beta, "β", " beta"),
+            (crate::ReleaseStage::Stable, "", ""),
+        ] {
+            let version = "9.8.7-alpha.2+proof";
+            let label = format!("EON {symbol}{version}");
+            let name = format!("Eon{word} {version}");
+            let hints = crate::ShortcutHintsScene::new(
+                Vec::new(),
+                size,
+                metrics,
+                Some(measure(&label)),
+                None,
+                measure,
+            );
+            let scene = WorkspaceScene::from_snapshot_with_bar(
+                &snapshot,
+                EonBar {
+                    version: Some(version),
+                    release_stage: stage,
+                    ..EonBar::default()
+                },
+                size,
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.to_owned(), measure(text)),
+                Some(hints),
+            );
+            let displayed = scene.version.as_ref().unwrap();
+            assert_eq!(displayed.label, label, "{stage:?}");
+            assert_eq!(displayed.tooltip, name);
+            assert_eq!(displayed.rect.width, measure(&label));
+            let mut accessible = Snapshot::new(size);
+            accessible.set_workspace(Some(&scene));
+            let tree = accessible.tree();
+            let version = node(&tree, VERSION);
+            assert_eq!(version.label(), Some(name.as_str()));
+            assert!(!version.supports_action(Action::Click));
+            assert!(!version.supports_action(Action::Focus));
+        }
+    }
+
+    #[test]
     fn version_label_sits_after_the_hints_and_has_no_actions() {
         for scale in [1.0, 1.25, 2.0] {
             let metrics = CellMetrics::for_scale(scale);
@@ -1792,7 +1846,7 @@ mod tests {
                             if let Some(version) = &scene.version {
                                 let hints = scene.hints.as_ref().unwrap();
                                 assert_eq!(version.label, "EON 9.8.7-alpha.2+proof");
-                                assert_eq!(version.tooltip, "Eon version 9.8.7-alpha.2+proof");
+                                assert_eq!(version.tooltip, "Eon 9.8.7-alpha.2+proof");
                                 assert_eq!(
                                     version.rect.width,
                                     version.label.len() as f32 * metrics.width
@@ -1813,10 +1867,7 @@ mod tests {
                                 assert_eq!(children[version_index - 1], HINTS);
                                 let node = node(&tree, VERSION);
                                 assert_eq!(node.role(), Role::Label);
-                                assert_eq!(
-                                    node.value(),
-                                    Some("Running Eon version 9.8.7-alpha.2+proof")
-                                );
+                                assert_eq!(node.label(), Some("Eon 9.8.7-alpha.2+proof"));
                                 assert_eq!(node.bounds(), Some(rect(version.rect)));
                                 assert!(!node.supports_action(Action::Click));
                                 assert!(!node.supports_action(Action::Focus));

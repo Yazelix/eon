@@ -521,7 +521,11 @@ fn venus_command(
         }
         let shown = |widget| bar.widgets.contains(&widget);
         if shown("version") {
-            command.arg("--eon-version").arg(inputs.version);
+            command
+                .arg("--eon-version")
+                .arg(inputs.version)
+                .arg("--eon-release-stage")
+                .arg(inputs.release_stage.as_str());
         }
         if let Some(icon) = &inputs.icon {
             command.arg("--eon-icon").arg(icon);
@@ -9103,11 +9107,18 @@ mod tests {
             );
             let versions = launch_input(&inputs, LaunchMode::Workspace, "--eon-version");
             if visible {
+                assert_eq!(
+                    launch_input(&inputs, LaunchMode::Workspace, "--eon-release-stage"),
+                    ["alpha"]
+                );
                 assert_eq!(versions, [inputs.version]);
             } else {
                 assert!(versions.is_empty());
+                assert!(
+                    launch_input(&inputs, LaunchMode::Workspace, "--eon-release-stage").is_empty()
+                );
             }
-            for flag in ["--bar-items", "--eon-version"] {
+            for flag in ["--bar-items", "--eon-version", "--eon-release-stage"] {
                 assert!(launch_input(&inputs, LaunchMode::Terminal, flag).is_empty());
             }
             // The Eon icon reaches every workspace window, whatever the widgets, as the opaque
@@ -9120,6 +9131,17 @@ mod tests {
                 ["/fixture/eon-icon.rgba"]
             );
             assert!(launch_input(&iconic, LaunchMode::Terminal, "--eon-icon").is_empty());
+        }
+        for (stage, expected) in [
+            (crate::ReleaseStage::Alpha, "alpha"),
+            (crate::ReleaseStage::Beta, "beta"),
+            (crate::ReleaseStage::Stable, "stable"),
+        ] {
+            inputs.release_stage = stage;
+            assert_eq!(
+                launch_input(&inputs, LaunchMode::Workspace, "--eon-release-stage"),
+                [expected]
+            );
         }
         // Load levels and the disk path reach Venus with the chip they belong to, and never a
         // terminal window. `~` names the supervisor's HOME.

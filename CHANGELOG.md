@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Eon Bar prefixes alpha and beta versions with α or β (`EON α0.1.24`,
+  `EON β0.2.0`); stable versions have no symbol. Hover and screen readers spell
+  out the build stage. Older supervisors without stage metadata retain an
+  unmarked version label when reloading Venus (`eon-eb6pf`).
+
 - Packaged Helix uses carbonfox, soft wrapping, a bufferline for multiple
   buffers, cursorline, colored modes, an insert bar cursor and indent guides.
   These nova-helix defaults sit below user and trusted workspace settings;

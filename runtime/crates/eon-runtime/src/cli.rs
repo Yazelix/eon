@@ -46,7 +46,26 @@ use std::{
 const EON_USAGE: &str = "invalid command or arguments\nusage: eon [COMMAND]\nRun `eon --help` for commands and examples.";
 const EONBASE_USAGE: &str = "usage: eonbase [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
+/// Immutable product release metadata supplied by the composition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleaseStage {
+    Alpha,
+    Beta,
+    Stable,
+}
+
+impl ReleaseStage {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Alpha => "alpha",
+            Self::Beta => "beta",
+            Self::Stable => "stable",
+        }
+    }
+}
+
 pub struct Inputs {
+    pub release_stage: ReleaseStage,
     pub version: &'static str,
     /// The agent skill this build ships, which `eon --skill` prints.
     pub skill: &'static str,

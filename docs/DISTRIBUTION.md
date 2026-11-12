@@ -38,7 +38,12 @@ Every channel consumes the same component graph and preserves runtime semantics.
 
 Eon's product version in `eon/crates/eon/Cargo.toml` is its one user-facing
 number; `eon --help`, `eon versions` and the window's `EON` label (when
-shown) report it. Eon is in alpha before v0.2.0 and in beta from v0.2.0:
+shown) report it. The compiled `RELEASE_STAGE` constant beside the version
+input in `eon/crates/eon/src/product.rs` supplies the stage independently of
+that number. Release preparation changes that constant with the Cargo version:
+`ReleaseStage::Alpha`, `ReleaseStage::Beta`, or `ReleaseStage::Stable`. The bar
+shows `EON α0.1.24`, `EON β0.2.0`, or `EON 1.0.0`, respectively; CLI version
+output keeps its numeric form. Eon is in alpha before v0.2.0 and in beta from v0.2.0:
 in both stages commands, configuration and behavior may still change, and the
 changelog records what did. `eon-igae` holds the scope for entering beta.
 1.0.0 has no scheduled date: user reports, not a plan, decide when it comes.
