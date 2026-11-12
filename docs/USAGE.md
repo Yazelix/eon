@@ -223,7 +223,7 @@ Nix store. `--json` reports `window`, `generation` and the presenting `venus`
 path on success, together with `"accepted":true`, `"replaced":null` and
 `"config_reloaded":null`. `accepted` confirms that the supervisor accepted
 the request. Both null values mean the reply cannot confirm whether Venus
-was replaced or configuration was reread; they do not mean false. EONW v40
+was replaced or configuration was reread; they do not mean false. EONW v41
 does not report those outcomes. Failure still returns an error object.
 The text reply acknowledges the request, reports the presenting path and
 says replacement and config rereading are unconfirmed. Quota polling follows
@@ -889,7 +889,7 @@ line points agents to `eon --skill`.
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are. The JSON reply names the new pane and its tab in `created`, as `{"tab": "tN", "pane": "pN"}` |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` and `created` as above; refused with exit 1 outside an Eon terminal |
-| `eon edit [--json] -- FILE` | Open FILE in the configured editor (`[editor] command`: Helix by default, or `$VISUAL` or `$EDITOR` in the package without Helix) in a new pane, placed as `pane create` places it, at the tab's directory; the JSON reply names the new pane in `created`, as `pane create` does |
+| `eon edit [--json] -- FILE` | Open FILE in the configured editor: packaged Helix uses the tab's Editor popup by default, retaining its buffers and unsaved edits; `[editor] open_in = "pane"`, other editors, directories, disabled Editor, an existing Editor without Eon's listener, and no-Helix builds use a new pane placed as `pane create` places it; JSON names Editor in the tab's `selected_popup`, or the new pane in `created` |
 | `eon pane close PANE [--yes] [--json]` | Close any pane of the addressed session, stopping its terminal without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab's last pane quits the window, or closes the session while others remain, asking first from a terminal |
 | `eon column close PANE --yes [--json]` | Close the column (Stack) holding PANE. Without `--yes`, list every terminal it would stop and fail `not-confirmed` (exit 1); never reads stdin. A changed scope fails `close-changed` (exit 1) and stops nothing |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |

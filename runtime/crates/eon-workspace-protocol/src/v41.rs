@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v40 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v41 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -17,7 +17,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 40;
+pub const VERSION: u16 = 41;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -246,8 +246,8 @@ pub enum Action {
     },
     /// Move the selected pane into the neighbouring column on `Side`.
     MovePaneSideways(Side),
-    /// Open an absolute file path in the editor in a new pane, as
-    /// `CreatePane` adds one; the editor is runtime policy.
+    /// Open an absolute file path in the Editor popup or a new pane;
+    /// the configured editor and route are runtime policy.
     Edit {
         file: Vec<u8>,
     },
@@ -3968,18 +3968,18 @@ mod tests {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e57280001000700000002007231002d00",
+                "454f4e57290001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e57280001000700000002007231002d01",
+                "454f4e57290001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e57280001000b00000002007231002c0200703200",
+                "454f4e57290001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -4015,14 +4015,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57280001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e57290001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e5728008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e5729008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -5347,14 +5347,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57280001000a00000002007231001202007431",
+                "454f4e57290001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57280001001000000002007231000c0200743104002f746d70",
+                "454f4e57290001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -5363,29 +5363,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572800010015000000020072310013020074310300676974010200753101",
+                "454f4e572900010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572800010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572900010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57280001000a00000002007231001702007032",
+                "454f4e57290001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572800010006000000020072310019",
+                "454f4e572900010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57280001000e00000002007231001a06002f746d702f61",
+                "454f4e57290001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57280001001000000002007231001b00020002006878010061",
+                "454f4e57290001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -5393,7 +5393,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57280001000f00000002007231002504002f746d70000001",
+                "454f4e57290001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -5401,44 +5401,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57280001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57290001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57280001000600000002007231001c",
+                "454f4e57290001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57280001000e00000002007231001d0200743102007032",
+                "454f4e57290001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57280001000600000002007231001e",
+                "454f4e57290001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57280001000600000002007231001f",
+                "454f4e57290001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57280001000a00000002007231002602007032",
+                "454f4e57290001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57280001000a00000002007231002902007032",
+                "454f4e57290001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57280001000a00000002007231002a02007032",
+                "454f4e57290001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -5447,7 +5447,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572800010012000000020072310027020070320000020000006869",
+                "454f4e572900010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -5455,7 +5455,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57280001000c000000020072310027020075310101",
+                "454f4e57290001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -5475,7 +5475,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57280001001700000002007231010e007465726d696e616c2d322e392d310201",
+            "454f4e57290001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -5592,7 +5592,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5728008100500100000100020002000100010000000200743100000041",
+                    "454f4e5729008100500100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -5609,7 +5609,7 @@ mod tests {
                     "00000000",
                 ),
             ),
-            (failure, "454f4e57280082000a00000004006275737902006e6f"),
+            (failure, "454f4e57290082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -5624,7 +5624,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572800860038000000",
+                    "454f4e572900860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -5647,7 +5647,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5728008d003c000000",
+                    "454f4e5729008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -5663,7 +5663,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572800870036000000",
+                    "454f4e572900870036000000",
                     "020073310200743100020070320a007465726d696e616c2d32",
                     "01020073310200743101020075310a007465726d696e616c2d33",
                     "012c01",
@@ -5676,7 +5676,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e5728008e0033000000",
+                    "454f4e5729008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -5687,7 +5687,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57280085000400000002006731",
+                "454f4e57290085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -5716,7 +5716,7 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e572800830031000000020067310500302e392e30280002006f6b010002",
+                "454f4e572900830031000000020067310500302e392e30290002006f6b010002",
                 "007331010500726561647900040062757379",
                 // v28: absent name, supervisor start in Unix milliseconds.
                 "000000000000000000",
@@ -5814,7 +5814,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5728008100be00000001000100010000000100740000000000000000",
+                "454f4e5729008100be00000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "010128000000000000000001000000000000000000000000010000000002",
                 "0200733102007331010002007331013000303132333435363738396162636465663031323334353637383961626364656630303030303030303030303030303031000001000100",
@@ -5854,7 +5854,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5728008100ef0000000100010001000000010074000000000000000000",
+                "454f4e5729008100ef0000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
                 "0001012800000000000000000100000000000000000000000001000000000202",
                 "007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001000100020073310100740100700101",
@@ -5927,7 +5927,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572800830064000000020067310500302e392e30280002006f6b0000",
+                "454f4e572900830064000000020067310500302e392e30290002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )

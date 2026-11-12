@@ -48,9 +48,9 @@ pub(super) struct Failure {
 }
 
 impl Failure {
-    pub(super) fn into_control(self) -> eon_workspace_protocol::v40::Failure {
+    pub(super) fn into_control(self) -> eon_workspace_protocol::v41::Failure {
         let mut detail = self.to_string();
-        let bound = eon_workspace_protocol::v40::MAX_DETAIL_BYTES;
+        let bound = eon_workspace_protocol::v41::MAX_DETAIL_BYTES;
         if detail.len() > bound {
             let tail = self
                 .reserved_id
@@ -64,7 +64,7 @@ impl Failure {
             detail.push_str("...");
             detail.push_str(&tail);
         }
-        eon_workspace_protocol::v40::Failure {
+        eon_workspace_protocol::v41::Failure {
             code: if self.publication == Publication::Uncertain {
                 "registry-uncertain"
             } else if self.busy {
@@ -647,7 +647,7 @@ pub(super) fn validate_id(id: &str) -> Result<(), Failure> {
 
 fn validate_name(name: Option<&str>) -> Result<(), Failure> {
     if let Some(name) = name {
-        eon_workspace_protocol::v40::validate_workspace_name(name)
+        eon_workspace_protocol::v41::validate_workspace_name(name)
             .map_err(|error| Failure::new(error.to_string()))?;
     }
     Ok(())

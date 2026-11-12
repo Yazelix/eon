@@ -68,8 +68,12 @@ person's selected pane; it does not identify the new pane.
 ## Open files, tabs and sessions
 
 When asked to open a file for the person, run `eon edit --json -- FILE` to open
-the person's configured editor in a new pane, selecting the new pane in your
-tab and dismissing that tab's popup.
+the file in the person's configured editor in your tab. Packaged Helix uses
+Editor by default, retaining its buffers and unsaved edits and showing in place
+of Files; read its ID from that tab's selected_popup. Other editors, directories,
+no-Helix builds, a disabled Editor, an existing Editor without Eon's listener,
+and [editor] open_in = "pane" use a new pane named in created. A timeout or lost
+reply can leave the file open already or later; inspect before retrying.
 For a work tab, read `eon session --json` first, then run
 `eon tab create --no-focus --json --dir DIR`. This starts a tab at DIR
 without quick search and leaves the person's view alone. Append `-- COMMAND ARGS...`

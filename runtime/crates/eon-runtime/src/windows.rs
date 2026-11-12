@@ -16,7 +16,7 @@ use super::{
     },
     workspace::{failure_json, json_escape, terminal_text, validate_initial_directory},
 };
-use eon_workspace_protocol::v40::Failure;
+use eon_workspace_protocol::v41::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
@@ -715,7 +715,7 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
 /// Reload targets one exact owner; it never delegates to another executable.
 pub(super) fn reload_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Result<i32, Error> {
     use super::control::{ControlResponse, EndpointFailureKind, send_action};
-    use eon_workspace_protocol::v40::{Action, LifecycleResponse, WorkspaceAction};
+    use eon_workspace_protocol::v41::{Action, LifecycleResponse, WorkspaceAction};
     let argument = window_id_argument(argument)?;
     let (window, shown) = match select_window(inputs, argument) {
         Ok(selected) => selected,

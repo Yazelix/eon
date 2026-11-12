@@ -142,6 +142,7 @@ terminal_access = "window" # Let `eon pane read`, `history` and `send` reach thi
 
 [editor]
 command = ["hx"] # Direct argv that `eon edit` and Files run with the file appended.
+open_in = "popup" # Open in the packaged Helix Editor popup, or "pane" for a new pane.
 
 # [updates]
 # nix_profile: unset. Absolute profile path; set with nix_entry.
@@ -794,10 +795,19 @@ private per-user fallbacks.
 
 ## Editor
 
-`eon edit FILE`, and Enter on a text file in Files, open the file in a new pane
-running `[editor] command` with the file's absolute path appended. The default,
-`["hx"]`, is Eon's packaged Helix. The Eon package without Helix (`no-helix`)
-has no default (see below). Any terminal editor works:
+`eon edit -- FILE`, and Enter on a text file in Files, open the file using
+`[editor] command`. The default `["hx"]` is Eon's packaged Helix. With
+`open_in = "popup"` (the default), it opens in the tab's Editor popup: an existing
+editor receives the file as a buffer and retains its other buffers and unsaved
+edits; otherwise Editor starts with the file. Editor shows in place of Files.
+`FILE:LINE[:COL]` works as in Helix, with an existing literal filename taking
+priority. Set `open_in = "pane"` to open a new pane instead.
+
+Directories, other editors, a disabled Editor popup, and a live Editor started
+without Eon's listener use the new-pane path. That preserves the existing
+editor's buffers. A build without packaged Helix (`no-helix`) always uses this
+path, including for a user's own `hx`; it has no default command (see below).
+Any terminal editor works:
 
 ```toml
 [editor]
@@ -808,7 +818,8 @@ command = ["nvim"]
 `["emacs", "-nw"]` rather than `"emacs -nw"`. A bare name resolves through the
 terminal PATH, as popup commands do, and a relative path such as `./bin/ed`
 against the tab's directory. Each edit reads the setting again, so a
-change applies to the next file you open without restarting the window. When
+change to `command` or `open_in` applies to the next file you open without
+restarting the window. When
 the editor is not on the terminal PATH, the edit fails with `edit-command` and
 opens no pane; Eon does not fall back to Helix.
 
@@ -826,8 +837,18 @@ The Editor popup (Alt+Shift+O) uses the same editor resolution when it starts.
 The editor keeps its buffers and working directory when the popup hides or
 the tab directory changes. When the popup starts the packaged Helix, Eon
 supplies its private listener socket. Remove Helix's own `--listen` option
-from `[editor] command` to use the popup. An ordinary `eon edit` can still
-pass that option to Helix.
+from `[editor] command` to use the popup. The `open_in = "pane"` route can
+still pass that option to Helix.
+
+A live editor that is not listening fails with `editor-unavailable`; a refusal
+fails with `editor-rejected`; a reply deadline fails with `editor-unresponsive`.
+Each exits 1 and leaves workspace topology and selection unchanged. Connect is
+bounded to 100 ms and the answer to 1 second. A lost reply or client timeout can
+leave the file open already or later; Eon never retries that uncertain request
+or starts a second editor. Only an explicit editor timeout reply confirms that
+queued work was abandoned. A live listener accepts UTF-8 filenames; an
+unrepresentable filename is rejected before sending. A fresh editor's argv
+retains filename bytes unchanged.
 
 The Scrollback popup (Alt+Shift+E, or `eon pane history TARGET --edit`) opens
 its snapshot file with the same command, in a popup instead of a pane. When

@@ -27,9 +27,9 @@ pub use cli::{Inputs, run};
 pub use control::Error;
 pub use generation::current_generation as build_identity;
 pub use managed_environment::{
-    BarLoad, Defaults, ManagedPrograms, PaddingColor, PanelHeading, PopupCatalog, PopupCommand,
-    PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig, UpdateSettings,
-    update_target,
+    BarLoad, Defaults, EditorOpenIn, ManagedPrograms, PaddingColor, PanelHeading, PopupCatalog,
+    PopupCommand, PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
+    UpdateSettings, update_target,
 };
 pub use report::{ReportFacts, report_facts};
 

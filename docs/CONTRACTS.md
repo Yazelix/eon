@@ -829,7 +829,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     a terminal that ended naturally during the request is reconciled as an
     exit. Venus maps Alt+W directly to the selected pane without a mode;
     `eon pane close PANE` sends the same target-bearing EONW action.
-  - Closing a column sends EONW v40's `CloseColumn { pane, consent }`, which
+  - Closing a column sends EONW v41's `CloseColumn { pane, consent }`, which
     closes every pane of the column that holds the named live pane, in one
     request. What it would stop is its scope: that column's panes' terminals,
     with the end `column`; or, when the column is its tab's only column and
@@ -916,7 +916,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v40 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v41 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1519,6 +1519,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   concurrent visibility change.
   Amended on 2026-11-10 (approved by eon-overseer under Lucca's standing
   rule) by `eon-xodrj.4` for the built-in Editor popup.
+  Amended on 2026-11-12 by `eon-xodrj.5` under Lucca's approved S4 design,
+  with the timeout and routing corrections approved by eon-overseer under
+  Lucca's standing rule: Editor file routing and EONW v41 edit-result semantics.
   Amended on 2026-11-10 (approved by Lucca, relayed by eon-overseer) by
   `eon-igae.17.1`: `[editor] command` has no default in the `no-helix`
   package, where an unset command resolves from `$VISUAL`, then `$EDITOR`.
@@ -1609,12 +1612,35 @@ names its socket. CLI JSON names a session `session` and a terminal
     ahead of any installed one, so `eon` run by name there acts on that
     terminal's own window and generation after the installed profile changes.
     An `eon` run by path, or put first by a shell or script, is that build's.
-  - `eon edit [--json] -- FILE` opens FILE in the configured editor in a new
-    pane, as `pane create` would for the same caller, with the tab directory
-    as its working directory: the pane runs `[editor] command` with FILE's
-    absolute path appended as its last argument. A relative FILE resolves
-    against the caller's working directory. The editor's argv is runtime
-    policy and does not cross EONW.
+  - `eon edit [--json] -- FILE` opens FILE in the configured editor. A relative
+    FILE resolves against the caller's working directory. With `[editor] open_in =
+    "popup"` (the default), an enabled Editor popup, and the packaged Helix as
+    `[editor] command`, FILE opens in the target tab's Editor popup if there is
+    no live Editor instance or its live instance was started with Eon's
+    packaged-Helix listener. When an Editor instance started without that
+    listener is live, or `[popups.editor] enabled = false`, FILE opens in a new
+    pane using the configured editor, and the existing Editor instance and its
+    buffers remain untouched. On the popup route, Editor shows: when its editor
+    is live, FILE opens there as a buffer through its private socket, and its
+    other buffers, unsaved edits included, stay; otherwise a fresh Editor popup
+    starts with FILE. FILE reaches Helix unchanged, so Helix's `FILE:LINE[:COL]`
+    form applies when no file has that literal name.
+    An editor that does not answer within 1 second fails with
+    `editor-unresponsive`, one that is live but not listening fails with
+    `editor-unavailable`, and one that refuses FILE fails with `editor-rejected`;
+    each exits 1 and leaves Eon's workspace topology and selection unchanged.
+    A client timeout or a lost or invalid reply does not prove that FILE was not
+    opened; it may have opened already or open later. For a sent request, only an
+    explicit editor timeout reply guarantees that the queued open was abandoned
+    before execution and cannot run later. Eon does not retry an uncertain request
+    or start a second editor for it.
+    With `open_in = "pane"`, any other `[editor] command`, or a FILE that is a
+    directory, FILE opens in a new pane, as `pane create` would for the same
+    caller, with the tab directory as its working directory: the pane runs
+    `[editor] command` with FILE's absolute path appended as its last argument.
+    The result names the popup or pane that shows FILE. The editor's argv and
+    socket are runtime policy and do not cross EONW. EONW v41 distinguishes
+    this edit result from earlier builds that assume pane creation.
   - `eon pane create [--json] -- COMMAND [ARGS...]`, run from an Eon terminal,
     opens a new pane exactly where `pane create` would for that caller, with
     the tab directory as its working directory, running COMMAND and its
@@ -1889,7 +1915,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v40 and accepted Orbit management operations.
+- **Consumes:** Current EONW v41 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1901,7 +1927,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v40 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v41 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
@@ -1924,8 +1950,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Files remains live when hidden and keeps its process, location and cursor
   across tab-directory changes; only after its process exits does the next
   invocation start a fresh instance at the tab directory.
-  In Files, Yazi's edit opener runs `eon edit`, so Enter on a text file opens
-  it in a new pane running the configured editor and hides the popup. Enter
+  In Files, Yazi's edit opener runs `eon edit`, so Enter on a text file opens it
+  as `eon edit` does, by default in the tab's Editor popup, which then shows in
+  place of Files. Enter
   on a folder enters it, and other file types keep Yazi's default openers. For
   Git and other keep-alive popups except Files and Editor, retargeting changes
   no process until the next invocation, which stops the exact old terminal before starting
@@ -1945,8 +1972,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   instance-specific Unix socket path under a mode-0700 directory in the
   window's private runtime directory. Eon requires its packaged Helix to
   bind that socket as mode 0600. A Helix `--listen` option in `[editor] command`
-  fails the popup with `popup-command`. Ordinary `eon edit` still passes that
-  option to Helix. Before a new launch, Eon removes an owned non-listening
+  fails the popup with `popup-command`. The pane route of `eon edit` still
+  passes that option to Helix. Before a new launch, Eon removes an owned non-listening
   socket left at the instance's path. A live or non-owned leftover fails
   the popup start. Eon removes leftover sockets when their terminals end and
   sweeps stale sockets on supervisor start, keeping the sockets of terminals
@@ -2009,8 +2036,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v40 `attention` is needs input. Rows run by
-  EONW v40 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v41 `attention` is needs input. Rows run by
+  EONW v41 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -2601,7 +2628,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     presenting executable path or null while detached. Reload success JSON
     is `{"window":ID,"generation":GENERATION,"venus":PATH,"accepted":true,"replaced":null,"config_reloaded":null}`.
     `accepted:true` confirms that the supervisor accepted the request. On
-    EONW v40, `replaced:null` and `config_reloaded:null` mean this reply does
+    EONW v41, `replaced:null` and `config_reloaded:null` mean this reply does
     not confirm Venus replacement or configuration rereading; neither null
     means false. A supervisor implementing `eon-u199d.3` replaces Venus with
     current configuration arguments on success. Earlier supervisors still
@@ -3289,7 +3316,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v40 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v41 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -4411,7 +4438,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 7, EON-C8 topology, and EON-C10
-  (EONW v40, request and response). EON-C39 exposes a stream of its changes.
+  (EONW v41, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` and `name` through unchanged, and Venus maps
@@ -5646,7 +5673,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v40 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v41 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -5828,9 +5855,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v40 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v41 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v40; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v41; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

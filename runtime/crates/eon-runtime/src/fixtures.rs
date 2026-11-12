@@ -4,7 +4,7 @@ use crate::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v40::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v41::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
@@ -12,7 +12,7 @@ pub(crate) fn inputs() -> Inputs {
         skill: "fixture-skill",
         component_report: Ok("fixture-components".into()),
         presentation_protocols: Ok([
-            eon_workspace_protocol::v40::VERSION,
+            eon_workspace_protocol::v41::VERSION,
             orbit_protocol::session::VERSION,
             orbit_protocol::VERSION,
         ]),
@@ -140,6 +140,7 @@ pub(crate) fn inputs() -> Inputs {
             ansi_palette: "111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111",
             custom_popup_keep_alive: true,
             editor: Some(&["fixture-editor"]),
+            editor_open_in: crate::EditorOpenIn::Popup,
             agent_commands: &[],
         },
         orbit: "fixture-orbit".into(),

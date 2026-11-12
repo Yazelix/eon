@@ -32,6 +32,7 @@
       ]
     },
     "editor": {
+      "open_in": "popup",
       "command": [
         "fixture-editor"
       ]

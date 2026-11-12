@@ -5,11 +5,19 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Files Enter and `eon edit` open files in the packaged Helix Editor popup,
+  keeping its buffers and unsaved edits. `[editor] open_in = "pane"` selects
+  the new-pane path, also used by other editors, directories, disabled Editor,
+  an existing Editor without Eon's listener, and builds without Helix. Failed
+  exchanges leave workspace topology and selection unchanged; uncertain opens
+  are never retried. Eon 0.1.23 uses EONW v41 to distinguish the edit result;
+  v41 commands require a window on this build (`eon-xodrj.5`).
+
 - Panel headings default to `"connected"`; `[panels] heading = "notch"` remains
   a supported choice. Omitted settings use connected on window open, reopen or
   reload (`eon-j7ii2`, Lucca's 2026-11-11 decision).
 - `eon window reload ID --json` reports `"accepted":true` with
-  `"replaced":null` and `"config_reloaded":null`: EONW v40 confirms request
+  `"replaced":null` and `"config_reloaded":null`: EONW v41 confirms request
   acceptance, but cannot confirm those effects. Text output states the same
   limit (`eon-u199d.5`, EON-C11).
 

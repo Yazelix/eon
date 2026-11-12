@@ -2,7 +2,7 @@ use super::super::{
     control as endpoint, sessions::bound_io, supervisor::request_id, workspace as projection,
 };
 use super::*;
-use eon_workspace_protocol::v40::{self as wire, EventKind, Filter, Resume};
+use eon_workspace_protocol::v41::{self as wire, EventKind, Filter, Resume};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use std::os::fd::{AsFd, BorrowedFd};
 

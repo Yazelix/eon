@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume canonical EONW v41, which distinguishes Editor-popup edits from
+  earlier builds that assume pane creation (`eon-xodrj.5`). The message layout
+  and Reserved Stop are unchanged.
+
 - VEN-C8/VEN-C18: panel headings default to `connected`; `notch` remains a
   supported setting. Both drawings and pane header bands are unchanged
   (`eon-j7ii2`, Lucca's 2026-11-11 decision).

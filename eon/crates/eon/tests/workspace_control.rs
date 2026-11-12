@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v40::{
+use eon_workspace_protocol::v41::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -14,6 +14,7 @@ use orbit_protocol::management::{
     ProgramStatus, Record as ManagementRecord, Refusal, Screen as OrbitScreen,
     ServerMessage as ManagementServerMessage, TerminationReason, Tombstone, VisibleText,
 };
+use std::io::BufRead;
 use std::{
     ffi::OsStr,
     fs,
@@ -5746,7 +5747,10 @@ fn a_build_without_helix_omits_it_from_versions_and_defaults_and_refuses_its_nam
         serde_json::from_str(&run(helix, &["config", "defaults", "--json"])).unwrap()
     };
     assert_eq!(json(true)["editor"]["command"], serde_json::json!(["hx"]));
-    assert_eq!(json(false)["editor"], serde_json::json!({}));
+    assert_eq!(
+        json(false)["editor"],
+        serde_json::json!({"open_in":"popup"})
+    );
 
     // The Helix names refuse with one line, before anything is prepared. Running an
     // `hx` from PATH instead would find the same name again inside a terminal.
@@ -7772,7 +7776,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -7782,7 +7786,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -7793,7 +7797,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -7808,7 +7812,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -7826,14 +7830,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -7855,7 +7859,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -10385,7 +10389,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v40::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v41::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -12725,7 +12729,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v40::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v41::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -16099,9 +16103,19 @@ fn editor_popup_socket_helper() {
         .skip_while(|argument| argument != "--")
         .skip(1)
         .collect();
+    if !arguments.iter().any(|argument| argument == "--listen") {
+        let stop = PathBuf::from(std::env::var_os("EON_TEST_STOP").unwrap());
+        while !stop.exists() {
+            thread::sleep(Duration::from_millis(10));
+        }
+        return;
+    }
     assert!((2..=3).contains(&arguments.len()));
-    assert_eq!(arguments[0], "--listen");
-    let path = Path::new(&arguments[1]);
+    let listen = arguments
+        .iter()
+        .position(|argument| argument == "--listen")
+        .unwrap();
+    let path = Path::new(&arguments[listen + 1]);
     let hold = PathBuf::from(std::env::var_os("EON_TEST_EDITOR_BIND_HOLD").unwrap());
     let stop = PathBuf::from(std::env::var_os("EON_TEST_STOP").unwrap());
     while hold.exists() {
@@ -16126,8 +16140,63 @@ fn editor_popup_socket_helper() {
     .unwrap();
     let release = PathBuf::from(std::env::var_os("EON_TEST_EDITOR_RELEASE").unwrap())
         .with_extension(path.file_stem().unwrap());
+    let root = PathBuf::from(std::env::var_os("EON_TEST_EDITOR_SOCKET_LOG").unwrap())
+        .parent()
+        .unwrap()
+        .to_owned();
+    let mut opened = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("editor-open.log"))
+        .unwrap();
+    writeln!(
+        opened,
+        "{}",
+        serde_json::json!({"initial":arguments.iter().enumerate().find(|(index, _)| *index != listen && *index != listen + 1).map(|(_, file)| file.to_string_lossy())})
+    )
+    .unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut listener = Some(listener);
     while !release.exists() && !stop.exists() {
-        thread::sleep(Duration::from_millis(10));
+        let mode = fs::read_to_string(root.join("editor-mode")).unwrap_or_default();
+        if mode == "refused" {
+            listener.take();
+        }
+        if let Some(listener) = &listener {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .unwrap();
+                    let mut line = String::new();
+                    std::io::BufReader::new(&mut stream)
+                        .read_line(&mut line)
+                        .unwrap();
+                    let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    writeln!(opened, "{request}").unwrap();
+                    if mode == "hang" {
+                        while fs::read_to_string(root.join("editor-mode")).unwrap_or_default()
+                            == "hang"
+                            && !stop.exists()
+                        {
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                    let reply = if matches!(
+                        mode.as_str(),
+                        "rejected" | "timeout" | "unavailable" | "invalid" | "unsupported"
+                    ) {
+                        serde_json::json!({"version":1,"id":request["id"],"status":"error","error":{"class":mode,"message":"fake editor failure"}})
+                    } else {
+                        serde_json::json!({"version":1,"id":request["id"],"status":"ok"})
+                    };
+                    let _ = writeln!(stream, "{reply}");
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("fake editor accept: {error}"),
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
     }
     drop(listener);
     // Leave the socket behind, as a terminated editor can.
@@ -16205,6 +16274,266 @@ fn open_editor_popup(window: &PairWindow, id: &str) -> Popup {
         .unwrap();
     assert_eq!(tab.selected_popup.as_ref(), Some(&popup.id));
     popup.clone()
+}
+
+fn edit_as(window: &PairWindow, file: &OsStr, caller: Option<&str>) -> Output {
+    let mut command = eon_command(&window.binary);
+    command
+        .args(["edit", "--json", "--"])
+        .arg(file)
+        .current_dir(&window.root)
+        .env("EON_RUNTIME_DIR", &window.runtime)
+        .env("EON_CONFIG_HOME", &window.config);
+    if let Some(caller) = caller {
+        command.env("EON_TERMINAL", caller);
+    }
+    command.output().unwrap()
+}
+
+#[test]
+fn editor_edits_start_reuse_and_restart_the_files_callers_popup() {
+    let window = editor_popup_window();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let files = window.inspect("files-caller").tabs[0].popups[0].clone();
+    let process = live_identity(Path::new(OsStr::from_bytes(&files.endpoint))).process_id;
+    let caller = process::environ(process)
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .map(|token| String::from_utf8(token.to_vec()).unwrap())
+        .unwrap();
+    let opened = edit_as(&window, OsStr::new("a.txt:2:3"), Some(&caller));
+    assert!(opened.status.success(), "{opened:?}");
+    let json: serde_json::Value = serde_json::from_str(stdout(&opened)).unwrap();
+    assert!(json.get("created").is_none(), "{json}");
+    let before = window.inspect("first-file");
+    let editor = before.tabs[0]
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "editor")
+        .unwrap()
+        .clone();
+    assert_eq!(before.tabs[0].selected_popup.as_ref(), Some(&editor.id));
+    assert_eq!(before.tabs[0].panes().count(), 1);
+    let endpoint = Path::new(OsStr::from_bytes(&editor.endpoint));
+    let identity = live_identity(endpoint);
+    let log = window.root.join("editor-open.log");
+    let first: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 1)[0]).unwrap();
+    assert_eq!(
+        first["initial"],
+        window.root.join("a.txt:2:3").to_str().unwrap()
+    );
+
+    // A hidden Files caller targets its own tab, preserving the shown one.
+    assert!(window.eon(&["tab", "create"]).status.success());
+    let shown = window.inspect("other-tab").active_tab;
+    let edited = edit_as(&window, OsStr::new("b\n\".txt"), Some(&caller));
+    assert!(edited.status.success(), "{edited:?}");
+    let json: serde_json::Value = serde_json::from_str(stdout(&edited)).unwrap();
+    assert!(json.get("created").is_none(), "{json}");
+    let after = window.inspect("reused-editor");
+    assert_eq!(after.active_tab, shown);
+    assert_eq!(after.tabs[0].selected_popup.as_ref(), Some(&editor.id));
+    assert_eq!(live_identity(endpoint), identity);
+    let request: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 2)[1]).unwrap();
+    assert_eq!(
+        request["paths"][0],
+        window.root.join("b\n\".txt").to_str().unwrap()
+    );
+
+    // No live instance after editor exit: a later edit starts a fresh one.
+    fs::write(
+        window
+            .root
+            .join("editor-release")
+            .with_extension(&editor.session),
+        "",
+    )
+    .unwrap();
+    wait_for_snapshot(&window.control(), "editor-exit", |snapshot| {
+        !snapshot.tabs[0]
+            .popups
+            .iter()
+            .any(|popup| popup.id == editor.id)
+    });
+    let restarted = edit_as(&window, OsStr::new("c.txt"), Some(&caller));
+    assert!(restarted.status.success(), "{restarted:?}");
+    let after = window.inspect("restarted-editor");
+    assert_eq!(after.active_tab, shown);
+    assert_ne!(after.tabs[0].selected_popup.as_ref(), Some(&editor.id));
+    assert_eq!(wait_for_lines(&log, 3).len(), 3);
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn editor_edit_json_survives_a_transient_popup_caller() {
+    for reuse in [false, true] {
+        let window = editor_popup_window();
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(window.config.join("config.toml"))
+                .unwrap(),
+            "\n[popups.commands]\ncommand = [\"eon-nu\"]"
+        )
+        .unwrap();
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        let existing = reuse.then(|| open_editor_popup(&window, "existing-editor"));
+        if reuse {
+            wait_for_lines(&window.root.join("editor-socket.log"), 1);
+        }
+        let Response::Snapshot(opened) = window.invoke_popup("transient-caller", "commands", None)
+        else {
+            panic!("Commands did not open");
+        };
+        let commands = opened.tabs[0]
+            .popups
+            .iter()
+            .find(|popup| popup.entry == "commands")
+            .unwrap();
+        let caller = String::from_utf8(quit_terminal_caller(Path::new(OsStr::from_bytes(
+            &commands.endpoint,
+        ))))
+        .unwrap();
+        let old = commands.id.clone();
+        assert!(window.eon(&["tab", "create"]).status.success());
+        let active = window.inspect("other-active-tab").active_tab;
+        let output = edit_as(&window, OsStr::new("notes.txt"), Some(&caller));
+        assert!(output.status.success(), "{reuse}: {output:?}");
+        let json: serde_json::Value = serde_json::from_str(stdout(&output)).unwrap();
+        assert!(json.get("created").is_none(), "{reuse}: {json}");
+        let after = window.inspect("transient-edit-result");
+        assert_eq!(after.active_tab, active);
+        let tab = &after.tabs[0];
+        assert!(!tab.popups.iter().any(|popup| popup.id == old));
+        let editor = tab
+            .popups
+            .iter()
+            .find(|popup| popup.entry == "editor")
+            .unwrap();
+        assert_eq!(tab.selected_popup.as_ref(), Some(&editor.id));
+        assert_eq!(tab.panes().count(), 1);
+        if let Some(existing) = existing {
+            assert_eq!(editor.id, existing.id);
+        }
+        window.stop_generation(&mut supervisor);
+    }
+}
+
+#[test]
+fn editor_edit_failures_preserve_topology_and_selection_without_a_second_editor() {
+    let window = editor_popup_window();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    assert!(edit_as(&window, OsStr::new("a.txt"), None).status.success());
+    wait_for_lines(&window.root.join("editor-open.log"), 1);
+    window.invoke_popup("show-files", "files", None);
+    let before = stable_tabs(&window.inspect("before-failure").tabs);
+    for (mode, code) in [
+        ("rejected", "editor-rejected"),
+        ("invalid", "editor-rejected"),
+        ("unsupported", "editor-rejected"),
+        ("unavailable", "editor-unavailable"),
+        ("timeout", "editor-unresponsive"),
+        ("hang", "editor-unresponsive"),
+        ("refused", "editor-unavailable"),
+    ] {
+        fs::write(window.root.join("editor-mode"), mode).unwrap();
+        // The refused mode closes the listening descriptor before this request.
+        if mode == "refused" {
+            thread::sleep(Duration::from_millis(30));
+        }
+        let failed = edit_as(&window, OsStr::new("b.txt"), None);
+        assert_eq!(failed.status.code(), Some(1), "{mode}: {failed:?}");
+        assert!(stdout(&failed).contains(code), "{mode}: {failed:?}");
+        assert_eq!(
+            stable_tabs(&window.inspect(&format!("after-{mode}")).tabs),
+            before,
+            "{mode}"
+        );
+        assert_eq!(log_lines(&window.root.join("editor-socket.log")).len(), 1);
+        fs::write(window.root.join("editor-mode"), "").unwrap();
+    }
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn editor_edit_rereads_pane_routing_and_preserves_an_editor_without_a_listener() {
+    let window = editor_popup_window();
+    let settings = window.config.join("config.toml");
+    let base = fs::read_to_string(&settings).unwrap();
+    let user = window.root.join("user-editor");
+    executable(
+        &user,
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    fs::write(
+        &settings,
+        format!("{base}\n[editor]\ncommand = [\"{}\"]\n", user.display()),
+    )
+    .unwrap();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let original = open_editor_popup(&window, "user-editor");
+    let endpoint = Path::new(OsStr::from_bytes(&original.endpoint));
+    let identity = live_identity(endpoint);
+    fs::write(&settings, format!("{base}\n[editor]\ncommand = [\"hx\"]\n")).unwrap();
+    let edit = edit_as(&window, OsStr::new("a.txt"), None);
+    assert!(edit.status.success(), "{edit:?}");
+    assert!(stdout(&edit).contains("\"created\""));
+    assert_eq!(live_identity(endpoint), identity);
+    assert_eq!(
+        window.inspect("no-listener-pane").tabs[0].panes().count(),
+        2
+    );
+
+    fs::write(
+        &settings,
+        format!("{base}\n[editor]\ncommand = [\"hx\"]\nopen_in = \"pane\"\n"),
+    )
+    .unwrap();
+    assert!(edit_as(&window, OsStr::new("b.txt"), None).status.success());
+    assert_eq!(window.inspect("configured-pane").tabs[0].panes().count(), 3);
+    assert_eq!(live_identity(endpoint), identity);
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn editor_edit_uses_a_pane_for_directories_and_disabled_editor() {
+    for disabled in [false, true] {
+        let window = editor_popup_window();
+        if disabled {
+            writeln!(
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(window.config.join("config.toml"))
+                    .unwrap(),
+                "\n[popups.editor]\nenabled = false"
+            )
+            .unwrap();
+        }
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        let file = if disabled {
+            window.root.join("a.txt")
+        } else {
+            window.home.clone()
+        };
+        let edit = edit_as(&window, file.as_os_str(), None);
+        assert!(edit.status.success(), "{disabled}: {edit:?}");
+        assert!(stdout(&edit).contains("\"created\""));
+        let snapshot = window.inspect("pane-fallback");
+        assert_eq!(snapshot.tabs[0].panes().count(), 2);
+        assert!(
+            !snapshot.tabs[0]
+                .popups
+                .iter()
+                .any(|popup| popup.entry == "editor")
+        );
+        assert!(!window.generation().join("editor").exists());
+        window.stop_generation(&mut supervisor);
+    }
 }
 
 #[test]
@@ -16370,6 +16699,11 @@ fn editor_popup_refuses_a_configured_helix_listener_before_stopping_the_shown_po
     );
     assert!(!window.generation().join("editor").exists());
 
+    let settings = window.config.join("config.toml");
+    let source = fs::read_to_string(&settings)
+        .unwrap()
+        .replace("[editor]", "[editor]\nopen_in = \"pane\"");
+    fs::write(settings, source).unwrap();
     let caller = quit_terminal_caller(&window.generation().join("orbit.sock"));
     let file = window.root.join("notes.txt");
     let edited = eon_command(&window.binary)

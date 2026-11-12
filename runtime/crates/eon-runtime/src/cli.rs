@@ -23,7 +23,7 @@ use super::{
         terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v40::{
+use eon_workspace_protocol::v41::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
     MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
     TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
@@ -1144,7 +1144,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "pane create [--json] -- COMMAND...",
                 "Run COMMAND in a new pane",
             ),
-            ("edit [--json] -- FILE", "Open FILE in a new editor pane"),
+            ("edit [--json] -- FILE", "Open FILE in Editor or a pane"),
             (
                 "pane close PANE [--yes] [--json]",
                 "Close any pane of this session",
@@ -1370,6 +1370,8 @@ pane create keeps the selected pane and any popup.
 pane read, history and send reach hidden sessions; [agents]
 terminal_access governs all three. pane send --enter waits
 [agents] send_enter_delay_ms first.
+edit uses the packaged Helix Editor popup by default; set [editor]
+open_in = \"pane\" for a new pane.
 pane history --edit opens the history in a Scrollback editor popup,
 only in the shown session's active tab.
 pane send refuses while a person is typing; --force bypasses the typing check.
@@ -1651,6 +1653,7 @@ fn control(
         }
         confirmed_connection = Some(stream);
     }
+    let editing = matches!(action, Action::Edit { .. });
     let creation = match action {
         Action::Workspace(WorkspaceAction::NewWorkspace { .. }) => Some(Creation::Workspace),
         Action::Workspace(WorkspaceAction::CreateTab) | Action::LaunchTab { .. } => {
@@ -1667,6 +1670,29 @@ fn control(
     );
     let inspecting = !list
         && (explicit_inspection || matches!(action, Action::Workspace(WorkspaceAction::Inspect)));
+    // Opening Editor can stop a transient caller before the reply names its tab.
+    let edited_tab = if editing && let Some(session) = caller.as_deref().and_then(terminal_session)
+    {
+        let before = match inspect(socket, caller.as_deref(), &resolved.label) {
+            Ok(snapshot) => snapshot,
+            Err(error) => return report_failure(&error, json),
+        };
+        let Some(tab) = before.tabs.iter().find(|tab| {
+            tab.panes().any(|pane| pane.session == session)
+                || tab.popups.iter().any(|popup| popup.session == session)
+        }) else {
+            return report_failure(
+                &failure(
+                    "unknown-caller",
+                    format!("terminal {session} is not in window {}", resolved.label),
+                ),
+                json,
+            );
+        };
+        Some(tab.id.clone())
+    } else {
+        None
+    };
     let response = match match confirmed_connection {
         Some(stream) => super::control::send_action_on(stream, caller.clone(), action),
         None => send_action_from(Ok(socket), caller.clone(), action),
@@ -1682,6 +1708,15 @@ fn control(
     let window = window_json(resolved.window.as_deref());
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
+            let edit_popup = editing
+                && snapshot.tabs.iter().any(|tab| {
+                    let target = tab.id == edited_tab.as_deref().unwrap_or(&snapshot.active_tab);
+                    target
+                        && tab.popups.iter().any(|popup| {
+                            popup.entry == "editor"
+                                && tab.selected_popup.as_deref() == Some(&popup.id)
+                        })
+                });
             let member = snapshot
                 .workspaces
                 .iter()
@@ -1748,6 +1783,7 @@ fn control(
                         .map(|tab| terminal(tab, newest(tab.panes(), 'p', |pane| &pane.id))),
                     None,
                 ),
+                Some(Creation::Pane) if edit_popup => (None, None),
                 Some(Creation::Pane) => (
                     newest(
                         snapshot
@@ -2163,7 +2199,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v40::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v41::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2796,7 +2832,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v40::validate_pane_name(name)
+        eon_workspace_protocol::v41::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -3100,7 +3136,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v40::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v41::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -4078,7 +4114,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v40::{
+        use eon_workspace_protocol::v41::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4328,7 +4364,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v40::{
+        use eon_workspace_protocol::v41::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };

@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::v40::{
+use eon_workspace_protocol::v41::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
     PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -175,6 +175,7 @@ pub struct Defaults {
     /// build without Helix, where an unset command resolves from the environment at each
     /// edit (EON-C10).
     pub editor: Option<&'static [&'static str]>,
+    pub editor_open_in: EditorOpenIn,
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
     pub agent_commands: &'static [&'static [&'static str]],
@@ -532,10 +533,18 @@ pub(crate) struct Agents {
     pub(crate) send_typing_quiet_ms: u16,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EditorOpenIn {
+    Popup,
+    Pane,
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct EditorSettings {
     command: Option<PopupCommandSetting>,
+    open_in: Option<EditorOpenIn>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -843,6 +852,7 @@ fn defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
             unknown: BTreeMap::new(),
         },
         editor: EditorSettings {
+            open_in: Some(defaults.editor_open_in),
             command: defaults.editor.map(|argv| {
                 PopupCommandSetting::Argv(argv.iter().map(|argument| (*argument).into()).collect())
             }),
@@ -1027,6 +1037,9 @@ fn defaults_table(
             "command" if section == "editor" => {
                 "Direct argv that `eon edit` and Files run with the file appended."
             }
+            "open_in" if section == "editor" => {
+                "Open in the packaged Helix Editor popup, or \"pane\" for a new pane."
+            }
             "command" => "Direct argv, or auto for Agent's command selection.",
             "starship" => "Enable the managed Starship prompt integration.",
             "zoxide" => "Enable the managed Zoxide integration and record tab-directory picks.",
@@ -1177,7 +1190,14 @@ pub(crate) fn editor_command(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<Vec<OsString>, String> {
-    if let Some(argv) = editor_setting(root, defaults, log)? {
+    editor_from_settings(read_config(root, defaults, log)?.editor, defaults)
+}
+
+fn editor_from_settings(
+    settings: EditorSettings,
+    defaults: &Defaults,
+) -> Result<Vec<OsString>, String> {
+    if let Some(argv) = resolve_editor(settings, defaults)? {
         return Ok(argv.into_iter().map(Into::into).collect());
     }
     let (variable, argv) = environment_editor(env::var_os("VISUAL"), env::var_os("EDITOR")).ok_or(
@@ -1187,6 +1207,32 @@ pub(crate) fn editor_command(
     )?;
     validate_argv(variable, &argv)?;
     Ok(argv)
+}
+
+/// Resolve command and route from one config read for this edit.
+pub(crate) fn prepare_edit(
+    root: &Path,
+    defaults: &Defaults,
+    programs: &ManagedPrograms,
+    directory: &Path,
+    file: &Path,
+    log: Option<&DiagnosticLog>,
+) -> Result<super::editor::EditCommand, String> {
+    let config = read_config(root, defaults, log)?;
+    let popup = config.editor.open_in.unwrap_or(defaults.editor_open_in) == EditorOpenIn::Popup
+        && config.popups.get("editor").and_then(|popup| popup.enabled) != Some(false)
+        && !file.is_dir();
+    let mut argv = editor_from_settings(config.editor, defaults)?;
+    argv[0] = popup_executable(&argv[0], programs.shell_bin.as_deref(), directory)?
+        .ok_or_else(|| {
+            format!(
+                "executable {:?} is unavailable on Eon's terminal PATH",
+                argv[0]
+            )
+        })?
+        .into_os_string();
+    let popup = popup && super::editor::listen_position(&argv, programs, directory)?.is_some();
+    Ok(super::editor::EditCommand { argv, popup })
 }
 
 /// The first of `$VISUAL` and `$EDITOR` that names an editor, with its name: the value
@@ -2813,7 +2859,7 @@ mod tests {
         assert!(json["session"].get("future_option").is_none());
         assert!(json["popups"]["git"].get("future_option").is_none());
         assert!(json.get("updates").is_none());
-        assert_eq!(json["editor"], serde_json::json!({}));
+        assert_eq!(json["editor"], serde_json::json!({"open_in":"popup"}));
         // A future configured update default must no longer hide its section.
         config["updates"]["future_value"] = true.into();
         let toml = super::format_defaults(config.clone(), false).unwrap();
@@ -2956,6 +3002,10 @@ mod tests {
                         .collect::<Box<[_]>>(),
                 )
             }),
+            editor_open_in: super::read_config(root, defaults, None)?
+                .editor
+                .open_in
+                .unwrap_or(defaults.editor_open_in),
             custom_popup_keep_alive: defaults.custom_popup_keep_alive,
             ansi_palette: defaults.ansi_palette,
             agent_commands: defaults.agent_commands,
@@ -4050,7 +4100,7 @@ label = "Browse"
 
     #[test]
     fn editor_popup_settings_round_trip_and_count_against_the_catalog_limit() {
-        use eon_workspace_protocol::v40::MAX_ENTRIES;
+        use eon_workspace_protocol::v41::MAX_ENTRIES;
 
         let mut defaults = crate::fixtures::inputs().defaults;
         let editor = PopupDefinition {

@@ -2,7 +2,7 @@ use eon_runtime::{
     BarLoad, Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand,
     PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v40::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v41::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");
@@ -197,6 +197,7 @@ pub(crate) fn inputs() -> Inputs {
             custom_popup_keep_alive: true,
             // The packaged Helix on Eon's terminal PATH; none in a build without Helix.
             editor: helix.as_ref().map(|_| &["hx"][..]),
+            editor_open_in: eon_runtime::EditorOpenIn::Popup,
             agent_commands: &[
                 // Codex's shared daemon would run this terminal's eon commands as another terminal.
                 &["codex", "resume", "--no-daemon"],
