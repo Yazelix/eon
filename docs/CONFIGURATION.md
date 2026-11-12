@@ -939,13 +939,45 @@ If no desktop clipboard is available, Nushell reports the error.
 
 The profile also exposes `eon-yazi`, `eon-ya`, `eon-lazygit`, and `eon-lg`.
 Inside terminals their unprefixed names resolve to the pinned tools.
-Packages with Helix also expose `eon-hx` and provide `hx` in their terminals.
-In the `no-helix` package, `hx` resolves through your PATH.
-Eon's Helix reads its configuration from `$(eon config dir)/helix/`. It is
-built without Steel, so it never runs `helix.scm` or `init.scm`, whether they
-are in that directory or in a repository's `.helix` directory.
 Eon does not rewrite the parent PATH, aliases, shell startup files, or native
 tool data paths.
+
+### Helix
+
+Packages with Helix also expose `eon-hx` and provide `hx` in their terminals.
+In the `no-helix` package, `hx` resolves through your PATH.
+Eon's Helix reads your settings from `$(eon config dir)/helix/config.toml`,
+normally `~/.config/eon/helix/config.toml`. It does not read the host's
+`~/.config/helix/config.toml`.
+
+The nova-helix fork embeds these defaults, including when no user file exists.
+They also apply to `eon-hx` outside Eon and standalone builds of the same fork.
+Each row shows how to override that setting with its upstream value in your
+Helix config:
+
+| Setting | Fork default | Override to restore upstream |
+| --- | --- | --- |
+| `theme` | `"carbonfox"` | `"default"` |
+| `editor.soft-wrap.enable` | `true` | `false` |
+| `editor.bufferline` | `"multiple"` | `"never"` |
+| `editor.cursorline` | `true` | `false` |
+| `editor.color-modes` | `true` | `false` |
+| `editor.cursor-shape.insert` | `"bar"` | `"block"` |
+| `editor.indent-guides.render` | `true` | `false` |
+
+For example, `theme = "default"` restores the upstream theme, and
+`editor.soft-wrap.enable = false` turns wrapping off. Omitted settings keep the
+fork defaults. Your global file (or `hx -c FILE`) overrides the embedded file;
+trusted workspace `.helix/config.toml` settings override it in turn, including
+when no user file exists. Workspace trust policy stays global. Session changes
+through `:set` or `:toggle` apply last. Helix leaves your config files intact;
+`:config-open` opens your file and `:config-reload` reloads the layers.
+
+Carbonfox needs true color; Helix falls back to its default theme without it.
+`editor.true-color = true` overrides detection when your terminal supports it.
+Auto-save is disabled unless your configuration enables it. Eon's Helix is built
+without Steel, so it never runs `helix.scm` or `init.scm`, whether they are in
+your config directory or in a repository's `.helix` directory.
 
 ## Installation updates
 

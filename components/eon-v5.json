@@ -267,7 +267,7 @@
       "id": "helix",
       "project": "Helix",
       "version": "25.7.1",
-      "revision": "6ee75ad3b7b2f2ed82daae0f9bf1663c168f48ea",
+      "revision": "77e6f3ff8c72d147418e1fc28a3f8cf8b28a4761",
       "targets": ["x86_64-linux", "aarch64-darwin"],
       "source": {
         "kind": "git",

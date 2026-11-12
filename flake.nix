@@ -21,7 +21,7 @@
       inputs.kinestra.follows = "kinestra";
     };
     helix = {
-      url = "github:Yazelix/nova-helix/6ee75ad3b7b2f2ed82daae0f9bf1663c168f48ea";
+      url = "github:Yazelix/nova-helix/77e6f3ff8c72d147418e1fc28a3f8cf8b28a4761";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     yazi = {

@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Packaged Helix uses carbonfox, soft wrapping, a bufferline for multiple
+  buffers, cursorline, colored modes, an insert bar cursor and indent guides.
+  These nova-helix defaults sit below user and trusted workspace settings;
+  configure overrides in `$(eon config dir)/helix/config.toml`
+  (`eon-nova-helix-defaults-8zqa`).
+
 - Files Enter and `eon edit` open files in the packaged Helix Editor popup,
   keeping its buffers and unsaved edits. `[editor] open_in = "pane"` selects
   the new-pane path, also used by other editors, directories, disabled Editor,
