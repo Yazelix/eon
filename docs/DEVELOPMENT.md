@@ -820,6 +820,9 @@ Disabled hooks retain ordinary behavior. Instrumented idle measurements do not
 establish tracing overhead or a performance improvement; stress profiles and
 mitigations need separate scheduled proof.
 
+Venus's separate `EON_VENUS_FRAME_TIMINGS` file diagnostic is described in
+[`venus/docs/DEVELOPMENT.md`](../venus/docs/DEVELOPMENT.md#frame-timing-diagnostic).
+
 #### Pressure and telemetry
 
 Every response run writes `DIR/telemetry.tsv`: once a second, and at each warm

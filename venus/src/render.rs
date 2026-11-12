@@ -19,10 +19,16 @@ use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
+    fs::OpenOptions,
+    io::{self, BufWriter, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
     },
+    thread::{self, JoinHandle},
     time::Instant,
 };
 use wgpu::{
@@ -203,10 +209,142 @@ impl CellMetrics {
 /// Result of one bounded surface presentation attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PresentOutcome {
-    Presented,
+    Presented(Option<RenderTimings>),
     Deferred,
     Occluded,
     Recovered,
+}
+
+/// Opt-in host elapsed times; these do not measure GPU completion or display latency.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderTimings {
+    pub present_ns: u64,
+    pub render_ns: u64,
+    pub rebuild_ns: u64,
+    pub prepare_ns: u64,
+    pub acquire_ns: u64,
+    pub submit_ns: u64,
+    pub full_rebuild: bool,
+}
+
+struct FrameTimingRow {
+    revision: Option<u64>,
+    receive_ns: Option<u64>,
+    scene_ns: u64,
+    render: RenderTimings,
+    dropped: u64,
+}
+
+/// A bounded diagnostic writer; the event loop never waits for disk I/O.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct FrameTimings {
+    sender: Option<SyncSender<FrameTimingRow>>,
+    writer: Option<JoinHandle<()>>,
+    dropped: u64,
+}
+
+impl FrameTimings {
+    pub fn from_environment() -> Self {
+        Self::new(crate::transport::frame_timings_path())
+    }
+
+    fn new(path: Option<&Path>) -> Self {
+        let Some(path) = path else {
+            return Self::default();
+        };
+        let path = path.to_owned();
+        let (sender, receiver) = mpsc::sync_channel(256);
+        match thread::Builder::new()
+            .name("venus-frame-timings".into())
+            .spawn(move || {
+                if let Err(error) = write_frame_rows(&path, receiver) {
+                    eprintln!("Venus frame timings disabled: {error}");
+                }
+            }) {
+            Ok(writer) => Self {
+                sender: Some(sender),
+                writer: Some(writer),
+                dropped: 0,
+            },
+            Err(error) => {
+                eprintln!("Venus frame timings disabled: {error}");
+                Self::default()
+            }
+        }
+    }
+
+    pub fn record(
+        &mut self,
+        outcome: PresentOutcome,
+        revision: Option<u64>,
+        receive_ns: Option<u64>,
+        scene_ns: u64,
+    ) {
+        let (Some(sender), PresentOutcome::Presented(Some(render))) = (&self.sender, outcome)
+        else {
+            return;
+        };
+        let row = FrameTimingRow {
+            revision,
+            receive_ns,
+            scene_ns,
+            render,
+            dropped: self.dropped,
+        };
+        match sender.try_send(row) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => self.dropped = self.dropped.saturating_add(1),
+            Err(mpsc::TrySendError::Disconnected(_)) => self.sender = None,
+        }
+    }
+}
+
+impl Drop for FrameTimings {
+    fn drop(&mut self) {
+        self.sender.take();
+        if let Some(writer) = self.writer.take()
+            && writer.join().is_err()
+        {
+            eprintln!("Venus frame timings writer failed");
+        }
+    }
+}
+
+fn write_frame_rows(path: &Path, receiver: mpsc::Receiver<FrameTimingRow>) -> io::Result<()> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("frame timings require a regular file"));
+    }
+    let mut writer = BufWriter::new(file);
+    for row in receiver {
+        let render = row.render;
+        serde_json::to_writer(
+            &mut writer,
+            &serde_json::json!({
+                "v": 1,
+                "revision": row.revision,
+                "receive_ns": row.receive_ns,
+                "present_ns": render.present_ns,
+                "scene_ns": row.scene_ns,
+                "render_ns": render.render_ns,
+                "rebuild_ns": render.rebuild_ns,
+                "prepare_ns": render.prepare_ns,
+                "acquire_ns": render.acquire_ns,
+                "submit_ns": render.submit_ns,
+                "full_rebuild": render.full_rebuild,
+                "dropped": row.dropped,
+            }),
+        )?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()
 }
 
 /// GPU and text failure suitable for the client-visible bounded status path.
@@ -1811,10 +1949,12 @@ impl Renderer {
         generation: u64,
     ) -> Result<PresentOutcome, RenderError> {
         ensure_device_available(&self.device_lost)?;
+        let started = crate::transport::frame_time();
         let paint = workspace
             .filter(|workspace| self.pane_frames || workspace.popup_label().is_some())
             .map(|workspace| workspace_paint(workspace, scene, columns, self.metrics));
         let workspace = paint.as_deref().or(workspace);
+        let rebuild_started = crate::transport::frame_time();
         crate::transport::bench_trace("rebuild_begin", "");
         let content_changed = self.rebuild_if_needed(
             scene,
@@ -1830,6 +1970,8 @@ impl Renderer {
             generation,
         );
         crate::transport::bench_trace("rebuild_end", content_changed);
+        let rebuild_ns = crate::transport::frame_elapsed(rebuild_started);
+        let prepare_started = crate::transport::frame_time();
         if scroll_offset == 0.0 && dialog.is_none() {
             self.rebuild_dynamic_cursor(scene, workspace, blink_visible);
         } else {
@@ -1874,8 +2016,11 @@ impl Renderer {
             }
         }
 
+        let prepare_ns = crate::transport::frame_elapsed(prepare_started);
         crate::transport::bench_trace("texture_begin", "");
+        let acquire_started = crate::transport::frame_time();
         let current_texture = self.surface.get_current_texture();
+        let acquire_ns = crate::transport::frame_elapsed(acquire_started);
         crate::transport::bench_trace("texture_end", "");
         ensure_device_available(&self.device_lost)?;
         let frame = match current_texture {
@@ -1963,11 +2108,17 @@ impl Renderer {
                 .map_err(display_error("cannot render the Venus glyph atlas"))?;
         }
         crate::transport::bench_trace("submit", "");
+        let render_ns = crate::transport::frame_elapsed(started).saturating_sub(acquire_ns);
+        let submit_started = crate::transport::frame_time();
         self.queue.submit(Some(encoder.finish()));
         ensure_device_available(&self.device_lost)?;
         self.window.pre_present_notify();
         self.queue.present(frame);
         ensure_device_available(&self.device_lost)?;
+        let present_ns = crate::transport::frame_time();
+        let submit_ns = present_ns
+            .zip(submit_started)
+            .map_or(0, |(end, start)| end.saturating_sub(start));
         self.atlas.trim();
         self.terminal.presented_scrollback_rect = self.terminal.scrollback_rect;
         if crate::transport::bench_tracing() {
@@ -2009,7 +2160,17 @@ impl Renderer {
                 }
             }
         }
-        Ok(PresentOutcome::Presented)
+        Ok(PresentOutcome::Presented(present_ns.map(|present_ns| {
+            RenderTimings {
+                present_ns,
+                render_ns,
+                rebuild_ns,
+                prepare_ns,
+                acquire_ns,
+                submit_ns,
+                full_rebuild: content_changed,
+            }
+        })))
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -1909,7 +1909,7 @@ mod tests {
                         u64::try_from(phase).unwrap() + 1,
                     )
                     .unwrap();
-                if outcome == PresentOutcome::Presented {
+                if matches!(outcome, PresentOutcome::Presented(_)) {
                     self.presented[usize::try_from(phase).unwrap()] += 1;
                 }
                 renderer.window.request_redraw();

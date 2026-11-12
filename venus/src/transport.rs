@@ -1039,6 +1039,12 @@ impl Transport {
     pub fn drain_events(&self) -> Vec<TransportEvent> {
         self.events.drain()
     }
+
+    /// Diagnostic receive time of a frame delivered to this terminal's model.
+    #[doc(hidden)]
+    pub fn frame_received_ns(&self, revision: u64) -> Option<u64> {
+        self.events.frame_received_ns(revision)
+    }
 }
 
 impl Drop for Transport {
@@ -1056,6 +1062,7 @@ struct EventQueue(Mutex<QueuedEvents>, Condvar);
 #[derive(Default)]
 struct QueuedEvents {
     events: VecDeque<QueuedEvent>,
+    received: VecDeque<(u64, u64)>,
     retained_bytes: usize,
     delivered_frame_high_water: Option<u64>,
     stopped: bool,
@@ -1064,6 +1071,7 @@ struct QueuedEvents {
 struct QueuedEvent {
     event: TransportEvent,
     framed_bytes: usize,
+    received_ns: Option<u64>,
 }
 
 const EVENT_QUEUE_CAPACITY: usize = 256;
@@ -1077,7 +1085,8 @@ impl EventQueue {
     }
 
     fn push_framed(&self, event: TransportEvent, framed_bytes: usize) -> bool {
-        self.push_with_byte_capacity(event, framed_bytes, EVENT_QUEUE_BYTE_CAPACITY)
+        let received_ns = frame_revision(&event).and_then(|_| frame_time());
+        self.push_with_byte_capacity(event, framed_bytes, EVENT_QUEUE_BYTE_CAPACITY, received_ns)
     }
 
     fn push_with_byte_capacity(
@@ -1085,6 +1094,7 @@ impl EventQueue {
         event: TransportEvent,
         framed_bytes: usize,
         byte_capacity: usize,
+        received_ns: Option<u64>,
     ) -> bool {
         let incoming_revision = frame_revision(&event);
         let mut state = self.0.lock().expect("transport event queue lock poisoned");
@@ -1159,6 +1169,7 @@ impl EventQueue {
         state.events.push_back(QueuedEvent {
             event,
             framed_bytes,
+            received_ns,
         });
         wake
     }
@@ -1172,9 +1183,34 @@ impl EventQueue {
             .chain(state.delivered_frame_high_water)
             .max();
         state.retained_bytes = 0;
+        if frame_timings_path().is_some() {
+            let receipts: Vec<_> = state
+                .events
+                .iter()
+                .filter_map(|queued| Some((frame_revision(&queued.event)?, queued.received_ns?)))
+                .collect();
+            for receipt in receipts {
+                state
+                    .received
+                    .retain(|(revision, _)| *revision != receipt.0);
+                state.received.push_back(receipt);
+                if state.received.len() > FRAME_QUEUE_CAPACITY {
+                    state.received.pop_front();
+                }
+            }
+        }
         let events = state.events.drain(..).map(|queued| queued.event).collect();
         self.1.notify_all();
         events
+    }
+
+    fn frame_received_ns(&self, revision: u64) -> Option<u64> {
+        self.0
+            .lock()
+            .expect("transport event queue lock poisoned")
+            .received
+            .iter()
+            .find_map(|&(received_revision, time)| (received_revision == revision).then_some(time))
     }
 
     /// Releases a waiting push once the client has gone.
@@ -1423,6 +1459,37 @@ impl Drop for BenchTrace {
 pub fn bench_tracing() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var_os("EON_BENCH_TRACE").is_some())
+}
+
+pub(crate) fn frame_timings_path() -> Option<&'static Path> {
+    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::var_os("EON_VENUS_FRAME_TIMINGS").map(PathBuf::from))
+        .as_deref()
+}
+
+/// Nanoseconds in the same monotonic clock domain as the benchmark trace.
+#[doc(hidden)]
+pub fn frame_time() -> Option<u64> {
+    frame_timings_path().map(|_| sample_frame_time())
+}
+
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static FRAME_CLOCK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn sample_frame_time() -> u64 {
+    #[cfg(test)]
+    FRAME_CLOCK_READS.set(FRAME_CLOCK_READS.get() + 1);
+    let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+}
+
+#[doc(hidden)]
+pub fn frame_elapsed(start: Option<u64>) -> u64 {
+    start.map_or(0, |start| {
+        frame_time().unwrap_or(start).saturating_sub(start)
+    })
 }
 
 #[cfg(test)]
@@ -1705,13 +1772,14 @@ mod tests {
     fn event_queue_bytes_are_bounded_replaced_and_reset() {
         const BYTE_CAPACITY: usize = 10;
         let events = EventQueue::default();
-        assert!(events.push_with_byte_capacity(server_frame(1), 6, BYTE_CAPACITY));
+        assert!(events.push_with_byte_capacity(server_frame(1), 6, BYTE_CAPACITY, None));
         assert!(!events.push_with_byte_capacity(
             TransportEvent::Server(ServerMessage::Accepted),
             1,
             BYTE_CAPACITY,
+            None,
         ));
-        assert!(!events.push_with_byte_capacity(server_frame(2), 9, BYTE_CAPACITY));
+        assert!(!events.push_with_byte_capacity(server_frame(2), 9, BYTE_CAPACITY, None));
         assert_eq!(events.0.lock().unwrap().retained_bytes, BYTE_CAPACITY);
         assert_eq!(
             events.drain(),
@@ -1721,6 +1789,49 @@ mod tests {
             ]
         );
         assert_eq!(events.0.lock().unwrap().retained_bytes, 0);
+    }
+
+    #[test]
+    fn frame_timing_receipts_follow_coalesced_frames_and_viewport_replies() {
+        const CHILD: &str = "EON_VENUS_TEST_FRAME_RECEIPTS_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "transport::tests::frame_timing_receipts_follow_coalesced_frames_and_viewport_replies"])
+                .env(CHILD, "1")
+                .env("EON_VENUS_FRAME_TIMINGS", "unused-receipts-test.jsonl")
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let events = EventQueue::default();
+        let push = |event, time| {
+            events.push_with_byte_capacity(event, 0, EVENT_QUEUE_BYTE_CAPACITY, Some(time));
+        };
+        push(server_frame(1), 100);
+        push(server_frame(2), 200);
+        assert_eq!(events.frame_received_ns(2), None);
+        assert_eq!(events.drain(), [server_frame(2)]);
+        assert_eq!(events.frame_received_ns(1), None);
+        assert_eq!(events.frame_received_ns(2), Some(200));
+        push(server_wheel_frame(3), 300);
+        assert_eq!(events.drain(), [server_wheel_frame(3)]);
+        assert_eq!(events.frame_received_ns(3), Some(300));
+        push(server_scroll_frame(4), 400);
+        push(server_frame(5), 500);
+        assert_eq!(events.drain(), [server_scroll_frame(4), server_frame(5)]);
+        assert_eq!(events.frame_received_ns(2), None);
+        assert_eq!(events.frame_received_ns(3), None);
+        assert_eq!(events.frame_received_ns(4), Some(400));
+        assert_eq!(events.frame_received_ns(5), Some(500));
+        events.push(accepted());
+        events.drain();
+        assert_eq!(events.frame_received_ns(4), Some(400));
+        assert_eq!(EventQueue::default().frame_received_ns(4), None);
     }
 
     #[test]

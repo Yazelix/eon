@@ -17,6 +17,46 @@ nix develop -c eon-test -p yazelix-venus
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
+## Frame timing diagnostic
+
+Set `EON_VENUS_FRAME_TIMINGS=/absolute/path/frames.jsonl` in Venus's launch
+environment to append one JSON line per successful presentation. It is off by
+default, reads the environment once, and adds no product configuration or mode.
+Use a separate regular file for each Venus process. No terminal text is recorded.
+This is a development diagnostic, not a stable product file format.
+
+Version 1 (`v: 1`) records:
+
+| Field | Meaning |
+| --- | --- |
+| `revision` | Latest frame applied to the selected terminal; null before a frame exists. Repeated revisions include cursor and chrome redraws. |
+| `receive_ns` | Monotonic receive time captured before transport queue admission for that frame, including wheel/scroll viewport replies; null when unavailable. Coalesced frames retain their own receipt. |
+| `present_ns` | Monotonic time after the native submit/present calls return. |
+| `scene_ns` | Canonical scene construction across the window's current terminal models since the previous successful presentation, plus this presentation's workspace/dialog scene construction. Reused scenes and focus changes do not charge previously presented work again. |
+| `render_ns` | Host elapsed time in the renderer before submission, excluding surface acquisition. |
+| `rebuild_ns`, `prepare_ns` | Portions of `render_ns` spent rebuilding draw inputs and preparing dynamic cursor/text resources (including glyph-atlas retries). |
+| `acquire_ns` | Surface texture acquisition, kept separate because it can wait. |
+| `submit_ns` | Host elapsed time for command completion, queue submission and native presentation calls. |
+| `full_rebuild` | Whether this presentation attempt rebuilt the cached window draw inputs. |
+| `dropped` | Cumulative rows dropped because the bounded writer queue was full. |
+
+All timestamps share `EON_BENCH_TRACE`'s rustix monotonic clock domain; durations
+are nanoseconds. These are elapsed host intervals, not CPU accounting, GPU
+completion, compositor display time or panel latency. Frame reduction, canonical
+scene construction, rendering and presentation retain their normal behavior.
+No row is emitted for a deferred, occluded, recovered or failed presentation.
+
+A bounded queue sends rows to a buffered writer without waiting for disk on the
+render thread. Clean shutdown drains and flushes it; crashes can lose buffered
+rows. Open/write errors report once on stderr and stop logging. Check for errors,
+nonzero `dropped`, and missing rows before using a log for measurements. The
+diagnostic itself has overhead; compare enabled and disabled runs in a quiet slot.
+Relative paths resolve against Venus's working directory; an absolute path avoids
+ambiguity. Draining the writer on clean exit can delay shutdown if its filesystem
+stalls. Use local disposable storage for measurement.
+
+## Native checks
+
 The application regression also needs an isolated native Wayland display and
 Vulkan renderer, so it runs outside `eon-test`, which hides every display.
 Point `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` at that display, and `TMPDIR` at

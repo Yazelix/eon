@@ -151,6 +151,7 @@ pub struct SessionModel {
     notices: Vec<Notice>,
     attachment: u64,
     resources: Resources,
+    scene_build_ns: u64,
 }
 
 /// One attachment's resource order state (VEN-C31).
@@ -671,12 +672,19 @@ impl SessionModel {
             notices: Vec::with_capacity(4),
             attachment: next_attachment(),
             resources: Resources::default(),
+            scene_build_ns: 0,
         }
     }
 
     #[must_use]
     pub fn scene(&self) -> Option<&Scene> {
         self.scene.as_ref()
+    }
+
+    /// Scene work since the last successful presentation, consumed once by the diagnostic.
+    #[doc(hidden)]
+    pub fn take_scene_build_ns(&mut self) -> u64 {
+        std::mem::take(&mut self.scene_build_ns)
     }
 
     /// Position of the accepted viewport, never extrapolated from a preview.
@@ -779,7 +787,9 @@ impl SessionModel {
                         && current.colors.palette == frame.colors.palette
                 });
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
+                let started = crate::transport::frame_time();
                 let scene = Scene::from_frame(frame, self.attachment);
+                self.scene_build_ns += crate::transport::frame_elapsed(started);
                 self.accept_scene(scene);
                 if !preview_compatible {
                     self.scroll_preview = None;
@@ -788,7 +798,9 @@ impl SessionModel {
             }
             ServerMessage::WheelOutcome(WheelOutcome::Viewport { frame, .. }) if attached => {
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
+                let started = crate::transport::frame_time();
                 let scene = Scene::from_frame(frame, self.attachment);
+                self.scene_build_ns += crate::transport::frame_elapsed(started);
                 self.accept_scene(scene);
                 self.scroll_preview = None;
                 self.awaiting_current_frame = false;
@@ -826,7 +838,9 @@ impl SessionModel {
                 let preview =
                     scene_preview(frame.as_ref(), scroll_direction(requested_rows), next)?;
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
+                let started = crate::transport::frame_time();
                 let scene = Scene::from_frame(frame, self.attachment);
+                self.scene_build_ns += crate::transport::frame_elapsed(started);
                 self.accept_scene(scene);
                 self.scroll_preview = Some(preview);
                 self.awaiting_current_frame = false;
@@ -979,6 +993,7 @@ impl SessionModel {
 
     /// Start a new attachment, which discards the old one's resources and identities.
     pub fn prepare_reconnect(&mut self) {
+        self.scene_build_ns = 0;
         self.reducer = FrameReducer::default();
         self.connection = ConnectionState::Connecting;
         self.awaiting_current_frame = true;

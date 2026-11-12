@@ -40,15 +40,15 @@ use winit::{
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, AttentionFilter, BarItem, BenchTrace, CellMetrics,
     CellText, ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
-    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, HeaderText, HeadingAction,
-    Hyperlink, ImageKey, ImageResync, InputState, LoadLevels, LocalClock, LocalNoticeSource,
-    MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor, PaneHeaderAction,
-    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
-    SidebarView, Transport, TransportEvent, WindowMenuAction, WorkspaceEvent, WorkspaceFocus,
-    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
-    active_popup, attention_only_change, bench_trace, bench_tracing, focused_terminal,
-    labels_only_change, read_eon_icon, shown_workspace, validate_copy_uri, validate_open_uri,
-    wrapped_lines,
+    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, FrameTimings, HeaderText,
+    HeadingAction, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels, LocalClock,
+    LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor,
+    PaneHeaderAction, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
+    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction, WorkspaceEvent,
+    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
+    WorkspaceTransport, active_popup, attention_only_change, bench_trace, bench_tracing,
+    focused_terminal, labels_only_change, read_eon_icon, shown_workspace, validate_copy_uri,
+    validate_open_uri, wrapped_lines,
 };
 
 mod geometry;
@@ -1321,6 +1321,7 @@ struct Application {
     /// The selected terminal's presented identity, which pairs its input; column output
     /// repaints without changing it.
     presentation: PresentationState,
+    frame_timings: FrameTimings,
     links: LinkInteraction,
     workspace_transport: Option<WorkspaceTransport>,
     workspace_model: WorkspaceModel,
@@ -1432,6 +1433,7 @@ impl Application {
             terminal: TerminalView::new(orbit_socket),
             column_views: Vec::new(),
             presentation: PresentationState::default(),
+            frame_timings: FrameTimings::from_environment(),
             links: LinkInteraction::default(),
             workspace_socket,
             new_window_executable: std::env::var_os("EON_NEW_WINDOW_EXECUTABLE")
@@ -5309,8 +5311,10 @@ impl Application {
             owned_status.as_str()
         };
         let preedit = self.input.preedit();
+        let scene_started = yazelix_venus::frame_time();
         let workspace = self.workspace_scene();
         let dialog = self.dialog_scene();
+        let scene_ns = yazelix_venus::frame_elapsed(scene_started);
         let workspace_focus = self.workspace_focus;
         let candidate = self.presentation_candidate(workspace.as_ref());
         let kinetic_active = self.terminal.terminal_scroll.velocity != 0.0;
@@ -5428,7 +5432,22 @@ impl Application {
             preedit,
             candidate.generation,
         ) {
-            Ok(PresentOutcome::Presented) => {
+            Ok(outcome @ PresentOutcome::Presented(_)) => {
+                if scene_started.is_some() {
+                    let revision = self.terminal.model.scene().map(|scene| scene.revision);
+                    let receive_ns = revision.and_then(|revision| {
+                        self.terminal
+                            .transport
+                            .as_ref()?
+                            .frame_received_ns(revision)
+                    });
+                    self.frame_timings.record(
+                        outcome,
+                        revision,
+                        receive_ns,
+                        scene_ns + take_scene_build_ns(&mut self.terminal, &mut self.column_views),
+                    );
+                }
                 // `dialog` is the scene this call built and drew, so its list is now on screen.
                 if let Some(prompt) = &mut self.close_prompt {
                     prompt.presented(
@@ -6813,6 +6832,14 @@ fn record_render_failure<'a>(
     set_title(&notice);
     report(&notice);
     Some(render_notice.insert(notice).as_str())
+}
+
+/// Consume the window's scene work once, before any later selection swaps its models.
+fn take_scene_build_ns(terminal: &mut TerminalView, columns: &mut [TerminalView]) -> u64 {
+    std::iter::once(terminal)
+        .chain(columns)
+        .map(|view| view.model.take_scene_build_ns())
+        .sum()
 }
 
 /// Each other column's latest scene, aligned with the workspace scene's `other_columns`.

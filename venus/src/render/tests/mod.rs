@@ -9,6 +9,113 @@ mod padding;
 mod shaping;
 mod text_clip;
 
+#[test]
+fn unset_frame_timings_skip_the_real_clock_and_writer_paths() {
+    use crate::transport::{FRAME_CLOCK_READS, frame_elapsed, frame_time, frame_timings_path};
+    assert!(
+        std::env::var_os("EON_VENUS_FRAME_TIMINGS").is_none(),
+        "run through isolated eon-test"
+    );
+    assert!(frame_timings_path().is_none());
+    let reads = FRAME_CLOCK_READS.get();
+    assert_eq!(frame_time(), None);
+    assert_eq!(frame_elapsed(Some(0)), 0);
+    let outcome =
+        PresentOutcome::Presented(frame_time().map(|_| panic!("disabled timing row built")));
+    let mut log = FrameTimings::from_environment();
+    log.record(outcome, Some(1), None, 0);
+    assert!(
+        log.sender.is_none() && log.writer.is_none(),
+        "no writer means no row encoding, allocation or file I/O"
+    );
+    assert_eq!(
+        FRAME_CLOCK_READS.get(),
+        reads,
+        "disabled probes must not sample the diagnostic clock"
+    );
+}
+
+#[test]
+fn frame_timings_append_successful_presents_and_flush_on_drop() {
+    let root = std::env::temp_dir().join(format!("venus-frame-timings-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("frames.jsonl");
+    let rendered = PresentOutcome::Presented(Some(RenderTimings {
+        present_ns: 100,
+        render_ns: 20,
+        rebuild_ns: 10,
+        prepare_ns: 5,
+        acquire_ns: 30,
+        submit_ns: 2,
+        full_rebuild: true,
+    }));
+    std::fs::write(&path, "existing\n").unwrap();
+    {
+        let mut log = FrameTimings::new(Some(&path));
+        for outcome in [
+            PresentOutcome::Deferred,
+            PresentOutcome::Occluded,
+            PresentOutcome::Recovered,
+            PresentOutcome::Presented(None),
+        ] {
+            log.record(outcome, Some(7), Some(50), 3);
+        }
+        log.record(rendered, Some(7), Some(50), 3);
+        log.record(
+            PresentOutcome::Presented(Some(RenderTimings {
+                full_rebuild: false,
+                ..RenderTimings::default()
+            })),
+            Some(7),
+            Some(50),
+            0,
+        );
+    }
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("existing"));
+    let rows: Vec<serde_json::Value> = lines
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0],
+        serde_json::json!({
+            "v": 1, "revision": 7, "receive_ns": 50, "present_ns": 100,
+            "scene_ns": 3, "render_ns": 20, "rebuild_ns": 10, "prepare_ns": 5,
+            "acquire_ns": 30, "submit_ns": 2, "full_rebuild": true, "dropped": 0,
+        })
+    );
+    assert_eq!(rows[1]["revision"], 7);
+    assert_eq!(rows[1]["scene_ns"], 0);
+    assert_eq!(rows[1]["full_rebuild"], false);
+    let (_, receiver) = mpsc::sync_channel(1);
+    assert!(write_frame_rows(&root, receiver).is_err());
+    drop(FrameTimings::new(Some(&root)));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn frame_timings_drop_full_queue_rows_without_waiting_and_report_loss() {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let mut log = FrameTimings {
+        sender: Some(sender),
+        writer: None,
+        dropped: 0,
+    };
+    let outcome = PresentOutcome::Presented(Some(RenderTimings::default()));
+    log.record(outcome, None, None, 0);
+    log.record(outcome, Some(1), Some(10), 0);
+    assert_eq!(receiver.recv().unwrap().dropped, 0);
+    log.record(outcome, Some(2), Some(20), 0);
+    let row = receiver.recv().unwrap();
+    assert_eq!(row.revision, Some(2));
+    assert_eq!(row.dropped, 1);
+    drop(receiver);
+    log.record(outcome, None, None, 0);
+    assert!(log.sender.is_none());
+}
+
 fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_ {
     batch
         .bytes

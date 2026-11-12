@@ -2305,8 +2305,7 @@ fn a_close_request_quits_as_alt_shift_q_does() {
 }
 
 /// An empty Orbit frame at `revision`.
-#[cfg(target_os = "linux")]
-fn frame(revision: u64, screen: orbit_protocol::Screen) -> TransportEvent {
+pub(super) fn frame(revision: u64, screen: orbit_protocol::Screen) -> TransportEvent {
     use orbit_protocol::{Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb};
 
     TransportEvent::Server(ServerMessage::Frame(Box::new(Frame {
