@@ -1454,6 +1454,20 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
         sidebar: eon_workspace_protocol::v42::Sidebar::Closed,
         attention_queue: Vec::new(),
     };
+    for scale in [0.75, 1.0, 1.25, 2.0] {
+        let mut metrics = CellMetrics::for_scale(scale);
+        // Generous padding prevents its cap from hiding a global badge-size regression.
+        metrics.padding = metrics.font_size * 2.0;
+        let pill = SceneRect {
+            left: 10.0,
+            top: 10.0,
+            width: 100.0,
+            height: metrics.height,
+        };
+        let corner = TabBadge::corner(pill, metrics, metrics.padding / 3.0).unwrap();
+        assert_eq!(corner.width, (metrics.font_size * 0.75).round());
+        assert_eq!(corner.height, corner.width);
+    }
     let metrics = CellMetrics::for_scale(1.0);
     let project = |snapshot: &Snapshot, width, scroll| {
         WorkspaceScene::from_snapshot(
@@ -1550,6 +1564,8 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
         for (tab, plain) in badged.tabs.iter().zip(&unbadged.tabs) {
             assert_eq!((tab.rect, tab.label()), (plain.rect, plain.label()));
             if let Some(badge) = tab.badge {
+                assert_eq!(badge.rect.width, 12.0);
+                assert_eq!(badge.rect.height, 12.0);
                 // The badge stays clear of the label's text box and inside the header.
                 assert!(badge.rect.left >= tab.rect.right() - metrics.padding);
                 assert!(badge.rect.top >= 0.0);
@@ -1565,6 +1581,8 @@ fn attention_badges_mark_tab_corners_without_moving_tabs() {
             .edge_badges
             .iter()
             .map(|badge| {
+                assert_eq!(badge.rect.width, 12.0);
+                assert_eq!(badge.rect.height, 12.0);
                 assert!(badge.rect.left >= scene.tab_viewport.left);
                 assert!(badge.rect.right() <= scene.tab_viewport.right());
                 // Labels are clipped clear of edge badges, which they would otherwise cover.

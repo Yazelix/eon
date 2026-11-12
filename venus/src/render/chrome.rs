@@ -4,7 +4,7 @@
 use super::{
     CellFont, CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PaneTitleTab,
     PlacedText, RectangleBatch, Renderer, SceneColor,
-    cells::{blend_to_contrast, contrast_ratio},
+    cells::{blend_to_contrast, blend_to_contrast_pair, card_surfaces, contrast_ratio},
     palette, physical_outline_width, shape_styled_text, shaping,
 };
 use crate::{
@@ -799,6 +799,8 @@ struct SpinnerSlot {
     offset: usize,
     badge: TabBadge,
     color: SceneColor,
+    outline: Option<SceneColor>,
+    row: bool,
 }
 
 /// The working badges in the current static vertices and the phase they are drawn at. On a
@@ -819,16 +821,16 @@ enum Backing {
     /// An opaque surface of this color, already painted.
     Surface(SceneColor),
     /// A translucent card's nominal color; its painted color also depends on the desktop.
-    Translucent(SceneColor),
+    Translucent(SceneColor, f32, bool),
 }
 
 impl Backing {
     /// A card in `fill` at the terminal-background `opacity`.
-    fn card(fill: SceneColor, opacity: f32) -> Self {
+    fn card(fill: SceneColor, opacity: f32, srgb_target: bool) -> Self {
         if opacity >= 1.0 {
             Self::Surface(fill)
         } else {
-            Self::Translucent(fill)
+            Self::Translucent(fill, opacity, srgb_target)
         }
     }
 }
@@ -852,12 +854,12 @@ impl Spinners {
         self.slots.clear();
     }
 
-    /// Draws a bare glyph at 3:1 before stale dimming, or on a quiet opaque square when the
-    /// translucent surface is unknown. Spinner ticks keep the same resolved color.
+    /// Resolve contrast before stale dimming; spinner ticks retain the same colour and contour.
     fn push_badge(&mut self, badge: TabBadge, backing: Backing, rectangles: &mut RectangleBatch) {
         if !badge_inside(badge, rectangles.clip) {
             return;
         }
+        let row = !matches!(backing, Backing::BarPill(_));
         let base = match badge.state {
             AttentionState::NeedsInput => palette::ATTENTION_NEEDS_INPUT,
             AttentionState::Error => palette::ATTENTION_ERROR,
@@ -865,30 +867,47 @@ impl Spinners {
             AttentionState::Working | AttentionState::Background => self.focus,
             AttentionState::Idle | AttentionState::Unavailable => palette::ATTENTION_IDLE,
         };
-        let (base, under) = match backing {
-            Backing::BarPill(color) => {
-                (blend_to_contrast(base, palette::BAR_BACKGROUND, 3.0), color)
-            }
-            Backing::Surface(color) => (base, color),
-            Backing::Translucent(color) => {
-                let square = blend_to_contrast(color, color, 1.5);
-                rectangles.push_rounded(
-                    badge.rect,
-                    tokens::badge_backing_radius(badge.rect.width),
-                    square,
-                );
-                (base, square)
+        let (color, outline) = match backing {
+            Backing::BarPill(color) => (
+                blend_to_contrast(
+                    blend_to_contrast(base, palette::BAR_BACKGROUND, 3.0),
+                    color,
+                    3.0,
+                ),
+                None,
+            ),
+            Backing::Surface(color) => (blend_to_contrast(base, color, 3.0), None),
+            Backing::Translucent(color, opacity, srgb) => {
+                match blend_to_contrast_pair(base, card_surfaces(color, opacity, srgb), 3.0) {
+                    Some(color) => (color, None),
+                    None => {
+                        let black = SceneColor { r: 0, g: 0, b: 0 };
+                        let white = SceneColor {
+                            r: 255,
+                            g: 255,
+                            b: 255,
+                        };
+                        let outline = if contrast_ratio(base, black) >= contrast_ratio(base, white)
+                        {
+                            black
+                        } else {
+                            white
+                        };
+                        (base, Some(outline))
+                    }
+                }
             }
         };
-        let color = blend_to_contrast(base, under, 3.0);
         if badge.state == AttentionState::Working && self.phase.is_some() {
             self.slots.push(SpinnerSlot {
                 offset: rectangles.bytes.len(),
                 badge,
                 color,
+                outline,
+                row,
             });
         }
-        push_badge_glyph(rectangles, badge, self.phase, color);
+        push_badge_glyph(rectangles, badge, self.phase, color, outline, row);
     }
 
     fn push_edge_badge(
@@ -1040,9 +1059,16 @@ fn push_badge_glyph(
     badge: TabBadge,
     phase: Option<usize>,
     color: SceneColor,
+    outline: Option<SceneColor>,
+    row: bool,
 ) {
-    // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
     let ring = (badge.rect.width / 12.0).floor();
+    // Leave room for the contour inside the clip, even on small badges.
+    let ring = if outline.is_some() {
+        ring.max(1.0).min(badge.rect.width / 4.0)
+    } else {
+        ring
+    };
     let glyph = SceneRect {
         left: badge.rect.left + ring,
         top: badge.rect.top + ring,
@@ -1050,38 +1076,73 @@ fn push_badge_glyph(
         height: badge.rect.height - ring * 2.0,
     };
     let alpha = if badge.dimmed { 0.45 } else { 1.0 };
+    if matches!(
+        badge.state,
+        AttentionState::Working | AttentionState::Background
+    ) {
+        let (grid, lit) = if badge.state == AttentionState::Working {
+            ((2, 3), SPINNER_FRAMES[phase.unwrap_or(0)])
+        } else {
+            ((3, 1), 0b111)
+        };
+        if row || outline.is_some() {
+            push_fitted_dots(rectangles, badge.rect, grid, lit, color, outline, alpha);
+        } else {
+            push_dots(rectangles, glyph, grid, lit, color, alpha);
+        }
+        return;
+    }
     let at = |x: f32, y: f32| CursorPoint {
         x: glyph.left + glyph.width * x,
         y: glyph.top + glyph.height * y,
     };
     let stroke = (glyph.width / 4.0).max(1.0);
+    let stroke_quad = |start: CursorPoint, end: CursorPoint| {
+        let (dx, dy) = (end.x - start.x, end.y - start.y);
+        let length = dx.hypot(dy).max(f32::EPSILON);
+        let (nx, ny) = (-dy / length * stroke / 2.0, dx / length * stroke / 2.0);
+        [
+            CursorPoint {
+                x: start.x + nx,
+                y: start.y + ny,
+            },
+            CursorPoint {
+                x: end.x + nx,
+                y: end.y + ny,
+            },
+            CursorPoint {
+                x: end.x - nx,
+                y: end.y - ny,
+            },
+            CursorPoint {
+                x: start.x - nx,
+                y: start.y - ny,
+            },
+        ]
+    };
+    let mut quads = Vec::new();
     match badge.state {
-        AttentionState::NeedsInput => rectangles.push_quad(
-            [at(0.5, 0.0), at(1.0, 0.5), at(0.5, 1.0), at(0.0, 0.5)],
-            color,
-            alpha,
-        ),
-        AttentionState::Error => {
-            rectangles.push_stroke(at(0.1, 0.1), at(0.9, 0.9), stroke, color, alpha);
-            rectangles.push_stroke(at(0.9, 0.1), at(0.1, 0.9), stroke, color, alpha);
+        AttentionState::NeedsInput => {
+            quads.push([at(0.5, 0.0), at(1.0, 0.5), at(0.5, 1.0), at(0.0, 0.5)])
         }
-        AttentionState::Finished => {
-            rectangles.push_stroke(at(0.05, 0.55), at(0.4, 0.88), stroke, color, alpha);
-            rectangles.push_stroke(at(0.4, 0.88), at(0.95, 0.15), stroke, color, alpha);
+        AttentionState::Error | AttentionState::Finished => {
+            let segments = if badge.state == AttentionState::Error {
+                [(at(0.1, 0.1), at(0.9, 0.9)), (at(0.9, 0.1), at(0.1, 0.9))]
+            } else {
+                [
+                    (at(0.05, 0.55), at(0.4, 0.88)),
+                    (at(0.4, 0.88), at(0.95, 0.15)),
+                ]
+            };
+            for (start, end) in segments {
+                if outline.is_some() {
+                    quads.push(stroke_quad(start, end));
+                } else {
+                    rectangles.push_stroke(start, end, stroke, color, alpha);
+                }
+            }
         }
-        AttentionState::Working => push_dots(
-            rectangles,
-            glyph,
-            (2, 3),
-            SPINNER_FRAMES[phase.unwrap_or(0)],
-            color,
-            alpha,
-        ),
-        // Background never animates (VEN-C21), so it takes no phase.
-        AttentionState::Background => push_dots(rectangles, glyph, (3, 1), 0b111, color, alpha),
         AttentionState::Idle | AttentionState::Unavailable => {
-            // A thin ring for idle and a small round dot for unavailable, each drawn as 16 joined
-            // segments.
             let center = at(0.5, 0.5);
             let (outer, inner) = if badge.state == AttentionState::Idle {
                 let outer = glyph.width / 2.0;
@@ -1097,18 +1158,141 @@ fn push_badge_glyph(
             for segment in 0..16 {
                 let start = segment as f32 * step;
                 let end = start + step;
-                rectangles.push_quad(
-                    [
-                        point(outer, start),
-                        point(outer, end),
-                        point(inner, end),
-                        point(inner, start),
-                    ],
-                    color,
-                    alpha,
-                );
+                quads.push([
+                    point(outer, start),
+                    point(outer, end),
+                    point(inner, end),
+                    point(inner, start),
+                ]);
             }
         }
+        AttentionState::Working | AttentionState::Background => unreachable!(),
+    }
+    if let Some(outline) = outline {
+        push_glyph_contour(rectangles, badge.rect, &quads, color, outline, alpha);
+    } else {
+        for quad in quads {
+            rectangles.push_quad(quad, color, alpha);
+        }
+    }
+}
+
+/// Rasterize the union once: contour and core never overlap, including stale stroke joins.
+fn push_glyph_contour(
+    rectangles: &mut RectangleBatch,
+    bounds: SceneRect,
+    quads: &[[CursorPoint; 4]],
+    color: SceneColor,
+    outline: SceneColor,
+    alpha: f32,
+) {
+    let step = (bounds.width / 12.0).min(1.0);
+    if step <= 0.0 {
+        return;
+    }
+    let distance = |point: CursorPoint| {
+        quads
+            .iter()
+            .map(|quad| {
+                let mut positive = false;
+                let mut negative = false;
+                let mut distance = f32::INFINITY;
+                for i in 0..4 {
+                    let (a, b) = (quad[i], quad[(i + 1) % 4]);
+                    let (dx, dy) = (b.x - a.x, b.y - a.y);
+                    let cross = dx * (point.y - a.y) - dy * (point.x - a.x);
+                    positive |= cross > 0.0001;
+                    negative |= cross < -0.0001;
+                    let t = (((point.x - a.x) * dx + (point.y - a.y) * dy)
+                        / (dx * dx + dy * dy).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                    distance = distance.min((point.x - a.x - t * dx).hypot(point.y - a.y - t * dy));
+                }
+                if positive && negative { distance } else { 0.0 }
+            })
+            .fold(f32::INFINITY, f32::min)
+    };
+    let (columns, rows) = (
+        (bounds.width / step).ceil() as u32,
+        (bounds.height / step).ceil() as u32,
+    );
+    let (width, height) = (bounds.width / columns as f32, bounds.height / rows as f32);
+    for row in 0..rows {
+        let mut start = 0;
+        let mut previous = None;
+        for column in 0..=columns {
+            let next = if column == columns {
+                None
+            } else {
+                let d = distance(CursorPoint {
+                    x: bounds.left + (column as f32 + 0.5) * width,
+                    y: bounds.top + (row as f32 + 0.5) * height,
+                });
+                if d == 0.0 {
+                    Some(color)
+                } else if d <= step {
+                    Some(outline)
+                } else {
+                    None
+                }
+            };
+            if next != previous {
+                if let Some(color) = previous {
+                    rectangles.push(
+                        bounds.left + start as f32 * width,
+                        bounds.top + row as f32 * height,
+                        (column - start) as f32 * width,
+                        height,
+                        color,
+                        alpha,
+                    );
+                }
+                start = column;
+                previous = next;
+            }
+        }
+    }
+}
+
+/// Fit core, contour and a clear gap together, rather than filling the dot grid's gaps.
+fn push_fitted_dots(
+    rectangles: &mut RectangleBatch,
+    bounds: SceneRect,
+    (columns, rows): (u8, u8),
+    lit: u8,
+    color: SceneColor,
+    outline: Option<SceneColor>,
+    alpha: f32,
+) {
+    let count = f32::from(columns.max(rows));
+    let size = bounds.width.min(bounds.height);
+    let gap = (size / 16.0).round().max(1.0).min(size / 6.0);
+    let side = (size / 4.0)
+        .round()
+        .max(gap * 2.0)
+        .min((size - (count - 1.0) * gap) / count);
+    let contour = ((side - gap.min(1.0)) / 2.0).min(1.0);
+    let dot = side - contour * 2.0;
+    let span = |n| f32::from(n) * side + (f32::from(n) - 1.0) * gap;
+    let left = bounds.left + ((bounds.width - span(columns)) / 2.0).floor().max(0.0);
+    let top = bounds.top + ((bounds.height - span(rows)) / 2.0).floor().max(0.0);
+    for bit in 0..columns * rows {
+        let x = left + f32::from(bit / rows) * (side + gap);
+        let y = top + f32::from(bit % rows) * (side + gap);
+        let alpha = if (lit >> bit) & 1 == 1 { alpha } else { 0.0 };
+        let Some(outline) = outline else {
+            rectangles.push(x, y, side, side, color, alpha);
+            continue;
+        };
+        for (x, y, w, h) in [
+            (x, y, side, contour),
+            (x, y + contour + dot, side, contour),
+            (x, y + contour, contour, dot),
+            (x + contour + dot, y + contour, contour, dot),
+        ] {
+            rectangles.push(x, y, w, h, outline, alpha);
+        }
+        rectangles.push(x + contour, y + contour, dot, dot, color, alpha);
     }
 }
 
@@ -1720,7 +1904,14 @@ impl Renderer {
         *phase = (*phase + 1) % SPINNER_FRAMES.len();
         for slot in &self.spinners.slots {
             let mut batch = RectangleBatch::new(self.config.width, self.config.height);
-            push_badge_glyph(&mut batch, slot.badge, self.spinners.phase, slot.color);
+            push_badge_glyph(
+                &mut batch,
+                slot.badge,
+                self.spinners.phase,
+                slot.color,
+                slot.outline,
+                slot.row,
+            );
             self.queue
                 .write_buffer(&self.vertices, slot.offset as u64, &batch.bytes);
         }
@@ -2857,7 +3048,11 @@ impl Renderer {
                     );
                 }
             }
-            let card = Backing::card(background, self.background_opacity);
+            let card = Backing::card(
+                background,
+                self.background_opacity,
+                self.config.format.is_srgb(),
+            );
             for row in workspace.sidebar_rows() {
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
                 self.push_attention_row(row, list, hovered, card, background, rectangles);
@@ -4895,7 +5090,14 @@ mod tests {
             let glyph = |phase, clip| {
                 let mut rectangles = RectangleBatch::new(800, 600);
                 rectangles.clip = clip;
-                push_badge_glyph(&mut rectangles, badge, Some(phase), DEFAULT_FOCUS);
+                push_badge_glyph(
+                    &mut rectangles,
+                    badge,
+                    Some(phase),
+                    DEFAULT_FOCUS,
+                    None,
+                    false,
+                );
                 rectangles
                     .bytes
                     .chunks_exact(4)
@@ -4964,7 +5166,7 @@ mod tests {
             },
         };
         let mut rectangles = RectangleBatch::new(800, 600);
-        push_badge_glyph(&mut rectangles, badge, phase, DEFAULT_FOCUS);
+        push_badge_glyph(&mut rectangles, badge, phase, DEFAULT_FOCUS, None, false);
         let side = size as usize;
         let mut rows = vec![vec![' '; side]; side];
         // Each dot is one quad of six vertices of x, y, r, g, b, alpha, in clip space.
@@ -5086,7 +5288,7 @@ mod tests {
         );
         // A phase never changes it.
         let mut turned = RectangleBatch::new(800, 600);
-        push_badge_glyph(&mut turned, badge, Some(4), DEFAULT_FOCUS);
+        push_badge_glyph(&mut turned, badge, Some(4), DEFAULT_FOCUS, None, true);
         assert_eq!(turned.bytes, rectangles.bytes);
     }
 
@@ -5235,10 +5437,10 @@ mod tests {
                 };
                 for (surface, background) in [
                     (
-                        Backing::Translucent(palette::TERMINAL_FALLBACK),
+                        Backing::card(palette::TERMINAL_FALLBACK, 0.8, true),
                         palette::TERMINAL_FALLBACK,
                     ),
-                    (Backing::Translucent(white), white),
+                    (Backing::card(white, 0.8, true), white),
                     (
                         Backing::Surface(palette::TERMINAL_FALLBACK),
                         palette::TERMINAL_FALLBACK,
@@ -5405,7 +5607,7 @@ mod tests {
                     let current_color = blend_to_contrast(focus, background, 3.0);
                     assert!(contrast_ratio(current_color, background) >= 3.0);
                     for opacity in [0.8, 1.0] {
-                        let surface = Backing::card(background, opacity);
+                        let surface = Backing::card(background, opacity, true);
                         for (current, focused, hovered) in
                             (0..8).map(|bits| (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0))
                         {
@@ -5504,15 +5706,15 @@ mod tests {
                                         "{background:?}, {text:?}"
                                     );
                                 }
-                                let under = match backing {
-                                    Backing::Surface(color) | Backing::BarPill(color) => color,
-                                    Backing::Translucent(color) => {
-                                        blend_to_contrast(color, color, 1.5)
+                                let surfaces = match backing {
+                                    Backing::Surface(color) | Backing::BarPill(color) => [color; 2],
+                                    Backing::Translucent(color, opacity, srgb) => {
+                                        card_surfaces(color, opacity, srgb)
                                     }
                                 };
                                 for vertex in badge.bytes.chunks_exact(VERTEX_SIZE as usize) {
                                     let color = vertex_color(vertex);
-                                    if color != under {
+                                    for under in surfaces {
                                         assert!(
                                             contrast_ratio(color, under) >= 3.0,
                                             "{state:?}: {color:?} on {under:?}"
@@ -5699,8 +5901,8 @@ mod tests {
     }
 
     #[test]
-    fn attention_badges_use_bare_opaque_surfaces_and_quiet_square_fallbacks() {
-        for (state, base) in [
+    fn attention_badges_use_bare_surfaces_and_only_outline_impossible_pairs() {
+        for (state, source) in [
             (AttentionState::NeedsInput, palette::ATTENTION_NEEDS_INPUT),
             (AttentionState::Error, palette::ATTENTION_ERROR),
             (AttentionState::Finished, palette::ATTENTION_FINISHED),
@@ -5710,19 +5912,20 @@ mod tests {
             (AttentionState::Unavailable, palette::ATTENTION_IDLE),
         ] {
             for focus in FOCUS_COLORS {
-                let base = if matches!(state, AttentionState::Working | AttentionState::Background)
-                {
-                    focus
-                } else {
-                    base
-                };
+                let source =
+                    if matches!(state, AttentionState::Working | AttentionState::Background) {
+                        focus
+                    } else {
+                        source
+                    };
                 for background in [
+                    palette::TERMINAL_FALLBACK,
+                    palette::DIALOG_BACKGROUND,
                     palette::BAR_BACKGROUND,
                     palette::TAB_IDLE,
                     palette::TAB_HOVER,
-                    palette::TAB_SELECTED,
                     palette::SESSION_PRESSED,
-                    palette::DIALOG_BACKGROUND,
+                    palette::TAB_SELECTED,
                     SceneColor {
                         r: 119,
                         g: 119,
@@ -5733,58 +5936,382 @@ mod tests {
                         g: 255,
                         b: 255,
                     },
+                    SceneColor {
+                        r: 10,
+                        g: 80,
+                        b: 150,
+                    },
                 ] {
-                    for opacity in [0.8, 1.0] {
+                    for opacity in [0.0, 0.3, 0.4, 0.8, 1.0] {
+                        let surfaces = card_surfaces(background, opacity, true);
+                        let resolved = if opacity == 1.0 {
+                            Some(blend_to_contrast(source, background, 3.0))
+                        } else {
+                            blend_to_contrast_pair(source, surfaces, 3.0)
+                        };
+                        if opacity == 0.8 || opacity == 1.0 {
+                            assert!(resolved.is_some());
+                        }
                         for dimmed in [false, true] {
                             let badge = TabBadge {
                                 state,
                                 dimmed,
                                 rect: SceneRect {
-                                    width: 12.0,
-                                    height: 12.0,
+                                    width: 16.0,
+                                    height: 16.0,
                                     ..SceneRect::default()
                                 },
                             };
-                            let mut expected_square = RectangleBatch::new(800, 600);
-                            let under = if opacity < 1.0 {
-                                let square = blend_to_contrast(background, background, 1.5);
-                                assert_ne!(square, palette::BAR_BACKGROUND);
-                                expected_square.push_rounded(badge.rect, 3.0, square);
-                                square
-                            } else {
-                                background
-                            };
-                            let color = blend_to_contrast(base, under, 3.0);
-                            assert!(contrast_ratio(color, under) >= 3.0);
-                            let mut glyph = RectangleBatch::new(800, 600);
-                            push_badge_glyph(&mut glyph, badge, Some(0), color);
                             let mut actual = RectangleBatch::new(800, 600);
                             let mut spinners = Spinners::new(true, focus);
                             spinners.push_badge(
                                 badge,
-                                Backing::card(background, opacity),
+                                Backing::card(background, opacity, true),
                                 &mut actual,
                             );
-                            let offset = expected_square.bytes.len();
-                            let valid = actual.bytes.len() == offset + glyph.bytes.len()
-                                && actual.bytes.starts_with(&expected_square.bytes)
-                                && actual.bytes[offset..].chunks_exact(24).all(|vertex| {
-                                    let alpha =
-                                        f32::from_ne_bytes(vertex[20..24].try_into().unwrap());
-                                    vertex_color(vertex) == color
-                                        && (alpha == 0.0
-                                            || alpha == if dimmed { 0.45 } else { 1.0 })
-                                });
-                            assert!(
-                                valid,
-                                "{state:?}, focus={focus:?}, background={background:?}, opacity={opacity}, dimmed={dimmed}"
-                            );
+                            assert!(!actual.bytes.is_empty());
+                            let alpha = if dimmed { 0.45 } else { 1.0 };
+                            for vertex in actual.bytes.chunks_exact(24) {
+                                let color = vertex_color(vertex);
+                                let value = f32::from_ne_bytes(vertex[20..24].try_into().unwrap());
+                                assert!(value == 0.0 || value == alpha);
+                                if let Some(resolved) = resolved {
+                                    assert_eq!(
+                                        color, resolved,
+                                        "{state:?}, {background:?}, opacity={opacity}, source={source:?}"
+                                    );
+                                    assert!(
+                                        surfaces
+                                            .into_iter()
+                                            .all(|surface| contrast_ratio(color, surface) >= 3.0)
+                                    );
+                                } else if color != source {
+                                    assert!(
+                                        color == SceneColor { r: 0, g: 0, b: 0 }
+                                            || color
+                                                == SceneColor {
+                                                    r: 255,
+                                                    g: 255,
+                                                    b: 255
+                                                }
+                                    );
+                                    assert!(contrast_ratio(color, source) >= 3.0);
+                                }
+                            }
+                            if let Some(color) = resolved {
+                                let mut expected = RectangleBatch::new(800, 600);
+                                push_badge_glyph(&mut expected, badge, Some(0), color, None, true);
+                                assert_eq!(
+                                    actual.bytes, expected.bytes,
+                                    "a plain badge has only glyph geometry"
+                                );
+                            }
                             assert_eq!(
-                                spinners.slots.first().map(|slot| (slot.offset, slot.color)),
-                                (state == AttentionState::Working).then_some((offset, color)),
-                                "{state:?}, focus={focus:?}, background={background:?}, opacity={opacity}, dimmed={dimmed}"
+                                spinners.slots.first().map(|slot| slot.offset),
+                                (state == AttentionState::Working).then_some(0)
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn card_surfaces_match_native_srgb_premultiplication() {
+        let white = SceneColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        assert_eq!(
+            card_surfaces(white, 0.3, true),
+            [
+                SceneColor {
+                    r: 149,
+                    g: 149,
+                    b: 149
+                },
+                white
+            ]
+        );
+        assert_eq!(
+            card_surfaces(white, 0.3, false)[0],
+            SceneColor {
+                r: 77,
+                g: 77,
+                b: 77
+            }
+        );
+        assert_eq!(
+            card_surfaces(palette::TERMINAL_FALLBACK, 1.0, true),
+            [palette::TERMINAL_FALLBACK; 2]
+        );
+    }
+
+    #[test]
+    fn row_spinner_dots_grow_while_bar_dots_keep_their_size() {
+        for (size, surface, expected) in [
+            (16.0, Backing::Surface(palette::BAR_BACKGROUND), 4.0),
+            (12.0, Backing::Surface(palette::BAR_BACKGROUND), 3.0),
+            (20.0, Backing::Surface(palette::BAR_BACKGROUND), 5.0),
+            (24.0, Backing::Surface(palette::BAR_BACKGROUND), 6.0),
+            (32.0, Backing::Surface(palette::BAR_BACKGROUND), 8.0),
+            (12.0, Backing::BarPill(palette::TAB_SELECTED), 2.0),
+        ] {
+            for state in [AttentionState::Working, AttentionState::Background] {
+                let badge = TabBadge {
+                    state,
+                    dimmed: false,
+                    rect: SceneRect {
+                        width: size,
+                        height: size,
+                        ..SceneRect::default()
+                    },
+                };
+                let mut batch = RectangleBatch::new(800, 600);
+                let mut spinners = Spinners::new(true, DEFAULT_FOCUS);
+                spinners.push_badge(badge, surface, &mut batch);
+                let x =
+                    |at| f32::from_ne_bytes(batch.bytes[at..at + 4].try_into().unwrap()) * 400.0;
+                assert!(
+                    (x(48) - x(0) - expected).abs() < 0.001,
+                    "size={size}, {surface:?}"
+                );
+                if state == AttentionState::Background {
+                    assert!(spinners.slots.is_empty());
+                    continue;
+                }
+                let slot = &spinners.slots[0];
+                for phase in 0..SPINNER_FRAMES.len() {
+                    let mut turned = RectangleBatch::new(800, 600);
+                    push_badge_glyph(
+                        &mut turned,
+                        slot.badge,
+                        Some(phase),
+                        slot.color,
+                        slot.outline,
+                        slot.row,
+                    );
+                    assert_eq!(turned.bytes.len(), batch.bytes.len());
+                    for (first, turned) in batch
+                        .bytes
+                        .chunks_exact(24)
+                        .zip(turned.bytes.chunks_exact(24))
+                    {
+                        assert_eq!(first[..20], turned[..20], "ticks only change dot alpha");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn translucent_badge_outline_threshold_depends_on_the_card() {
+        for (card, samples) in [
+            (
+                SceneColor {
+                    r: 10,
+                    g: 13,
+                    b: 20,
+                },
+                [
+                    (0.3, false),
+                    (0.34, false),
+                    (0.35, true),
+                    (0.43, true),
+                    (0.45, false),
+                    (0.8, false),
+                ],
+            ),
+            (
+                SceneColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                },
+                [
+                    (0.06, false),
+                    (0.08, true),
+                    (0.1, true),
+                    (0.11, false),
+                    (0.8, false),
+                    (0.3, false),
+                ],
+            ),
+        ] {
+            for (opacity, outlined) in samples {
+                let badge = TabBadge {
+                    state: AttentionState::Working,
+                    dimmed: false,
+                    rect: SceneRect {
+                        width: 16.0,
+                        height: 16.0,
+                        ..SceneRect::default()
+                    },
+                };
+                let mut spinners = Spinners::new(true, DEFAULT_FOCUS);
+                spinners.push_badge(
+                    badge,
+                    Backing::card(card, opacity, true),
+                    &mut RectangleBatch::new(800, 600),
+                );
+                assert_eq!(
+                    spinners.slots[0].outline.is_some(),
+                    outlined,
+                    "{card:?}, {opacity}"
+                );
+                if outlined {
+                    assert_eq!(spinners.slots[0].color, DEFAULT_FOCUS);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn glyph_contours_preserve_gaps_alpha_clipping_and_spinner_rewrites() {
+        let core = DEFAULT_FOCUS;
+        let outline = SceneColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        for size in [1.0, 6.0, 10.0, 12.0, 16.0, 20.0, 24.0, 32.0] {
+            for state in [
+                AttentionState::Working,
+                AttentionState::Background,
+                AttentionState::NeedsInput,
+                AttentionState::Error,
+                AttentionState::Finished,
+                AttentionState::Idle,
+                AttentionState::Unavailable,
+            ] {
+                let badge = TabBadge {
+                    state,
+                    dimmed: true,
+                    rect: SceneRect {
+                        left: 20.0,
+                        top: 20.0,
+                        width: size,
+                        height: size,
+                    },
+                };
+                let mut first = None;
+                for (phase, frame) in
+                    SPINNER_FRAMES
+                        .iter()
+                        .enumerate()
+                        .take(if state == AttentionState::Working {
+                            SPINNER_FRAMES.len()
+                        } else {
+                            1
+                        })
+                {
+                    let mut batch = RectangleBatch::new(800, 600);
+                    batch.clip = Some(badge.rect);
+                    push_badge_glyph(&mut batch, badge, Some(phase), core, Some(outline), true);
+                    let mut unclipped = RectangleBatch::new(800, 600);
+                    push_badge_glyph(
+                        &mut unclipped,
+                        badge,
+                        Some(phase),
+                        core,
+                        Some(outline),
+                        true,
+                    );
+                    assert_eq!(
+                        batch.bytes, unclipped.bytes,
+                        "the contour must fit before clipping"
+                    );
+                    let rects = batch
+                        .bytes
+                        .chunks_exact(24 * 6)
+                        .map(|quad| {
+                            let value = |i| f32::from_ne_bytes(quad[i..i + 4].try_into().unwrap());
+                            let x = |i| (value(i) + 1.0) * 400.0;
+                            let y = |i| (1.0 - value(i)) * 300.0;
+                            (
+                                SceneRect {
+                                    left: x(0),
+                                    top: y(4),
+                                    width: x(48) - x(0),
+                                    height: y(28) - y(4),
+                                },
+                                vertex_color(&quad[..24]),
+                                value(20),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    assert!(!rects.is_empty());
+                    if size >= 12.0 {
+                        assert!(rects.iter().any(|(_, color, a)| *color == core && *a > 0.0));
+                        assert!(
+                            rects
+                                .iter()
+                                .any(|(_, color, a)| *color == outline && *a > 0.0)
+                        );
+                        assert!(
+                            !rects
+                                .iter()
+                                .any(|(r, _, a)| *a > 0.0 && r.contains(20.01, 20.01)),
+                            "no filled backing at the badge corner"
+                        );
+                        if state == AttentionState::Idle {
+                            assert!(
+                                !rects.iter().any(|(r, _, a)| *a > 0.0
+                                    && r.contains(20.0 + size / 2.0, 20.0 + size / 2.0)),
+                                "the ring's centre stays hollow"
+                            );
+                        }
+                    }
+                    assert!(rects.iter().all(|(r, _, a)| r.left >= 19.999
+                        && r.top >= 19.999
+                        && r.right() <= 20.001 + size
+                        && r.bottom() <= 20.001 + size
+                        && (*a == 0.0 || *a == 0.45)));
+                    // Every fragment belongs to exactly one core/contour rectangle: stale joins cannot brighten.
+                    for y in 0..(size * 4.0) as u32 {
+                        for x in 0..(size * 4.0) as u32 {
+                            let (x, y) =
+                                (20.0 + (x as f32 + 0.5) / 4.0, 20.0 + (y as f32 + 0.5) / 4.0);
+                            assert!(
+                                rects
+                                    .iter()
+                                    .filter(|(r, _, a)| *a > 0.0 && r.contains(x, y))
+                                    .count()
+                                    <= 1
+                            );
+                        }
+                    }
+                    if state == AttentionState::Working {
+                        let geometry = batch
+                            .bytes
+                            .chunks_exact(24)
+                            .map(|v| v[..20].to_vec())
+                            .collect::<Vec<_>>();
+                        if let Some(first) = &first {
+                            assert_eq!(&geometry, first);
+                        } else {
+                            first = Some(geometry);
+                        }
+                        // The six dot cores and contours always leave a strictly positive gap.
+                        let dots = rects.chunks_exact(5).collect::<Vec<_>>();
+                        assert_eq!(dots.len(), 6);
+                        if size >= 12.0 {
+                            assert!(
+                                (dots[0][0].0.height - 1.0).abs() < 0.001,
+                                "contours stay one physical pixel"
+                            );
+                        }
+                        assert!(dots[0][0].0.bottom() < dots[1][0].0.top);
+                        assert!(dots[0][0].0.right() < dots[3][0].0.left);
+                        assert_eq!(
+                            dots.iter()
+                                .enumerate()
+                                .filter(|(_, dot)| dot[4].2 > 0.0)
+                                .fold(0, |bits, (i, _)| bits | 1 << i),
+                            *frame
+                        );
                     }
                 }
             }
@@ -5817,7 +6344,7 @@ mod tests {
             let mut actual = RectangleBatch::new(800, 600);
             Spinners::new(false, DEFAULT_FOCUS).push_edge_badge(badge, pills, &mut actual);
             let mut expected = RectangleBatch::new(800, 600);
-            push_badge_glyph(&mut expected, badge, None, color);
+            push_badge_glyph(&mut expected, badge, None, color, None, false);
             assert_eq!(
                 actual.bytes, expected.bytes,
                 "only intersecting pill fills may adapt the glyph"
@@ -7530,7 +8057,7 @@ mod tests {
                         &row,
                         workspace.sidebar_list,
                         false,
-                        Backing::Translucent(palette::TERMINAL_FALLBACK),
+                        Backing::card(palette::TERMINAL_FALLBACK, 0.8, true),
                         palette::TERMINAL_FALLBACK,
                         &mut RectangleBatch::new(1600, 900),
                     );

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C30: attention badges have no backing at any opacity, with two-surface
+  colour adaptation and a glyph-only outline when needed. Sidebar/inbox badge
+  boxes are the font size (`eon-0ntg1`, approved 2026-11-12).
+
 - VEN-C30: attention badges adapt every glyph colour for 3:1 before stale
   dimming, with no backing on opaque surfaces and a quiet opaque rounded
   square on translucent rows (`eon-wuau8.7`, delegated approval 2026-11-12).

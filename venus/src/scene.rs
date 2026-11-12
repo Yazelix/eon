@@ -2748,7 +2748,7 @@ fn attention_row(
 ) -> SidebarRow {
     let line = metrics.height;
     let row_gap = attention_row_gap(metrics);
-    let glyph_size = badge_size(metrics).round().max(1.0);
+    let glyph_size = metrics.font_size.round().max(1.0);
     let icon_size = metrics.font_size.round().max(1.0);
     let spacing = (metrics.width / 2.0).round();
     let content_left = rect.left + inner_inset(metrics);

@@ -24,11 +24,6 @@ pub(crate) const fn popup_marker_radius(size: f32) -> f32 {
     (size / 4.0).round()
 }
 
-/// The translucent-card badge backing's rounded-square corners, snapped to physical pixels.
-pub(crate) const fn badge_backing_radius(size: f32) -> f32 {
-    (size / 4.0).round()
-}
-
 /// The corner radius of what sits inside a card or in the frame around the cards: sidebar and
 /// inbox rows, tooltips and hint popups, hint keycaps, pane title highlights, and pane and
 /// heading buttons.

@@ -8,6 +8,11 @@ installation, and proven contract changes.
 Eon remains in alpha. v0.2.0 is the planned first beta; its version and stage
 switch requires explicit approval of the release cut (`eon-igae.9`).
 
+- Attention badges have no backing square on translucent rows; a thin glyph
+  outline appears only where colour adaptation cannot reach 3:1. Sidebar and
+  inbox badges are the font size, moving row text 4 pixels right at default
+  metrics and truncating titles sooner. Tab/bar badges and popup markers
+  keep their size (`eon-0ntg1`).
 - The Linux install instructions include the release public key. Without a
   recorded Accelerando redistribution grant, the Linux archive omits
   Accelerando and its fonts; Game of Life stays available (`eon-igae.18`).

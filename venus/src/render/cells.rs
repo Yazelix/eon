@@ -612,16 +612,46 @@ pub(super) fn push_cursor(
     }
 }
 
-fn relative_luminance(color: SceneColor) -> f64 {
-    let linear = |channel: u8| {
-        let channel = f64::from(channel) / 255.0;
-        if channel <= 0.04045 {
-            channel / 12.92
-        } else {
-            ((channel + 0.055) / 1.055).powf(2.4)
+fn linear_channel(channel: u8) -> f64 {
+    let channel = f64::from(channel) / 255.0;
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Match the premultiplied attachment before the compositor adds the encoded desktop.
+pub(super) fn card_surfaces(card: SceneColor, opacity: f32, srgb_target: bool) -> [SceneColor; 2] {
+    let opacity = f64::from(opacity);
+    [0.0, 255.0].map(|desktop| {
+        let channel = |value| {
+            let premultiplied = if srgb_target {
+                let linear = linear_channel(value) * opacity;
+                if linear <= 0.0031308 {
+                    linear * 12.92
+                } else {
+                    1.055 * linear.powf(1.0 / 2.4) - 0.055
+                }
+            } else {
+                f64::from(value) / 255.0 * opacity
+            };
+            (premultiplied * 255.0 + desktop * (1.0 - opacity))
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
+        SceneColor {
+            r: channel(card.r),
+            g: channel(card.g),
+            b: channel(card.b),
         }
-    };
-    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    })
+}
+
+fn relative_luminance(color: SceneColor) -> f64 {
+    0.2126 * linear_channel(color.r)
+        + 0.7152 * linear_channel(color.g)
+        + 0.0722 * linear_channel(color.b)
 }
 
 pub(super) fn contrast_ratio(left: SceneColor, right: SceneColor) -> f64 {
@@ -662,6 +692,83 @@ pub(super) fn blend_to_contrast(color: SceneColor, against: SceneColor, ratio: f
         })
         .find(|blended| contrast_ratio(against, *blended) >= ratio)
         .unwrap_or(target)
+}
+
+/// Prefer the nearest tint/shade that contrasts with both surfaces. A middle tone can work
+/// even when neither black nor white does; return None only when no integer RGB colour works.
+pub(super) fn blend_to_contrast_pair(
+    color: SceneColor,
+    surfaces: [SceneColor; 2],
+    ratio: f64,
+) -> Option<SceneColor> {
+    let valid = |color| {
+        surfaces
+            .into_iter()
+            .all(|surface| contrast_ratio(color, surface) >= ratio)
+    };
+    if valid(color) {
+        return Some(color);
+    }
+    let [a, b] = surfaces.map(relative_luminance);
+    let (low, high) = (a.min(b), a.max(b));
+    let intervals = [
+        (0.0, (low + 0.05) / ratio - 0.05),
+        (ratio * (low + 0.05) - 0.05, (high + 0.05) / ratio - 0.05),
+        (ratio * (high + 0.05) - 0.05, 1.0),
+    ]
+    .into_iter()
+    .filter(|(low, high)| low <= high)
+    .collect::<Vec<_>>();
+    if intervals.is_empty() {
+        return None;
+    }
+    for amount in 1..=255u16 {
+        for target in [0, 255] {
+            let blend =
+                |source| ((u16::from(source) * (255 - amount) + target * amount + 127) / 255) as u8;
+            let candidate = SceneColor {
+                r: blend(color.r),
+                g: blend(color.g),
+                b: blend(color.b),
+            };
+            if valid(candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    for channel in 0..=255 {
+        let grey = SceneColor {
+            r: channel,
+            g: channel,
+            b: channel,
+        };
+        if valid(grey) {
+            return Some(grey);
+        }
+    }
+    // Very narrow feasible intervals may contain a coloured RGB value but no grey or tint.
+    let levels: [f64; 256] = std::array::from_fn(|channel| linear_channel(channel as u8));
+    for (low, high) in intervals {
+        for (r, red) in levels.iter().enumerate() {
+            for (g, green) in levels.iter().enumerate() {
+                let partial = 0.2126 * red + 0.7152 * green;
+                let first = levels.partition_point(|blue| partial + 0.0722 * blue < low);
+                for (b, blue) in levels.iter().enumerate().skip(first).take(2) {
+                    if partial + 0.0722 * blue <= high {
+                        let candidate = SceneColor {
+                            r: r as u8,
+                            g: g as u8,
+                            b: b as u8,
+                        };
+                        if valid(candidate) {
+                            return Some(candidate);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1245,6 +1352,61 @@ pub(super) mod tests {
             }),
             expected(1.0, 2.0)
         );
+    }
+
+    #[test]
+    fn two_surface_contrast_finds_middle_tones_and_only_rejects_impossible_pairs() {
+        let grey = |v| SceneColor { r: v, g: v, b: v };
+        let source = SceneColor {
+            r: 178,
+            g: 7,
+            b: 251,
+        };
+        for surfaces in [
+            [grey(0), grey(51)],
+            [grey(0), grey(179)],
+            [grey(30), grey(240)],
+        ] {
+            let color = blend_to_contrast_pair(source, surfaces, 3.0).unwrap();
+            assert!(
+                surfaces
+                    .into_iter()
+                    .all(|surface| contrast_ratio(color, surface) >= 3.0)
+            );
+            assert_eq!(blend_to_contrast_pair(color, surfaces, 3.0), Some(color));
+        }
+        assert_eq!(
+            blend_to_contrast_pair(source, [grey(0), grey(153)], 3.0),
+            None
+        );
+        // This interval has a coloured witness (#003fff), but no grey or source tint/shade.
+        let surfaces = [grey(8), grey(174)];
+        let color = blend_to_contrast_pair(source, surfaces, 3.0).unwrap();
+        assert!(
+            surfaces
+                .into_iter()
+                .all(|surface| contrast_ratio(color, surface) >= 3.0)
+        );
+        // Every supported grey pair: an available grey is a witness that forbids a halo.
+        for low in (0..=255).step_by(5) {
+            for high in (low..=255).step_by(5) {
+                let surfaces = [grey(low), grey(high)];
+                let result = blend_to_contrast_pair(source, surfaces, 3.0);
+                if let Some(color) = result {
+                    assert!(
+                        surfaces
+                            .into_iter()
+                            .all(|surface| contrast_ratio(color, surface) >= 3.0)
+                    );
+                } else {
+                    assert!(!(0..=255).any(|v| {
+                        surfaces
+                            .into_iter()
+                            .all(|surface| contrast_ratio(grey(v), surface) >= 3.0)
+                    }));
+                }
+            }
+        }
     }
 
     #[test]

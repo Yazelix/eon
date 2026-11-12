@@ -548,14 +548,24 @@ needed for 3:1 against the row fill. Rows have no mint pressed flash. Current
 text uses the primary role, adjusted for 4.5:1 contrast. Accessible names
 include "popup" and, for the current row, "current".
 
-Attention badges on tabs, the bar, and opaque sidebar/inbox row surfaces draw
-no backing. Each glyph colour, before stale dimming, adapts only as needed
-for 3:1 against its surface; working and background dots start in the configured
-focus colour. An unhighlighted row on a translucent terminal background uses
-an opaque rounded square in the nominal card colour adapted to 1.5:1 against
-that colour, and its glyph adapts to 3:1 against the square. Square corners
-have a radius of one quarter of the badge size, rounded to physical pixels.
-Stale glyphs keep their intentional 0.45 alpha after colour adaptation.
+Attention badges draw no backing at any opacity. Each glyph colour, before
+stale dimming, adapts only as needed for 3:1 against its surface; working and
+background dots start in the configured focus colour. On a translucent row,
+the glyph must contrast against the card at the configured background opacity
+over both black and white. Only where no single colour reaches 3:1 against
+both does it retain its source colour and take a black or white outline,
+whichever contrasts more with the glyph. The outline follows the glyph's own
+shape, about one physical pixel wide, reduced only to fit small glyphs without
+closing their gaps. Stale glyphs and outlines keep their intentional 0.45 alpha
+after colour adaptation. No square or other backing shape is drawn.
+Sidebar/inbox badge boxes are the font size (16 physical pixels at default
+metrics); row heights stay fixed by the text lines. Their larger boxes move
+row text 4 pixels right at default metrics, so titles truncate earlier. Tab,
+session-label and edge badges retain their 0.75× font size and padding cap.
+Plain spinner dots are 4 physical pixels across in default sidebar/inbox rows
+and retain their 2-pixel size on the bar. Row dots and gaps scale with the box;
+the contour stays about one physical pixel, with clear gaps in the fitted grid.
+The popup marker keeps its independent 1.25× font-size box and hollow windows.
 Bar corner badges retain contrast against both their pill and the surrounding
 bar; overflow badges adapt against the visible tab fills beneath them.
 

@@ -139,13 +139,14 @@ rounded card outline. This is a startup option; Eon owns persistent product conf
 
 Pass `--focus-color preset:NAME|custom:#RRGGBB` to colour the selected pane's
 whole outline in the selected column and the working and background attention
-badges' dots. Every attention glyph adapts its colour toward black or white
-only as needed for 3:1 against its opaque surface; bar badges retain contrast
-against both their pill and the surrounding bar. Badges draw no backing on
-opaque surfaces. An unhighlighted sidebar row under a translucent terminal
-background uses an opaque rounded square in the nominal card colour adapted
-to 1.5:1, with its glyph adapted to 3:1 against that square. Stale badges keep
-their intentional 0.45 alpha after colour adaptation and may read below 3:1.
+badges' dots. Every attention glyph adapts its colour only as needed for 3:1
+against its surface; bar badges retain contrast against both their pill and
+the surrounding bar. A translucent row's glyph adapts against the card at the
+configured background opacity over both black and white. Only where no single
+colour can reach 3:1 against both does the source glyph take a thin black or
+white outline, whichever contrasts more with the glyph. Badges draw no backing
+shape at any opacity. Stale glyphs and outlines keep their intentional 0.45
+alpha after colour adaptation and may read below 3:1.
 The default is `custom:#b207fb`; presets are the cursor colours listed below,
 and `random` is invalid. Missing, duplicate or invalid values fail before window
 creation. F6 keyboard-focus pills stay mint. With pane frames off, no pane

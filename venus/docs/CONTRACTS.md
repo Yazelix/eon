@@ -2312,10 +2312,12 @@ re-proved when that platform or feature is next touched.
   decorations](PRESENTATION.md#window-background-and-decorations)), and the
   current row's focus-colour outline and inset keyboard-focus treatment
   (`eon-wuau8.4`), and pointer scrolling/overflow indication (`eon-r1scq`).
-  Lucca approved that presentation on 2026-11-11 ("ahhh i like
-  it"); its live acceptance follows landing. Lucca approved the sidebar
-  contract on 2026-10-21 (draft 15 on `eon-agent-sidebar-yx8.1`, there under an
-  earlier draft ID). `eon-agent-sidebar-yx8.3`
+  Lucca approved the current-row outline presentation on 2026-11-11 ("ahhh
+  i like it"); its live acceptance follows landing. The bare translucent-row
+  badges, contour fallback and font-sized row badges (`eon-0ntg1`) have
+  scale-1 installed proof on x86_64 Linux Wayland; Lucca's live look is pending.
+  Lucca approved the sidebar contract on 2026-10-21 (draft 15 on
+  `eon-agent-sidebar-yx8.1`, there under an earlier draft ID). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
   sidebar's AccessKit region and the empty state;
   `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
@@ -2350,6 +2352,11 @@ re-proved when that platform or feature is next touched.
   Attention badge backing presentation amended by `eon-wuau8.7`, approved
   by eon-overseer under Lucca's standing delegation on 2026-11-12;
   installed acceptance pending.
+  Amended by `eon-0ntg1`, approved by Lucca through eon-overseer on
+  2026-11-12: no backing at any opacity, conditional glyph contour, and
+  font-sized sidebar/inbox badges; tab/bar sizes and the popup marker stay
+  unchanged. Scale-1 installed proof is recorded in `eon-0ntg1`;
+  Lucca's live look remains pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2457,11 +2464,21 @@ re-proved when that platform or feature is next touched.
       one-physical-pixel outline, inset one pixel on a current row so both
       remain visible, adjusted only as needed for 3:1 against the row fill.
       Current text starts in the primary role and retains 4.5:1, including
-      stale text. Attention badges draw no backing on an opaque surface. Each
-      glyph colour, before stale dimming, adapts only as needed for 3:1 against
-      that surface. Under a translucent terminal background, a row badge sits
-      on an opaque rounded square in the card colour adapted to 1.5:1, and its
-      glyph adapts to 3:1 against the square. Rows
+      stale text. Attention badges draw directly on their surface, with no
+      backing shape at any
+      opacity. Each glyph colour, before stale dimming, adapts only as needed
+      for 3:1 against its opaque surface. On a translucent row, it adapts
+      against both the card colour composited at the configured background
+      opacity over black and the same card colour composited over white. Only
+      when no single glyph colour can reach 3:1 against both surfaces does
+      the glyph retain its source state or configured focus colour and
+      receive a thin outline following its own shape. The outline is black or
+      white, whichever contrasts more with the glyph, reaching at least 3:1
+      against the glyph before stale dimming. It is about one physical pixel
+      wide, reduced only as needed to fit small glyphs without closing their
+      gaps; no filled backing is drawn. Stale glyphs and their outlines
+      retain the intentional 0.45 alpha and may read below 3:1. Sidebar and
+      inbox row badge boxes are the font size. Rows
       have no mint pressed flash. Rows in other tabs never take the current
       outline. Its accessible label adds "current" (`eon-wuau8.4`, approved by
       Lucca on 2026-11-11: "ahhh i like it").
@@ -2559,7 +2576,18 @@ re-proved when that platform or feature is next touched.
     `popup_detail_keeps_metadata_ltr_after_an_rtl_catalog_label` covers the
     shaped label and metadata ordering.
     `popup_and_pane_rows_share_surfaces_in_every_state` covers shared row
-    fills, badge backing and text colors. The isolated native
+    fills, bare badge surfaces and text colors. `eon-0ntg1` adds
+    `attention_badges_use_bare_surfaces_and_only_outline_impossible_pairs`,
+    `translucent_badge_outline_threshold_depends_on_the_card`,
+    `glyph_contours_preserve_gaps_alpha_clipping_and_spinner_rewrites` and
+    `two_surface_contrast_finds_middle_tones_and_only_rejects_impossible_pairs`;
+    `card_surfaces_match_native_srgb_premultiplication` pins the observed
+    sRGB attachment blend, and
+    `row_spinner_dots_grow_while_bar_dots_keep_their_size` covers actual dot
+    growth without changing bar pixels, including every tick's geometry;
+    it extends the marker geometry check with font-sized row badges and
+    unchanged row heights, and the tab badge check with unchanged bar sizing.
+    The isolated native
     `long_workspace_labels_stay_on_the_visible_line` also checks popup text
     clipping in both text directions and at minimum text widths.
     `eon-popup-marker-always-52rk`

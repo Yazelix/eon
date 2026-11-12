@@ -1060,7 +1060,7 @@ fn agent_sidebar_ages_count_whole_minutes_hours_and_days() {
 fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
     use eon_workspace_protocol::v42::{Attention, AttentionRecord, AttentionState};
 
-    for scale in [0.75, 1.0, 1.25, 2.0] {
+    for scale in [0.75, 1.0, 1.25, 1.5, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
         for message in ["", "A long question that occupies the third line"] {
             for width in [0.0, metrics.font_size, 28.0 * metrics.width] {
@@ -1098,7 +1098,27 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                         height: 800.0,
                     },
                 );
+                let glyph = row.glyph.rect;
+                assert_eq!(glyph.width, metrics.font_size.round().max(1.0));
+                assert_eq!(glyph.height, glyph.width);
+                let lines = if message.is_empty() { 2.0 } else { 3.0 };
+                assert_eq!(
+                    row.rect.height,
+                    metrics.height * lines + attention_row_gap(metrics)
+                );
+                assert!(glyph.top >= row.rect.top);
+                assert!(
+                    glyph.bottom()
+                        <= row.rect.top + attention_row_gap(metrics) / 2.0 + metrics.height
+                );
                 let marker = row.popup_marker.unwrap();
+                assert_eq!(
+                    marker.width,
+                    (metrics.font_size * 1.25)
+                        .round()
+                        .max(1.0)
+                        .min((row.rect.width - metrics.padding / 2.0).max(0.0))
+                );
                 assert!(marker.left >= row.rect.left && marker.right() <= row.rect.right());
                 assert!(marker.top >= row.rect.top && marker.bottom() <= row.rect.bottom());
                 assert_eq!(
