@@ -1,5 +1,5 @@
 use crate::{
-    Color as SceneColor, DialogScene, DrawRow, DrawStyle, ImageKey, ImageResource, Scene,
+    Color as SceneColor, DialogScene, DrawRow, DrawStyle, GlyphRun, ImageKey, ImageResource, Scene,
     ScenePlacement, ScenePreview, SceneRect, WorkspaceFocus, WorkspaceScene,
     scene::{
         CardFill, PaneOutline, rounded_radius,
@@ -16,7 +16,7 @@ use orbit_protocol::{
 };
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     error::Error,
     fmt,
     sync::{
@@ -221,8 +221,39 @@ impl fmt::Display for RenderError {
 
 impl Error for RenderError {}
 
+enum TextBuffer {
+    Owned(Box<Buffer>),
+    Row { row: Arc<ShapedRow>, index: usize },
+}
+
+impl From<Buffer> for TextBuffer {
+    fn from(buffer: Buffer) -> Self {
+        Self::Owned(Box::new(buffer))
+    }
+}
+
+impl std::ops::Deref for TextBuffer {
+    type Target = Buffer;
+
+    fn deref(&self) -> &Buffer {
+        match self {
+            Self::Owned(buffer) => buffer,
+            Self::Row { row, index } => &row.buffers[*index].0,
+        }
+    }
+}
+
+impl TextBuffer {
+    fn mutable(&mut self) -> &mut Buffer {
+        match self {
+            Self::Owned(buffer) => buffer,
+            Self::Row { .. } => unreachable!("terminal row buffers are immutable"),
+        }
+    }
+}
+
 struct PlacedText {
-    buffer: Buffer,
+    buffer: TextBuffer,
     custom_glyph: Option<CustomGlyph>,
     left: f32,
     top: f32,
@@ -231,6 +262,224 @@ struct PlacedText {
     bound_left: i32,
     bound_top: i32,
     color: Color,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+// shortcut: reuse only the same row slot, extend to moved rows in the scroll-handoff slice.
+struct RowTextSlot {
+    terminal: usize,
+    preview: Option<bool>,
+    row: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct RowTextContext {
+    metrics: CellMetrics,
+    cell_font: CellFont,
+    family: Option<&'static str>,
+    columns: u16,
+    screen: orbit_protocol::Screen,
+}
+
+struct ShapedCell {
+    run: GlyphRun,
+    layers: std::ops::Range<usize>,
+}
+
+struct ShapedRow {
+    cells: Vec<ShapedCell>,
+    buffers: Vec<(Buffer, bool)>,
+}
+
+struct CachedRowText {
+    content: DrawRow,
+    context: RowTextContext,
+    shaped: Option<Arc<ShapedRow>>,
+    used: bool,
+}
+
+#[derive(Default)]
+struct RowTextCache {
+    rows: HashMap<RowTextSlot, CachedRowText>,
+}
+
+impl RowTextCache {
+    fn begin(&mut self) {
+        for row in self.rows.values_mut() {
+            row.used = false;
+        }
+    }
+
+    fn finish(&mut self) {
+        // Only drawn rows survive: no history margin beyond the two partial clip edges.
+        self.rows.retain(|_, row| row.used);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &mut self,
+        slot: RowTextSlot,
+        row: &DrawRow,
+        context: RowTextContext,
+        fonts: &mut FontSystem,
+        blink_visible: bool,
+        origin: SceneRect,
+        top: f32,
+        clip: SceneRect,
+        text: &mut Vec<PlacedText>,
+    ) {
+        let metrics = context.metrics;
+        if !row_intersects_clip(top, metrics.height, clip) {
+            return;
+        }
+        let cached = self.rows.entry(slot).or_insert_with(|| CachedRowText {
+            content: row.clone(),
+            context,
+            shaped: None,
+            used: true,
+        });
+        let changed = cached.content != *row || cached.context != context;
+        let bypass = changed
+            && cached.context == context
+            && !row.cells.is_empty()
+            && cached.content.cells.len() == row.cells.len()
+            && cached
+                .content
+                .cells
+                .iter()
+                .zip(&row.cells)
+                .all(|(old, new)| old != new);
+        if changed {
+            cached.shaped = None;
+            copy_row_key(&mut cached.content, row);
+            cached.context = context;
+        }
+        cached.used = true;
+        let shaped = if bypass {
+            // Fully dirty rows have nothing to reuse; retain only their key, not their shapes.
+            Arc::new(shape_row_text(row, context, fonts))
+        } else {
+            Arc::clone(
+                cached
+                    .shaped
+                    .get_or_insert_with(|| Arc::new(shape_row_text(row, context, fonts))),
+            )
+        };
+        let mut visible = shaped
+            .cells
+            .iter()
+            .filter(|cell| cell.run.style.foreground_visible(blink_visible))
+            .peekable();
+        while let Some(cell) = visible.next() {
+            let run = &cell.run;
+            let left = origin.left + metrics.padding + f32::from(run.column) * metrics.width;
+            let ink_width = f32::from(
+                cell_ink_right(run, visible.peek().map(|cell| &cell.run), context.columns)
+                    - run.column,
+            ) * metrics.width;
+            let Some(bounds) = (SceneRect {
+                left,
+                top,
+                width: ink_width.max(1.0),
+                height: metrics.height.max(1.0),
+            })
+            .intersection(clip) else {
+                continue;
+            };
+            let bounds = text_clip_bounds(bounds);
+            for index in cell.layers.clone() {
+                let box_drawing = shaped.buffers[index].1;
+                text.push(PlacedText {
+                    buffer: TextBuffer::Row {
+                        row: Arc::clone(&shaped),
+                        index,
+                    },
+                    custom_glyph: None,
+                    left,
+                    top: top
+                        - if box_drawing {
+                            0.0
+                        } else {
+                            context.cell_font.top_offset
+                        },
+                    bound_left: bounds.left,
+                    bound_top: bounds.top,
+                    right: bounds.right,
+                    bottom: bounds.bottom,
+                    color: Color::rgba(
+                        run.style.foreground.r,
+                        run.style.foreground.g,
+                        run.style.foreground.b,
+                        run.style.foreground_alpha(),
+                    ),
+                });
+            }
+        }
+    }
+}
+
+// Repeated full output must not allocate another set of cell strings for cache keys.
+fn copy_row_key(target: &mut DrawRow, source: &DrawRow) {
+    let DrawRow {
+        wrapped,
+        wrap_continuation,
+        cells,
+    } = source;
+    if target.cells.len() != cells.len() {
+        target.clone_from(source);
+        return;
+    }
+    target.wrapped = *wrapped;
+    target.wrap_continuation = *wrap_continuation;
+    for (target, source) in target.cells.iter_mut().zip(cells) {
+        let crate::DrawCell {
+            width,
+            text,
+            hyperlink,
+            style,
+        } = source;
+        target.width = *width;
+        target.style = *style;
+        target.text.clone_from(text);
+        target.hyperlink.clone_from(hyperlink);
+    }
+}
+
+fn shape_row_text(row: &DrawRow, context: RowTextContext, fonts: &mut FontSystem) -> ShapedRow {
+    let mut runs = Vec::new();
+    row.append_glyph_runs(0, &mut runs);
+    let mut shaped = ShapedRow {
+        cells: Vec::with_capacity(runs.len()),
+        buffers: Vec::with_capacity(runs.len()),
+    };
+    for run in runs {
+        let start = shaped.buffers.len();
+        if block_span(&run.text, run.columns == 1).is_none() {
+            for (buffer, box_drawing) in shape_cell_layers(
+                fonts,
+                context.metrics,
+                context.cell_font,
+                context.family,
+                &run.text,
+                f32::from(run.columns) * context.metrics.width,
+                context.metrics.height,
+                run.style,
+                run.columns == 2,
+            )
+            .into_iter()
+            .zip([false, true])
+            {
+                if let Some(buffer) = buffer {
+                    shaped.buffers.push((buffer, box_drawing));
+                }
+            }
+        }
+        shaped.cells.push(ShapedCell {
+            run,
+            layers: start..shaped.buffers.len(),
+        });
+    }
+    shaped
 }
 
 #[derive(Debug, PartialEq)]
@@ -1124,6 +1373,7 @@ pub struct Renderer {
     text_renderer: TextRenderer,
     text_overlay: Option<(usize, Vec<TextBounds>)>,
     text: Vec<PlacedText>,
+    row_text: RowTextCache,
     /// The keycap popup this frame drew, for the pointer.
     hint_popup_hit: Option<chrome::HintPopupHit>,
     content_key: Option<ContentKey>,
@@ -1394,6 +1644,7 @@ impl Renderer {
             text_renderer,
             text_overlay: None,
             text: Vec::new(),
+            row_text: RowTextCache::default(),
             hint_popup_hit: None,
             content_key: None,
             pane_titles: None,
@@ -1461,6 +1712,7 @@ impl Renderer {
         }
         self.surface.configure(&self.device, &self.config);
         self.content_key = None;
+        self.row_text.rows.clear();
         self.pane_titles = None;
         self.reset_cursor_animation();
     }
@@ -1822,6 +2074,7 @@ impl Renderer {
         }
 
         self.text.clear();
+        self.row_text.begin();
         self.text_overlay = None;
         self.hint_popup_hit = None;
         self.spinners.clear();
@@ -1943,11 +2196,12 @@ impl Renderer {
                 &title_tabs,
                 &pane_tabs,
             );
-            for ((column, scene), band) in workspace
+            for (text_slot, ((column, scene), band)) in workspace
                 .other_columns
                 .iter()
                 .zip(columns)
                 .zip(&key.images[1..])
+                .enumerate()
             {
                 let Some(scene) = scene else {
                     continue;
@@ -1969,7 +2223,13 @@ impl Renderer {
                 rectangles.card_clip = card_clip;
                 let text_clip =
                     terminal_text_clip(column.terminal, clip, self.metrics, self.pane_frames);
-                self.build_scene_text(scene, blink_visible, column.terminal, text_clip);
+                self.build_scene_text(
+                    scene,
+                    blink_visible,
+                    column.terminal,
+                    text_clip,
+                    text_slot + 1,
+                );
                 // The cursor trail follows the selected column; other columns draw a static cursor.
                 build_scene_rectangles(
                     &mut rectangles,
@@ -2001,7 +2261,7 @@ impl Renderer {
                 let origin = shifted(workspace.terminal, scroll_offset);
                 let text_clip =
                     terminal_text_clip(workspace.terminal, clip, self.metrics, self.pane_frames);
-                self.build_scene_text(scene, blink_visible, origin, text_clip);
+                self.build_scene_text(scene, blink_visible, origin, text_clip, 0);
                 self.build_preview_text(scene, scroll_preview, blink_visible, origin, text_clip);
                 cursor_vertex_boundary = build_scene_rectangles(
                     &mut rectangles,
@@ -2058,7 +2318,7 @@ impl Renderer {
             let clip = scene_grid(scene, viewport, self.metrics);
             rectangles.clip = Some(clip);
             let origin = shifted(viewport, scroll_offset);
-            self.build_scene_text(scene, blink_visible, origin, clip);
+            self.build_scene_text(scene, blink_visible, origin, clip, 0);
             self.build_preview_text(scene, scroll_preview, blink_visible, origin, clip);
             cursor_vertex_boundary = build_scene_rectangles(
                 &mut rectangles,
@@ -2106,6 +2366,7 @@ impl Renderer {
         if let Some(dialog) = dialog {
             self.build_dialog(dialog, &mut rectangles);
         }
+        self.row_text.finish();
         self.cursor_vertex_boundary = cursor_vertex_boundary;
         self.upload_vertices(&rectangles.bytes);
         self.images.prepare(
@@ -2364,36 +2625,41 @@ impl Renderer {
         );
     }
 
+    fn row_text_context(&self, scene: &Scene) -> RowTextContext {
+        RowTextContext {
+            metrics: self.metrics,
+            cell_font: self.cell_font,
+            family: self.fonts.family,
+            columns: scene.columns,
+            screen: scene.screen,
+        }
+    }
+
     fn build_scene_text(
         &mut self,
         scene: &Scene,
         blink_visible: bool,
         origin: SceneRect,
         clip: SceneRect,
+        terminal: usize,
     ) {
-        let mut runs = scene.glyph_runs();
-        runs.retain(|run| run.style.foreground_visible(blink_visible));
-        for (index, run) in runs.iter().enumerate() {
-            if block_span(&run.text, run.columns == 1).is_some() {
-                continue;
-            }
-            let left =
-                origin.left + self.metrics.padding + f32::from(run.column) * self.metrics.width;
-            let top = origin.top + self.metrics.padding + f32::from(run.row) * self.metrics.height;
-            let width = f32::from(run.columns) * self.metrics.width;
-            let next = runs.get(index + 1).filter(|next| next.row == run.row);
-            let ink_width = f32::from(cell_ink_right(run, next, scene.columns) - run.column)
-                * self.metrics.width;
-            self.push_text_clipped(
-                &run.text,
-                left,
+        let context = self.row_text_context(scene);
+        for (row_index, row) in scene.content.iter().enumerate() {
+            let top = origin.top + self.metrics.padding + row_index as f32 * self.metrics.height;
+            self.row_text.place(
+                RowTextSlot {
+                    terminal,
+                    preview: None,
+                    row: row_index,
+                },
+                row,
+                context,
+                &mut self.fonts.font_system,
+                blink_visible,
+                origin,
                 top,
-                width,
-                ink_width,
-                self.metrics.height,
-                run.style.foreground,
-                DrawStyleKind::Cell(run.style, run.columns == 2),
                 clip,
+                &mut self.text,
             );
         }
     }
@@ -2409,37 +2675,24 @@ impl Renderer {
         let Some((direction, rows)) = preview_rows(preview) else {
             return;
         };
-        let mut runs = Vec::new();
+        let context = self.row_text_context(scene);
         for (row_index, row) in rows.iter().enumerate() {
             let top = preview_row_top(scene, direction, row_index, self.metrics, origin);
-            if !row_intersects_clip(top, self.metrics.height, clip) {
-                continue;
-            }
-            runs.clear();
-            row.append_glyph_runs(0, &mut runs);
-            runs.retain(|run| run.style.foreground_visible(blink_visible));
-            for (index, run) in runs.iter().enumerate() {
-                if block_span(&run.text, run.columns == 1).is_some() {
-                    continue;
-                }
-                let left =
-                    origin.left + self.metrics.padding + f32::from(run.column) * self.metrics.width;
-                let width = f32::from(run.columns) * self.metrics.width;
-                let next = runs.get(index + 1);
-                let ink_width = f32::from(cell_ink_right(run, next, scene.columns) - run.column)
-                    * self.metrics.width;
-                self.push_text_clipped(
-                    &run.text,
-                    left,
-                    top,
-                    width,
-                    ink_width,
-                    self.metrics.height,
-                    run.style.foreground,
-                    DrawStyleKind::Cell(run.style, run.columns == 2),
-                    clip,
-                );
-            }
+            self.row_text.place(
+                RowTextSlot {
+                    terminal: 0,
+                    preview: Some(direction == VerticalDirection::Up),
+                    row: row_index,
+                },
+                row,
+                context,
+                &mut self.fonts.font_system,
+                blink_visible,
+                origin,
+                top,
+                clip,
+                &mut self.text,
+            );
         }
     }
 
@@ -2538,19 +2791,6 @@ impl Renderer {
         if text.is_empty() {
             return 0.0;
         }
-        if let DrawStyleKind::Cell(style, wide) = kind {
-            self.push_cell_text(
-                text,
-                left,
-                top,
-                layout_width,
-                layout_height,
-                foreground,
-                style,
-                wide,
-            );
-            return 0.0;
-        }
         let layout_width = layout_width.max(1.0);
         let layout_height = layout_height.max(1.0);
         let buffer = shape_styled_text(
@@ -2568,7 +2808,7 @@ impl Renderer {
             (0.0, 0.0)
         };
         self.text.push(PlacedText {
-            buffer,
+            buffer: buffer.into(),
             custom_glyph: None,
             left: left + left_offset,
             top: top
@@ -2584,88 +2824,6 @@ impl Renderer {
             color: Color::rgba(foreground.r, foreground.g, foreground.b, 255),
         });
         measured_width
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn push_cell_text(
-        &mut self,
-        text: &str,
-        left: f32,
-        top: f32,
-        layout_width: f32,
-        layout_height: f32,
-        foreground: SceneColor,
-        style: DrawStyle,
-        wide: bool,
-    ) {
-        let segments = cell_text_segments(text);
-        let attrs = cell_text_attrs(self.cell_font, text, wide, style);
-        let box_attrs = attrs
-            .clone()
-            .metrics(Metrics::new(self.cell_font.box_size, self.metrics.height))
-            .letter_spacing(self.cell_font.box_letter_spacing);
-        let braille_attrs = if self.fonts.family.is_some() {
-            attrs.clone()
-        } else {
-            attrs.clone().family(Family::Name(BRAILLE_FAMILY))
-        };
-        for box_drawing in [false, true] {
-            if !segments
-                .iter()
-                .any(|(_, kind)| (*kind == CellTextKind::Box) == box_drawing)
-            {
-                continue;
-            }
-            // A cell needs one line, not Vec's four-line initial allocation.
-            let mut buffer =
-                Buffer::new_empty(Metrics::new(self.cell_font.size, self.metrics.height));
-            buffer.lines.reserve_exact(1);
-            buffer.set_size(Some(layout_width.max(1.0)), Some(layout_height.max(1.0)));
-            buffer.set_wrap(Wrap::None);
-            buffer.set_monospace_width(Some(self.metrics.width));
-            set_cell_layer(
-                &mut buffer,
-                text,
-                &segments,
-                &attrs,
-                &braille_attrs,
-                &box_attrs,
-                box_drawing,
-            );
-            if box_drawing {
-                buffer.shape_until_scroll(&mut self.fonts.font_system, false);
-            } else {
-                shape_cell_text(
-                    &mut buffer,
-                    &mut self.fonts.font_system,
-                    self.cell_font,
-                    text,
-                    style,
-                    &attrs,
-                );
-            }
-            self.text.push(PlacedText {
-                buffer,
-                custom_glyph: None,
-                left,
-                top: top
-                    - if box_drawing {
-                        0.0
-                    } else {
-                        self.cell_font.top_offset
-                    },
-                right: (left + layout_width).ceil() as i32,
-                bottom: (top + layout_height).ceil() as i32,
-                bound_left: left.floor() as i32,
-                bound_top: top.floor() as i32,
-                color: Color::rgba(
-                    foreground.r,
-                    foreground.g,
-                    foreground.b,
-                    style.foreground_alpha(),
-                ),
-            });
-        }
     }
 
     fn upload_vertices(&mut self, bytes: &[u8]) {
@@ -2724,7 +2882,6 @@ fn upload_vertices(
 
 #[derive(Clone, Copy)]
 enum DrawStyleKind {
-    Cell(DrawStyle, bool),
     Heading,
     Preedit,
     Monospace,
@@ -2733,7 +2890,7 @@ enum DrawStyleKind {
 }
 
 /// `text` shaped in the typography of `kind` for a box `layout_width` by `layout_height`, as
-/// `push_text` draws it. Cell runs, which `push_cell_text` shapes, take the monospace font here.
+/// `push_text` draws it. Terminal cell layers use `shape_cell_layers` instead.
 fn shape_styled_text(
     font_system: &mut FontSystem,
     metrics: CellMetrics,
@@ -2758,7 +2915,7 @@ fn shape_styled_text(
             None,
             Wrap::None,
         ),
-        DrawStyleKind::Cell(..) | DrawStyleKind::Preedit | DrawStyleKind::Monospace => (
+        DrawStyleKind::Preedit | DrawStyleKind::Monospace => (
             cell_font.size,
             metrics.height,
             cell_font.attrs(),
@@ -2800,6 +2957,62 @@ fn shaped_preedit_placement(buffer: &Buffer) -> (f32, f32) {
         (left.min(glyph.x), right.max(glyph.x + glyph.w))
     });
     (-left, right - left)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shape_cell_layers(
+    fonts: &mut FontSystem,
+    metrics: CellMetrics,
+    cell_font: CellFont,
+    family: Option<&'static str>,
+    text: &str,
+    layout_width: f32,
+    layout_height: f32,
+    style: DrawStyle,
+    wide: bool,
+) -> [Option<Buffer>; 2] {
+    let segments = cell_text_segments(text);
+    let attrs = cell_text_attrs(cell_font, text, wide, style);
+    let box_attrs = attrs
+        .clone()
+        .metrics(Metrics::new(cell_font.box_size, metrics.height))
+        .letter_spacing(cell_font.box_letter_spacing);
+    let braille_attrs = if family.is_some() {
+        attrs.clone()
+    } else {
+        attrs.clone().family(Family::Name(BRAILLE_FAMILY))
+    };
+    let mut layers = [None, None];
+    for (layer, box_drawing) in layers.iter_mut().zip([false, true]) {
+        if !segments
+            .iter()
+            .any(|(_, kind)| (*kind == CellTextKind::Box) == box_drawing)
+        {
+            continue;
+        }
+        // A cell needs one line, not Vec's four-line initial allocation.
+        let mut buffer = Buffer::new_empty(Metrics::new(cell_font.size, metrics.height));
+        buffer.lines.reserve_exact(1);
+        buffer.set_size(Some(layout_width.max(1.0)), Some(layout_height.max(1.0)));
+        buffer.set_wrap(Wrap::None);
+        buffer.set_monospace_width(Some(metrics.width));
+        set_cell_layer(
+            &mut buffer,
+            text,
+            &segments,
+            &attrs,
+            &braille_attrs,
+            &box_attrs,
+            box_drawing,
+        );
+        if box_drawing {
+            buffer.shape_until_scroll(fonts, false);
+        } else {
+            shape_cell_text(&mut buffer, fonts, cell_font, text, style, &attrs);
+        }
+        *layer = Some(buffer);
+    }
+    layers
 }
 
 fn shaping(text: &str) -> Shaping {

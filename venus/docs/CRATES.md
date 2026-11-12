@@ -467,7 +467,11 @@ occluded or recovering because assistive technology must not wait for GPU
 presentation. Both views derive from the same scene and keep no independent
 content model.
 
-The first slice rebuilds and redraws the complete scene. Damage is derived only
+The renderer caches shaped cell layers for equal rows at the same terminal and
+row slot. Fractional scrolling rebuilds placement and clipping from those layers;
+changed rows reshape independently. Cache entries retain only visible rows and
+partial clip edges, with no terminal history. Each changed frame still prepares
+the complete text-area stream and rectangle scene. Damage is derived locally
 after measurement and never becomes wire state. The implementation is smaller
 than the gate estimate; the README scorecard records the exact owned size.
 

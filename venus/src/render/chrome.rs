@@ -2045,7 +2045,7 @@ impl Renderer {
             placed.top = chip_label_top(
                 &mut self.fonts.font_system,
                 &mut self.swash_cache,
-                &mut placed.buffer,
+                placed.buffer.mutable(),
                 label,
                 line_height,
             );
@@ -2778,7 +2778,7 @@ impl Renderer {
                     && let Some(text) = self.text.get_mut(first)
                 {
                     color_label_identity(
-                        &mut text.buffer,
+                        text.buffer.mutable(),
                         &mut self.fonts.font_system,
                         &(index + 1).to_string(),
                         heading_number,
@@ -2900,7 +2900,7 @@ impl Renderer {
                 && let Some(text) = self.text.get_mut(first)
             {
                 color_label_identity(
-                    &mut text.buffer,
+                    text.buffer.mutable(),
                     &mut self.fonts.font_system,
                     &(index + 1).to_string(),
                     blend_to_contrast(palette::PANE_ID, fill, 4.5),
@@ -2985,7 +2985,7 @@ impl Renderer {
                 && let Some(text) = self.text.get_mut(first_text)
             {
                 color_quota_pace(
-                    &mut text.buffer,
+                    text.buffer.mutable(),
                     &mut self.fonts.font_system,
                     &quota.label,
                     shortfall,
@@ -3071,7 +3071,7 @@ impl Renderer {
                     palette::SECONDARY_TEXT
                 };
                 self.text.push(PlacedText {
-                    buffer,
+                    buffer: buffer.into(),
                     custom_glyph: None,
                     left,
                     top,
@@ -3277,7 +3277,7 @@ impl Renderer {
                     && let Some(text) = self.text.get_mut(first_text)
                 {
                     color_label_identity(
-                        &mut text.buffer,
+                        text.buffer.mutable(),
                         &mut self.fonts.font_system,
                         &pane.id,
                         id_color,
@@ -3481,7 +3481,7 @@ impl Renderer {
             if state.enabled { 4.5 } else { 3.0 },
         );
         self.text.push(PlacedText {
-            buffer,
+            buffer: buffer.into(),
             custom_glyph: None,
             left,
             top,
@@ -3596,7 +3596,7 @@ impl Renderer {
         let mut buffer = Buffer::new_empty(Metrics::new(rect.height, rect.height));
         buffer.set_size(Some(rect.width), Some(rect.height));
         self.text.push(PlacedText {
-            buffer,
+            buffer: buffer.into(),
             custom_glyph: Some(CustomGlyph {
                 id,
                 width: rect.width,
@@ -3661,6 +3661,8 @@ mod tests {
     use super::super::*;
     use super::*;
     use glyphon::{cosmic_text::SubpixelBin, fontdb};
+    #[cfg(target_os = "linux")]
+    use std::sync::Arc;
 
     /// Venus's focus color when Eon passes none (`--focus-color`), readable on the bar disc.
     const DEFAULT_FOCUS: SceneColor = SceneColor {

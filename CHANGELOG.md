@@ -72,6 +72,8 @@ installation, and proven contract changes.
   replay uncertainty, and retain unconfirmed children for reaping. CLI and
   window reply waits cover the same lifecycle budgets; Stop's wire bytes
   are unchanged (`eon-g3vdz`, `eon-l4e7s`).
+- Venus reuses shaped text for unchanged terminal rows during updates and
+  fractional scrolling (`eon-venus-row-text-cache-gxb4`, first slice).
 
 - The first expanded Stack pane's band and focus frame sit one title row
   below the Stack outline, matching the gap below collapsed titles. Existing

@@ -17,7 +17,7 @@ const EMOJI_FAMILY: &str = "Apple Color Emoji";
 #[cfg(not(target_os = "macos"))]
 const EMOJI_FAMILY: &str = "Noto Color Emoji";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(super) struct CellFont {
     family: Option<&'static str>,
     pub(super) size: f32,

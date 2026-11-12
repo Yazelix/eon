@@ -142,7 +142,7 @@ fn retained_frame_text_preserves_padding_after_resize() {
         }
         if let Some(bounds) = cell.intersection(clip) {
             text.push(PlacedText {
-                buffer,
+                buffer: buffer.into(),
                 custom_glyph: None,
                 left: cell.left,
                 top: cell.top,
@@ -280,7 +280,7 @@ fn fractional_card_text_has_no_exterior_ink_with_hints_and_header_scroll() {
             );
             buffer.shape_until_scroll(&mut fonts.font_system, false);
             let text = [PlacedText {
-                buffer,
+                buffer: buffer.into(),
                 custom_glyph: None,
                 left: cell.left,
                 top: cell.top,
@@ -425,7 +425,7 @@ fn fractional_card_text_survives_glyphon_preparation_with_hints_and_header_scrol
         .intersection(clip)
         .unwrap();
         let text = [PlacedText {
-            buffer,
+            buffer: buffer.into(),
             custom_glyph: None,
             left,
             top: top - cell_font.top_offset,
@@ -502,7 +502,7 @@ fn notched_dialog_preserves_text_in_its_exposed_top_cutout() {
     let point = (card.bounds.right() - metrics.padding * 2.0, tab.top + 2.5);
     assert!(!fill.iter().any(|band| band.contains(point.0, point.1)));
     let text = [PlacedText {
-        buffer: Buffer::new(&mut fonts.font_system, Metrics::new(16.0, 18.0)),
+        buffer: Buffer::new(&mut fonts.font_system, Metrics::new(16.0, 18.0)).into(),
         custom_glyph: None,
         left: 0.0,
         top: 0.0,
@@ -533,7 +533,7 @@ fn notched_dialog_preserves_text_in_its_exposed_top_cutout() {
 fn rectangular_text_overlays_keep_their_bounds_and_foreground_text() {
     let mut fonts = FontSystem::new();
     let text = [PlacedText {
-        buffer: Buffer::new(&mut fonts, Metrics::new(16.0, 18.0)),
+        buffer: Buffer::new(&mut fonts, Metrics::new(16.0, 18.0)).into(),
         custom_glyph: None,
         left: 0.0,
         top: 0.0,
