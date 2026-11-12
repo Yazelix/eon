@@ -14306,10 +14306,17 @@ fn read_request(stream: &mut UnixStream) -> Vec<u8> {
     request
 }
 
-/// An accepted reload reply names the presenting path without confirming replacement.
+/// Reload distinguishes acceptance from unconfirmed effects and from refusal.
 #[test]
-fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
-    for (independent, json) in [(false, false), (false, true), (true, false), (true, true)] {
+fn window_reload_reports_acceptance_with_unconfirmed_effects_or_refusal() {
+    for (independent, json, refuse) in [
+        (false, true, false),
+        (false, false, false),
+        (true, false, false),
+        (true, true, false),
+        (false, true, true),
+        (false, false, true),
+    ] {
         let root = temporary_directory();
         let runtime = root.join("r");
         let windows = runtime.join("w");
@@ -14326,6 +14333,7 @@ fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
         let listener = generation_listener(&owner, &id);
         let target = root.join("new-venus");
         let requested = target.clone();
+        let generation = id.clone();
         let server = thread::spawn(move || {
             loop {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -14356,10 +14364,16 @@ fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
                 let mut info = previous_runtime(&id);
                 // A supervisor can accept a reload while leaving the presenting path unchanged.
                 info.venus = Some(requested.to_str().unwrap().into());
+                let response = if reload && refuse {
+                    LifecycleResponse::Failure(ProtocolFailure {
+                        code: "reload-refused".into(),
+                        detail: "invalid configuration".into(),
+                    })
+                } else {
+                    LifecycleResponse::Runtime(info)
+                };
                 stream
-                    .write_all(
-                        &encode_lifecycle_response(&LifecycleResponse::Runtime(info)).unwrap(),
-                    )
+                    .write_all(&encode_lifecycle_response(&response).unwrap())
                     .unwrap();
                 if reload {
                     break;
@@ -14398,11 +14412,40 @@ fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
             reload.arg("--json");
         }
         let output = reload.output().unwrap();
-        assert!(output.status.success(), "{output:?}");
-        if json {
+        assert_eq!(
+            output.status.code(),
+            Some(if refuse { 4 } else { 0 }),
+            "{output:?}"
+        );
+        if refuse {
+            if json {
+                let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(
+                    answer,
+                    serde_json::json!({
+                        "error": {"code": "reload-refused", "detail": "invalid configuration"}
+                    })
+                );
+            } else {
+                assert!(output.stdout.is_empty(), "{output:?}");
+                assert_eq!(
+                    String::from_utf8(output.stderr).unwrap(),
+                    "error reload-refused: invalid configuration\n"
+                );
+            }
+        } else if json {
             let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(answer["venus"], target.to_str().unwrap());
-            assert_eq!(answer["window"], full_id);
+            assert_eq!(
+                answer,
+                serde_json::json!({
+                    "window": full_id,
+                    "generation": generation,
+                    "venus": target.to_str().unwrap(),
+                    "accepted": true,
+                    "replaced": null,
+                    "config_reloaded": null
+                })
+            );
         } else {
             let answer = String::from_utf8(output.stdout).unwrap();
             assert!(
@@ -14410,7 +14453,10 @@ fn window_reload_sends_its_own_venus_and_reports_the_presenting_path() {
                 "{answer}"
             );
             assert!(answer.contains(&format!("presenting Venus {}", target.display())));
-            assert!(answer.contains("does not confirm replacement"), "{answer}");
+            assert!(
+                answer.contains("does not confirm replacement or config rereading"),
+                "{answer}"
+            );
             assert!(
                 answer.contains("Older supervisors may skip same-path reloads"),
                 "{answer}"

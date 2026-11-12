@@ -2599,12 +2599,16 @@ names its socket. CLI JSON names a session `session` and a terminal
     clears that override, so the next Present uses the supervisor's own Venus.
     Runtime inspection and `eon window ls --json` carry `venus`, its actual
     presenting executable path or null while detached. Reload success JSON
-    is `{"window":ID,"generation":GENERATION,"venus":PATH}`; success from a
-    fixed supervisor means Venus was replaced with current configuration
-    arguments. Supervisors predating `eon-u199d.3` still skip same-path reload;
+    is `{"window":ID,"generation":GENERATION,"venus":PATH,"accepted":true,"replaced":null,"config_reloaded":null}`.
+    `accepted:true` confirms that the supervisor accepted the request. On
+    EONW v40, `replaced:null` and `config_reloaded:null` mean this reply does
+    not confirm Venus replacement or configuration rereading; neither null
+    means false. A supervisor implementing `eon-u199d.3` replaces Venus with
+    current configuration arguments on success. Earlier supervisors still
+    accept without rereading configuration at the same executable path;
     those windows need one move to a fresh window for this fix. The CLI's text
-    acknowledges the request and reports the presenting path without claiming
-    confirmed replacement. Accepted replacement updates EON-C27 quota polling
+    acknowledges the request, reports the presenting path and says neither
+    effect is confirmed. Accepted replacement updates EON-C27 quota polling
     to the resolved bar widgets; refusal or rollback retains the previous
     polling selection. Failure uses
     the existing failure object: `reload-refused`, `reload-presentation-failed`

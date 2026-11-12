@@ -785,7 +785,7 @@ pub(super) fn reload_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Re
         {
             if json {
                 write_stdout(format!(
-                    "{{\"window\":\"{}\",\"generation\":\"{}\",\"venus\":{}}}\n",
+                    "{{\"window\":\"{}\",\"generation\":\"{}\",\"venus\":{},\"accepted\":true,\"replaced\":null,\"config_reloaded\":null}}\n",
                     json_escape(&full_id),
                     json_escape(&runtime.generation),
                     runtime.venus.as_deref().map_or_else(
@@ -796,7 +796,7 @@ pub(super) fn reload_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Re
             } else {
                 write_stdout(format!(
                     "Reload accepted for window {}; presenting Venus {}\n\
-                     This reply does not confirm replacement. Older supervisors may skip same-path reloads; those windows need a fresh window to reread config.\n",
+                     This reply does not confirm replacement or config rereading. Older supervisors may skip same-path reloads; those windows need a fresh window to reread config.\n",
                     terminal_text(&shown),
                     terminal_text(runtime.venus.as_deref().unwrap_or("unavailable"))
                 ))?;

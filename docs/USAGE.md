@@ -220,14 +220,18 @@ startup admission, Eon restores Venus with its last accepted launch arguments
 and reports failure. Reload refuses when the window lacks keyboard focus,
 when protocols differ, or when the requesting Venus is outside the immutable
 Nix store. `--json` reports `window`, `generation` and the presenting `venus`
-path on success, or an error object on failure.
-The text reply acknowledges the request and reports the presenting path;
-the reply alone cannot confirm that Venus was replaced. Quota polling follows
+path on success, together with `"accepted":true`, `"replaced":null` and
+`"config_reloaded":null`. `accepted` confirms that the supervisor accepted
+the request. Both null values mean the reply cannot confirm whether Venus
+was replaced or configuration was reread; they do not mean false. EONW v40
+does not report those outcomes. Failure still returns an error object.
+The text reply acknowledges the request, reports the presenting path and
+says replacement and config rereading are unconfirmed. Quota polling follows
 the accepted `[bar] widgets`; a failed reload retains its previous selection.
 
 Popup definitions added while the supervisor is running still need a fresh
 window. Supervisors started before the same-build reload fix (`eon-u199d.3`)
-keep their old behavior: an identical Venus path skips config rereading. Move
+accept without rereading config when the Venus path is identical. Move
 those windows to a fresh window once to use the fix.
 
 ### Stop terminals

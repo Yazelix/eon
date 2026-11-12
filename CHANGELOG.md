@@ -8,6 +8,10 @@ installation, and proven contract changes.
 - Panel headings default to `"connected"`; `[panels] heading = "notch"` remains
   a supported choice. Omitted settings use connected on window open, reopen or
   reload (`eon-j7ii2`, Lucca's 2026-11-11 decision).
+- `eon window reload ID --json` reports `"accepted":true` with
+  `"replaced":null` and `"config_reloaded":null`: EONW v40 confirms request
+  acceptance, but cannot confirm those effects. Text output states the same
+  limit (`eon-u199d.5`, EON-C11).
 
 - The current Agents row uses a one-pixel outline in the configured focus
   colour instead of a grey fill. Hover keeps its dark fill, and keyboard focus
