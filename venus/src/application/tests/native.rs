@@ -394,6 +394,108 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         platform::wayland::EventLoopBuilderExtWayland,
     };
 
+    fn check_sidebar_wheel_bursts(
+        app: &mut Application,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+    ) {
+        let mut snapshot = app.workspace_model.snapshot().unwrap().clone();
+        let tab = &mut snapshot.tabs[0];
+        let pane = tab.columns[0].panes[0].clone();
+        tab.columns = vec![workspace::Column {
+            expanded: "sidebar-0".into(),
+            panes: (0..20)
+                .map(|index| {
+                    let mut pane = pane.clone();
+                    pane.id = format!("sidebar-{index}");
+                    pane.live = false;
+                    pane.attention = Some(workspace::Attention {
+                        state: workspace::AttentionState::Unavailable,
+                        record: None,
+                    });
+                    pane
+                })
+                .collect(),
+        }];
+        tab.selected_pane = Some("sidebar-0".into());
+        tab.attention_rollup = Some(workspace::AttentionState::Unavailable);
+        snapshot.active_tab = tab.id.clone();
+        snapshot.sidebar = workspace::Sidebar::Open;
+        app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
+            snapshot,
+        )));
+        app.window_event(
+            event_loop,
+            id,
+            WindowEvent::Resized(PhysicalSize::new(2400, 600)),
+        );
+        app.render();
+        assert!(app.presentation.has_presented_geometry());
+        let metrics = app.window.as_ref().unwrap().renderer.metrics();
+        let card = app.workspace_scene().unwrap().sidebar().unwrap();
+        app.cursor =
+            PhysicalPosition::new(f64::from(card.left + 10.0), f64::from(card.top + 100.0));
+        let focus = app.workspace_focus;
+        app.terminal
+            .terminal_scroll
+            .push_lines(1.0, f64::from(metrics.height));
+        let wheel = |app: &mut Application, delta| {
+            app.window_event(
+                event_loop,
+                id,
+                WindowEvent::MouseWheel {
+                    device_id: DeviceId::dummy(),
+                    delta,
+                    phase: TouchPhase::Moved,
+                },
+            )
+        };
+        let mut expected = app.sidebar_scroll;
+        for delta in [
+            MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -0.25)),
+            MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -0.25)),
+            MouseScrollDelta::LineDelta(0.0, -1.0),
+            MouseScrollDelta::LineDelta(0.0, -1.0),
+        ] {
+            expected += list_scroll_delta(delta, metrics.height);
+            wheel(app, delta);
+            assert_eq!(
+                app.sidebar_scroll, expected,
+                "every delta before redraw must reach the sidebar"
+            );
+            assert!(
+                !app.presentation.has_presented_geometry(),
+                "row activation waits for repaint"
+            );
+            assert_eq!(app.workspace_focus, focus);
+            assert!(
+                !app.terminal
+                    .terminal_scroll
+                    .active(app.terminal.pending_viewport)
+            );
+        }
+        app.window_event(
+            event_loop,
+            id,
+            WindowEvent::MouseInput {
+                device_id: DeviceId::dummy(),
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+            },
+        );
+        assert_eq!(
+            app.workspace_focus, focus,
+            "stale row geometry cannot activate"
+        );
+        app.set_shortcut_viewer(true);
+        wheel(app, MouseScrollDelta::LineDelta(0.0, -1.0));
+        assert_eq!(
+            app.sidebar_scroll, expected,
+            "an open dialog takes the wheel first"
+        );
+        app.set_shortcut_viewer(false);
+    }
+
     fn linked_frame(revision: u64, uri: &str) -> TransportEvent {
         use orbit_protocol::{Cell, CellStyle, CellWidth, Row, StyleColor, Underline};
         let TransportEvent::Server(ServerMessage::Frame(mut frame)) =
@@ -1473,6 +1575,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             assert!(app.status().contains("selected Eon pane is offline"));
             assert_eq!(app.presented_revision(), None);
             assert!(app.pointer_link(app.links.unshifted).is_none());
+            check_sidebar_wheel_bursts(app, event_loop, id);
             let mut empty = app.workspace_model.snapshot().unwrap().clone();
             empty.active_tab = empty.tabs[0].id.clone();
             show_test_popup(&mut empty);

@@ -709,6 +709,10 @@ impl Snapshot {
                 let mut sidebar = Node::new(Role::Complementary);
                 sidebar.set_label("Agent sidebar");
                 sidebar.set_bounds(rect(bounds));
+                sidebar.set_clips_children();
+                sidebar.set_scroll_y(f64::from(workspace.sidebar_scroll()));
+                sidebar.set_scroll_y_min(0.0);
+                sidebar.set_scroll_y_max(f64::from(workspace.sidebar_max_scroll()));
                 // The Hide button, then each tab's heading and its rows, in visual order.
                 let mut children = Vec::new();
                 if let Some(node) = heading_button(workspace, HeadingAction::HideSidebar) {
@@ -726,9 +730,12 @@ impl Snapshot {
                     let id = self.sidebar_ids[heading.tab.as_str()];
                     let mut node = Node::new(Role::Heading);
                     node.set_label(heading.label.as_str());
-                    if let Some(bounds) = heading.rect.intersection(workspace.sidebar_list) {
-                        node.set_bounds(rect(bounds));
-                    }
+                    node.set_bounds(rect(
+                        heading
+                            .rect
+                            .intersection(workspace.sidebar_list)
+                            .unwrap_or_default(),
+                    ));
                     children.push(id);
                     nodes.push((id, node));
                     for row in workspace
@@ -739,9 +746,11 @@ impl Snapshot {
                         let id = self.sidebar_ids[row.target.as_str()];
                         let mut node = Node::new(Role::Button);
                         node.set_label(row.accessible_label.as_str());
-                        if let Some(bounds) = row.rect.intersection(workspace.sidebar_list) {
-                            node.set_bounds(rect(bounds));
-                        }
+                        node.set_bounds(rect(
+                            row.rect
+                                .intersection(workspace.sidebar_list)
+                                .unwrap_or_default(),
+                        ));
                         node.add_action(Action::Click);
                         node.add_action(Action::Focus);
                         children.push(id);
@@ -4137,6 +4146,8 @@ mod tests {
         assert_eq!(sidebar.role(), Role::Complementary);
         assert_eq!(sidebar.label(), Some("Agent sidebar"));
         assert_eq!(sidebar.bounds(), Some(rect(scene.sidebar().unwrap())));
+        assert_eq!(sidebar.scroll_y(), Some(0.0));
+        assert_eq!(sidebar.scroll_y_max(), Some(0.0));
         assert_eq!(sidebar.children(), [SIDEBAR_HIDE, SIDEBAR_EMPTY_STATE]);
         // The Agents heading's Hide button is a button on its drawn target.
         let hide = node(&update, SIDEBAR_HIDE);
@@ -4199,6 +4210,7 @@ mod tests {
             crate::SidebarView {
                 now: 0,
                 focused: Some("p1"),
+                scroll: 0.0,
             },
         );
         let mut snapshot = Snapshot::new(size);
@@ -4241,6 +4253,46 @@ mod tests {
         assert_eq!(update.focus, CONTENT);
         snapshot.workspace_focus = WorkspaceFocus::Sidebar;
         assert_eq!(snapshot.tree().focus, row);
+
+        let pane = workspace.tabs[0].columns[0].panes[0].clone();
+        workspace.tabs[0].columns[0].panes = (1..=20)
+            .map(|index| {
+                let mut pane = pane.clone();
+                pane.id = format!("p{index}");
+                pane
+            })
+            .collect();
+        let scrolled = WorkspaceScene::from_snapshot_with_zoom(
+            &workspace,
+            crate::EonBar::default(),
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.len() as f32 * 10.0),
+            None,
+            false,
+            crate::SidebarView {
+                scroll: 180.5,
+                ..crate::SidebarView::default()
+            },
+        );
+        snapshot.set_workspace(Some(&scrolled));
+        let update = snapshot.tree();
+        assert_eq!(node(&update, SIDEBAR).scroll_y(), Some(180.5));
+        assert_eq!(
+            node(&update, SIDEBAR).scroll_y_max(),
+            Some(f64::from(scrolled.sidebar_max_scroll()))
+        );
+        assert_eq!(
+            node(&update, row).bounds(),
+            Some(rect(SceneRect::default()))
+        );
+        assert_eq!(
+            node(&update, SIDEBAR).children().len(),
+            22,
+            "hidden rows remain addressable"
+        );
 
         // Closed or hidden for width, the region leaves the tree.
         for (sidebar, width) in [(Sidebar::Closed, 1400), (Sidebar::Open, 1000)] {

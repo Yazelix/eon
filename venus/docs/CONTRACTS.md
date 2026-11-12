@@ -2311,7 +2311,8 @@ re-proved when that platform or feature is next touched.
   re-proof of background blur ([Window background and
   decorations](PRESENTATION.md#window-background-and-decorations)), and the
   current row's focus-colour outline and inset keyboard-focus treatment
-  (`eon-wuau8.4`). Lucca approved that presentation on 2026-11-11 ("ahhh i like
+  (`eon-wuau8.4`), and pointer scrolling/overflow indication (`eon-r1scq`).
+  Lucca approved that presentation on 2026-11-11 ("ahhh i like
   it"); its live acceptance follows landing. Lucca approved the sidebar
   contract on 2026-10-21 (draft 15 on `eon-agent-sidebar-yx8.1`, there under an
   earlier draft ID). `eon-agent-sidebar-yx8.3`
@@ -2344,6 +2345,8 @@ re-proved when that platform or feature is next touched.
   Presentation amended by `eon-wuau8.3`, approved by Lucca on 2026-11-10
   (selection, accents and labels), with zoom and contrast decisions relayed
   by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
+  Pointer scrolling and its overflow thumb amended by `eon-r1scq`, approved
+  by eon-overseer under Lucca's standing delegation on 2026-11-12; proof pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2457,6 +2460,20 @@ re-proved when that platform or feature is next touched.
       outline. Its accessible label adds "current" (`eon-wuau8.4`, approved by
       Lucca on 2026-11-11: "ahhh i like it").
   - **Navigation.**
+    - **Pointer scrolling.** Vertical mouse-wheel and touchpad input over the
+      visible Agents sidebar card scrolls its rows using the attention inbox's
+      delta policy: three cell heights per logical wheel step and direct
+      fractional pixel movement, without synthetic momentum. Input over the card
+      is consumed even at either end. The offset is clamped to the content and
+      viewport and survives redraws and attention refreshes. When rows are added
+      or removed, a viewport at the start stays at the start; otherwise a
+      surviving visible row retains its position where clamping permits.
+      Pointer scrolling changes neither keyboard focus nor the active
+      terminal. Keyboard navigation continues to reveal its focused row; ordinary
+      redraws do not undo a pointer scroll. Row activation uses the presented,
+      scrolled and clipped row geometry. A scroll thumb shows only while rows
+      overflow; its size and position reflect the viewport and offset, and it
+      disappears when all rows fit.
     - Activating a row sends `FocusAttention`, and keyboard focus moves to the
       target terminal, or stays on the tab when the covered-target rule only
       selects the tab. It never stops a terminal.
@@ -2705,6 +2722,10 @@ re-proved when that platform or feature is next touched.
     live acceptance after landing. The earlier current-row outline
     observation gap (`eon-sidebar-you-are-here-3743`) is superseded by this
     presentation change; its historical observations above remain unchanged.
+  - Pointer scrolling and the overflow thumb (`eon-r1scq`) await isolated
+    installed dogfood. Application/Scene regressions cover card routing,
+    clamping, anchoring and focus/pointer interplay; geometry checks cover
+    gutter clearance at scales 1, 1.125 and 2 with supported border widths.
 
 ## VEN-C31 — Static terminal images
 

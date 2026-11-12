@@ -13,6 +13,10 @@ installation, and proven contract changes.
   are never retried. Eon 0.1.23 uses EONW v41 to distinguish the edit result;
   v41 commands require a window on this build (`eon-xodrj.5`).
 
+- The Agents sidebar scrolls overflowing rows with the mouse wheel and
+  touchpad. A slim neutral thumb shows overflow and position; keyboard
+  navigation continues to reveal its focused row (`eon-r1scq`).
+
 - Panel headings default to `"connected"`; `[panels] heading = "notch"` remains
   a supported choice. Omitted settings use connected on window open, reopen or
   reload (`eon-j7ii2`, Lucca's 2026-11-11 decision).

@@ -60,7 +60,10 @@ use geometry::{
     terminal_screen,
 };
 
-use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish_scroll_failure};
+use scroll::{
+    PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish_scroll_failure,
+    list_scroll_delta, list_scroll_offset, sidebar_wheel,
+};
 
 use shortcuts::{
     HintPopupLatch, NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, command_q,
@@ -1357,6 +1360,7 @@ struct Application {
     workspace_focus: WorkspaceFocus,
     /// The agent sidebar row that holds keyboard focus while `workspace_focus` is `Sidebar`.
     sidebar_row: Option<String>,
+    sidebar_scroll: f32,
     /// A sidebar row's jump awaiting its result, which focus follows (VEN-C30).
     attention_jump: Option<AttentionJump>,
     pending_pane: Option<PendingPaneAction>,
@@ -1493,6 +1497,7 @@ impl Application {
             window_occluded: false,
             workspace_focus: WorkspaceFocus::Terminal,
             sidebar_row: None,
+            sidebar_scroll: 0.0,
             attention_jump: None,
             pending_pane: None,
             pending_close: None,
@@ -1781,7 +1786,11 @@ impl Application {
                 },
                 self.hints.clone(),
                 self.zoomed(),
-                sidebar_view(self.workspace_focus, self.sidebar_row.as_deref()),
+                sidebar_view(
+                    self.workspace_focus,
+                    self.sidebar_row.as_deref(),
+                    self.sidebar_scroll,
+                ),
             )
         })
     }
@@ -1893,7 +1902,7 @@ impl Application {
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.attention_inbox.scroll,
-                sidebar_view(self.workspace_focus, None).now,
+                sidebar_view(self.workspace_focus, None, self.sidebar_scroll).now,
             ));
         }
         let Some(prompt) = &self.close_prompt else {
@@ -2597,7 +2606,7 @@ impl Application {
         let Some(dialog) = self.dialog_scene() else {
             return;
         };
-        let scroll = (dialog.scroll + pixels).clamp(0.0, dialog.max_scroll);
+        let scroll = list_scroll_offset(dialog.scroll, pixels, dialog.max_scroll);
         if *self.dialog_scroll() != scroll {
             *self.dialog_scroll() = scroll;
             if self.window_menu.open {
@@ -2764,7 +2773,11 @@ impl Application {
             },
             self.hints.clone(),
             zoom,
-            sidebar_view(self.workspace_focus, self.sidebar_row.as_deref()),
+            sidebar_view(
+                self.workspace_focus,
+                self.sidebar_row.as_deref(),
+                self.sidebar_scroll,
+            ),
         ))
     }
 
@@ -2787,11 +2800,24 @@ impl Application {
         if self.workspace_focus != WorkspaceFocus::Sidebar {
             self.sidebar_row = Some(target);
             self.set_workspace_focus(WorkspaceFocus::Sidebar);
-        } else if self.sidebar_row.as_ref() != Some(&target) {
+        } else {
+            let changed = self.sidebar_row.as_ref() != Some(&target);
             self.sidebar_row = Some(target);
-            // Revealing the row can scroll every row, and rows are hit targets.
-            self.presentation.invalidate();
-            self.refresh_client_view();
+            let previous = self.sidebar_scroll;
+            self.reveal_sidebar_row();
+            if changed || self.sidebar_scroll != previous {
+                // Revealing the row can scroll every row, and rows are hit targets.
+                self.presentation.invalidate();
+                self.refresh_client_view();
+            }
+        }
+    }
+
+    fn reveal_sidebar_row(&mut self) {
+        if let Some(scene) = self.workspace_scene()
+            && let Some(target) = self.sidebar_row.as_deref()
+        {
+            self.sidebar_scroll = scene.sidebar_reveal_scroll(target);
         }
     }
 
@@ -2920,6 +2946,9 @@ impl Application {
         self.cancel_terminal_scroll();
         let was = self.workspace_focus;
         self.workspace_focus = focus;
+        if focus == WorkspaceFocus::Sidebar {
+            self.reveal_sidebar_row();
+        }
         self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
         // Focus changes hints and controls, not the terminal's presented geometry; entering or
         // leaving the sidebar can scroll its rows, which are hit targets.
@@ -3654,6 +3683,9 @@ impl Application {
             _ => (false, false, false, false, false, false, false),
         };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable { .. });
+        let sidebar_before = (received_snapshot && snapshot_changed)
+            .then(|| self.workspace_scene())
+            .flatten();
         let quota_expired = unavailable
             && self.workspace_model.snapshot().is_some_and(|snapshot| {
                 snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
@@ -3757,6 +3789,11 @@ impl Application {
                 // every size as it was, so nothing is sent.
                 self.send_resize();
             }
+        }
+        if let Some(previous) = sidebar_before
+            && let Some(scene) = self.workspace_scene()
+        {
+            self.sidebar_scroll = scene.sidebar_preserved_scroll(&previous);
         }
         self.close_stale_prompt(unavailable);
         if received_snapshot {
@@ -4254,6 +4291,8 @@ impl Application {
                         .map(str::to_owned)
                 }) {
                     self.focus_sidebar_row(row);
+                } else {
+                    self.focus_sidebar_rows();
                 }
                 return true;
             }
@@ -4861,6 +4900,9 @@ impl Application {
         // Wake when a visible row's age next changes its label; every change to the rows or
         // their visibility refreshes the view. Ages are not part of the presented content's
         // identity, so a refresh at or past the deadline marks the content changed.
+        if let Some(scene) = &workspace {
+            self.sidebar_scroll = scene.sidebar_scroll();
+        }
         let now = Instant::now();
         if self.next_age.is_some_and(|due| now >= due) {
             self.presentation.content_changed();
@@ -6150,12 +6192,7 @@ impl ApplicationHandler<UserEvent> for Application {
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 if dialog_open {
                     let metrics = state.renderer.metrics();
-                    let pixels = match delta {
-                        MouseScrollDelta::LineDelta(_, vertical) => {
-                            -vertical * metrics.height * 3.0
-                        }
-                        MouseScrollDelta::PixelDelta(position) => -position.y as f32,
-                    };
+                    let pixels = list_scroll_delta(delta, metrics.height);
                     self.scroll_dialog(pixels);
                     return;
                 }
@@ -6181,6 +6218,17 @@ impl ApplicationHandler<UserEvent> for Application {
                         state.renderer.reset_cursor_animation();
                     }
                     state.window.request_redraw();
+                }
+                if let Some(scroll) = workspace
+                    .as_ref()
+                    .and_then(|scene| sidebar_wheel(scene, self.cursor, delta, metrics))
+                {
+                    if self.sidebar_scroll != scroll {
+                        self.sidebar_scroll = scroll;
+                        self.presentation.invalidate();
+                        self.refresh_client_view();
+                    }
+                    return;
                 }
                 if workspace.as_ref().is_some_and(|scene| {
                     scene
@@ -6963,9 +7011,10 @@ fn native_ime_message(
     }
 }
 
-/// What the agent sidebar's rows need: the time their ages count to, and the focused row.
-fn sidebar_view(focus: WorkspaceFocus, row: Option<&str>) -> SidebarView<'_> {
+/// The rows' age clock, focused target and retained vertical scroll offset.
+fn sidebar_view(focus: WorkspaceFocus, row: Option<&str>, scroll: f32) -> SidebarView<'_> {
     SidebarView {
+        scroll,
         now: SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |since| {

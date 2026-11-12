@@ -484,6 +484,17 @@ request, and the window still opens.
 
 ## Agents sidebar
 
+Wheel and touchpad movement over the card scroll overflowing rows, using the
+attention inbox's three cell heights per wheel step and direct pixel movement.
+Scrolling preserves keyboard focus; keyboard navigation reveals its row.
+Attention refreshes keep a viewport at the start pinned there, so new attention
+at the top stays visible; otherwise they anchor a surviving visible row.
+A thin neutral thumb, without a track, shows only during overflow. It sits in
+the gutter between row bounds and the card edge, clear of row outlines and
+popup markers. Its size and position reflect the viewport; its secondary text
+colour adapts to 3:1 contrast against the sidebar background. The thumb shares
+the inbox's scale-based dimensions and capsule shape and is an indicator.
+
 An agent row uses the pane's pinned name when it has one, ahead of the agent's
 own reported name. The app icon stays beside it. `eon pane rename` sets or clears
 that pin; without one, rows keep their existing fallback: Claude Code's reported

@@ -3,6 +3,127 @@ use crate::application::shortcuts::ALT_SHIFT;
 use eon_workspace_protocol::v41::{InvokeIntent, Pane, Tab};
 
 #[test]
+fn sidebar_wheel_routes_only_the_visible_card() {
+    use eon_workspace_protocol::v41::{Attention, AttentionState, Column, Sidebar};
+    let mut snapshot = quit_snapshot();
+    snapshot.sidebar = Sidebar::Open;
+    let pane = Pane {
+        id: "p1".into(),
+        label: "p1".into(),
+        pinned_name: None,
+        session: "terminal-p1".into(),
+        endpoint: b"/run/p1".to_vec(),
+        live: true,
+        attention: Some(Attention {
+            state: AttentionState::Unavailable,
+            record: None,
+        }),
+    };
+    let panes = (1..=14)
+        .map(|index| {
+            let mut pane = pane.clone();
+            pane.id = format!("p{index}");
+            pane
+        })
+        .collect();
+    snapshot.tabs = vec![Tab {
+        id: "t1".into(),
+        directory: b"/work".to_vec(),
+        pending: false,
+        selected_pane: Some("p1".into()),
+        selected_popup: None,
+        columns: vec![Column {
+            expanded: "p1".into(),
+            panes,
+        }],
+        popups: vec![],
+        attention_rollup: Some(AttentionState::Unavailable),
+    }];
+    snapshot.active_tab = "t1".into();
+    let metrics = CellMetrics::for_scale(1.0);
+    let scene = WorkspaceScene::from_snapshot(
+        &snapshot,
+        PhysicalSize::new(1600, 450),
+        metrics,
+        0.0,
+        0.0,
+        |_, text| (text.into(), text.len() as f32 * metrics.width),
+    );
+    let card = scene.sidebar().unwrap();
+    for point in [
+        PhysicalPosition::new(f64::from(card.left + 1.0), f64::from(card.top + 1.0)),
+        PhysicalPosition::new(
+            f64::from(card.right() - 1.0),
+            f64::from(card.bottom() - 1.0),
+        ),
+    ] {
+        assert_eq!(
+            sidebar_wheel(
+                &scene,
+                point,
+                MouseScrollDelta::LineDelta(0.0, -1.0),
+                metrics
+            ),
+            Some(3.0 * metrics.height)
+        );
+        assert_eq!(
+            sidebar_wheel(
+                &scene,
+                point,
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -0.25)),
+                metrics
+            ),
+            Some(0.25)
+        );
+        assert_eq!(
+            sidebar_wheel(
+                &scene,
+                point,
+                MouseScrollDelta::LineDelta(0.0, 1.0),
+                metrics
+            ),
+            Some(0.0)
+        );
+        assert_eq!(
+            sidebar_wheel(
+                &scene,
+                point,
+                MouseScrollDelta::LineDelta(0.0, f32::NAN),
+                metrics
+            ),
+            Some(0.0)
+        );
+    }
+    assert_eq!(
+        sidebar_wheel(
+            &scene,
+            PhysicalPosition::new(f64::from(card.right() + 10.0), f64::from(card.top + 10.0)),
+            MouseScrollDelta::LineDelta(0.0, -1.0),
+            metrics
+        ),
+        None
+    );
+    snapshot.sidebar = Sidebar::Closed;
+    let hidden = WorkspaceScene::from_snapshot(
+        &snapshot,
+        PhysicalSize::new(1600, 450),
+        metrics,
+        0.0,
+        0.0,
+        |_, text| (text.into(), text.len() as f32 * metrics.width),
+    );
+    assert_eq!(
+        sidebar_wheel(
+            &hidden,
+            PhysicalPosition::new(f64::from(card.left), f64::from(card.top)),
+            MouseScrollDelta::LineDelta(0.0, -1.0),
+            metrics
+        ),
+        None
+    );
+}
+
+#[test]
 fn close_prompt_asks_for_a_final_close() {
     use orbit_protocol::session::Modifiers;
 

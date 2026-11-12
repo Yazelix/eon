@@ -800,8 +800,11 @@ the terminal into the sidebar, back to the row it last focused while that row
 remains, then to the tabs and panes. Up and Down move between rows, and Escape
 returns to the terminal. Tab moves from the rows to the heading's Hide button
 and back; Enter or Space on it hides the sidebar, as clicking it, Alt+Shift+H
-and `eon sidebar hide` do. Rows that don't fit are cut off at the bottom, and
-keyboard focus scrolls them into view.
+and `eon sidebar hide` do. The wheel and touchpad scroll overflowing rows when
+pointed anywhere over the sidebar card. A slim neutral thumb beside the rows
+shows the viewport's position while rows overflow. Keyboard focus still scrolls
+its row into view; pointer scrolling keeps keyboard focus and the active
+terminal in place.
 
 Alt+G jumps to the next agent that needs attention, in any session of the
 window, whether the sidebar is shown, hidden or turned off; jumping to an agent

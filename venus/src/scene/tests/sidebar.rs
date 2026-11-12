@@ -73,6 +73,218 @@ fn sidebar_snapshot() -> Snapshot {
     }
 }
 
+fn overflowing_sidebar_snapshot() -> Snapshot {
+    let mut snapshot = sidebar_snapshot();
+    snapshot.tabs[0].popups[0].attention = Some(Attention {
+        state: AttentionState::Unavailable,
+        record: None,
+    });
+    let mut pane = snapshot.tabs[0].columns[0].panes[0].clone();
+    pane.attention = Some(Attention {
+        state: AttentionState::Unavailable,
+        record: None,
+    });
+    snapshot.tabs[0].columns[0].panes = (1..=20)
+        .map(|index| {
+            let mut pane = pane.clone();
+            pane.id = format!("p{index}");
+            pane
+        })
+        .collect();
+    snapshot.tabs[0].attention_rollup = Some(AttentionState::Unavailable);
+    snapshot
+}
+
+fn scrolled_sidebar(
+    snapshot: &Snapshot,
+    metrics: CellMetrics,
+    scroll: f32,
+    focused: Option<&str>,
+) -> WorkspaceScene {
+    WorkspaceScene::from_snapshot_with_zoom(
+        snapshot,
+        EonBar::default(),
+        PhysicalSize::new(
+            (1600.0 * metrics.scale) as u32,
+            (450.0 * metrics.scale) as u32,
+        ),
+        metrics,
+        0.0,
+        0.0,
+        |_, text| (text.into(), text.len() as f32 * metrics.width),
+        None,
+        false,
+        SidebarView {
+            scroll,
+            focused,
+            ..SidebarView::default()
+        },
+    )
+}
+
+#[test]
+fn sidebar_scroll_clamps_reveals_and_updates_pointer_targets() {
+    let snapshot = overflowing_sidebar_snapshot();
+    let metrics = CellMetrics::for_scale(1.0);
+    let start = scrolled_sidebar(&snapshot, metrics, -100.0, None);
+    assert_eq!(start.sidebar_scroll(), 0.0);
+    let end = scrolled_sidebar(&snapshot, metrics, f32::MAX, None);
+    assert!(end.sidebar_max_scroll() > 0.0);
+    assert_eq!(end.sidebar_scroll(), end.sidebar_max_scroll());
+    let pointer = (
+        start.sidebar_list.left + 10.0,
+        start.sidebar_list.top + 80.0,
+    );
+    let before = start.hit_test(pointer.0, pointer.1);
+    let scrolled = scrolled_sidebar(&snapshot, metrics, 120.5, Some("p1"));
+    assert_eq!(
+        scrolled.sidebar_scroll(),
+        120.5,
+        "focus styling must not undo a wheel scroll"
+    );
+    let after = scrolled.hit_test(pointer.0, pointer.1);
+    assert!(matches!(before, Some(WorkspaceHit::SidebarRow(_))));
+    assert!(matches!(after, Some(WorkspaceHit::SidebarRow(_))));
+    assert_ne!(
+        before, after,
+        "hover and activation follow the row now under the pointer"
+    );
+    let focused = scrolled_sidebar(
+        &snapshot,
+        metrics,
+        start.sidebar_reveal_scroll("p20"),
+        Some("p20"),
+    );
+    let row = focused.sidebar_row("p20").unwrap();
+    assert!(
+        row.rect.top >= focused.sidebar_list.top
+            && row.rect.bottom() <= focused.sidebar_list.bottom()
+    );
+    let restored = scrolled_sidebar(
+        &snapshot,
+        metrics,
+        focused.sidebar_reveal_scroll("p1"),
+        Some("p1"),
+    );
+    assert!(restored.sidebar_row("p1").unwrap().rect.top >= restored.sidebar_list.top);
+    let mut empty = snapshot;
+    empty.tabs[0].attention_rollup = None;
+    assert_eq!(
+        scrolled_sidebar(&empty, metrics, 120.5, None).sidebar_scroll(),
+        0.0
+    );
+}
+
+#[test]
+fn sidebar_scroll_at_start_keeps_new_attention_visible() {
+    let mut snapshot = overflowing_sidebar_snapshot();
+    let metrics = CellMetrics::for_scale(1.0);
+    let start = scrolled_sidebar(&snapshot, metrics, 0.0, None);
+    let mut popup = snapshot.tabs[0].popups[0].clone();
+    popup.id = "new-attention".into();
+    snapshot.tabs[0].popups.insert(0, popup);
+    let updated = scrolled_sidebar(&snapshot, metrics, 0.0, None);
+    assert_eq!(
+        updated.sidebar_preserved_scroll(&start),
+        0.0,
+        "new attention above the fold must remain visible when pinned to the top"
+    );
+}
+
+#[test]
+fn sidebar_scroll_preserves_visible_rows_across_refresh() {
+    let mut snapshot = overflowing_sidebar_snapshot();
+    let metrics = CellMetrics::for_scale(1.0);
+    let before = scrolled_sidebar(&snapshot, metrics, 220.5, None);
+    let anchor = before
+        .sidebar_rows()
+        .iter()
+        .find(|row| row.rect.intersection(before.sidebar_list).is_some())
+        .unwrap()
+        .clone();
+    let mut inserted = snapshot.tabs[0].columns[0].panes[0].clone();
+    inserted.id = "inserted".into();
+    snapshot.tabs[0].columns[0].panes.insert(0, inserted);
+    let next = scrolled_sidebar(&snapshot, metrics, before.sidebar_scroll(), None);
+    let stable = scrolled_sidebar(
+        &snapshot,
+        metrics,
+        next.sidebar_preserved_scroll(&before),
+        None,
+    );
+    assert_eq!(
+        stable.sidebar_row(&anchor.target).unwrap().rect.top,
+        anchor.rect.top
+    );
+    snapshot.tabs[0].columns[0].panes.remove(0);
+    let next = scrolled_sidebar(&snapshot, metrics, stable.sidebar_scroll(), None);
+    let restored = scrolled_sidebar(
+        &snapshot,
+        metrics,
+        next.sidebar_preserved_scroll(&stable),
+        None,
+    );
+    assert_eq!(
+        restored.sidebar_row(&anchor.target).unwrap().rect.top,
+        anchor.rect.top
+    );
+    snapshot.tabs[0].columns[0]
+        .panes
+        .retain(|pane| pane.id != anchor.target);
+    let next = scrolled_sidebar(&snapshot, metrics, restored.sidebar_scroll(), None);
+    let removed = scrolled_sidebar(
+        &snapshot,
+        metrics,
+        next.sidebar_preserved_scroll(&restored),
+        None,
+    );
+    let neighbour = restored
+        .sidebar_rows()
+        .iter()
+        .find(|row| row.rect.top > anchor.rect.top)
+        .unwrap();
+    assert_eq!(
+        removed.sidebar_row(&neighbour.target).unwrap().rect.top,
+        neighbour.rect.top
+    );
+}
+
+#[test]
+fn sidebar_thumb_gutter_clears_rows_and_markers_at_fractional_scales() {
+    let snapshot = overflowing_sidebar_snapshot();
+    for scale in [1.0, 1.125, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        let scene = scrolled_sidebar(&snapshot, metrics, 120.5, None);
+        for border in [1.0_f32, 2.0, 3.0] {
+            let stroke = (border * metrics.scale).round().max(1.0);
+            let track = scene.sidebar_scroll_track(metrics, stroke).unwrap();
+            let card = scene.sidebar().unwrap();
+            for row in scene.sidebar_rows() {
+                assert!(
+                    track.left > row.rect.right() + 1.0,
+                    "clear keyboard outlines at {scale}"
+                );
+                assert!(
+                    row.popup_marker
+                        .is_none_or(|marker| marker.right() < track.left)
+                );
+            }
+            assert!(track.right() < card.right() - stroke);
+            assert!(
+                track.top >= scene.sidebar_list.top
+                    && track.bottom() <= scene.sidebar_list.bottom()
+            );
+            let mut fitting = snapshot.clone();
+            fitting.tabs[0].columns[0].panes.truncate(1);
+            assert!(
+                scrolled_sidebar(&fitting, metrics, 0.0, None)
+                    .sidebar_scroll_track(metrics, stroke)
+                    .is_none()
+            );
+        }
+    }
+}
+
 #[test]
 fn heading_hide_targets_sit_in_their_title_rows_and_yield_when_narrow() {
     let mut snapshot = sidebar_snapshot();
@@ -391,18 +603,26 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     };
     let metrics = CellMetrics::for_scale(1.0);
     let project = |snapshot: &Snapshot, height, focused| {
-        WorkspaceScene::from_snapshot_with_zoom(
-            snapshot,
-            EonBar::default(),
-            PhysicalSize::new(1400, height),
-            metrics,
-            0.0,
-            0.0,
-            |_, text| (text.into(), text.len() as f32 * 10.0),
-            None,
-            false,
-            SidebarView { now: NOW, focused },
-        )
+        let build = |scroll| {
+            WorkspaceScene::from_snapshot_with_zoom(
+                snapshot,
+                EonBar::default(),
+                PhysicalSize::new(1400, height),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * 10.0),
+                None,
+                false,
+                SidebarView {
+                    now: NOW,
+                    focused,
+                    scroll,
+                },
+            )
+        };
+        let scene = build(0.0);
+        build(focused.map_or(0.0, |target| scene.sidebar_reveal_scroll(target)))
     };
 
     // Only tabs with attention are listed, each under its heading, with one row per

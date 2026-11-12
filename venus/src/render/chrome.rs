@@ -209,6 +209,17 @@ fn hint_popup_layout<'a>(
     }
 }
 
+fn scroll_thumb(track: SceneRect, viewport: f32, scroll: f32, max_scroll: f32) -> SceneRect {
+    let height = (track.height * viewport / (viewport + max_scroll))
+        .max(track.width * 2.0)
+        .min(track.height);
+    SceneRect {
+        top: track.top + (track.height - height) * scroll / max_scroll,
+        height,
+        ..track
+    }
+}
+
 fn contrast(a: SceneColor, b: SceneColor) -> f32 {
     let luminance = |color: SceneColor| {
         let channel = |value: u8| {
@@ -2630,18 +2641,13 @@ impl Renderer {
                 tokens::capsule_radius(track.width),
                 palette::SCROLLBAR_TRACK,
             );
-            let thumb_height = (track.height * viewer.content.height
-                / (viewer.content.height + viewer.max_scroll))
-                .max(track.width * 2.0)
-                .min(track.height);
-            let thumb_top =
-                track.top + (track.height - thumb_height) * viewer.scroll / viewer.max_scroll;
             rectangles.push_rounded(
-                SceneRect {
-                    top: thumb_top,
-                    height: thumb_height,
-                    ..track
-                },
+                scroll_thumb(
+                    track,
+                    viewer.content.height,
+                    viewer.scroll,
+                    viewer.max_scroll,
+                ),
                 tokens::capsule_radius(track.width),
                 palette::DIALOG_SCROLL_THUMB,
             );
@@ -2791,6 +2797,18 @@ impl Renderer {
                 self.push_attention_row(row, list, hovered, card, background, rectangles);
             }
             rectangles.clip = None;
+            if let Some(track) = workspace.sidebar_scroll_track(self.metrics, stroke) {
+                rectangles.push_rounded(
+                    scroll_thumb(
+                        track,
+                        list.height,
+                        workspace.sidebar_scroll(),
+                        workspace.sidebar_max_scroll(),
+                    ),
+                    tokens::capsule_radius(track.width),
+                    blend_to_contrast(palette::DIALOG_SCROLL_THUMB, background, 3.0),
+                );
+            }
         }
         if let Some(hints) = &workspace.hints {
             // The hints sit bare in the margin below the cards; only keycaps have a fill.
@@ -3663,6 +3681,34 @@ mod tests {
     use glyphon::{cosmic_text::SubpixelBin, fontdb};
     #[cfg(target_os = "linux")]
     use std::sync::Arc;
+
+    #[test]
+    fn scroll_thumb_tracks_viewport_and_clamps_its_minimum_height() {
+        let track = SceneRect {
+            left: 30.0,
+            top: 10.0,
+            width: 2.0,
+            height: 100.0,
+        };
+        let start = scroll_thumb(track, 100.0, 0.0, 300.0);
+        assert_eq!(start.top, track.top);
+        assert_eq!(start.height, 25.0);
+        let end = scroll_thumb(track, 100.0, 300.0, 300.0);
+        assert_eq!(end.bottom(), track.bottom());
+        assert_eq!(
+            scroll_thumb(track, 100.0, 150.0, 300.0).top,
+            (start.top + end.top) / 2.0
+        );
+        assert_eq!(
+            scroll_thumb(track, 100.0, 0.0, 1_000_000.0).height,
+            track.width * 2.0
+        );
+        let tiny = SceneRect {
+            height: 1.0,
+            ..track
+        };
+        assert_eq!(scroll_thumb(tiny, 1.0, 0.0, 300.0).height, tiny.height);
+    }
 
     /// Venus's focus color when Eon passes none (`--focus-color`), readable on the bar disc.
     const DEFAULT_FOCUS: SceneColor = SceneColor {

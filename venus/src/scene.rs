@@ -334,6 +334,8 @@ impl TabBadge {
 /// What the agent sidebar's rows need besides the snapshot (VEN-C30).
 #[derive(Clone, Copy, Default)]
 pub struct SidebarView<'a> {
+    /// Retained vertical offset in physical pixels; Scene clamps it to the current content.
+    pub scroll: f32,
     /// The wall-clock Unix milliseconds that row ages count to.
     pub now: u64,
     /// The keyboard-focused row's target while the sidebar holds focus.
@@ -2460,6 +2462,8 @@ pub struct WorkspaceScene {
     pub(crate) sidebar_headings: Vec<SidebarHeading>,
     sidebar_rows: Vec<SidebarRow>,
     pub(crate) sidebar_list: SceneRect,
+    sidebar_scroll: f32,
+    sidebar_max_scroll: f32,
     card_radius: f32,
     tab_scroll: f32,
     pane_scroll: f32,
@@ -2854,13 +2858,13 @@ fn attention_row(
 
 /// The agent sidebar's tab headings and rows inside its `card`, in tab and terminal order, and
 /// the list area that clips them. Only tabs with an attention rollup are listed, and only their
-/// terminals with attention; the keyboard-focused row scrolls into view.
+/// terminals with attention. The retained view offset is clamped to the content.
 fn sidebar_contents(
     snapshot: &Snapshot,
     card: SceneRect,
     metrics: CellMetrics,
     view: SidebarView<'_>,
-) -> (Vec<SidebarHeading>, Vec<SidebarRow>, SceneRect) {
+) -> (Vec<SidebarHeading>, Vec<SidebarRow>, SceneRect, f32, f32) {
     let line = metrics.height;
     let padding = metrics.padding;
     // The list starts where the empty state does, below the title.
@@ -2944,19 +2948,19 @@ fn sidebar_contents(
             rows.push(row);
         }
     }
-    // Reveal the focused row: scroll just far enough to show its bottom, never past its top.
-    let scroll = rows.iter().find(|row| row.focused).map_or(0.0, |row| {
-        (row.rect.bottom() - list.bottom())
-            .min(row.rect.top - list.top)
-            .max(0.0)
-    });
+    let max_scroll = (top - list.bottom()).max(0.0);
+    let scroll = if view.scroll.is_finite() {
+        view.scroll.clamp(0.0, max_scroll)
+    } else {
+        0.0
+    };
     for heading in &mut headings {
         heading.rect.top -= scroll;
     }
     for row in &mut rows {
         row.shift(-scroll);
     }
-    (headings, rows, list)
+    (headings, rows, list, scroll, max_scroll)
 }
 
 /// The area `count` cards share: inset from the content area's sides by the card gap, starting
@@ -3815,10 +3819,11 @@ impl WorkspaceScene {
             quota.logo.top =
                 pill_band.start + (pill_band.end - pill_band.start - quota.logo.height) / 2.0;
         }
-        let (sidebar_headings, sidebar_rows, sidebar_list) = sidebar.map_or_else(
-            || (Vec::new(), Vec::new(), SceneRect::default()),
-            |card| sidebar_contents(snapshot, card, metrics, sidebar_view),
-        );
+        let (sidebar_headings, sidebar_rows, sidebar_list, sidebar_scroll, sidebar_max_scroll) =
+            sidebar.map_or_else(
+                || (Vec::new(), Vec::new(), SceneRect::default(), 0.0, 0.0),
+                |card| sidebar_contents(snapshot, card, metrics, sidebar_view),
+            );
         // Tabs follow the label's or the icon's gap, or else the bar's left inset.
         let mut tab_end = if workspace_label.is_some() || eon_icon.is_some() {
             tab_viewport.left
@@ -4104,6 +4109,8 @@ impl WorkspaceScene {
                 sidebar_headings,
                 sidebar_rows,
                 sidebar_list,
+                sidebar_scroll,
+                sidebar_max_scroll,
                 card_radius,
                 tab_scroll,
                 pane_scroll: 0.0,
@@ -4328,6 +4335,8 @@ impl WorkspaceScene {
             sidebar_headings,
             sidebar_rows,
             sidebar_list,
+            sidebar_scroll,
+            sidebar_max_scroll,
             card_radius,
             tab_scroll,
             pane_scroll,
@@ -4466,6 +4475,85 @@ impl WorkspaceScene {
     #[must_use]
     pub fn sidebar(&self) -> Option<SceneRect> {
         self.sidebar
+    }
+
+    #[must_use]
+    pub fn sidebar_scroll(&self) -> f32 {
+        self.sidebar_scroll
+    }
+
+    #[must_use]
+    pub fn sidebar_max_scroll(&self) -> f32 {
+        self.sidebar_max_scroll
+    }
+
+    /// Reveal only on a navigation request; focus styling alone never moves the viewport.
+    #[must_use]
+    pub fn sidebar_reveal_scroll(&self, target: &str) -> f32 {
+        let Some(row) = self.sidebar_row(target) else {
+            return self.sidebar_scroll;
+        };
+        if row.rect.height > self.sidebar_list.height
+            && row.rect.intersection(self.sidebar_list).is_some()
+        {
+            return self.sidebar_scroll;
+        }
+        let delta = if row.rect.top < self.sidebar_list.top {
+            row.rect.top - self.sidebar_list.top
+        } else {
+            (row.rect.bottom() - self.sidebar_list.bottom())
+                .min(row.rect.top - self.sidebar_list.top)
+                .max(0.0)
+        };
+        (self.sidebar_scroll + delta).clamp(0.0, self.sidebar_max_scroll)
+    }
+
+    /// Keep the first surviving visible row at its old displacement, then nearby survivors.
+    #[must_use]
+    pub fn sidebar_preserved_scroll(&self, previous: &Self) -> f32 {
+        if previous.sidebar_scroll == 0.0 {
+            return 0.0;
+        }
+        let first = previous
+            .sidebar_rows
+            .iter()
+            .position(|row| row.rect.bottom() > previous.sidebar_list.top)
+            .unwrap_or(previous.sidebar_rows.len());
+        previous.sidebar_rows[first..]
+            .iter()
+            .chain(previous.sidebar_rows[..first].iter().rev())
+            .find_map(|old| {
+                self.sidebar_row(&old.target).map(|row| {
+                    let delta = (row.rect.top - self.sidebar_list.top)
+                        - (old.rect.top - previous.sidebar_list.top);
+                    (self.sidebar_scroll + delta).clamp(0.0, self.sidebar_max_scroll)
+                })
+            })
+            .unwrap_or(self.sidebar_scroll)
+    }
+
+    /// A gutter outside row fills/outlines, between the list's edge and the card border.
+    pub(crate) fn sidebar_scroll_track(
+        &self,
+        metrics: CellMetrics,
+        stroke: f32,
+    ) -> Option<SceneRect> {
+        let card = self.sidebar?;
+        if self.sidebar_max_scroll <= 0.0 || self.sidebar_list.height <= 0.0 {
+            return None;
+        }
+        let left = self.sidebar_list.right() + 1.0;
+        let right = card.right() - stroke;
+        let width = (metrics.scale * 2.0).min((right - left) / 2.0);
+        if width <= 0.0 {
+            return None;
+        }
+        Some(SceneRect {
+            left: left + (right - left - width) / 2.0,
+            top: self.sidebar_list.top,
+            width,
+            height: self.sidebar_list.height,
+        })
     }
 
     /// The sidebar's title layout and clipping include the area above its painted top edge.

@@ -3,8 +3,42 @@ use std::{
     collections::VecDeque,
     time::{Duration, Instant},
 };
-use winit::event::TouchPhase;
-use yazelix_venus::ScenePreview;
+use winit::{
+    dpi::PhysicalPosition,
+    event::{MouseScrollDelta, TouchPhase},
+};
+use yazelix_venus::{CellMetrics, ScenePreview, WorkspaceScene};
+
+pub(super) fn list_scroll_delta(delta: MouseScrollDelta, cell_height: f32) -> f32 {
+    match delta {
+        MouseScrollDelta::LineDelta(_, vertical) => -vertical * cell_height * 3.0,
+        MouseScrollDelta::PixelDelta(position) => -position.y as f32,
+    }
+}
+
+pub(super) fn list_scroll_offset(scroll: f32, pixels: f32, max_scroll: f32) -> f32 {
+    if pixels.is_finite() {
+        (scroll + pixels).clamp(0.0, max_scroll)
+    } else {
+        scroll
+    }
+}
+
+pub(super) fn sidebar_wheel(
+    scene: &WorkspaceScene,
+    cursor: PhysicalPosition<f64>,
+    delta: MouseScrollDelta,
+    metrics: CellMetrics,
+) -> Option<f32> {
+    scene
+        .sidebar()
+        .filter(|card| card.contains(cursor.x as f32, cursor.y as f32))?;
+    Some(list_scroll_offset(
+        scene.sidebar_scroll(),
+        list_scroll_delta(delta, metrics.height),
+        scene.sidebar_max_scroll(),
+    ))
+}
 
 const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(40);
 const SCROLL_SAMPLE_WINDOW: Duration = Duration::from_millis(150);
