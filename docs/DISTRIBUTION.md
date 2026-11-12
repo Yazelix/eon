@@ -40,14 +40,16 @@ Eon's product version in `eon/crates/eon/Cargo.toml` is its one user-facing
 number; `eon --help`, `eon versions` and the window's `EON` label (when
 shown) report it. The compiled `RELEASE_STAGE` constant beside the version
 input in `eon/crates/eon/src/product.rs` supplies the stage independently of
-that number. Release preparation changes that constant with the Cargo version:
+that number. A stage change updates that constant together with the Cargo
+version only at the explicitly authorized release cut:
 `ReleaseStage::Alpha`, `ReleaseStage::Beta`, or `ReleaseStage::Stable`. The bar
 shows `EON α0.1.24`, `EON β0.2.0`, or `EON 1.0.0`, respectively; CLI version
-output keeps its numeric form. v0.2.0 is the first beta; before its GitHub release is
-published, it is a prepared candidate. Its download commands require
-publication. In alpha and beta, commands, configuration and behavior may still
-change, and the changelog records what did. `eon-igae` holds the scope for
-entering beta.
+output keeps its numeric form. Eon remains in alpha. v0.2.0 is the planned first
+beta; its version/stage switch requires the release owner's explicit go-ahead.
+The signing key, release workflow and download instructions are prepared for
+that cut; download commands require publication. In alpha and beta, commands,
+configuration and behavior may still change, and the changelog records what
+did. `eon-igae` holds the scope for entering beta.
 1.0.0 has no scheduled date: user reports, not a plan, decide when it comes.
 [EON-C28](CONTRACTS.md#eon-c28--1x-stability) states what 1.x would keep stable.
 Orbit, Venus and Eon Runtime keep their own package versions, and EONW its

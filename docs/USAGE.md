@@ -2,8 +2,9 @@
 
 ## Supported environment
 
-v0.2.0 is Eon's first beta; before publication it is a prepared candidate.
-Its download commands require the GitHub release to be published.
+Eon is in alpha. v0.2.0 is the planned first beta; its cut requires explicit
+release approval. Its prepared download commands require a published GitHub
+release.
 On Linux it installs without Nix or through Nix. The
 supported product target is **x86_64 Linux on native Wayland**. From v0.2.0, Apple Silicon Macs
 with macOS 14 or later run Eon as a preview; the

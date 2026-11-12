@@ -3,10 +3,10 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## v0.2.0
+## Unreleased
 
-First beta. Until its GitHub release is published, this section describes the
-prepared candidate.
+Eon remains in alpha. v0.2.0 is the planned first beta; its version and stage
+switch requires explicit approval of the release cut (`eon-igae.9`).
 
 - The Linux install instructions include the release public key. Without a
   recorded Accelerando redistribution grant, the Linux archive omits

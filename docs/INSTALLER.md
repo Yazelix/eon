@@ -19,8 +19,9 @@ commands are unnecessary on the target machine. `ssh-keygen`, `curl` and
 
 ## Install a release
 
-The v0.2.0 beta commands below work once its GitHub release is published;
-before publication, v0.2.0 is a prepared candidate.
+The commands below are prepared for the planned v0.2.0 beta. Eon remains in
+alpha until the release owner explicitly approves the beta cut; these commands
+require that release to be published.
 
 A release's directory, `https://github.com/Yazelix/eon/releases/download/vVERSION/`,
 holds the exact archive `eon-VERSION-x86_64-linux.tar.zst`, the installer,

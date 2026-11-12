@@ -49,7 +49,8 @@ checksums signed by the Eon release key and GitHub build attestations for the
 archive, its source companion, the installer and the checksum file. Your system
 needs glibc 2.39 or newer, a Vulkan driver, `curl`, and `ssh-keygen` from
 OpenSSH 8.9 or newer ([all prerequisites](docs/MANUAL-BUNDLE.md#execution-and-host-boundary)).
-These v0.2.0 beta install commands work once its GitHub release is published:
+Prepared for the planned v0.2.0 beta: these install commands require the
+release to be explicitly approved and published:
 
 ```sh
 v=0.2.0
@@ -161,8 +162,9 @@ coverage.
 
 ## Status and limits
 
-v0.2.0 is Eon's first beta. Before its GitHub release is published, it is a
-prepared candidate. Commands, configuration and behavior may still change
+Eon is in alpha. v0.2.0 is planned as the first beta and requires the release
+owner's explicit go-ahead. Its signing key and Linux install route are prepared
+for that cut. Commands, configuration and behavior may still change
 between releases. On Linux it installs without Nix or through Nix;
 the Mac preview installs through Nix. It was proved on COSMIC and private Sway
 before the move to one repository. Here, installed checks so far run on a
