@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn hosted_frames_prepare_draw_and_resize_without_a_surface() {
+    let (device, queue) = wgpu::Device::noop(&DeviceDescriptor::default());
+    let mut renderer = Renderer::hosted(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8Unorm,
+        (320, 180),
+        1.0,
+        clipping_test_fonts(),
+    )
+    .unwrap();
+    let mut scene = padding_scene();
+    scene.content[0].cells[0].text = "A".into();
+    for (frame, (size, scale)) in [
+        (PhysicalSize::new(320, 180), 1.0),
+        (PhysicalSize::new(640, 360), 2.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if frame == 0 {
+            renderer.prepare_hosted(&scene, true, 1).unwrap();
+        } else {
+            renderer.resize(size, scale);
+            let (content_changed, _, _) = renderer
+                .prepare_frame(
+                    Some(&scene),
+                    None,
+                    0.0,
+                    None,
+                    &[],
+                    None,
+                    WorkspaceFocus::Terminal,
+                    "",
+                    true,
+                    "",
+                    1,
+                )
+                .unwrap();
+            assert!(content_changed, "resize must invalidate prepared content");
+        }
+        assert_eq!(renderer.size(), size);
+        assert_eq!(renderer.metrics().scale, scale as f32);
+        assert!(renderer.vertex_count > 0);
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::BLACK),
+                        store: StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            renderer.draw_hosted(&mut pass).unwrap();
+        }
+        queue.submit(Some(encoder.finish()));
+        renderer.end_frame_hosted();
+    }
+    assert!(renderer.windowed.is_none());
+    assert_eq!(
+        renderer.render(
+            Some(&scene),
+            None,
+            0.0,
+            None,
+            &[],
+            None,
+            WorkspaceFocus::Terminal,
+            "",
+            true,
+            "",
+            1
+        ),
+        Err(RenderError(
+            "a hosted Venus renderer has no presentation surface".into()
+        ))
+    );
+}
+
+#[test]
 fn allocation_hints_favor_memory_only_on_non_cpu_adapters() {
     use wgpu::{DeviceType, MemoryHints};
 

@@ -1487,13 +1487,18 @@ struct TerminalLayer {
     last_cursor_frame: Option<Instant>,
 }
 
-/// One wgpu surface and one glyphon text owner for the native window.
-pub struct Renderer {
+struct WindowedTarget {
     instance: Instance,
+    surface: Surface<'static>,
+    window: Arc<Window>,
+}
+
+/// One shared GPU/text owner, optionally presenting to its own native window.
+pub struct Renderer {
+    windowed: Option<WindowedTarget>,
     device: wgpu::Device,
     device_lost: Arc<AtomicBool>,
     queue: wgpu::Queue,
-    surface: Surface<'static>,
     config: SurfaceConfiguration,
     rectangle_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
@@ -1536,7 +1541,6 @@ pub struct Renderer {
     /// Widest Status percentage for these fonts and metrics, shared by the bar readings.
     reading_width: f32,
     cell_font: CellFont,
-    window: Arc<Window>,
 }
 
 impl Renderer {
@@ -1602,7 +1606,7 @@ impl Renderer {
         focus_border_width: u8,
         animate_working_badge: bool,
         eon_icon: Option<Arc<[u8]>>,
-        mut fonts: FontSetup,
+        fonts: FontSetup,
     ) -> Result<Self, RenderError> {
         let size = nonzero(window.inner_size());
         let instance = Instance::new(InstanceDescriptor::new_with_display_handle(Box::new(
@@ -1658,7 +1662,6 @@ impl Renderer {
         {
             config.format = format;
         }
-        let srgb_target = config.format.is_srgb();
         config.present_mode = PresentMode::Fifo;
         config.alpha_mode = surface_alpha_mode(
             background_opacity,
@@ -1669,6 +1672,132 @@ impl Renderer {
         surface.configure(&device, &config);
         ensure_device_available(&device_lost)?;
 
+        Self::assemble(
+            Some(WindowedTarget {
+                instance,
+                surface,
+                window: Arc::clone(&window),
+            }),
+            device,
+            device_lost,
+            queue,
+            config,
+            window.scale_factor(),
+            spinners_turn,
+            background_opacity,
+            padding_color,
+            cursor_tail,
+            pane_frames,
+            panel_heading,
+            detect_local_hosts,
+            focus_color,
+            border_width,
+            focus_border_width,
+            eon_icon,
+            fonts,
+        )
+    }
+
+    /// Uses a host's device, queue and format without creating a window or surface.
+    /// The host sets the pass viewport to the slot, submits and presents, and owns
+    /// device-loss handling and callbacks; this renderer does not replace them.
+    pub fn hosted(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+        size: (u32, u32),
+        scale_factor: f64,
+        fonts: FontSetup,
+    ) -> Result<Self, RenderError> {
+        let config = SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            color_space: Default::default(),
+            width: size.0.max(1),
+            height: size.1.max(1),
+            present_mode: PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: CompositeAlphaMode::Opaque,
+            view_formats: Vec::new(),
+        };
+        Self::assemble(
+            None,
+            device,
+            Arc::new(AtomicBool::new(false)),
+            queue,
+            config,
+            scale_factor,
+            false,
+            1.0,
+            PaddingColor::default(),
+            None,
+            false,
+            PanelHeading::default(),
+            false,
+            SceneColor::default(),
+            1,
+            1,
+            None,
+            fonts,
+        )
+    }
+
+    /// Prepares one terminal scene before the host opens its render pass.
+    pub fn prepare_hosted(
+        &mut self,
+        scene: &Scene,
+        blink_visible: bool,
+        generation: u64,
+    ) -> Result<(), RenderError> {
+        self.prepare_frame(
+            Some(scene),
+            None,
+            0.0,
+            None,
+            &[],
+            None,
+            WorkspaceFocus::Terminal,
+            "",
+            blink_visible,
+            "",
+            generation,
+        )
+        .map(|_| ())
+    }
+
+    /// Draws the prepared terminal into the host's current viewport.
+    pub fn draw_hosted(&self, pass: &mut wgpu::RenderPass<'_>) -> Result<(), RenderError> {
+        self.draw_into(pass)
+    }
+
+    /// Releases frame-local atlas entries after the host has submitted the frame.
+    pub fn end_frame_hosted(&mut self) {
+        self.atlas.trim();
+        self.terminal.presented_scrollback_rect = self.terminal.scrollback_rect;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        windowed: Option<WindowedTarget>,
+        device: wgpu::Device,
+        device_lost: Arc<AtomicBool>,
+        queue: wgpu::Queue,
+        config: SurfaceConfiguration,
+        scale_factor: f64,
+        spinners_turn: bool,
+        background_opacity: f32,
+        padding_color: PaddingColor,
+        cursor_tail: Option<(SceneColor, f32)>,
+        pane_frames: bool,
+        panel_heading: PanelHeading,
+        detect_local_hosts: bool,
+        focus_color: SceneColor,
+        border_width: u8,
+        focus_border_width: u8,
+        eon_icon: Option<Arc<[u8]>>,
+        mut fonts: FontSetup,
+    ) -> Result<Self, RenderError> {
+        let srgb_target = config.format.is_srgb();
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("venus rectangles"),
             source: ShaderSource::Wgsl(SHADER.into()),
@@ -1738,7 +1867,7 @@ impl Renderer {
 
         let images = Images::new(&device, config.format);
 
-        let metrics = fonts.metrics(window.scale_factor());
+        let metrics = fonts.metrics(scale_factor);
         let reading_width = chrome::measure_reading_width(&mut fonts.font_system, metrics);
         let cell_font = fitted_cell_font(
             &mut fonts.font_system,
@@ -1760,11 +1889,10 @@ impl Renderer {
             TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         ensure_device_available(&device_lost)?;
         Ok(Self {
-            instance,
+            windowed,
             device,
             device_lost,
             queue,
-            surface,
             config,
             rectangle_pipeline,
             vertices,
@@ -1813,8 +1941,114 @@ impl Renderer {
             metrics,
             reading_width,
             cell_font,
-            window,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_frame(
+        &mut self,
+        scene: Option<&Scene>,
+        scroll_preview: Option<&ScenePreview>,
+        scroll_offset: f32,
+        workspace: Option<&WorkspaceScene>,
+        columns: &[Option<&Scene>],
+        dialog: Option<&DialogScene>,
+        workspace_focus: WorkspaceFocus,
+        status: &str,
+        blink_visible: bool,
+        preedit: &str,
+        generation: u64,
+    ) -> Result<(bool, u64, u64), RenderError> {
+        let rebuild_started = crate::transport::frame_time();
+        crate::transport::bench_trace("rebuild_begin", "");
+        let content_changed = self.rebuild_if_needed(
+            scene,
+            scroll_preview,
+            scroll_offset,
+            workspace,
+            columns,
+            dialog,
+            workspace_focus,
+            status,
+            blink_visible,
+            preedit,
+            generation,
+        );
+        crate::transport::bench_trace("rebuild_end", content_changed);
+        let rebuild_ns = crate::transport::frame_elapsed(rebuild_started);
+        let prepare_started = crate::transport::frame_time();
+        if scroll_offset == 0.0 && dialog.is_none() {
+            self.rebuild_dynamic_cursor(scene, workspace, blink_visible);
+        } else {
+            self.reset_cursor_animation();
+        }
+        if content_changed {
+            self.viewport.update(
+                &self.queue,
+                Resolution {
+                    width: self.config.width,
+                    height: self.config.height,
+                },
+            );
+            let eon_icon = self.eon_icon.as_deref();
+            if self
+                .text_renderer
+                .prepare_with_custom(
+                    &self.device,
+                    &self.queue,
+                    &mut self.fonts.font_system,
+                    &mut self.atlas,
+                    &self.viewport,
+                    text_areas(&self.text, self.text_overlay.as_ref()),
+                    &mut self.swash_cache,
+                    |request| rasterize_bar_icon(request, eon_icon),
+                )
+                .is_err()
+            {
+                self.atlas.trim();
+                self.text_renderer
+                    .prepare_with_custom(
+                        &self.device,
+                        &self.queue,
+                        &mut self.fonts.font_system,
+                        &mut self.atlas,
+                        &self.viewport,
+                        text_areas(&self.text, self.text_overlay.as_ref()),
+                        &mut self.swash_cache,
+                        |request| rasterize_bar_icon(request, eon_icon),
+                    )
+                    .map_err(display_error("the Venus glyph atlas is full"))?;
+            }
+        }
+
+        let prepare_ns = crate::transport::frame_elapsed(prepare_started);
+        Ok((content_changed, rebuild_ns, prepare_ns))
+    }
+
+    fn draw_into(&self, pass: &mut wgpu::RenderPass<'_>) -> Result<(), RenderError> {
+        for step in draw_steps(
+            self.vertex_count,
+            (self.dynamic_vertex_count > 0).then_some(self.cursor_vertex_boundary),
+            &self.images.draws,
+        ) {
+            match step {
+                DrawStep::Rectangles(vertices) => {
+                    pass.set_pipeline(&self.rectangle_pipeline);
+                    pass.set_vertex_buffer(0, self.vertices.slice(..));
+                    pass.draw(vertices, 0..1);
+                }
+                DrawStep::Cursor => {
+                    pass.set_pipeline(&self.rectangle_pipeline);
+                    pass.set_vertex_buffer(0, self.dynamic_vertices.slice(..));
+                    pass.draw(0..self.dynamic_vertex_count, 0..1);
+                }
+                DrawStep::Image(index) => self.images.draw(pass, index),
+            }
+        }
+        self.text_renderer
+            .render(&self.atlas, &self.viewport, pass)
+            .map_err(display_error("cannot render the Venus glyph atlas"))?;
+        Ok(())
     }
 
     #[must_use]
@@ -1848,7 +2082,9 @@ impl Renderer {
             );
             self.metrics = metrics;
         }
-        self.surface.configure(&self.device, &self.config);
+        if let Some(target) = &self.windowed {
+            target.surface.configure(&self.device, &self.config);
+        }
         self.content_key = None;
         self.row_text.rows.clear();
         self.pane_titles = None;
@@ -1954,9 +2190,7 @@ impl Renderer {
             .filter(|workspace| self.pane_frames || workspace.popup_label().is_some())
             .map(|workspace| workspace_paint(workspace, scene, columns, self.metrics));
         let workspace = paint.as_deref().or(workspace);
-        let rebuild_started = crate::transport::frame_time();
-        crate::transport::bench_trace("rebuild_begin", "");
-        let content_changed = self.rebuild_if_needed(
+        let (content_changed, rebuild_ns, prepare_ns) = self.prepare_frame(
             scene,
             scroll_preview,
             scroll_offset,
@@ -1968,65 +2202,20 @@ impl Renderer {
             blink_visible,
             preedit,
             generation,
-        );
-        crate::transport::bench_trace("rebuild_end", content_changed);
-        let rebuild_ns = crate::transport::frame_elapsed(rebuild_started);
-        let prepare_started = crate::transport::frame_time();
-        if scroll_offset == 0.0 && dialog.is_none() {
-            self.rebuild_dynamic_cursor(scene, workspace, blink_visible);
-        } else {
-            self.reset_cursor_animation();
-        }
-        if content_changed {
-            self.viewport.update(
-                &self.queue,
-                Resolution {
-                    width: self.config.width,
-                    height: self.config.height,
-                },
-            );
-            let eon_icon = self.eon_icon.as_deref();
-            if self
-                .text_renderer
-                .prepare_with_custom(
-                    &self.device,
-                    &self.queue,
-                    &mut self.fonts.font_system,
-                    &mut self.atlas,
-                    &self.viewport,
-                    text_areas(&self.text, self.text_overlay.as_ref()),
-                    &mut self.swash_cache,
-                    |request| rasterize_bar_icon(request, eon_icon),
-                )
-                .is_err()
-            {
-                self.atlas.trim();
-                self.text_renderer
-                    .prepare_with_custom(
-                        &self.device,
-                        &self.queue,
-                        &mut self.fonts.font_system,
-                        &mut self.atlas,
-                        &self.viewport,
-                        text_areas(&self.text, self.text_overlay.as_ref()),
-                        &mut self.swash_cache,
-                        |request| rasterize_bar_icon(request, eon_icon),
-                    )
-                    .map_err(display_error("the Venus glyph atlas is full"))?;
-            }
-        }
-
-        let prepare_ns = crate::transport::frame_elapsed(prepare_started);
+        )?;
+        let target = self.windowed.as_mut().ok_or_else(|| {
+            RenderError("a hosted Venus renderer has no presentation surface".into())
+        })?;
         crate::transport::bench_trace("texture_begin", "");
         let acquire_started = crate::transport::frame_time();
-        let current_texture = self.surface.get_current_texture();
+        let current_texture = target.surface.get_current_texture();
         let acquire_ns = crate::transport::frame_elapsed(acquire_started);
         crate::transport::bench_trace("texture_end", "");
         ensure_device_available(&self.device_lost)?;
         let frame = match current_texture {
             CurrentSurfaceTexture::Success(frame) => frame,
             CurrentSurfaceTexture::Timeout => {
-                self.window.request_redraw();
+                target.window.request_redraw();
                 return Ok(PresentOutcome::Deferred);
             }
             CurrentSurfaceTexture::Occluded => {
@@ -2034,25 +2223,25 @@ impl Renderer {
                 return Ok(PresentOutcome::Occluded);
             }
             CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.config);
+                target.surface.configure(&self.device, &self.config);
                 ensure_device_available(&self.device_lost)?;
                 self.reset_cursor_animation();
                 return Ok(PresentOutcome::Recovered);
             }
             CurrentSurfaceTexture::Suboptimal(frame) => {
                 drop(frame);
-                self.surface.configure(&self.device, &self.config);
+                target.surface.configure(&self.device, &self.config);
                 ensure_device_available(&self.device_lost)?;
                 self.reset_cursor_animation();
                 return Ok(PresentOutcome::Recovered);
             }
             CurrentSurfaceTexture::Lost => {
                 ensure_device_available(&self.device_lost)?;
-                self.surface = self
+                target.surface = target
                     .instance
-                    .create_surface(Arc::clone(&self.window))
+                    .create_surface(Arc::clone(&target.window))
                     .map_err(display_error("cannot recover the Venus GPU surface"))?;
-                self.surface.configure(&self.device, &self.config);
+                target.surface.configure(&self.device, &self.config);
                 ensure_device_available(&self.device_lost)?;
                 self.reset_cursor_animation();
                 return Ok(PresentOutcome::Recovered);
@@ -2084,35 +2273,16 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            for step in draw_steps(
-                self.vertex_count,
-                (self.dynamic_vertex_count > 0).then_some(self.cursor_vertex_boundary),
-                &self.images.draws,
-            ) {
-                match step {
-                    DrawStep::Rectangles(vertices) => {
-                        pass.set_pipeline(&self.rectangle_pipeline);
-                        pass.set_vertex_buffer(0, self.vertices.slice(..));
-                        pass.draw(vertices, 0..1);
-                    }
-                    DrawStep::Cursor => {
-                        pass.set_pipeline(&self.rectangle_pipeline);
-                        pass.set_vertex_buffer(0, self.dynamic_vertices.slice(..));
-                        pass.draw(0..self.dynamic_vertex_count, 0..1);
-                    }
-                    DrawStep::Image(index) => self.images.draw(&mut pass, index),
-                }
-            }
-            self.text_renderer
-                .render(&self.atlas, &self.viewport, &mut pass)
-                .map_err(display_error("cannot render the Venus glyph atlas"))?;
+            self.draw_into(&mut pass)?;
         }
         crate::transport::bench_trace("submit", "");
         let render_ns = crate::transport::frame_elapsed(started).saturating_sub(acquire_ns);
         let submit_started = crate::transport::frame_time();
         self.queue.submit(Some(encoder.finish()));
         ensure_device_available(&self.device_lost)?;
-        self.window.pre_present_notify();
+        if let Some(target) = &self.windowed {
+            target.window.pre_present_notify();
+        }
         self.queue.present(frame);
         ensure_device_available(&self.device_lost)?;
         let present_ns = crate::transport::frame_time();

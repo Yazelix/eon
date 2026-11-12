@@ -392,8 +392,8 @@ cadence prove the route; a second cache or resolver is outside Venus ownership.
   native-event boundary. Its
   [`EventLoopProxy`](https://docs.rs/winit/0.30.13/winit/event_loop/struct.EventLoopProxy.html)
   carries typed wakeups from transport work into the application loop.
-- [wgpu 30.0.0](https://docs.rs/wgpu/30.0.0/wgpu/) owns GPU access. Its
-  [`CurrentSurfaceTexture`](https://docs.rs/wgpu/30.0.0/wgpu/enum.CurrentSurfaceTexture.html)
+- [wgpu 30.0.1](https://docs.rs/wgpu/30.0.1/wgpu/) owns GPU access. Its
+  [`CurrentSurfaceTexture`](https://docs.rs/wgpu/30.0.1/wgpu/enum.CurrentSurfaceTexture.html)
   distinguishes success, occlusion, timeout, outdated configuration, and loss
   for bounded renderer recovery.
 - [glyphon 0.12.0](https://docs.rs/glyphon/0.12.0/glyphon/) integrates text

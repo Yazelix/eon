@@ -1913,7 +1913,7 @@ mod tests {
                 if matches!(outcome, PresentOutcome::Presented(_)) {
                     self.presented[usize::try_from(phase).unwrap()] += 1;
                 }
-                renderer.window.request_redraw();
+                renderer.windowed.as_ref().unwrap().window.request_redraw();
             }
         }
         let event_loop = EventLoop::builder()

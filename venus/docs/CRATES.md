@@ -124,18 +124,26 @@ for one zero-payload semantic action without a new dependency or adapter.
 
 ### GPU and text
 
-- **Selected shape:** wgpu 30.0.0 with WGSL shaders and only the Vulkan backend
+- **Selected shape:** wgpu 30.0.1 with WGSL shaders and only the Vulkan backend
   (Metal on macOS) for rendering; glyphon 0.12.0 with its cosmic-text 0.19.0
   re-export; pollster 1.0.1 for bounded initialization. wgpu's `noop` backend is
   also compiled in, so tests reuse the release build's wgpu: wgpu uses it only when
-  it is enabled explicitly, which production Venus never does; the headless glyphon
-  preparation test in `src/render/tests/text_clip.rs` does
+  it is enabled explicitly, which production Venus never does; the headless
+  tests in `src/render/tests/text_clip.rs` and `src/render/tests/device.rs` do
 - **Status:** Active on Linux/Vulkan
 - **Owner consequence:** Venus owns a small rectangle/decorations pipeline and a
   textured-quad pipeline for terminal images (VEN-C31), which draws each terminal's images
   between its cell backgrounds and its foreground and creates image textures inside wgpu
   error scopes. Glyphon owns shaping, fallback, clipping, raster cache, atlas, and text
-  preparation. None sees transport or terminal state.
+  preparation. None sees transport or terminal state. Venus can prepare and
+  draw on a host's device/queue without owning its presentation or device-loss
+  callbacks; standalone rendering uses the same path.
+- **Version policy:** wgpu stays exact at 30.0.1; the lock retains wgpu-core,
+  wgpu-hal, wgpu-types, wgpu-naga-bridge, naga and naga-types 30.0.0. The
+  lock also advances wasm-only js-sys/web-sys to 0.3.105, wasm-bindgen and its
+  macro, macro-support and shared crates to 0.2.128, and wasm-bindgen-futures
+  to 0.4.78. Neither native target builds these seven crates. Native feature
+  graphs and the cfg_aliases 0.2.2 build dependency stay unchanged.
 
 ### Ordered startup font fallback
 
@@ -272,7 +280,7 @@ dependency decision does not establish public-distribution proof.
 
 ### macOS application menu
 
-- **Selected shape:** target-only macOS `objc2 = "=0.6.4"`, `objc2-app-kit =
+- **Selected shape:** target-only macOS `objc2 = "0.6.4"` (locked at 0.6.4), `objc2-app-kit =
   "=0.3.2"` (default features disabled; `std`, `NSApplication`, `NSMenu`,
   `NSMenuItem`, `NSResponder`) and `objc2-foundation = "=0.3.2"` (default
   features disabled; `std`, `NSArray`, `NSEnumerator`, `NSString`)
@@ -299,6 +307,12 @@ dependency decision does not establish public-distribution proof.
   `src/application.rs`; the fallback is a Yazelix winit-fork option that
   leaves Command+Q off the default menu. Remove the edges when winit offers
   that or Venus owns its app menu; move with arboard's objc2 generation.
+  The compatible objc2 0.6 range admits a future host's 0.6.5 requirement
+  without changing the current locked Darwin build (`eon-1cyzr`).
+  This deliberately excepts the exact manifest pin from
+  [Verification](../../docs/AGENT-RULES.md#verification), as approved by Lucca
+  in the requested scope of `eon-1cyzr` on 2026-11-11 (approval relayed through
+  eon-desk: "i agree"). The lock remains exact at 0.6.4.
 
 ### Subscription readiness
 
