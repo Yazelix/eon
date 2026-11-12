@@ -144,6 +144,14 @@ a terminal by CLI does not activate the desktop window.
 
 Use `env -u EON_TERMINAL eon ...` only when asked to act on the shown session
 instead of your own. Keep `--json` on the command you substitute.
+When asked to address another window, use
+`env -u EON_TERMINAL -u EON_TAB eon --window ID session --json` first; an
+explicit window target still validates any inherited caller. Without a caller,
+commands act on that window's shown session and keep their usual restrictions.
+Across EONW versions, session commands, events and reload run with the target
+window's recorded build, preserving its output and supported commands. An
+unavailable recorded build exits 4 and suggests opening a new window; do not
+restart a live supervisor to work around it.
 Run `eon --help` for the command list, or `eon pane --help` for one family.
 
 ## Read a pane's screen

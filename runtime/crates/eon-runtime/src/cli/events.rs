@@ -17,7 +17,10 @@ pub(super) fn parse(arguments: &[OsString]) -> Result<Options, Error> {
     let mut options = Options {
         filter: Filter::default(),
         after: None,
-        target: WorkspaceTarget::default(),
+        target: WorkspaceTarget {
+            command: arguments.to_vec(),
+            ..WorkspaceTarget::default()
+        },
         json: false,
     };
     let mut args = arguments.iter();

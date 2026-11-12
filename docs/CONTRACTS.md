@@ -1415,6 +1415,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   those beads' exact staged-tree checks and isolated Linux observations; this
   does not upgrade the contract's overall proof status.
 
+- **Amendment 2026-11-12:** Approved by Lucca under his "auto-decide"
+  delegation, relayed by eon-overseer, in `eon-jbr1w`: complete window-build
+  routing, retain caller validation and explain how to clear a foreign caller.
+  Proof is pending this bead's exact-tree checks and isolated observation.
+
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-ciwn.1`: EON-C39's event subscription is the
@@ -1607,9 +1612,15 @@ names its socket. CLI JSON names a session `session` and a terminal
     resolve in any tab of that session by the close rules below. Other
     session-scoped commands use the caller's session and retain their
     existing per-tab rules. Without a calling terminal or explicit target,
-    session control uses the invoked build's
-    current generation in the selected runtime namespace and its shown session. Launch, lifecycle and
-    local information commands retain their existing targeting. Every popup terminal's environment
+    session control uses the
+    invoked build's current generation in the default namespace. When
+    `EON_WINDOW_RUNTIME_DIR` selects an independent window, it uses that
+    namespace's current live generation, otherwise its sole live generation,
+    and refuses an ambiguous selection. It uses the selected window's shown
+    session. An EONW mismatch follows EON-C11's Routing without changing caller
+    validation or the command's target and authorization rules. Launch,
+    lifecycle and local information commands retain their existing targeting.
+    Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
   - Session commands accept `--window ID` before any `--` operand separator,
@@ -2397,6 +2408,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   beads' exact staged-tree checks and isolated Linux observations; this does
   not upgrade the contract's overall proof status.
 
+- **Amendment 2026-11-12:** Approved by Lucca under his "auto-decide"
+  delegation, relayed by eon-overseer, in `eon-jbr1w`: complete window-build
+  routing, retain caller validation and explain how to clear a foreign caller.
+  Proof is pending this bead's exact-tree checks and isolated observation.
+
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-12 by `eon-u199d.3`, approved by eon-overseer under
   Lucca's standing mandate: same-build reload rereads configuration and
@@ -2474,26 +2490,45 @@ names its socket. CLI JSON names a session `session` and a terminal
     its terminals. A supervisor of EONW 37 or later that answers in its
     versioned framing is `stop-failed`.
   - A generation records the `eon` executable of the build that started it, an
-    opaque launch input, so a later build can run it; `eon window
-    attach` runs it, as Delegation describes, when this build cannot present
-    that window, and a session command runs it as Routing describes.
-  - **Routing.** When a session command (EON-C10) or `eon quit` selects a
-    generation whose supervisor speaks another EONW version, `eon` executes
-    that generation's recorded `eon` in its own place, with the same
-    arguments, environment, standard input and output, and with
-    `EON_ROUTED` set to the generation; that build's result and exit status
-    are the command's. Selection is EON-C10's: `--window` selects as it
-    does, and a calling terminal with no validating supervisor selects the
-    live generations of its namespace that this `eon` cannot inspect,
-    narrowed to the generation the terminal's Orbit log names while that log
-    remains, when exactly one remains. One command makes at most one hop: an
-    `eon` run with `EON_ROUTED` set, to any value, never routes. Eon removes
-    the variable from the environment of every supervisor, terminal and
-    Venus it starts. Without a recorded `eon`, when it no longer exists, or
-    when `EON_ROUTED` is set, the command fails as before
-    (`supervisor-unavailable`, exit 4); the detail names the recorded `eon`
-    that is gone, or the marker and its value. Window, launch and local
-    information commands, attach and Stop are never routed.
+    opaque launch input, so a later build can run it. `eon window attach` uses
+    this record as Delegation describes; commands use the same record and build
+    lookup as Routing describes. Reading or using the record does not require
+    an EONW change, a package-manager query or a second component graph.
+  - **Routing.** When a session command (EON-C10), `eon events` (EON-C39),
+    `eon quit`, or `eon window reload ID [--json]` selects a live generation
+    whose supervisor speaks another EONW version, `eon` executes that
+    generation's recorded `eon` in its own place. The original arguments,
+    working directory, environment, standard input, standard output and standard
+    error pass through, except that `EON_ROUTED` is set to the selected
+    generation. That build's output, including JSON, and exit status are the
+    command's. Routing occurs before consuming command input or sending a
+    mutation; it does not replay a command after an uncertain reply. No Eon
+    build interprets another EONW version's workspace payloads.
+
+    Selection follows EON-C10 and EON-C23.
+    A calling terminal with no validating supervisor selects only the live
+    generations of its namespace that this `eon` cannot inspect, narrowed to
+    the generation the terminal's Orbit log names while that log remains, when
+    exactly one remains. Ambiguity, an unknown caller, unsafe state, a dead
+    endpoint, timeout or corruption does not authorize routing or substitution
+    of a different window.
+
+    One command makes at most one routing hop: an `eon` run with `EON_ROUTED`
+    set, to any value, never routes again. Eon removes the variable from the
+    environment of every supervisor, terminal and Venus it starts. Without a
+    valid recorded `eon`, when that executable is gone or cannot be executed,
+    or when a further routing hop would be required, the command fails with
+    `supervisor-unavailable` (exit 4). The detail names the selected window and
+    generation and the missing record, executable path or routing marker as
+    applicable. An unavailable build's diagnostic suggests opening a new Eon
+    window with the installed build. Failure never starts or stops a supervisor
+    or chooses another generation.
+
+    `window attach` retains Delegation's own targeting and marker. Stop and
+    bulk lifecycle operations retain Reserved Stop. Window creation and listing,
+    launch, registry-only and local information commands are not routed.
+    This routing guarantee covers a newer CLI controlling an older live window;
+    it adds no guarantee for an older CLI controlling a newer window.
   - **Reserved Stop.** Every Stop, of any window and from any build
     (`eon`, `eonbase` and Venus's Quit), is one request whose bytes no EONW
     revision changes. Every supervisor answers it before it checks the EONW
@@ -2611,8 +2646,14 @@ names its socket. CLI JSON names a session `session` and a terminal
     supervisor to replace Venus with the requesting CLI's own Venus, with
     arguments from the current configuration, even at the same executable
     path. Invalid configuration refuses before retiring the old Venus. ID uses
-    the window ID/prefix rules of `eon window ls`; Reload never delegates
-    across EONW versions. The target must be a canonical, non-writable
+    the window ID/prefix rules of `eon window ls`. Across EONW
+    versions, Routing first runs the command with the window's recorded build,
+    so Reload requests that build's Venus and retains that build's reload
+    behavior and configuration support. With the same EONW version, Reload
+    requests the invoking CLI's Venus as before. Routing does not update the
+    supervisor, EONW or component set, and every existing reload admission,
+    protocol-match and focus requirement still applies in the executing build.
+    The target must be a canonical, non-writable
     executable file in `/nix/store`; relocated bundle paths refuse. The
     requesting Venus's EONW, ORBS and ORBF requirements must exactly match
     the running owner's. A mismatch names the need for a fresh window; every

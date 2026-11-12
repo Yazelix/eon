@@ -8840,7 +8840,8 @@ fn workspace_target_failures_are_explicit_and_bounded() {
             "{detail}"
         );
         assert!(detail.contains("EONW"), "{detail}");
-        assert!(detail.contains("the terminal's own `eon`"), "{detail}");
+        assert!(detail.contains("open a new Eon window"), "{detail}");
+        assert!(!detail.contains("the terminal's own `eon`"), "{detail}");
     }
     end_older_supervisors(
         &done,
@@ -9022,6 +9023,16 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         "--json",
     ]);
     assert_eq!(wrong.status.code(), Some(3), "{}", stdout(&wrong));
+    let refusal: serde_json::Value = serde_json::from_slice(&wrong.stdout).unwrap();
+    assert_eq!(refusal["error"]["code"], "unknown-caller");
+    for remedy in ["clear EON_TERMINAL and EON_TAB", "run outside Eon"] {
+        assert!(
+            refusal["error"]["detail"]
+                .as_str()
+                .unwrap()
+                .contains(remedy)
+        );
+    }
     let human = from(&["session"]);
     assert!(human.status.success());
     assert!(stdout(&human).starts_with(&format!(
@@ -14852,8 +14863,7 @@ fn other_eonw_supervisor(
                 return;
             }
             let request = read_request(&mut stream);
-            // This EONW is the first with the Reserved Stop.
-            if version >= VERSION && stop::is_reserved(&request) {
+            if version >= stop::FIRST_VERSION && stop::is_reserved(&request) {
                 let generation = stop::decode_request(&request).unwrap();
                 assert_eq!(generation, server_id, "a Stop of another generation");
                 let stopped = stop::encode_reply(&stop::Reply::Stopped {
@@ -15095,7 +15105,7 @@ fn quit_listing_names_the_stop_of_every_window() {
 fn routed_eon(
     runtime: &Path,
     state: &Path,
-    arguments: &[&str],
+    arguments: &[impl AsRef<OsStr> + std::fmt::Debug],
     caller: Option<&str>,
     routed: Option<&str>,
     input: &[u8],
@@ -15139,8 +15149,10 @@ fn recording_eon(path: &Path, log: &Path) {
         path,
         format!(
             "#!/bin/sh\n\
+             printf '%s\\0' \"$@\" > '{log}.argv'\n\
+             pwd > '{log}.cwd'\n\
              {{ printf '%s|%s|%s|' \"$*\" \"${{EON_ROUTED-unset}}\" \"${{EON_TERMINAL-unset}}\"; \
-             cat; echo; }} >> '{log}'\n\
+             tee '{log}.stdin'; echo; }} >> '{log}'\n\
              echo routed\n\
              echo routed-error >&2\n\
              exit 7\n",
@@ -15154,12 +15166,15 @@ fn recording_eon(path: &Path, log: &Path) {
 /// or that runs it when no build or a second hop would (EON-C11, Routing).
 #[test]
 fn session_commands_run_the_build_of_a_window_of_another_eonw() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
     let root = temporary_directory();
     let runtime = root.join("r");
     let state = root.join("state");
     let done = root.join("done");
     let id = format!("g1-{:032x}", 21);
-    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION + 1);
+    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION - 1);
     let log = root.join("log");
     let newer_eon = root.join("newer-eon");
     recording_eon(&newer_eon, &log);
@@ -15172,25 +15187,52 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
         routed_eon(&runtime, &state, arguments, caller, routed, input)
     };
     let take_log = || {
-        let lines = fs::read_to_string(&log).unwrap_or_default();
+        let lines = fs::read(&log).unwrap_or_default();
         let _ = fs::remove_file(&log);
-        lines
+        String::from_utf8_lossy(&lines).into_owned()
     };
     let caller = Some("terminal-3.r1");
+    let window = &id[3..11];
 
     // Its build runs the same arguments, environment and stdin, and its output
     // and status are the command's.
     for (arguments, input) in [
         (
             &["pane", "send", "p2", "--stdin", "--json"][..],
-            &b"hello"[..],
+            &b"hello\0\xff"[..],
         ),
         (&["quit"][..], &b""[..]),
+        (&["session", "--json"][..], &b""[..]),
+        (&["pane", "read", "p2", "--json"][..], &b""[..]),
+        (
+            &["pane", "rename", "p2", "two words", "--json"][..],
+            &b""[..],
+        ),
+        (&["pane", "create", "--no-focus", "--json"][..], &b""[..]),
+        (&["popup", "hide", "u1", "--json"][..], &b""[..]),
+        (&["sidebar", "show", "--json"][..], &b""[..]),
+        (&["events", "--json"][..], &b""[..]),
+        (&["--window", window, "events", "--json"][..], &b""[..]),
+        (&["window", "reload", window, "--json"][..], &b""[..]),
     ] {
         let output = eon(arguments, caller, None, input);
-        assert_eq!(output.status.code(), Some(7), "{output:?}");
+        assert_eq!(output.status.code(), Some(7), "{arguments:?}: {output:?}");
         assert_eq!(output.stdout, b"routed\n");
         assert_eq!(output.stderr, b"routed-error\n");
+        assert_eq!(fs::read(log.with_extension("stdin")).unwrap(), input);
+        assert_eq!(
+            fs::read(log.with_extension("argv")).unwrap(),
+            arguments
+                .iter()
+                .flat_map(|argument| argument.bytes().chain([0]))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fs::read_to_string(log.with_extension("cwd"))
+                .unwrap()
+                .trim_end(),
+            std::env::current_dir().unwrap().to_str().unwrap()
+        );
         assert_eq!(
             take_log(),
             format!(
@@ -15200,8 +15242,22 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
             )
         );
     }
+    let mut arguments: Vec<OsString> = ["pane", "create", "--json", "--", "/bin/echo", "--window"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    arguments.push(OsString::from_vec(b"non-utf8-\xff two words".to_vec()));
+    let output = routed_eon(&runtime, &state, &arguments, caller, None, b"");
+    assert_eq!(output.status.code(), Some(7), "{output:?}");
+    assert_eq!(
+        fs::read(log.with_extension("argv")).unwrap(),
+        arguments
+            .iter()
+            .flat_map(|argument| argument.as_bytes().iter().copied().chain([0]))
+            .collect::<Vec<_>>()
+    );
+    take_log();
     // So does an explicit target, from outside Eon.
-    let window = &id[3..11];
     let shown = eon(&["session", "--window", window, "--json"], None, None, b"");
     assert_eq!(shown.status.code(), Some(7), "{shown:?}");
     assert_eq!(
@@ -15224,6 +15280,8 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     for (arguments, marker) in [
         (&["session", "--json"][..], id.as_str()),
         (&["quit", "--json"][..], "forged"),
+        (&["events", "--json"][..], ""),
+        (&["window", "reload", window, "--json"][..], "forged"),
     ] {
         refused_as_routed(&eon(arguments, caller, Some(marker), b""), marker);
     }
@@ -15256,7 +15314,34 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
         detail.contains(&format!("{}, no longer exists", newer_eon.display())),
         "{detail}"
     );
-    assert!(detail.contains("the terminal's own `eon`"), "{detail}");
+    assert!(!detail.contains("the terminal's own `eon`"), "{detail}");
+    assert!(detail.contains(&id), "{detail}");
+    assert!(detail.contains("open a new Eon window"), "{detail}");
+
+    fs::remove_file(&record).unwrap();
+    let absent = eon(&["session", "--json"], caller, None, b"");
+    assert_eq!(absent.status.code(), Some(4), "{absent:?}");
+    assert!(stdout(&absent).contains("not recorded"), "{absent:?}");
+    assert!(stdout(&absent).contains(&id), "{absent:?}");
+    refused_as_routed(
+        &eon(&["session", "--json"], caller, Some("forged"), b""),
+        "forged",
+    );
+    symlink(&newer_eon, &record).unwrap();
+
+    fs::write(&newer_eon, "#!/bin/sh\nexit 7\n").unwrap();
+    fs::set_permissions(&newer_eon, fs::Permissions::from_mode(0o600)).unwrap();
+    let unexecutable = eon(&["session", "--json"], caller, None, b"");
+    assert_eq!(unexecutable.status.code(), Some(4), "{unexecutable:?}");
+    assert!(
+        stdout(&unexecutable).contains("cannot run"),
+        "{unexecutable:?}"
+    );
+    assert!(stdout(&unexecutable).contains(&id), "{unexecutable:?}");
+    assert!(
+        stdout(&unexecutable).contains("open a new Eon window"),
+        "{unexecutable:?}"
+    );
 
     // Stop is the Reserved Stop, never routed, even with its build present.
     recording_eon(&newer_eon, &log);
@@ -15267,6 +15352,69 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
         &done,
         &[runtime.join("generations").join(&id).join("eon.sock")],
         vec![server],
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn namespace_only_routing_validates_the_generation_before_running_its_build() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let namespace = runtime.join("w/abcd1000");
+    let done = root.join("done");
+    let id = format!("g1-{:032x}", 21);
+    let server = other_eonw_supervisor(&namespace, &id, &done, VERSION - 1);
+    for path in [&runtime, &runtime.join("w")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let log = root.join("log");
+    let recorded = root.join("recorded-eon");
+    recording_eon(&recorded, &log);
+    let generation = namespace.join("generations").join(&id);
+    symlink(&recorded, generation.join("eon")).unwrap();
+    let run = || {
+        eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(["session", "--json"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_WINDOW_RUNTIME_DIR", &namespace)
+            .env_remove("EON_TERMINAL")
+            .env_remove("EON_ROUTED")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let routed = run();
+    assert_eq!(routed.status.code(), Some(7), "{routed:?}");
+    assert_eq!(routed.stdout, b"routed\n");
+    assert_eq!(routed.stderr, b"routed-error\n");
+    fs::remove_file(&log).unwrap();
+    fs::set_permissions(&generation, fs::Permissions::from_mode(0o777)).unwrap();
+    let refused = run();
+    assert_eq!(refused.status.code(), Some(4), "{refused:?}");
+    assert!(
+        !log.exists(),
+        "an unsafe generation ran its recorded executable"
+    );
+    fs::set_permissions(&generation, fs::Permissions::from_mode(0o700)).unwrap();
+    let other = format!("g1-{:032x}", 22);
+    let other_server = other_eonw_supervisor(&namespace, &other, &done, VERSION - 2);
+    let other_generation = namespace.join("generations").join(&other);
+    symlink(&recorded, other_generation.join("eon")).unwrap();
+    let ambiguous = run();
+    assert_eq!(ambiguous.status.code(), Some(1), "{ambiguous:?}");
+    let failure: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
+    assert_eq!(failure["error"]["code"], "ambiguous-window");
+    assert!(
+        !log.exists(),
+        "ambiguous selection ran a recorded executable"
+    );
+    end_older_supervisors(
+        &done,
+        &[
+            generation.join("eon.sock"),
+            other_generation.join("eon.sock"),
+        ],
+        vec![server, other_server],
     );
     fs::remove_dir_all(root).unwrap();
 }

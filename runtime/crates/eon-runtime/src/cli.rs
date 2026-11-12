@@ -786,12 +786,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Ok(windows::attach_window(inputs, Some(id))?)
         }
         [command, action, id] if command == "window" && action == "reload" => {
-            Ok(windows::reload_window(inputs, id, false)?)
+            Ok(windows::reload_window(inputs, id, false, &arguments)?)
         }
         [command, action, id, flag]
             if command == "window" && action == "reload" && flag == "--json" =>
         {
-            Ok(windows::reload_window(inputs, id, true)?)
+            Ok(windows::reload_window(inputs, id, true, &arguments)?)
         }
         [command, action, which]
             if command == "window"
@@ -1376,6 +1376,8 @@ independent window's ID, or any unique prefix of 4+ characters.
 Window flag: --window ID, before any --.
 Explicit targets still validate EON_TERMINAL; independent windows use
 attach's rule.
+To address another window, clear EON_TERMINAL and EON_TAB or run outside Eon.
+Session commands, events and reload use the window's build when EONW differs.
 Results name generation, window (null for default), and session.
 SESSION is a session ID (s1, s2, ...) or its exact name.
 Inspect/switch/rename/close accept --id ID instead of a SESSION target.

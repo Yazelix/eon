@@ -218,7 +218,10 @@ eon window reload ID
 Use the ID or prefix from `eon window ls`. Reload rereads presentation settings,
 including `[panels] heading`, and replaces Venus even when the build is
 unchanged. It also selects the requesting CLI's Venus after an upgrade when
-its protocols match the running window. The supervisor, terminals, running
+its protocols match the running window. When EONW differs, the command runs
+with the window's recorded Eon build and requests that build's Venus, retaining
+its reload behavior and supported configuration. Reload does not upgrade the
+window's supervisor or EONW. The supervisor, terminals, running
 commands, layout and selected tab/pane/popup survive. Venus-local view state,
 including dialogs, zoom and terminal text selection, resets; see
 [EON-C11](CONTRACTS.md#eon-c11--runtime-generations-and-presentation).
@@ -226,7 +229,8 @@ including dialogs, zoom and terminal text selection, resets; see
 Invalid configuration refuses before replacing Venus. If the replacement fails
 startup admission, Eon restores Venus with its last accepted launch arguments
 and reports failure. Reload refuses when the window lacks keyboard focus,
-when protocols differ, or when the requesting Venus is outside the immutable
+when the executing build's Venus protocols differ from the window's, or when
+the requesting Venus is outside the immutable
 Nix store. `--json` reports `window`, `generation` and the presenting `venus`
 path on success, together with `"accepted":true`, `"replaced":null` and
 `"config_reloaded":null`. `accepted` confirms that the supervisor accepted
@@ -1082,12 +1086,28 @@ open the newer build from the launcher or from a shell outside Eon. A session
 command from another compatible build still finds the caller's supervisor in
 the inherited namespace. Discovery validates private directories and endpoints,
 has a bounded candidate count and timeout, and refuses ambiguous or incomplete
-resolution. When the selected window runs a build with another EONW version,
-`eon` runs the command, with the same arguments and input, as the `eon` of the
-build that started that window, so an `eon` from a newer profile still reaches
-an older window from inside it. When that build is no longer installed, or the
-supervisor is unavailable, it exits 4 and names the window, pointing to the
-terminal's own `eon`; it never launches, presents or restarts a supervisor.
+resolution. Without a caller, `EON_WINDOW_RUNTIME_DIR` selects an independent
+window's current live generation or its sole live generation; ambiguity refuses.
+When the selected window runs a build with another EONW version, session
+commands, `eon events` and `eon window reload` run as that window's recorded
+`eon`. Arguments, working directory, input, output and exit status pass through,
+including that build's JSON and command/configuration support. A newer profile
+therefore keeps reaching an older window. Each command routes at most once.
+An absent or unavailable recorded build exits 4, names the window and generation,
+and suggests opening a new window with the installed build. Routing never
+starts or restarts a supervisor. Same-version commands keep their direct path;
+attach and Stop retain their separate lifecycle behavior.
+
+An explicit window target still validates `EON_TERMINAL`. To address another
+window from an Eon terminal, clear the caller deliberately:
+
+```sh
+env -u EON_TERMINAL -u EON_TAB eon --window ID session --json
+```
+
+Without a caller, actions use the target window's shown session and retain
+their ordinary restrictions; creating a pane with an explicit command still
+requires a caller. Routing does not silently discard a stale or foreign caller.
 Unknown explicit targets exit 3, malformed flags or IDs exit 2, and ambiguous
 window selection exits 1.
 

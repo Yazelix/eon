@@ -5,8 +5,8 @@ use super::{
         Ask, DELEGATION_MARKER, GenerationRecord, ROUTE_MARKER, WorkspaceTarget, attach_generation,
         caller_generation, current_generation, damaged_generations, delegated_elsewhere,
         delegated_generation, generation_directory, generation_running, private_directory_exists,
-        resolve_workspace, running_generations, stop_generation, stop_generations,
-        valid_generation, window_cells, window_generation, window_json,
+        probe_workspace_generation, resolve_workspace, route, running_generations, stop_generation,
+        stop_generations, valid_generation, window_cells, window_generation, window_json,
     },
     platform::socket_path_fits,
     supervisor::{
@@ -712,9 +712,14 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
     }
 }
 
-/// Reload targets one exact owner; it never delegates to another executable.
-pub(super) fn reload_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Result<i32, Error> {
-    use super::control::{ControlResponse, EndpointFailureKind, send_action};
+/// Reload uses the exact owner's build across EONW versions, before any mutation.
+pub(super) fn reload_window(
+    inputs: &Inputs,
+    argument: &OsStr,
+    json: bool,
+    arguments: &[OsString],
+) -> Result<i32, Error> {
+    use super::control::{CONTROL_TIMEOUT, ControlResponse, EndpointFailureKind, send_action};
     use eon_workspace_protocol::v42::{Action, LifecycleResponse, WorkspaceAction};
     let argument = window_id_argument(argument)?;
     let (window, shown) = match select_window(inputs, argument) {
@@ -745,6 +750,28 @@ pub(super) fn reload_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Re
             (root, generation, id)
         }
     };
+    if let Err(error) =
+        probe_workspace_generation(&root, &generation, Instant::now() + CONTROL_TIMEOUT)
+    {
+        let routed = (error.kind == EndpointFailureKind::Incompatible)
+            .then(|| route(&root, &generation, arguments))
+            .flatten();
+        let detail = match routed {
+            Some(reason) => format!("{}; {reason}", error.detail),
+            None => error.detail,
+        };
+        return Ok(report_failure(
+            &failure(
+                if error.kind == EndpointFailureKind::Dead {
+                    "stale-target"
+                } else {
+                    "supervisor-unavailable"
+                },
+                format!("Eon window {shown} (generation {generation}): {detail}"),
+            ),
+            json,
+        )?);
+    }
     let [eonw, orbs, orbf] = *inputs
         .presentation_protocols
         .as_ref()

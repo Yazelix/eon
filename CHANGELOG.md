@@ -11,6 +11,11 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 - The Linux install instructions include the release public key. Without a
   recorded Accelerando redistribution grant, the Linux archive omits
   Accelerando and its fonts; Game of Life stays available (`eon-igae.18`).
+- Window commands route through the window's recorded Eon build across EONW
+  versions, including events, reload and caller-free independent-window
+  selection. Missing builds name the generation and how to recover; explicit
+  targets retain caller validation (`eon-jbr1w`).
+
 - The Eon Bar prefixes alpha and beta versions with α or β (`EON α0.1.24`,
   `EON β0.2.0`); stable versions have no symbol. Hover and screen readers spell
   out the build stage. Older supervisors without stage metadata retain an

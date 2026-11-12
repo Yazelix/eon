@@ -141,23 +141,27 @@ pub(super) const ROUTE_MARKER: &str = "EON_ROUTED";
 /// Runs `command` as the build that started generation `generation` of
 /// namespace `root`, through its recorded `eon`, in place of this `eon`
 /// (EON-C11, Routing). It returns only when it does not run it: with nothing
-/// to add when no `eon` is recorded, else with why. With the marker set, to
+/// to add for a command that cannot route, else with why. With the marker set, to
 /// any value, it never runs it, so one command makes at most one hop.
-fn route(root: &Path, generation: &str, command: &[OsString]) -> Option<String> {
+pub(super) fn route(root: &Path, generation: &str, command: &[OsString]) -> Option<String> {
     if command.is_empty() {
         return None;
     }
-    let eon = recorded_launcher(&generation_directory(root, generation))?;
     if let Some(routed) = env::var_os(ROUTE_MARKER) {
         return Some(format!(
-            "{ROUTE_MARKER} is {:?}, so this `eon` was itself routed and does not run {}",
+            "{ROUTE_MARKER} is {:?}, so this `eon` was itself routed and does not route generation {generation} again",
             routed.to_string_lossy(),
-            eon.display()
         ));
     }
+    let recovery = "open a new Eon window with the installed build";
+    let Some(eon) = recorded_launcher(&generation_directory(root, generation)) else {
+        return Some(format!(
+            "generation {generation}: the `eon` that started it is not recorded; {recovery}"
+        ));
+    };
     if !eon.is_file() {
         return Some(format!(
-            "the `eon` that started it, {}, no longer exists",
+            "generation {generation}: the `eon` that started it, {}, no longer exists; {recovery}",
             eon.display()
         ));
     }
@@ -166,7 +170,10 @@ fn route(root: &Path, generation: &str, command: &[OsString]) -> Option<String> 
         .args(command)
         .env(ROUTE_MARKER, generation)
         .exec();
-    Some(format!("cannot run {}: {error}", eon.display()))
+    Some(format!(
+        "generation {generation}: cannot run {}: {error}; {recovery}",
+        eon.display()
+    ))
 }
 
 /// Records this build's `eon`, from its session bin, in the workspace
@@ -242,10 +249,15 @@ pub(super) fn resolve_workspace(
             }
             (Window::Independent { root, .. }, shown) => (root, None, shown),
         },
-        None => (runtime_directory("eon"), None, String::new()),
+        None => {
+            let root = runtime_directory("eon");
+            let shown = runtime_window(&root).unwrap_or_default();
+            (root, None, shown)
+        }
     };
-    let window_only = target.window.is_some() && exact.is_none();
     let window = super::windows::runtime_window(&root);
+    let window_only =
+        exact.is_none() && (target.window.is_some() || (caller.is_none() && window.is_some()));
     let label = |generation: &str| {
         window
             .clone()
@@ -272,31 +284,20 @@ pub(super) fn resolve_workspace(
         let routed = (kind == EndpointFailureKind::Incompatible)
             .then(|| route(&root, generation, &target.command))
             .flatten();
-        unavailable(
-            generation,
-            match routed {
-                Some(why) => format!("{detail}; {why}"),
-                None => detail,
-            },
-        )
+        match routed {
+            Some(why) => failure(
+                "supervisor-unavailable",
+                format!("Eon window {}: {detail}; {why}", label(generation)),
+            ),
+            None => unavailable(generation, detail),
+        }
     };
     let deadline = Instant::now() + CONTROL_TIMEOUT;
     let probe = |id: &str| {
-        let path = generation_directory(&root, id);
-        validate_private_directory(&path)
-            .map_err(|detail| (EndpointFailureKind::Corrupt, detail))?;
-        let socket = path.join("eon.sock");
-        match probe_generation_runtime_until(&socket, deadline) {
-            Ok(runtime) if runtime.generation == id => Ok(()),
-            Ok(runtime) => Err((
-                EndpointFailureKind::Corrupt,
-                format!("supervisor reports generation {}", runtime.generation),
-            )),
-            Err(error) => Err((error.kind, error.detail)),
-        }
+        probe_workspace_generation(&root, id, deadline).map_err(|error| (error.kind, error.detail))
     };
     // A plain outside-Eon command keeps its current-generation default and existing failures.
-    if caller.is_none() && target.window.is_none() {
+    if caller.is_none() && target.window.is_none() && !window_only {
         if !workspace_runtime_exists(&root, &current)
             .map_err(|detail| unavailable(&current, detail))?
         {
@@ -529,8 +530,30 @@ pub(super) fn caller_generation(
 fn unknown_caller() -> Failure {
     failure(
         "unknown-caller",
-        "the calling terminal is not live in this Eon runtime namespace",
+        "the calling terminal is not live in this Eon runtime namespace; to address another window, clear EON_TERMINAL and EON_TAB, or run outside Eon",
     )
+}
+
+/// Validates the private generation and its exact owner before control or routing.
+pub(super) fn probe_workspace_generation(
+    root: &Path,
+    generation: &str,
+    deadline: Instant,
+) -> Result<(), EndpointFailure> {
+    let socket = generation_directory(root, generation).join("eon.sock");
+    if !workspace_runtime_exists(root, generation)
+        .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?
+    {
+        return Err(super::control::missing_endpoint(&socket));
+    }
+    let runtime = probe_generation_runtime_until(&socket, deadline)?;
+    if runtime.generation != generation {
+        return Err(EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            format!("supervisor reports generation {}", runtime.generation),
+        ));
+    }
+    Ok(())
 }
 
 fn workspace_runtime_exists(root: &Path, id: &str) -> Result<bool, String> {
