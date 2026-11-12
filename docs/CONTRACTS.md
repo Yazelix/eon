@@ -6009,6 +6009,321 @@ names its socket. CLI JSON names a session `session` and a terminal
   real agent pane. Installed Darwin subscription/slow-reader proof remains
   open; this contract is Candidate.
 
+## EON-C40 — Managed agent admission and execution
+
+- **Status:** Planned (`eon-eon-agent-lr8sx`; indexed by
+  `eon-eon-agent-lr8sx.22`), approved on 2026-11-07 by Lucca ("i agree",
+  recorded on the parent epic at 17:23Z), following the delegated review
+  recorded in `eon-eon-agent-lr8sx.1`.
+  Amended on 2026-11-12 (approved by Lucca's "you decide" over eon-desk's
+  yes, relayed by eon-overseer) by `eon-eon-agent-lr8sx.22`, comment 7406.
+  Lucca removed the v0.2.0-cut hold on 2026-11-12
+  ("remove this rule / add eon agent to the queue", relayed by eon-desk).
+  Slices retain their actual prerequisites and contract-approval gates;
+  runtime proof is pending.
+- **Consumer:** A person or local agent choosing and starting a coding-agent
+  CLI, inspecting availability or tracking an attempt, with workspace effects
+  governed by C10.
+- **Trigger:**
+  - `eon agent launch [--brief FILE] [--name NAME] [--bead ID]
+    [--role implement|review] [--level medium|high] [--only BACKEND]
+    [--cwd DIR] [--pane] [--dry-run] [--json]`;
+  - `eon agent run --brief FILE --name NAME --timeout DURATION
+    [--bead ID] [--role implement|review] [--only BACKEND] [--cwd DIR]
+    [--effort EFFORT] [--add-dir DIR]... [--json]`;
+  - `eon agent ps [--all] [--json]` or
+    `eon agent status [--cwd DIR] [--json]`;
+  - the Agent popup's `auto` command needs a new terminal.
+- **Result:**
+  - **One admission owner.** Runtime resolves new keys in existing `[agents]`:
+    backend array, declared account environments, role/mode commands, model/effort argv,
+    read-only guard/account checks, quota limits, cap and explicit fallback.
+    Eon supplies the product defaults. All managed entry points consume the
+    same eligibility and selection rules; Venus never chooses a backend.
+    A window's managed-agent admission policy is resolved by its Runtime
+    when the window opens or reopens. EON-C11 presentation reload retains
+    that policy and existing attempts; its presentation and quota-widget
+    updates do not by themselves replace the picker policy. Changing the
+    window's managed-agent policy takes a fresh window unless a separately
+    approved reload extension supplies it. Standalone launch, run and status
+    resolve current configuration. --pane creates a child through C10 and that
+    child's standalone launch resolves its configuration; no second placement
+    or picker owner is introduced.
+  - **Choice.** Among enabled eligible entries, choose the first in configured
+    order after the last admitted backend, wrapping once. Missing/removed
+    cursor starts at the beginning. Order is round-robin, not quota scoring.
+    `--only` restricts selection and never falls back. A configured fallback
+    is considered only for interactive implement when no ordinary backend is
+    available and no `--only` was given; it satisfies the same guard, account,
+    quota and cap rules and is explicitly reported as fallback. Headless and
+    review never fall back. A refusal explains each checked backend.
+  - **Quota truth.** Native facts are exactly C27's validated not-old readings
+    (age at most one hour, windows unexpired) plus available failure evidence.
+    Claude's last failure is shared; Codex's failure and cadence remain local
+    to its supervisor/collector. No new cross-process Codex guarantee is made.
+    Real admission may request a bounded read without a visible chip/window,
+    using C27's existing collection/scheduling rules, not a second schedule.
+    Custom readers are bounded read-only commands. Eon does not authenticate,
+    change credentials, or infer exhaustion from a failed read.
+  - **Declared account boundary.** A native source forbids backend env and
+    unset_env on CODEX_HOME and CLAUDE_CONFIG_DIR, even setting a default.
+    Opaque account-selecting wrappers/commands need a custom reader. These
+    checks cover declared selection inputs only; Eon does not verify account
+    or credential equivalence, arbitrary wrapper behavior or account changes
+    at the same credential path. C27's credential/cache owner is unchanged.
+  - **Limits and unavailable facts.** A valid not-old reading enforces limits,
+    including observed exhaustion, even if a later read failed; available
+    failures, including Claude's shared last failure, are disclosed beside it.
+    Old/missing/blocked/unknown/malformed/failed data is unavailable, never 0%
+    usage or evidence of limitless capacity. Built-ins allow unavailable quota
+    so Mac/API-key users and reader failures do not lose Agent auto. Custom
+    entries default to refusing unavailable quota unless explicitly opted in.
+    `min_remaining` is inclusive unless `strictly_above_min` is true;
+    `max_used` is exclusive. Named rules select stable window keys; `*`
+    checks every returned window. `allow_missing` permits absent named
+    windows only within an otherwise valid nonempty reading. Every failing
+    window and supplied reset is reported. `allow_unknown_quota` permits
+    unavailable data but never bypasses a valid reading's limit failure. No missing
+    fact becomes zero use; credits or paid overage are not inferred.
+  - **Caps.** A configured cap counts the current user's matching processes
+    across roles and windows, managed or unmanaged, using executable/script
+    identity and configured account filters. Probe exclusions are explicit.
+    A live matching process that cannot be inspected makes the count unknown
+    and refuses admission. Runtime holds one cross-process lock from pick
+    through spawn/exec and rechecks the scan before launching. There are no
+    persisted reservations. Independently launched external CLIs can race a count;
+    the cap controls Eon admissions, not every program on the host.
+    Unsupported process observation refuses a capped backend, never treats
+    its count as zero. Built-ins omit caps; configured caps remain enforced.
+  - **Interactive execution.** Launch defaults to implement/high, canonical
+    current cwd, and exec in the current terminal. A readable regular brief
+    supplies UTF-8 text without NUL as one argument; no brief omits it. Before
+    admission, validate brief and expanded argv against C10's 32 KiB argument,
+    256-argument and frame bounds. Larger briefs use headless stdin, up to
+    1 MiB. Runtime executes argv directly, without
+    a shell or rescanning substitutions, with the backend account environment
+    after inherited agent-session markers are removed. It does not change
+    provider trust, approvals, sandbox settings or credentials. Explicit user
+    argv remains the user's choice. With exec, provider stdin/output and exit
+    status remain the provider's; structured output is permitted only for
+    dry-run, before exec.
+  - **Pane convenience.** `launch --pane` is exactly `eon pane create
+    --no-focus -- eon agent launch <same launch arguments without --pane and
+    --json>`, spawned in the caller's tab under C10's non-focusing placement,
+    empty-tab and refusal rules, with no other placement flags. It retains
+    the session's active tab, selection and shown popup, including C10's
+    existing first-pane exception in an empty tab.
+    --json formats the outer C10 receipt rather than the child's interactive
+    output; --pane with --dry-run is invalid before creating anything. Before
+    forwarding, the outer command canonicalizes --brief, --cwd and the default
+    cwd against the caller's cwd, passing explicit absolute paths; resolution
+    failure precedes pane creation. Creation success is not backend admission.
+  - **Agent popup.** `auto` admits implement/high at the tab's launch
+    directory, with no brief. If its keep-alive terminal exists, showing or
+    hiding it reuses that terminal without a new pick. The built-in Codex
+    popup command is `codex resume --no-daemon`; the built-in Claude popup
+    command is `claude --resume`. Grok, OpenCode and Pi retain their current
+    product-owned popup argv. A failed admission starts no replacement/fallback
+    shell and surfaces the refusal. Explicit `[popups.agent] command = [...]`
+    is an exact generic popup command outside managed selection; it is not a
+    cap bypass hidden behind `auto`. No default backend command bypasses
+    provider permissions.
+    The CLI path for showing or creating the managed Agent popup is owned by
+    `eon-agent-parity-a9g0.1.2`, with Runtime/protocol work in
+    `eon-agent-parity-a9g0.1.1` and `eon-agent-parity-a9g0.1.3`;
+    it is not supplied by `agent launch --pane`. Until that path is delivered,
+    the popup-show parity gap remains explicitly open.
+  - **Headless execution.** `run` chooses only entries with the requested
+    run command and supported effort/add-dir shape. It defaults to implement
+    and current cwd; brief, name and timeout are required. It has no
+    interactive level or fallback. Its stdin is the opened brief or null,
+    never the caller's input, with a 1 MiB brief bound. It writes combined output
+    to a private log and
+    supplies a private report path; a successful process exit does not prove
+    the report exists or that the work succeeded. It removes desktop/session
+    controls and supplies a private Eon runtime root so accidental unqualified
+    `eon` calls do not reach the person's live window. This hygiene is not an
+    OS security sandbox.
+  - **Bounded cleanup.** A run owns its direct child and process group, not
+    an init manager or PTY. A positive timeout is integer seconds or a value
+    with s/m/h suffix, at most 30 days; it starts at child launch. Normal exit,
+    timeout and interruption all end the owned group with TERM/CONT, a grace
+    of up to 5 seconds, then KILL and a wait of up to 10 seconds. Handle
+    SIGINT, SIGTERM and SIGHUP. Signal the group only while the leader is
+    unreaped or that same group is proven non-empty, never a potentially
+    recycled group ID. Failure to confirm child/group completion is explicitly
+    unknown and never success.
+    Any descendant leaving the group may survive. If the runner crashes or
+    receives SIGKILL, no cleanup occurs. `cleanup_scope` states `process-group`.
+    No all-descendant containment,
+    service-manager requirement or process resurrection is implied.
+  - **Attempts.** Every managed entry registers a versioned private attempt,
+    separate from a bead, Eon session, provider conversation and PID. Records
+    hold identity, backend/fallback, source binding and known lifecycle outcome
+    under the documented versioned CLI schema. --pane's child is an exec
+    attempt; optional caller provenance does not assert verified topology or
+    grant control of a terminal. `ps` lists unfinished attempts in start-time/ID
+    order; `--all` adds finished attempts. It
+    distinguishes starting, running, ended, unknown and finished; absence of
+    authoritative exit evidence is not a fabricated exit code. Exact identity
+    fences PID reuse. A corrupt/unreadable record is preserved and reported,
+    while readable peers remain inspectable. It is never overwritten as an
+    empty record. Persistent records carry a format version and use Eon-owned
+    atomic writes, private directories (0700) and files (0600).
+  - **Inspection.** `status` returns per-entry enabled state, known process
+    count, quota source/windows/failure and availability by role and execution
+    mode. It needs no supervisor. `ps` and `status` create no Eon files and
+    run no refresh/login/model turn. Probe and output details live in the
+    command/configuration documentation. A successful query can report no
+    available backend. `ps` is not an attention waiter,
+    log follower or completion report. EON-C31/C39 own terminal attention.
+  - **Dry-run.** Returns the prospective choice, reason codes and advisory
+    counts without starting an agent, taking an admission lock,
+    advancing rotation, writing state/cache/log/registry, applying
+    trust or preparation changes, or refreshing quota. Read-only custom probes
+    may run. No brief content, arbitrary argv or environment values are printed.
+  - **CLI/configuration projection.** Human and JSON output reflect the same
+    typed result. Existing failures use `error.code`/`error.detail`. New
+    successful JSON objects carry `schema: 1` except --pane's existing C10
+    receipt. Attempt records expose nullable lifecycle identities
+    and outcomes without account secrets, prompt contents or transcripts.
+    Unix paths use EON-C10's string-or-byte-array rule; a provider argv
+    placeholder requiring UTF-8 refuses an unrepresentable path. Times are
+    Unix milliseconds. `run --json` emits started and finished JSONL messages;
+    provider output is kept in the log. Resolved-config output redacts env
+    values. The full field/default/probe/scrub specification lives in the
+    command and configuration documentation. Loss of stdout never abandons a
+    live run's cleanup and final recording.
+- **Important failures:**
+  - New commands retain EON-C10 status meanings: 1 for admission/operational
+    refusal, 2 invalid syntax/configuration or unsupported option combination,
+    130 interruption; --pane forwards C10 target/supervisor statuses 3/4.
+    Standalone admission never uses 3 for refusal. EON-C36 owns typing status 5.
+    Stable failure codes and exact JSON/attempt keys are specified in the
+    accompanying CLI documentation. Missing target codes are retained.
+  - After a headless start, recorded backend exit status or 128+signal passes
+    through after confirmed owned-group cleanup and final recording. Eon
+    timeout exits 124; unknown owned-group cleanup exits 125, overriding other
+    outcomes; interruption exits 130 after confirmed cleanup. A failed final
+    write exits 1 unless cleanup is unknown, which retains 125. The structured
+    outcome distinguishes backend statuses from Eon's own failure.
+  - Interactive admission uses an immediate try-lock; run waits at most
+    agents.probe_timeout_seconds (default 20), then refuses agent-busy. There
+    is no unbounded headless admission wait. This setting bounds headless
+    admission-lock acquisition and the configured guard/account checks that
+    use it; quota readers retain their own deadlines. It is not the run's
+    execution timeout. After acquiring the lock, capacity is evaluated once;
+    no qualifying backend means refusal. There is no capacity queue or
+    `run --wait`. Probe output, account environment and raw provider error
+    text are not copied to EONW, metadata logs or diagnostics.
+  - Failed spawn/registration releases only resources proven to belong to
+    that attempt; possible partial starts retain their identity/effects for
+    reconciliation. No unrelated pane/process or user's work is removed.
+  - Native on-demand reads retain C27's current bounds and Claude shared
+    backoff. Codex remains per supervisor/collector: cross-invocation read
+    spacing and failure persistence are not guaranteed by this contract.
+- **Owner:** Eon Runtime owns configuration resolution, admission, quota
+  adaptation, cap enforcement, execution and attempt records. Eon owns product
+  defaults and distribution. Orbit retains persistent terminal/PTY ownership;
+  Venus presents typed state. User/provider tools own authentication and
+  provider permission/trust policy.
+- **Boundary:** Full Eon only; not eonbase. No new network/MCP API, provider
+  harness, task graph, automatic bead claim/close, worktree creation/deletion,
+  headless provider resume/failover, reliable agent messaging or worker retirement.
+  Existing interactive popup resume commands are retained. Persistent rota
+  decisions.jsonl history is not ported; admitted attempt metadata is retained
+  and refusals are returned only. Existing history is not imported or deleted.
+  Optional bead/cwd metadata does not authorize those operations. Existing
+  read/send/events/wait paths retain their owners and approval rules.
+  Machine-wide command slots (`eon-eon-agent-lr8sx.21`) are outside this
+  contract, and a slot grant is not agent admission. C40 covers managed
+  launch, headless run and admission/attempt inspection; it does not by
+  itself replace rota.
+  Process observation and cleanup require separate proof on each supported
+  platform, with no service-manager dependency. Platform support remains
+  exactly EON-C7's status; this planned entry proves no platform.
+- **Consumes:** EON-C4, EON-C7, EON-C8, EON-C9, EON-C10, EON-C11, EON-C17,
+  EON-C23, EON-C27, EON-C31, EON-C33, EON-C35, EON-C36, EON-C39 and Orbit's
+  accepted terminal identity/lifecycle contracts. It does not mirror their
+  owned guarantees.
+- **Planned CLI/configuration specification:** The [accepted full
+  text](AGENT-ADMISSION.md), approved on `eon-eon-agent-lr8sx.22` in comment
+  7406, supplies the command, field, default, probe and scrub specification.
+  These are planned interfaces until their owning implementation slices land.
+- **Proof:** None. Original research: Eon
+  `72449060632c7f5fedf7b774b9e2bb836473919a` and rota
+  `8e103fc04509f85196ba815684bb910e0211e1b0`.
+  Source-only re-check on 2026-11-12: Eon
+  `1390bc25d35ca7c9d49371c3c0520ae2dba85c56` (EONW v42, Eon 0.1.24)
+  and rota `22abc72834e309173eb17051ee6418d9bee61ffa`.
+  No build, test or delivered-artifact observation supplies runtime proof.
+- **Open proof:** Deterministic eligibility/limit/parser failures; concurrent
+  capped admissions with executable/account identity; hidden-chip and no-window
+  native stored/demand facts at C27's scope; Mac/API-key/unreadable-quota popup
+  defaults and resume reuse; pane convenience equivalence; byte-safe CLI/JSON
+  errors; exact-process liveness and corrupt
+  state; headless stdin EOF, deadline/interruption/normal-exit cleanup and
+  unknown cleanup; supported-platform process observation; full affected Rust,
+  Nix and consuming Eon suites; one isolated installed accepted-batch
+  observation through the exact delivered artifact. No test/build/dogfood was
+  performed in this research bead.
+
+The following amendments are Planned with EON-C40. They do not replace the
+current implemented EON-C9, EON-C10 or EON-C27 clauses until their owning
+implementation slices land.
+
+### Planned EON-C9 amendment — add to Result
+
+> New keys in existing `[agents]` configure managed agents, resolved by Runtime
+> for EON-C40. Its backend array order is rotation order; a supplied array
+> replaces built-ins rather than merging them. Built-in popup candidates keep
+> Codex, Grok, OpenCode, Pi, Claude order and current launch/resume commands.
+> Built-in Codex launch and popup commands disable the shared daemon so
+> commands from the agent retain the launching terminal's Eon context.
+> They use normal provider permissions, no fallback, cap, headless command or
+> mandatory external guard. Codex/Claude use native quota and require positive
+> headroom where valid not-old readings exist; built-ins explicitly allow
+> unavailable quota. Medium/high CLI commands use provider defaults as
+> documented. The configuration documentation and `eon config defaults` expose
+> every key/default, optional omission and replacement-array rule in TOML/JSON.
+> Managed-agent settings participate in EON-C9's existing offline configuration
+> validation. `eon config check` validates their types, references, limits, argv
+> shapes and declared-environment rules without running checks, readers or
+> agents, contacting a supervisor, inspecting runtime account availability or
+> creating state. It retains EON-C9's exit statuses and unknown-key policy.
+> Optional omissions and backend-array replacement have the same meaning in
+> both defaults formats. Existing `[agents]` terminal-access/send settings keep
+> their EON-C35/C36 meaning; none are renamed. Commands printing resolved
+> configuration redact env values.
+
+### Planned EON-C10 amendment — replace only the Agent selection clause
+
+Replace “Agent defaults to the first available provider in the accepted Nova
+order on Alt+Shift+L” in Runtime policy with:
+
+> Agent defaults to EON-C40's shared picker on Alt+Shift+L, using its popup
+> command and unavailable-quota policy; current Codex/Grok/OpenCode/Pi/Claude
+> popup candidates remain, with Codex using `codex resume --no-daemon` and
+> Claude using `claude --resume`.
+
+No general placement amendment remains. All other C10 rules stay as written,
+including its empty-tab first-pane exception. --pane is defined only by
+reference to existing pane creation, not by the unapproved targeting beads.
+
+### Planned EON-C27 amendment — activation only; scheduling unchanged
+
+> Native quota's existing Runtime collection implementation also serves
+> EON-C40. Listed widgets keep continuing collection active as before; a real
+> admission may request a bounded observation even with all chips hidden or
+> no window. Dry-run/status read retained facts without native refresh or
+> writes. This changes activation only: C27's source, credential, validation,
+> stored-reading, failure and scheduling rules stay unchanged. Claude retains
+> its shared schedule/backoff/failure and existing unusable-schedule behavior;
+> Codex remains per supervisor/collector with no cross-process schedule or
+> persisted-last-failure promise. Display retention is unchanged. C40 decides
+> eligibility from not-old supplied facts and declares unavailable facts
+> explicitly; cached facts do not attest current account identity.
+
 ## EON-C41 — Installation update ownership and provenance
 
 - **Status:** Planned (`eon-update-button-f10d1.1`), approved on 2026-11-07
