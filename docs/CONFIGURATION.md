@@ -311,11 +311,12 @@ uses the chosen color with a shape-aware contrasting edge unless Orbit supplies
 an explicit cursor color.
 
 `focus_color` colours the selected pane's whole outline in the selected column
-when pane frames are on, and the working and background dots of agent
-attention badges on tabs and in the agent sidebar. Where the colour would
-read below 3:1 contrast on what lies under the dots, such as a dark custom
-colour on the bar or a white one on a white terminal background, the dots
-blend it toward black or white just enough to reach 3:1. Under a translucent
+when pane frames are on, the current Agents row's outline, and the working and
+background dots of agent attention badges on tabs and in the agent sidebar.
+Where the colour would read below 3:1 contrast on what lies under the dots,
+such as a dark custom colour on the bar or a white one on a white terminal
+background, the dots blend it toward black or white just enough to reach 3:1.
+Under a translucent
 terminal background (`background_opacity` below 1), resting sidebar rows
 depend on the desktop behind the window, so their dots sit on the bar's dark
 disc, as on a tab. The 3:1 holds for a current agent's badge; a stale agent's
@@ -339,11 +340,15 @@ and 2. Pane frames off hides pane and sidebar outlines and title rules;
 popups keep their outline. These settings apply to full-Eon surfaces;
 eonbase receives neither override. F6 title focus uses the pane header's configured
 stroke; other focus pills keep their one-physical-pixel outlines. The current
-agent row uses the selected-tab fill role rather than a neutral outline.
-Hover and current fills adapt together along the same contrast ramp.
-Its keyboard-focus outline remains one physical pixel, with mint adjusted
-only as needed for 3:1 against the row fill. Selection fills adapt for 3:1
-against the sidebar background, and selected text for 4.5:1 against the fill.
+agent row has a one-physical-pixel outline in `focus_color`, adapted only as
+needed for 3:1 against the sidebar background, without a selection fill. Hover
+or keyboard focus adds the dark highlight fill to any row, adapted only as
+needed for 1.5:1 against the background; the current outline keeps its colour.
+Its mint keyboard-focus outline is one physical pixel, inset one pixel on a
+current row and adapted only as needed for 3:1 against the row fill. Both row
+strokes stay one physical pixel to match keyboard focus and the approved look;
+pane/card border settings do not size them. Current text retains 4.5:1 against
+the background or highlight fill. Selected tabs keep their fill.
 Resting numbers and IDs are dimmer than names where 4.5:1 remains possible;
 the selected tab label uses one primary text role. These colours follow the
 fixed chrome palette; colour settings belong to the themes work.

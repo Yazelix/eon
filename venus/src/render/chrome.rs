@@ -924,38 +924,46 @@ fn push_attention_row_surface(
     spinners: &mut Spinners,
     rectangles: &mut RectangleBatch,
 ) -> (SceneColor, SceneColor) {
-    let fill = if row.current {
-        Some(blend_to_contrast(palette::TAB_SELECTED, background, 3.0))
-    } else if row.focused || hovered {
+    let fill = if row.focused || hovered {
         let hover = palette::CHROME_HIGHLIGHT;
-        let current = blend_to_contrast(palette::TAB_SELECTED, background, 3.0);
-        let to_rest = contrast_ratio(hover, background);
-        let to_current = contrast_ratio(hover, current);
-        let span = contrast_ratio(background, current);
-        Some(
-            if to_rest >= 1.5 && to_current >= 1.5 && to_rest < span && to_current < span {
-                hover
-            } else {
-                // Step from the same surface as selection, in the same contrast direction.
-                blend_to_contrast(background, background, 1.5)
-            },
-        )
+        Some(if contrast_ratio(hover, background) >= 1.5 {
+            hover
+        } else {
+            blend_to_contrast(background, background, 1.5)
+        })
     } else {
         None
     };
     if let Some(fill) = fill {
         rectangles.push_rounded(row.rect, radius, fill);
     }
+    // Snap inward so fractional list clipping cannot soften the one-pixel strokes.
+    let mut outline = SceneRect {
+        left: row.rect.left.ceil(),
+        top: row.rect.top.ceil(),
+        width: row.rect.right().floor() - row.rect.left.ceil(),
+        height: row.rect.bottom().floor() - row.rect.top.ceil(),
+    };
+    let mut outline_radius = radius.round();
+    if row.current {
+        let current = blend_to_contrast(spinners.focus, background, 3.0);
+        rectangles.push_rounded_outline(outline, outline_radius, current);
+        outline.left += 1.0;
+        outline.top += 1.0;
+        outline.width -= 2.0;
+        outline.height -= 2.0;
+        outline_radius = (outline_radius - 1.0).max(0.0);
+    }
     if row.focused {
         let focus = blend_to_contrast(palette::ACCENT, fill.unwrap_or(background), 3.0);
-        rectangles.push_rounded_outline(row.rect, radius, focus);
+        rectangles.push_rounded_outline(outline, outline_radius, focus);
     }
     let backing = match fill {
         // Adapted fills keep fixed attention colours readable on the tab badges' dark disc.
-        Some(fill) if row.current || fill != palette::CHROME_HIGHLIGHT => {
-            Backing::Disc(palette::BAR_BACKGROUND)
-        }
+        Some(fill) if fill != palette::CHROME_HIGHLIGHT => Backing::Disc(palette::BAR_BACKGROUND),
         Some(fill) => Backing::Disc(fill),
+        // The current row keeps its dark badge backing when its selection fill is absent.
+        None if row.current => Backing::Disc(palette::BAR_BACKGROUND),
         None => surface,
     };
     spinners.push_badge(row.glyph, backing, rectangles);
@@ -5011,7 +5019,7 @@ mod tests {
                     let mut pane = row.clone();
                     pane.popup_marker = None;
                     assert_eq!(popup, paint(&pane));
-                    let fill = if current || focused || hovered {
+                    let fill = if focused || hovered {
                         let rgb = [2, 3, 4].map(|i| {
                             (f32::from_ne_bytes(popup.1[i * 4..i * 4 + 4].try_into().unwrap())
                                 * 255.0)
@@ -5038,7 +5046,7 @@ mod tests {
     }
 
     #[test]
-    fn adapted_sidebar_fill_steps_keep_hover_and_current_distinct() {
+    fn sidebar_hover_and_keyboard_fill_remain_distinct_from_rest() {
         let snapshot = popup_sidebar_snapshot();
         let metrics = CellMetrics::for_scale(1.0);
         let scene = WorkspaceScene::from_snapshot(
@@ -5050,218 +5058,242 @@ mod tests {
             |_, text| (text.into(), text.len() as f32 * metrics.width),
         );
         let mut row = scene.sidebar_rows()[0].clone();
-        row.focused = false;
-        let black = SceneColor { r: 0, g: 0, b: 0 };
-        for background in [
-            palette::BAR_BACKGROUND,
-            SceneColor { r: 4, g: 5, b: 7 },
-            SceneColor {
-                r: 40,
-                g: 42,
-                b: 54,
-            },
-            SceneColor {
-                r: 80,
-                g: 80,
-                b: 80,
-            },
-            SceneColor {
-                r: 100,
-                g: 100,
-                b: 100,
-            },
-            SceneColor {
-                r: 128,
-                g: 128,
-                b: 128,
-            },
-            SceneColor {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
-        ]
-        .into_iter()
-        .chain((0..=255).map(|value| SceneColor {
-            r: value,
-            g: value,
-            b: value,
-        })) {
-            let mut paint = |current| {
+        for background in [palette::BAR_BACKGROUND, palette::CHROME_HIGHLIGHT]
+            .into_iter()
+            .chain((0..=255).map(|value| SceneColor {
+                r: value,
+                g: value,
+                b: value,
+            }))
+        {
+            for current in [false, true] {
                 row.current = current;
-                let mut batch = RectangleBatch::new(1600, 900);
-                push_attention_row_surface(
-                    &row,
-                    true,
-                    tokens::inner_radius(metrics),
-                    Backing::Surface(background),
-                    background,
-                    &mut Spinners::new(false, DEFAULT_FOCUS),
-                    &mut batch,
-                );
-                let rgb = [2, 3, 4].map(|i| {
-                    (f32::from_ne_bytes(batch.bytes[i * 4..i * 4 + 4].try_into().unwrap()) * 255.0)
-                        .round() as u8
-                });
-                SceneColor {
-                    r: rgb[0],
-                    g: rgb[1],
-                    b: rgb[2],
+                for (focused, hovered) in [(false, true), (true, false), (true, true)] {
+                    row.focused = focused;
+                    let mut batch = RectangleBatch::new(1600, 900);
+                    push_attention_row_surface(
+                        &row,
+                        hovered,
+                        tokens::inner_radius(metrics),
+                        Backing::Surface(background),
+                        background,
+                        &mut Spinners::new(false, DEFAULT_FOCUS),
+                        &mut batch,
+                    );
+                    let rgb = [2, 3, 4].map(|i| {
+                        (f32::from_ne_bytes(batch.bytes[i * 4..i * 4 + 4].try_into().unwrap())
+                            * 255.0)
+                            .round() as u8
+                    });
+                    let fill = SceneColor {
+                        r: rgb[0],
+                        g: rgb[1],
+                        b: rgb[2],
+                    };
+                    assert!(contrast_ratio(fill, background) >= 1.5);
+                    let expected = if contrast_ratio(palette::CHROME_HIGHLIGHT, background) >= 1.5 {
+                        palette::CHROME_HIGHLIGHT
+                    } else {
+                        blend_to_contrast(background, background, 1.5)
+                    };
+                    assert_eq!(fill, expected, "{background:?}, current={current}");
                 }
-            };
-            let hover = paint(false);
-            let current = paint(true);
-            let rest_luma = contrast_ratio(background, black);
-            let hover_luma = contrast_ratio(hover, black);
-            let current_luma = contrast_ratio(current, black);
-            assert!(
-                (rest_luma < hover_luma && hover_luma < current_luma)
-                    || (rest_luma > hover_luma && hover_luma > current_luma),
-                "{background:?}: hover {hover:?}, current {current:?} must step in one direction"
-            );
-            assert!(contrast_ratio(hover, background) >= 1.5);
-            assert!(contrast_ratio(current, background) >= 3.0);
-            assert!(
-                contrast_ratio(hover, current) >= 1.5,
-                "{background:?}: hover {hover:?} must remain distinct from current {current:?}"
-            );
-            if background == palette::BAR_BACKGROUND
-                || background == black
-                || background == (SceneColor { r: 4, g: 5, b: 7 })
-            {
-                assert_eq!(hover, palette::CHROME_HIGHLIGHT);
-                assert_eq!(current, palette::TAB_SELECTED);
             }
         }
     }
 
     #[test]
-    fn selected_and_hovered_sidebar_rows_keep_readable_fill_focus_text_and_badges() {
+    fn sidebar_rows_keep_current_and_keyboard_outlines_distinct_and_content_readable() {
         let snapshot = popup_sidebar_snapshot();
-        let metrics = CellMetrics::for_scale(1.0);
-        let scene = WorkspaceScene::from_snapshot(
-            &snapshot,
-            PhysicalSize::new(1600, 900),
-            metrics,
-            0.0,
-            0.0,
-            |_, text| (text.into(), text.len() as f32 * metrics.width),
-        );
-        let mut row = scene.sidebar_rows()[0].clone();
-        row.current = true;
-        row.glyph.dimmed = false;
-        for background in [
-            palette::BAR_BACKGROUND,
-            SceneColor { r: 4, g: 5, b: 7 },
+        let vertex_color = |vertex: &[u8]| {
+            let rgb = [2, 3, 4].map(|i| {
+                (f32::from_ne_bytes(vertex[i * 4..i * 4 + 4].try_into().unwrap()) * 255.0).round()
+                    as u8
+            });
             SceneColor {
-                r: 40,
-                g: 42,
-                b: 54,
-            },
-            SceneColor {
-                r: 80,
-                g: 80,
-                b: 80,
-            },
-            SceneColor {
-                r: 100,
-                g: 100,
-                b: 100,
-            },
-            SceneColor {
-                r: 128,
-                g: 128,
-                b: 128,
-            },
-            SceneColor {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
-        ] {
-            for current in [false, true] {
-                row.current = current;
-                for state in [
-                    AttentionState::NeedsInput,
-                    AttentionState::Error,
-                    AttentionState::Finished,
-                    AttentionState::Working,
-                    AttentionState::Background,
-                    AttentionState::Idle,
-                    AttentionState::Unavailable,
-                ] {
-                    row.glyph.state = state;
-                    for focused in [false, true] {
-                        row.focused = focused;
-                        let mut batch = RectangleBatch::new(1600, 900);
-                        let colors = push_attention_row_surface(
-                            &row,
-                            true,
-                            tokens::inner_radius(metrics),
-                            Backing::Surface(background),
-                            background,
-                            &mut Spinners::new(false, DEFAULT_FOCUS),
-                            &mut batch,
-                        );
-                        let rgb = [2, 3, 4].map(|i| {
-                            (f32::from_ne_bytes(batch.bytes[i * 4..i * 4 + 4].try_into().unwrap())
-                                * 255.0)
-                                .round() as u8
-                        });
-                        let fill = SceneColor {
-                            r: rgb[0],
-                            g: rgb[1],
-                            b: rgb[2],
-                        };
-                        let mut expected = RectangleBatch::new(1600, 900);
-                        expected.push_rounded(row.rect, tokens::inner_radius(metrics), fill);
-                        if focused {
-                            let focus = blend_to_contrast(palette::ACCENT, fill, 3.0);
-                            assert!(contrast_ratio(focus, fill) >= 3.0);
-                            expected.push_rounded_outline(
-                                row.rect,
-                                tokens::inner_radius(metrics),
-                                focus,
-                            );
-                        }
-                        let mut badge = RectangleBatch::new(1600, 900);
-                        let disc = if current || fill != palette::CHROME_HIGHLIGHT {
-                            palette::BAR_BACKGROUND
-                        } else {
-                            fill
-                        };
-                        Spinners::new(false, DEFAULT_FOCUS).push_badge(
-                            row.glyph,
-                            Backing::Disc(disc),
-                            &mut badge,
-                        );
-                        expected.bytes.extend_from_slice(&badge.bytes);
-                        assert_eq!(
-                            batch.bytes, expected.bytes,
-                            "{background:?}, {state:?}, focus={focused}"
-                        );
-                        assert!(
-                            contrast_ratio(fill, background) >= if current { 3.0 } else { 1.5 }
-                        );
-                        for text in [colors.0, colors.1] {
-                            assert!(
-                                contrast_ratio(text, fill) >= 4.5,
-                                "{background:?}, {text:?}"
-                            );
-                        }
-                        for vertex in badge.bytes.chunks_exact(VERTEX_SIZE as usize) {
-                            let rgb = [2, 3, 4].map(|i| {
-                                (f32::from_ne_bytes(vertex[i * 4..i * 4 + 4].try_into().unwrap())
-                                    * 255.0)
-                                    .round() as u8
+                r: rgb[0],
+                g: rgb[1],
+                b: rgb[2],
+            }
+        };
+        // The approved outline stays the same on hover; 3:1 is against the sidebar background.
+        assert!(contrast_ratio(DEFAULT_FOCUS, palette::CHROME_HIGHLIGHT) < 3.0);
+        assert_ne!(DEFAULT_FOCUS, palette::CHROME_HIGHLIGHT);
+        for scale in [1.0, 1.125, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            let size = PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32);
+            let scene =
+                WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                    (text.into(), text.len() as f32 * metrics.width)
+                });
+            let mut row = scene.sidebar_rows()[0].clone();
+            row.glyph.dimmed = false;
+            // Exercise fractional placement and the clipping used by the shared list painter.
+            row.rect.left += 0.25;
+            row.rect.top += 0.25;
+            let outer = SceneRect {
+                left: row.rect.left.ceil(),
+                top: row.rect.top.ceil(),
+                width: row.rect.right().floor() - row.rect.left.ceil(),
+                height: row.rect.bottom().floor() - row.rect.top.ceil(),
+            };
+            let inner = SceneRect {
+                left: outer.left + 1.0,
+                top: outer.top + 1.0,
+                width: outer.width - 2.0,
+                height: outer.height - 2.0,
+            };
+            for background in [
+                palette::BAR_BACKGROUND,
+                palette::CHROME_HIGHLIGHT,
+                SceneColor { r: 4, g: 5, b: 7 },
+                SceneColor {
+                    r: 80,
+                    g: 80,
+                    b: 80,
+                },
+                SceneColor {
+                    r: 100,
+                    g: 100,
+                    b: 100,
+                },
+                SceneColor {
+                    r: 128,
+                    g: 128,
+                    b: 128,
+                },
+                SceneColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                },
+            ] {
+                for focus in FOCUS_COLORS {
+                    let current_color = blend_to_contrast(focus, background, 3.0);
+                    assert!(contrast_ratio(current_color, background) >= 3.0);
+                    for opacity in [0.8, 1.0] {
+                        let surface = Backing::card(background, opacity);
+                        for (current, focused, hovered) in
+                            (0..8).map(|bits| (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0))
+                        {
+                            row.current = current;
+                            row.focused = focused;
+                            let fill = (focused || hovered).then(|| {
+                                if contrast_ratio(palette::CHROME_HIGHLIGHT, background) >= 1.5 {
+                                    palette::CHROME_HIGHLIGHT
+                                } else {
+                                    blend_to_contrast(background, background, 1.5)
+                                }
                             });
-                            let color = SceneColor {
-                                r: rgb[0],
-                                g: rgb[1],
-                                b: rgb[2],
-                            };
-                            if color != disc {
-                                assert!(contrast_ratio(color, disc) >= 3.0, "{state:?}: {color:?}");
+                            let under = fill.unwrap_or(background);
+                            for state in [
+                                AttentionState::NeedsInput,
+                                AttentionState::Error,
+                                AttentionState::Finished,
+                                AttentionState::Working,
+                                AttentionState::Background,
+                                AttentionState::Idle,
+                                AttentionState::Unavailable,
+                            ] {
+                                row.glyph.state = state;
+                                let mut batch = RectangleBatch::new(size.width, size.height);
+                                batch.clip = Some(row.rect);
+                                let colors = push_attention_row_surface(
+                                    &row,
+                                    hovered,
+                                    tokens::inner_radius(metrics),
+                                    surface,
+                                    background,
+                                    &mut Spinners::new(false, focus),
+                                    &mut batch,
+                                );
+                                let mut expected = RectangleBatch::new(size.width, size.height);
+                                expected.clip = Some(row.rect);
+                                if let Some(fill) = fill {
+                                    expected.push_rounded(
+                                        row.rect,
+                                        tokens::inner_radius(metrics),
+                                        fill,
+                                    );
+                                    assert_ne!(current_color, fill);
+                                }
+                                let outline_start = expected.bytes.len();
+                                if current {
+                                    expected.push_rounded_outline(
+                                        outer,
+                                        tokens::inner_radius(metrics).round(),
+                                        current_color,
+                                    );
+                                }
+                                if focused {
+                                    let mint = blend_to_contrast(palette::ACCENT, under, 3.0);
+                                    assert!(contrast_ratio(mint, under) >= 3.0);
+                                    expected.push_rounded_outline(
+                                        if current { inner } else { outer },
+                                        (tokens::inner_radius(metrics).round()
+                                            - if current { 1.0 } else { 0.0 })
+                                        .max(0.0),
+                                        mint,
+                                    );
+                                }
+                                let outline_end = expected.bytes.len();
+                                let backing = match fill {
+                                    Some(fill) if fill != palette::CHROME_HIGHLIGHT => {
+                                        Backing::Disc(palette::BAR_BACKGROUND)
+                                    }
+                                    Some(fill) => Backing::Disc(fill),
+                                    None if current => Backing::Disc(palette::BAR_BACKGROUND),
+                                    None => surface,
+                                };
+                                let mut badge = RectangleBatch::new(size.width, size.height);
+                                badge.clip = Some(row.rect);
+                                Spinners::new(false, focus)
+                                    .push_badge(row.glyph, backing, &mut badge);
+                                expected.bytes.extend_from_slice(&badge.bytes);
+                                assert_eq!(
+                                    batch.bytes, expected.bytes,
+                                    "scale={scale}, {background:?}, {focus:?}, {state:?}, current={current}, focused={focused}, hovered={hovered}, opacity={opacity}"
+                                );
+                                for vertex in batch.bytes[outline_start..outline_end]
+                                    .chunks_exact(VERTEX_SIZE as usize)
+                                {
+                                    let ndc = [0, 1].map(|i| {
+                                        f32::from_ne_bytes(
+                                            vertex[i * 4..i * 4 + 4].try_into().unwrap(),
+                                        )
+                                    });
+                                    for pixel in [
+                                        (ndc[0] + 1.0) * size.width as f32 / 2.0,
+                                        (1.0 - ndc[1]) * size.height as f32 / 2.0,
+                                    ] {
+                                        assert!(
+                                            (pixel - pixel.round()).abs() < 0.001,
+                                            "scale={scale}, fractional outline edge {pixel}"
+                                        );
+                                    }
+                                }
+                                for text in [colors.0, colors.1] {
+                                    assert!(
+                                        contrast_ratio(text, under) >= 4.5,
+                                        "{background:?}, {text:?}"
+                                    );
+                                }
+                                // Current/highlighted badges keep all fixed glyph colours readable.
+                                if current || fill.is_some() {
+                                    let disc = match backing {
+                                        Backing::Disc(color) | Backing::Surface(color) => color,
+                                        Backing::Translucent => unreachable!(),
+                                    };
+                                    for vertex in badge.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                                        let color = vertex_color(vertex);
+                                        if color != disc {
+                                            assert!(
+                                                contrast_ratio(color, disc) >= 3.0,
+                                                "{state:?}: {color:?} on {disc:?}"
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

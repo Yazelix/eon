@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The current Agents row uses a one-pixel outline in the configured focus
+  colour instead of a grey fill. Hover keeps its dark fill, and keyboard focus
+  adds a mint outline one pixel inside the current outline; tabs keep their
+  selected fill (`eon-wuau8.4`, Lucca's 2026-11-11 approval).
+
 - `eon config check [--json]` checks configuration for settings Eon would reject
   at startup or during later use, without a running supervisor or state changes.
   JSON results include the checked path, validity and structured error details
@@ -16,10 +21,10 @@ installation, and proven contract changes.
 
 - Closing a column or stopping right after a failed close no longer fails
   with "already managed" (`eon-k0okt`).
-- Selected tabs and the current Agents row share a brighter fill; keyboard
-  focus stays distinct and adapts for contrast. Resting tab and sidebar
-  heading numbers are dimmer than their names, hint and dialog text use
-  grey roles, and zoomed tabs share the pane Restore mark `▣`
+- Selected tabs use a brighter fill; keyboard focus stays distinct and adapts
+  for contrast. Resting tab and sidebar heading numbers are dimmer than their
+  names, hint and dialog text use grey roles, and zoomed tabs share the pane
+  Restore mark `▣`
   (`eon-wuau8.3`, Lucca's 2026-11-10 approval and delegated contrast decisions).
 - Managed Bash reports command start and exit status with OSC 133 C/D marks.
   Its marks stay on the terminal when command output is redirected.

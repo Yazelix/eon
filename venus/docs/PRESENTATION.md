@@ -504,12 +504,16 @@ title bar or interior. The mark takes the title color and the stale-row palette.
 Row text retains at least 4.5:1 contrast against the terminal or
 highlight background, including stale text. Resting row text and marks darken when the terminal
 background needs contrast, as Stack labels do. The mark's size scales with the
-sidebar font. The current row uses the selected tab's fill role, adapted to
-contrast at least 3:1 against the sidebar background. Hover uses a weaker fill
-on the same adapted contrast ramp, preserving a visible step to current;
-keyboard focus adds a mint outline, adapted only as needed to retain 3:1
-against the row fill. Selected text uses the primary role, adjusted for 4.5:1
-contrast; its attention badge keeps the bar's dark disc. Accessible names
+sidebar font. The current row has a one-physical-pixel outline in the configured
+focus colour, adapted only as needed for 3:1 against the sidebar background,
+with no selection fill. Hover or keyboard focus adds the dark highlight fill
+on every row, adapted only as needed for 1.5:1 against the background; the
+current outline keeps its colour. Keyboard focus adds a mint one-pixel outline,
+inset one pixel on the current row so both remain visible, adapted only as
+needed for 3:1 against the row fill. Rows have no mint pressed flash. Current
+text uses the primary role, adjusted for 4.5:1 contrast; its badge keeps the
+bar's dark disc at rest. Highlighted badges use the highlight's backing, or the
+bar's disc when adapted. Accessible names
 include "popup" and, for the current row, "current".
 
 Sidebar tab headings use a dimmed number followed by a primary name, each

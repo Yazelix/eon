@@ -372,7 +372,7 @@ pub struct SidebarRow {
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,
     pub(crate) focused: bool,
-    /// The row's source terminal is the one the active tab focuses, so it takes the selected fill.
+    /// The row's source terminal is the one the active tab focuses, so it takes the focus outline.
     pub(crate) current: bool,
     /// Milliseconds since the record changed; unavailable rows have no age.
     age: Option<u64>,

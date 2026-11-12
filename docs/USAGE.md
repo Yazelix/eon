@@ -611,10 +611,13 @@ tabs inherit their terminal background colour and opacity.
 
 Keycaps keep their dark fill and brighten under the pointer; their legends,
 popup keys and expanded hint keys use grey text roles. Mint marks keyboard
-focus and pressed controls. Selected tabs and the current Agents row share a
-brighter fill; resting tab numbers and sidebar heading numbers are dimmer
-than their names. The whole selected tab label brightens. Keyboard focus
-adds an outline to the current row without hiding its selection fill. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
+focus and pressed controls. Selected tabs use a brighter fill; the current
+Agents row has a one-pixel outline in the configured focus colour, with no
+selection fill. Hover or keyboard focus adds a dark fill to every row while
+the current outline stays visible. Keyboard focus adds a mint outline one
+pixel inside the current outline. Resting tab numbers and sidebar heading
+numbers are dimmer than their names. The whole selected tab label brightens.
+The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints. The `Alt`
 popup lists one `focus` row, HJKL · 1..9, the `Ctrl+Alt` popup one row for the
 HJKL pane moves, and the `Ctrl+Alt+Shift` popup the HL tab moves. Full help and
@@ -738,8 +741,10 @@ unavailable`. An agent running in a popup has a window mark larger than the
 label text at the row's right edge, whether or not the popup is shown. Text
 stops before the mark, and the row uses the same fill as a pane agent. The
 attention inbox uses the same treatment for agents in the shown session. The
-current terminal's row uses the selected tab's brighter fill; keyboard focus
-adds its own mint outline. While no agent reports, the sidebar says so.
+current terminal's row has a one-pixel outline in the configured focus colour,
+with no selection fill. Hover or keyboard focus adds the dark fill to any row;
+mint keyboard focus sits one pixel inside the current outline. While no agent
+reports, the sidebar says so.
 
 Click a row, or press Enter or Space on it, to jump to that agent: Eon selects
 its tab and shows its pane or popup, and keyboard focus moves to that terminal.

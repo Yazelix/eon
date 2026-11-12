@@ -2,10 +2,15 @@
 
 ## Unreleased
 
-- Selected tabs and the current Agents row share a brighter fill; keyboard
-  focus stays distinct and adapts for contrast. Resting tab and sidebar
-  heading numbers are dimmer than their names, hint and dialog text use
-  grey roles, and zoomed tabs share the pane Restore mark `▣`
+- VEN-C30: the current Agents row uses a one-physical-pixel focus-colour outline
+  without a selection fill. Hover and keyboard focus keep their dark fill on
+  every row; mint keyboard focus sits one pixel inside the current outline.
+  Tabs retain their selected fill (`eon-wuau8.4`, Lucca's 2026-11-11 approval).
+
+- Selected tabs use a brighter fill; keyboard focus stays distinct and adapts
+  for contrast. Resting tab and sidebar heading numbers are dimmer than their
+  names, hint and dialog text use grey roles, and zoomed tabs share the pane
+  Restore mark `▣`
   (`eon-wuau8.3`, Lucca's 2026-11-10 approval and delegated contrast decisions).
 
 - VEN-C8/VEN-C18: `--panel-heading connected` uses a straight panel top at notch

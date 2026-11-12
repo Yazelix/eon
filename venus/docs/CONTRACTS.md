@@ -2309,10 +2309,11 @@ re-proved when that platform or feature is next touched.
   except compositor blur through the card, which waits on the native backdrop
   re-proof of background blur ([Window background and
   decorations](PRESENTATION.md#window-background-and-decorations)), and the
-  current row's selected fill and focus treatment introduced by `eon-wuau8.3`,
-  whose live acceptance follows landing. Approved by Lucca on
-  2026-10-21 (draft 15 on `eon-agent-sidebar-yx8.1`, there under an earlier
-  draft ID). `eon-agent-sidebar-yx8.3`
+  current row's focus-colour outline and inset keyboard-focus treatment
+  (`eon-wuau8.4`). Lucca approved that presentation on 2026-11-11 ("ahhh i like
+  it"); its live acceptance follows landing. Lucca approved the sidebar
+  contract on 2026-10-21 (draft 15 on `eon-agent-sidebar-yx8.1`, there under an
+  earlier draft ID). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
   sidebar's AccessKit region and the empty state;
   `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
@@ -2431,19 +2432,24 @@ re-proved when that platform or feature is next touched.
       corners proportional to its size, with no filled title bar or interior. It
       takes the title color, dimmed with a stale record; resting row text and
       marks adapt for contrast against the terminal background. Popup and pane rows
-      use the same fill in resting, hover, current and keyboard-focus states;
-      keyboard focus outlines the row fill (`eon-wuau8.3`). Tab headers
+      use the same surfaces in resting, hover, current and keyboard-focus states;
+      keyboard focus outlines the row (`eon-wuau8.4`). Tab headers
       carry no marker.
     - **Current row.** The row whose source terminal is the active tab's
       focused terminal (its shown popup, else its selected pane) takes a
-      selected-tab fill role, adapted to at least 3:1 against the sidebar
-      background. Hover uses a weaker fill on the same adapted contrast ramp,
-      with a visible step to current. Current selection survives hover
-      and keyboard focus without a neutral outline. Keyboard focus adds the
-      mint role, adjusted only as needed for 3:1 against the row fill. Selected
-      text starts in the primary role and retains 4.5:1, including stale text;
-      selected badges keep the bar's dark disc. Rows in other tabs never take
-      this selection fill. Its accessible label adds "current".
+      one-physical-pixel outline in the configured focus colour, adapted only
+      as needed for 3:1 against the sidebar background. Current selection adds
+      no fill. Hover or keyboard focus fills any row with the dark highlight
+      role, adapted only as needed for 1.5:1 against the background. The current
+      outline keeps its colour over that fill. Keyboard focus adds a mint
+      one-physical-pixel outline, inset one pixel on a current row so both
+      remain visible, adjusted only as needed for 3:1 against the row fill.
+      Current text starts in the primary role and retains 4.5:1, including
+      stale text; its badge keeps the bar's dark disc at rest. Highlighted
+      badges use the highlight's backing, or the bar's disc when adapted. Rows
+      have no mint pressed flash. Rows in other tabs never take the current
+      outline. Its accessible label adds "current" (`eon-wuau8.4`, approved by
+      Lucca on 2026-11-11: "ahhh i like it").
   - **Navigation.**
     - Activating a row sends `FocusAttention`, and keyboard focus moves to the
       target terminal, or stays on the tab when the covered-target rule only
@@ -2689,7 +2695,7 @@ re-proved when that platform or feature is next touched.
   - Compositor blur through the card: headless Sway has no blur, so only its
     translucency was measured. It waits on the native backdrop re-proof of
     background blur, whose open proof `eon-vn0nk` records.
-  - The current-row fill and focus treatment (`eon-wuau8.3`) await Lucca's
+  - The current-row outline and inset focus treatment (`eon-wuau8.4`) await Lucca's
     live acceptance after landing. The earlier current-row outline
     observation gap (`eon-sidebar-you-are-here-3743`) is superseded by this
     presentation change; its historical observations above remain unchanged.
