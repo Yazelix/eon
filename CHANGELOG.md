@@ -30,6 +30,8 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   even when a preceding request's reply fails during disconnect. This preserves
   focus-out delivery for programs that save on focus loss (`eon-lobng`).
 
+- Quota, CPU, RAM and disk chips keep neutral text and show their percentage
+  and grade colour in a thin meter along the capsule's bottom (`eon-wuau8.6`).
 - Packaged Helix uses carbonfox, soft wrapping, a bufferline for multiple
   buffers, cursorline, colored modes, an insert bar cursor and indent guides.
   These nova-helix defaults sit below user and trusted workspace settings;

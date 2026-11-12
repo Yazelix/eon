@@ -446,6 +446,8 @@ Both providers show one chip per available window, five-hour then seven-day,
 then one Claude chip for each model-scoped weekly window, such as `Fable`.
 Each window shows its remaining percentage; hover lists when it resets, in
 local time, the pace, and whether the reading is old. Missing resets stay unknown.
+Chip text stays neutral. A thin bottom meter shows the remaining percentage,
+coloured by pace; old and reset-less readings use a neutral meter.
 Readings say `old` once they are more than an hour old and disappear after 24
 hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.
@@ -457,7 +459,8 @@ holding your home directory is, refreshed every 30 seconds; hover them for
 their names and details, such as the disk's size, mount point and free space.
 Each hover is a short list, one fact per line, that leaves out what the chip
 already shows; screen readers read one sentence with every fact.
-They turn yellow from 60%, orange from 75% and red from 90% use by default, at
+Their bottom meters show the percentage in use and turn yellow from 60%,
+orange from 75% and red from 90% use by default, at
 the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
 chooses the path the disk chip measures.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock

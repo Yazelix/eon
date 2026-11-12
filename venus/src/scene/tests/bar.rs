@@ -285,6 +285,7 @@ fn quota_without_reset_retains_percent_and_accessible_freshness() {
             ""
         };
         assert_eq!(text.label, format!("5h 100%{suffix}"));
+        assert_eq!(text.remaining_percent, Some(100));
         assert!(text.pace.is_none());
         assert!(text.description.contains("reset time unavailable"));
         assert!(!text.description.contains("pace"));
@@ -663,6 +664,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
                 None,
             );
             assert_eq!(text.label, label);
+            assert_eq!(text.remaining_percent, Some(window.remaining_percent));
             let pace = text.pace.expect("each fresh chip judges its one window");
             assert!((pace - shortfall).abs() < 1e-3);
             assert_eq!(
@@ -686,6 +688,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         None,
     );
     assert!(text.pace.is_some());
+    assert_eq!(text.remaining_percent, Some(0));
     assert!(
         text.description
             .ends_with("observed 16m into 5h. Used up until reset.")
@@ -727,7 +730,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         text.description
     );
 
-    // Stale, blocked, unknown and unused windows keep neutral labels and descriptions.
+    // Stale and unused windows retain their percentage but have no pace judgement.
     let unused = QuotaWindow {
         remaining_percent: 100,
         resets_at: Some(observed_at + 17_940),
@@ -756,6 +759,10 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
     ] {
         let text = quota_text(QuotaProvider::Codex, state, observed_at, window, None);
         assert_eq!(text.label, label);
+        assert_eq!(
+            text.remaining_percent,
+            window.map(|window| window.remaining_percent)
+        );
         assert!(text.pace.is_none());
         assert!(!text.description.contains("pace") && !text.description.contains("Used up"));
     }
@@ -2064,6 +2071,7 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     );
     let (cpu, ram) = (scene.cpu.unwrap(), scene.ram.unwrap());
     assert_eq!((cpu.load, ram.load), (Load::Critical, Load::Critical));
+    assert_eq!((cpu.percent, ram.percent), (Some(100), Some(91)));
     assert_eq!(cpu.description, busy.description);
     assert_eq!(
         ram.description,
@@ -2243,6 +2251,7 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     let shown = scene.disk.as_ref().unwrap();
     assert_eq!(shown.label, "\u{f0a0} 95%");
     assert_eq!(shown.load, Load::Critical);
+    assert_eq!(shown.percent, Some(95));
     assert_eq!(shown.description, full.description);
     assert_eq!(
         shown.tooltip,
@@ -2450,6 +2459,7 @@ fn reading_slots_only_grow_and_reflow_at_one_hundred_percent() {
             let mut previous = None;
             for readings in [
                 [8, 61, 67],
+                [0, 0, 0],
                 [61, 8, 99],
                 [100, 61, 67],
                 [8, 100, 67],
@@ -2501,6 +2511,7 @@ fn reading_slots_only_grow_and_reflow_at_one_hundred_percent() {
                 let labels = [&scene.cpu, &scene.ram, &scene.disk];
                 let slots: [_; 3] = std::array::from_fn(|index| {
                     labels[index].as_ref().map(|label| {
+                        assert_eq!(label.percent, Some(readings[index]));
                         if scale == 1.0 {
                             let width = if readings[index] == 100 { 106.5 } else { 95.5 };
                             assert_eq!(label.rect.width, width);
@@ -3014,6 +3025,15 @@ fn a_full_bar_with_room_shows_the_icon() {
             None,
         );
         assert_eq!(scene.quotas.len(), 3);
+        assert!(
+            scene
+                .quotas
+                .iter()
+                .all(|quota| quota.remaining_percent == Some(60))
+        );
+        assert_eq!(scene.cpu.as_ref().unwrap().percent, Some(12));
+        assert_eq!(scene.ram.as_ref().unwrap().percent, Some(50));
+        assert_eq!(scene.disk.as_ref().unwrap().percent, Some(100));
         assert!(scene.eon_icon.is_some(), "{} tabs", snapshot.tabs.len());
     }
 }
@@ -3145,6 +3165,7 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
             // The version label sits at the right end of the hints, and hides with them.
             assert_eq!(scene.version.is_some(), version.is_some() && shown);
             if let Some(label) = &scene.version {
+                assert_eq!(label.percent, None);
                 let hints = scene.hints.as_ref().unwrap();
                 assert_eq!(label.label, "EON 9.8.7");
                 assert_eq!(label.tooltip, "Eon 9.8.7");

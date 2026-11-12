@@ -33,10 +33,11 @@ Eon supplies its running version and release stage together through
 `--eon-version` and `--eon-release-stage alpha|beta|stable` in workspace mode.
 A version without stage metadata remains unmarked for older-supervisor reloads.
 The read-only label uses spare header space and yields before tabs and controls.
-`--bar-items` lets Eon choose which bar items show and in what order, the
-`--*-percent` load levels set when the CPU, RAM and disk chips turn orange or
-red, `--cpu-average-seconds` sets the window of the CPU average that hover and
-accessibility give, and `--disk-path` names the path whose filesystem the disk
+`--bar-items` lets Eon choose which bar items show and in what order. The
+`--*-percent` load levels set when the CPU, RAM and disk bottom meters turn
+yellow, orange or red while chip text stays neutral. `--cpu-average-seconds`
+sets the window of the CPU average that hover and accessibility give, and
+`--disk-path` names the path whose filesystem the disk
 chip measures.
 
 Eon can supply Codex and Claude quota facts in the same header. Read-only chips

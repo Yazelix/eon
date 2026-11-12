@@ -666,6 +666,8 @@ pub(crate) struct WorkspaceQuota {
     pub(crate) rect: SceneRect,
     pub(crate) logo: SceneRect,
     pub(crate) label: String,
+    /// The displayed remaining share; blocked and unknown observations have no meter.
+    pub(crate) remaining_percent: Option<u8>,
     /// How early the fresh window's linear pace runs out before reset, as a share of
     /// the window; negative means it lasts with that share spare. None means no judgment.
     pub(crate) pace: Option<f32>,
@@ -699,6 +701,8 @@ pub(crate) struct WorkspaceLabel {
     pub(crate) description: String,
     /// The machine load a CPU, RAM or disk label shows; other labels stay normal.
     pub(crate) load: Load,
+    /// The displayed use; clock and version labels have no meter.
+    pub(crate) percent: Option<u64>,
 }
 
 /// The Eon Bar's leading workspace label (VEN-C21).
@@ -3252,6 +3256,7 @@ fn quota_window_text(window: &QuotaWindow, observed_at: u64) -> String {
 /// One provider chip's label with its pace, its hover list, and its accessible description.
 struct QuotaText {
     label: String,
+    remaining_percent: Option<u8>,
     pace: Option<f32>,
     tooltip: String,
     description: String,
@@ -3288,13 +3293,16 @@ fn quota_text(
     window: Option<&QuotaWindow>,
     now: Option<&jiff::Zoned>,
 ) -> QuotaText {
-    let mut label = match state {
-        CodexQuotaState::Fresh | CodexQuotaState::Stale => quota_window_text(
-            window.expect("EONW requires a quota window for fresh and stale states"),
-            observed_at,
-        ),
-        CodexQuotaState::Blocked => "blocked".into(),
-        CodexQuotaState::Unknown => "unknown".into(),
+    let (mut label, remaining_percent) = match state {
+        CodexQuotaState::Fresh | CodexQuotaState::Stale => {
+            let window = window.expect("EONW requires a quota window for fresh and stale states");
+            (
+                quota_window_text(window, observed_at),
+                Some(window.remaining_percent),
+            )
+        }
+        CodexQuotaState::Blocked => ("blocked".into(), None),
+        CodexQuotaState::Unknown => ("unknown".into(), None),
     };
     if state == CodexQuotaState::Stale {
         label.push_str(" old");
@@ -3391,6 +3399,7 @@ fn quota_text(
     });
     QuotaText {
         label,
+        remaining_percent,
         pace,
         tooltip,
         description,
@@ -3766,6 +3775,7 @@ impl WorkspaceScene {
                     logo: SceneRect::default(),
                     accessible_label: format!("{} {label}", provider.name()),
                     label,
+                    remaining_percent: text.remaining_percent,
                     pace: text.pace,
                     tooltip: text.tooltip,
                     description: text.description,
@@ -3997,6 +4007,7 @@ impl WorkspaceScene {
                     tooltip,
                     description,
                     load,
+                    percent: Some(percent),
                 },
             )
         });
@@ -4058,6 +4069,7 @@ impl WorkspaceScene {
                 tooltip: clock.tooltip.clone(),
                 description: clock.description.clone(),
                 load: Load::Normal,
+                percent: None,
             });
         let version = hints
             .as_ref()
@@ -4069,6 +4081,7 @@ impl WorkspaceScene {
                 tooltip: bar.release_stage.version_name(version),
                 description: String::new(),
                 load: Load::Normal,
+                percent: None,
             });
         let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);
         let active = tabs[active_tab].rect;
