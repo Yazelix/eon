@@ -20,6 +20,11 @@ let
       inherit (spec) version licenses;
       source = "https://crates.io/crates/${crate.name}/${crate.version} (${crate.checksum}); bundled native code";
       source_roots = [ "${notices}" ];
+      source_material = {
+        sources = [ source ];
+        patches = [ ];
+        build = ./native.nix;
+      };
     };
   binding = id: spec: {
     name = spec.crate.name;

@@ -344,6 +344,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 - **Status:** Pending re-proof in this repository (proven before consolidation
   for the unpublished Linux slice)
+  Amended on 2026-11-11 by `eon-igae.15.7`.
 - **Consumer:** A user installing Eon without adopting an unrelated toolchain.
 - **Trigger:** Install, upgrade, inspect, roll back or remove a direct Eon bundle.
 - **Result:** The operation affects only the selected Eon bundle and its owned
@@ -363,6 +364,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   OpenSSH signature and GitHub build attestations as GitHub release assets.
   Nix remains a supported channel. Other platforms, architectures and package
   formats keep separate gates and explicit approval.
+  Each Nix-free Linux release also carries `eon-VERSION-x86_64-linux-sources.tar.zst`, listed in `SHA256SUMS`. It holds the source, modifications and build and relink instructions that the licenses of the archive's inventoried copyleft components require, and the archive's notices name it and the release it is attached to. Release assembly fails when an inventoried copyleft obligation lacks its source material.
 - **Proof:** Pending re-proof in this repository.
   - **Environment:** Not repeated after consolidation.
   - **Evidence:** Before consolidation, `eon-prove-manual-nix-free-linux-bundle-216b`

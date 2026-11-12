@@ -96,6 +96,10 @@ installation, and proven contract changes.
   are unchanged (`eon-g3vdz`, `eon-l4e7s`).
 - Venus reuses shaped text for unchanged terminal rows during updates and
   fractional scrolling (`eon-venus-row-text-cache-gxb4`, first slice).
+- Nix-free release assets include a checked source companion for the archive's
+  inventoried copyleft components, with exact sources, patches, build recipes and
+  library replacement instructions. The binary notices locate it on the same release and
+  `SHA256SUMS` covers it (`eon-igae.15.7`, EON-C5).
 
 - The first expanded Stack pane's band and focus frame sit one title row
   below the Stack outline, matching the gap below collapsed titles. Existing

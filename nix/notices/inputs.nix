@@ -1,4 +1,4 @@
-{ pkgs, manifest, noticeTool, bundleRelink, helix, yazi, ghostty, ghosttyDeps, bend, anima
+{ pkgs, manifest, noticeTool, bundleRelink, helix, yazi, ghostty, ghosttyDeps, bend, anima, nixpkgsSource
 , zig, rustToolchain, system, withoutAccelerando, githubSource, codexbarIdentity
 , animaIdentity, helixIdentity, venusFonts, venusBuildInputs, venusRuntimeLibraries
 , venusFontsConf, filesPopupConfig, eonRust, eonPackage, orbitPackage, venusPackage, installerPackage
@@ -78,6 +78,16 @@ let
       { name = "LICENSE-APACHE"; hash = "sha256-Yseh419WQGiW16p8pS0MwNJyrAIrXSeW59aQXbijY2o="; }
     ];
   accelerandoGrantPath = "${anima}/fonts/redistribution-grant.json";
+  sourceBuildSupport = lib.fileset.toSource {
+    root = ../..;
+    fileset = lib.fileset.unions [
+      ../../nix ../../relink ../../launcher ../../components
+      ../../flake.nix ../../flake.lock ../../LICENSE
+    ];
+  };
+  sourceName = "eon-${eonPackage.version}-x86_64-linux-sources.tar.zst";
+  nixpkgsSourcePath = builtins.path { path = nixpkgsSource.outPath; name = "source"; };
+  helixSourcePath = builtins.path { path = helix.outPath; name = "source"; };
   accelerandoGrant = if !builtins.pathExists accelerandoGrantPath then null else
     let
       grant = builtins.fromJSON (builtins.readFile accelerandoGrantPath);
@@ -99,6 +109,31 @@ let
 in
 import ./default.nix {
   inherit pkgs manifest;
+  sourceRelease = {
+    filename = sourceName;
+    releases_page = "https://github.com/Yazelix/eon/releases";
+    support = {
+      nixpkgs = nixpkgsSourcePath;
+      eon = sourceBuildSupport;
+      helix = helixSourcePath;
+    };
+    instructions = ./source-instructions.md;
+    runtime_exception_basis = ''
+      glibc ${pkgs.glibc.version} startup code in sysdeps/x86_64/start.S grants
+      unlimited permission to link its compiled form into other programs and
+      distribute those programs. csu/libc-start.c is in the host libc.so for these
+      dynamically linked binaries; the static installer and launcher use musl.
+      GCC ${pkgs.stdenv.cc.cc.version} crtstuff/libgcc code retains COPYING.RUNTIME
+      (GCC Runtime Library Exception 3.1). The selected compilation processes use
+      GPL-compatible GCC, rustc/LLVM and LLVM-based native toolchains without
+      non-GPL-compatible GCC plugins or intermediate-code processing. This is the
+      Eligible Compilation Process basis, not a relicensing of runtime sources.
+      libquadmath remains LGPL and dynamically replaceable. The source, selected
+      patches and original exceptions are included; no relink kit is promised for
+      excepted startup objects. Static LGPL code without an applicable exception
+      requires a separate decision before shipment.
+    '';
+  };
   nativeBindings = native.bindings;
   nativeExclusions = native.exclusions;
   tool = noticeTool;
@@ -269,6 +304,7 @@ import ./default.nix {
       licenses = [ "MPL-2.0" "MIT" "Apache-2.0" "0BSD" "Unlicense" "GPL-3.0-only" ];
       notice_files = [ "${helix}/LICENSE" "${apache2}" ];
       source_roots = [ "${helix}/runtime" "${helixRuntimeInlineNotices}" ];
+      source_material = { sources = [ helixSourcePath ]; patches = [ ]; build = "${helix}/flake.nix"; };
     };
   } // lib.optionalAttrs (!withoutAccelerando) {
     ${anima.packages.${system}.accelerando-font.name} = {
@@ -301,6 +337,12 @@ import ./default.nix {
       source = "${pkgs.glibc.src} and ${pkgs.stdenv.cc.cc.src}";
       licenses = [ "LGPL-2.1-or-later" "GPL-3.0-or-later WITH GCC-exception-3.1" ];
       source_roots = map toString [ pkgs.glibc.src pkgs.stdenv.cc.cc.src ];
+      source_material = {
+        sources = [ pkgs.glibc.src pkgs.stdenv.cc.cc.src ];
+        patches = (pkgs.glibc.patches or [ ]) ++ (pkgs.stdenv.cc.cc.patches or [ ]);
+        build = pkgs.writeText "eon-system-runtime-build-recipes.txt"
+          "Nixpkgs ${nixpkgsSourcePath}: pkgs.glibc and pkgs.stdenv.cc.cc, as selected in the included Eon flake.nix.\n";
+      };
     }
     {
       id = "rust-standard-library";
@@ -425,6 +467,7 @@ import ./default.nix {
       source = "${helix}/runtime";
       licenses = [ "MPL-2.0" ];
       output_name = "runtime";
+      source_material = { sources = [ helixSourcePath ]; patches = [ ]; build = "${helix}/flake.nix"; };
       notice_files = [ "${helix}/LICENSE" ];
     }
     {
@@ -433,6 +476,7 @@ import ./default.nix {
       source = "${helix}/grammars.nix";
       licenses = [ "MPL-2.0" ];
       output_name = "consolidated-helix-grammars";
+      source_material = { sources = [ helixSourcePath ]; patches = [ ]; build = "${helix}/grammars.nix"; };
       notice_files = [ "${helix}/LICENSE" ];
     }
     (import ./yazi-syntaxes.nix { inherit pkgs yaziPackage; })

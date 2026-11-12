@@ -6,12 +6,15 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod sources;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Inputs {
     schema: u32,
+    source_release: sources::Release,
     accepted: BTreeSet<String>,
     required_components: BTreeSet<String>,
     omitted_grammars: BTreeSet<String>,
@@ -37,6 +40,8 @@ struct Entry {
     notice_files: Vec<PathBuf>,
     #[serde(default)]
     source_roots: Vec<PathBuf>,
+    #[serde(default)]
+    source_material: Option<sources::Producer>,
     #[serde(default)]
     notice_hashes: BTreeMap<PathBuf, String>,
     #[serde(default)]
@@ -133,6 +138,7 @@ struct NativeBinary {
 #[derive(Deserialize, Serialize)]
 struct Report {
     schema: u32,
+    source_release: sources::Release,
     entries: Vec<Entry>,
     files: Vec<File>,
     binaries: BTreeMap<String, Binary>,
@@ -156,6 +162,12 @@ fn run() -> Result<()> {
             generate(Path::new(input), Path::new(tree), Path::new(output))?;
         }
         [command, output] if command == "check" => check(Path::new(output))?,
+        [command, notices, output] if command == "sources" => {
+            sources::generate(Path::new(notices), Path::new(output))?;
+        }
+        [command, notices, output] if command == "check-sources" => {
+            sources::check(Path::new(notices), Path::new(output))?;
+        }
         [command, build, modules, licenses, go_version] if command == "check-go" => check_go(
             &fs::read(Path::new(build))?,
             &fs::read_to_string(Path::new(modules))?,
@@ -182,7 +194,7 @@ fn run() -> Result<()> {
         }
         _ => {
             return Err(
-                "usage: archive-notices generate INPUT.json RELINKED-TREE OUTPUT | check OUTPUT"
+                "usage: archive-notices generate INPUT.json RELINKED-TREE OUTPUT | check OUTPUT | sources NOTICES OUTPUT | check-sources NOTICES OUTPUT"
                     .into(),
             );
         }
@@ -399,6 +411,18 @@ fn cargo_texts(
     report["native_packages"] =
         serde_json::to_value(native_packages(&fs::read_to_string(native_tree)?)?)?;
     report["native_binaries"] = serde_json::to_value(binaries)?;
+    let source_crates = report["licenses"]
+        .as_array()
+        .ok_or("Cargo report has no licenses")?
+        .iter()
+        .filter(|license| {
+            license["id"]
+                .as_str()
+                .is_some_and(|id| source_obligation(id).is_some())
+        })
+        .flat_map(|license| license["used_by"].as_array().into_iter().flatten())
+        .map(|usage| cargo_identity(&usage["crate"]))
+        .collect::<Result<BTreeSet<_>>>()?;
     let mut missing = shipped.clone();
     let crates = report["crates"]
         .as_array_mut()
@@ -421,6 +445,15 @@ fn cargo_texts(
                 .parent()
                 .ok_or("Cargo manifest has no parent")?,
         )?;
+        if source_crates.contains(&cargo_identity(&entry["package"])?)
+            && !entry["package"]["source"].is_null()
+        {
+            sources::retain_crate(
+                entry,
+                &root,
+                output.parent().ok_or("Cargo output has no parent")?,
+            )?;
+        }
         if entry["package"]["license"].as_str() == Some("CC-PDDC") {
             let vcs: serde_json::Value =
                 serde_json::from_slice(&fs::read(root.join(".cargo_vcs_info.json"))?)?;
@@ -1279,6 +1312,7 @@ fn generate(input: &Path, tree: &Path, output: &Path) -> Result<()> {
     notice_gaps.dedup();
     let report = Report {
         schema: 1,
+        source_release: inputs.source_release,
         entries: inputs.entries,
         files,
         binaries,
@@ -1293,7 +1327,10 @@ fn generate(input: &Path, tree: &Path, output: &Path) -> Result<()> {
     )?;
     fs::write(
         output.join("README.txt"),
-        "Eon archive third-party notices\n\nSee inventory.json for component/source identities, per-binary static inputs, original texts, notice gaps and summaries of source obligations.\nThis report is generated from the archive producers and the actual relinked tree.\nA nonempty findings list blocks publication. Source delivery is separately gated (eon-igae.15.7).\nRelinked ELF interpreters and library paths and absolute symlinks are modified by Eon.\n",
+        format!(
+            "Eon archive third-party notices\n\nSee inventory.json for component/source identities, per-binary static inputs, original texts, notice gaps and summaries of source obligations.\nThis report is generated from the archive producers and the actual relinked tree.\nA nonempty findings list blocks publication. Required source material is checked separately.\nSource companion: {}\nIt is attached to the same GitHub release as this binary archive. Find that release and its source companion at {}\nExtract the companion and read source-index.json and BUILD-AND-RELINK.md.\nEon modifications (2026-11-11): ELF interpreters and library search paths are relinked and absolute symlinks made relative; upstream patches are identified in the source index.\n",
+            report.source_release.filename, report.source_release.releases_page
+        ),
     )?;
     Ok(())
 }
@@ -1331,9 +1368,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    struct Fixture(PathBuf);
+    pub(super) struct Fixture(pub(super) PathBuf);
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
                 "eon-notices-{}-{}",
                 std::process::id(),
@@ -1348,12 +1385,15 @@ mod tests {
             .unwrap();
             Self(path)
         }
-        fn input(&self) -> serde_json::Value {
-            json!({"schema":1,"accepted":["MIT"],"required_components":["tool"],"omitted_grammars":["drools"],
+        pub(super) fn input(&self) -> serde_json::Value {
+            json!({"schema":1,"source_release":{"filename":"eon-1-x86_64-linux-sources.tar.zst",
+                "releases_page":"https://github.com/Yazelix/eon/releases",
+                "support":{},"instructions":self.0.join("BUILD.md"),"runtime_exception_basis":"fixture"},
+                "accepted":["MIT"],"required_components":["tool"],"omitted_grammars":["drools"],
                 "entries":[{"id":"tool","version":"1","source":"pinned source","licenses":["MIT"],"components":["tool"],
                     "outputs":["/nix/store/hash-tool-1"],"notice_files":[self.0.join("LICENSE")]}]})
         }
-        fn generate(&self, input: serde_json::Value) -> Report {
+        pub(super) fn generate(&self, input: serde_json::Value) -> Report {
             fs::write(
                 self.0.join("input.json"),
                 serde_json::to_vec(&input).unwrap(),

@@ -166,9 +166,26 @@ The archive root contains `THIRD-PARTY-NOTICES/` with the generated inventory,
 license texts and attribution. It identifies the actual relinked store outputs
 and the code embedded in their binaries, including the static launcher and
 installer. Relinking changes interpreters and library search paths. The release
-build refuses a payload with unresolved license or notice findings. Delivery
-of corresponding source for the modified and linked components remains a
-separate publication gate (`eon-igae.15.7`).
+build refuses a payload with unresolved license or notice findings.
+`eon-VERSION-x86_64-linux-sources.tar.zst` accompanies the binary on the same
+release and is listed in its signed `SHA256SUMS`. The notices give its exact
+filename, identify it as an attachment to the same release as the binary archive,
+and point to [the releases page](https://github.com/Yazelix/eon/releases). These
+directions also cover prerelease tags. The companion's `source-index.json` maps every inventoried copyleft
+obligation to exact source, patches and build recipes, with hashes and instructions
+in `BUILD-AND-RELINK.md`. It includes MPL-covered source as well as GPL/LGPL source.
+The release build rejects missing source material or a source index whose inventory
+hash differs from the notices actually in the binary archive. Keep the companion
+published and accessible for as long as the binary is available.
+
+The source companion includes the scripts used to build and relink the components
+and instructions for replacing interface-compatible LGPL shared libraries in a
+separate extracted copy. Its index records the glibc startup and GCC runtime
+exceptions; the host supplies dynamic glibc, while startup objects may still be
+embedded. Source and exception texts are included. Source inspection and extraction
+need no Nix; rebuilding through the supplied recipes can use Nix and fetch normal
+build tools. This does not claim that a draft release has been exercised or that
+other redistribution and beta qualification gates are complete.
 
 The archive omits the Helix grammars for Blueprint, Drools, GNU assembler
 (GAS), Hare, Jinja2, nginx and Prolog because they use strong-copyleft licenses.

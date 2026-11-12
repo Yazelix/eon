@@ -1518,6 +1518,13 @@
             venusFontsConf filesPopupConfig eonRust eonPackage orbitPackage venusPackage installerPackage
             animaPackage nushellPackage bashPackage starshipPackage zoxidePackage fzfPackage
             atuinPackage carapacePackage helixPackage yaziPackage lazygitPackage codexbarPackage;
+            nixpkgsSource = nixpkgs;
+          };
+          archiveSource = import ./nix/notices/source.nix {
+            inherit pkgs;
+            tool = noticeTool;
+            notices = archiveNotices.notices;
+            version = eonPackage.version;
           };
           br = pkgs.runCommand "br-0.7.2" { } ''
             mkdir -p "$out/bin" "$out/share/licenses/br"
@@ -1579,6 +1586,8 @@
               inherit pkgs installer;
               bundle = manual-bundle;
               noticeCheck = archiveNotices.check;
+              source = archiveSource.archive;
+              sourceCheck = archiveSource.check;
             };
             archive-notices = if archive then archiveNotices.notices else
               archivePackages.archive-notices;
@@ -1586,6 +1595,10 @@
               archivePackages.archive-notice-inputs;
             archive-notice-check = if archive then archiveNotices.check else
               archivePackages.archive-notice-check;
+            archive-source = if archive then archiveSource.archive else
+              archivePackages.archive-source;
+            archive-source-check = if archive then archiveSource.check else
+              archivePackages.archive-source-check;
             manual-bundle-without-accelerando =
               withoutAccelerandoPackages.manual-bundle;
             release-without-accelerando =

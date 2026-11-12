@@ -159,10 +159,15 @@ payloads or promises rollback. Use the explicit installer rollback below.
 
 ## Release assets
 
-A release carries `eon-VERSION-x86_64-linux.tar.zst`, the static installer as
-`eon-install-x86_64-linux`, `SHA256SUMS` over both and the maintainer's
-`SHA256SUMS.sig`. `nix build .#release` builds the first three from one
-revision. Verify a downloaded installer like the archive: check the signature
+A release carries `eon-VERSION-x86_64-linux.tar.zst`, its copyleft source
+companion `eon-VERSION-x86_64-linux-sources.tar.zst`, the static installer as
+`eon-install-x86_64-linux`, `SHA256SUMS` over all three and the maintainer's
+`SHA256SUMS.sig`. `nix build .#release` builds the artifacts and checksum list
+from one revision. The binary notices name the source companion, say that it is
+attached to the same release as the archive, and give the releases page; see
+[source and relink instructions](MANUAL-BUNDLE.md#installer-and-publication-handoff).
+The installer downloads the exact binary archive name; source is an optional
+separate download. Verify a downloaded installer or source companion like the archive: check the signature
 over `SHA256SUMS`, then run `sha256sum -c --ignore-missing SHA256SUMS`
 ([manual verification](MANUAL-BUNDLE.md#verification-before-extraction)).
 

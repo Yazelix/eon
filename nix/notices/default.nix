@@ -1,5 +1,6 @@
 { pkgs, tool, tree, manifest, packages, rustProducers, goProducers, extraEntries
-, packageOverrides, grammarSources, helixSource, launcherPrograms, binaryInputs, nativeExclusions, nativeBindings }:
+, packageOverrides, grammarSources, helixSource, launcherPrograms, binaryInputs, nativeExclusions, nativeBindings
+, sourceRelease }:
 let
   inherit (pkgs) lib;
   key = value: builtins.unsafeDiscardStringContext (toString value);
@@ -34,6 +35,28 @@ let
         else package.srcs or [ ]
       )
     );
+  sourceMaterial = package:
+    let outputNames = package.outputs or [ "out" ];
+    in {
+    sources = sources package;
+    patches = package.patches or [ ];
+    build = pkgs.writeText "${package.name}-source-build.json"
+      (lib.replaceStrings
+        (map builtins.placeholder outputNames)
+        (map (output: "@output:${output}@") outputNames)
+        (builtins.toJSON {
+        package = package.name;
+        output_names = outputNames;
+        inherit (pkgs.stdenv.hostPlatform) system;
+        configuration = builtins.intersectAttrs (lib.genAttrs [
+          "configureFlags" "configurePhase" "buildPhase" "installPhase"
+          "prePatch" "postPatch" "preConfigure" "postConfigure" "preBuild" "postBuild"
+          "preInstall" "postInstall" "postFixup" "makeFlags" "buildFlags" "installFlags"
+          "NIX_CFLAGS_COMPILE" "NIX_LDFLAGS" "cargoBuildFeatures" "cargoBuildNoDefaultFeatures"
+          "nativeBuildInputs" "buildInputs" "propagatedBuildInputs"
+        ] (_: null)) package;
+      }));
+  };
   cargoReport = producer:
     let
       manifestPath = producer.manifest or "Cargo.toml";
@@ -148,6 +171,7 @@ let
       source_roots = map (source: "${source}") (sources package)
         ++ lib.optional (go != null) "${go}/licenses"
         ++ lib.optional (cargo != null) "${cargo}/texts";
+      source_material = sourceMaterial package;
       cargo_reports = lib.optional (cargo != null) "${cargo}/report.json";
       checks = lib.optional (go != null) "${go}/status";
       embedded = [ "system-linker-runtime" ]
@@ -172,6 +196,11 @@ let
       grammar = grammar.name;
       output_name = "helix-tree-sitter-${grammar.name}-${grammar.source.rev}";
       licenses = evidence.licenses;
+      source_material = {
+        sources = [ source ];
+        patches = [ ];
+        build = "${helixSource}/grammars.nix";
+      };
       notice_files = map (file: "${source}/${file.path}") evidence.evidence
         ++ map (license: "${standardTexts.${license}}") (evidence.terms or [ ]);
       notice_hashes = lib.listToAttrs (map (file: {
@@ -184,6 +213,7 @@ let
   input = pkgs.writeText "eon-archive-notice-input.json" (builtins.toJSON {
     schema = 1;
     inherit accepted;
+    source_release = sourceRelease;
     native_exclusions = nativeExclusions;
     omitted_grammars = omitted;
     # Ratconfig has a composition pin but no shipped binary or linked Cargo package.
