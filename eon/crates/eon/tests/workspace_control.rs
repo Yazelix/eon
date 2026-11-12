@@ -4048,6 +4048,98 @@ fn still_pending(snapshot: &Response) -> bool {
 }
 
 #[test]
+fn recovery_refuses_saved_popup_pane_tab_and_session_ids() {
+    let window = PairWindow::new();
+    let mut supervisor = window.spawn(&[]);
+    let mut retired = Vec::new();
+    assert!(
+        window
+            .eon(&[
+                "tab",
+                "directory",
+                "t1",
+                "--",
+                window.home.to_str().unwrap()
+            ])
+            .status
+            .success()
+    );
+    let mut before = window.inspect("initial-identities");
+    assert_eq!(before.workspace, "s1");
+    assert_eq!(before.active_tab, "t1");
+    assert_eq!(before.tabs[0].panes().next().unwrap().id, "p1");
+    assert_eq!(before.tabs[0].popups[0].id, "u1");
+    let original = live_identity(&window.generation().join("orbit.sock"));
+    for attempt in 0..2 {
+        let old_pane = before.tabs[0].panes().next().unwrap().id.clone();
+        let old_popup = before.tabs[0].popups[0].id.clone();
+        window.crash(&mut supervisor);
+        // Dropping an old guard signals every stub; retain it until the final Stop.
+        retired.push(std::mem::replace(&mut supervisor, window.spawn(&[])));
+        let recovered = window.inspect(&format!("recovered-{attempt}"));
+        assert_ne!(recovered.workspace, before.workspace);
+        assert_ne!(recovered.active_tab, before.active_tab);
+        assert!(recovered.tabs[0].panes().all(|pane| pane.id != old_pane));
+        assert_eq!(
+            live_identity(&window.generation().join("orbit.sock")),
+            original
+        );
+        assert!(matches!(
+            window.invoke_popup(&format!("successor-{attempt}"), "files", None),
+            Response::Snapshot(_)
+        ));
+        let successor = window.inspect(&format!("successor-snapshot-{attempt}"));
+        assert_ne!(successor.tabs[0].popups[0].id, old_popup);
+        for (index, arguments) in [
+            vec!["popup", "hide", old_popup.as_str(), "--json"],
+            vec!["focus", old_pane.as_str(), "--json"],
+            vec!["tab", "switch", before.active_tab.as_str(), "--json"],
+            vec!["session", "close", before.workspace.as_str(), "--json"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let refused = window.eon(&arguments);
+            assert_eq!(
+                refused.status.code(),
+                Some(3),
+                "{arguments:?}: {}",
+                stdout(&refused)
+            );
+            let after = window.inspect(&format!("after-stale-{attempt}-{index}"));
+            assert_eq!(after.workspace, successor.workspace);
+            assert_eq!(after.active_tab, successor.active_tab);
+            assert_eq!(after.tabs[0].selected_pane, successor.tabs[0].selected_pane);
+            assert_eq!(
+                after.tabs[0].selected_popup,
+                successor.tabs[0].selected_popup
+            );
+            assert_eq!(snapshot_sessions(&after), snapshot_sessions(&successor));
+        }
+        before = successor;
+    }
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn an_empty_same_generation_restart_does_not_reclaim_short_ids() {
+    let window = PairWindow::new();
+    let mut first = window.spawn(&[]);
+    let old = window.inspect("first-window");
+    assert_eq!(old.workspace, "s1");
+    assert_eq!(old.active_tab, "t1");
+    let generation = window.generation();
+    window.stop_generation(&mut first);
+    assert!(!generation.exists());
+    let mut replacement = window.spawn(&[]);
+    let new = window.inspect("empty-replacement");
+    assert_ne!(new.workspace, old.workspace);
+    assert_ne!(new.active_tab, old.active_tab);
+    assert_ne!(new.tabs[0].popups[0].id, old.tabs[0].popups[0].id);
+    window.stop_generation(&mut replacement);
+}
+
+#[test]
 fn recovery_stops_a_pending_pair_and_keeps_a_committed_files() {
     for committed in [false, true] {
         let window = PairWindow::new();
@@ -10791,11 +10883,18 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let recovered = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert!(recovered.status.success(), "{}", stdout(&recovered));
     let recovered = stdout(&recovered);
-    assert!(recovered.contains("\"active_tab\":\"t1\""));
-    assert!(recovered.contains("\"selected_pane\":\"p1\""));
+    let recovered_json: serde_json::Value = serde_json::from_str(recovered).unwrap();
+    let recovered_tab = &recovered_json["tabs"][0];
+    assert_ne!(recovered_json["active_tab"], "t1");
+    assert_ne!(recovered_json["session"], "s1");
+    assert_eq!(recovered_json["active_tab"], recovered_tab["id"]);
+    assert_eq!(
+        recovered_tab["selected_pane"],
+        recovered_tab["panes"][0]["id"]
+    );
     assert_eq!(recovered.matches("\"expanded\":").count(), 2);
-    assert!(recovered.contains("\"id\":\"p1\""));
-    assert!(recovered.contains("\"id\":\"p2\""));
+    assert_ne!(recovered_tab["panes"][0]["id"], "p1");
+    assert_ne!(recovered_tab["panes"][1]["id"], "p2");
     assert!(recovered.contains("\"popups\":[]"));
     assert_eq!(
         [
@@ -10808,7 +10907,14 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
 
     let created = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(created.status.success(), "{}", stdout(&created));
-    assert!(stdout(&created).contains("\"id\":\"p3\""));
+    let created_json: serde_json::Value = serde_json::from_str(stdout(&created)).unwrap();
+    assert!(
+        recovered_tab["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|pane| pane["id"] != created_json["created"]["pane"])
+    );
     assert!(stdout(&created).contains("\"terminal\":\"terminal-3\""));
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
     assert_named(

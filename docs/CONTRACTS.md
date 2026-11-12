@@ -555,6 +555,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C8 — Durable tab and pane workspace
 
+- **Amendment 2026-11-12:** `eon-agent-parity-a9g0.1.4`, approved by
+  eon-overseer under Lucca's standing rule: tab and pane identities cannot
+  retarget after supervisor recovery; EON-C15 owns their allocation ranges.
+
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-05 (approved by Lucca,
   relayed by eon-overseer) by `eon-agent-parity-a9g0.3`: tabs and panes in any
@@ -602,6 +606,14 @@ names its socket. CLI JSON names a session `session` and a terminal
     name. Context uses a relative path, or the compact path when shorter; compact paths use `~` for home
     and `~/` for its descendants. Labels preserve explicit offline, connecting and unavailable states.
     Program metadata is untrusted display text, never identity or command input.
+  - Within one window and generation on the same boot, a tab or pane identity
+    never names a different object, including after supervisor recovery. Flat
+    recovery creates new synthetic tab and pane objects with IDs from the
+    replacement supervisor's range (EON-C15). A saved ID absent from the current
+    snapshot fails as a missing or stale target and changes nothing. Fresh
+    windows start their tab and pane identity counters at 1 under EON-C15's
+    lifecycle-lock creation rule. Displayed identity numbers can be long and
+    need not be contiguous after supervisor replacement.
   - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed session and changes no session, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Session inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and draws each pane as its own card,
@@ -876,9 +888,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     left empty closes Venus and the supervisor. A column whose last pane ends disappears; if it
     held the selection, selection moves to the following column, otherwise the
     preceding one.
-  - Same-boot recovered runs project numerically into one column of synthetic
-    `t1` as `pN`
-    without claiming restoration of prior topology or launch-directory policy.
+  - Same-boot recovered runs, sorted by their positive canonical terminal
+    numbers, project into one column of a new synthetic tab, with a new pane
+    object for each run and the first pane selected. Their IDs come from the
+    replacement supervisor's range under EON-C15. This does not restore prior
+    topology or launch-directory policy. A pane's identity number need not equal
+    its terminal's number.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target outside
@@ -2821,6 +2836,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C15 — Same-boot Orbit recovery
 
+- **Amendment 2026-11-12:** `eon-agent-parity-a9g0.1.4`, approved by
+  eon-overseer under Lucca's standing rule (01:10 and 01:15 UTC): disjoint
+  supervisor ranges for session, tab, pane and popup identities, with range 0
+  claimed by atomic creation of the existing lifecycle lock.
+
 - **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer, in
   `eon-g3vdz` / `eon-l4e7s`: fresh failed-start rollback, retained Child
   ownership through bootstrap/empty topology/Stop, and fallback-aware client
@@ -2846,12 +2866,55 @@ names its socket. CLI JSON names a session `session` and a terminal
     operation. These are fixed lifecycle budgets; clients consume their
     canonical ceilings rather than independently choosing startup allowances.
   - Replacement eonbase recovers exactly one live run; replacement full Eon
-    acquires at most 256 valid runs, sorts positive canonical N numerically, and
-    projects them into synthetic `t1` as `pN` with the lowest selected. That tab
-    receives the replacement supervisor's launch directory as fresh policy.
-  - New creation continues at checked `max(N)+1`; prior grouping, focus, argv,
-    launch directories, and request history are not restored. After recovered
-    `t1`, later creation starts at `t2`.
+    acquires at most 256 valid runs, sorts positive canonical terminal numbers
+    numerically, and projects them into one new synthetic session and tab,
+    with a new pane object for each run and the first pane selected. Their IDs
+    come from the replacement supervisor's range below. That tab receives the
+    replacement supervisor's launch directory as fresh policy.
+  - New terminal creation continues at checked `max(N)+1` among recovered
+    `terminal-N` identities. Session, tab, pane and popup identities are allocated
+    separately and never reassigned to different objects within the same window
+    and generation on the same boot, including across supervisor replacement.
+    Prior grouping, focus, argv, launch directories and request history are not
+    restored.
+  - Each full-Eon supervisor obtains one range for each local identity prefix
+    `s`, `t`, `p` and `u`. Range 0 belongs to the launch that creates the window
+    generation's lifecycle lock; every other launch uses its boot-clock range.
+    Range 0 contains IDs 1 through 1048576 for each prefix: `s1`, `t1`, `p1`
+    and `u1` as today. This includes replacement when no live terminal survives;
+    long IDs after a failed or contended first attempt are an accepted rare cost.
+  - While holding the existing exclusive lifecycle lock for the same window
+    and generation, a replacement reads the system-wide monotonic time since
+    boot (`CLOCK_BOOTTIME` on Linux) and takes its whole-millisecond value `m`,
+    which must be at least 1, as the range index. Before any workspace-ID
+    publication, it waits at least one millisecond while retaining that lock
+    and confirms that the clock's whole-millisecond value is greater than `m`.
+    The lock remains held for the supervisor's lifetime. A crash before this
+    barrier publishes no IDs.
+  - Each prefix independently allocates N from `m*1048576+1` through
+    `(m+1)*1048576`, inclusive, without reusing a number. Startup admission
+    preview and the actual model use the same range. A replacement's range is
+    disjoint from the first supervisor's range 0, including when no terminal
+    survives. A later supervisor for the same window and generation samples a
+    strictly later `m` and cannot allocate any ID from the earlier range.
+    Numbers are canonical positive decimals. Normal fresh startup begins at
+    `s1`/`t1`/`p1`/`u1`; existing-lock launches use boot-clock ranges whose IDs
+    can be long and jump.
+  - The fixed 1048576 IDs per prefix partition a 64-bit numeric space by
+    supervisor startup and avoid durable allocation state or per-action I/O.
+    `terminal-N` numbering and persistent session registrations are outside these
+    ranges. Exhausting a prefix refuses creation with `capacity` before any
+    process effect; it never borrows the next supervisor's range or wraps.
+    Range construction uses checked arithmetic. A valid clock reading has
+    nonnegative seconds and nanoseconds in 0..999999999, and both range endpoints
+    must fit the supported 64-bit numeric identity representation. A replacement
+    never uses range 0; if its clock range index would be 0, identity creation
+    refuses as `capacity` instead.
+  - This allocation mechanism creates, reads and repairs no allocation file,
+    adds no allocation-file-related startup refusal, and does not change
+    recovery acquisition or its existing refusal rules. No terminal is stopped,
+    restarted or replaced merely to obtain an identity range. Reserved Stop is
+    unchanged.
   - Before spawn, Eon creates and retains the exact empty owned mode-0600
     management record inode. Orbit locks it, marks publication and atomically
     replaces it with Ready. Local Child rollback requires winning the lock on
@@ -3009,6 +3072,9 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C17 — Tab launch directory
 
+- **Clarification 2026-11-12:** `eon-agent-parity-a9g0.1.4`, approved by
+  eon-overseer: the recovered synthetic tab uses EON-C15's identity range.
+
 - **Status:** Candidate; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-03 (approved by Lucca,
   relayed by eon-overseer) by `eon-quick-search-parity-23y9.3`: the Zoxide
@@ -3045,7 +3111,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - Current EONW v7 returns the exact accepted raw path bytes. Venus derives a
     bounded `N  leaf` or `N  /` label while retaining `tN` for actions and
     exposing identity plus bounded path context to accessibility.
-  - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
+  - Same-boot recovery assigns the synthetic tab the replacement supervisor's
     launch directory as fresh policy and never infers prior policy from a pane.
   - A worktree tab (EON-C42) is a tab whose launch directory is the root of a Git
     worktree. Runtime stores nothing else about it; the Boundary's "persistence"
@@ -4649,6 +4715,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C33 — Several sessions in one window
 
+- **Amendment 2026-11-12:** `eon-agent-parity-a9g0.1.4`, approved by
+  eon-overseer under Lucca's standing rule: session IDs cannot retarget after
+  supervisor recovery; EON-C15 owns the allocation ranges.
+
 - **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-22
   (`eon-workspace-switching-shn4.1`, shape D of `eon-n77e`). The children of
   `eon-workspace-switching-shn4` implement it. Each child folds its part into
@@ -4706,8 +4776,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Model.** A window holds an ordered list of 1 to 32 sessions and shows
     exactly one. Each session has its own tabs, panes, popups, focus and
     terminals, as EON-C8 describes. Each session has a stable `sN` identity,
-    which is unique for the life of the window's supervisor and never reused
-    in it, and an optional name of 1 to 64 characters with no control
+    which never names a different session within the same window and generation
+    on the same boot, including after supervisor replacement, and an optional
+    name of 1 to 64 characters with no control
     characters. Names are display text, not identity, and need not be unique.
     Tab, pane and popup identities are unique across the window's sessions,
     so a tab or pane action never reaches another session; only the Alt+G
@@ -4819,8 +4890,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     together, and attach shows the last shown session; closing the window
     follows EON-C8's close rule. `eon window stop`, `eon quit` and Commands >
     Quit this window stop every session of the window. Same-boot recovery
-    projects every recovered run into one session `s1`, as EON-C8 projects
-    them into `t1`; names and membership are not recovered.
+    projects every recovered run into one new synthetic session and tab with
+    IDs from the replacement supervisor's range under EON-C15; names and
+    membership are not recovered.
 - **Important failures:** These leave every session unchanged and return
   EON-C10's typed failure: an unknown or stale `sN` or a name that matches
   nothing (exit 3); a name that matches more than one session
@@ -6344,10 +6416,10 @@ names its socket. CLI JSON names a session `session` and a terminal
     about worktrees. `eon-el45.7` spikes that and drafts it as a later amendment.
   - No Eon registry of worktrees, and no record of a tab's tie to one beyond the launch
     directory; no restore of that tie after same-boot recovery, which gives its synthetic
-    `t1` a fresh launch directory (EON-C15).
+    tab a fresh launch directory (EON-C15).
   - Eon sees a worktree's use only through the tab launch directories of the addressed
     window. It does not see another window's tabs, a pane that changed directory, a
-    recovered `t1`, a process that outlived its terminal, or a program outside Eon. A
+    recovered synthetic tab, a process that outlived its terminal, or a program outside Eon. A
     removal can take the directory from under any of them, and Eon makes no promise about
     what such a process writes or loses.
   - No pane-level worktrees; no checkout of an existing branch; no detached worktree; no

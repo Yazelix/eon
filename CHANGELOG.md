@@ -19,6 +19,9 @@ installation, and proven contract changes.
   layout survive. Windows whose supervisors predate this fix need one move
   to a fresh window; those supervisors still skip same-path reload
   (`eon-u199d.3`, EON-C11).
+- Saved popup, pane, tab and session IDs cannot target different objects after
+  supervisor recovery. Fresh launches retain short IDs; recovered supervisors
+  use separate numeric ranges (`eon-agent-parity-a9g0.1.4`, EON-C15).
 
 - `eon config check [--json]` checks configuration for settings Eon would reject
   at startup or during later use, without a running supervisor or state changes.

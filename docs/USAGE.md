@@ -347,6 +347,14 @@ needs inspection; do not automatically resend a new-session request. Replay
 protection lasts only while the request remains in the supervisor's recent
 256 mutations and that supervisor has not restarted.
 
+Popup (`uN`), pane (`pN`), tab (`tN`) and session (`sN`) IDs never name a
+different object after same-boot supervisor recovery. Read the recovered IDs
+from `eon session --json` or `eon session ls --json`; old targets fail rather
+than acting on a successor. Normal fresh launches start at 1. A launch that
+finds the generation's lifecycle lock already present uses a separate numeric
+range, so IDs can be long after recovery or an earlier failed launch attempt.
+Terminal IDs (`terminal-N`) and persistent session registrations are separate.
+
 Renaming or clearing a name persists before memory, events and success. A
 post-publication sync failure reports uncertainty, retains the last confirmed
 in-memory name, and rereads disk under the lock on the next change. Close,

@@ -5,7 +5,31 @@ use std::{
     io,
     os::{fd::AsRawFd, unix::net::UnixStream},
     path::{Path, PathBuf},
+    time::Duration,
 };
+
+/// System-wide monotonic time, including suspend, shared by replacement processes.
+pub(crate) fn boot_time() -> io::Result<Duration> {
+    #[cfg(target_os = "linux")]
+    let clock = libc::CLOCK_BOOTTIME;
+    #[cfg(target_os = "macos")]
+    let clock = libc::CLOCK_MONOTONIC_RAW;
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: time is writable timespec storage; clock is a supported system clock.
+    if unsafe { libc::clock_gettime(clock, &raw mut time) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let seconds = u64::try_from(time.tv_sec)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "negative boot time"))?;
+    let nanos = u32::try_from(time.tv_nsec)
+        .ok()
+        .filter(|nanos| *nanos < 1_000_000_000)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid boot nanoseconds"))?;
+    Ok(Duration::new(seconds, nanos))
+}
 
 /// The longest Unix socket path this platform binds: `sun_path` less its NUL.
 const SOCKET_PATH_BYTES: usize = std::mem::size_of::<libc::sockaddr_un>()

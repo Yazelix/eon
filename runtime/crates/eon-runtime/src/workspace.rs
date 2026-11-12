@@ -19,6 +19,8 @@ use std::{
 };
 
 const MAX_RECENT_REQUESTS: usize = 256;
+// Fixed partitions keep every supervisor's local identities disjoint (EON-C15).
+const IDS_PER_SUPERVISOR: usize = 1 << 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Session {
@@ -123,6 +125,7 @@ impl Tab {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IdAllocator {
     runtime: PathBuf,
+    limit: usize,
     next_workspace: usize,
     next_tab: usize,
     next_pane: usize,
@@ -134,16 +137,34 @@ pub(crate) struct IdAllocator {
 }
 
 impl IdAllocator {
-    fn new(runtime: PathBuf) -> Self {
-        Self {
+    pub(crate) fn new(runtime: PathBuf, range: usize) -> Result<Self, String> {
+        let first = range
+            .checked_mul(IDS_PER_SUPERVISOR)
+            .and_then(|base| base.checked_add(1))
+            .ok_or("capacity: workspace identity range overflow")?;
+        let limit = first
+            .checked_add(IDS_PER_SUPERVISOR)
+            .ok_or("capacity: workspace identity range overflow")?;
+        Ok(Self {
             runtime,
-            next_workspace: 1,
-            next_tab: 1,
-            next_pane: 1,
+            limit,
+            next_workspace: first,
+            next_tab: first,
+            next_pane: first,
             next_session: 1,
-            next_popup: 1,
+            next_popup: first,
             first_reserved: false,
+        })
+    }
+
+    fn check_pane_identity(&self) -> Result<(), Failure> {
+        if self.next_pane >= self.limit {
+            return Err(action_error(
+                "capacity",
+                "session exhausted pane identities",
+            ));
         }
+        Ok(())
     }
 
     fn pane_number(&self) -> usize {
@@ -217,7 +238,7 @@ impl WorkspaceSet {
         Self::registered_pending(
             Some(registry),
             registration,
-            runtime,
+            IdAllocator::new(runtime, 0)?,
             directory,
             home,
             catalog,
@@ -262,7 +283,7 @@ impl WorkspaceSet {
         Self::registered_recovered(
             Some(registry),
             Some(registration),
-            runtime,
+            IdAllocator::new(runtime, 0)?,
             directory,
             home,
             sessions,
@@ -274,7 +295,7 @@ impl WorkspaceSet {
     pub(crate) fn registered_pending(
         registry: Option<Registry>,
         registration: Registration,
-        runtime: PathBuf,
+        ids: IdAllocator,
         directory: PathBuf,
         home: Option<PathBuf>,
         catalog: PopupCatalog,
@@ -286,7 +307,7 @@ impl WorkspaceSet {
             registry,
             workspaces: Vec::new(),
             shown: 0,
-            ids: IdAllocator::new(runtime),
+            ids,
             recent_inspections: VecDeque::new(),
             recent_workspaces: VecDeque::new(),
             recent_mutations: VecDeque::new(),
@@ -305,18 +326,17 @@ impl WorkspaceSet {
     }
 
     fn pending_allowance(&self) -> Result<usize, Failure> {
-        if self.workspaces.len() >= eon_workspace_protocol::v40::MAX_WORKSPACES
-            || self.ids.next_workspace == usize::MAX
-        {
+        if self.workspaces.len() >= eon_workspace_protocol::v40::MAX_WORKSPACES {
             return Err(action_error(
                 "session-limit",
                 "a window holds at most 32 sessions",
             ));
         }
-        if self.ids.next_tab == usize::MAX
-            || self.ids.next_pane == usize::MAX
+        if self.ids.next_workspace >= self.ids.limit
+            || self.ids.next_tab >= self.ids.limit
+            || self.ids.next_pane >= self.ids.limit
             || self.ids.next_session == usize::MAX
-            || self.ids.next_popup == usize::MAX
+            || self.ids.next_popup >= self.ids.limit
         {
             return Err(action_error(
                 "capacity",
@@ -371,7 +391,7 @@ impl WorkspaceSet {
     pub(crate) fn registered_recovered(
         registry: Option<Registry>,
         registration: Option<Registration>,
-        runtime: PathBuf,
+        mut ids: IdAllocator,
         directory: PathBuf,
         home: Option<PathBuf>,
         sessions: Vec<(usize, Session)>,
@@ -383,18 +403,19 @@ impl WorkspaceSet {
             .0
             .checked_add(1)
             .ok_or("recovered terminal identity leaves no next terminal identity")?;
-        let mut ids = IdAllocator::new(runtime);
+        if sessions.len() > ids.limit.saturating_sub(ids.next_pane) {
+            return Err("capacity: recovered panes exceed identity range".into());
+        }
         let workspace = Workspace::with_recovered_sessions(
             registration,
-            &ids,
+            &mut ids,
             directory,
             home,
             sessions,
             catalog,
         );
-        ids.next_workspace = 2;
-        ids.next_tab = 2;
-        ids.next_pane = next_session;
+        ids.next_workspace += 1;
+        ids.next_tab += 1;
         ids.next_session = next_session;
         let recent_workspaces = VecDeque::from([workspace.id.clone()]);
         Ok(Self {
@@ -1340,7 +1361,7 @@ impl Workspace {
 
     fn with_recovered_sessions(
         registration: Option<Registration>,
-        ids: &IdAllocator,
+        ids: &mut IdAllocator,
         directory: PathBuf,
         home: Option<PathBuf>,
         sessions: Vec<(usize, Session)>,
@@ -1348,10 +1369,14 @@ impl Workspace {
     ) -> Self {
         let panes = sessions
             .into_iter()
-            .map(|(number, session)| Pane {
-                pinned_name: None,
-                id: format!("p{number}"),
-                session,
+            .map(|(_, session)| {
+                let id = format!("p{}", ids.next_pane);
+                ids.next_pane += 1;
+                Pane {
+                    pinned_name: None,
+                    id,
+                    session,
+                }
             })
             .collect::<Vec<_>>();
         Self {
@@ -1479,6 +1504,16 @@ impl Workspace {
     ) -> Result<(), Failure> {
         check_popup_action(&self.snapshot(), &action)
             .map_err(|error| action_error("stale-popup", error.to_string()))?;
+        if matches!(
+            action,
+            Action::CreateColumn
+                | Action::Edit { .. }
+                | Action::CreateCommandPane { .. }
+                | Action::LaunchTab { .. }
+                | Action::Workspace(WorkspaceAction::CreatePane { .. })
+        ) {
+            ids.check_pane_identity()?;
+        }
         let (target, previous) = match &action {
             Action::Workspace(WorkspaceAction::Move(Direction::Left | Direction::Right)) => {
                 (self.target_tab(caller)?.0, None)
@@ -1761,7 +1796,10 @@ impl Workspace {
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        if self.tabs.len() >= MAX_TABS || ids.next_tab == usize::MAX {
+        if ids.next_tab >= ids.limit {
+            return Err(action_error("capacity", "session exhausted tab identities"));
+        }
+        if self.tabs.len() >= MAX_TABS {
             return Err(action_error(
                 "capacity",
                 format!("session is limited to {MAX_TABS} tabs"),
@@ -1816,7 +1854,10 @@ impl Workspace {
             ));
         }
         let directory = validated_directory(directory)?;
-        if self.tabs.len() >= MAX_TABS || ids.next_tab == usize::MAX {
+        if ids.next_tab >= ids.limit {
+            return Err(action_error("capacity", "session exhausted tab identities"));
+        }
+        if self.tabs.len() >= MAX_TABS {
             return Err(action_error(
                 "capacity",
                 format!("session is limited to {MAX_TABS} tabs"),
@@ -2032,7 +2073,7 @@ impl Workspace {
                 format!("session is limited to {MAX_SESSIONS} terminals"),
             ));
         }
-        if ids.next_popup == usize::MAX || ids.next_session == usize::MAX {
+        if ids.next_popup >= ids.limit || ids.next_session == usize::MAX {
             return Err(action_error(
                 "capacity",
                 "session exhausted terminal identities",
@@ -2108,6 +2149,9 @@ impl Workspace {
         // Closing a pending tab's pair is dismissal: its first pane starts at
         // the tab directory (EON-C18).
         let pending = self.tabs[tab_index].pending;
+        if pending {
+            ids.check_pane_identity()?;
+        }
         if self.definition(&popup.entry)?.keep_alive {
             if self.tabs[tab_index].selected_popup.as_deref() == Some(&popup.id) {
                 self.tabs[tab_index].selected_popup = None;
@@ -2417,7 +2461,8 @@ impl Workspace {
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         self.check_session_capacity(allowance)?;
-        if ids.next_pane == usize::MAX || ids.next_session == usize::MAX {
+        ids.check_pane_identity().map_err(|error| error.detail)?;
+        if ids.next_session == usize::MAX {
             return Err("session exhausted pane or terminal identities".into());
         }
         let pane = Pane {
@@ -2812,6 +2857,7 @@ impl Workspace {
         if !self.tabs[tab_index].pending {
             return self.retarget(ids, tab_index, directory);
         }
+        ids.check_pane_identity()?;
         // A pick on a pending tab commits it: one first pane at the directory,
         // and the pair hides (EON-C18).
         self.start_pane_at(ids, allowance, tab_index, &directory, operate)
@@ -2840,11 +2886,8 @@ impl Workspace {
             .popups
             .iter()
             .position(|popup| popup.entry == "agent" && popup.launch_directory != directory);
-        if parked.is_some() && ids.next_pane == usize::MAX {
-            return Err(action_error(
-                "capacity",
-                "session exhausted pane identities",
-            ));
+        if parked.is_some() {
+            ids.check_pane_identity()?;
         }
         let tab = &mut self.tabs[tab_index];
         tab.directory = directory;
@@ -3974,7 +4017,7 @@ mod tests {
         let set = WorkspaceSet::registered_pending(
             Some(registry.clone()),
             registration,
-            root.join("runtime"),
+            IdAllocator::new(root.join("runtime"), 0).unwrap(),
             root.into(),
             Some(root.into()),
             catalog(),
@@ -4386,7 +4429,7 @@ mod tests {
         let set = WorkspaceSet::registered_pending(
             Some(registry),
             registration,
-            "/runtime".into(),
+            IdAllocator::new("/runtime".into(), 0).unwrap(),
             "/launch".into(),
             Some("/".into()),
             catalog(),
@@ -6149,6 +6192,282 @@ mod tests {
         assert!(human.contains(" attention=none app=none name=none\n"));
         for omitted in ["secret", "progress", "quota", "observed", "attention_queue"] {
             assert!(!human.contains(omitted), "{human}");
+        }
+    }
+
+    #[test]
+    fn popup_identity_recovery_gate() {
+        let pane = Session {
+            id: "terminal-1".into(),
+            endpoint: "/runtime/orbit.sock".into(),
+        };
+        let recover = |range| {
+            WorkspaceSet::registered_recovered(
+                None,
+                None,
+                IdAllocator::new("/runtime".into(), range).unwrap(),
+                "/".into(),
+                Some("/".into()),
+                vec![(1, pane.clone())],
+                catalog(),
+            )
+            .unwrap()
+        };
+        let mut before = recover(0);
+        before
+            .dispatch("old", None, invoke("t1", "git"), prepared, |_| Ok(()))
+            .unwrap();
+        let old = before.snapshot().tabs[0].popups[0].clone();
+        before
+            .session_ended(&old.session, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        let mut recovered = recover(1);
+        let tab = recovered.snapshot().active_tab;
+        recovered
+            .dispatch("new", None, invoke(&tab, "git"), prepared, |_| Ok(()))
+            .unwrap();
+        let snapshot = recovered.snapshot();
+        let stale = Action::DismissPopup(PopupTarget {
+            tab,
+            instance: old.id.clone(),
+        });
+        assert!(
+            check_popup_action(&snapshot, &stale).is_err(),
+            "saved {} targets successor {:?} after recovery",
+            old.id,
+            snapshot.tabs[0].popups[0]
+        );
+    }
+
+    #[test]
+    fn recovery_never_retargets_pane_tab_or_session_ids() {
+        let sessions = || {
+            vec![(
+                1,
+                Session {
+                    id: "terminal-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )]
+        };
+        let mut before = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            sessions(),
+            catalog(),
+        )
+        .unwrap();
+        before
+            .dispatch("popup", None, invoke("t1", "git"), prepared, |_| Ok(()))
+            .unwrap();
+        before
+            .dispatch(
+                "pane",
+                Some("terminal-1"),
+                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(
+            before.snapshot().tabs[0].panes().nth(1).unwrap().session,
+            "terminal-3"
+        );
+        before
+            .dispatch(
+                "tab",
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        before
+            .insert_pending(
+                "/".into(),
+                Some("/".into()),
+                catalog(),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let old = before.snapshots();
+        for range in 1..=2 {
+            let mut recovered = WorkspaceSet::registered_recovered(
+                None,
+                None,
+                IdAllocator::new("/runtime".into(), range).unwrap(),
+                "/".into(),
+                Some("/".into()),
+                sessions(),
+                catalog(),
+            )
+            .unwrap();
+            let snapshot = recovered.snapshot();
+            for session in &old {
+                assert!(recovered.snapshot_in(Some(&session.workspace)).is_err());
+                for tab in &session.tabs {
+                    for id in std::iter::once(&tab.id).chain(tab.panes().map(|pane| &pane.id)) {
+                        assert!(
+                            recovered
+                                .dispatch(
+                                    &format!("stale-{id}"),
+                                    None,
+                                    Action::Workspace(WorkspaceAction::FocusId(id.clone())),
+                                    prepared,
+                                    |_| panic!("stale ID operated on a terminal"),
+                                )
+                                .is_err()
+                        );
+                        assert_eq!(recovered.snapshot(), snapshot);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn identity_ranges_refuse_exhaustion_before_process_effects() {
+        let zero = IdAllocator::new("/runtime".into(), 0).unwrap();
+        let next = IdAllocator::new("/runtime".into(), 1).unwrap();
+        assert_eq!(zero.next_popup, 1);
+        assert_eq!(zero.limit, next.next_popup);
+        assert_eq!(zero.limit - 1, IDS_PER_SUPERVISOR);
+        assert!(IdAllocator::new("/runtime".into(), usize::MAX / IDS_PER_SUPERVISOR).is_err());
+        for kind in 0..4 {
+            let mut set = WorkspaceSet::with_recovered_sessions(
+                "/runtime".into(),
+                "/".into(),
+                Some("/".into()),
+                vec![(
+                    1,
+                    Session {
+                        id: "terminal-1".into(),
+                        endpoint: "/runtime/orbit.sock".into(),
+                    },
+                )],
+                catalog(),
+            )
+            .unwrap();
+            let mut action = match kind {
+                0 => {
+                    set.ids.next_pane = set.ids.limit - 1;
+                    Action::Workspace(WorkspaceAction::CreatePane { focus: true })
+                }
+                1 => {
+                    set.ids.next_tab = set.ids.limit - 1;
+                    Action::Workspace(WorkspaceAction::CreateTab)
+                }
+                2 => {
+                    set.ids.next_popup = set.ids.limit - 1;
+                    invoke("t1", "git")
+                }
+                _ => {
+                    set.ids.next_workspace = set.ids.limit - 1;
+                    Action::Workspace(WorkspaceAction::NewWorkspace {
+                        name: None,
+                        focus: true,
+                    })
+                }
+            };
+            set.dispatch("last-identity", None, action.clone(), prepared, |_| Ok(()))
+                .unwrap();
+            if kind == 2 {
+                action = invoke("t1", "agent");
+            }
+            let before = set.snapshot();
+            let error = set
+                .dispatch("exhausted", None, action, prepared, |_| {
+                    panic!("exhausted identity range operated on a terminal")
+                })
+                .unwrap_err();
+            assert_eq!(error.code, "capacity");
+            assert_eq!(set.snapshot(), before);
+        }
+    }
+
+    #[test]
+    fn exhausted_pane_ids_leave_pending_pairs_unchanged() {
+        let mut pending = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "terminal-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        pending.ids.next_pane = pending.ids.limit;
+        pending
+            .dispatch(
+                "pending",
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let before = pending.snapshot();
+        let tab = before
+            .tabs
+            .iter()
+            .find(|tab| tab.id == before.active_tab)
+            .unwrap();
+        let pair = tab.popups[0].clone();
+        for kind in 0..4 {
+            let mut set = pending.clone();
+            let mut operations = Vec::new();
+            let operate = |operation| {
+                operations.push(operation);
+                Ok(())
+            };
+            let result = match kind {
+                0 => set.dispatch(
+                    "hide",
+                    None,
+                    Action::DismissPopup(PopupTarget {
+                        tab: tab.id.clone(),
+                        instance: pair.id.clone(),
+                    }),
+                    prepared,
+                    operate,
+                ),
+                1 => set.dispatch(
+                    "pick",
+                    None,
+                    Action::Workspace(WorkspaceAction::SetTabDirectory {
+                        tab: tab.id.clone(),
+                        directory: b"/".to_vec(),
+                    }),
+                    prepared,
+                    operate,
+                ),
+                2 => set.dispatch(
+                    "toggle",
+                    None,
+                    Action::InvokePopup {
+                        tab: tab.id.clone(),
+                        entry: FILES_ENTRY.into(),
+                        expected_instance: Some(pair.id.clone()),
+                        intent: InvokeIntent::Toggle,
+                    },
+                    prepared,
+                    operate,
+                ),
+                _ => set.dismiss_pending_pairs(operate),
+            };
+            let error = result.unwrap_err();
+            assert!(
+                error.code == "capacity" && operations.is_empty() && set.snapshot() == before,
+                "pending action {kind}: {error:?}; operations {operations:?}; snapshot {:?}",
+                set.snapshot()
+            );
         }
     }
 

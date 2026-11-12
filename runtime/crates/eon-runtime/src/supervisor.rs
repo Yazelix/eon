@@ -982,7 +982,7 @@ fn supervise(
     bar: &managed_environment::Bar,
     popups: Option<managed_environment::PopupCatalog>,
     startup_animation: Option<managed_environment::StartupAnimation>,
-    lifecycle_lock: fs::File,
+    lifecycle_lock: LifecycleLock,
     runtime: &Path,
     child: &[OsString],
     directory: Option<PathBuf>,
@@ -1014,6 +1014,16 @@ fn supervise(
             )
         })
         .transpose()?;
+    let workspace_ids = if mode == LaunchMode::Workspace {
+        let range = if lifecycle_lock.created {
+            0
+        } else {
+            replacement_id_range(platform::boot_time)?
+        };
+        Some(workspace::IdAllocator::new(runtime.to_path_buf(), range)?)
+    } else {
+        None
+    };
     let _lifecycle_lock = lifecycle_lock;
     // A launch `--dir` gives t1 no pair (EON-C18).
     let pair = directory.is_none();
@@ -1161,7 +1171,7 @@ fn supervise(
                 WorkspaceSet::registered_pending(
                     registry.clone(),
                     registration.as_ref().unwrap().clone(),
-                    runtime.to_path_buf(),
+                    workspace_ids.as_ref().unwrap().clone(),
                     launch_directory.clone(),
                     env::home_dir(),
                     popup_catalog.clone(),
@@ -1185,7 +1195,7 @@ fn supervise(
                 WorkspaceSet::registered_recovered(
                     registry.clone(),
                     registration.clone(),
-                    runtime.to_path_buf(),
+                    workspace_ids.as_ref().unwrap().clone(),
                     launch_directory.clone(),
                     env::home_dir(),
                     recovered,
@@ -1280,7 +1290,7 @@ fn supervise(
                 WorkspaceSet::registered_pending(
                     registry.clone(),
                     registration.as_ref().unwrap().clone(),
-                    runtime.to_path_buf(),
+                    workspace_ids.as_ref().unwrap().clone(),
                     launch_directory.clone(),
                     env::home_dir(),
                     popup_catalog.clone(),
@@ -1316,7 +1326,7 @@ fn supervise(
                 WorkspaceSet::registered_recovered(
                     registry.clone(),
                     registration.clone(),
-                    runtime.to_path_buf(),
+                    workspace_ids.as_ref().unwrap().clone(),
                     launch_directory,
                     env::home_dir(),
                     recovered_workspace_sessions(&sessions).map_err(&startup_error)?,
@@ -1330,7 +1340,8 @@ fn supervise(
         if let Some(error) = registry_setup_error
             && let Some(workspaces) = &mut workspaces
         {
-            workspaces.registered_recovery("s1", Err(error));
+            let target = workspaces.snapshot().workspace;
+            workspaces.registered_recovery(&target, Err(error));
         }
         Ok::<_, String>(workspaces)
     })();
@@ -1349,7 +1360,8 @@ fn supervise(
     let mut state = SupervisorState {
         failed_starts,
         registry_worker,
-        registry_pending: registration_pending.then(|| RegistryPending::Recovery("s1".into())),
+        registry_pending: registration_pending
+            .then(|| RegistryPending::Recovery(workspaces.as_ref().unwrap().snapshot().workspace)),
         started_at,
         window,
         running,
@@ -3110,15 +3122,40 @@ pub(super) fn supervisor_lock_path(root: &Path, generation: &str) -> PathBuf {
     root.join(format!("supervisor-{generation}.lock"))
 }
 
-fn open_supervisor_lifecycle_lock(path: &Path) -> Result<fs::File, String> {
-    let file = fs::OpenOptions::new()
+pub(super) struct LifecycleLock {
+    file: fs::File,
+    created: bool,
+}
+
+impl std::ops::Deref for LifecycleLock {
+    type Target = fs::File;
+    fn deref(&self) -> &fs::File {
+        &self.file
+    }
+}
+
+fn open_supervisor_lifecycle_lock(path: &Path) -> Result<LifecycleLock, String> {
+    let mut options = fs::OpenOptions::new();
+    options
         .read(true)
         .write(true)
-        .create(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|error| format!("cannot open Eon lifecycle lock {}: {error}", path.display()))?;
+        .custom_flags(libc::O_NOFOLLOW);
+    let (file, created) = match options.create_new(true).open(path) {
+        Ok(file) => (file, true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (
+            options.create_new(false).open(path).map_err(|error| {
+                format!("cannot open Eon lifecycle lock {}: {error}", path.display())
+            })?,
+            false,
+        ),
+        Err(error) => {
+            return Err(format!(
+                "cannot open Eon lifecycle lock {}: {error}",
+                path.display()
+            ));
+        }
+    };
     let metadata = file.metadata().map_err(|error| {
         format!(
             "cannot inspect Eon lifecycle lock {}: {error}",
@@ -3138,10 +3175,26 @@ fn open_supervisor_lifecycle_lock(path: &Path) -> Result<fs::File, String> {
                 path.display()
             )
         })?;
-    Ok(file)
+    Ok(LifecycleLock { file, created })
 }
 
-pub(super) fn lock_supervisor_lifecycle(path: &Path) -> Result<fs::File, String> {
+/// Called while holding the lifecycle lock; no IDs are published before this barrier.
+fn replacement_id_range(mut now: impl FnMut() -> io::Result<Duration>) -> Result<usize, String> {
+    let mut sample =
+        || now().map_err(|error| format!("cannot read supervisor boot clock: {error}"));
+    let range = usize::try_from(sample()?.as_millis())
+        .map_err(|_| "capacity: supervisor boot clock exceeds identity range")?;
+    if range == 0 {
+        return Err("capacity: a replacement cannot use identity range zero".into());
+    }
+    thread::sleep(Duration::from_millis(1));
+    while sample()?.as_millis() <= range as u128 {
+        thread::sleep(Duration::from_millis(1));
+    }
+    Ok(range)
+}
+
+pub(super) fn lock_supervisor_lifecycle(path: &Path) -> Result<LifecycleLock, String> {
     let file = open_supervisor_lifecycle_lock(path)?;
     let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT.saturating_add(Duration::from_secs(1));
     loop {
@@ -3168,7 +3221,7 @@ pub(super) fn lock_supervisor_lifecycle(path: &Path) -> Result<fs::File, String>
     }
 }
 
-pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<fs::File>, String> {
+pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<LifecycleLock>, String> {
     let file = open_supervisor_lifecycle_lock(path)?;
     loop {
         match file.try_lock() {
@@ -4388,6 +4441,55 @@ mod tests {
         process::Command,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn lifecycle_lock_creation_claims_short_ids_only_once() {
+        let root = temporary_directory();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("lifecycle.lock");
+        let first = super::try_lock_supervisor_lifecycle(&path)
+            .unwrap()
+            .unwrap();
+        assert!(first.created);
+        assert!(
+            super::try_lock_supervisor_lifecycle(&path)
+                .unwrap()
+                .is_none()
+        );
+        // The first attempt publishes nothing; its claim still cannot be reused.
+        drop(first);
+        let replacement = super::lock_supervisor_lifecycle(&path).unwrap();
+        assert!(!replacement.created);
+        let range = super::replacement_id_range(crate::platform::boot_time).unwrap();
+        assert!(range > 0);
+        drop(replacement);
+        let next = super::lock_supervisor_lifecycle(&path).unwrap();
+        assert!(!next.created);
+        assert!(super::replacement_id_range(crate::platform::boot_time).unwrap() > range);
+        drop(next);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replacement_range_waits_for_the_clock_before_publication() {
+        let mut samples = [1000, 1000, 1001].into_iter();
+        assert_eq!(
+            super::replacement_id_range(|| Ok(Duration::from_millis(samples.next().unwrap())))
+                .unwrap(),
+            1000
+        );
+        assert!(samples.next().is_none());
+        assert!(
+            super::replacement_id_range(|| Ok(Duration::ZERO))
+                .unwrap_err()
+                .starts_with("capacity:")
+        );
+        assert!(
+            super::replacement_id_range(|| Err(std::io::Error::other("clock unavailable")))
+                .unwrap_err()
+                .contains("clock unavailable")
+        );
+    }
 
     /// Scrollback's record names its editor's terminal before that Start
     /// runs, and the started popup owns the snapshot. A record that cannot be
@@ -5809,7 +5911,7 @@ mod tests {
             WorkspaceSet::registered_recovered(
                 Some(registry.clone()),
                 None,
-                root.clone(),
+                crate::workspace::IdAllocator::new(root.clone(), 0).unwrap(),
                 root.clone(),
                 Some(root.clone()),
                 vec![(
@@ -5986,7 +6088,7 @@ mod tests {
             WorkspaceSet::registered_pending(
                 Some(registry.clone()),
                 registration,
-                root.clone(),
+                crate::workspace::IdAllocator::new(root.clone(), 0).unwrap(),
                 root.clone(),
                 Some(root.clone()),
                 inputs.defaults.popups.clone(),
