@@ -15,6 +15,8 @@ installation, and proven contract changes.
   Separate builds, servers and watchers keep the dots. Unrecognized helpers,
   custom MCP servers and Darwin retain raw-count behavior; work inside an
   exempt interpreter remains a documented limit (`eon-v0gvq`).
+- CPU, RAM and disk chip percentages align to the right padding while their
+  icons and chip widths stay fixed (`eon-wuau8.5`).
 
 - Files Enter and `eon edit` open files in the packaged Helix Editor popup,
   keeping its buffers and unsaved edits. `[editor] open_in = "pane"` selects

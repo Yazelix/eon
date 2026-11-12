@@ -112,9 +112,10 @@ order, selection, and popups; Venus draws the visible scene.
   whatever the terminal font and its fallbacks; hover and accessibility name
   each reading in words. Percentages use the interface font, like quota chips
   and tab labels. Each reading reserves the widest percentage from 0% through
-  100% for that font and scale. Its icon stays at the left inset, followed by
-  the shared icon gap and a left-aligned percentage, so the contents and
-  neighbouring items stay put as values change.
+  100% for that font and scale. Its icon stays at the left inset, and its
+  percentage aligns to the right inset within the reserved slot, leaving at
+  least the shared icon gap. Chip widths and neighbouring items stay put as
+  values change.
   Accessibility says, for example, `CPU use 12% across 16 logical CPUs, over
   the last 2 seconds` and `RAM use 43%, 13.5 GiB of 31.3 GiB`; hover lists
   `CPU` then `16 logical CPUs`, and `RAM` then `13.5 GiB used of 31.3 GiB`, the

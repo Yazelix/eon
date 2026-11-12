@@ -3043,6 +3043,7 @@ impl Renderer {
                 label.rect,
             );
             let value_left = left + self.metrics.font_size + tokens::icon_gap(self.metrics);
+            let first_text = self.text.len();
             self.push_chip_label(
                 value.trim_start(),
                 SceneRect {
@@ -3053,6 +3054,13 @@ impl Renderer {
                 color,
                 label.rect,
             );
+            if let Some(text) = self.text.get_mut(first_text)
+                && let Some(line) = text.buffer.layout_runs().next()
+            {
+                text.left = text
+                    .left
+                    .max(label.rect.right() - self.metrics.padding - line.line_w);
+            }
         }
         for control in &workspace.controls {
             if control.rect.width <= 0.0 {
@@ -6008,6 +6016,104 @@ mod tests {
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
         };
 
+        fn assert_reading_alignment(renderer: &mut Renderer) {
+            let snapshot = popup_sidebar_snapshot();
+            for scale in [1.0, 1.25, 2.0] {
+                let size = PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32);
+                renderer.resize(size, scale);
+                let metrics = renderer.metrics();
+                let mut previous = None;
+                for percent in [5, 50, 100] {
+                    let cpu = crate::CpuUse {
+                        percent,
+                        label: format!("{} {percent}%", crate::system::CPU_ICON),
+                        tooltip: "CPU".into(),
+                        description: "CPU".into(),
+                        load: Load::Normal,
+                    };
+                    let ram = crate::RamUse::parse(&format!(
+                        "MemTotal: 100000 kB\nMemAvailable: {} kB\n",
+                        (100 - percent) * 1000
+                    ))
+                    .unwrap();
+                    let disk =
+                        crate::DiskUse::of(100, 100 - percent, 100 - percent, 4096, "/").unwrap();
+                    let workspace = WorkspaceScene::from_snapshot_with_bar(
+                        &snapshot,
+                        EonBar {
+                            cpu: Some(&cpu),
+                            ram: Some(&ram),
+                            disk: Some(&disk),
+                            ..EonBar::default()
+                        },
+                        size,
+                        metrics,
+                        0.0,
+                        0.0,
+                        |kind, text| match kind {
+                            crate::HeaderText::Reading => {
+                                (text.to_owned(), renderer.reading_width())
+                            }
+                            _ => renderer.fit_tab_text(text),
+                        },
+                        None,
+                    );
+                    renderer.text.clear();
+                    let title_tabs = renderer.workspace_title_tabs(&workspace);
+                    let pane_tabs = renderer.workspace_pane_tabs(&workspace);
+                    renderer.build_workspace(
+                        &workspace,
+                        WorkspaceFocus::Terminal,
+                        &mut RectangleBatch::new(size.width, size.height),
+                        &[],
+                        &title_tabs,
+                        &pane_tabs,
+                    );
+                    let positions = [&workspace.cpu, &workspace.ram, &workspace.disk].map(|chip| {
+                        let chip = chip.as_ref().expect("room for all three reading chips");
+                        let icon = chip.label.chars().next().unwrap().to_string();
+                        let index = renderer
+                            .text
+                            .iter()
+                            .position(|text| {
+                                text.buffer
+                                    .lines
+                                    .first()
+                                    .is_some_and(|line| line.text() == icon)
+                            })
+                            .expect("painted reading icon");
+                        let icon = &renderer.text[index];
+                        let value = &renderer.text[index + 1];
+                        let line = value.buffer.layout_runs().next().unwrap();
+                        assert_eq!(line.text, format!("{percent}%"));
+                        let right = value.left + line.line_w;
+                        let padded_right = chip.rect.right() - metrics.padding;
+                        let value_left = icon.left + metrics.font_size + tokens::icon_gap(metrics);
+                        assert!(
+                            (right - padded_right).abs() < 0.01,
+                            "{percent}% at scale {scale}: right {right}, expected {padded_right}"
+                        );
+                        assert_eq!(icon.left, chip.rect.left + metrics.padding);
+                        assert!(
+                            value.left + 0.01 >= value_left,
+                            "value overlaps the icon gap"
+                        );
+                        assert_eq!(value.bound_left, (value_left - 0.5).ceil() as i32);
+                        if percent == 100 {
+                            // In packaged DejaVu Sans, 100% fills the reserved percentage slot.
+                            assert!((value.left - value_left).abs() < 0.01);
+                        }
+                        (chip.rect, icon.left, padded_right)
+                    });
+                    if let Some(previous) = previous {
+                        assert_eq!(positions, previous, "reading changes must not move chips");
+                    }
+                    previous = Some(positions);
+                }
+            }
+            renderer.resize(PhysicalSize::new(1600, 900), 1.0);
+        }
+
         fn assert_chrome_text(renderer: &mut Renderer) {
             fn color(color: SceneColor) -> Color {
                 Color::rgb(color.r, color.g, color.b)
@@ -6938,6 +7044,7 @@ mod tests {
                         }
                     }
                 }
+                assert_reading_alignment(&mut renderer);
                 assert_chrome_text(&mut renderer);
                 event_loop.exit();
             }
