@@ -16,8 +16,9 @@ handle with a null persistent ID until registration confirms a new ID.
 Registration errors are visible without stopping recovered work. Restoring
 original groups belongs to slice 2b (`eon-remote-workspaces-52i4.6`), whose
 [contract draft](LOCAL-SESSION-RECOVERY.md) is now available for review.
-Only its three product directions have Yu's approval; detailed behavior and
-exact schema still need review and approval with Lucca. No 2b acceptance
+Its revised draft incorporates Lucca's review and shares one Runtime checkpoint
+core with planned supervisor Update. Exact text still needs Lucca's approval;
+this does not implement Update, Rune presentation or SSH. No 2b acceptance
 checks have run. The remote flows below remain a plan and future acceptance
 matrix, not implemented SSH or recovery guarantees.
 
@@ -206,8 +207,8 @@ surface, not for these future changes.
 
 The earlier plan was checked against `a92831765c0af35f112b3f17adcc01ecdddde2be`
 (EONW/management/ORBS/ORBF 29/5/14/3). This documentation update was checked
-against `edge` at `12ee64fc6d7d9997ecb5535b7f528eb2519912e3`, where EONW is
-v38. Implementation must use the then-current canonical schemas, not those
+against `edge` at `5939ae4924e901df27107ceeb3503d3e342164c0`, where EONW is
+v44. Implementation must use the then-current canonical schemas, not those
 historical version numbers. The existing plan bead is
 `eon-remote-workspaces-52i4.4`; its `eon-hyil8` dependency was removed. This
 plan uses today's window-owned sessions and does not require global session
@@ -237,7 +238,7 @@ The final history/network proof is needed before issue #1 is complete.
 | I4 | Discovery/lifecycle | Forget live, confirmed-stopped, cached-stopped and unreachable sessions | Only authoritative confirmed-stopped registration can be forgotten |
 | R1 | 2b, local same boot/login | Supervisor exit without Stop, then replacement in the same namespace/generation with multiple named sessions/layouts/popups | Confirmed original persistent IDs and committed structure/selection around the same verified Orbit/PTY runs; counters advance; no command/input replay |
 | R2 | 2b, local same boot/login | Supervisor crash and concurrent replacements in the same namespace/generation | One supervisor/lifecycle ownership winner; no duplicate terminals or split lease; other windows remain unchanged |
-| R3 | 2b | Corrupt/unknown/missing-required checkpoint; definitively missing run, checkpoint-only unresolved intent or extra run; unavailable registry; original projection over capacity | Degraded availability only after the whole run set passes C15 and live count is at most 256; no guessed grouping/ID; stopped versus unresolved slots distinguished; no unsafe adoption, replay or Stop; damaged/over-capacity checkpoint preserved; see the draft's separate lifecycle recommendations and full matrix |
+| R3 | 2b | Corrupt/unknown/missing-required checkpoint; definitively missing run, unconfirmed start intent or extra run; unavailable registry; original projection over capacity | Degraded availability only after the whole run set passes C15 and live count is at most 256; no guessed grouping/ID; stopped reasons distinguish ended from start-unconfirmed; no unsafe adoption, replay or Stop; damaged/over-capacity checkpoint preserved; fresh Recovered registration and preserved-aside checkpoint allow new durable work; no-live recovery opens no window; see full draft matrix |
 | R4 | 2b, local | PID reuse, wrong UID/start-time, replaced record/socket inode, wrong run ID, busy lease, unreconciled empty/unpublished record, more than 256 live runs or exceeded acquisition bounds | Existing whole-set C15 refusal preserved; no partial session, first-256 truncation, placeholder escape, signal, deletion or attachment to a substituted owner; SSH identity proof stays in slice 3 |
 | L1 | 2b, local | Detach (Alt+Shift+D) and reattach to the same live local supervisor repeatedly, then test supervisor loss separately | Live detach preserves the current session map; loss follows the proposed 2b checkpoint rules; fresh authoritative display/events; local close/Quit policy unchanged |
 | L1r | 3, remote | Close or detach a remote window; reconnect repeatedly | Remote work survives; same persistent target and fresh authoritative display; future remote proof, not a 2b claim |
