@@ -21,6 +21,13 @@ Use the existing `archive-notice-inputs`, `archive-notices`, `archive-notice-che
 overseer when working as a pane agent; follow the repository's heavy-run rules.
 No regeneration step runs automatically during an archive build.
 
+Local asset `notice_hashes` in `nix/notices/inputs.nix` use `noticeHashes` to
+retain each file's Nix dependency context on its hash value. Attribute names
+cannot carry that context; a path used only as a key would be absent from the
+build sandbox. The constructor changes no JSON bytes. Before generating notices,
+both archive routes check that every declared hash input exists in the sandbox,
+including entries the generator later omits.
+
 Every Cargo notice report has an adjacent `audit/` directory, including when an
 old exception key rejects the candidate. It contains `context.json`, `Cargo.lock`,
 `runtime-crates.txt`, `native-packages.txt`, canonical `graph.json` and the actual

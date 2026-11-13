@@ -7,6 +7,11 @@
 let
   inherit (pkgs) lib;
   launcher = bundleRelink.launcher;
+  noticeHashes = files: lib.listToAttrs (map ({ file, hash }: {
+    name = builtins.unsafeDiscardStringContext "${file}";
+    # Attribute names cannot retain the dependency context; hash values can.
+    value = lib.addContextFrom "${file}" hash;
+  }) files);
   auditExceptions = builtins.fromJSON (builtins.readFile ./audit-exceptions.json);
   native = import ./native.nix { inherit pkgs; };
   eonStaticInputs = [ "system-linker-runtime" "rust-standard-library" ];
@@ -415,10 +420,12 @@ import ./default.nix {
       source = "https://github.com/openai/openai-cookbook, rasterized mask ${../../venus/assets/openai-blossom-104.alpha}";
       licenses = [ "MIT" ];
       notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
-      notice_hashes = {
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/openai-blossom-104.alpha}"} =
-          "7bf5bf047a493ef0d76177d74a3de81783b5d1038dd13fcc6cd9b1db20edec91";
-      };
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/openai-blossom-104.alpha;
+          hash = "7bf5bf047a493ef0d76177d74a3de81783b5d1038dd13fcc6cd9b1db20edec91";
+        }
+      ];
     }
     {
       id = "claude-code-mark";
@@ -426,12 +433,16 @@ import ./default.nix {
       source = "https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-code, extension/resources/clawd.svg; retrieved 2026-11-13";
       licenses = [ "LicenseRef-Anthropic-Brand-Terms" ];
       notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
-      notice_hashes = {
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/claude-code-clawd.svg}"} =
-          "9ca6ebb33e268ff95ded9b927ceb53f22deecf4f1de9988f088437621c85154c";
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/claude-code-clawd-256.rgba}"} =
-          "8f1969bb128bbc158d2b331ac4a428c9197a4abc921253f18c2d0d4cc7d5fb6b";
-      };
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/claude-code-clawd.svg;
+          hash = "9ca6ebb33e268ff95ded9b927ceb53f22deecf4f1de9988f088437621c85154c";
+        }
+        {
+          file = ../../venus/assets/claude-code-clawd-256.rgba;
+          hash = "8f1969bb128bbc158d2b331ac4a428c9197a4abc921253f18c2d0d4cc7d5fb6b";
+        }
+      ];
     }
     {
       id = "codex-symbol";
@@ -439,20 +450,32 @@ import ./default.nix {
       source = "https://zonalogo.com, Codex Logo - Colored; third-party vector, source unverified, chosen by Lucca 2026-11-13";
       licenses = [ "LicenseRef-Codex-Identification-Use" ];
       notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
-      notice_hashes = {
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol.svg}"} =
-          "983fc436a025a9920ec2661d790e956f766f273a2240801e64c3d3d26feb7ad2";
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-16.png}"} =
-          "fe1ea40b4bd3604d67a2d9342d2e7edfeeb406e65ba93afffeef5afef6ebac1c";
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-16.rgba}"} =
-          "ffbb26dc060b51273de363504507680d79499929ba23c34b1f91980177ed4137";
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-32.png}"} =
-          "32ad4411605c4dace9f7ee453ebc93b7815beee3683c7b876d74bdf3fceb904b";
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-32.rgba}"} =
-          "d42a3401b55899f18ea9a02e442ada027011626a7423a0ed7d5c10670e3c27c6";
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-256.rgba}"} =
-          "307c8d69585224de9e7d9a168916300d0ca648fece87ce74a416c419716e19e6";
-      };
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/codex-symbol.svg;
+          hash = "983fc436a025a9920ec2661d790e956f766f273a2240801e64c3d3d26feb7ad2";
+        }
+        {
+          file = ../../venus/assets/codex-symbol-16.png;
+          hash = "fe1ea40b4bd3604d67a2d9342d2e7edfeeb406e65ba93afffeef5afef6ebac1c";
+        }
+        {
+          file = ../../venus/assets/codex-symbol-16.rgba;
+          hash = "ffbb26dc060b51273de363504507680d79499929ba23c34b1f91980177ed4137";
+        }
+        {
+          file = ../../venus/assets/codex-symbol-32.png;
+          hash = "32ad4411605c4dace9f7ee453ebc93b7815beee3683c7b876d74bdf3fceb904b";
+        }
+        {
+          file = ../../venus/assets/codex-symbol-32.rgba;
+          hash = "d42a3401b55899f18ea9a02e442ada027011626a7423a0ed7d5c10670e3c27c6";
+        }
+        {
+          file = ../../venus/assets/codex-symbol-256.rgba;
+          hash = "307c8d69585224de9e7d9a168916300d0ca648fece87ce74a416c419716e19e6";
+        }
+      ];
     }
     {
       id = "claude-logomark";
@@ -460,10 +483,12 @@ import ./default.nix {
       source = "${codexbarIdentity.source.url}, rasterized mask ${../../venus/assets/claude-splat-104.alpha}";
       licenses = [ "MIT" ];
       notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
-      notice_hashes = {
-        ${builtins.unsafeDiscardStringContext "${../../venus/assets/claude-splat-104.alpha}"} =
-          "74e02f5b35b30449941a759acb6d0872aa3d3bda0bdb78760ee0eb8893479e7f";
-      };
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/claude-splat-104.alpha;
+          hash = "74e02f5b35b30449941a759acb6d0872aa3d3bda0bdb78760ee0eb8893479e7f";
+        }
+      ];
     }
     {
       id = "go-standard-library";

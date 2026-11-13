@@ -249,8 +249,18 @@ let
       ++ extraEntries;
   });
   notices = pkgs.runCommand "eon-archive-third-party-notices" {
-    nativeBuildInputs = [ tool pkgs.rust-audit-info pkgs.binutils pkgs.gnutar pkgs.xz pkgs.bzip2 pkgs.lzip pkgs.zstd ];
+    nativeBuildInputs = [ tool pkgs.rust-audit-info pkgs.binutils pkgs.gnutar pkgs.xz pkgs.bzip2 pkgs.lzip pkgs.zstd pkgs.jq ];
   } ''
+    jq -r '.entries[] | .id as $id | (.notice_hashes // {} | keys[]) | [$id, .] | @tsv' \
+      ${input} > "$TMPDIR/notice-hash-paths"
+    missing=0
+    while IFS=$'\t' read -r entry path; do
+      if [ ! -f "$path" ]; then
+        echo "archive-notices: $entry: notice_hashes input missing from sandbox: $path" >&2
+        missing=1
+      fi
+    done < "$TMPDIR/notice-hash-paths"
+    test "$missing" -eq 0
     archive-notices generate ${input} ${tree} "$out"
   '';
   check = pkgs.runCommand "eon-archive-notices-check" {
