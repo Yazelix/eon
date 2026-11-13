@@ -1048,7 +1048,8 @@ or `stale` states. Any valid exact Google selector in `[bar] widgets` enables
 collection with the already signed-in agy 1.4.1 on absolute PATH entries.
 Every active reported group remains in JSON, including unselected groups.
 Failed reads keep last-good facts; successful empty reports clear them.
-Google bar chips remain pending. See [Agent quota](CONFIGURATION.md#agent-quota)
+Selected active Google windows show text chips in the Eon Bar; hiding a chip
+does not filter its JSON fact. See [Agent quota](CONFIGURATION.md#agent-quota)
 for source support, scheduling, process bounds and retention.
 
 Commands run inside an independent window target that window; commands outside

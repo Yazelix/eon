@@ -88,6 +88,18 @@ order, selection, and popups; Venus draws the visible scene.
   minutes, such as `90m`. A stale chip that cannot fit its label with `old`
   disappears rather than drop `old`. Hover and accessibility never show raw
   epoch timestamps.
+- Google quota uses one read-only text chip for each selected active model-group
+  window. Its label is `Google <scope> <position>/<duration> <remaining>%`;
+  without a reset it omits the position and slash. A stale chip retains `old`.
+  Hover and accessibility identify Google's model group, period, remaining
+  allowance, reset availability, local read time and freshness. Read time means
+  the successful reader's completion, shown as a local date/time and UTC offset;
+  without usable local time it says `Read time unavailable`. Disabled and missing
+  windows have no chip. Chips follow the configured order and existing whole-chip
+  hiding, window-menu room and tab/control priority. Google-only updates preserve
+  navigation and coherent workspace notices. Workspace transport loss clears
+  Google presentation with the other quota facts. No Google bitmap slot is
+  reserved; text uses the existing horizontal padding and shared chip styling.
 - Quota, CPU, RAM and disk chip text stays neutral, at least 4.5:1 on the chip
   fill; the CPU, RAM and disk icons are neutral too. Provider marks keep their
   brand colours. A thin bottom meter carries the displayed percentage: quota

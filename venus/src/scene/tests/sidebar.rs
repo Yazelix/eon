@@ -793,6 +793,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 assert_eq!(
                     row.accessible_label,
                     match provider {
+                        QuotaProvider::Google => unreachable!("Google has no sidebar icon"),
                         QuotaProvider::Codex =>
                             "Needs input (permission): Codex, events ciwn.8 \
                             in tab 2, site, p2, changed 4 minutes ago, 2 more records: \

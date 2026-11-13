@@ -112,7 +112,7 @@ disk_warning_percent = 75 # Disk use from which the disk chip turns orange.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_notice_percent = 60 # RAM use from which the RAM chip turns yellow.
 ram_warning_percent = 75 # RAM use from which the RAM chip turns orange.
-widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google collection is available; chips are pending.
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google windows show text chips when reported.
 
 [terminal]
 background_blur = true # Request compositor background blur.
@@ -260,8 +260,7 @@ bar's left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
 list above. The list applies when a window next opens, reopens or reloads.
-It also accepts opt-in exact Google scope/window selectors; collection and
-chips remain pending. See [Agent quota](#agent-quota) for grammar and examples.
+It also accepts opt-in exact Google scope/window selectors for text chips. See [Agent quota](#agent-quota) for grammar and examples.
 Unknown names are ignored with a warning; repeated known names are a
 configuration error. Narrow windows hide the Eon logo first, then disk, RAM
 and CPU, whatever the order, then quota chips one by
@@ -690,7 +689,18 @@ ID dims only when the resolved fill and configured opacity permit readable contr
 Google selection is opt-in through exact `google_quota:<scope>:5h` and
 `google_quota:<scope>:7d` entries in `[bar] widgets`. These selectors are
 accepted and transported; they enable Google collection and its CLI JSON facts.
-Google chips remain pending, so they show nothing in the bar yet. The ten existing defaults above are unchanged.
+Each selected active Google window shows a text chip; unselected or missing windows show nothing. The ten existing defaults above are unchanged.
+
+Google chips read `Google <group> <elapsed>/<duration> <remaining>%`, with
+`old` when stale. Without a reset they omit the elapsed position and slash.
+Hover and accessibility name the model group, period, remaining allowance,
+reset availability, local read time and freshness. Disabled windows have no
+chip; weekly-only groups get no invented five-hour chip. Hide Argon by leaving
+out `google_quota:Gemini 4 Argon:7d`; all its active facts remain in
+`eon session --json` while any Google selector is enabled. Google text uses the
+existing chip typography, padding and meters without a provider bitmap.
+The fixed Google label identifies the subscription owner; source group names
+keep independent allowances distinct.
 
 Scope is the exact reported model-group name: nonempty, control-free and at
 most 32 UTF-8 bytes. The last colon separates `5h` (five hours) or `7d`

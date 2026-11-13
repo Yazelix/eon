@@ -4245,7 +4245,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Google amendment** (`eon-o9f3h`, approved by Lucca 2026-11-05):
   Slices 1–4 supply the canonical Google fact/failure slots, CLI JSON
   projection, structured parser, exact selectors, collection, shared scheduling
-  and retention. Google chips remain pending slice 5 and installed end-to-end
+  and retention. Slice 5 supplies Google chip presentation; installed end-to-end
   Google proof is slice 6. Existing Codex/Claude proof does not prove Google
   behavior. The approved Google contract is:
 
@@ -5028,7 +5028,8 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   A valid selector whose scope is not currently reported shows nothing and
   still enables Google collection.
   No Google selectors are defaulted; bare `google_quota` is not a widget.
-  Unknown or malformed names warn and are ignored. Google collection follows EON-C27; Google chips remain pending slice 5.
+  Unknown or malformed names warn and are ignored. Google collection follows EON-C27; chip presentation is documented in
+  `venus/docs/PRESENTATION.md`.
   The Eon Bar shows the listed widgets left to right in that order, between the
   drag region and Shortcuts, except `clock` and `version`, which sit at the left
   and right ends of the bottom shortcut hints while they show, whatever their

@@ -445,6 +445,7 @@ impl WorkspaceModel {
                         current.tabs != snapshot.tabs
                             || current.codex_quota != snapshot.codex_quota
                             || current.claude_quota != snapshot.claude_quota
+                            || current.google_quota != snapshot.google_quota
                             || current.sidebar != snapshot.sidebar
                             || bar_workspace(current) != bar_workspace(&snapshot)
                             || hidden_needs_input(current) != hidden_needs_input(&snapshot)
@@ -570,7 +571,8 @@ impl WorkspaceModel {
         let expired_quota = self.snapshot.as_mut().is_some_and(|snapshot| {
             let codex = snapshot.codex_quota.take().is_some();
             let claude = snapshot.claude_quota.take().is_some();
-            codex || claude
+            let google = snapshot.google_quota.take().is_some();
+            codex || claude || google
         });
         self.set_notice(
             WorkspaceNotice::Unavailable(bounded(detail.into())),
@@ -1946,5 +1948,73 @@ mod tests {
         snapshot.tabs[0].selected_popup = Some("u1".into());
         model.apply(WorkspaceResponse::Snapshot(snapshot));
         assert!(model.column_attachments().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod google_quota_tests {
+    use super::*;
+    use crate::scene::tests::bar::google_snapshot;
+    use eon_workspace_protocol::v44 as workspace;
+
+    #[test]
+    fn google_only_refresh_preserves_workspace_structure_and_notice() {
+        let mut snapshot = google_snapshot();
+        snapshot.google_quota = None;
+        let mut model = WorkspaceModel::default();
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        model.reject_action("kept refusal");
+        let attachment = model.active_attachment().map(|(e, l)| (e.to_vec(), l));
+        let mut refreshed = google_snapshot().google_quota;
+        refreshed.as_mut().unwrap().observed_at += 1;
+        refreshed.as_mut().unwrap().windows[0].remaining_percent = 61;
+        for quota in [google_snapshot().google_quota, refreshed, None] {
+            snapshot.google_quota = quota;
+            assert_eq!(
+                model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
+                (true, false)
+            );
+            assert_eq!(
+                model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
+                (false, false)
+            );
+            assert_eq!(model.notice(), Some("kept refusal"));
+            assert_eq!(
+                model.active_attachment().map(|(e, l)| (e.to_vec(), l)),
+                attachment
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_loss_clears_google_quota_with_other_providers() {
+        for mixed in [false, true] {
+            let mut snapshot = google_snapshot();
+            if mixed {
+                let mut window = snapshot.google_quota.as_ref().unwrap().windows[0].clone();
+                window.scope = None;
+                snapshot.codex_quota = Some(workspace::CodexQuota {
+                    state: workspace::CodexQuotaState::Fresh,
+                    observed_at: 1_000_000,
+                    windows: vec![window.clone()],
+                });
+                snapshot.claude_quota = Some(workspace::ClaudeQuota {
+                    state: workspace::ClaudeQuotaState::Fresh,
+                    observed_at: 1_000_000,
+                    windows: vec![window],
+                });
+            }
+            let mut model = WorkspaceModel::default();
+            model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+            assert!(model.mark_unavailable("lost", false));
+            let lost = model.snapshot().unwrap();
+            assert!(
+                lost.google_quota.is_none()
+                    && lost.codex_quota.is_none()
+                    && lost.claude_quota.is_none()
+            );
+            assert_eq!(lost.tabs, snapshot.tabs);
+            assert!(!model.mark_unavailable("lost", false));
+        }
     }
 }

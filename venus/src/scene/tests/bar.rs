@@ -3618,9 +3618,14 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
     for width in (500..1800).step_by(10) {
         let empty = project(&snapshot, &[], width);
         let google_only = project(&snapshot, std::slice::from_ref(&google), width);
-        assert!(google_only.quotas.is_empty());
+        assert!(
+            google_only
+                .quotas
+                .iter()
+                .all(|q| q.provider == QuotaProvider::Google)
+        );
         assert_eq!(google_only.eon_icon, empty.eon_icon);
-        assert_eq!(google_only.tabs, empty.tabs);
+        assert_eq!(google_only.terminal, empty.terminal);
     }
     let scene = project(&snapshot, &selected, 3000);
     assert_eq!(
@@ -3890,4 +3895,214 @@ fn header_and_viewer_dismissal_labels_follow_shared_chords_and_policy() {
         .trigger
         .display_label_for(Platform::CURRENT);
     assert!(DialogKind::Shortcuts.footer().join(" ").contains(&toggle));
+}
+
+pub(crate) fn google_snapshot() -> Snapshot {
+    use eon_workspace_protocol::v44::{GoogleQuota, GoogleQuotaState};
+    let mut snapshot = one_pane_snapshot();
+    snapshot.google_quota = Some(GoogleQuota {
+        state: GoogleQuotaState::Fresh,
+        observed_at: 1_000_000,
+        windows: [
+            ("Gemini Models", 300, 74, 9_000),
+            ("Gemini Models", 10080, 42, 378_000),
+            ("Claude and GPT models", 10080, 0, 378_000),
+            ("Gemini 4 Argon", 10080, 93, 378_000),
+        ]
+        .into_iter()
+        .map(
+            |(scope, duration_minutes, remaining_percent, reset)| QuotaWindow {
+                scope: Some(scope.into()),
+                duration_minutes,
+                remaining_percent,
+                resets_at: Some(1_000_000 + reset),
+            },
+        )
+        .collect(),
+    });
+    snapshot
+}
+
+fn google_scene(snapshot: &Snapshot, items: &[BarItem], width: u32, scale: f64) -> WorkspaceScene {
+    let now = jiff::Timestamp::from_second(1_000_000)
+        .unwrap()
+        .to_zoned(jiff::tz::TimeZone::UTC);
+    WorkspaceScene::from_snapshot_with_bar(
+        snapshot,
+        EonBar {
+            items,
+            icon: true,
+            now: Some(&now),
+            ..EonBar::default()
+        },
+        PhysicalSize::new((f64::from(width) * scale) as u32, 800),
+        CellMetrics::for_scale(scale),
+        0.0,
+        0.0,
+        |_, text| {
+            (
+                text.into(),
+                text.chars().count() as f32 * 10.0 * scale as f32,
+            )
+        },
+        None,
+    )
+}
+
+#[test]
+fn google_chips_follow_exact_selectors_and_source_windows() {
+    let snapshot = google_snapshot();
+    let items = [
+        ("Claude and GPT models", 300), // Disabled: no canonical window.
+        ("Gemini 4 Argon", 300),        // Weekly-only: no invented companion.
+        ("Claude and GPT models", 10080),
+        ("Gemini Models", 300),
+        ("gemini Models", 10080), // Exact scope, including case.
+        ("Gemini Models", 10080),
+    ]
+    .map(|(scope, duration_minutes)| BarItem::GoogleQuota {
+        scope: scope.into(),
+        duration_minutes,
+    });
+    let scene = google_scene(&snapshot, &items, 3000, 1.0);
+    assert_eq!(
+        scene
+            .quotas
+            .iter()
+            .map(|q| q.label.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Google Claude and GPT models 2d15h/7d 0%",
+            "Google Gemini Models 2h30m/5h 74%",
+            "Google Gemini Models 2d15h/7d 42%",
+        ]
+    );
+    for q in &scene.quotas {
+        assert_eq!(q.provider.name(), "Google");
+        assert_eq!(q.accessible_label, q.label);
+        assert_eq!(
+            q.rect.width,
+            q.label.chars().count() as f32 * 10.0 + 2.0 * CellMetrics::for_scale(1.0).padding
+        );
+    }
+    assert!(
+        google_scene(&snapshot, &BarItem::DEFAULT, 3000, 1.0)
+            .quotas
+            .is_empty()
+    );
+}
+
+#[test]
+fn google_chips_yield_whole_before_navigation() {
+    let snapshot = google_snapshot();
+    let items = snapshot
+        .google_quota
+        .as_ref()
+        .unwrap()
+        .windows
+        .iter()
+        .map(|w| BarItem::GoogleQuota {
+            scope: w.scope.clone().unwrap(),
+            duration_minutes: w.duration_minutes,
+        })
+        .collect::<Vec<_>>();
+    for scale in [1.0, 1.25, 2.0] {
+        let full = google_scene(&snapshot, &items, 3000, scale);
+        assert_eq!(full.quotas.len(), 4);
+        let mut partial = false;
+        for width in (300..=3000).step_by(25) {
+            let scene = google_scene(&snapshot, &items, width, scale);
+            let bare = google_scene(&snapshot, &[], width, scale);
+            for (tab, bare_tab) in scene.tabs.iter().zip(&bare.tabs) {
+                assert_eq!(
+                    (&tab.id, tab.selected, tab.rect.left),
+                    (&bare_tab.id, bare_tab.selected, bare_tab.rect.left)
+                );
+                assert!(tab.rect.width > 0.0);
+            }
+            let mut refreshed = snapshot.clone();
+            refreshed.google_quota.as_mut().unwrap().windows[0].remaining_percent = 61;
+            let refreshed = google_scene(&refreshed, &items, width, scale);
+            assert_eq!(scene.tabs, refreshed.tabs);
+            assert_eq!(scene.controls, refreshed.controls);
+            assert_eq!(scene.terminal, bare.terminal);
+            assert_eq!(scene.eon_icon, bare.eon_icon);
+            for (a, b) in scene.controls.iter().zip(&bare.controls) {
+                assert_eq!((a.kind, a.rect.height), (b.kind, b.rect.height));
+                assert!(a.rect.width >= b.rect.width);
+            }
+            assert_eq!(scene.controls[2], bare.controls[2]);
+            let count = scene.quotas.len();
+            partial |= count > 0 && count < 4;
+            assert_eq!(
+                scene.quotas.iter().map(|q| &q.label).collect::<Vec<_>>(),
+                full.quotas[4 - count..]
+                    .iter()
+                    .map(|q| &q.label)
+                    .collect::<Vec<_>>()
+            );
+            for (index, q) in scene.quotas.iter().enumerate() {
+                assert!(q.rect.left >= scene.drag_region.right());
+                assert!(q.rect.right() <= scene.controls[1].rect.left + 0.01);
+                assert_eq!(
+                    scene.hit_test(q.rect.left + q.rect.width / 2.0, q.rect.height / 2.0),
+                    Some(WorkspaceHit::Quota(index))
+                );
+            }
+        }
+        assert!(partial, "must exercise whole-chip hiding");
+    }
+}
+
+#[test]
+fn google_chip_truth_includes_old_reset_and_read_time() {
+    use eon_workspace_protocol::v44::GoogleQuotaState;
+    let item = [BarItem::GoogleQuota {
+        scope: "Gemini Models".into(),
+        duration_minutes: 300,
+    }];
+    for stale in [false, true] {
+        for reset in [false, true] {
+            let mut snapshot = google_snapshot();
+            let quota = snapshot.google_quota.as_mut().unwrap();
+            if stale {
+                quota.state = GoogleQuotaState::Stale;
+            }
+            if !reset {
+                quota.windows[0].resets_at = None;
+            }
+            let scene = google_scene(&snapshot, &item, 3000, 1.0);
+            assert_eq!(scene.quotas.len(), 1);
+            let q = &scene.quotas[0];
+            let position = if reset { "2h30m/5h" } else { "5h" };
+            assert_eq!(
+                q.label,
+                format!(
+                    "Google Gemini Models {position} 74%{}",
+                    if stale { " old" } else { "" }
+                )
+            );
+            for text in [&q.tooltip, &q.description] {
+                for expected in [
+                    "Google",
+                    "model group Gemini Models",
+                    "5h",
+                    "74% remaining",
+                    "Read at 1970-01-12 13:46 +00:00",
+                    if stale { "stale" } else { "fresh" },
+                    if reset {
+                        "Resets at 16:16"
+                    } else {
+                        "Reset time unavailable"
+                    },
+                ] {
+                    assert!(text.contains(expected), "{expected}: {text}");
+                }
+                assert!(!text.contains("-only"));
+            }
+            if stale || !reset {
+                assert!(q.pace.is_none());
+            }
+        }
+    }
 }

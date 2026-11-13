@@ -55,6 +55,8 @@ const WORKSPACE_NODE_START: u64 = 1 << 32;
 const CODEX_QUOTA_NODE_START: u64 = 1 << 40;
 // Past every Codex ID and below links.
 const CLAUDE_SCOPED_QUOTA_NODE_START: u64 = CODEX_QUOTA_NODE_START + (1 << 34);
+// Six positional Google windows, past Claude and below links.
+const GOOGLE_QUOTA_NODE_START: u64 = CLAUDE_SCOPED_QUOTA_NODE_START + (1 << 8);
 const LINK_NODE_START: u64 = 1 << 48;
 const DIALOG_NODE_START: u64 = 1 << 56;
 const DIALOG_GROUP_STRIDE: u64 = 1 << 8;
@@ -1298,6 +1300,9 @@ fn quota_id(quota: &WorkspaceQuota) -> NodeId {
         Some(QuotaWindowIdentity::Claude(_)) => CLAUDE_FIVE_HOUR_QUOTA,
         Some(QuotaWindowIdentity::ClaudeScoped(index)) => {
             NodeId(CLAUDE_SCOPED_QUOTA_NODE_START + u64::from(index))
+        }
+        Some(QuotaWindowIdentity::Google(index)) => {
+            NodeId(GOOGLE_QUOTA_NODE_START + u64::from(index))
         }
         None => QUOTA,
     }
@@ -2980,6 +2985,9 @@ mod tests {
                                         quota.window.map(|window| match window {
                                             QuotaWindowIdentity::Codex { duration, .. }
                                             | QuotaWindowIdentity::Claude(duration) => duration,
+                                            QuotaWindowIdentity::Google(_) => {
+                                                unreachable!("no Google selectors")
+                                            }
                                             QuotaWindowIdentity::ClaudeScoped(index) => {
                                                 u32::MAX - u32::from(index)
                                             }
@@ -5502,5 +5510,129 @@ mod tests {
                     .all(|(_, node)| node.role() != Role::Alert)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod google_quota_tests {
+    use super::*;
+    use crate::{BarItem, EonBar, scene::tests::bar::google_snapshot};
+
+    #[test]
+    fn google_selection_keeps_source_ids_and_reserves_only_shown_windows() {
+        let mut snapshot = google_snapshot();
+        let quota = snapshot.google_quota.as_mut().unwrap();
+        // Fill all six canonical slots; equal durations must not merge scopes.
+        for scope in ["A,B:C", "Other"] {
+            let mut window = quota.windows[0].clone();
+            window.scope = Some(scope.into());
+            quota.windows.push(window);
+        }
+        let items = quota
+            .windows
+            .iter()
+            .map(|w| BarItem::GoogleQuota {
+                scope: w.scope.clone().unwrap(),
+                duration_minutes: w.duration_minutes,
+            })
+            .collect::<Vec<_>>();
+        let project =
+            |snapshot: &eon_workspace_protocol::v44::Snapshot, items: &[BarItem], width| {
+                WorkspaceScene::from_snapshot_with_bar(
+                    snapshot,
+                    EonBar {
+                        items,
+                        icon: true,
+                        ..EonBar::default()
+                    },
+                    PhysicalSize::new(width, 800),
+                    CellMetrics::for_scale(1.0),
+                    0.0,
+                    0.0,
+                    |_, text| (text.into(), text.chars().count() as f32 * 10.0),
+                    None,
+                )
+            };
+        let full = project(&snapshot, &items, 5000);
+        assert_eq!(full.quotas.len(), 6);
+        let ids = full.quotas.iter().map(quota_id).collect::<Vec<_>>();
+        assert_eq!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len(),
+            6
+        );
+        let mut mixed = snapshot.clone();
+        let mut window = mixed.google_quota.as_ref().unwrap().windows[0].clone();
+        window.scope = None;
+        mixed.codex_quota = Some(eon_workspace_protocol::v44::CodexQuota {
+            state: eon_workspace_protocol::v44::CodexQuotaState::Fresh,
+            observed_at: 1_000_000,
+            windows: vec![window.clone()],
+        });
+        mixed.claude_quota = Some(eon_workspace_protocol::v44::ClaudeQuota {
+            state: eon_workspace_protocol::v44::ClaudeQuotaState::Fresh,
+            observed_at: 1_000_000,
+            windows: vec![window],
+        });
+        let mut mixed_items = items.clone();
+        mixed_items.extend([BarItem::CodexQuota5h, BarItem::ClaudeQuota5h]);
+        let mixed = project(&mixed, &mixed_items, 5000);
+        assert_eq!(mixed.quotas.len(), 8);
+        assert_eq!(
+            mixed
+                .quotas
+                .iter()
+                .map(quota_id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            8
+        );
+        let selected = [items[5].clone(), items[1].clone(), items[0].clone()];
+        let mut without_argon = snapshot.clone();
+        without_argon
+            .google_quota
+            .as_mut()
+            .unwrap()
+            .windows
+            .remove(3);
+        let mut saw_hidden = false;
+        for width in (300..=3000).step_by(50) {
+            let scene = project(&snapshot, &selected, width);
+            let without = project(&without_argon, &selected, width);
+            assert_eq!(scene.tabs, without.tabs);
+            assert_eq!(scene.controls, without.controls);
+            assert_eq!(scene.eon_icon, without.eon_icon);
+            assert_eq!(
+                scene.quotas.iter().map(|q| q.rect).collect::<Vec<_>>(),
+                without.quotas.iter().map(|q| q.rect).collect::<Vec<_>>()
+            );
+            let mut a11y = Snapshot::new(PhysicalSize::new(width, 800));
+            a11y.set_workspace(Some(&scene));
+            let tree = a11y.tree();
+            for q in &scene.quotas {
+                let original = full
+                    .quotas
+                    .iter()
+                    .find(|other| other.label == q.label)
+                    .unwrap();
+                assert_eq!(quota_id(q), quota_id(original));
+                let node = tree
+                    .nodes
+                    .iter()
+                    .find(|(id, _)| *id == quota_id(q))
+                    .unwrap()
+                    .1
+                    .clone();
+                assert_eq!(node.role(), Role::Label);
+                assert_eq!(node.value(), Some(q.accessible_label.as_str()));
+                assert_eq!(node.description(), Some(q.description.as_str()));
+                assert_eq!(node.bounds(), Some(rect(q.rect)));
+                assert!(!node.supports_action(Action::Click));
+                assert!(!node.supports_action(Action::Focus));
+            }
+            assert!(!tree.nodes.iter().any(|(id, _)| *id == ids[3]));
+            saw_hidden |= !scene.quotas.is_empty() && scene.quotas.len() < selected.len();
+        }
+        assert!(saw_hidden);
+        assert_eq!(snapshot.google_quota.as_ref().unwrap().windows.len(), 6);
     }
 }

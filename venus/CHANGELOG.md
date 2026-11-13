@@ -7,8 +7,9 @@
   Reserved Stop and workspace presentation are unchanged (`eon-t3fyd.2`).
 
 - Consume the canonical workspace wire with separate Google quota fact and
-  failure slots (`eon-o9f3h.1`). Google chip presentation is planned in
-  `eon-o9f3h.5`.
+  failure slots (`eon-o9f3h.1`). Selected Google windows show text chips
+  with exact groups, window position, remaining share and stale state, plus
+  hover and accessibility read/reset facts (`eon-o9f3h.5`).
 
 - VEN-C30: attention badges have no backing at any opacity, with two-surface
   colour adaptation and a glyph-only outline when needed. Sidebar/inbox badge

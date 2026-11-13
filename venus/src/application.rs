@@ -3657,8 +3657,10 @@ impl Application {
                 let quota_changed = current.is_some_and(|current| {
                     current.codex_quota != snapshot.codex_quota
                         || current.claude_quota != snapshot.claude_quota
+                        || current.google_quota != snapshot.google_quota
                         || current.codex_quota_failure != snapshot.codex_quota_failure
                         || current.claude_quota_failure != snapshot.claude_quota_failure
+                        || current.google_quota_failure != snapshot.google_quota_failure
                 });
                 let metadata_only = attention_only
                     || quota_changed
@@ -3666,10 +3668,13 @@ impl Application {
                             let mut next = snapshot.clone();
                             next.codex_quota.clone_from(&current.codex_quota);
                             next.claude_quota.clone_from(&current.claude_quota);
+                            next.google_quota.clone_from(&current.google_quota);
                             next.codex_quota_failure
                                 .clone_from(&current.codex_quota_failure);
                             next.claude_quota_failure
                                 .clone_from(&current.claude_quota_failure);
+                            next.google_quota_failure
+                                .clone_from(&current.google_quota_failure);
                             current == &next || attention_only_change(current, &next)
                         });
                 (
@@ -3691,7 +3696,9 @@ impl Application {
             .flatten();
         let quota_expired = unavailable
             && self.workspace_model.snapshot().is_some_and(|snapshot| {
-                snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
+                snapshot.codex_quota.is_some()
+                    || snapshot.claude_quota.is_some()
+                    || snapshot.google_quota.is_some()
             });
         let (mut view_changed, workspace_changed) = match event {
             WorkspaceEvent::Response(eon_workspace_protocol::v44::Response::Failure(failure))
@@ -3937,7 +3944,9 @@ impl Application {
             }
             Err(error) => {
                 let quota_expired = self.workspace_model.snapshot().is_some_and(|snapshot| {
-                    snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
+                    snapshot.codex_quota.is_some()
+                        || snapshot.claude_quota.is_some()
+                        || snapshot.google_quota.is_some()
                 });
                 if self
                     .workspace_model

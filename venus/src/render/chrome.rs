@@ -3260,8 +3260,12 @@ impl Renderer {
                     self.metrics,
                 );
             }
-            self.push_quota_icon(quota.provider, quota.logo, None);
-            let label_left = quota.logo.right() + tokens::icon_gap(self.metrics);
+            let label_left = if quota.provider == QuotaProvider::Google {
+                quota.rect.left + self.metrics.padding
+            } else {
+                self.push_quota_icon(quota.provider, quota.logo, None);
+                quota.logo.right() + tokens::icon_gap(self.metrics)
+            };
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
             self.push_chip_label(
                 &quota.label,
@@ -3875,6 +3879,7 @@ impl Renderer {
         let (id, color) = match provider {
             QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, palette::QUOTA_ICON_CODEX),
             QuotaProvider::Claude => (CLAUDE_SPLAT_ID, palette::QUOTA_ICON_CLAUDE),
+            QuotaProvider::Google => return,
         };
         self.push_bar_icon(id, color, rect, clip);
     }
@@ -7144,6 +7149,62 @@ mod tests {
                         previous = Some(positions);
                     }
                 }
+            }
+            let snapshot = crate::scene::tests::bar::google_snapshot();
+            let items = [crate::BarItem::GoogleQuota {
+                scope: "Gemini Models".into(),
+                duration_minutes: 300,
+            }];
+            for scale in [1.0, 1.25, 2.0] {
+                let size = PhysicalSize::new((1600.0 * scale) as u32, 900);
+                renderer.resize(size, scale);
+                let metrics = renderer.metrics();
+                let workspace = WorkspaceScene::from_snapshot_with_bar(
+                    &snapshot,
+                    EonBar {
+                        items: &items,
+                        ..EonBar::default()
+                    },
+                    size,
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| renderer.measure_header_text(text),
+                    None,
+                );
+                renderer.text.clear();
+                let title_tabs = renderer.workspace_title_tabs(&workspace);
+                let pane_tabs = renderer.workspace_pane_tabs(&workspace);
+                let mut rectangles = RectangleBatch::new(size.width, size.height);
+                renderer.build_workspace(
+                    &workspace,
+                    WorkspaceFocus::Terminal,
+                    &mut rectangles,
+                    &[],
+                    &title_tabs,
+                    &pane_tabs,
+                );
+                let quota = &workspace.quotas[0];
+                let text = renderer
+                    .text
+                    .iter()
+                    .find(|text| {
+                        text.buffer
+                            .lines
+                            .first()
+                            .is_some_and(|line| line.text() == quota.label)
+                    })
+                    .expect("painted Google label");
+                assert_eq!(text.left, quota.rect.left + metrics.padding);
+                assert_neutral(text);
+                assert!(!renderer.text.iter().any(|text| text.custom_glyph.is_some()));
+                assert_meter(
+                    &rectangles,
+                    workspace.bar_pill_rect(header_item_visual(quota.rect, metrics), metrics),
+                    74.0,
+                    quota_pace_color(quota.pace.unwrap()),
+                    metrics.scale,
+                );
             }
             renderer.resize(PhysicalSize::new(1600, 900), 1.0);
         }

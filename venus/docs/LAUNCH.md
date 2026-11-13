@@ -101,7 +101,8 @@ Google selectors are `google_quota:<scope>:5h` and `google_quota:<scope>:7d`:
 separate the final suffix at the last colon. Scope is exact, nonempty,
 control-free and at most 32 UTF-8 bytes. For example,
 `--bar-item 'google_quota:A,B:C:7d'` carries scope `A,B:C` unchanged.
-Google selectors are retained but show nothing until Google presentation lands.
+Each Google selector shows its matching active model-group window as a Google
+text chip; an unreported window shows nothing.
 There is no bare provider alias.
 
 With neither input, Venus uses all ten fixed items in the order above.

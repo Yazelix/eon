@@ -5,13 +5,18 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Selected Google quota windows show text chips in the Eon Bar, with their
+  exact model group, window position, remaining percentage and stale state.
+  Hover and accessibility include reset availability and local read time;
+  hidden groups remain in JSON (`eon-o9f3h.5`).
+
 - Opt-in Google quota selectors collect agy 1.4.1 reports on a shared
   five-minute schedule and retain last-good groups in workspace JSON across
-  failures and restarts; Google bar chips remain pending (`eon-o9f3h.4`).
+  failures and restarts (`eon-o9f3h.4`).
 
 - `[bar] widgets` accepts exact `google_quota:<scope>:5h` / `:7d`
   selectors, preserving commas and colons in scopes. Google entries remain
-  opt-in; their bar chips remain pending. Configuration
+  opt-in. Configuration
   schema exposes their accepted forms beside fixed names (`eon-o9f3h.3`).
 
 - Workspace JSON includes independent `google_quota` and

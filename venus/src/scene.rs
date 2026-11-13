@@ -7,8 +7,8 @@ use crate::{
 use eon_workspace_protocol::v44::{ALT, SHIFT};
 use eon_workspace_protocol::v44::{
     Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
-    CloseScope, CodexQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, Sidebar, Snapshot, Tab,
-    TargetId,
+    CloseScope, CodexQuotaState, GoogleQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, Sidebar,
+    Snapshot, Tab, TargetId,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -645,6 +645,7 @@ pub(crate) struct WorkspaceControl {
 pub(crate) enum QuotaProvider {
     Codex,
     Claude,
+    Google,
 }
 
 impl QuotaProvider {
@@ -652,6 +653,7 @@ impl QuotaProvider {
         match self {
             Self::Codex => "Codex",
             Self::Claude => "Claude",
+            Self::Google => "Google",
         }
     }
 }
@@ -688,6 +690,8 @@ pub(crate) enum QuotaWindowIdentity {
     Claude(u32),
     /// Zero-based position among Claude's scoped windows in EONW order, before hiding.
     ClaudeScoped(u8),
+    /// EONW index before presentation filtering; source removal/reordering can change it.
+    Google(u8),
 }
 
 /// One read-only informational label in the workspace header.
@@ -3312,6 +3316,9 @@ fn quota_text(
         CodexQuotaState::Blocked => ("blocked".into(), None),
         CodexQuotaState::Unknown => ("unknown".into(), None),
     };
+    if provider == QuotaProvider::Google {
+        label.insert_str(0, "Google ");
+    }
     if state == CodexQuotaState::Stale {
         label.push_str(" old");
     }
@@ -3336,20 +3343,30 @@ fn quota_text(
     let mut tooltip = format!("{name} quota");
     if let Some(window) = window {
         let duration = quota_duration(window.duration_minutes);
-        let scope = window
-            .scope
-            .as_ref()
-            .map_or_else(String::new, |scope| format!(" {scope}-only"));
+        let scope = window.scope.as_ref().map_or_else(String::new, |scope| {
+            if provider == QuotaProvider::Google {
+                format!(" model group {scope}")
+            } else {
+                format!(" {scope}-only")
+            }
+        });
         let _ = write!(
             description,
             "{scope} {duration} window: {}% remaining; ",
             window.remaining_percent
         );
         tooltip = format!("{name}{scope} {duration} window");
+        if provider == QuotaProvider::Google {
+            let _ = write!(tooltip, "\n{}% remaining", window.remaining_percent);
+        }
         if let Some(position) = quota_window_position(window, observed_at) {
             let _ = write!(description, "observed {position} into {duration}.");
         } else {
-            description.push_str("reset time unavailable.");
+            description.push_str(if provider == QuotaProvider::Google {
+                "Reset time unavailable."
+            } else {
+                "reset time unavailable."
+            });
         }
         // Once the reset has passed, hover drops the pace, which looks ahead to it.
         let mut passed = false;
@@ -3357,16 +3374,29 @@ fn quota_text(
             (Some(reset), Some(now)) => match quota_reset(reset, now) {
                 Some(line) => {
                     let _ = write!(tooltip, "\n{line}");
+                    if provider == QuotaProvider::Google {
+                        let _ = write!(description, " {line}.");
+                    }
                 }
                 None => {
                     passed = true;
                     tooltip.push_str("\nHas reset since this reading");
+                    if provider == QuotaProvider::Google {
+                        description.push_str(" Has reset since this reading.");
+                    }
                 }
             },
             // Without a local time zone hover leaves the reset out, as the bar leaves out the
             // clock, rather than state it in UTC.
-            (Some(_), None) => {}
-            (None, _) => tooltip.push_str("\nReset time unavailable"),
+            (Some(_), None) => {
+                if provider == QuotaProvider::Google {
+                    tooltip.push_str("\nReset time available");
+                    description.push_str(" Reset time available.");
+                }
+            }
+            (None, _) => {
+                tooltip.push_str("\nReset time unavailable");
+            }
         }
         if let Some(shortfall) = pace {
             let line = if window.remaining_percent == 0 {
@@ -3397,6 +3427,24 @@ fn quota_text(
             if !passed {
                 let _ = write!(tooltip, "\n{line}");
             }
+        }
+    }
+    if provider == QuotaProvider::Google {
+        let read = now
+            .and_then(|now| {
+                i64::try_from(observed_at)
+                    .ok()
+                    .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
+                    .map(|timestamp| timestamp.to_zoned(now.time_zone().clone()))
+            })
+            .map_or_else(
+                || "Read time unavailable".into(),
+                |read| format!("Read at {}", read.strftime("%Y-%m-%d %H:%M %:z")),
+            );
+        let _ = write!(tooltip, "\n{read}");
+        let _ = write!(description, " {read}.");
+        if state == CodexQuotaState::Fresh {
+            tooltip.push_str("\nData is fresh");
         }
     }
     tooltip.push_str(match state {
@@ -3764,14 +3812,55 @@ impl WorkspaceScene {
                         })
                         .collect()
                 }
+                BarItem::GoogleQuota { .. } => snapshot
+                    .google_quota
+                    .iter()
+                    .flat_map(|quota| {
+                        let state = match quota.state {
+                            GoogleQuotaState::Fresh => CodexQuotaState::Fresh,
+                            GoogleQuotaState::Stale => CodexQuotaState::Stale,
+                        };
+                        quota
+                            .windows
+                            .iter()
+                            .enumerate()
+                            .filter(move |(_, window)| {
+                                item.selects(window.scope.as_deref(), window.duration_minutes)
+                            })
+                            .map(move |(index, window)| {
+                                (
+                                    item.clone(),
+                                    QuotaProvider::Google,
+                                    Some(QuotaWindowIdentity::Google(index as u8)),
+                                    quota_text(
+                                        QuotaProvider::Google,
+                                        state,
+                                        quota.observed_at,
+                                        Some(window),
+                                        bar.now,
+                                    ),
+                                )
+                            })
+                    })
+                    .collect(),
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>();
-        let quota_padding = metrics.padding * 2.0 + metrics.font_size + icon_gap(metrics);
         let mut quotas = quota_texts
             .into_iter()
             .map(|(item, provider, window, text)| {
                 let (label, width) = header_text(HeaderText::Fact, &text.label);
+                let quota_padding = metrics.padding * 2.0
+                    + if provider == QuotaProvider::Google {
+                        0.0
+                    } else {
+                        metrics.font_size + icon_gap(metrics)
+                    };
+                let accessible_label = if provider == QuotaProvider::Google {
+                    label.clone()
+                } else {
+                    format!("{} {label}", provider.name())
+                };
                 WorkspaceQuota {
                     item,
                     provider,
@@ -3781,7 +3870,7 @@ impl WorkspaceScene {
                         ..SceneRect::default()
                     },
                     logo: SceneRect::default(),
-                    accessible_label: format!("{} {label}", provider.name()),
+                    accessible_label,
                     label,
                     remaining_percent: text.remaining_percent,
                     pace: text.pace,
@@ -3847,12 +3936,14 @@ impl WorkspaceScene {
         for quota in &mut quotas {
             quota.rect.left = left;
             quota.rect.height = tab_height;
-            quota.logo = SceneRect {
-                left: left + metrics.padding,
-                top: (tab_height - metrics.font_size) / 2.0,
-                width: metrics.font_size,
-                height: metrics.font_size,
-            };
+            if quota.provider != QuotaProvider::Google {
+                quota.logo = SceneRect {
+                    left: left + metrics.padding,
+                    top: (tab_height - metrics.font_size) / 2.0,
+                    width: metrics.font_size,
+                    height: metrics.font_size,
+                };
+            }
             left = quota.rect.right();
         }
         let max_tab_width = tab_max_width(metrics, tab_viewport.width);
