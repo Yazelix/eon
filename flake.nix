@@ -1240,6 +1240,10 @@
             doInstallCargoArtifacts = false;
             allowedReferences = [ ];
             ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
+            # Build sandboxes without unprivileged user namespaces (GitHub's Ubuntu runners) skip
+            # the bwrap PID-namespace test with a diagnostic; hosts that have them still run it, and
+            # eon-test does not set this, so it fails there when bwrap cannot start (eon-w5udv).
+            ROTA_TEST_ALLOW_NO_BWRAP = "1";
             nativeCheckInputs = [ nushellPackage pkgs.jq pkgs.bash
               (pkgs.coreutils.override { singleBinary = false; }) ]
               ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
