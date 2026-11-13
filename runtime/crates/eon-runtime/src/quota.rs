@@ -2,6 +2,8 @@ use eon_workspace_protocol::v43::{
     ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, MAX_QUOTA_SCOPE_BYTES,
     MAX_SCOPED_QUOTA_WINDOWS, QuotaFailure, QuotaFailureReason as Failure, QuotaWindow, Snapshot,
 };
+
+mod google;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{

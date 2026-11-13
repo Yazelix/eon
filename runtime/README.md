@@ -99,8 +99,9 @@ Google quota has independent optional Snapshot fact and failure slots.
 Its fresh/stale reading carries at most six windows, all scoped by the exact
 Google model group, with only 300/10080-minute periods and unique scope/period
 pairs. Scope and value/reset bounds are canonical. EONW timestamps are Unix
-seconds; CLI JSON projects milliseconds. This slice supplies the wire and
-CLI projection only: Google slots remain null until collection is implemented.
+seconds; CLI JSON projects milliseconds. Google slots remain null until collection
+is implemented.
+Runtime also has a dormant structured agy 1.4.1 `/usage` parser and exact version check; collection is pending.
 Codex/Claude provider bounds stay unchanged. The prior wire version is rejected,
 never reinterpreted, and live generations are not stopped by a wire upgrade.
 
