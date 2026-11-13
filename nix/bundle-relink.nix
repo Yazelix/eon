@@ -197,7 +197,7 @@ let
     ];
 in
 {
-  inherit tree glibcFloor;
+  inherit tree glibcFloor launcher;
   launcherPrograms = map (wrapper: wrapper.program) bundleWrappers;
   excluded = map toString excluded;
   substituted = map (lib.mapAttrs (_: toString)) substitutes;

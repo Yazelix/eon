@@ -1,6 +1,6 @@
 { pkgs, tool, tree, manifest, packages, rustProducers, goProducers, extraEntries
 , packageOverrides, grammarSources, helixSource, launcherPrograms, binaryInputs, nativeExclusions, nativeBindings
-, sourceRelease }:
+, sourceRelease, auditToolchain }:
 let
   inherit (pkgs) lib;
   key = value: builtins.unsafeDiscardStringContext (toString value);
@@ -67,6 +67,20 @@ let
           [ "--features" (lib.concatStringsSep " " producer.package.cargoBuildFeatures) ]
       );
       roots = lib.escapeShellArgs (lib.concatMap (root: [ "--package" root ]) producer.roots);
+      auditContext = pkgs.writeText "${producer.id}-audit-context.json" (builtins.toJSON {
+        producer = producer.id;
+        inherit target;
+        roots = producer.roots;
+        default_features = !(producer.package.cargoBuildNoDefaultFeatures or false);
+        features = producer.package.cargoBuildFeatures or [ ];
+        build_flags = lib.toList (producer.package.cargoBuildFlags or [ ]);
+        build_command = producer.package.buildPhase or "cargoBuildHook";
+        toolchain = auditToolchain;
+        lock_file = "Cargo.lock";
+        exceptions = pkgs.writeText "${producer.id}-audit-exceptions.json"
+          (builtins.toJSON (producer.auditExceptions or [ ]));
+        evidence_documents."nix/notices/audit-evidence.md" = ./audit-evidence.md;
+      });
     in pkgs.rustPlatform.buildRustPackage {
       pname = "${producer.id}-cargo-notices";
       version = producer.package.version or "0";
@@ -76,6 +90,7 @@ let
       postPatch = lib.concatStringsSep "\n" (lib.mapAttrsToList (path: notice:
         "install -Dm444 ${notice} ${lib.escapeShellArg path}") (producer.sourceNotices or { }));
       buildPhase = ''
+        mkdir -p "$out/texts"
         if cargo tree --locked --offline --target ${target} --manifest-path ${manifestPath} \
           ${flags} ${roots} --edges normal,no-proc-macro --prefix none --format '{p}' > runtime-crates.txt \
           && cargo tree --locked --offline --target ${target} --manifest-path ${manifestPath} \
@@ -83,13 +98,14 @@ let
           && cargo-about about generate --locked --offline --fail --target ${target} \
           --manifest-path ${manifestPath} --config ${./about.toml} --format json \
           --output-file report.json ${flags} ${lib.optionalString (builtins.length producer.roots > 1) "--workspace"} \
-          && mkdir -p "$out/texts" \
           && archive-notices cargo-texts report.json "$out/texts" ${producer.package}/bin runtime-crates.txt \
-            ${pkgs.writeText "${producer.id}-original-crate-notices.json" (builtins.toJSON (producer.crateNotices or { }))} native-packages.txt; then
+            ${pkgs.writeText "${producer.id}-original-crate-notices.json" (builtins.toJSON (producer.crateNotices or { }))} native-packages.txt \
+            ${auditContext}; then
           :
         else
           printf '{"failed":true}\n' > report.json
-        fi
+        fi 2> "$out/error.txt"
+        cat "$out/error.txt" >&2
       '';
       doCheck = false;
       installPhase = ''

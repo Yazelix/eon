@@ -168,6 +168,12 @@ license texts and attribution. It identifies the actual relinked store outputs
 and the code embedded in their binaries, including the static launcher and
 installer. Relinking changes interpreters and library search paths. The release
 build refuses a payload with unresolved license or notice findings.
+Each Rust binary's runtime audit dependencies must be covered by its producer's
+crate inventory. Audit over-reporting requires exact package/version exceptions
+bound to the producer, normalized lockfile, resolved dependency/feature graph, build
+flags and target, with checked evidence anchors. Local version and binary-byte changes
+preserve matching evidence; dependency changes and unused exceptions fail the check.
+See the [inspection and renewal recipe](../eon/tools/archive-notices/README.md).
 `eon-VERSION-x86_64-linux-sources.tar.zst` accompanies the binary on the same
 release and is listed in its signed `SHA256SUMS`. The notices give its exact
 filename, identify it as an attachment to the same release as the binary archive,

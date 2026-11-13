@@ -6,6 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod audit;
 mod sources;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -129,10 +130,20 @@ struct NativePackage {
     origin: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct NativeBinary {
     root: (String, String),
     packages: BTreeSet<(String, String)>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AuditException {
+    root: String,
+    package: (String, String),
+    graph_sha256: String,
+    reason: String,
+    evidence: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -182,6 +193,7 @@ fn run() -> Result<()> {
             tree,
             supplements,
             native_tree,
+            context,
         ] if command == "cargo-texts" => {
             cargo_texts(
                 Path::new(report),
@@ -190,6 +202,35 @@ fn run() -> Result<()> {
                 Path::new(tree),
                 Path::new(supplements),
                 Path::new(native_tree),
+                Path::new(context),
+            )?;
+        }
+        [command, context, lock, binaries, tree, native_tree, output]
+            if command == "inspect-audit" =>
+        {
+            audit::inspect(
+                Path::new(context),
+                Path::new(lock),
+                Path::new(binaries),
+                Path::new(tree),
+                Path::new(native_tree),
+                Path::new(output),
+            )?;
+        }
+        [command, exceptions, full, fallback, output] if command == "propose-audit-renewal" => {
+            audit::propose(
+                Path::new(exceptions),
+                Path::new(full),
+                Path::new(fallback),
+                Path::new(output),
+            )?;
+        }
+        [command, observation, exceptions, name, version] if command == "prove-audit-omission" => {
+            audit::prove_omission(
+                Path::new(observation),
+                Path::new(exceptions),
+                name.to_str().ok_or("invalid crate name")?,
+                version.to_str().ok_or("invalid crate version")?,
             )?;
         }
         _ => {
@@ -279,31 +320,113 @@ fn audit_packages(binary: &Path) -> Result<Vec<serde_json::Value>> {
         .clone())
 }
 
-fn binary_crates(binaries: &Path) -> Result<Vec<NativeBinary>> {
-    let mut files = Vec::new();
-    tree_files(binaries, &mut files)?;
-    let mut crates = Vec::new();
-    for file in files {
-        if !is_elf(&file)? {
-            continue;
-        }
-        let packages = audit_packages(&file)?;
-        let identities = packages
-            .iter()
-            .map(cargo_identity)
-            .collect::<Result<BTreeSet<_>>>()?;
-        for package in &packages {
-            if package["root"].as_bool() == Some(true) {
-                crates.push(NativeBinary {
-                    root: cargo_identity(package)?,
-                    packages: identities.clone(),
-                });
+fn check_binary_crates(
+    binary: &Path,
+    packages: &[serde_json::Value],
+    shipped: &BTreeSet<(String, String)>,
+    exceptions: &[AuditException],
+    used: &mut BTreeSet<usize>,
+    graph_sha256: &str,
+) -> Result<NativeBinary> {
+    let roots = packages
+        .iter()
+        .filter(|package| package["root"].as_bool() == Some(true))
+        .collect::<Vec<_>>();
+    let [root] = roots.as_slice() else {
+        return Err(format!("{}: expected exactly one Rust audit root", binary.display()).into());
+    };
+    let root = cargo_identity(root)?;
+    let mut runtime = BTreeSet::new();
+    for package in packages {
+        match package.get("kind") {
+            None => {}
+            Some(kind) if kind == "runtime" => {}
+            Some(kind) if kind == "build" => continue,
+            Some(kind) => {
+                return Err(format!("{}: unknown Rust audit kind {kind}", binary.display()).into());
             }
         }
+        runtime.insert(cargo_identity(package)?);
+    }
+    if !runtime.contains(&root) || !shipped.contains(&root) {
+        return Err(format!(
+            "{}: Rust audit root {root:?} absent from runtime Cargo tree",
+            binary.display()
+        )
+        .into());
+    }
+    let mut missing = Vec::new();
+    for package in runtime.difference(shipped) {
+        if let Some(index) = exceptions
+            .iter()
+            .position(|exception| exception.root == root.0 && &exception.package == package)
+        {
+            if exceptions[index].graph_sha256 != graph_sha256 {
+                return Err(format!(
+                    "{}: Rust audit exception does not match dependency context {graph_sha256}: {:?}",
+                    binary.display(),
+                    exceptions[index].package
+                )
+                .into());
+            }
+            used.insert(index);
+        } else {
+            missing.push(package);
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "{}: audited Rust dependencies absent from Cargo tree for {root:?}: {missing:?}",
+            binary.display()
+        )
+        .into());
+    }
+    Ok(NativeBinary {
+        root,
+        // Native bindings still consume the complete audit graph, including build packages.
+        packages: packages.iter().map(cargo_identity).collect::<Result<_>>()?,
+    })
+}
+
+fn check_audit_exceptions(
+    exceptions: &[AuditException],
+    used: &BTreeSet<usize>,
+    documents: &BTreeMap<String, PathBuf>,
+) -> Result<()> {
+    for (index, exception) in exceptions.iter().enumerate() {
+        if exception.reason.trim().is_empty() || exception.evidence.trim().is_empty() {
+            return Err(
+                format!("Rust audit exception lacks reason or evidence: {exception:?}").into(),
+            );
+        }
+        if !used.contains(&index) {
+            return Err(format!("unused Rust audit exception: {exception:?}").into());
+        }
+        audit::check_evidence(&exception.evidence, documents)?;
+    }
+    Ok(())
+}
+
+fn binary_crates(
+    snapshot: &audit::Snapshot,
+    exceptions: &[AuditException],
+) -> Result<Vec<NativeBinary>> {
+    let mut crates = Vec::new();
+    let mut used = BTreeSet::new();
+    for binary in &snapshot.binaries {
+        crates.push(check_binary_crates(
+            &binary.path,
+            &binary.packages,
+            &snapshot.shipped,
+            exceptions,
+            &mut used,
+            &snapshot.graph_sha256,
+        )?);
     }
     if crates.is_empty() {
         return Err("no Rust package evidence in shipped binaries".into());
     }
+    check_audit_exceptions(exceptions, &used, &snapshot.context.evidence_documents)?;
     Ok(crates)
 }
 
@@ -375,6 +498,21 @@ fn supplement_cargo_notice(
     Ok(())
 }
 
+fn runtime_crates(tree: &str) -> Result<BTreeSet<(String, String)>> {
+    tree.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next().ok_or("Cargo tree has an empty line")?;
+            let version = fields
+                .next()
+                .and_then(|field| field.strip_prefix('v'))
+                .ok_or("Cargo tree has no version")?;
+            Ok((name.to_owned(), version.to_owned()))
+        })
+        .collect()
+}
+
 fn cargo_texts(
     report_path: &Path,
     output: &Path,
@@ -382,32 +520,29 @@ fn cargo_texts(
     tree: &Path,
     supplements: &Path,
     native_tree: &Path,
+    context_path: &Path,
 ) -> Result<()> {
     let supplements: BTreeMap<String, CargoNotice> =
         serde_json::from_slice(&fs::read(supplements)?)?;
-    let mut shipped = BTreeSet::new();
-    for line in fs::read_to_string(tree)?
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-    {
-        let mut fields = line.split_whitespace();
-        let name = fields.next().ok_or("Cargo tree has an empty line")?;
-        let version = fields
-            .next()
-            .and_then(|field| field.strip_prefix('v'))
-            .ok_or("Cargo tree has no version")?;
-        shipped.insert((name.to_owned(), version.to_owned()));
-    }
-    let binaries = binary_crates(binaries)?;
-    let roots: BTreeSet<_> = binaries.iter().map(|binary| binary.root.clone()).collect();
-    if !roots.is_subset(&shipped) {
-        return Err(format!(
-            "shipped Rust roots absent from Cargo tree: {:?}",
-            roots.difference(&shipped).collect::<Vec<_>>()
-        )
-        .into());
-    }
+    let context: audit::Context = serde_json::from_slice(&fs::read(context_path)?)?;
+    let exceptions: Vec<AuditException> = serde_json::from_slice(&fs::read(&context.exceptions)?)?;
+    let snapshot = audit::inspect(
+        context_path,
+        &context.lock_file,
+        binaries,
+        tree,
+        native_tree,
+        &output
+            .parent()
+            .ok_or("Cargo texts lack parent")?
+            .join("audit"),
+    )?;
+    let binaries = binary_crates(&snapshot, &exceptions)?;
+    let shipped = &snapshot.shipped;
     let mut report: serde_json::Value = serde_json::from_slice(&fs::read(report_path)?)?;
+    report["audit_exceptions"] = serde_json::to_value(exceptions)?;
+    report["audit_graph_sha256"] = serde_json::to_value(&snapshot.graph_sha256)?;
+    report["audit_context"] = serde_json::to_value(&snapshot.context)?;
     report["native_packages"] =
         serde_json::to_value(native_packages(&fs::read_to_string(native_tree)?)?)?;
     report["native_binaries"] = serde_json::to_value(binaries)?;
@@ -499,7 +634,7 @@ fn cargo_texts(
         .flat_map(|license| license["used_by"].as_array().into_iter().flatten())
         .map(|usage| cargo_identity(&usage["crate"]))
         .collect::<Result<BTreeSet<_>>>()?;
-    if covered != shipped {
+    if &covered != shipped {
         return Err(format!(
             "binary crates lack selected license terms: {:?}",
             shipped.difference(&covered).collect::<Vec<_>>()
@@ -1069,12 +1204,27 @@ fn generate(input: &Path, tree: &Path, output: &Path) -> Result<()> {
             });
         }
         for (number, source) in entry.cargo_reports.iter().enumerate() {
-            let report: serde_json::Value = serde_json::from_slice(&fs::read(source)?)?;
+            let mut report: serde_json::Value = serde_json::from_slice(&fs::read(source)?)?;
+            if report["failed"].as_bool() == Some(true) {
+                let path = source.with_file_name("error.txt");
+                let error = fs::read_to_string(&path).map_err(|error| {
+                    format!(
+                        "{}: cannot read Cargo diagnostics {}: {error}",
+                        entry.id,
+                        path.display()
+                    )
+                })?;
+                report["error"] = error.trim().to_owned().into();
+            }
             let empty = Vec::new();
             let licenses = report["licenses"].as_array().unwrap_or(&empty);
             let crates = report["crates"].as_array().unwrap_or(&empty);
             if licenses.is_empty() || crates.is_empty() {
-                findings.push(format!("{}: empty Cargo report", entry.id));
+                let error = report["error"]
+                    .as_str()
+                    .filter(|error| !error.is_empty())
+                    .unwrap_or("empty Cargo report");
+                findings.push(format!("{}: {error}", entry.id));
             } else {
                 match validate_native(&report, entry, &inputs.native_exclusions) {
                     Ok(native) => {
@@ -1594,6 +1744,125 @@ mod tests {
         )
         .unwrap();
         assert!(check_go(replaced, modules, licenses, "1.26.3").is_err());
+    }
+
+    #[test]
+    fn audited_runtime_dependencies_need_coverage_and_each_binary_needs_one_root() {
+        let packages = vec![
+            json!({"name":"application","version":"1","root":true}),
+            json!({"name":"dependency","version":"2","kind":"runtime"}),
+            json!({"name":"compiler","version":"3","kind":"build"}),
+        ];
+        let shipped = BTreeSet::from([
+            ("application".into(), "1".into()),
+            ("dependency".into(), "2".into()),
+        ]);
+        let path = Path::new("bin/application");
+        let mut used = BTreeSet::new();
+        let binary =
+            check_binary_crates(path, &packages, &shipped, &[], &mut used, "graph").unwrap();
+        assert!(binary.packages.contains(&("compiler".into(), "3".into())));
+        let missing = BTreeSet::from([("application".into(), "1".into())]);
+        let error =
+            check_binary_crates(path, &packages, &missing, &[], &mut used, "graph").unwrap_err();
+        assert!(error.to_string().contains("bin/application"));
+        assert!(error.to_string().contains("dependency"));
+        for malformed in [
+            vec![],
+            packages[1..].to_vec(),
+            vec![packages[0].clone(), packages[0].clone()],
+            vec![json!({"name":"application","version":"1","root":true,"kind":"build"})],
+            vec![
+                packages[0].clone(),
+                json!({"name":"new","version":"1","kind":"unknown"}),
+            ],
+            vec![
+                packages[0].clone(),
+                json!({"name":"new","version":"1","kind":null}),
+            ],
+        ] {
+            assert!(
+                check_binary_crates(path, &malformed, &shipped, &[], &mut used, "graph").is_err()
+            );
+        }
+        let other = vec![json!({"name":"auxiliary","version":"1","root":true})];
+        assert!(
+            check_binary_crates(
+                Path::new("bin/auxiliary"),
+                &other,
+                &shipped,
+                &[],
+                &mut used,
+                "graph"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn audit_exceptions_are_exact_evidenced_and_consumed() {
+        let fixture = Fixture::new();
+        let path = fixture.0.join("application");
+        fs::write(&path, "exact binary fixture").unwrap();
+        let packages = vec![
+            json!({"name":"application","version":"1","root":true}),
+            json!({"name":"dependency","version":"2"}),
+        ];
+        let shipped = BTreeSet::from([("application".into(), "1".into())]);
+        fs::write(
+            fixture.0.join("evidence.md"),
+            "## application\nBuild flags and dependency paths.\n",
+        )
+        .unwrap();
+        let documents = BTreeMap::from([("evidence.md".into(), fixture.0.join("evidence.md"))]);
+        let mut exceptions: Vec<AuditException> = serde_json::from_value(json!([{
+            "root":"application", "package":["dependency","2"], "graph_sha256":"graph",
+            "reason":"audit includes a disabled dependency", "evidence":"evidence.md#application"
+        }]))
+        .unwrap();
+        let path = path.as_path();
+        let mut used = BTreeSet::new();
+        check_binary_crates(path, &packages, &shipped, &exceptions, &mut used, "graph").unwrap();
+        check_audit_exceptions(&exceptions, &used, &documents).unwrap();
+        assert!(
+            check_binary_crates(path, &packages, &shipped, &exceptions, &mut used, "changed")
+                .unwrap_err()
+                .to_string()
+                .contains("does not match dependency context")
+        );
+        assert!(check_audit_exceptions(&exceptions, &BTreeSet::new(), &documents).is_err());
+        exceptions[0].reason = " ".into();
+        assert!(check_audit_exceptions(&exceptions, &used, &documents).is_err());
+        exceptions[0].reason = "reason".into();
+        for evidence in ["", "evidence.md#absent", "absent.md#application"] {
+            exceptions[0].evidence = evidence.into();
+            assert!(check_audit_exceptions(&exceptions, &used, &documents).is_err());
+        }
+        exceptions[0].evidence = "evidence.md#application".into();
+        exceptions[0].package.1 = "3".into();
+        assert!(
+            check_binary_crates(path, &packages, &shipped, &exceptions, &mut used, "graph")
+                .is_err()
+        );
+        exceptions[0].package.1 = "2".into();
+        exceptions[0].root = "another-producer".into();
+        assert!(
+            check_binary_crates(path, &packages, &shipped, &exceptions, &mut used, "graph")
+                .is_err()
+        );
+        exceptions[0].root = "application".into();
+        exceptions[0].package = ("application".into(), "1".into());
+        assert!(
+            check_binary_crates(
+                path,
+                &packages,
+                &BTreeSet::new(),
+                &exceptions,
+                &mut used,
+                "graph"
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@
 , atuinPackage, carapacePackage, helixPackage, yaziPackage, lazygitPackage, codexbarPackage }:
 let
   inherit (pkgs) lib;
+  launcher = bundleRelink.launcher;
+  auditExceptions = builtins.fromJSON (builtins.readFile ./audit-exceptions.json);
   native = import ./native.nix { inherit pkgs; };
   eonStaticInputs = [ "system-linker-runtime" "rust-standard-library" ];
   ghosttyNoticeCatalogue = "${ghostty}/deps/libghostty-vt-third-party.json";
@@ -146,14 +148,20 @@ import ./default.nix {
   grammarSources = helix.packages.${system}.grammar-sources;
   helixSource = helix;
   packages = [
-    eonPackage eonRust orbitPackage venusPackage installerPackage
+    eonPackage eonRust orbitPackage venusPackage installerPackage launcher
     animaPackage nushellPackage bashPackage starshipPackage zoxidePackage fzfPackage
     atuinPackage carapacePackage helixPackage yaziPackage lazygitPackage codexbarPackage
     pkgs.bash pkgs.curlMinimal pkgs.cacert pkgs.bc pkgs.iana-etc pkgs.mailcap pkgs.tzdata
     pkgs.xkeyboard_config
     pkgs.dejavu_fonts.minimal pkgs.stdenv.cc.cc
   ] ++ venusFonts ++ venusBuildInputs ++ venusRuntimeLibraries;
-  rustProducers = [
+  auditToolchain = { nixpkgs = toString nixpkgsSource; rust = toString rustToolchain; };
+  rustProducers = map (producer: producer // {
+    auditExceptions = lib.concatMap (exception: map (package: {
+      inherit package;
+      inherit (exception) root graph_sha256 reason evidence;
+    }) exception.packages) (auditExceptions.${producer.id} or [ ]);
+  }) [
     { id = "eon"; package = eonRust; roots = [ "eon" ]; manifest = "eon/crates/eon/Cargo.toml"; }
     { id = "orbit"; package = orbitPackage; roots = [ "yazelix-orbit" ]; manifest = "orbit/Cargo.toml"; }
     {
@@ -201,6 +209,13 @@ import ./default.nix {
     { id = "helix"; package = helixPackage; roots = [ "helix-term" ]; manifest = "helix-term/Cargo.toml"; }
     { id = "yazi"; package = yaziPackage; roots = [ "yazi-fm" "yazi-cli" ]; source = yazi; nixpkgs = true; }
     { id = "installer"; package = installerPackage; roots = [ "eon-install" ]; target = "x86_64-unknown-linux-musl"; }
+    {
+      id = "launcher";
+      package = launcher;
+      roots = [ "eon-launcher" ];
+      target = "x86_64-unknown-linux-musl";
+      sourceNotices.LICENSE = "${../../LICENSE}";
+    }
   ];
   goProducers = [
     { id = "fzf"; package = fzfPackage; binary = "fzf"; }
@@ -208,6 +223,12 @@ import ./default.nix {
     { id = "lazygit"; package = lazygitPackage; binary = "lazygit"; }
   ];
   packageOverrides = {
+    ${launcher.name} = {
+      id = "archive-launcher";
+      licenses = [ "Apache-2.0" ];
+      notice_files = [ "${../../LICENSE}" ];
+      embedded = [ "rust-nixpkgs-standard-library" "musl-runtime" ];
+    };
     ${pkgs.tzdata.name}.licenses = [ "BSD-3-Clause" "LicenseRef-TZ-Public-Domain" ];
     ${pkgs.iana-etc.name} = {
       # The generated registries use IANA/IETF's CC0 dedication, not the generator's MIT terms.
@@ -407,14 +428,6 @@ import ./default.nix {
         ${builtins.unsafeDiscardStringContext "${../../venus/assets/claude-splat-104.alpha}"} =
           "74e02f5b35b30449941a759acb6d0872aa3d3bda0bdb78760ee0eb8893479e7f";
       };
-    }
-    {
-      id = "archive-launcher";
-      version = "0.1.0";
-      source = "${../../launcher}";
-      licenses = [ "Apache-2.0" ];
-      notice_files = [ "${../../LICENSE}" ];
-      embedded = [ "rust-nixpkgs-standard-library" "musl-runtime" ];
     }
     {
       id = "go-standard-library";

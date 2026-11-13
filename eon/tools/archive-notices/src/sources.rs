@@ -119,10 +119,14 @@ fn requirements(notices: &Path, report: &Report) -> Result<BTreeMap<String, Deli
             let cargo: serde_json::Value =
                 serde_json::from_slice(&fs::read(notices.join(&file.path))?)?;
             let mut crate_licenses: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
-            for license in cargo["licenses"]
-                .as_array()
-                .ok_or("missing Cargo licenses")?
-            {
+            for license in cargo["licenses"].as_array().ok_or_else(|| {
+                format!(
+                    "{}: missing Cargo licenses in {}: {}",
+                    entry.id,
+                    file.path,
+                    cargo["error"].as_str().unwrap_or("no producer diagnostic")
+                )
+            })? {
                 let id = license["id"].as_str().ok_or("missing Cargo license ID")?;
                 if covered(id)? {
                     for usage in license["used_by"]
@@ -517,6 +521,32 @@ mod tests {
     use super::*;
     use crate::tests::Fixture;
     use serde_json::json;
+
+    #[test]
+    fn failed_cargo_producer_keeps_its_identity_and_diagnostic() {
+        let fixture = Fixture::new();
+        let producer = fixture.0.join("cargo-producer");
+        fs::create_dir(&producer).unwrap();
+        let path = producer.join("report.json");
+        fs::write(&path, br#"{"failed":true}"#).unwrap();
+        let cause = "bin/application: audited dependency missing-crate 1.0 absent from inventory";
+        fs::write(producer.join("error.txt"), cause).unwrap();
+        let mut input = fixture.input();
+        input["entries"][0]["cargo_reports"] = json!([path]);
+        let report = fixture.generate(input);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.contains("tool:") && finding.contains(cause))
+        );
+        let error = requirements(&fixture.0.join("notices"), &report)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("tool:") && error.contains("missing Cargo licenses"));
+        assert!(error.contains("cargo-0.json") && error.contains(cause));
+    }
 
     fn fixture() -> Fixture {
         let fixture = Fixture::new();
