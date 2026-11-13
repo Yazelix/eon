@@ -24,7 +24,7 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     Action, Availability, BusyTerminals, CloseConsent, CloseEnd, CloseScope, CloseTerminal,
     Editing, Ended, FILES_ENTRY, Failure, InvokeIntent, LifecycleResponse, Request, Response,
     Runtime, Screen, Sent, Snapshot, TargetId, TerminalHistory, TerminalInput, TerminalText,
@@ -759,7 +759,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v43::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v44::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -1122,6 +1122,9 @@ fn supervise(
         let starting = Runtime {
             venus: None,
             generation: generation.into(),
+            created_build: current_generation(inputs)?,
+            active_build: current_generation(inputs)?,
+            terminal_inventory: Vec::new(),
             name: None,
             started_at,
             eon_version: inputs.version.into(),
@@ -1207,12 +1210,17 @@ fn supervise(
                 .map_err(&startup_error)?
             };
             let mut snapshot = workspaces.snapshot();
+            snapshot.generation = generation.into();
+            snapshot.created_build = current_generation(inputs)?;
+            snapshot.active_build = current_generation(inputs)?;
             if let Some(running) = &running {
                 running.apply(
                     &mut snapshot,
                     WindowEntry {
                         window: window.clone(),
                         generation: generation.into(),
+                        created_build: Some(current_generation(inputs)?),
+                        active_build: Some(current_generation(inputs)?),
                         name: Some(workspaces.window_name()),
                         started_at: Some(started_at),
                         live_terminals: Some(
@@ -1369,6 +1377,8 @@ fn supervise(
         window,
         running,
         component_generation: generation.to_owned(),
+        created_build: current_generation(inputs)?,
+        active_build: current_generation(inputs)?,
         application_id: application_id.into(),
         decorations,
         workspaces,
@@ -1597,6 +1607,8 @@ struct SupervisorState {
     window: Option<String>,
     running: Option<Running>,
     component_generation: String,
+    created_build: String,
+    active_build: String,
     application_id: String,
     decorations: bool,
     workspaces: Option<WorkspaceSet>,
@@ -1724,6 +1736,8 @@ impl SupervisorState {
         Some(WindowEntry {
             window: self.window.clone(),
             generation: self.component_generation.clone(),
+            created_build: Some(self.created_build.clone()),
+            active_build: Some(self.active_build.clone()),
             name: Some(self.workspaces.as_ref()?.window_name()),
             started_at: Some(self.started_at),
             live_terminals: Some(
@@ -1775,6 +1789,9 @@ impl SupervisorState {
                 Instant::now(),
             );
         }
+        snapshot.generation = self.component_generation.clone();
+        snapshot.created_build = self.created_build.clone();
+        snapshot.active_build = self.active_build.clone();
         snapshot.busy = self.busy(None);
         Ok(snapshot)
     }
@@ -1814,6 +1831,9 @@ impl SupervisorState {
             if let Some(attention) = &mut self.attention {
                 attention.present(&mut snapshot, &every, viewing, now);
             }
+            snapshot.generation = self.component_generation.clone();
+            snapshot.created_build = self.created_build.clone();
+            snapshot.active_build = self.active_build.clone();
             prepared.push(snapshot);
         }
         let busy = match &self.attention {
@@ -3798,7 +3818,7 @@ fn dispatch_registered_request(
             ) && state
                 .attention
                 .as_ref()
-                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v43::Sidebar::Off)
+                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v44::Sidebar::Off)
             {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
@@ -4426,6 +4446,11 @@ fn runtime_status(
             .as_ref()
             .map(|venus| venus.executable.to_string_lossy().into_owned()),
         generation: generation.into(),
+        created_build: state.created_build.clone(),
+        active_build: state.active_build.clone(),
+        terminal_inventory: live_sessions(&state.sessions, state.workspaces.as_ref())
+            .map(RunningSession::inventory)
+            .collect(),
         name: state.workspaces.as_ref().map(WorkspaceSet::window_name),
         started_at: state.started_at,
         eon_version: inputs.version.into(),
@@ -4567,13 +4592,15 @@ mod tests {
         let (failed_starts, input, pid) = sessions::tests::retained_start(&root);
         let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eonbase");
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts,
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: None,
@@ -4697,13 +4724,13 @@ mod tests {
         let inspected = crate::control::send_action_from_until(
             &socket,
             None,
-            Action::Workspace(eon_workspace_protocol::v43::WorkspaceAction::InspectRuntime),
+            Action::Workspace(eon_workspace_protocol::v44::WorkspaceAction::InspectRuntime),
             deadline,
         )
         .unwrap();
         assert!(
             matches!(inspected, crate::control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v43::LifecycleResponse::Runtime(runtime)
+            eon_workspace_protocol::v44::LifecycleResponse::Runtime(runtime)
         ) if !runtime.attach.available && runtime.attach.reason.contains("cleanup is incomplete"))
         );
         assert!(
@@ -4777,7 +4804,7 @@ mod tests {
             root,
             endpoint,
             id,
-            "component-1",
+            "g1-00000000000000000000000000000001",
             root,
             &["sh".into(), "-c".into(), "exec sleep 300".into()],
             None,
@@ -4816,7 +4843,7 @@ mod tests {
 
     #[test]
     fn a_consent_matches_on_generation_runs_and_end_only() {
-        use eon_workspace_protocol::v43::{
+        use eon_workspace_protocol::v44::{
             CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
         };
         let mut scope = CloseScope {
@@ -4850,7 +4877,7 @@ mod tests {
         assert!(super::consent_matches(&consent, &scope, "g1"));
         for bad in [
             super::CloseConsent {
-                generation: "g2".into(),
+                generation: "g1-00000000000000000000000000000002".into(),
                 ..consent.clone()
             },
             super::CloseConsent {
@@ -4880,7 +4907,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_column_close_never_runs_without_a_consent_that_names_its_runs() {
-        use eon_workspace_protocol::v43::{CloseEnd, Side};
+        use eon_workspace_protocol::v44::{CloseEnd, Side};
         let root = temporary_directory();
         let (mut state, _) = finishing_window(&root);
         // A one-pane final column always asks, even once the default shell is idle.
@@ -5227,7 +5254,7 @@ mod tests {
             let mut runs = sessions::acquire_generation_sessions(
                 &root,
                 LaunchMode::Workspace,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 &[],
                 None,
                 Instant::now() + SESSION_CLEANUP_TIMEOUT,
@@ -5299,7 +5326,7 @@ mod tests {
             let acquired = sessions::acquire_generation_sessions(
                 &root,
                 LaunchMode::Workspace,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 &state.sessions,
                 state.log.orbit_directory().ok(),
                 deadline,
@@ -5320,7 +5347,7 @@ mod tests {
             assert_eq!(error.code, "column-close-failed", "{context}: {error:?}");
             assert!(error.detail.contains("terminal-9"), "{context}: {error:?}");
             assert!(
-                eon_workspace_protocol::v43::encode_response(&super::Response::Failure(
+                eon_workspace_protocol::v44::encode_response(&super::Response::Failure(
                     error.clone()
                 ))
                 .is_ok(),
@@ -5382,7 +5409,7 @@ mod tests {
             let untracked = sessions::untracked_runs(
                 &root,
                 LaunchMode::Workspace,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 &state.sessions,
                 deadline,
             )
@@ -5514,7 +5541,7 @@ mod tests {
                 (
                     None,
                     crate::control::ControlResponse::Workspace(super::Response::Snapshot(snapshot)),
-                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v43::Sidebar::Off),
+                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v44::Sidebar::Off),
                 _ => panic!("unexpected sidebar result"),
             }
         }
@@ -5648,9 +5675,13 @@ mod tests {
         if root.join("venus").exists() {
             inputs.venus = root.join("venus");
         }
-        let generation =
-            std::env::var("EON_C38_GENERATION").unwrap_or_else(|_| "component-1".into());
-        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "component-1", "eon");
+        let generation = std::env::var("EON_C38_GENERATION")
+            .unwrap_or_else(|_| "g1-00000000000000000000000000000001".into());
+        let log = DiagnosticLog::open_in(
+            Ok(root.join("logs")),
+            "g1-00000000000000000000000000000001",
+            "eon",
+        );
         let lock = super::lock_supervisor_lifecycle(&root.join("startup.lock")).unwrap();
         let mode = if std::env::var_os("EON_C38_BASE").is_some() {
             LaunchMode::Terminal
@@ -5953,7 +5984,7 @@ mod tests {
     #[test]
     fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
         use crate::session_registry::{Operation, Registry, Worker};
-        use eon_workspace_protocol::v43::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v44::{Change, SubscriptionMessage, WorkspaceChange};
         let (root, inputs, mut state, old_peer) = subscribed_window();
         drop(old_peer);
         let registry_root = root.join("registry");
@@ -5977,7 +6008,8 @@ mod tests {
             )
             .unwrap(),
         );
-        state.subscribers = crate::subscriptions::Subscribers::new("component-1");
+        state.subscribers =
+            crate::subscriptions::Subscribers::new("g1-00000000000000000000000000000001");
         let before = state.workspace_snapshot_in(None).unwrap();
         let Dispatched::Subscribe(subscriber) = super::dispatch(
             super::Incoming::Request(super::Request {
@@ -5992,7 +6024,7 @@ mod tests {
             &inputs,
             &root,
             &root,
-            "component-1",
+            "g1-00000000000000000000000000000001",
         ) else {
             panic!("subscription refused");
         };
@@ -6012,7 +6044,7 @@ mod tests {
         state.registry_worker = Some(worker);
         state.registry_pending = Some(super::RegistryPending::Recovery("s1".into()));
         std::thread::sleep(Duration::from_millis(100));
-        state.poll_registry(&inputs, &root, &root, "component-1");
+        state.poll_registry(&inputs, &root, &root, "g1-00000000000000000000000000000001");
         assert!(
             state.workspace_snapshot_in(None).unwrap().workspaces[0]
                 .persistent_id
@@ -6025,7 +6057,7 @@ mod tests {
                 Instant::now() < deadline,
                 "recovered registration did not retry"
             );
-            state.poll_registry(&inputs, &root, &root, "component-1");
+            state.poll_registry(&inputs, &root, &root, "g1-00000000000000000000000000000001");
             state.end_turn(Instant::now());
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -6064,20 +6096,23 @@ mod tests {
         let socket = root.join("eon.sock");
         let listener = control::ControlListener::bind(&socket).unwrap();
         let generation = "g1-00000000000000000000000000000001";
-        let starting = eon_workspace_protocol::v43::Runtime {
+        let starting = eon_workspace_protocol::v44::Runtime {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
+            terminal_inventory: Vec::new(),
             venus: None,
             generation: generation.into(),
             name: None,
             started_at: 1,
             eon_version: inputs.version.into(),
-            workspace_protocol: eon_workspace_protocol::v43::VERSION,
+            workspace_protocol: eon_workspace_protocol::v44::VERSION,
             component_report: inputs.component_report().unwrap().into(),
             sessions: Vec::new(),
-            attach: eon_workspace_protocol::v43::Availability {
+            attach: eon_workspace_protocol::v44::Availability {
                 available: false,
                 reason: "registering".into(),
             },
-            stop: eon_workspace_protocol::v43::Availability {
+            stop: eon_workspace_protocol::v44::Availability {
                 available: true,
                 reason: "starting".into(),
             },
@@ -6092,7 +6127,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v43::LifecycleResponse::Runtime(status),
+            eon_workspace_protocol::v44::LifecycleResponse::Runtime(status),
         ) = control::send_action(&socket, Action::Workspace(WorkspaceAction::InspectRuntime))
             .unwrap()
         else {
@@ -6130,7 +6165,7 @@ mod tests {
             control,
             session_registry::{Fault, Registry, Worker},
         };
-        use eon_workspace_protocol::v43::{Request, encode_request};
+        use eon_workspace_protocol::v44::{Request, encode_request};
         use std::io::Write;
         let (root, inputs, mut state, peer) = subscribed_window();
         let registry_root = root.join("registry");
@@ -6299,13 +6334,15 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: Some(workspace),
@@ -6339,7 +6376,7 @@ mod tests {
                 &inputs,
                 &root,
                 &root,
-                "component-1",
+                "g1-00000000000000000000000000000001",
             )
         };
         let refusal = |dispatched| match dispatched {
@@ -6359,20 +6396,20 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v43::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v44::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v43::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v44::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v43::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v44::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v43::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v43::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v44::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v44::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
-        assert_eq!(subscribed.generation, "component-1");
+        assert_eq!(subscribed.generation, "g1-00000000000000000000000000000001");
         assert_eq!(
             subscribed.snapshot.unwrap().workspaces[0].workspace.id,
             before.workspace
@@ -6384,7 +6421,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v43::Filter {
+        let missing = eon_workspace_protocol::v44::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -6435,7 +6472,7 @@ mod tests {
             "session-unavailable"
         );
         // Stop, quit and the final close end the stream.
-        state.subscribers.end("component-1");
+        state.subscribers.end("g1-00000000000000000000000000000001");
         let mut rest = Vec::new();
         peer.read_to_end(&mut rest).unwrap();
         assert!(!rest.is_empty());
@@ -6499,7 +6536,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v43::SubscriptionMessage;
+        use eon_workspace_protocol::v44::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -6512,6 +6549,8 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: Some(
                 crate::session_registry::Worker::start(workspace.registry().clone()).unwrap(),
@@ -6520,7 +6559,7 @@ mod tests {
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: Some(workspace),
@@ -6553,7 +6592,7 @@ mod tests {
             &inputs,
             &root,
             &root,
-            "component-1",
+            "g1-00000000000000000000000000000001",
         ) else {
             panic!("a subscription is served");
         };
@@ -6577,9 +6616,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v43::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v44::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v43::{
+        use eon_workspace_protocol::v44::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -6617,7 +6656,16 @@ mod tests {
     ) {
         state.tend(Instant::now());
         let accepted = control
-            .accept(|request| super::dispatch(request, state, inputs, root, root, "component-1"))
+            .accept(|request| {
+                super::dispatch(
+                    request,
+                    state,
+                    inputs,
+                    root,
+                    root,
+                    "g1-00000000000000000000000000000001",
+                )
+            })
             .unwrap();
         state.end_turn(Instant::now());
         assert!(!matches!(accepted, super::Accepted::None));
@@ -6631,7 +6679,7 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(5);
             while state.registry_pending.is_some() {
                 assert!(Instant::now() < deadline, "registry did not complete");
-                state.poll_registry(inputs, root, root, "component-1");
+                state.poll_registry(inputs, root, root, "g1-00000000000000000000000000000001");
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
@@ -6639,9 +6687,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v43::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v44::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v43::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v44::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -6660,8 +6708,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v43::SubscriptionMessage> {
-        use eon_workspace_protocol::v43::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v44::SubscriptionMessage> {
+        use eon_workspace_protocol::v44::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -6689,7 +6737,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v43::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v44::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -6712,13 +6760,15 @@ mod tests {
         )
         .unwrap();
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: Some(workspace),
@@ -6743,8 +6793,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v43::Filter {
-                        kinds: vec![eon_workspace_protocol::v43::EventKind::Attention],
+                    filter: eon_workspace_protocol::v44::Filter {
+                        kinds: vec![eon_workspace_protocol::v44::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -6754,7 +6804,7 @@ mod tests {
             &inputs,
             &root,
             &root,
-            "component-1",
+            "g1-00000000000000000000000000000001",
         ) else {
             panic!("a subscription is served");
         };
@@ -6837,13 +6887,15 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn finishing_window(root: &Path) -> (FinishingWindow, PathBuf) {
         let state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: None,
@@ -7178,11 +7230,11 @@ mod tests {
             &inputs,
             &root,
             &root,
-            "component-1",
+            "g1-00000000000000000000000000000001",
         );
         assert!(!ended);
         assert!(
-            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v43::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
+            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v44::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
         );
         let failed = super::reload_presentation(
             &mut fixture.state,
@@ -7259,7 +7311,7 @@ mod tests {
         assert_eq!(state.workspaces.as_ref().unwrap().snapshot(), before);
         assert_eq!(
             state.attention.as_ref().unwrap().sidebar(),
-            eon_workspace_protocol::v43::Sidebar::Closed
+            eon_workspace_protocol::v44::Sidebar::Closed
         );
         assert!(shown().is_none());
         drop(state);
@@ -7269,7 +7321,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn reload_crash_or_failed_reattach_returns_to_the_own_build() {
-        use eon_workspace_protocol::v43::LifecycleResponse;
+        use eon_workspace_protocol::v44::LifecycleResponse;
         use std::{io::Write, os::unix::fs::OpenOptionsExt, thread};
         for outcome in [9, 0] {
             let root = temporary_directory();
@@ -7364,7 +7416,7 @@ mod tests {
                     &inputs,
                     &root,
                     &root,
-                    "component-1",
+                    "g1-00000000000000000000000000000001",
                 )
             };
             if outcome == 0 {
@@ -7409,16 +7461,16 @@ mod tests {
             return;
         };
         let result = std::env::var_os("EON_RELOAD_ATTACH_RESULT").unwrap();
-        let mut startup = vec![0; eon_workspace_protocol::v43::HEADER_BYTES];
+        let mut startup = vec![0; eon_workspace_protocol::v44::HEADER_BYTES];
         std::io::stdin().read_exact(&mut startup).unwrap();
-        let length = eon_workspace_protocol::v43::declared_message_len(&startup).unwrap();
+        let length = eon_workspace_protocol::v44::declared_message_len(&startup).unwrap();
         startup.resize(length, 0);
         std::io::stdin()
-            .read_exact(&mut startup[eon_workspace_protocol::v43::HEADER_BYTES..])
+            .read_exact(&mut startup[eon_workspace_protocol::v44::HEADER_BYTES..])
             .unwrap();
         assert!(matches!(
-            eon_workspace_protocol::v43::decode_response(&startup).unwrap(),
-            eon_workspace_protocol::v43::Response::Snapshot(_)
+            eon_workspace_protocol::v44::decode_response(&startup).unwrap(),
+            eon_workspace_protocol::v44::Response::Snapshot(_)
         ));
         let read = |stream: &mut UnixStream| {
             let mut bytes = vec![0; orbs::HEADER_BYTES];
@@ -7685,8 +7737,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v43::Attention>,
-        Vec<eon_workspace_protocol::v43::QueueEntry>,
+        Option<eon_workspace_protocol::v44::Attention>,
+        Vec<eon_workspace_protocol::v44::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -7701,14 +7753,14 @@ mod tests {
             &crate::fixtures::inputs(),
             Path::new("/unused"),
             Path::new("/unused"),
-            "component-1",
+            "g1-00000000000000000000000000000001",
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v43::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v44::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v43::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v44::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -7728,10 +7780,10 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v43::AttentionState {
-        use eon_workspace_protocol::v43::AttentionState;
+    ) -> eon_workspace_protocol::v44::AttentionState {
+        use eon_workspace_protocol::v44::AttentionState;
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
-        let changed = |attention: &Option<eon_workspace_protocol::v43::Attention>| {
+        let changed = |attention: &Option<eon_workspace_protocol::v44::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -7791,7 +7843,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v43::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v44::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -7823,7 +7875,7 @@ mod tests {
             &crate::fixtures::inputs(),
             &root,
             &root,
-            "component-1",
+            "g1-00000000000000000000000000000001",
         );
         assert!(!ended);
         assert_eq!(queued(&mut state), (Some(Finished), 1), "focused by CLI");
@@ -7911,7 +7963,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v43::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v44::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -7999,13 +8051,15 @@ mod tests {
         .unwrap();
         let (notices, take_close) = crate::notification::Notices::record_closes();
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: Some(workspace),
@@ -8037,7 +8091,7 @@ mod tests {
                     &inputs,
                     &root,
                     &root,
-                    "component-1",
+                    "g1-00000000000000000000000000000001",
                 );
                 assert!(!ended);
                 assert!(matches!(
@@ -8088,13 +8142,15 @@ mod tests {
         venus.child.wait().unwrap();
         let (notices, take_show) = crate::notification::Notices::record_shows();
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: Some(workspace),
@@ -8239,13 +8295,15 @@ mod tests {
         );
         assert_eq!(sessions.len(), 2);
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: None,
@@ -8450,13 +8508,15 @@ mod tests {
         let record = sessions::tests::record(&sessions[0]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: None,
@@ -8551,14 +8611,17 @@ mod tests {
         let session = sessions::tests::leased_orbit_with_program(&root, "exec sleep 30", &launcher);
         let orbit = orbit_pid(&session);
         let orbit_logs = root.join("launch-logs/orbit");
-        let orbit_log = orbit_logs.join(format!("component-1-terminal-1-{}.log", session.run_id()));
+        let orbit_log = orbit_logs.join(format!(
+            "g1-00000000000000000000000000000001-terminal-1-{}.log",
+            session.run_id()
+        ));
         assert_eq!(session.orbit_log.as_ref(), Some(&orbit_log));
         // A supervisor that recovers the run rebuilds its log path.
         sessions::tests::release_lease(session);
         let (sessions, _) = sessions::recover_sessions(
             &root,
             LaunchMode::Workspace,
-            "component-1",
+            "g1-00000000000000000000000000000001",
             Some(&orbit_logs),
             Instant::now() + SESSION_CLEANUP_TIMEOUT,
         )
@@ -8566,13 +8629,15 @@ mod tests {
         assert_eq!(sessions[0].orbit_log.as_ref(), Some(&orbit_log));
         kill_orbit_worker(orbit);
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: None,
@@ -8628,13 +8693,15 @@ mod tests {
         let orbit_log = session.orbit_log.clone().unwrap();
         kill_worker(&session);
         let mut state = SupervisorState {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: None,
@@ -8838,7 +8905,7 @@ mod tests {
                 &inputs,
                 &root,
                 &log,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 &mut owned,
                 &mut sessions::FailedStarts::default(),
                 &mut Vec::new(),
@@ -8859,7 +8926,7 @@ mod tests {
             let (mut recovered, pair) = sessions::recover_sessions(
                 &root,
                 LaunchMode::Workspace,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 None,
                 Instant::now() + SESSION_CLEANUP_TIMEOUT,
             )
@@ -8889,16 +8956,19 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v43::{
+        use eon_workspace_protocol::v44::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
 
         let root = temporary_directory();
         let snapshot = Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v44::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -8945,7 +9015,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v43::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v44::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
@@ -10095,7 +10165,9 @@ rows = 30
             started_at: 1,
             window: None,
             running: None,
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             application_id: String::new(),
             decorations: false,
             workspaces: None,
@@ -10233,12 +10305,15 @@ rows = 30
             .next()
             .expect("launcher spawned Orbit");
         let orbit_logs = root.join("launch-logs/orbit");
-        let orbit_log = orbit_logs.join(format!("component-1-terminal-1-{}.log", session.run_id()));
+        let orbit_log = orbit_logs.join(format!(
+            "g1-00000000000000000000000000000001-terminal-1-{}.log",
+            session.run_id()
+        ));
         sessions::tests::release_lease(session);
         let (sessions, _) = sessions::recover_sessions(
             &root,
             LaunchMode::Workspace,
-            "component-1",
+            "g1-00000000000000000000000000000001",
             Some(&orbit_logs),
             Instant::now() + SESSION_CLEANUP_TIMEOUT,
         )

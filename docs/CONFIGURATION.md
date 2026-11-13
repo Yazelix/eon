@@ -64,6 +64,19 @@ send_enter_delay_ms = 300
 send_typing_quiet_ms = 2000
 ```
 
+## Runtime identity and protocol bounds
+
+`generation`, `created_build`, `active_build` and known `origin_build` use the
+fixed `g1-` plus 32 lowercase hexadecimal spelling. They describe lifetime and
+build roles, not configurable names. This baseline uses EONW v44; the ordinary
+frame ceiling remains 2 MiB. Lifecycle `terminal_inventory` follows the existing
+terminal-ID list and has at most 256 entries, with terminal/run IDs bounded by
+128 bytes and at most 78,850 encoded inventory bytes. Unknown recovered launch
+facts are null. These fixed format/resource bounds and machine field names
+keep producers and consumers in agreement; no preference changes them.
+`updating` is a fixed protocol End reason (exit 1), not a configurable timeout
+or an ended lifetime. In-place Update remains planned.
+
 ## Built-in defaults
 
 `eon config schema --json` describes this build's active configuration keys,

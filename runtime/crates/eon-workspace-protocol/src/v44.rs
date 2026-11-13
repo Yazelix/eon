@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v43 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v44 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -25,7 +25,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 43;
+pub const VERSION: u16 = 44;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -663,6 +663,8 @@ pub struct WindowEntry {
     /// Null for the default namespace.
     pub window: Option<String>,
     pub generation: String,
+    pub created_build: Option<String>,
+    pub active_build: Option<String>,
     pub name: Option<String>,
     /// Unix milliseconds at supervisor start; recovery restarts the clock.
     pub started_at: Option<u64>,
@@ -696,6 +698,9 @@ pub struct BusyTerminals {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
+    pub generation: String,
+    pub created_build: String,
+    pub active_build: String,
     /// The workspace described by tabs/active_tab; caller replies may project a hidden one.
     pub workspace: String,
     pub active_workspace: String,
@@ -888,6 +893,9 @@ pub struct Availability {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Runtime {
     pub generation: String,
+    pub created_build: String,
+    pub active_build: String,
+    pub terminal_inventory: Vec<TerminalInventory>,
     /// The executable of the presenting Venus, or none while detached.
     pub venus: Option<String>,
     pub name: Option<String>,
@@ -901,6 +909,19 @@ pub struct Runtime {
     /// The snapshot's list, without the caller of an inspection that names
     /// one; None in eonbase.
     pub busy: Option<BusyTerminals>,
+}
+
+/// Launch facts for a retained Orbit run, never management authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalInventory {
+    pub terminal: String,
+    pub run: String,
+    pub origin_build: Option<String>,
+    pub management_version: u16,
+    pub record_generation: u16,
+    /// Validated assembly facts at launch; unknown after supervisor loss.
+    pub orbs: Option<u16>,
+    pub orbf: Option<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1794,6 +1815,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
         Response::Snapshot(snapshot) => {
             let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
             let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
+            validate_snapshot_identity(snapshot)?;
             let google = snapshot.google_quota.as_ref().map(google_as_codex);
             validate_workspace(snapshot, &tabs)?;
             validate_running(snapshot.running.as_ref())?;
@@ -1820,6 +1842,9 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_attention_queue(&mut payload, &snapshot.attention_queue);
             encode_running(&mut payload, snapshot.running.as_ref());
             encode_busy(&mut payload, snapshot.busy.as_ref());
+            payload.string(&snapshot.generation);
+            payload.string(&snapshot.created_build);
+            payload.string(&snapshot.active_build);
             SNAPSHOT
         }
         Response::Failure(failure) => {
@@ -2297,6 +2322,10 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     snapshot.running = decode_running(&mut decoder)?;
     validate_running(snapshot.running.as_ref())?;
     snapshot.busy = decode_busy(&mut decoder)?;
+    snapshot.generation = decoder.string("generation", 35)?;
+    snapshot.created_build = decoder.string("created build", 35)?;
+    snapshot.active_build = decoder.string("active build", 35)?;
+    validate_snapshot_identity(&snapshot)?;
     validate_busy(snapshot.busy.as_ref())?;
     validate_workspace(&snapshot, &wire_tabs)?;
     validate_codex(snapshot.codex_quota.as_ref())?;
@@ -2511,6 +2540,9 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         tabs.push(decode_wire_tab(decoder, &mut sessions)?);
     }
     let snapshot = Snapshot {
+        generation: String::new(),
+        created_build: String::new(),
+        active_build: String::new(),
         workspace: String::new(),
         active_workspace: String::new(),
         workspaces: Vec::new(),
@@ -3344,7 +3376,15 @@ fn validate_window_id(window: Option<&str>) -> Result<()> {
 
 fn validate_window(entry: &WindowEntry) -> Result<()> {
     validate_window_id(entry.window.as_deref())?;
-    identity("generation", &entry.generation)?;
+    generation_identity("generation", &entry.generation)?;
+    for (field, build) in [
+        ("created build", &entry.created_build),
+        ("active build", &entry.active_build),
+    ] {
+        if let Some(build) = build {
+            generation_identity(field, build)?;
+        }
+    }
     validate_window_name(entry.name.as_deref())?;
     if entry
         .live_terminals
@@ -3354,10 +3394,16 @@ fn validate_window(entry: &WindowEntry) -> Result<()> {
             field: "live terminals",
         });
     }
-    let known =
-        entry.name.is_some() && entry.started_at.is_some() && entry.live_terminals.is_some();
-    let unknown =
-        entry.name.is_none() && entry.started_at.is_none() && entry.live_terminals.is_none();
+    let known = entry.name.is_some()
+        && entry.started_at.is_some()
+        && entry.live_terminals.is_some()
+        && entry.created_build.is_some()
+        && entry.active_build.is_some();
+    let unknown = entry.name.is_none()
+        && entry.started_at.is_none()
+        && entry.live_terminals.is_none()
+        && entry.created_build.is_none()
+        && entry.active_build.is_none();
     if !(if entry.state == WindowState::Live {
         known
     } else {
@@ -3410,6 +3456,11 @@ fn encode_window(encoder: &mut Encoder, entry: &WindowEntry) {
         WindowState::Incompatible => 1,
         WindowState::Unreachable => 2,
     });
+    encoder.byte(u8::from(entry.created_build.is_some()));
+    if let (Some(created), Some(active)) = (&entry.created_build, &entry.active_build) {
+        encoder.string(created);
+        encoder.string(active);
+    }
 }
 
 fn decode_window_name(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
@@ -3441,6 +3492,13 @@ fn decode_window(decoder: &mut Decoder<'_>) -> Result<WindowEntry> {
             });
         }
     };
+    let builds = decode_bool(decoder, "window builds")?;
+    let created_build = builds
+        .then(|| decoder.string("created build", 35))
+        .transpose()?;
+    let active_build = builds
+        .then(|| decoder.string("active build", 35))
+        .transpose()?;
     Ok(WindowEntry {
         window,
         generation,
@@ -3448,6 +3506,8 @@ fn decode_window(decoder: &mut Decoder<'_>) -> Result<WindowEntry> {
         started_at,
         live_terminals,
         state,
+        created_build,
+        active_build,
     })
 }
 
@@ -3572,6 +3632,9 @@ pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>
                 .extend_from_slice(&runtime.started_at.to_le_bytes());
             encode_busy(&mut payload, runtime.busy.as_ref());
             encode_optional(&mut payload, &runtime.venus);
+            payload.string(&runtime.created_build);
+            payload.string(&runtime.active_build);
+            encode_inventory(&mut payload, &runtime.terminal_inventory);
             RUNTIME
         }
         LifecycleResponse::Failure(failure) => {
@@ -3588,7 +3651,7 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
     let response = match kind {
         RUNTIME => {
             let runtime = Runtime {
-                generation: decoder.string("generation", MAX_ID_BYTES)?,
+                generation: decoder.string("generation", 35)?,
                 eon_version: decoder.string("Eon version", MAX_VERSION_BYTES)?,
                 workspace_protocol: decoder.number()?,
                 component_report: decoder.string("component report", MAX_COMPONENT_REPORT_BYTES)?,
@@ -3603,6 +3666,9 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
                 } else {
                     None
                 },
+                created_build: decoder.string("created build", 35)?,
+                active_build: decoder.string("active build", 35)?,
+                terminal_inventory: decode_inventory(&mut decoder)?,
             };
             validate_runtime(&runtime)?;
             LifecycleResponse::Runtime(runtime)
@@ -3620,7 +3686,33 @@ fn validate_runtime(runtime: &Runtime) -> Result<()> {
     }
     validate_window_name(runtime.name.as_deref())?;
     validate_busy(runtime.busy.as_ref())?;
-    identity("generation", &runtime.generation)?;
+    generation_identity("generation", &runtime.generation)?;
+    generation_identity("created build", &runtime.created_build)?;
+    generation_identity("active build", &runtime.active_build)?;
+    validate_sessions(&runtime.sessions)?;
+    if runtime.terminal_inventory.len() != runtime.sessions.len() {
+        return Err(Error::InvalidValue {
+            field: "terminal inventory",
+        });
+    }
+    let mut runs = HashSet::new();
+    for (terminal, host) in runtime.sessions.iter().zip(&runtime.terminal_inventory) {
+        identity("run", &host.run)?;
+        if terminal != &host.terminal
+            || !runs.insert(&host.run)
+            || host.management_version == 0
+            || host.record_generation == 0
+            || host.orbs == Some(0)
+            || host.orbf == Some(0)
+        {
+            return Err(Error::InvalidValue {
+                field: "terminal inventory",
+            });
+        }
+        if let Some(build) = &host.origin_build {
+            generation_identity("origin build", build)?;
+        }
+    }
     nonempty("Eon version", &runtime.eon_version, MAX_VERSION_BYTES)?;
     if runtime.workspace_protocol == 0 {
         return Err(Error::InvalidValue {
@@ -3632,7 +3724,6 @@ fn validate_runtime(runtime: &Runtime) -> Result<()> {
         &runtime.component_report,
         MAX_COMPONENT_REPORT_BYTES,
     )?;
-    validate_sessions(&runtime.sessions)?;
     nonempty("attach reason", &runtime.attach.reason, MAX_DETAIL_BYTES)?;
     nonempty("stop reason", &runtime.stop.reason, MAX_DETAIL_BYTES)
 }
@@ -3795,6 +3886,85 @@ fn validate_endpoint(endpoint: &[u8]) -> Result<()> {
 /// Whether a request may carry `caller` as its calling terminal.
 pub fn valid_caller(caller: &str) -> bool {
     identity("caller", caller).is_ok()
+}
+
+/// Lifetime and build digests share the frozen Reserved Stop spelling.
+/// Reserved Stop deliberately keeps its own independent validator.
+pub fn valid_generation(value: &str) -> bool {
+    value.len() == 35
+        && value.starts_with("g1-")
+        && value.as_bytes()[3..]
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn generation_identity(field: &'static str, value: &str) -> Result<()> {
+    if valid_generation(value) {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue { field })
+    }
+}
+
+fn validate_snapshot_identity(snapshot: &Snapshot) -> Result<()> {
+    generation_identity("generation", &snapshot.generation)?;
+    generation_identity("created build", &snapshot.created_build)?;
+    generation_identity("active build", &snapshot.active_build)?;
+    if let Some(running) = &snapshot.running
+        && (running.this.generation != snapshot.generation
+            || running.this.created_build.as_ref() != Some(&snapshot.created_build)
+            || running.this.active_build.as_ref() != Some(&snapshot.active_build))
+    {
+        return Err(Error::InvalidValue {
+            field: "snapshot builds",
+        });
+    }
+    Ok(())
+}
+
+fn encode_optional_version(encoder: &mut Encoder, version: Option<u16>) {
+    encoder.byte(u8::from(version.is_some()));
+    if let Some(version) = version {
+        encoder.number(version);
+    }
+}
+
+fn decode_optional_version(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Option<u16>> {
+    decode_bool(decoder, field)?
+        .then(|| decoder.number())
+        .transpose()
+}
+
+fn encode_inventory(encoder: &mut Encoder, hosts: &[TerminalInventory]) {
+    encoder.count(hosts.len());
+    for host in hosts {
+        encoder.string(&host.terminal);
+        encoder.string(&host.run);
+        encode_optional(encoder, &host.origin_build);
+        encoder.number(host.management_version);
+        encoder.number(host.record_generation);
+        encode_optional_version(encoder, host.orbs);
+        encode_optional_version(encoder, host.orbf);
+    }
+}
+
+fn decode_inventory(decoder: &mut Decoder<'_>) -> Result<Vec<TerminalInventory>> {
+    let count = decoder.count("terminal inventory", MAX_SESSIONS)?;
+    (0..count)
+        .map(|_| {
+            Ok(TerminalInventory {
+                terminal: decoder.string("terminal", MAX_ID_BYTES)?,
+                run: decoder.string("run", MAX_ID_BYTES)?,
+                origin_build: decode_bool(decoder, "origin build")?
+                    .then(|| decoder.string("origin build", 35))
+                    .transpose()?,
+                management_version: decoder.number()?,
+                record_generation: decoder.number()?,
+                orbs: decode_optional_version(decoder, "ORBS")?,
+                orbf: decode_optional_version(decoder, "ORBF")?,
+            })
+        })
+        .collect()
 }
 
 fn identity(field: &'static str, value: &str) -> Result<()> {
@@ -4082,18 +4252,18 @@ mod tests {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e572b0001000700000002007231002d00",
+                "454f4e572c0001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e572b0001000700000002007231002d01",
+                "454f4e572c0001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e572b0001000b00000002007231002c0200703200",
+                "454f4e572c0001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -4129,14 +4299,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572b0001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e572c0001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572b008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e572c008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -4621,6 +4791,9 @@ mod tests {
             record: None,
         });
         Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
@@ -4713,13 +4886,18 @@ mod tests {
         encode_attention_queue(&mut payload, &snapshot.attention_queue);
         encode_running(&mut payload, snapshot.running.as_ref());
         encode_busy(&mut payload, snapshot.busy.as_ref());
+        payload.string(&snapshot.generation);
+        payload.string(&snapshot.created_build);
+        payload.string(&snapshot.active_build);
         frame(SNAPSHOT, payload.bytes).unwrap()
     }
 
     fn window_entry() -> WindowEntry {
         WindowEntry {
+            created_build: Some("g1-00000000000000000000000000000001".into()),
+            active_build: Some("g1-00000000000000000000000000000001".into()),
             window: Some("abcdef01".into()),
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             name: Some("🦀".repeat(64)),
             started_at: Some(u64::MAX),
             live_terminals: Some(MAX_SESSIONS as u16),
@@ -4738,8 +4916,11 @@ mod tests {
     fn busy_terminals_round_trip_and_reject_forged_bounds() {
         let mut state = snapshot();
         let runtime = Runtime {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
+            terminal_inventory: Vec::new(),
             venus: None,
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             name: None,
             started_at: 1,
             eon_version: "0.1.13".into(),
@@ -4851,8 +5032,10 @@ mod tests {
         let mut state = snapshot();
         let this = window_entry();
         let unknown = WindowEntry {
+            created_build: None,
+            active_build: None,
             window: None,
-            generation: "g2".into(),
+            generation: "g1-00000000000000000000000000000002".into(),
             name: None,
             started_at: None,
             live_terminals: None,
@@ -4866,7 +5049,7 @@ mod tests {
                 unknown.clone(),
                 WindowEntry {
                     state: WindowState::Unreachable,
-                    generation: "g3".into(),
+                    generation: "g1-00000000000000000000000000000003".into(),
                     ..unknown.clone()
                 },
             ]),
@@ -4942,8 +5125,11 @@ mod tests {
             assert!(decode_response(&forged).is_err());
         }
         let runtime = Runtime {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
+            terminal_inventory: Vec::new(),
             venus: None,
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             name: Some("🦀".repeat(64)),
             started_at: u64::MAX,
             eon_version: "0.1.11".into(),
@@ -5555,14 +5741,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e572b0001000a00000002007231001202007431",
+                "454f4e572c0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e572b0001001000000002007231000c0200743104002f746d70",
+                "454f4e572c0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -5571,29 +5757,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572b00010015000000020072310013020074310300676974010200753101",
+                "454f4e572c00010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572b00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572c00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e572b0001000a00000002007231001702007032",
+                "454f4e572c0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572b00010006000000020072310019",
+                "454f4e572c00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e572b0001000e00000002007231001a06002f746d702f61",
+                "454f4e572c0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e572b0001001000000002007231001b00020002006878010061",
+                "454f4e572c0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -5601,7 +5787,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e572b0001000f00000002007231002504002f746d70000001",
+                "454f4e572c0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -5609,44 +5795,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e572b0001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e572c0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e572b0001000600000002007231001c",
+                "454f4e572c0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e572b0001000e00000002007231001d0200743102007032",
+                "454f4e572c0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e572b0001000600000002007231001e",
+                "454f4e572c0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e572b0001000600000002007231001f",
+                "454f4e572c0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e572b0001000a00000002007231002602007032",
+                "454f4e572c0001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e572b0001000a00000002007231002902007032",
+                "454f4e572c0001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e572b0001000a00000002007231002a02007032",
+                "454f4e572c0001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -5655,7 +5841,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572b00010012000000020072310027020070320000020000006869",
+                "454f4e572c00010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -5663,7 +5849,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e572b0001000c000000020072310027020075310101",
+                "454f4e572c0001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -5683,7 +5869,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572b0001001700000002007231010e007465726d696e616c2d322e392d310201",
+            "454f4e572c0001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -5695,6 +5881,9 @@ mod tests {
         }
 
         let snapshot = Response::Snapshot(Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
@@ -5802,7 +5991,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e572b008100550100000100020002000100010000000200743100000041",
+                    "454f4e572c008100c40100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "0200703100000002007032030073703203002f70320102007032000000020070",
@@ -5810,16 +5999,16 @@ mod tests {
                     "6e2d396101007401006d01000000000000000002000100020075310300676974",
                     "030073753103002f753100010100640000000000000001002c0100002a01f401",
                     "0000000000000001015a00000000000000020060270000070000602700003c00",
-                    "0105004661626c6500015f000000000000000100000102007331020073",
-                    // s1's local/persistent IDs, absent name, tab count, rollup and rank.
-                    "3101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100",
-                    "0001",
-                    // v27's empty attention queue, v28's absent running summary,
-                    // then v29's absent busy list.
-                    "00010000000000",
+                    "0105004661626c6500015f000000000000000100000102007331020073310100",
+                    "0200733101300030313233343536373839616263646566303132333435363738",
+                    "3961626364656630303030303030303030303030303031000001000100000000",
+                    "00230067312d3030303030303030303030303030303030303030303030303030",
+                    "303030303031230067312d303030303030303030303030303030303030303030",
+                    "3030303030303030303031230067312d30303030303030303030303030303030",
+                    "30303030303030303030303030303031",
                 ),
             ),
-            (failure, "454f4e572b0082000a00000004006275737902006e6f"),
+            (failure, "454f4e572c0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -5834,7 +6023,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572b00860038000000",
+                    "454f4e572c00860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -5857,7 +6046,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572b008d003c000000",
+                    "454f4e572c008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -5873,7 +6062,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572b00870036000000",
+                    "454f4e572c00870036000000",
                     "020073310200743100020070320a007465726d696e616c2d32",
                     "01020073310200743101020075310a007465726d696e616c2d33",
                     "012c01",
@@ -5886,7 +6075,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e572b008e0033000000",
+                    "454f4e572c008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -5897,7 +6086,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e572b0085000400000002006731",
+                "454f4e572c0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -5907,8 +6096,19 @@ mod tests {
 
         let (response, expected) = (
             LifecycleResponse::Runtime(Runtime {
+                created_build: "g1-00000000000000000000000000000001".into(),
+                active_build: "g1-00000000000000000000000000000001".into(),
+                terminal_inventory: vec![TerminalInventory {
+                    terminal: "s1".into(),
+                    run: "fixture-run".into(),
+                    origin_build: None,
+                    management_version: 8,
+                    record_generation: 1,
+                    orbs: None,
+                    orbf: None,
+                }],
                 venus: None,
-                generation: "g1".into(),
+                generation: "g1-00000000000000000000000000000001".into(),
                 name: None,
                 started_at: 0,
                 eon_version: "0.9.0".into(),
@@ -5926,14 +6126,13 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e572b00830031000000020067310500302e392e302b0002006f6b010002",
-                "007331010500726561647900040062757379",
-                // v28: absent name, supervisor start in Unix milliseconds.
-                "000000000000000000",
-                // v29: absent busy list.
-                "00",
-                // v40: absent presenting Venus.
-                "00",
+                "454f4e572c008300b6000000230067312d303030303030303030303030303030",
+                "30303030303030303030303030303030310500302e392e302c0002006f6b0100",
+                "0200733101050072656164790004006275737900000000000000000000002300",
+                "67312d3030303030303030303030303030303030303030303030303030303030",
+                "303031230067312d303030303030303030303030303030303030303030303030",
+                "30303030303030310100020073310b00666978747572652d72756e0008000100",
+                "0000",
             ),
         );
         let bytes = encode_lifecycle_response(&response).unwrap();
@@ -5968,6 +6167,9 @@ mod tests {
             }),
         };
         Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
@@ -6026,16 +6228,16 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572b008100c100000001000100010000000100740000000000000000",
-                "0000010001007401002f00010100700001000100700200737002002f700101007000",
-                "000101280000000000000000010000000000000000000000000100000000",
-                // Absent Google quota and last failure.
-                "0000",
-                "0202007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001",
-                // u16 count, workspace, tab, target, then needs-input permission at 40%.
-                "0001000200733101007401007001012800000000000000000100000000000000000000",
-                // v29's absent busy list.
-                "0000",
+                "454f4e572c008100300100000100010001000000010074000000000000000000",
+                "00010001007401002f00010100700001000100700200737002002f7001010070",
+                "0000010128000000000000000001000000000000000000000000010000000000",
+                "0002020073310200733101000200733101300030313233343536373839616263",
+                "6465663031323334353637383961626364656630303030303030303030303030",
+                "3030310000010001000100020073310100740100700101280000000000000000",
+                "01000000000000000000000000230067312d3030303030303030303030303030",
+                "303030303030303030303030303030303031230067312d303030303030303030",
+                "3030303030303030303030303030303030303030303031230067312d30303030",
+                "30303030303030303030303030303030303030303030303030303031",
             ),
         );
         assert_eq!(decode_response(&bytes).unwrap(), snapshot);
@@ -6046,16 +6248,20 @@ mod tests {
         let mut snapshot = attention_queue_snapshot();
         snapshot.running = Some(RunningWindows {
             this: WindowEntry {
+                created_build: Some("g1-00000000000000000000000000000001".into()),
+                active_build: Some("g1-00000000000000000000000000000001".into()),
                 window: Some("1234abcd".into()),
-                generation: "g1".into(),
+                generation: "g1-00000000000000000000000000000001".into(),
                 name: Some("here".into()),
                 started_at: Some(42),
                 live_terminals: Some(3),
                 state: WindowState::Live,
             },
             others: Some(vec![WindowEntry {
+                created_build: None,
+                active_build: None,
                 window: None,
-                generation: "g2".into(),
+                generation: "g1-00000000000000000000000000000002".into(),
                 name: None,
                 started_at: None,
                 live_terminals: None,
@@ -6068,15 +6274,22 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572b008100f20000000100010001000000010074000000000000000000",
+                "454f4e572c008100ef0100000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
-                "00000101280000000000000000010000000000000000000000000100000000000002",
-                "020073310200733101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100010001000200733101007401007001",
-                "0128000000000000000001000000000000000000000101080031323334616263",
-                "640200673101040068657265012a000000000000000103000001010000020067",
-                "320000000107",
-                // v29's absent busy list.
-                "0000",
+                "0000010128000000000000000001000000000000000000000000010000000000",
+                "0002020073310200733101000200733101300030313233343536373839616263",
+                "6465663031323334353637383961626364656630303030303030303030303030",
+                "3030310000010001000100020073310100740100700101280000000000000000",
+                "0100000000000000000000010108003132333461626364230067312d30303030",
+                "3030303030303030303030303030303030303030303030303030303101040068",
+                "657265012a000000000000000103000001230067312d30303030303030303030",
+                "30303030303030303030303030303030303030303031230067312d3030303030",
+                "3030303030303030303030303030303030303030303030303030310101000023",
+                "0067312d30303030303030303030303030303030303030303030303030303030",
+                "303030320000000100070000230067312d303030303030303030303030303030",
+                "3030303030303030303030303030303031230067312d30303030303030303030",
+                "30303030303030303030303030303030303030303031230067312d3030303030",
+                "303030303030303030303030303030303030303030303030303031",
             )
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
@@ -6111,16 +6324,24 @@ mod tests {
         let bytes = encode_response(&response).unwrap();
         snapshot.busy = None;
         let without = hex(&encode_response(&Response::Snapshot(snapshot)).unwrap());
-        // The list replaces the absent byte at the snapshot's end.
+        // The identity block follows the busy list.
+        let identity_at = without.len() - 2 * 111;
         assert_eq!(
             &hex(&bytes)[24..],
-            format!("{}{busy_bytes}", &without[24..without.len() - 2])
+            format!(
+                "{}{busy_bytes}{}",
+                &without[24..identity_at - 2],
+                &without[identity_at..]
+            )
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
 
         let runtime = LifecycleResponse::Runtime(Runtime {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
+            terminal_inventory: Vec::new(),
             venus: None,
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             name: None,
             started_at: 0,
             eon_version: "0.9.0".into(),
@@ -6141,13 +6362,14 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572b00830064000000020067310500302e392e302b0002006f6b0000",
-                "01050072656164790105007265616479",
-                "000000000000000000",
+                "454f4e572c008300d1000000230067312d303030303030303030303030303030",
+                "30303030303030303030303030303030310500302e392e302c0002006f6b0000",
+                "01050072656164790105007265616479000000000000000000",
             )
             .to_owned()
                 + busy_bytes
                 + "00"
+                + "230067312d3030303030303030303030303030303030303030303030303030303030303031230067312d30303030303030303030303030303030303030303030303030303030303030310000"
         );
         assert_eq!(decode_lifecycle_response(&bytes).unwrap(), runtime);
     }
@@ -7248,7 +7470,7 @@ mod tests {
             + 2
             + MAX_SESSIONS * (workspace_id + 2 * id + attention)
             + 1
-            + (1 + MAX_RUNNING_WINDOWS) * (1 + 2 + 8 + id + 1 + 2 + 256 + 1 + 8 + 1 + 2 + 1)
+            + (1 + MAX_RUNNING_WINDOWS) * (1 + 2 + 8 + 37 + 1 + 2 + 256 + 1 + 8 + 1 + 2 + 1 + 75)
             + 1
             + 2
             + 2
@@ -7256,6 +7478,7 @@ mod tests {
             + 2
             + MAX_BUSY_TERMINALS * (4 * id + 1 + 2 + MAX_PANE_LABEL_BYTES)
             + 2;
+        let upper_bound = upper_bound + 111;
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
         let name = |prefix: &str, n: usize, length: usize| {
@@ -7379,14 +7602,14 @@ mod tests {
                 .collect();
             state.running = Some(RunningWindows {
                 this: WindowEntry {
-                    generation: "g".repeat(MAX_ID_BYTES),
+                    generation: "g1-00000000000000000000000000000001".into(),
                     ..window_entry()
                 },
                 others: Some(
                     (0..MAX_RUNNING_WINDOWS)
                         .map(|n| WindowEntry {
                             window: Some(format!("{n:08x}")),
-                            generation: "g".repeat(MAX_ID_BYTES),
+                            generation: "g1-00000000000000000000000000000001".into(),
                             ..window_entry()
                         })
                         .collect(),
@@ -7432,5 +7655,140 @@ mod tests {
             decode_request(&request),
             Err(Error::UnsupportedVersion { version: 0 })
         );
+    }
+    #[test]
+    fn lifetime_builds_and_inventory_round_trip_and_reject_malformed_facts() {
+        let generation = "g1-00000000000000000000000000000001";
+        let created = "g1-00000000000000000000000000000002";
+        let active = "g1-00000000000000000000000000000003";
+        let host = TerminalInventory {
+            terminal: "terminal-1".into(),
+            run: "run-1".into(),
+            origin_build: Some(created.into()),
+            management_version: 8,
+            record_generation: 1,
+            orbs: Some(14),
+            orbf: Some(3),
+        };
+        let runtime = Runtime {
+            generation: generation.into(),
+            created_build: created.into(),
+            active_build: active.into(),
+            terminal_inventory: vec![host],
+            venus: None,
+            name: None,
+            started_at: 1,
+            eon_version: "fixture".into(),
+            workspace_protocol: VERSION,
+            component_report: "fixture".into(),
+            sessions: vec!["terminal-1".into()],
+            attach: Availability {
+                available: true,
+                reason: "fixture".into(),
+            },
+            stop: Availability {
+                available: true,
+                reason: "fixture".into(),
+            },
+            busy: None,
+        };
+        let roundtrip = |runtime: Runtime| {
+            let reply = LifecycleResponse::Runtime(runtime);
+            let bytes = encode_lifecycle_response(&reply).unwrap();
+            assert_eq!(decode_lifecycle_response(&bytes).unwrap(), reply);
+            bytes
+        };
+        let bytes = roundtrip(runtime.clone());
+        for bad in ["", "g1", "g1-0000000000000000000000000000000A"] {
+            let mut value = runtime.clone();
+            value.created_build = bad.into();
+            assert!(encode_lifecycle_response(&LifecycleResponse::Runtime(value)).is_err());
+        }
+        let mut forged = bytes;
+        let offset = forged
+            .windows(created.len())
+            .position(|value| value == created.as_bytes())
+            .unwrap();
+        forged[offset] = b'x';
+        assert!(decode_lifecycle_response(&forged).is_err());
+        let changes: [fn(&mut TerminalInventory); 6] = [
+            |host: &mut TerminalInventory| host.terminal = "terminal-2".into(),
+            |host: &mut TerminalInventory| host.run.clear(),
+            |host: &mut TerminalInventory| host.management_version = 0,
+            |host: &mut TerminalInventory| host.record_generation = 0,
+            |host: &mut TerminalInventory| host.orbs = Some(0),
+            |host: &mut TerminalInventory| host.orbf = Some(0),
+        ];
+        for change in changes {
+            let mut value = runtime.clone();
+            change(&mut value.terminal_inventory[0]);
+            assert!(encode_lifecycle_response(&LifecycleResponse::Runtime(value)).is_err());
+        }
+        let mut maximum = runtime.clone();
+        maximum.terminal_inventory = (0..MAX_SESSIONS)
+            .map(|index| TerminalInventory {
+                terminal: format!("{index:0128x}"),
+                run: format!("{index:0128x}"),
+                origin_build: Some(created.into()),
+                management_version: u16::MAX,
+                record_generation: u16::MAX,
+                orbs: Some(u16::MAX),
+                orbf: Some(u16::MAX),
+            })
+            .collect();
+        maximum.sessions = maximum
+            .terminal_inventory
+            .iter()
+            .map(|host| host.terminal.clone())
+            .collect();
+        let mut inventory_bytes = Encoder::default();
+        encode_inventory(&mut inventory_bytes, &maximum.terminal_inventory);
+        assert_eq!(inventory_bytes.bytes.len(), 78_850);
+        roundtrip(maximum);
+        let mut recovered = runtime;
+        recovered.terminal_inventory[0].origin_build = None;
+        recovered.terminal_inventory[0].orbs = None;
+        recovered.terminal_inventory[0].orbf = None;
+        roundtrip(recovered.clone());
+        recovered
+            .terminal_inventory
+            .push(recovered.terminal_inventory[0].clone());
+        assert!(encode_lifecycle_response(&LifecycleResponse::Runtime(recovered)).is_err());
+    }
+
+    #[test]
+    fn snapshots_require_consistent_lifetime_and_window_builds() {
+        let mut state = snapshot();
+        let entry = WindowEntry {
+            generation: state.generation.clone(),
+            created_build: Some(state.created_build.clone()),
+            active_build: Some(state.active_build.clone()),
+            ..window_entry()
+        };
+        state.running = Some(RunningWindows {
+            this: entry,
+            others: None,
+            omitted: 0,
+        });
+        let valid = Response::Snapshot(state.clone());
+        assert_eq!(
+            decode_response(&encode_response(&valid).unwrap()).unwrap(),
+            valid
+        );
+        state.active_build = "g1-11111111111111111111111111111111".into();
+        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+        state.running.as_mut().unwrap().this.active_build = None;
+        assert!(encode_response(&Response::Snapshot(state)).is_err());
+        for state in [WindowState::Incompatible, WindowState::Unreachable] {
+            let mut entry = window_entry();
+            entry.state = state;
+            assert!(validate_window(&entry).is_err());
+            entry.created_build = None;
+            entry.active_build = None;
+            entry.name = None;
+            entry.started_at = None;
+            entry.live_terminals = None;
+            assert!(validate_window(&entry).is_ok());
+        }
     }
 }

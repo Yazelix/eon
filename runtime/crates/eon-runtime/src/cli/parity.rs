@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v43::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v44::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -223,7 +223,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::Present { workspace: true },
         WorkspaceAction::ReloadPresentation {
             venus: "/nix/store/fixture/bin/venus".into(),
-            eonw: eon_workspace_protocol::v43::VERSION,
+            eonw: eon_workspace_protocol::v44::VERSION,
             orbs: 14,
             orbf: 3,
         },

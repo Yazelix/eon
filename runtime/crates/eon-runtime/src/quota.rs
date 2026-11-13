@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, MAX_QUOTA_SCOPE_BYTES,
     MAX_SCOPED_QUOTA_WINDOWS, QuotaFailure, QuotaFailureReason as Failure, QuotaWindow, Snapshot,
 };
@@ -1284,11 +1284,14 @@ mod tests {
             &["codex_quota_5h", "claude_quota_5h"],
         );
         let mut snapshot = Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: String::new(),
             active_workspace: String::new(),
             workspaces: vec![],
             active_tab: String::new(),
-            geometry: eon_workspace_protocol::v43::PopupGeometry {
+            geometry: eon_workspace_protocol::v44::PopupGeometry {
                 side_margin: 0.0,
                 vertical_margin: 0.0,
             },
@@ -1302,7 +1305,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v43::Sidebar::Off,
+            sidebar: eon_workspace_protocol::v44::Sidebar::Off,
             attention_queue: vec![],
         };
         let deadline = Instant::now() + Duration::from_secs(5);

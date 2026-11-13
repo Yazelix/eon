@@ -242,7 +242,7 @@ Nix store. `--json` reports `window`, `generation` and the presenting `venus`
 path on success, together with `"accepted":true`, `"replaced":null` and
 `"config_reloaded":null`. `accepted` confirms that the supervisor accepted
 the request. Both null values mean the reply cannot confirm whether Venus
-was replaced or configuration was reread; they do not mean false. EONW v43
+was replaced or configuration was reread; they do not mean false. EONW v44
 does not report those outcomes. Failure still returns an error object.
 The text reply acknowledges the request, reports the presenting path and
 says replacement and config rereading are unconfirmed. Quota polling follows
@@ -982,7 +982,16 @@ Session commands inside Eon target the supervisor and session that own the
 exact `EON_TERMINAL` caller, even when the invoked CLI is from another compatible
 build. Outside Eon, they default to the invoked build's current generation in
 the inherited runtime namespace. Human and `--json` output identify `generation`,
-`window` (null in JSON for the default namespace), and the projected `session`.
+`created_build`, `active_build`, `window` (null in JSON for the default
+namespace), and the projected `session`. `generation` names the runtime lifetime;
+creation build is fixed and active build identifies its controlling Runtime.
+This baseline still allocates generation from the build digest, so the three
+values initially match. `eon versions` names the invoked build, not a lifetime.
+`eon window ls --json` and the window in `eon report` add `terminal_inventory`:
+`terminal`, `run`, `origin_build`, `management_version`, `record_generation`,
+`orbs` and `orbf`. Launch facts that are unknown after recovery are null; they
+are not replaced with the current assembly's values. Full in-place Update and
+independent lifetime allocation remain planned.
 A missing supervisor is not started implicitly.
 
 Session commands accept `--window ID` before any `--` operand separator, for
@@ -1579,7 +1588,8 @@ one flag combine with OR, different flags with AND. Kinds are `session`, `tab`,
 Attention matches its previous or current state. A target follows its terminal
 when a popup becomes a pane. Session selectors resolve once by ID or exact name.
 
-The first line gives `stream`, `seq`, `resumed`, `generation`, `window`, `caller`
+The first line gives `stream`, `seq`, `resumed`, `generation`, `created_build`,
+`active_build`, `window`, `caller`
 and state (`sessions`, `tabs`, `attention_queue`, `busy`). Save `STREAM:SEQ` to
 resume retained events; a successful resume has null state, otherwise a fresh
 snapshot. Sequence numbers advance before filtering, so skips are normal.
@@ -1606,3 +1616,9 @@ keeps its named tabs current but does not rebuild session-wide selection or
 window order. Add `--kind queue` to receive the whole queue on each change.
 See [EON-C39](CONTRACTS.md#eon-c39--session-events-from-the-cli) for the
 snapshot and event field sets and the exact reconstruction guarantees.
+
+A stream's `updating` end reason exits 1 and never means that its lifetime or
+wait target ended. The codec and consumers recognize this reason; emission
+through in-place Update is planned. Each supervisor execution has a fresh
+STREAM, including a future same-PID Update; an old stream cursor gets a full
+snapshot rather than resuming another execution's history.

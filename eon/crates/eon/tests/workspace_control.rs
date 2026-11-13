@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -6531,6 +6531,9 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
     };
     let first: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 1)[0]).unwrap();
     assert_eq!(first["type"], "snapshot");
+    assert_eq!(first["created_build"], first["generation"]);
+    assert_eq!(first["active_build"], first["generation"]);
+
     let filtered_log = root.join("filtered");
     let mut filtered = TestProcess {
         child: eon_command(binary)
@@ -8197,7 +8200,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -8207,7 +8210,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -8218,7 +8221,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -8233,7 +8236,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -8251,14 +8254,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -8280,7 +8283,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -9368,7 +9371,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     let human = from(&["session"]);
     assert!(human.status.success());
     assert!(stdout(&human).starts_with(&format!(
-        "generation {previous_id}\nwindow default\nsession s1\n"
+        "generation {previous_id}\ncreated_build {previous_id}\nactive_build {previous_id}\nwindow default\nsession s1\n"
     )));
     for token in [
         String::from_utf8(caller.to_vec()).unwrap() + "0",
@@ -10821,7 +10824,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -11218,6 +11221,32 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         live_identity(&generation.join("orbit.sock")),
         live_identity(&generation.join("terminal-2.sock")),
     ];
+    let initial_json: serde_json::Value = serde_json::from_str(stdout(&pane)).unwrap();
+    let lifetime = generation.file_name().unwrap().to_str().unwrap();
+    for field in ["generation", "created_build", "active_build"] {
+        assert_eq!(initial_json[field], lifetime, "{field}");
+    }
+    let fresh = listed_window(eon_command(&binary), &runtime, &config);
+    assert_eq!(fresh["created_build"], initial_json["created_build"]);
+    assert_eq!(fresh["active_build"], initial_json["active_build"]);
+    for (host, identity) in fresh["terminal_inventory"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(&initial)
+    {
+        assert_eq!(host["terminal"], identity.session_id);
+        assert_eq!(host["run"], identity.run_id);
+        assert_eq!(host["origin_build"], initial_json["active_build"]);
+        assert_eq!(host["management_version"], identity.management_generation);
+        assert_eq!(host["record_generation"], identity.record_generation);
+        assert_eq!(host["orbs"], orbit_protocol::session::VERSION);
+        assert_eq!(host["orbf"], orbit_protocol::VERSION);
+    }
+    assert_eq!(
+        fresh["terminal_inventory"].as_array().unwrap().len(),
+        initial.len()
+    );
     let first_venus_log = fs::read_to_string(&venus_log).unwrap();
     let first_venus: u32 = first_venus_log.split('|').next().unwrap().parse().unwrap();
     assert!(first_venus_log.contains("|--no-decorations "));
@@ -11320,6 +11349,25 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(recovered.status.success(), "{}", stdout(&recovered));
     let recovered = stdout(&recovered);
     let recovered_json: serde_json::Value = serde_json::from_str(recovered).unwrap();
+    for field in ["generation", "created_build", "active_build"] {
+        assert_eq!(recovered_json[field], initial_json[field], "{field}");
+    }
+    let retained = listed_window(eon_command(&binary), &runtime, &config);
+    assert_eq!(
+        retained["terminal_inventory"].as_array().unwrap().len(),
+        initial.len()
+    );
+    for (host, identity) in retained["terminal_inventory"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(&initial)
+    {
+        assert_eq!(host["run"], identity.run_id);
+        for field in ["origin_build", "orbs", "orbf"] {
+            assert!(host[field].is_null(), "{field}: {host}");
+        }
+    }
     let recovered_tab = &recovered_json["tabs"][0];
     assert_ne!(recovered_json["active_tab"], "t1");
     assert_ne!(recovered_json["session"], "s1");
@@ -13161,7 +13209,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v43::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v44::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -14945,6 +14993,17 @@ fn window_reload_reports_an_ended_independent_target_as_json() {
 /// What a fake supervisor of generation `id` from another build reports.
 fn previous_runtime(id: &str) -> Runtime {
     Runtime {
+        created_build: "g1-00000000000000000000000000000001".into(),
+        active_build: "g1-00000000000000000000000000000001".into(),
+        terminal_inventory: vec![eon_workspace_protocol::v44::TerminalInventory {
+            terminal: "terminal-1".into(),
+            run: "fixture-run".into(),
+            origin_build: None,
+            management_version: 8,
+            record_generation: 1,
+            orbs: None,
+            orbf: None,
+        }],
         venus: None,
         generation: id.into(),
         name: None,
@@ -15528,7 +15587,7 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     stream.read_to_end(&mut reply).unwrap();
     assert_eq!(
         decode_response(&reply),
-        Err(eon_workspace_protocol::v43::Error::UnsupportedVersion {
+        Err(eon_workspace_protocol::v44::Error::UnsupportedVersion {
             version: VERSION - 1
         })
     );
@@ -20446,6 +20505,17 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
             let response = match &action {
                 ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime) => {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
+                        created_build: "g1-00000000000000000000000000000001".into(),
+                        active_build: "g1-00000000000000000000000000000001".into(),
+                        terminal_inventory: vec![eon_workspace_protocol::v44::TerminalInventory {
+                            terminal: "terminal-1".into(),
+                            run: "fixture-run".into(),
+                            origin_build: None,
+                            management_version: 8,
+                            record_generation: 1,
+                            orbs: None,
+                            orbf: None,
+                        }],
                         venus: None,
                         generation: server_id.clone(),
                         name: None,

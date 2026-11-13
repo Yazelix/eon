@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume canonical EONW v44 lifetime/build metadata and the `updating` End
+  reason; a closed subscription reconnects without retaining partial frames.
+  Reserved Stop and workspace presentation are unchanged (`eon-t3fyd.2`).
+
 - Consume the canonical workspace wire with separate Google quota fact and
   failure slots (`eon-o9f3h.1`). Google chip presentation is planned in
   `eon-o9f3h.5`.

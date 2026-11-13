@@ -16,7 +16,7 @@ use super::windows::{
 };
 use super::workspace::{json_escape, terminal_text};
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     Action, Availability, BusyTerminals, Failure, MAX_RUNNING_WINDOWS, Response, WindowEntry,
     WindowState, WorkspaceAction,
 };
@@ -37,7 +37,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// This build's exact identity, `g1-…`, which `eon versions` reports and generations carry.
+/// This build's exact digest, `g1-…`; it is not a lifetime lookup.
 pub fn current_generation(inputs: &Inputs) -> Result<String, String> {
     inputs.component_report()?;
     Ok(generation_id(inputs.assembly))
@@ -55,11 +55,7 @@ fn generation_id(input: &[u8]) -> String {
 }
 
 pub(super) fn valid_generation(value: &str) -> bool {
-    value.len() == 35
-        && value.starts_with("g1-")
-        && value[3..]
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    eon_workspace_protocol::v44::valid_generation(value)
 }
 
 pub(super) fn generation_directory(root: &Path, generation: &str) -> PathBuf {
@@ -628,6 +624,9 @@ fn generation_candidates(root: &Path) -> Result<Vec<(OsString, PathBuf)>, String
 #[derive(Debug)]
 pub(super) struct GenerationRecord {
     pub(super) id: String,
+    created_build: Option<String>,
+    active_build: Option<String>,
+    terminal_inventory: Vec<eon_workspace_protocol::v44::TerminalInventory>,
     kind: &'static str,
     pub(super) state: &'static str,
     runtime: PathBuf,
@@ -762,6 +761,8 @@ pub(super) fn live_supervisors(
                     .then(|| root.file_name().unwrap().to_string_lossy().into_owned());
                 candidates.push((
                     WindowEntry {
+                        created_build: None,
+                        active_build: None,
                         window,
                         generation: id.into(),
                         name: None,
@@ -808,6 +809,8 @@ pub(super) fn live_supervisors(
                         // Full Eon always supplies its derived workspace name; eonbase has none.
                         "live" if record.name.is_none() => return Ok(None),
                         "live" => {
+                            entry.created_build = record.created_build;
+                            entry.active_build = record.active_build;
                             entry.name = record.name;
                             entry.started_at = record.started_at;
                             entry.live_terminals = Some(record.sessions.len() as u16);
@@ -936,6 +939,9 @@ fn inspect_generation(
             }
             GenerationRecord {
                 id: id.into(),
+                created_build: Some(info.created_build),
+                active_build: Some(info.active_build),
+                terminal_inventory: info.terminal_inventory,
                 kind,
                 state: "live",
                 name: info.name,
@@ -1031,6 +1037,9 @@ fn failed_generation(
     };
     GenerationRecord {
         id: id.into(),
+        created_build: None,
+        active_build: None,
+        terminal_inventory: Vec::new(),
         kind,
         state,
         runtime,
@@ -1129,6 +1138,11 @@ fn generations_human(records: &[GenerationRecord]) -> String {
                 version.escape_debug()
             ));
         }
+        output.push_str(&format!(
+            "  created_build={} active_build={}\n",
+            record.created_build.as_deref().unwrap_or("unknown"),
+            record.active_build.as_deref().unwrap_or("unknown")
+        ));
         if let Some(eon) = &record.launcher {
             output.push_str(&format!("  executable {}\n", eon.display()));
         }
@@ -1183,7 +1197,13 @@ fn generations_json(records: &[GenerationRecord]) -> String {
             }
             output.push_str(&format!("\"{}\"", json_escape(session)));
         }
-        output.push_str("],\"busy\":");
+        output.push_str(&format!(
+            "],\"created_build\":{},\"active_build\":{},\"terminal_inventory\":{},\"busy\":",
+            json_option(record.created_build.as_deref()),
+            json_option(record.active_build.as_deref()),
+            super::workspace::json_inventory(&record.terminal_inventory)
+        ));
+
         super::workspace::json_busy(&mut output, record.busy.as_ref(), true);
         output.push_str(&format!(
             ",\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"detail\":\"{}\"}}",
@@ -1239,8 +1259,11 @@ pub(super) fn window_json(
         output.push_str(&format!("\"{}\"", json_escape(session)));
     }
     output.push_str(&format!(
-        "],\"venus\":{},\"busy\":",
-        json_option(record.venus.as_deref())
+        "],\"venus\":{},\"created_build\":{},\"active_build\":{},\"terminal_inventory\":{},\"busy\":",
+        json_option(record.venus.as_deref()),
+        json_option(record.created_build.as_deref()),
+        json_option(record.active_build.as_deref()),
+        super::workspace::json_inventory(&record.terminal_inventory)
     ));
     super::workspace::json_busy(&mut output, record.busy.as_ref(), labels);
     output.push_str(&format!(
@@ -1908,7 +1931,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v43::{
+        use eon_workspace_protocol::v44::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -1936,12 +1959,23 @@ mod tests {
                 reason: "terminal-only supervisor".into(),
             };
             let response = LifecycleResponse::Runtime(Runtime {
+                created_build: "g1-00000000000000000000000000000001".into(),
+                active_build: "g1-00000000000000000000000000000001".into(),
+                terminal_inventory: vec![eon_workspace_protocol::v44::TerminalInventory {
+                    terminal: "terminal-1".into(),
+                    run: "fixture-run".into(),
+                    origin_build: None,
+                    management_version: 8,
+                    record_generation: 1,
+                    orbs: None,
+                    orbf: None,
+                }],
                 venus: None,
                 generation: id.into(),
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v43::VERSION,
+                workspace_protocol: eon_workspace_protocol::v44::VERSION,
                 component_report: "fixture".into(),
                 sessions: vec!["terminal-1".into()],
                 attach: available.clone(),
@@ -2054,7 +2088,7 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v43::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v44::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         let sessions = ["terminal-1".to_owned(), "terminal-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {
@@ -2117,7 +2151,7 @@ mod tests {
 
     #[test]
     fn window_json_leaves_out_labels_only_when_asked() {
-        use eon_workspace_protocol::v43::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v44::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         record.name = Some("client-acme-window".into());
         record.busy = Some(BusyTerminals {

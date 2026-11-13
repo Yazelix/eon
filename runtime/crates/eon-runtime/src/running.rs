@@ -7,7 +7,7 @@ use super::{
     supervisor::{effective_uid, supervisor_lock_path},
     windows::valid_window_id,
 };
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     MAX_RUNNING_WINDOWS, RunningWindows, Snapshot, WindowEntry, WindowState,
 };
 use std::{
@@ -379,8 +379,10 @@ mod tests {
     #[test]
     fn running_notice_counts_labels_and_bounds() {
         let entry = WindowEntry {
+            created_build: Some("g1-00000000000000000000000000000001".into()),
+            active_build: Some("g1-00000000000000000000000000000001".into()),
             window: Some("0a1b2c3d".into()),
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             name: Some("refs".into()),
             started_at: None,
             live_terminals: None,
@@ -435,8 +437,10 @@ mod tests {
     #[test]
     fn window_label_prefers_name_then_window_then_generation() {
         let mut entry = WindowEntry {
+            created_build: None,
+            active_build: None,
             window: Some("0a1b2c3d".into()),
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             name: Some("refs".into()),
             started_at: None,
             live_terminals: None,
@@ -446,7 +450,7 @@ mod tests {
         entry.name = None;
         assert_eq!(window_label(&entry), "0a1b2c3d");
         entry.window = None;
-        assert_eq!(window_label(&entry), "g1");
+        assert_eq!(window_label(&entry), entry.generation);
     }
 
     #[test]
@@ -455,8 +459,10 @@ mod tests {
         fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
         let log = DiagnosticLog::open_in(Ok(base.join("logs")), "test", "test");
         let this = WindowEntry {
+            created_build: Some("g1-00000000000000000000000000000001".into()),
+            active_build: Some("g1-00000000000000000000000000000001".into()),
             window: None,
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             name: Some("test".into()),
             started_at: Some(1),
             live_terminals: Some(1),

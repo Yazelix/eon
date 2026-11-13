@@ -831,7 +831,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     a terminal that ended naturally during the request is reconciled as an
     exit. Venus maps Alt+W directly to the selected pane without a mode;
     `eon pane close PANE` sends the same target-bearing EONW action.
-  - Closing a column sends EONW v43's `CloseColumn { pane, consent }`, which
+  - Closing a column sends EONW v44's `CloseColumn { pane, consent }`, which
     closes every pane of the column that holds the named live pane, in one
     request. What it would stop is its scope: that column's panes' terminals,
     with the end `column`; or, when the column is its tab's only column and
@@ -918,7 +918,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v43 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v44 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1573,6 +1573,33 @@ names its socket. CLI JSON names a session `session` and a terminal
     component/protocol identity, live terminals, busy terminals (EON-C11), the
     window's name and supervisor start time (EON-C23), and owner-authored
     attach/stop availability.
+  - EONW v44 exposes `generation`, `created_build` and `active_build` in Runtime
+    lifecycle inspection, session/window snapshots, initial/gap event snapshots
+    and their CLI projections. Each retained terminal inventory entry exposes
+    its terminal/run identity, `origin_build` (null only when unknown), management
+    version, record generation, ORBS and ORBF. Origin is captured at launch,
+    carried across Update and not guessed after recovery. The component report
+    describes target assembly/launch policy; live-host inventory separately
+    describes retained processes and is not a second compatibility graph. Build
+    identity/local lifetime/session persistent ID are distinct fields and cannot
+    substitute for one another.
+
+    S2a provides these identity and codec fields with existing build-derived
+    generation allocation. Creation and active build initially equal the build
+    digest. Independent lifetime allocation and active-build selection are
+    planned under `eon-t3fyd.3`. This baseline does not implement Update.
+
+    `terminal_inventory` accompanies lifecycle inspection's existing terminal-ID
+    list in the same order. Each entry has `terminal`, `run`, `origin_build`,
+    `management_version`, `record_generation`, `orbs` and `orbf`. ORBS and ORBF
+    are captured from validated launch facts; either is null when it cannot be
+    established for a recovered host. An absent origin remains null even when
+    creation and active build are known. Inventory is descriptive and grants no
+    management authority. Session and event snapshots carry the lifetime/build
+    fields; full host inventory is obtained from lifecycle inspection.
+    Exact layouts and bounds: `eon-t3fyd.2`, approved 2026-11-13 by eon-desk
+    under Lucca's delegation, after Opus 0406/0416 review. Record/retention is
+    separately planned under `eon-t3fyd.14`.
   - CLI JSON emits each directory and endpoint as a JSON string when its bytes
     are valid UTF-8, and otherwise as an ordered byte array, without changing
     EONW. Each connection carries one length-delimited request
@@ -1703,7 +1730,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     The pane runs the configured editor argv with FILE's absolute path appended
     as its last argument, preserving raw Unix bytes. The result names the popup
     or pane that shows FILE. Editor argv and sockets are runtime policy and do
-    not cross EONW. EONW v43 distinguishes this edit result from earlier builds
+    not cross EONW. EONW v44 distinguishes this edit result from earlier builds
     that assume pane creation.
   - `eon pane create [--json] -- COMMAND [ARGS...]`, run from an Eon terminal,
     opens a new pane exactly where `pane create` would for that caller, with
@@ -1979,7 +2006,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v43 and accepted Orbit management operations.
+- **Consumes:** Current EONW v44 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1991,7 +2018,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v43 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v44 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
   The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
   failure records to Snapshot: fresh/stale state, observation and windows,
@@ -2128,8 +2155,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v43 `attention` is needs input. Rows run by
-  EONW v43 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v44 `attention` is needs input. Rows run by
+  EONW v44 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -2536,6 +2563,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     assembly/default/validator/graph/Cargo/Nix-generated inputs; each
     generation owns one private directory. Store/profile paths, mutable
     configuration, PIDs and live state do not define identity.
+  - Lifecycle inspection separately reports creation and active build under
+    EON-C10's identity/inventory clause. Generation allocation remains build-derived
+    in this baseline; independent lifetimes are planned under `eon-t3fyd.3`.
   - Older live generations that speak the current EONW remain discoverable,
     presentable when compatible, and stoppable through their own supervisor;
     presentation still requires the exact current EONW and component graph. A
@@ -2759,7 +2789,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     presenting executable path or null while detached. Reload success JSON
     is `{"window":ID,"generation":GENERATION,"venus":PATH,"accepted":true,"replaced":null,"config_reloaded":null}`.
     `accepted:true` confirms that the supervisor accepted the request. On
-    EONW v43, `replaced:null` and `config_reloaded:null` mean this reply does
+    EONW v44, `replaced:null` and `config_reloaded:null` mean this reply does
     not confirm Venus replacement or configuration rereading; neither null
     means false. A supervisor implementing `eon-u199d.3` replaces Venus with
     current configuration arguments on success. Earlier supervisors still
@@ -3447,7 +3477,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v43 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v44 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -4713,7 +4743,7 @@ implementation.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 8, EON-C8 topology, and EON-C10
-  (EONW v43, request and response). EON-C39 exposes a stream of its changes.
+  (EONW v44, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no screen, transcript or provider-state parsing; Runtime recognizes only
@@ -5951,7 +5981,7 @@ implementation.
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v43 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v44 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -5962,7 +5992,7 @@ implementation.
     snapshot's messages into one snapshot line. Every message is one
     length-delimited EONW frame; EOF never frames a message.
   - **Snapshot, then events.** The first JSON line is
-    `{"type":"snapshot","stream","seq","resumed","generation","window",
+    `{"type":"snapshot","stream","seq","resumed","generation","created_build","active_build","window",
     "caller","sessions","tabs","attention_queue","busy"}`. It covers every
     session of the window that the filters admit:
     - `sessions` holds each session as `eon session ls --json` lists it,
@@ -6069,15 +6099,25 @@ implementation.
     or fewer while those take more than 8 MiB as EONW frames. The snapshot
     line then carries `"resumed":true`, `seq` equal to SEQ and no state, and
     the matching events after SEQ follow. Otherwise the first line is a full
-    snapshot with `"resumed":false`. STREAM identifies one supervisor process,
-    so a supervisor restarted or recovered under the same generation (EON-C15)
-    is a new STREAM.
+    snapshot with `"resumed":false`. STREAM identifies one supervisor execution,
+    not a PID or generation. A restarted or recovered supervisor under the same
+    generation (EON-C15) begins a new STREAM. Planned Update also begins a new
+    STREAM even with unchanged PID/generation.
+
+    S2a supplies the `updating` codec value and current CLI/transport handling.
+    The actual pre-exec ending, new-execution restoration, mutation-dedup
+    preservation and native transition are planned under `eon-t3fyd.10/.11`;
+    `pane wait` remains subject to its own implementation. Those outcomes are
+    not proved by S2a's codec tests.
   - **End.** The stream ends with `{"type":"end","reason",...}` and EOF.
     Its reasons are:
     - `ended`, with `generation`: Stop, quit or the window's final close;
       the CLI exits 0;
     - `targets-gone`: under Filters; the CLI exits 0;
     - `too-slow`: under Important failures; the CLI exits 1.
+    - `updating`: a planned ownership transition, not an ended lifetime; the CLI
+      exits 1 and a waiter must not treat it as predicate success. S2a defines
+      the value; emission during Update is planned under `eon-t3fyd.10`.
   - **Human output.** One line per message:
     - an event prints `seq`, the event name and its identities, and for
       `attention` its `state`, `app` and `name` only, as EON-C31's human
@@ -6134,9 +6174,9 @@ implementation.
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v43 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v44 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v43; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v44; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

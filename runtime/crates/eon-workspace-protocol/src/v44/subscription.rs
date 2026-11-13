@@ -18,9 +18,10 @@ use super::{
     decode_layout, decode_optional, decode_pane, decode_popup, decode_state, decode_target,
     decode_u64, decode_wire_tab, encode_attention, encode_caller, encode_failure, encode_layout,
     encode_optional, encode_pane, encode_popup, encode_state, encode_target, encode_wire_tab,
-    entry_id, frame, identity, queued, unframe, validate_attention, validate_busy_terminal,
-    validate_columns, validate_endpoint, validate_pane_label, validate_tabs, validate_target,
-    validate_window_id, validate_workspace_id, validate_workspace_info, validate_workspace_name,
+    entry_id, frame, generation_identity, identity, queued, unframe, validate_attention,
+    validate_busy_terminal, validate_columns, validate_endpoint, validate_pane_label,
+    validate_tabs, validate_target, validate_window_id, validate_workspace_id,
+    validate_workspace_info, validate_workspace_name,
 };
 
 pub(super) const SUBSCRIBE: u8 = 40;
@@ -100,6 +101,8 @@ pub struct QueueItem {
 /// A snapshot's state apart from its tabs, which follow in `TABS` messages.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowSnapshot {
+    pub created_build: String,
+    pub active_build: String,
     pub workspaces: Vec<WorkspaceEntry>,
     /// The window's whole queue in EON-C31 order.
     pub attention_queue: Vec<QueueItem>,
@@ -112,7 +115,7 @@ pub struct WindowSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Subscribed {
-    /// One supervisor process.
+    /// One supervisor execution, including in-place image replacement.
     pub stream: String,
     pub seq: u64,
     pub generation: String,
@@ -274,6 +277,8 @@ pub enum End {
     },
     TargetsGone,
     TooSlow,
+    /// Planned ownership transition; never predicate success.
+    Updating,
 }
 
 /// One message of a subscription connection; `Failure` is the refusal.
@@ -453,6 +458,8 @@ fn validate_queue(queue: &[QueueItem]) -> Result<()> {
 }
 
 fn validate_snapshot(snapshot: &WindowSnapshot) -> Result<()> {
+    generation_identity("created build", &snapshot.created_build)?;
+    generation_identity("active build", &snapshot.active_build)?;
     let workspaces = &snapshot.workspaces;
     if workspaces.len() > MAX_WORKSPACES {
         return Err(Error::InvalidSnapshot {
@@ -589,6 +596,8 @@ fn encode_snapshot(encoder: &mut Encoder, snapshot: &WindowSnapshot) {
     encode_queue(encoder, &snapshot.attention_queue);
     encode_busy_list(encoder, snapshot.busy.as_ref());
     encoder.count(snapshot.tab_messages);
+    encoder.string(&snapshot.created_build);
+    encoder.string(&snapshot.active_build);
 }
 
 fn decode_snapshot(decoder: &mut Decoder<'_>) -> Result<WindowSnapshot> {
@@ -600,6 +609,8 @@ fn decode_snapshot(decoder: &mut Decoder<'_>) -> Result<WindowSnapshot> {
         attention_queue: decode_queue(decoder)?,
         busy: decode_busy_list(decoder)?,
         tab_messages: decoder.count("tab messages", MAX_WORKSPACES)?,
+        created_build: decoder.string("created build", 35)?,
+        active_build: decoder.string("active build", 35)?,
     })
 }
 
@@ -1004,7 +1015,7 @@ pub fn encode_subscription_message(message: &SubscriptionMessage) -> Result<Vec<
         // when it did not resume.
         SubscriptionMessage::Subscribed(subscribed) => {
             identity("stream", &subscribed.stream)?;
-            identity("generation", &subscribed.generation)?;
+            generation_identity("generation", &subscribed.generation)?;
             validate_window_id(subscribed.window.as_deref())?;
             if let Some(caller) = &subscribed.caller {
                 validate_target(caller)?;
@@ -1062,6 +1073,7 @@ pub fn encode_subscription_message(message: &SubscriptionMessage) -> Result<Vec<
                 }
                 End::TargetsGone => payload.byte(1),
                 End::TooSlow => payload.byte(2),
+                End::Updating => payload.byte(3),
             }
             END
         }
@@ -1082,7 +1094,7 @@ pub fn decode_subscription_message(bytes: &[u8]) -> Result<SubscriptionMessage> 
             let subscribed = Subscribed {
                 stream: decoder.string("stream", MAX_ID_BYTES)?,
                 seq: decode_u64(&mut decoder)?,
-                generation: decoder.string("generation", MAX_ID_BYTES)?,
+                generation: decoder.string("generation", 35)?,
                 window: decode_optional(&mut decoder, "window id")?,
                 caller: decode_caller(&mut decoder)?,
                 snapshot: decode_bool(&mut decoder, "snapshot")?
@@ -1090,7 +1102,7 @@ pub fn decode_subscription_message(bytes: &[u8]) -> Result<SubscriptionMessage> 
                     .transpose()?,
             };
             identity("stream", &subscribed.stream)?;
-            identity("generation", &subscribed.generation)?;
+            generation_identity("generation", &subscribed.generation)?;
             validate_window_id(subscribed.window.as_deref())?;
             if let Some(snapshot) = &subscribed.snapshot {
                 validate_snapshot(snapshot)?;
@@ -1146,6 +1158,7 @@ pub fn decode_subscription_message(bytes: &[u8]) -> Result<SubscriptionMessage> 
             }
             1 => End::TargetsGone,
             2 => End::TooSlow,
+            3 => End::Updating,
             value => {
                 return Err(Error::InvalidTag {
                     field: "end reason",
@@ -1257,6 +1270,8 @@ mod tests {
 
     fn window_snapshot() -> WindowSnapshot {
         WindowSnapshot {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspaces: vec![entry(
                 "s1",
                 "0123456789abcdef0123456789abcdef0000000000000001",
@@ -1277,7 +1292,7 @@ mod tests {
         SubscriptionMessage::Subscribed(Subscribed {
             stream: "g1.1700000000000".into(),
             seq: 41,
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             window: None,
             caller: None,
             snapshot,
@@ -1946,7 +1961,7 @@ mod tests {
         // Unknown tags, kinds and trailing bytes.
         let end = encode_subscription_message(&SubscriptionMessage::End(End::TooSlow)).unwrap();
         let mut forged = end.clone();
-        forged[HEADER_BYTES] = 3;
+        forged[HEADER_BYTES] = 4;
         assert!(decode_subscription_message(&forged).is_err());
         let mut forged = end.clone();
         forged[6] = 141;
@@ -1985,12 +2000,12 @@ mod tests {
             (
                 WorkspaceChange::Registered,
                 confirmed,
-                "454f4e572b008a001c0000002a000000000000000004020073310101007200000100000002007431",
+                "454f4e572c008a001c0000002a000000000000000004020073310101007200000100000002007431",
             ),
             (
                 WorkspaceChange::RegistrationFailed,
                 failed,
-                "454f4e572b008a002e0000002a0000000000000000050200733100010d0072656769737472792d62757379040068656c64000100000002007431",
+                "454f4e572c008a002e0000002a0000000000000000050200733100010d0072656769737472792d62757379040068656c64000100000002007431",
             ),
         ] {
             let message = event(Change::Workspace { change, workspace });
@@ -2013,7 +2028,7 @@ mod tests {
         );
         assert_eq!(
             hex(&encode_request(&request).unwrap()),
-            "454f4e572b0001002d00000002007231002801000200733201000200743101000200703101000401000101040067312e370500000000000000"
+            "454f4e572c0001002d00000002007231002801000200733201000200743101000200703101000401000101040067312e370500000000000000"
         );
         let attention_event = event(Change::Attention {
             target: target("s1", "t1", TargetId::Pane("p1".into())),
@@ -2053,38 +2068,38 @@ mod tests {
         for (message, expected) in [
             (
                 subscribed(None),
-                "454f4e572b00880021000000100067312e31373030303030303030303030290000000000000002006731000000",
+                "454f4e572c00880042000000100067312e313730303030303030303030302900000000000000230067312d3030303030303030303030303030303030303030303030303030303030303031000000",
             ),
             (
                 subscribed(Some(window_snapshot())),
-                "454f4e572b00880076000000100067312e3137303030303030303030303029000000000000000200673100000101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100",
+                "454f4e572c008800e1000000100067312e313730303030303030303030302900000000000000230067312d303030303030303030303030303030303030303030303030303030303030303100000101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100230067312d3030303030303030303030303030303030303030303030303030303030303031230067312d3030303030303030303030303030303030303030303030303030303030303031",
             ),
             (
                 SubscriptionMessage::Tabs(Tabs {
                     workspace: "s1".into(),
                     tabs: vec![tab("t1", &["p1"])],
                 }),
-                "454f4e572b008900350000000200733101000100010000000200743101002f00010200703100010002007031030073703103002f70310102007031000000000000",
+                "454f4e572c008900350000000200733101000100010000000200743101002f00010200703100010002007031030073703103002f70310102007031000000000000",
             ),
             (
                 attention_event,
-                "454f4e572b008a00400000002a00000000000000040200733102007431000200703102007331040102ff0600636c6175646500000900436f6e74696e75653f00000700000000000000000000",
+                "454f4e572c008a00400000002a00000000000000040200733102007431000200703102007331040102ff0600636c6175646500000900436f6e74696e75653f00000700000000000000000000",
             ),
             (
                 tab_event,
-                "454f4e572b008a00470000002a000000000000000101020073310100010000000200743201002f00010200703300010002007033030073703303002f7033010200703300000000000002000200743202007431",
+                "454f4e572c008a00470000002a000000000000000101020073310100010000000200743201002f00010200703300010002007033030073703303002f7033010200703300000000000002000200743202007431",
             ),
             (
                 pane_event,
-                "454f4e572b008a00380000002a000000000000000201020073310200743102007032030073703203002f7032010200703200000001010100020002007031020070320100",
+                "454f4e572c008a00380000002a000000000000000201020073310200743102007032030073703203002f7032010200703200000001010100020002007031020070320100",
             ),
             (
                 popup_event,
-                "454f4e572b008a00290000002a00000000000000030102007331020074310200753105006167656e74030073753103002f75310001",
+                "454f4e572c008a00290000002a00000000000000030102007331020074310200753105006167656e74030073753103002f75310001",
             ),
             (
                 busy_event,
-                "454f4e572b008a00250000002a00000000000000060200733102007431000200703102007331010107007031202076696d",
+                "454f4e572c008a00250000002a00000000000000060200733102007431000200703102007331010107007031202076696d",
             ),
             (
                 SubscriptionMessage::Gap(Gap {
@@ -2092,21 +2107,21 @@ mod tests {
                     reason: GapReason::Overflow,
                     snapshot: window_snapshot(),
                 }),
-                "454f4e572b008b005e0000005a000000000000000001000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100",
+                "454f4e572c008b00a80000005a000000000000000001000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100230067312d3030303030303030303030303030303030303030303030303030303030303031230067312d3030303030303030303030303030303030303030303030303030303030303031",
             ),
             (
                 SubscriptionMessage::End(End::Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e572b008c00050000000002006731",
+                "454f4e572c008c00050000000002006731",
             ),
             (
                 SubscriptionMessage::End(End::TargetsGone),
-                "454f4e572b008c000100000001",
+                "454f4e572c008c000100000001",
             ),
             (
                 SubscriptionMessage::End(End::TooSlow),
-                "454f4e572b008c000100000002",
+                "454f4e572c008c000100000002",
             ),
         ] {
             assert_eq!(
@@ -2288,6 +2303,8 @@ mod tests {
             terminal: name("s", n, MAX_ID_BYTES),
         };
         let snapshot = WindowSnapshot {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspaces: (1..=MAX_WORKSPACES)
                 .map(|n| WorkspaceEntry {
                     workspace: WorkspaceInfo {
@@ -2331,7 +2348,7 @@ mod tests {
             &SubscriptionMessage::Subscribed(Subscribed {
                 stream: "g".repeat(MAX_ID_BYTES),
                 seq: u64::MAX,
-                generation: "g".repeat(MAX_ID_BYTES),
+                generation: "g1-00000000000000000000000000000001".into(),
                 window: Some("0123abcd".into()),
                 caller: Some(long_target(MAX_SESSIONS)),
                 snapshot: Some(snapshot.clone()),
@@ -2416,5 +2433,20 @@ mod tests {
             assert!(encode_subscription_message(&over).is_err());
             assert!(decode_subscription_message(&forge(&over)).is_err());
         }
+    }
+    #[test]
+    fn updating_has_exact_bytes_and_rejects_unknown_or_partial_endings() {
+        let message = SubscriptionMessage::End(End::Updating);
+        let bytes = [0x45, 0x4f, 0x4e, 0x57, 44, 0, 140, 0, 1, 0, 0, 0, 3];
+        assert_eq!(encode_subscription_message(&message).unwrap(), bytes);
+        assert_eq!(decode_subscription_message(&bytes).unwrap(), message);
+        let mut unknown = bytes;
+        unknown[12] = 4;
+        assert!(decode_subscription_message(&unknown).is_err());
+        assert!(decode_subscription_message(&bytes[..12]).is_err());
+        let mut trailing = bytes.to_vec();
+        trailing[8] = 2;
+        trailing.push(0);
+        assert!(decode_subscription_message(&trailing).is_err());
     }
 }

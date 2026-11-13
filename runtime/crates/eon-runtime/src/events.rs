@@ -4,7 +4,7 @@
 //! publishes and serves subscribers; nothing here touches a connection.
 
 use super::{supervisor::request_id, workspace::resolve_selector};
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     self as eonw, AttentionState as State, Failure, Snapshot, TargetId, TerminalTarget,
 };
 use std::{
@@ -287,6 +287,8 @@ struct Values<'a> {
 /// popups and attention, the attention queue and every busy terminal.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Projection {
+    created_build: String,
+    active_build: String,
     workspaces: Vec<WorkspaceState>,
     queue: Vec<QueueItem>,
     /// Every busy terminal in window order, unbounded.
@@ -360,6 +362,8 @@ impl Projection {
             })
             .collect();
         Self {
+            created_build: first.created_build.clone(),
+            active_build: first.active_build.clone(),
             workspaces,
             queue,
             busy,
@@ -874,6 +878,8 @@ pub(super) struct Filter {
 /// without EONW's 32-terminal bound.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SnapshotState {
+    pub(super) created_build: String,
+    pub(super) active_build: String,
     pub(super) workspaces: Vec<WorkspaceItem>,
     /// Each workspace with admitted tabs, in window order, so each group
     /// travels as one frame.
@@ -1013,6 +1019,8 @@ impl Filter {
             .cloned()
             .collect();
         SnapshotState {
+            created_build: projection.created_build.clone(),
+            active_build: projection.active_build.clone(),
             workspaces: workspaces
                 .into_iter()
                 .map(|workspace| workspace.item.clone())
@@ -1169,7 +1177,7 @@ impl Events {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use eon_workspace_protocol::v43::{
+    use eon_workspace_protocol::v44::{
         AttentionRecord, BusyTerminal, Column, PopupGeometry, QueueEntry, Sidebar, WorkspaceInfo,
     };
     use std::collections::BTreeMap;
@@ -1262,6 +1270,9 @@ pub(super) mod tests {
         workspaces
             .into_iter()
             .map(|(id, _, tabs)| Snapshot {
+                generation: "g1-00000000000000000000000000000001".into(),
+                created_build: "g1-00000000000000000000000000000001".into(),
+                active_build: "g1-00000000000000000000000000000001".into(),
                 workspace: id.into(),
                 active_workspace: shown.into(),
                 workspaces: infos.clone(),
@@ -2973,7 +2984,7 @@ pub(super) mod tests {
         projection.queue = queue;
     }
 
-    /// What the v43 codec checks of a pane or popup event: but for a close,
+    /// What the v44 codec checks of a pane or popup event: but for a close,
     /// its `column` and `expanded` and its `chosen` agree with the order it
     /// carries, and only a close may carry the empty order of a gone tab.
     fn assert_placed(event: &Event) {

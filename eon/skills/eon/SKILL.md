@@ -9,6 +9,12 @@ Treat `EON_TERMINAL` as opaque. When it is set, find yourself with
 `eon session --json`: `caller` gives your `terminal` (`terminal-N`), `tab`
 (`tN`), and either `pane` (`pN`) with `popup` null, or `popup` with `pane` null.
 Without a calling terminal, `caller` is null.
+Inspection separates `generation` (runtime lifetime), `created_build` and
+`active_build`; their values initially match in this baseline. `eon versions`
+names the invoked build. `eon window ls --json` supplies each retained run's
+`terminal_inventory`; null origin/protocol facts after recovery stay unknown.
+An `events` end with `reason:"updating"` exits 1 and is not target completion.
+
 
 Act by local ID: sessions use `sN`, tabs `tN`, panes `pN`, and terminals `terminal-N`.
 Use `--json` on every session, tab and pane command. From an Eon terminal, pane creation

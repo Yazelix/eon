@@ -10,7 +10,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use super::{running::window_label, windows::durable_window_id};
-use eon_workspace_protocol::v43::WindowEntry;
+use eon_workspace_protocol::v44::WindowEntry;
 
 /// The notification service's well-known bus name.
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -877,12 +877,14 @@ mod tests {
 
     fn window(name: &str, id: Option<&str>, terminals: u16) -> NoticeWindow {
         NoticeWindow::new(&WindowEntry {
+            created_build: Some("g1-00000000000000000000000000000001".into()),
+            active_build: Some("g1-00000000000000000000000000000001".into()),
             name: Some(name.into()),
             window: id.map(Into::into),
             generation: "g1-0123456789abcdef0123456789abcdef".into(),
             started_at: None,
             live_terminals: Some(terminals),
-            state: eon_workspace_protocol::v43::WindowState::Live,
+            state: eon_workspace_protocol::v44::WindowState::Live,
         })
     }
 

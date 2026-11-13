@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -76,7 +76,7 @@ pub enum WorkspaceEvent {
     },
 }
 
-/// Bounded semantic-action handle for EONW v43.
+/// Bounded semantic-action handle for EONW v44.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<WorkerItem>,
     events: Arc<WorkspaceEventQueue>,
@@ -1495,7 +1495,7 @@ pub fn frame_elapsed(start: Option<u64>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v43::{
+    use eon_workspace_protocol::v44::{
         InvokeIntent, Pane, Popup, PopupEntry, PopupKey, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -2937,7 +2937,14 @@ mod tests {
             detail: "this window already serves 32 event subscribers".into(),
         });
         let ended = workspace::SubscriptionMessage::End(workspace::End::TooSlow);
-        for closing in [vec![refused], vec![subscribed(), ended]] {
+        for closing in [
+            vec![refused],
+            vec![subscribed(), ended],
+            vec![
+                subscribed(),
+                workspace::SubscriptionMessage::End(workspace::End::Updating),
+            ],
+        ] {
             let mut subscription = eon.subscription();
             for message in &closing {
                 write_subscription(&mut subscription, message);
@@ -3089,7 +3096,7 @@ mod tests {
         workspace::SubscriptionMessage::Subscribed(workspace::Subscribed {
             stream: "s1".into(),
             seq: 0,
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             window: None,
             caller: None,
             snapshot: None,
@@ -3157,9 +3164,12 @@ mod tests {
 
     fn workspace_snapshot() -> Snapshot {
         Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v44::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -3182,7 +3192,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v43::Column {
+                columns: vec![eon_workspace_protocol::v44::Column {
                     panes: vec![Pane {
                         label: "pane-1".into(),
                         pinned_name: None,
@@ -3197,7 +3207,7 @@ mod tests {
                 }],
                 attention_rollup: None,
             }],
-            geometry: eon_workspace_protocol::v43::PopupGeometry {
+            geometry: eon_workspace_protocol::v44::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -3217,7 +3227,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v43::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v44::Sidebar::Open,
             attention_queue: Vec::new(),
         }
     }
@@ -3230,7 +3240,7 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v43::Column {
+            columns: vec![eon_workspace_protocol::v44::Column {
                 panes: vec![Pane {
                     label: "pane-2".into(),
                     pinned_name: None,

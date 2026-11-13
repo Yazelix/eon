@@ -23,7 +23,7 @@ use super::{
         terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
     MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
     TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
@@ -1387,7 +1387,8 @@ Explicit targets still validate EON_TERMINAL; independent windows use
 attach's rule.
 To address another window, clear EON_TERMINAL and EON_TAB or run outside Eon.
 Session commands, events and reload use the window's build when EONW differs.
-Results name generation, window (null for default), and session.
+Results name generation, created_build, active_build, window (null for default),
+and session.
 SESSION is a session ID (s1, s2, ...) or its exact name.
 Inspect/switch/rename/close accept --id ID instead of a SESSION target.
 ID is the full persistent_id, scoped to the selected window.
@@ -1847,7 +1848,9 @@ fn control(
                 )
             } else {
                 format!(
-                    "generation {generation}\nwindow {}\nsession {}\n{caller}{}{}{}",
+                    "generation {generation}\ncreated_build {}\nactive_build {}\nwindow {}\nsession {}\n{caller}{}{}{}",
+                    snapshot.created_build,
+                    snapshot.active_build,
                     resolved.window.as_deref().unwrap_or("default"),
                     snapshot.workspace,
                     if list {
@@ -2229,7 +2232,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v43::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v44::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2875,7 +2878,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         ),
         _ => return Err(Error::usage(EON_USAGE)),
     };
-    eon_workspace_protocol::v43::validate_pane_rename(name, tag)
+    eon_workspace_protocol::v44::validate_pane_rename(name, tag)
         .map_err(|error| Error::usage(error.to_string()))?;
     Ok((
         Action::RenamePane {
@@ -3179,7 +3182,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v43::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v44::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -4203,7 +4206,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v43::{
+        use eon_workspace_protocol::v44::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4227,6 +4230,9 @@ mod tests {
             name: name.into(),
         };
         let base_snapshot = || Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {
@@ -4456,11 +4462,14 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v43::{
+        use eon_workspace_protocol::v44::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
         let mut snap = Snapshot {
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
             workspaces: vec![WorkspaceInfo {

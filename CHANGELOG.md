@@ -26,6 +26,14 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   report Orbit's exit status or signal, or unknown status when Orbit's exit
   cannot be observed (`eon-terminal-end-status-mapping-cxys`).
 
+- Eon 0.1.25 uses EONW v44. Inspection separates the runtime `generation`
+  from `created_build` and `active_build`; window inventory reports each
+  retained terminal's run, origin and protocol facts, with unknown recovered
+  launch facts null. Event consumers recognize `updating` as exit 1. This is
+  the data foundation for in-place Update; allocation still uses the build
+  digest and Update is not exposed. v44 needs a fresh matching-version window;
+  existing cross-version Routing and Reserved Stop remain (`eon-t3fyd.2`).
+
 - The Editor key starts Neovim with an Eon-owned listener. `[editor] kind`
   defaults to `"auto"`, recognizing the `nvim` basename; foreground wrappers
   opt in with `"neovim"`. Neovim Files and `eon edit` still open new panes

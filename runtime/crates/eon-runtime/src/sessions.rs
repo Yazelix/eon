@@ -8,7 +8,7 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v43::{
+use eon_workspace_protocol::v44::{
     Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES,
     MAX_TERMINAL_TEXT_BYTES,
 };
@@ -583,6 +583,8 @@ fn acquire_management(
         record_object: candidate.record,
         identity: candidate.identity,
         orbit_log,
+        origin_build: None,
+        presentation_protocols: None,
         lease: stream,
         request: None,
         answered_status: None,
@@ -1024,6 +1026,8 @@ pub(super) struct RunningSession {
     record_object: ObjectIdentity,
     identity: LiveIdentity,
     pub(super) orbit_log: Option<PathBuf>,
+    origin_build: Option<String>,
+    presentation_protocols: Option<[u16; 2]>,
     /// This Runtime is the lease's one reader and keeps at most one request
     /// in flight on it (EON-C31 Polling).
     lease: UnixStream,
@@ -1723,6 +1727,18 @@ fn naming_failed(
 }
 
 impl RunningSession {
+    pub(super) fn inventory(&self) -> eon_workspace_protocol::v44::TerminalInventory {
+        eon_workspace_protocol::v44::TerminalInventory {
+            terminal: self.id.clone(),
+            run: self.identity.run_id.clone(),
+            origin_build: self.origin_build.clone(),
+            management_version: self.identity.management_generation,
+            record_generation: self.identity.record_generation,
+            orbs: self.presentation_protocols.map(|versions| versions[0]),
+            orbf: self.presentation_protocols.map(|versions| versions[1]),
+        }
+    }
+
     pub(super) fn end(&self) -> Option<SessionEnd> {
         self.finished
     }
@@ -1835,6 +1851,11 @@ pub(super) fn start_orbit(
     deadline: Instant,
     failed_starts: &mut FailedStarts,
 ) -> Result<RunningSession, String> {
+    let origin_build = super::generation::current_generation(inputs)?;
+    let [_, orbs, orbf] = *inputs
+        .presentation_protocols
+        .as_ref()
+        .map_err(Clone::clone)?;
     let started = Instant::now();
     let budget = deadline.saturating_duration_since(started);
     let management = artifact_path(socket, ".management");
@@ -1951,6 +1972,8 @@ pub(super) fn start_orbit(
                     )
                     .map(|session| RunningSession {
                         default_shell: child.is_empty(),
+                        origin_build: Some(origin_build.clone()),
+                        presentation_protocols: Some([orbs, orbf]),
                         ..session
                     });
                 }
@@ -2619,7 +2642,7 @@ pub(crate) mod tests {
         let candidates = super::untracked_runs(
             &root,
             super::LaunchMode::Workspace,
-            "component-1",
+            "g1-00000000000000000000000000000001",
             &[],
             Instant::now() + Duration::from_secs(5),
         )
@@ -2630,7 +2653,7 @@ pub(crate) mod tests {
         let mut acquired = super::acquire_generation_sessions(
             &root,
             super::LaunchMode::Workspace,
-            "component-1",
+            "g1-00000000000000000000000000000001",
             &[],
             None,
             Instant::now() + Duration::from_secs(5),
@@ -2682,7 +2705,7 @@ pub(crate) mod tests {
         let identity = LiveIdentity {
             session_id: format!("terminal-{number}"),
             run_id: format!("lease-race-{number}"),
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             record_generation: management::RECORD_GENERATION,
             management_generation: management::VERSION,
             process_id: std::process::id(),
@@ -2852,7 +2875,7 @@ pub(crate) mod tests {
             let result = super::acquire_generation_sessions(
                 &root,
                 super::LaunchMode::Workspace,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 &[],
                 None,
                 Instant::now() + SESSION_CLEANUP_TIMEOUT,
@@ -3022,7 +3045,7 @@ pub(crate) mod tests {
                 super::recover_sessions(
                     &root,
                     crate::supervisor::LaunchMode::Workspace,
-                    "component-1",
+                    "g1-00000000000000000000000000000001",
                     None,
                     Instant::now() + Duration::from_secs(5),
                 )
@@ -3058,7 +3081,7 @@ pub(crate) mod tests {
         let identity = LiveIdentity {
             session_id: "terminal-1".into(),
             run_id: "lost-owner".into(),
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             record_generation: management::RECORD_GENERATION,
             management_generation: management::VERSION,
             process_id: child.id(),
@@ -3087,6 +3110,8 @@ pub(crate) mod tests {
             record: record.clone(),
             record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
             identity,
+            origin_build: None,
+            presentation_protocols: None,
             orbit_log: None,
             lease,
             request: None,
@@ -3195,7 +3220,7 @@ pub(crate) mod tests {
         let identity = LiveIdentity {
             session_id: "terminal-1".into(),
             run_id: "liveness".into(),
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             record_generation: management::RECORD_GENERATION,
             management_generation: management::VERSION,
             process_id: child.id(),
@@ -3244,7 +3269,7 @@ pub(crate) mod tests {
             let identity = LiveIdentity {
                 session_id: "terminal-2".into(),
                 run_id: format!("run-{pid}"),
-                component_generation: "component-1".into(),
+                component_generation: "g1-00000000000000000000000000000001".into(),
                 record_generation: management::RECORD_GENERATION,
                 management_generation: management::VERSION,
                 process_id: pid,
@@ -3302,7 +3327,7 @@ pub(crate) mod tests {
                 let error = super::acquire_generation_sessions(
                     &root,
                     super::LaunchMode::Workspace,
-                    "component-1",
+                    "g1-00000000000000000000000000000001",
                     &[],
                     None,
                     deadline,
@@ -3320,7 +3345,7 @@ pub(crate) mod tests {
             let sessions = super::acquire_generation_sessions(
                 &root,
                 super::LaunchMode::Workspace,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 &[],
                 None,
                 deadline,
@@ -3359,7 +3384,7 @@ pub(crate) mod tests {
             let result = super::discover_untracked_runs(
                 &root,
                 super::LaunchMode::Workspace,
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 &[],
                 Instant::now() + timeout,
                 |identity| {
@@ -3406,7 +3431,7 @@ pub(crate) mod tests {
         let identity = LiveIdentity {
             session_id: "terminal-2".into(),
             run_id: "discovery-race".into(),
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             record_generation: management::RECORD_GENERATION,
             management_generation: management::VERSION,
             process_id,
@@ -3682,7 +3707,7 @@ pub(crate) mod tests {
             let identity = LiveIdentity {
                 session_id: "terminal-5".into(),
                 run_id: format!("run-{pid}"),
-                component_generation: "component-1".into(),
+                component_generation: "g1-00000000000000000000000000000001".into(),
                 record_generation: management::RECORD_GENERATION,
                 management_generation: management::VERSION,
                 process_id: pid,
@@ -3726,7 +3751,7 @@ pub(crate) mod tests {
             super::rollback_unleased_orbit(
                 &mut orbit,
                 &claim,
-                (&launch.0, "component-1", &launch.1),
+                (&launch.0, "g1-00000000000000000000000000000001", &launch.1),
                 Duration::from_secs(2),
             )
             .unwrap();
@@ -3754,7 +3779,7 @@ pub(crate) mod tests {
         let identity = LiveIdentity {
             session_id: format!("terminal-{number}"),
             run_id: format!("run-{number}"),
-            component_generation: "component-1".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
             record_generation: management::RECORD_GENERATION,
             management_generation: management::VERSION,
             process_id: std::process::id(),
@@ -3805,6 +3830,8 @@ pub(crate) mod tests {
             record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
             record,
             identity,
+            origin_build: None,
+            presentation_protocols: None,
             orbit_log: None,
             lease,
             request: None,
@@ -3976,7 +4003,7 @@ pub(crate) mod tests {
             root,
             &root.join("orbit.sock"),
             "terminal-1",
-            "component-1",
+            "g1-00000000000000000000000000000001",
             root,
             &["sh".into(), "-c".into(), script.into()],
             None,
@@ -4002,7 +4029,7 @@ pub(crate) mod tests {
             &socket,
             "terminal-1",
             "rollback-run",
-            "component-1",
+            "g1-00000000000000000000000000000001",
             &root,
             &["sh".into(), "-c".into(), "exec sleep 300".into()],
             None,
@@ -4041,7 +4068,11 @@ pub(crate) mod tests {
         super::rollback_unleased_orbit(
             &mut orbit,
             &claim,
-            ("rollback-run", "component-1", &socket),
+            (
+                "rollback-run",
+                "g1-00000000000000000000000000000001",
+                &socket,
+            ),
             SESSION_CLEANUP_TIMEOUT,
         )
         .unwrap();
@@ -4070,7 +4101,11 @@ pub(crate) mod tests {
         let failure = super::rollback_unleased_orbit(
             &mut child,
             &claim,
-            ("marked", "component-1", &root.join("orbit.sock")),
+            (
+                "marked",
+                "g1-00000000000000000000000000000001",
+                &root.join("orbit.sock"),
+            ),
             Duration::from_millis(10),
         )
         .unwrap_err();
@@ -4119,7 +4154,7 @@ pub(crate) mod tests {
             &root,
             &root.join("orbit.sock"),
             "terminal-1",
-            "component-1",
+            "g1-00000000000000000000000000000001",
             &root,
             &["sh".into(), "-c".into(), "exec sleep 30".into()],
             None,
@@ -4349,7 +4384,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v43::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v44::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(
@@ -5046,7 +5081,7 @@ pub(crate) mod tests {
             socket,
             "terminal-1",
             "run-1",
-            "component-1",
+            "g1-00000000000000000000000000000001",
             root.as_path(),
             &[],
             None,
@@ -5061,7 +5096,7 @@ pub(crate) mod tests {
                 "--management-v8",
                 "terminal-1",
                 "run-1",
-                "component-1",
+                "g1-00000000000000000000000000000001",
                 "--ansi-palette-v1",
                 inputs.defaults.ansi_palette,
                 "--",

@@ -621,10 +621,10 @@ mod tests {
         assert_eq!(
             [SHIFT, CTRL, ALT, SUPER],
             [
-                crate::v43::SHIFT,
-                crate::v43::CTRL,
-                crate::v43::ALT,
-                crate::v43::SUPER
+                crate::v44::SHIFT,
+                crate::v44::CTRL,
+                crate::v44::ALT,
+                crate::v44::SUPER
             ]
         );
     }

@@ -2,7 +2,7 @@ use super::super::{
     control as endpoint, sessions::bound_io, supervisor::request_id, workspace as projection,
 };
 use super::*;
-use eon_workspace_protocol::v43::{self as wire, EventKind, Filter, Resume};
+use eon_workspace_protocol::v44::{self as wire, EventKind, Filter, Resume};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use std::os::fd::{AsFd, BorrowedFd};
 
@@ -482,7 +482,8 @@ fn consume(
                 };
                 if json {
                     format!(
-                        "{{\"type\":\"gap\",\"seq\":{seq},\"reason\":\"overflow\",\"snapshot\":{{{}}}}}",
+                        "{{\"type\":\"gap\",\"seq\":{seq},\"reason\":\"overflow\",\"snapshot\":{{\"generation\":\"{}\",{}}}}}",
+                        json_escape(&subscribed.generation),
                         state_json(Some(&gap.snapshot), &tabs)
                     )
                 } else {
@@ -502,6 +503,7 @@ fn write_end(output: &mut impl Write, end: wire::End, json: bool) -> std::io::Re
         wire::End::Ended { .. } => ("ended", 0),
         wire::End::TargetsGone => ("targets-gone", 0),
         wire::End::TooSlow => ("too-slow", 1),
+        wire::End::Updating => ("updating", 1),
     };
     let mut text = if json {
         format!("{{\"type\":\"end\",\"reason\":\"{reason}\"")
@@ -619,7 +621,7 @@ fn queue_json(queue: &[wire::QueueItem]) -> String {
 }
 fn state_json(snapshot: Option<&wire::WindowSnapshot>, tabs: &[wire::Tabs]) -> String {
     let Some(snapshot) = snapshot else {
-        return "\"sessions\":null,\"tabs\":null,\"attention_queue\":null,\"busy\":null".into();
+        return "\"created_build\":null,\"active_build\":null,\"sessions\":null,\"tabs\":null,\"attention_queue\":null,\"busy\":null".into();
     };
     let mut busy = String::new();
     projection::json_busy(
@@ -648,7 +650,9 @@ fn state_json(snapshot: Option<&wire::WindowSnapshot>, tabs: &[wire::Tabs]) -> S
         },
     );
     format!(
-        "\"sessions\":{},\"tabs\":{tabs},\"attention_queue\":{},\"busy\":{busy}",
+        "\"created_build\":\"{}\",\"active_build\":\"{}\",\"sessions\":{},\"tabs\":{tabs},\"attention_queue\":{},\"busy\":{busy}",
+        json_escape(&snapshot.created_build),
+        json_escape(&snapshot.active_build),
         array(&snapshot.workspaces, entry_json),
         queue_json(&snapshot.attention_queue)
     )
@@ -952,7 +956,7 @@ mod tests {
         wire::SubscriptionMessage::Subscribed(wire::Subscribed {
             stream: "stream".into(),
             seq: 0,
-            generation: "g1".into(),
+            generation: "g1-00000000000000000000000000000001".into(),
             window: None,
             caller: None,
             snapshot,
@@ -980,6 +984,8 @@ mod tests {
         };
         tabs.tabs[0].columns[0].panes[0].tag = Some("work \"🦀\"".into());
         let snapshot = wire::WindowSnapshot {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
             workspaces: vec![entry],
             attention_queue: vec![],
             busy: Some(vec![]),
@@ -1021,6 +1027,7 @@ mod tests {
         assert!(human.ends_with("end targets-gone\n"));
         for (end, status, reason) in [
             (wire::End::TooSlow, 1, "too-slow"),
+            (wire::End::Updating, 1, "updating"),
             (
                 wire::End::Ended {
                     generation: "g1".into(),
@@ -1059,12 +1066,14 @@ mod tests {
                 0,
             ),
             (wire::End::TooSlow, 1),
+            (wire::End::Updating, 1),
         ] {
             let expected_line = match &end {
                 wire::End::TargetsGone => {
                     serde_json::json!({"type":"end", "reason":"targets-gone"})
                 }
                 wire::End::TooSlow => serde_json::json!({"type":"end", "reason":"too-slow"}),
+                wire::End::Updating => serde_json::json!({"type":"end", "reason":"updating"}),
                 wire::End::Ended { .. } => {
                     serde_json::json!({"type":"end", "reason":"ended", "generation":"g1"})
                 }
