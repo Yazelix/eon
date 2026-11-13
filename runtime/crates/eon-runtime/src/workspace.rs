@@ -1,6 +1,9 @@
 use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition, PreparedCommand};
 use super::session_registry::{Completion, Operation, Registration, Registry};
+use eon_workspace_protocol::shortcuts::{
+    EffectiveBinding, EffectiveKeymap, EffectivePopup, ReservedChord,
+};
 use eon_workspace_protocol::v44::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
@@ -4111,6 +4114,170 @@ pub(crate) fn json_escape(value: &str) -> String {
         }
     }
     escaped
+}
+
+fn binding_json(binding: &EffectiveBinding) -> serde_json::Value {
+    serde_json::json!({
+        "action": binding.action,
+        "group": binding.group,
+        "label": binding.label,
+        "display": binding.display,
+        "chords": binding
+            .chords
+            .iter()
+            .map(|chord| {
+                serde_json::json!({
+                    "config": chord.config,
+                    "display": chord.display,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "source": binding.source,
+        "overridden_by": binding
+            .overridden_by
+            .iter()
+            .map(|source| {
+                serde_json::json!({
+                    "config": source.config,
+                    "display": source.display,
+                    "kind": source.kind,
+                    "id": source.id,
+                    "label": source.label,
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn popup_json(popup: &EffectivePopup) -> serde_json::Value {
+    serde_json::json!({
+        "id": popup.id,
+        "label": popup.label,
+        "keybinding": popup.keybinding,
+        "display": popup.display,
+        "default_keybinding": popup.default_keybinding,
+        "default_display": popup.default_display,
+        "overridden_by": popup.overridden_by,
+        "overridden_by_label": popup.overridden_by_label,
+        "source": popup.source,
+    })
+}
+
+fn reserved_json(chord: &ReservedChord) -> serde_json::Value {
+    serde_json::json!({
+        "action": chord.action,
+        "config": chord.config,
+        "display": chord.display,
+    })
+}
+
+/// Effective keymap as one JSON line (`EON-C10`).
+pub(crate) fn keys_json(
+    generation: &str,
+    window: Option<&str>,
+    keymap: &EffectiveKeymap,
+) -> String {
+    let output = serde_json::json!({
+        "generation": generation,
+        "window": window,
+        "platform": keymap.platform.name(),
+        "sidebar": sidebar_name(keymap.sidebar),
+        "number_keys": keymap.number_keys,
+        "number_keys_source": "config",
+        "running": keymap.running,
+        "groups": keymap
+            .groups
+            .iter()
+            .map(|group| {
+                serde_json::json!({
+                    "title": group.title,
+                    "rows": group
+                        .rows
+                        .iter()
+                        .map(|row| {
+                            serde_json::json!({
+                                "shortcut": row.shortcut,
+                                "label": row.label,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>(),
+        "bindings": keymap.bindings.iter().map(binding_json).collect::<Vec<_>>(),
+        "popups": keymap.popups.iter().map(popup_json).collect::<Vec<_>>(),
+        "reserved": {
+            "strict": keymap.reserved.strict.iter().map(reserved_json).collect::<Vec<_>>(),
+            "focus": keymap.reserved.focus.iter().map(reserved_json).collect::<Vec<_>>(),
+        },
+    });
+    format!("{output}\n")
+}
+
+/// Human-readable effective keymap report matching the `Alt+/` groups (`EON-C10`).
+pub(crate) fn keys_human(
+    generation: &str,
+    window: Option<&str>,
+    keymap: &EffectiveKeymap,
+) -> String {
+    let mut output = format!(
+        "window={} generation={} platform={} sidebar={} number_keys={} number_keys_source=config running={}\n",
+        window.unwrap_or("default"),
+        generation,
+        keymap.platform.name(),
+        sidebar_name(keymap.sidebar),
+        keymap.number_keys,
+        keymap.running,
+    );
+    let width = keymap
+        .groups
+        .iter()
+        .flat_map(|group| group.rows.iter().map(|row| row.shortcut.chars().count()))
+        .chain(
+            keymap
+                .reserved
+                .strict
+                .iter()
+                .chain(&keymap.reserved.focus)
+                .map(|chord| chord.display.chars().count()),
+        )
+        .max()
+        .unwrap_or(20)
+        .max(20);
+    for group in &keymap.groups {
+        output.push('\n');
+        output.push_str(&group.title);
+        output.push('\n');
+        for row in &group.rows {
+            output.push_str(&format!("  {:<width$}  {}\n", row.shortcut, row.label));
+        }
+    }
+    let unbound: Vec<&EffectivePopup> = keymap
+        .popups
+        .iter()
+        .filter(|popup| popup.source == "unbound")
+        .collect();
+    if !unbound.is_empty() {
+        output.push_str("\nUnbound popups\n");
+        for popup in unbound {
+            output.push_str(&format!("  {:<width$}  {}\n", popup.id, popup.label));
+        }
+    }
+    for (title, chords) in [
+        ("Reserved (strict)", &keymap.reserved.strict),
+        ("Reserved (focus)", &keymap.reserved.focus),
+    ] {
+        output.push('\n');
+        output.push_str(title);
+        output.push('\n');
+        for chord in chords {
+            output.push_str(&format!(
+                "  {:<width$}  {} ({})\n",
+                chord.display, chord.action, chord.config
+            ));
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -10290,5 +10457,378 @@ mod tests {
         assert_eq!(set.shown, 0);
         assert_eq!(set.workspaces[0], shown_before);
         assert_eq!(set.snapshot().active_workspace, "s1");
+    }
+
+    #[test]
+    fn keys_json_and_human_project_effective_keymap() {
+        use eon_workspace_protocol::shortcuts::{
+            ALT, KeyChord, OverrideSource, Platform, ReservedChords, ViewerGroup, ViewerRow,
+            effective_keymap,
+        };
+
+        // Compact full-schema literal expectation covering every field, explicit nulls, and ordering.
+        let compact = EffectiveKeymap {
+            platform: Platform::Linux,
+            sidebar: Sidebar::Closed,
+            number_keys: false,
+            running: true,
+            groups: vec![
+                ViewerGroup {
+                    title: "Navigate".into(),
+                    rows: vec![ViewerRow {
+                        shortcut: "Ctrl+Tab / Ctrl+Shift+Tab".into(),
+                        label: "Select the next or previous tab".into(),
+                    }],
+                },
+                ViewerGroup {
+                    title: "Tabs and panes".into(),
+                    rows: vec![ViewerRow {
+                        shortcut: "Alt+M".into(),
+                        label: "Create pane (overridden by Pane Override)".into(),
+                    }],
+                },
+            ],
+            bindings: vec![
+                EffectiveBinding {
+                    action: "open_link",
+                    group: "Host",
+                    label: "Open link",
+                    display: Some("Ctrl+click".into()),
+                    chords: vec![KeyChord {
+                        config: None,
+                        display: "Ctrl+click".into(),
+                    }],
+                    source: "default",
+                    overridden_by: Vec::new(),
+                },
+                EffectiveBinding {
+                    action: "quit",
+                    group: "Host",
+                    label: "Quit: close the window, stop its terminals",
+                    display: Some("Command+Q".into()),
+                    chords: vec![KeyChord {
+                        config: Some("Super+Q".into()),
+                        display: "Command+Q".into(),
+                    }],
+                    source: "default",
+                    overridden_by: vec![OverrideSource {
+                        config: Some("Alt+Shift+Q".into()),
+                        display: "Option+Shift+Q".into(),
+                        kind: "popup",
+                        id: "pane-maker".into(),
+                        label: "Pane Override".into(),
+                    }],
+                },
+                EffectiveBinding {
+                    action: "create_pane",
+                    group: "Tabs and panes",
+                    label: "Create pane",
+                    display: None,
+                    chords: Vec::new(),
+                    source: "overridden",
+                    overridden_by: vec![OverrideSource {
+                        config: Some("Alt+M".into()),
+                        display: "Alt+M".into(),
+                        kind: "popup",
+                        id: "pane-maker".into(),
+                        label: "Pane Override".into(),
+                    }],
+                },
+            ],
+            popups: vec![
+                EffectivePopup {
+                    id: "pane-maker".into(),
+                    label: "Pane Override".into(),
+                    keybinding: Some("Alt+M".into()),
+                    display: Some("Alt+M".into()),
+                    default_keybinding: None,
+                    default_display: None,
+                    overridden_by: None,
+                    overridden_by_label: None,
+                    source: "bound",
+                },
+                EffectivePopup {
+                    id: "agent".into(),
+                    label: "Agent".into(),
+                    keybinding: None,
+                    display: None,
+                    default_keybinding: Some("Alt+Shift+L".into()),
+                    default_display: Some("Alt+Shift+L".into()),
+                    overridden_by: Some("pane-maker".into()),
+                    overridden_by_label: Some("Pane Override".into()),
+                    source: "overridden",
+                },
+                EffectivePopup {
+                    id: "silent".into(),
+                    label: "Silent Tool".into(),
+                    keybinding: None,
+                    display: None,
+                    default_keybinding: None,
+                    default_display: None,
+                    overridden_by: None,
+                    overridden_by_label: None,
+                    source: "unbound",
+                },
+            ],
+            reserved: ReservedChords {
+                strict: vec![ReservedChord {
+                    action: "toggle_viewer",
+                    config: "Alt+/".into(),
+                    display: "Alt+/".into(),
+                }],
+                focus: vec![ReservedChord {
+                    action: "focus_left",
+                    config: "Alt+H".into(),
+                    display: "Alt+H".into(),
+                }],
+            },
+        };
+        let compact_parsed: serde_json::Value =
+            serde_json::from_str(&keys_json("g1-test", Some("work"), &compact)).unwrap();
+        assert_eq!(
+            compact_parsed,
+            serde_json::json!({
+                "generation": "g1-test",
+                "window": "work",
+                "platform": "linux",
+                "sidebar": "closed",
+                "number_keys": false,
+                "number_keys_source": "config",
+                "running": true,
+                "groups": [
+                    {
+                        "title": "Navigate",
+                        "rows": [
+                            { "shortcut": "Ctrl+Tab / Ctrl+Shift+Tab", "label": "Select the next or previous tab" }
+                        ]
+                    },
+                    {
+                        "title": "Tabs and panes",
+                        "rows": [
+                            { "shortcut": "Alt+M", "label": "Create pane (overridden by Pane Override)" }
+                        ]
+                    }
+                ],
+                "bindings": [
+                    {
+                        "action": "open_link",
+                        "group": "Host",
+                        "label": "Open link",
+                        "display": "Ctrl+click",
+                        "chords": [{ "config": null, "display": "Ctrl+click" }],
+                        "source": "default",
+                        "overridden_by": []
+                    },
+                    {
+                        "action": "quit",
+                        "group": "Host",
+                        "label": "Quit: close the window, stop its terminals",
+                        "display": "Command+Q",
+                        "chords": [{ "config": "Super+Q", "display": "Command+Q" }],
+                        "source": "default",
+                        "overridden_by": [{
+                            "config": "Alt+Shift+Q",
+                            "display": "Option+Shift+Q",
+                            "kind": "popup",
+                            "id": "pane-maker",
+                            "label": "Pane Override"
+                        }]
+                    },
+                    {
+                        "action": "create_pane",
+                        "group": "Tabs and panes",
+                        "label": "Create pane",
+                        "display": null,
+                        "chords": [],
+                        "source": "overridden",
+                        "overridden_by": [{
+                            "config": "Alt+M",
+                            "display": "Alt+M",
+                            "kind": "popup",
+                            "id": "pane-maker",
+                            "label": "Pane Override"
+                        }]
+                    }
+                ],
+                "popups": [
+                    {
+                        "id": "pane-maker",
+                        "label": "Pane Override",
+                        "keybinding": "Alt+M",
+                        "display": "Alt+M",
+                        "default_keybinding": null,
+                        "default_display": null,
+                        "overridden_by": null,
+                        "overridden_by_label": null,
+                        "source": "bound"
+                    },
+                    {
+                        "id": "agent",
+                        "label": "Agent",
+                        "keybinding": null,
+                        "display": null,
+                        "default_keybinding": "Alt+Shift+L",
+                        "default_display": "Alt+Shift+L",
+                        "overridden_by": "pane-maker",
+                        "overridden_by_label": "Pane Override",
+                        "source": "overridden"
+                    },
+                    {
+                        "id": "silent",
+                        "label": "Silent Tool",
+                        "keybinding": null,
+                        "display": null,
+                        "default_keybinding": null,
+                        "default_display": null,
+                        "overridden_by": null,
+                        "overridden_by_label": null,
+                        "source": "unbound"
+                    }
+                ],
+                "reserved": {
+                    "strict": [{ "action": "toggle_viewer", "config": "Alt+/", "display": "Alt+/" }],
+                    "focus": [{ "action": "focus_left", "config": "Alt+H", "display": "Alt+H" }]
+                }
+            })
+        );
+
+        let entries = vec![
+            SnapshotEntry {
+                id: "pane-maker".into(),
+                label: "Pane Override".into(),
+                shortcut: PopupKey::Bound(Shortcut {
+                    modifiers: ALT,
+                    key: "KeyM".into(),
+                }),
+            },
+            SnapshotEntry {
+                id: "agent".into(),
+                label: "Agent".into(),
+                shortcut: PopupKey::Overridden {
+                    default: Shortcut {
+                        modifiers: ALT | eon_workspace_protocol::v44::SHIFT,
+                        key: "KeyL".into(),
+                    },
+                    by: "pane-maker".into(),
+                },
+            },
+            SnapshotEntry {
+                id: "silent".into(),
+                label: "Silent Tool".into(),
+                shortcut: PopupKey::Unbound,
+            },
+        ];
+        let keymap = effective_keymap(Platform::Linux, &entries, Sidebar::Closed, true, false);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&keys_json("g1-test", None, &keymap)).unwrap();
+        assert_eq!(
+            parsed.as_object().unwrap().get("window"),
+            Some(&serde_json::Value::Null)
+        );
+        let group_titles: Vec<&str> = parsed["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|group| group["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            group_titles,
+            ["Navigate", "Tabs and panes", "Projects and tools", "Host"]
+        );
+        let binding_actions: Vec<&str> = parsed["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|binding| binding["action"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            binding_actions,
+            [
+                "next_tab",
+                "previous_tab",
+                "focus_left",
+                "focus_right",
+                "focus_up",
+                "focus_down",
+                "focus_tab_position",
+                "next_attention",
+                "previous_attention",
+                "toggle_inbox",
+                "cycle_focus",
+                "return_to_terminal",
+                "traverse_chrome_left",
+                "traverse_chrome_right",
+                "traverse_chrome_up",
+                "traverse_chrome_down",
+                "create_pane",
+                "create_column",
+                "create_tab",
+                "close_tab",
+                "close_pane",
+                "toggle_zoom",
+                "move_tab_left",
+                "move_tab_right",
+                "move_pane_left",
+                "move_pane_right",
+                "move_pane_up",
+                "move_pane_down",
+                "new_window",
+                "detach",
+                "quit",
+                "toggle_viewer",
+                "toggle_hints",
+                "toggle_sidebar",
+                "copy",
+                "paste",
+                "open_link",
+            ]
+        );
+        assert_eq!(
+            parsed["bindings"][16],
+            serde_json::json!({
+                "action": "create_pane",
+                "group": "Tabs and panes",
+                "label": "Create pane",
+                "display": null,
+                "chords": [],
+                "source": "overridden",
+                "overridden_by": [{
+                    "config": "Alt+M",
+                    "display": "Alt+M",
+                    "kind": "popup",
+                    "id": "pane-maker",
+                    "label": "Pane Override"
+                }]
+            })
+        );
+        assert_eq!(parsed["popups"], compact_parsed["popups"]);
+        let strict_actions: Vec<&str> = parsed["reserved"]["strict"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|chord| chord["action"].as_str().unwrap())
+            .collect();
+        assert_eq!(strict_actions.len(), 11);
+        assert_eq!(strict_actions[0], "focus_tab_position");
+        assert_eq!(strict_actions[10], "toggle_viewer");
+        let focus_actions: Vec<&str> = parsed["reserved"]["focus"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|chord| chord["action"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            focus_actions,
+            ["focus_left", "focus_right", "focus_up", "focus_down"]
+        );
+
+        let human = keys_human("g1-test", None, &keymap);
+        assert!(human.starts_with(
+            "window=default generation=g1-test platform=linux sidebar=closed number_keys=false number_keys_source=config running=true\n"
+        ));
+        assert!(human.contains("Unbound popups\n"));
+        assert!(human.contains("silent"));
+        assert!(human.contains("Reserved (strict)\n"));
+        assert!(human.contains("Reserved (focus)\n"));
     }
 }

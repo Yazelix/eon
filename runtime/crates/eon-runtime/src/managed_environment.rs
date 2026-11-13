@@ -3077,6 +3077,29 @@ pub(super) fn read_configuration(path: &Path) -> Result<String, String> {
     }
 }
 
+fn invalid_configuration_error(path: &Path, error: impl std::fmt::Display) -> String {
+    format!("invalid Eon configuration {}: {error}", path.display())
+}
+
+/// Read `[session] number_keys` from `path` without creating directories or
+/// printing unrelated configuration warnings (EON-C10).
+pub(super) fn read_number_keys(
+    path: &Path,
+    defaults: &Defaults,
+) -> Result<bool, (&'static str, String)> {
+    let source = read_configuration(path).map_err(|detail| ("unreadable-configuration", detail))?;
+    let config = parse_configuration_text(&source, path, defaults)
+        .map_err(|detail| ("invalid-configuration", detail))?;
+    let number_keys = config.session.number_keys.unwrap_or(defaults.number_keys);
+    config.validate(defaults).map_err(|error| {
+        (
+            "invalid-configuration",
+            invalid_configuration_error(path, error),
+        )
+    })?;
+    Ok(number_keys)
+}
+
 /// Validate one candidate without reading a file, emitting warnings or starting children.
 pub(super) fn validate_configuration_text(
     source: &str,
@@ -3085,7 +3108,7 @@ pub(super) fn validate_configuration_text(
 ) -> Result<(), String> {
     parse_configuration_text(source, path, defaults)?
         .validate(defaults)
-        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))
+        .map_err(|error| invalid_configuration_error(path, error))
 }
 
 fn parse_configuration_text(
@@ -3093,7 +3116,7 @@ fn parse_configuration_text(
     path: &Path,
     defaults: &Defaults,
 ) -> Result<EonConfig, String> {
-    let invalid = |error: String| format!("invalid Eon configuration {}: {error}", path.display());
+    let invalid = |error: String| invalid_configuration_error(path, error);
     let mut table: toml::Table =
         toml::from_str(source).map_err(|error: toml::de::Error| invalid(error.to_string()))?;
     // A tombstoned table goes before any typed read, so nothing in it can fail.
@@ -3296,6 +3319,32 @@ mod tests {
             error.contains("cannot disable Eon's required quick search"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn read_number_keys_validates_semantic_configuration_errors() {
+        let root = crate::supervisor::temporary_directory();
+        let config_path = root.join("config.toml");
+        let defaults = crate::fixtures::inputs().defaults;
+
+        assert_eq!(
+            super::read_number_keys(&config_path, &defaults).unwrap(),
+            defaults.number_keys
+        );
+
+        fs::write(&config_path, "[session]\nnumber_keys = false\n").unwrap();
+        assert!(!super::read_number_keys(&config_path, &defaults).unwrap());
+
+        for invalid in [
+            "[terminal]\nfont_size = 0\n",
+            "[popups.project]\nenabled = false\n",
+        ] {
+            fs::write(&config_path, invalid).unwrap();
+            let (code, detail) = super::read_number_keys(&config_path, &defaults).unwrap_err();
+            assert_eq!(code, "invalid-configuration", "{invalid}: {detail}");
+        }
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

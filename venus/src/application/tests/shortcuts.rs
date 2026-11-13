@@ -1,9 +1,9 @@
 use super::*;
 use crate::application::shortcuts::{
-    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, NativeShortcutTrigger, PAIRED_ROWS,
-    ShortcutSide, command_q_for, native_modifiers, native_pointer_shortcut_for,
-    shortcut_groups_for,
+    ALT_SHIFT, CTRL_ALT, CTRL_SHIFT, FIXED_SHORTCUTS, NativeShortcutTrigger, ShortcutSide,
+    command_q_for, native_modifiers, native_pointer_shortcut_for, shortcut_groups_for,
 };
+use eon_workspace_protocol::shortcuts::PAIRED_ROWS;
 use eon_workspace_protocol::v44::{InvokeIntent, Side, Tab};
 
 #[test]
@@ -1108,6 +1108,45 @@ fn literal_shortcut_defaults_preserve_both_platforms() {
             }
         }
         assert_eq!(actual, expected, "{platform:?} shortcut defaults changed");
+        let direct = eon_workspace_protocol::shortcuts::effective_keymap(
+            platform,
+            &[],
+            eon_workspace_protocol::v44::Sidebar::Open,
+            true,
+            true,
+        );
+        let direct_viewer: Vec<(&str, Vec<(&str, &str)>)> = direct
+            .groups
+            .iter()
+            .map(|g| {
+                (
+                    g.title.as_str(),
+                    g.rows
+                        .iter()
+                        .map(|r| (r.shortcut.as_str(), r.label.as_str()))
+                        .collect(),
+                )
+            })
+            .collect();
+        let venus_viewer = shortcut_groups_for(
+            platform,
+            &[],
+            eon_workspace_protocol::v44::Sidebar::Open,
+            true,
+        );
+        let venus_viewer: Vec<(&str, Vec<(&str, &str)>)> = venus_viewer
+            .iter()
+            .map(|g| {
+                (
+                    g.title.as_str(),
+                    g.rows
+                        .iter()
+                        .map(|r| (r.shortcut.as_str(), r.action.as_str()))
+                        .collect(),
+                )
+            })
+            .collect();
+        assert_eq!(direct_viewer, venus_viewer);
     }
 }
 

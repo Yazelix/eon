@@ -569,7 +569,7 @@ fn assert_names_no_workspace(text: &str, context: &str) {
 #[test]
 fn help_skill_and_usage_name_sessions_and_old_commands_are_invalid() {
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
-    for arguments in [&["--help"][..], &["session", "--help"]] {
+    for arguments in [&["--help"][..], &["session", "--help"], &["keys", "--help"]] {
         let output = eon_command(binary).args(arguments).output().unwrap();
         assert!(output.status.success(), "{arguments:?}");
         assert_names_no_workspace(stdout(&output), &format!("eon {arguments:?}"));
@@ -11975,6 +11975,10 @@ fn wait_for_busy_panes(root: &Path, window: Option<&Path>, panes: &[&str]) {
 }
 
 fn quit_workspace() -> (PathBuf, TestProcess) {
+    quit_workspace_with_config("")
+}
+
+fn quit_workspace_with_config(extra_config: &str) -> (PathBuf, TestProcess) {
     // Independent windows need short socket paths on macOS too.
     let root = (0_u32..)
         .map(|n| std::env::temp_dir().join(format!("eq{n:x}")))
@@ -11985,6 +11989,11 @@ fn quit_workspace() -> (PathBuf, TestProcess) {
         })
         .unwrap();
     configure_mock_desktop(&root.join("config"));
+    if !extra_config.is_empty() {
+        let path = root.join("config/config.toml");
+        let existing = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{existing}\n{extra_config}")).unwrap();
+    }
     managed_orbit_executable(&root.join("orbit"));
     executable(&root.join("venus"), "#!/bin/sh\nexit 0\n");
     let supervisor = TestProcess {
@@ -20995,5 +21004,277 @@ esac
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["outcome"], "installed");
     assert!(payload.exists() && second.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn keys_cli_errors_and_live_projection() {
+    use eon_workspace_protocol::shortcuts::{Platform, viewer_groups};
+
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let offline_root = temporary_directory();
+    // Invalid operands/flags exit 2 without touching state.
+    for arguments in [
+        &["keys", "extra"][..],
+        &["keys", "--json", "--json"],
+        &["keys", "--no-focus"],
+        &["keys", "--window"],
+    ] {
+        let output = eon_command(binary)
+            .args(arguments)
+            .env("EON_RUNTIME_DIR", offline_root.join("runtime"))
+            .env("EON_CONFIG_HOME", offline_root.join("config"))
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{arguments:?}");
+    }
+    assert!(!offline_root.join("config").exists());
+
+    // Missing supervisor exits 4 in both human and JSON output.
+    for (args, json) in [(&["keys"][..], false), (&["keys", "--json"][..], true)] {
+        let output = eon_command(binary)
+            .args(args)
+            .env("EON_RUNTIME_DIR", offline_root.join("runtime"))
+            .env("EON_CONFIG_HOME", offline_root.join("config"))
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env_remove("EON_TERMINAL")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        if json {
+            let err: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(err["error"]["code"], "missing-supervisor");
+            assert!(output.stderr.is_empty());
+        } else {
+            assert!(output.stdout.is_empty());
+            assert!(!output.stderr.is_empty());
+        }
+    }
+    fs::remove_dir_all(&offline_root).unwrap();
+
+    // Live workspace with sidebar disabled, unbound editor popup, fixed-key override (Alt+M),
+    // and popup-vs-popup override (Alt+Shift+J on git).
+    let (root, mut default) = quit_workspace_with_config(
+        "[sidebar]\nenabled = false\n\n[popups.editor]\nkeybinding = \"\"\n\n[popups.custom]\ncommand = [\"sh\"]\nkeybinding = \"Alt+M\"\nlabel = \"Custom\"\n\n[popups.clash]\ncommand = [\"sh\"]\nkeybinding = \"Alt+Shift+J\"\nlabel = \"Clash\"\n",
+    );
+    let run = |args: &[&str], caller: Option<&[u8]>| {
+        let mut command = quit_command(&root);
+        if let Some(caller) = caller {
+            command.env("EON_TERMINAL", OsStr::from_bytes(caller));
+        }
+        command.args(args).output().unwrap()
+    };
+
+    // Malformed / unknown EON_TERMINAL and unknown --window fail with exit 3.
+    let stale_caller = run(&["keys", "--json"], Some(b"stale-token"));
+    assert_eq!(stale_caller.status.code(), Some(3), "{stale_caller:?}");
+    let stale_json: serde_json::Value = serde_json::from_slice(&stale_caller.stdout).unwrap();
+    assert_eq!(stale_json["error"]["code"], "unknown-caller");
+
+    let unknown_window = run(&["keys", "--window", "ffff", "--json"], None);
+    assert_eq!(unknown_window.status.code(), Some(3), "{unknown_window:?}");
+    let unknown_json: serde_json::Value = serde_json::from_slice(&unknown_window.stdout).unwrap();
+    assert_eq!(unknown_json["error"]["code"], "unknown-window");
+
+    let session_before = presented(&run(&["session", "--json"], None));
+    let json_output = run(&["keys", "--json"], None);
+    assert_eq!(json_output.status.code(), Some(0), "{json_output:?}");
+    assert!(json_output.stderr.is_empty());
+    let keymap: serde_json::Value = serde_json::from_slice(&json_output.stdout).unwrap();
+    let session_after = presented(&run(&["session", "--json"], None));
+    assert_eq!(session_before, session_after);
+
+    assert_eq!(keymap["platform"], Platform::CURRENT.name());
+    assert!(keymap["generation"].as_str().is_some_and(|g| !g.is_empty()));
+    assert!(keymap["window"].is_null());
+    assert_eq!(keymap["sidebar"], "off");
+    assert_eq!(keymap["number_keys"], true);
+    assert_eq!(keymap["number_keys_source"], "config");
+    assert_eq!(keymap["running"], true);
+
+    // Groups in `eon keys --json` match `viewer_groups` built directly from snapshot.
+    let socket = generation_runtime(&root.join("r")).join("eon.sock");
+    let Response::Snapshot(snapshot) = workspace_action(&socket, "keys-inspect", Action::Inspect)
+    else {
+        panic!("expected Snapshot from supervisor");
+    };
+    let expected_groups = viewer_groups(
+        Platform::CURRENT,
+        &snapshot.entries,
+        snapshot.sidebar,
+        snapshot.running.is_some(),
+        true,
+    );
+    let json_groups: Vec<(String, Vec<(String, String)>)> = keymap["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| {
+            (
+                g["title"].as_str().unwrap().to_owned(),
+                g["rows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| {
+                        (
+                            r["shortcut"].as_str().unwrap().to_owned(),
+                            r["label"].as_str().unwrap().to_owned(),
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    let direct_groups: Vec<(String, Vec<(String, String)>)> = expected_groups
+        .into_iter()
+        .map(|g| {
+            (
+                g.title,
+                g.rows.into_iter().map(|r| (r.shortcut, r.label)).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(json_groups, direct_groups);
+
+    let bindings = keymap["bindings"].as_array().unwrap();
+    assert!(!bindings.iter().any(|b| b["action"] == "toggle_sidebar"));
+    let create_pane = bindings
+        .iter()
+        .find(|b| b["action"] == "create_pane")
+        .unwrap();
+    assert_eq!(create_pane["source"], "overridden");
+    assert!(create_pane["display"].is_null());
+    assert_eq!(create_pane["chords"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        create_pane["overridden_by"],
+        serde_json::json!([{
+            "config": "Alt+M",
+            "display": "Alt+M",
+            "kind": "popup",
+            "id": "custom",
+            "label": "Custom",
+        }])
+    );
+
+    let popups = keymap["popups"].as_array().unwrap();
+    let editor = popups.iter().find(|p| p["id"] == "editor").unwrap();
+    assert_eq!(editor["source"], "unbound");
+    assert!(editor["keybinding"].is_null());
+    let git = popups.iter().find(|p| p["id"] == "git").unwrap();
+    assert_eq!(git["source"], "overridden");
+    assert_eq!(git["overridden_by"], "clash");
+    assert_eq!(git["overridden_by_label"], "Clash");
+
+    let strict = keymap["reserved"]["strict"].as_array().unwrap();
+    let focus = keymap["reserved"]["focus"].as_array().unwrap();
+    assert_eq!(strict.len(), 11);
+    assert_eq!(focus.len(), 4);
+    assert!(
+        strict
+            .iter()
+            .any(|c| c["action"] == "toggle_viewer" && c["config"] == "Alt+Slash")
+    );
+
+    let human = run(&["keys"], None);
+    assert_eq!(human.status.code(), Some(0), "{human:?}");
+    let human_text = stdout(&human);
+    assert!(human_text.contains("Create pane (overridden by Custom)"));
+    assert!(human_text.contains("Unbound popups\n"));
+    assert!(human_text.contains("editor"));
+    assert!(human_text.contains("Reserved (strict)\n"));
+    assert!(human_text.contains("Reserved (focus)\n"));
+
+    // Closed stdout pipe exits 0 without stderr; /dev/full fails exit 1.
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let broken = quit_command(&root)
+        .args(["keys", "--json"])
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(broken.status.code(), Some(0));
+    assert!(broken.stderr.is_empty());
+
+    #[cfg(target_os = "linux")]
+    {
+        let full = quit_command(&root)
+            .args(["keys", "--json"])
+            .stdout(
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open("/dev/full")
+                    .unwrap(),
+            )
+            .output()
+            .unwrap();
+        assert_eq!(full.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&full.stderr).contains("cannot write stdout"));
+    }
+
+    // Explicit independent window targeting works.
+    let window_id = open_quit_window(&root);
+    let win_out = run(&["--window", &window_id, "keys", "--json"], None);
+    assert_eq!(win_out.status.code(), Some(0), "{win_out:?}");
+    let win_json: serde_json::Value = serde_json::from_slice(&win_out.stdout).unwrap();
+    assert_eq!(win_json["window"], window_id);
+
+    // Updating [session] number_keys on disk updates `eon keys` without supervisor reload.
+    let config_path = root.join("config/config.toml");
+    let valid_config = fs::read_to_string(&config_path).unwrap();
+    fs::write(
+        &config_path,
+        format!("{valid_config}\n[session]\nnumber_keys = false\n"),
+    )
+    .unwrap();
+    let disk_out = run(&["keys", "--json"], None);
+    assert_eq!(disk_out.status.code(), Some(0), "{disk_out:?}");
+    let disk_json: serde_json::Value = serde_json::from_slice(&disk_out.stdout).unwrap();
+    assert_eq!(disk_json["number_keys"], false);
+    assert_eq!(disk_json["number_keys_source"], "config");
+    assert!(
+        !disk_json["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["action"] == "show_workspace_position")
+    );
+
+    // Invalid or unreadable config.toml fails cleanly (exit 1) before writing output.
+    fs::write(&config_path, "broken = [").unwrap();
+    let bad_json = run(&["keys", "--json"], None);
+    assert_eq!(bad_json.status.code(), Some(1), "{bad_json:?}");
+    let bad_err: serde_json::Value = serde_json::from_slice(&bad_json.stdout).unwrap();
+    assert_eq!(bad_err["error"]["code"], "invalid-configuration");
+    let bad_human = run(&["keys"], None);
+    assert_eq!(bad_human.status.code(), Some(1), "{bad_human:?}");
+    assert!(bad_human.stdout.is_empty());
+
+    fs::write(&config_path, "[terminal]\nfont_size = 0\n").unwrap();
+    let semantic_json = run(&["keys", "--json"], None);
+    assert_eq!(semantic_json.status.code(), Some(1), "{semantic_json:?}");
+    let semantic_err: serde_json::Value = serde_json::from_slice(&semantic_json.stdout).unwrap();
+    assert_eq!(semantic_err["error"]["code"], "invalid-configuration");
+    let semantic_human = run(&["keys"], None);
+    assert_eq!(semantic_human.status.code(), Some(1), "{semantic_human:?}");
+    assert!(semantic_human.stdout.is_empty());
+
+    fs::write(&config_path, [0xff]).unwrap();
+    let unreadable = run(&["keys", "--json"], None);
+    assert_eq!(unreadable.status.code(), Some(1), "{unreadable:?}");
+    let unreadable_err: serde_json::Value = serde_json::from_slice(&unreadable.stdout).unwrap();
+    assert_eq!(unreadable_err["error"]["code"], "unreadable-configuration");
+    fs::write(&config_path, valid_config).unwrap();
+
+    let win_generation = generation_runtime(&root.join("r/w").join(&window_id));
+    let stopped_win = run(&["window", "stop", &window_id, "--json"], None);
+    assert!(stopped_win.status.success(), "{stopped_win:?}");
+    wait_for_generation_removal(&win_generation);
+    let stopped_default = run(&["window", "stop", "default", "--json"], None);
+    assert!(stopped_default.status.success(), "{stopped_default:?}");
+    wait_for_successful_exit(&mut default.child);
     fs::remove_dir_all(root).unwrap();
 }

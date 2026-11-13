@@ -155,6 +155,16 @@ agents report through OSC 7501. A selected terminal's finish or error stays
 unseen while its Eon window is unfocused. Reading session state or focusing
 a terminal by CLI does not activate the desktop window.
 
+Use `eon keys --json` to inspect the addressed window's effective shortcuts
+matching `Alt+/` without taking focus or changing state: `groups` matches the
+native viewer, `bindings` gives fixed actions with active chords and popup
+overrides (respecting sidebar state and on-disk `[session] number_keys` from
+`config.toml`, reported with `number_keys_source: "config"`; edits to
+`number_keys` on disk show in `eon keys` immediately while `Alt+/` keeps the
+window's launch or reloaded value until reload), `popups` lists bound,
+overridden, and unbound enabled popups, and `reserved` lists `strict` and
+`focus` keys. Accepts `--window ID`.
+
 Use `env -u EON_TERMINAL eon ...` only when asked to act on the shown session
 instead of your own. Keep `--json` on the command you substitute.
 When asked to address another window, use

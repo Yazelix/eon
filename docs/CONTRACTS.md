@@ -1540,6 +1540,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   package, where an unset command resolves from `$VISUAL`, then `$EDITOR`.
   Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
   `eon-cq38r`: `eon column close` and Runtime-owned sidebar show/hide on EONW v39.
+  The `eon keys [--json]` keymap inspection clause is Candidate (`eon-configurability-qkq8.4`).
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -1672,6 +1673,65 @@ names its socket. CLI JSON names a session `session` and a terminal
     The human output prints a matching `caller` line. Without `EON_TERMINAL`, JSON `caller` is null
     and the line is absent. `EON_TERMINAL` stays opaque; `caller` is the supported way to find the
     calling pane.
+  - **Keymap inspection (Candidate):** `eon keys [--json]` projects the
+    effective keyboard and link shortcuts of the addressed Eon session window,
+    derived from `eon-workspace-protocol`'s shared shortcut table (`EON-C20`),
+    that window's live EONW v44 snapshot (`entries`, `sidebar`, and `running`
+    presence), and `[session] number_keys`. It resolves the calling terminal
+    (`EON_TERMINAL`), `--window ID`, runtime namespace, and `EON-C11` routing as
+    `eon session` does; absence of a compatible session window fails explicitly
+    (`missing-supervisor` or `supervisor-unavailable` exit 4, `unknown-window`,
+    `ambiguous-window-id`, or `unknown-caller` exit 3, `session-unavailable`
+    exit 1 on eonbase), invalid arguments exit 2, and unreadable or invalid
+    configuration anywhere in `config.toml` (parsed when reading `[session]
+    number_keys`) fails with exit 1 (`unreadable-configuration` or
+    `invalid-configuration`, JSON when `--json` is passed) before writing output.
+    Because EONW v44 does not carry `[session] number_keys`, the CLI reads
+    `[session] number_keys` from `config.toml` on disk (matching
+    `warning_close_last_tab`), which can differ from an already-running
+    window's launch/reload setting if `config.toml` changed without reloading or
+    reattaching that window (until `eon-configurability-qkq8.3` carries resolved
+    bindings over EONW). It reads no other key configuration,
+    mutates no session or configuration state, and takes no desktop focus.
+
+    Stable fixed action IDs follow lowercase ASCII `snake_case` derived from
+    each `eon-workspace-protocol::shortcuts::Action` variant and subject
+    (`Move(Left|Right)` maps to tab moves; `Move(Up|Down)` and
+    `MovePaneSideways(Left|Right)` map to pane moves). The full set of 38
+    stable IDs emitted here—stable names that `[keys]` configuration (`eon-configurability-qkq8.12`)
+    and scripts use; renaming or removing one is a contract change—is: `next_tab`,
+    `previous_tab`, `focus_left`, `focus_right`, `focus_up`, `focus_down`,
+    `focus_tab_position`, `show_workspace_position`, `next_attention`,
+    `previous_attention`, `toggle_inbox`, `cycle_focus`, `return_to_terminal`,
+    `traverse_chrome_left`, `traverse_chrome_right`, `traverse_chrome_up`,
+    `traverse_chrome_down`, `create_pane`, `create_column`, `create_tab`,
+    `close_tab`, `close_pane`, `toggle_zoom`, `move_tab_left`, `move_tab_right`,
+    `move_pane_left`, `move_pane_right`, `move_pane_up`, `move_pane_down`,
+    `new_window`, `detach`, `quit`, `toggle_viewer`, `toggle_hints`,
+    `toggle_sidebar`, `copy`, `paste`, and `open_link`.
+
+    With `--json`, stdout is one JSON object containing: `generation` (string),
+    `window` (string or null, null for the default namespace), `platform`
+    (`"linux"` or `"macos"`), `sidebar` (`"open"`, `"closed"`, or `"off"`),
+    `number_keys` (boolean), `number_keys_source` (`"config"`, stating
+    `[session] number_keys` came from `config.toml` on disk), `running`
+    (boolean), `groups` (ordered array of `{ "title": string, "rows": [{ "shortcut": string, "label": string }] }`
+    matching `Alt+/`'s visible groups and rows field-for-field, including
+    paired chrome rows, popup overrides, omitted `ToggleSidebar` when
+    `sidebar` is `"off"`, omitted `ShowWorkspacePosition` when `number_keys`
+    is false, omitted `Quit` when `running` is false, and omission of an empty
+    popup group), `bindings` (ordered array of applicable fixed actions, each
+    `{ "action": string, "group": string, "label": string, "display": string | null, "chords": [{ "config": string | null, "display": string }], "source": "default" | "overridden", "overridden_by": [{ "config": string | null, "display": string, "kind": "popup", "id": string, "label": string }] }`,
+    retaining non-overridden chords while `"source"` is `"default"` and
+    setting `"source"` to `"overridden"` and `"display"` to null when every
+    chord is overridden), `popups` (enabled popup entries in snapshot order,
+    each `{ "id": string, "label": string, "keybinding": string | null, "display": string | null, "default_keybinding": string | null, "default_display": string | null, "overridden_by": string | null, "overridden_by_label": string | null, "source": "bound" | "unbound" | "overridden" }`),
+    and `reserved` (`{ "strict": [...], "focus": [...] }` from the shared
+    table's popup policies, each `{ "action": string, "config": string, "display": string }`).
+    Human output prints the window header, each viewer group and row, any
+    unbound enabled popups, and the reserved sets. Closed standard output
+    exits 0 without stderr; write failures exit 1. Consumers ignore additional
+    object fields.
   - Every Eon terminal's PATH names that terminal's own Eon build as `eon`,
     ahead of any installed one, so `eon` run by name there acts on that
     terminal's own window and generation after the installed profile changes.
@@ -2265,7 +2325,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   tiers); final-tab `tab close` and `pane close`
   `eon-prove-close-and-detach-batch-bf8t` (installed tier); EONW v19 attention
   fields `eon-agent-sidebar-yx8.9` (installed tier); `eon workspace` `caller`
-  `eon-ed9d.1` (automated and installed tiers).
+  `eon-ed9d.1` (automated and installed tiers); `eon keys [--json]`
+  `eon-configurability-qkq8.4` (automated and installed tiers).
   - **Qualification:** The evidence at
     `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
     (`6818aee17b131b4156515c0cf3f0067020558b0f`). It is pre-Bend candidate
@@ -2493,6 +2554,27 @@ names its socket. CLI JSON names a session `session` and a terminal
     in the other direction, also show that an `eon` with Helix and one
     without, of one build, report the same build and component graph and
     present each other's window.
+  - **Effective keymap inspection (`eon-configurability-qkq8.4`, automated
+    tier on x86_64 Linux and installed tier under isolated headless Sway):**
+    `action_ids_are_unique_snake_case_and_cover_fixed_shortcuts`,
+    `effective_keymap_and_viewer_groups_project_overrides_and_flags`,
+    `viewer_groups_and_effective_bindings_agree_on_every_override`,
+    `policy_and_native_alternatives_preserve_their_distinct_boundaries`,
+    `config_and_display_keep_their_audiences`,
+    `keys_json_and_human_project_effective_keymap`,
+    `read_number_keys_validates_semantic_configuration_errors`,
+    `keys_parser_and_help_cover_json_target_and_usage_errors`,
+    `keys_cli_errors_and_live_projection`,
+    `help_skill_and_usage_name_sessions_and_old_commands_are_invalid`, and
+    `literal_shortcut_defaults_preserve_both_platforms` (with `yazelix-venus`
+    delegating `Alt+/` rendering to `viewer_groups` and pinning byte-identical
+    Linux and macOS fixtures). Installed observations checked live `Alt+/`
+    against `eon keys` and `eon keys --json` inside the session across all 45
+    rows (including `Alt+M` overriding `Create pane` and unbound `Editor`
+    omitted from `Alt+/`) plus semantic configuration validation
+    (`[terminal] font_size = 0` exiting 1 with `invalid-configuration`) and
+    on-disk `[session] number_keys = false` projection (`number_keys_source`
+    equal to `"config"`).
 - **Open proof:** Re-proof of EON-C10 on the beta candidate is pending under
   eon-igae.7.5, after the remote-chain amendments.
 

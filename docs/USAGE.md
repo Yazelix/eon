@@ -97,6 +97,16 @@ Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
 fixed bindings and every enabled popup binding. Escape, Alt+/ or a
 click outside it closes it.
 
+From a terminal or script, run `eon keys` or `eon keys --json` to inspect the
+addressed window's effective shortcuts—including `Alt+/` groups and rows,
+active chords and popup overrides, enabled unbound popups, sidebar and
+`[session] number_keys` visibility, and reserved or focus keys—without
+opening the dialog or changing state. Because `eon keys` reads
+`[session] number_keys` from `config.toml` on disk (`number_keys_source`
+reports `"config"`), edits to that setting appear in `eon keys` output right
+away while a running window's `Alt+/` keeps its launch or last-reloaded
+value until the window reloads.
+
 Window labels use the platform's modifier names: on macOS, Option replaces
 Alt and Control replaces Ctrl, including header tooltips and the viewer's
 dismissal hint. Configuration keeps the physical-key spelling described in
@@ -936,6 +946,7 @@ line points agents to `eon --skill`.
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon sidebar show\|hide\|toggle [--json]` | Show, hide or toggle the window's agent sidebar, as Alt+Shift+H and the sidebar's Hide button do, and print the session, whose `sidebar` reads `open`, `closed` or `off`. `show` and `hide` set the state directly in Runtime, so repeating either changes nothing; the command or keypress that ran last determines visibility. With `[sidebar] enabled = false`, `hide` succeeds and `show` and `toggle` fail `unavailable` (exit 1) |
 | `eon focus PANE\|left\|right\|up\|down [--json]` | Focus pane PANE, switching to its tab, or traverse the session; switch tabs with `eon tab switch` |
+| `eon keys [--json]` | List effective keyboard and link shortcuts for this window: JSON emits `generation`, `window`, `platform`, `sidebar`, `number_keys` (read from `config.toml` on disk; edits there take effect in `eon keys` immediately while `Alt+/` keeps the window's launch/reloaded value until reload), `number_keys_source` (`"config"`), `running`, `groups` matching the `Alt+/` dialog, `bindings` with active chords and popup overrides, enabled `popups` (including unbound and overridden ones), and `reserved` (`strict` and `focus`); human output prints the header, `Alt+/` groups, unbound popups, and reserved sets |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon report` | Print a Markdown bug report for this window, with paths under your home as `~` and long environment values (8 bytes or more) removed, to read and then paste into the bug form; see [Troubleshooting and reporting](#troubleshooting-and-reporting) |
 | `eon update --install [--yes] [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Update one eligible Nix entry on its original ref or one managed Linux prefix through its bundled installer for fresh launches; inside a window, untargeted package updates use external PATH's `eon`; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |

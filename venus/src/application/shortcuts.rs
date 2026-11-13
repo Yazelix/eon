@@ -1,14 +1,15 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
 pub(super) use eon_workspace_protocol::shortcuts::{
-    Action as NativeShortcutAction, Direction as ShortcutDirection, FIXED_SHORTCUTS, PAIRED_ROWS,
+    Action as NativeShortcutAction, Direction as ShortcutDirection, FIXED_SHORTCUTS,
     Shortcut as NativeShortcut, Side as ShortcutSide, Trigger as NativeShortcutTrigger, shortcut,
 };
 use eon_workspace_protocol::shortcuts::{
-    PopupPolicy, display_chord as physical_shortcut_label_for, key_label as physical_key_label,
+    display_chord as physical_shortcut_label_for, key_label as physical_key_label,
+    popup_entry_for_chord, viewer_groups,
 };
 use eon_workspace_protocol::v44::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, PopupKey,
-    Side, Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
+    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, Side,
+    Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session;
 use winit::{
@@ -37,15 +38,9 @@ pub(super) const CTRL_ALT: session::Modifiers =
 pub(super) const CTRL_SHIFT: session::Modifiers =
     session::Modifiers::CTRL.union(session::Modifiers::SHIFT);
 
-/// Native context and popup projection of the shared descriptors.
+/// Native context and pointer projection of the shared descriptors.
 pub(super) trait NativeShortcutExt {
     fn bound(self, sidebar: Sidebar, running: bool) -> bool;
-    fn overriding_popup(
-        self,
-        platform: NativePlatform,
-        entries: &[PopupEntry],
-    ) -> Option<&PopupEntry>;
-    fn taken_keys(self, platform: NativePlatform, entries: &[PopupEntry]) -> Vec<String>;
     fn matches_pointer(
         self,
         platform: NativePlatform,
@@ -56,49 +51,7 @@ pub(super) trait NativeShortcutExt {
 
 impl NativeShortcutExt for NativeShortcut {
     fn bound(self, sidebar: Sidebar, running: bool) -> bool {
-        match self.action {
-            NativeShortcutAction::ToggleSidebar => sidebar != Sidebar::Off,
-            NativeShortcutAction::Quit => running,
-            _ => true,
-        }
-    }
-
-    fn overriding_popup(
-        self,
-        platform: NativePlatform,
-        entries: &[PopupEntry],
-    ) -> Option<&PopupEntry> {
-        if self.popup_policy() != PopupPolicy::Overridable
-            || matches!(
-                self.trigger,
-                NativeShortcutTrigger::AltShiftDigits | NativeShortcutTrigger::OpenLink
-            )
-            || self.trigger == NativeShortcutTrigger::Quit && platform == NativePlatform::Macos
-        {
-            return None;
-        }
-        let chord = self.trigger.primary_chord(platform);
-        popup_entry_key(entries, chord.key, chord.modifiers)
-    }
-
-    fn taken_keys(self, platform: NativePlatform, entries: &[PopupEntry]) -> Vec<String> {
-        if self.trigger != NativeShortcutTrigger::AltShiftDigits
-            && !(self.trigger == NativeShortcutTrigger::Quit && platform == NativePlatform::Macos)
-        {
-            return Vec::new();
-        }
-        self.trigger
-            .chords(platform)
-            .into_iter()
-            .filter_map(|chord| {
-                let entry = popup_entry_key(entries, chord.key, chord.modifiers)?;
-                Some(format!(
-                    "{} overridden by {}",
-                    chord.display(platform),
-                    entry.label
-                ))
-            })
-            .collect()
+        self.bound_for_window(sidebar, running)
     }
 
     fn matches_pointer(
@@ -161,7 +114,7 @@ pub(super) fn command_q_for(
     };
     matches!(key, PhysicalKey::Code(code) if format!("{code:?}") == chord.key)
         && modifiers == native_modifiers(chord.modifiers)
-        && popup_entry_key(entries, chord.key, chord.modifiers).is_none()
+        && popup_entry_for_chord(entries, chord.key, chord.modifiers).is_none()
 }
 
 pub(super) fn native_key_shortcut(
@@ -200,7 +153,7 @@ pub(super) fn native_key_shortcut_for(
             && !(matches!(
                 shortcut.trigger,
                 NativeShortcutTrigger::AltShiftDigits | NativeShortcutTrigger::Quit
-            ) && popup_entry_key(entries, &key, bits).is_some())
+            ) && popup_entry_for_chord(entries, &key, bits).is_some())
     })
 }
 
@@ -227,7 +180,7 @@ pub(super) fn quit_retry_chord(entries: &[PopupEntry]) -> Option<String> {
     let chord = shortcut(NativeShortcutAction::Quit)
         .trigger
         .primary_chord(NATIVE_PLATFORM);
-    popup_entry_key(entries, chord.key, chord.modifiers)
+    popup_entry_for_chord(entries, chord.key, chord.modifiers)
         .is_none()
         .then(|| chord.display(NATIVE_PLATFORM))
 }
@@ -276,94 +229,19 @@ fn shortcut_groups_with(
     running: bool,
     number_keys: bool,
 ) -> Vec<ShortcutGroup> {
-    let row = |shortcut: &NativeShortcut| {
-        ShortcutRow::new(
-            shortcut.trigger.display_label_for(platform),
-            match shortcut.overriding_popup(platform, entries) {
-                Some(entry) => format!("{} (overridden by {})", shortcut.label, entry.label),
-                None => match shortcut.taken_keys(platform, entries) {
-                    taken if taken.is_empty() => shortcut.label.into(),
-                    taken => format!("{} ({})", shortcut.label, taken.join("; ")),
-                },
-            },
-        )
-    };
-    let plain = |shortcut: &NativeShortcut| {
-        shortcut.overriding_popup(platform, entries).is_none()
-            && shortcut.taken_keys(platform, entries).is_empty()
-    };
-    let mut groups = eon_workspace_protocol::shortcuts::GROUPS
+    viewer_groups(platform, entries, sidebar, running, number_keys)
         .into_iter()
-        .map(|title| {
-            let shortcuts = FIXED_SHORTCUTS
-                .iter()
-                .filter(|shortcut| {
-                    shortcut.group == title
-                        && shortcut.bound(sidebar, running)
-                        && (number_keys
-                            || shortcut.action != NativeShortcutAction::ShowWorkspacePosition)
-                })
-                .collect::<Vec<_>>();
-            let mut rows = Vec::with_capacity(shortcuts.len());
-            for shortcut in &shortcuts {
-                let Some(&(first, second, description)) = PAIRED_ROWS
-                    .iter()
-                    .find(|(first, second, _)| [*first, *second].contains(&shortcut.action))
-                else {
-                    rows.push(row(shortcut));
-                    continue;
-                };
-                let partner = if shortcut.action == first {
-                    second
-                } else {
-                    first
-                };
-                match shortcuts
-                    .iter()
-                    .find(|other| other.action == partner)
-                    .filter(|other| plain(shortcut) && plain(other))
-                {
-                    Some(other) if shortcut.action == first => rows.push(ShortcutRow::new(
-                        format!(
-                            "{} / {}",
-                            shortcut.trigger.display_label_for(platform),
-                            other.trigger.display_label_for(platform)
-                        ),
-                        description,
-                    )),
-                    // The first key's row lists this one.
-                    Some(_) => {}
-                    None => rows.push(row(shortcut)),
-                }
-            }
-            ShortcutGroup::new(title, rows)
+        .map(|group| {
+            ShortcutGroup::new(
+                group.title,
+                group
+                    .rows
+                    .into_iter()
+                    .map(|row| ShortcutRow::new(row.shortcut, row.label))
+                    .collect(),
+            )
         })
-        .collect::<Vec<_>>();
-    // An overridden entry keeps its default chord's row; an unbound one has none.
-    let rows = entries
-        .iter()
-        .filter_map(|entry| {
-            let (shortcut, label) = match &entry.shortcut {
-                PopupKey::Bound(shortcut) => (shortcut, entry.label.clone()),
-                PopupKey::Overridden { default, by } => {
-                    let by = entries
-                        .iter()
-                        .find(|other| &other.id == by)
-                        .map_or(by.as_str(), |other| other.label.as_str());
-                    (default, format!("{} (overridden by {by})", entry.label))
-                }
-                PopupKey::Unbound => return None,
-            };
-            Some(ShortcutRow::new(
-                physical_shortcut_label_for(platform, shortcut.modifiers, &shortcut.key),
-                label,
-            ))
-        })
-        .collect::<Vec<_>>();
-    if !rows.is_empty() {
-        groups.insert(2, ShortcutGroup::new("Projects and tools", rows));
-    }
-    groups
+        .collect()
 }
 
 /// A keycap popup's dismissal: Escape or a pointer press hides the popup until
@@ -783,26 +661,13 @@ fn popup_entry(
     code: KeyCode,
     modifiers: session::Modifiers,
 ) -> Option<&PopupEntry> {
-    popup_entry_key(entries, &format!("{code:?}"), wire_modifiers(modifiers))
-}
-
-fn popup_entry_key<'a>(
-    entries: &'a [PopupEntry],
-    key: &str,
-    modifiers: u8,
-) -> Option<&'a PopupEntry> {
-    entries.iter().find(|entry| {
-        entry
-            .shortcut
-            .bound()
-            .is_some_and(|shortcut| shortcut.modifiers == modifiers && shortcut.key == key)
-    })
+    popup_entry_for_chord(entries, &format!("{code:?}"), wire_modifiers(modifiers))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v44::WorkspaceInfo;
+    use eon_workspace_protocol::v44::{PopupKey, WorkspaceInfo};
 
     /// Eon's default popup catalog, copied from eon/crates/eon/src/product.rs, which this crate
     /// cannot depend on; keep the two in step.

@@ -19,8 +19,9 @@ use super::{
     windows,
     workspace::{
         caller_output, failure_human, human as human_output, json as json_output, json_escape,
-        list_human, list_json, registration_json, resolve_target, tab_number,
-        terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
+        keys_human, keys_json, list_human, list_json, registration_json, resolve_target,
+        tab_number, terminal_editing_json, terminal_history_json, terminal_sent_json,
+        terminal_text_json,
     },
 };
 use eon_workspace_protocol::v44::{
@@ -855,6 +856,9 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             if let Some((verb, json)) = parse_sidebar_arguments(&arguments)? {
                 return Ok(sidebar(inputs, verb, json, target)?);
             }
+            if let Some(json) = parse_keys_arguments(&arguments)? {
+                return Ok(keys(inputs, json, target)?);
+            }
             if let Some((action, json, yes)) = parse_close_arguments(&arguments)? {
                 return Ok(match action {
                     Action::CloseColumn { pane, .. } => {
@@ -1017,7 +1021,7 @@ fn renamed_command(arguments: &[OsString]) -> Option<Error> {
 /// The first words `execute` hands to `parse_control_arguments`.
 fn control_command(command: &OsStr) -> bool {
     [
-        "session", "tab", "pane", "column", "popup", "sidebar", "edit", "focus", "--window",
+        "session", "tab", "pane", "column", "popup", "sidebar", "edit", "focus", "keys", "--window",
     ]
     .iter()
     .any(|word| command == *word)
@@ -1110,6 +1114,8 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "End a window, the old-version",
             ),
             ("", "ones, or all"),
+            ("keys [--json]", "Show effective shortcuts for"),
+            ("", "this window"),
         ],
     ),
     (
@@ -2428,6 +2434,47 @@ fn sidebar(
     control(inputs, action, json, false, target, false)
 }
 
+/// Inspects the addressed window and projects its effective keymap (`EON-C10`).
+fn keys(inputs: &Inputs, json: bool, target: WorkspaceTarget) -> Result<i32, String> {
+    let caller = match calling_terminal() {
+        Ok(caller) => caller,
+        Err(error) => return report_failure(&error, json),
+    };
+    let resolved = match resolve_workspace(inputs, target, caller.as_deref()) {
+        Ok(resolved) => resolved,
+        Err(error) => return report_failure(&error, json),
+    };
+    let snapshot = match inspect(&resolved.socket, caller.as_deref(), &resolved.label) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return report_failure(&error, json),
+    };
+    let number_keys = match configuration_directory()
+        .map_err(|detail| ("unreadable-configuration", detail))
+        .and_then(|root| {
+            managed_environment::read_number_keys(
+                &root.join(managed_environment::CONFIG_FILE),
+                &inputs.defaults,
+            )
+        }) {
+        Ok(enabled) => enabled,
+        Err((code, detail)) => return report_failure(&failure(code, detail), json),
+    };
+    let keymap = eon_workspace_protocol::shortcuts::effective_keymap(
+        eon_workspace_protocol::shortcuts::Platform::CURRENT,
+        &snapshot.entries,
+        snapshot.sidebar,
+        snapshot.running.is_some(),
+        number_keys,
+    );
+    let output = if json {
+        keys_json(&resolved.generation, resolved.window.as_deref(), &keymap)
+    } else {
+        keys_human(&resolved.generation, resolved.window.as_deref(), &keymap)
+    };
+    write_stdout(output)?;
+    Ok(0)
+}
+
 #[derive(Debug, PartialEq)]
 enum CloseStep {
     Consent,
@@ -3051,6 +3098,16 @@ fn parse_sidebar_arguments(arguments: &[OsString]) -> Result<Option<(SidebarVerb
         _ => return Err(Error::usage(EON_USAGE)),
     };
     Ok(Some((verb, json)))
+}
+
+/// `keys [--json]`.
+fn parse_keys_arguments(arguments: &[OsString]) -> Result<Option<bool>, Error> {
+    match arguments {
+        [command] if command == "keys" => Ok(Some(false)),
+        [command, flag] if command == "keys" && flag == "--json" => Ok(Some(true)),
+        [command, ..] if command == "keys" => Err(Error::usage(EON_USAGE)),
+        _ => Ok(None),
+    }
 }
 
 /// `edit [--json] -- FILE`, with a relative FILE resolved against the
@@ -4860,5 +4917,39 @@ mod tests {
         ] {
             assert_eq!(parse(args).unwrap_err().status, 2, "{args:?}");
         }
+    }
+
+    #[test]
+    fn keys_parser_and_help_cover_json_target_and_usage_errors() {
+        let parse = |args: &[&str]| -> Result<(Option<bool>, WorkspaceTarget), Error> {
+            let (rest, target) = parse_workspace_target_arguments(
+                &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            )?;
+            Ok((parse_keys_arguments(&rest)?, target))
+        };
+        assert_eq!(parse(&["keys"]).unwrap().0, Some(false));
+        assert_eq!(parse(&["keys", "--json"]).unwrap().0, Some(true));
+        let (json, target) = parse(&["--window", "abcd", "keys", "--json"]).unwrap();
+        assert_eq!(json, Some(true));
+        assert_eq!(target.window.as_deref(), Some("abcd"));
+        let (json, target) = parse(&["keys", "--window", "abcd", "--json"]).unwrap();
+        assert_eq!(json, Some(true));
+        assert_eq!(target.window.as_deref(), Some("abcd"));
+        assert_eq!(parse(&["session"]).unwrap().0, None);
+
+        for bad in [
+            &["keys", "extra"][..],
+            &["keys", "--json", "--json"],
+            &["keys", "--no-focus"],
+            &["keys", "--json", "extra"],
+        ] {
+            let Err(err) = parse(bad) else {
+                panic!("expected usage error for {bad:?}");
+            };
+            assert_eq!(err.status, 2, "{bad:?}");
+        }
+
+        let help = command_help_text(&[OsString::from("keys")], false).unwrap();
+        assert!(help.contains("keys [--json]"), "{help}");
     }
 }

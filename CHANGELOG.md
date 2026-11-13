@@ -33,6 +33,15 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   the data foundation for in-place Update; allocation still uses the build
   digest and Update is not exposed. v44 needs a fresh matching-version window;
   existing cross-version Routing and Reserved Stop remain (`eon-t3fyd.2`).
+- `eon keys [--json]` lists the effective keyboard and link shortcuts of the
+  addressed Eon window without taking focus or changing state: `groups` matches
+  `Alt+/`, `bindings` reports fixed action IDs, active chords and popup
+  overrides, `popups` includes bound, overridden and unbound entries, and
+  `reserved` lists protected keys; `[session] number_keys` is read from
+  `config.toml` on disk (`number_keys_source` is `"config"`), so un-reloaded
+  disk changes appear in `eon keys` immediately while `Alt+/` keeps the
+  window's launch or last-reloaded value until reload (`EON-C10` Candidate,
+  `eon-configurability-qkq8.4`).
 
 - The Editor key starts Neovim with an Eon-owned listener. `[editor] kind`
   defaults to `"auto"`, recognizing the `nvim` basename; foreground wrappers

@@ -1,5 +1,7 @@
 //! Eon's shared shortcut descriptors. This is Rust data, not an EONW codec.
 
+use crate::v44::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
+
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
 pub const ALT: u8 = 4;
@@ -21,6 +23,14 @@ impl Platform {
     } else {
         Self::Linux
     };
+
+    /// Lowercase wire/CLI platform name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Linux => "linux",
+            Self::Macos => "macos",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +77,52 @@ pub enum Action {
     Copy,
     Paste,
     OpenLink,
+}
+
+impl Action {
+    /// Stable lowercase ASCII `snake_case` action identifier (`EON-C10`).
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::ToggleViewer => "toggle_viewer",
+            Self::ToggleInbox => "toggle_inbox",
+            Self::ToggleHints => "toggle_hints",
+            Self::ToggleSidebar => "toggle_sidebar",
+            Self::NextAttention => "next_attention",
+            Self::PreviousAttention => "previous_attention",
+            Self::ToggleZoom => "toggle_zoom",
+            Self::NewWindow => "new_window",
+            Self::Detach => "detach",
+            Self::Quit => "quit",
+            Self::FocusTabPosition => "focus_tab_position",
+            Self::ShowWorkspacePosition => "show_workspace_position",
+            Self::NextTab => "next_tab",
+            Self::PreviousTab => "previous_tab",
+            Self::Focus(Direction::Left) => "focus_left",
+            Self::Focus(Direction::Right) => "focus_right",
+            Self::Focus(Direction::Up) => "focus_up",
+            Self::Focus(Direction::Down) => "focus_down",
+            Self::Move(Direction::Left) => "move_tab_left",
+            Self::Move(Direction::Right) => "move_tab_right",
+            Self::Move(Direction::Up) => "move_pane_up",
+            Self::Move(Direction::Down) => "move_pane_down",
+            Self::MovePaneSideways(Side::Left) => "move_pane_left",
+            Self::MovePaneSideways(Side::Right) => "move_pane_right",
+            Self::CreatePane => "create_pane",
+            Self::CreateColumn => "create_column",
+            Self::CreateTab => "create_tab",
+            Self::CloseTab => "close_tab",
+            Self::ClosePane => "close_pane",
+            Self::CycleFocus => "cycle_focus",
+            Self::ReturnToTerminal => "return_to_terminal",
+            Self::TraverseChrome(Direction::Left) => "traverse_chrome_left",
+            Self::TraverseChrome(Direction::Right) => "traverse_chrome_right",
+            Self::TraverseChrome(Direction::Up) => "traverse_chrome_up",
+            Self::TraverseChrome(Direction::Down) => "traverse_chrome_down",
+            Self::Copy => "copy",
+            Self::Paste => "paste",
+            Self::OpenLink => "open_link",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,6 +288,96 @@ impl Shortcut {
             _ => PopupPolicy::Overridable,
         }
     }
+
+    /// Whether this shortcut can fire in a window with `sidebar` and `running` state.
+    pub fn bound_for_window(self, sidebar: Sidebar, running: bool) -> bool {
+        match self.action {
+            Action::ToggleSidebar => sidebar != Sidebar::Off,
+            Action::Quit => running,
+            _ => true,
+        }
+    }
+
+    /// Whether this shortcut is shown and active given `sidebar`, `running`, and `number_keys`.
+    pub fn applicable(self, sidebar: Sidebar, running: bool, number_keys: bool) -> bool {
+        self.bound_for_window(sidebar, running)
+            && (number_keys || self.action != Action::ShowWorkspacePosition)
+    }
+
+    /// Whether `chord` can be overridden by a configured popup keybinding.
+    pub fn is_overridable_chord(self, chord: Chord) -> bool {
+        self.popup_policy() == PopupPolicy::Overridable && !matches!(chord.key, "click" | "Paste")
+    }
+
+    /// Configured popup overriding one specific chord of this shortcut, if any.
+    pub fn chord_override(self, chord: Chord, entries: &[PopupEntry]) -> Option<&PopupEntry> {
+        self.is_overridable_chord(chord)
+            .then(|| popup_entry_for_chord(entries, chord.key, chord.modifiers))
+            .flatten()
+    }
+
+    /// Chords of this shortcut that configured popups may override, in trigger order.
+    fn overridable_chords(self, platform: Platform) -> Vec<Chord> {
+        self.trigger
+            .chords(platform)
+            .into_iter()
+            .filter(|&chord| self.is_overridable_chord(chord))
+            .collect()
+    }
+
+    /// Popup overriding a shortcut with a single overridable chord.
+    pub fn overriding_popup(
+        self,
+        platform: Platform,
+        entries: &[PopupEntry],
+    ) -> Option<&PopupEntry> {
+        let chords = self.overridable_chords(platform);
+        match chords.as_slice() {
+            &[chord] => self.chord_override(chord, entries),
+            _ => None,
+        }
+    }
+
+    /// Individual multi-chord overridable trigger keys overridden by popups.
+    pub fn taken_chords(
+        self,
+        platform: Platform,
+        entries: &[PopupEntry],
+    ) -> Vec<(Chord, &PopupEntry)> {
+        let chords = self.overridable_chords(platform);
+        if chords.len() <= 1 {
+            return Vec::new();
+        }
+        chords
+            .into_iter()
+            .filter_map(|chord| Some((chord, self.chord_override(chord, entries)?)))
+            .collect()
+    }
+}
+
+/// First bound popup matching `(key, modifiers)`.
+pub fn popup_entry_for_chord<'a>(
+    entries: &'a [PopupEntry],
+    key: &str,
+    modifiers: u8,
+) -> Option<&'a PopupEntry> {
+    entries.iter().find(|entry| {
+        entry
+            .shortcut
+            .bound()
+            .is_some_and(|shortcut| shortcut.modifiers == modifiers && shortcut.key == key)
+    })
+}
+
+/// Config spelling for `(modifiers, key)` when `v44::Shortcut` accepts it, else `None`.
+pub fn config_chord_if_valid(modifiers: u8, key: &str) -> Option<String> {
+    ProtocolShortcut {
+        modifiers,
+        key: key.to_owned(),
+    }
+    .validate()
+    .ok()
+    .map(|()| config_chord(modifiers, key))
 }
 
 pub fn shortcut(action: Action) -> &'static Shortcut {
@@ -587,6 +733,353 @@ pub static FIXED_SHORTCUTS: &[Shortcut] = &[
     },
 ];
 
+/// One row of the `Alt+/` shortcuts viewer (`EON-C10`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ViewerRow {
+    pub shortcut: String,
+    pub label: String,
+}
+
+/// One named section of the `Alt+/` shortcuts viewer (`EON-C10`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ViewerGroup {
+    pub title: String,
+    pub rows: Vec<ViewerRow>,
+}
+
+/// One trigger chord with optional config spelling and platform display label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyChord {
+    pub config: Option<String>,
+    pub display: String,
+}
+
+/// Popup entry that overrides one chord of a fixed shortcut.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OverrideSource {
+    pub config: Option<String>,
+    pub display: String,
+    pub kind: &'static str,
+    pub id: String,
+    pub label: String,
+}
+
+/// Effective binding for one applicable fixed action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveBinding {
+    pub action: &'static str,
+    pub group: &'static str,
+    pub label: &'static str,
+    pub display: Option<String>,
+    pub chords: Vec<KeyChord>,
+    pub source: &'static str,
+    pub overridden_by: Vec<OverrideSource>,
+}
+
+/// Effective state of one enabled popup entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectivePopup {
+    pub id: String,
+    pub label: String,
+    pub keybinding: Option<String>,
+    pub display: Option<String>,
+    pub default_keybinding: Option<String>,
+    pub default_display: Option<String>,
+    pub overridden_by: Option<String>,
+    pub overridden_by_label: Option<String>,
+    pub source: &'static str,
+}
+
+/// One chord protected from popup overrides.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReservedChord {
+    pub action: &'static str,
+    pub config: String,
+    pub display: String,
+}
+
+/// Reserved and focus-policy fixed chords from the shared table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReservedChords {
+    pub strict: Vec<ReservedChord>,
+    pub focus: Vec<ReservedChord>,
+}
+
+/// Complete effective keymap projection shared by Venus (`Alt+/`) and `eon keys`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveKeymap {
+    pub platform: Platform,
+    pub sidebar: Sidebar,
+    pub number_keys: bool,
+    pub running: bool,
+    pub groups: Vec<ViewerGroup>,
+    pub bindings: Vec<EffectiveBinding>,
+    pub popups: Vec<EffectivePopup>,
+    pub reserved: ReservedChords,
+}
+
+fn popup_label<'a>(entries: &'a [PopupEntry], id: &'a str) -> &'a str {
+    entries
+        .iter()
+        .find(|other| other.id == id)
+        .map_or(id, |other| other.label.as_str())
+}
+
+/// Viewer groups matching `DialogKind::Shortcuts` (`Alt+/`).
+pub fn viewer_groups(
+    platform: Platform,
+    entries: &[PopupEntry],
+    sidebar: Sidebar,
+    running: bool,
+    number_keys: bool,
+) -> Vec<ViewerGroup> {
+    let row = |shortcut: &Shortcut| {
+        let label = match shortcut.overriding_popup(platform, entries) {
+            Some(entry) => format!("{} (overridden by {})", shortcut.label, entry.label),
+            None => {
+                let taken = shortcut
+                    .taken_chords(platform, entries)
+                    .into_iter()
+                    .map(|(chord, entry)| {
+                        format!("{} overridden by {}", chord.display(platform), entry.label)
+                    })
+                    .collect::<Vec<_>>();
+                if taken.is_empty() {
+                    shortcut.label.to_owned()
+                } else {
+                    format!("{} ({})", shortcut.label, taken.join("; "))
+                }
+            }
+        };
+        ViewerRow {
+            shortcut: shortcut.trigger.display_label_for(platform),
+            label,
+        }
+    };
+    let plain = |shortcut: &Shortcut| {
+        shortcut.overriding_popup(platform, entries).is_none()
+            && shortcut.taken_chords(platform, entries).is_empty()
+    };
+    let mut groups = GROUPS
+        .into_iter()
+        .map(|title| {
+            let shortcuts = FIXED_SHORTCUTS
+                .iter()
+                .filter(|shortcut| {
+                    shortcut.group == title && shortcut.applicable(sidebar, running, number_keys)
+                })
+                .collect::<Vec<_>>();
+            let mut rows = Vec::with_capacity(shortcuts.len());
+            for shortcut in &shortcuts {
+                let Some(&(first, second, description)) = PAIRED_ROWS
+                    .iter()
+                    .find(|(first, second, _)| [*first, *second].contains(&shortcut.action))
+                else {
+                    rows.push(row(shortcut));
+                    continue;
+                };
+                let partner = if shortcut.action == first {
+                    second
+                } else {
+                    first
+                };
+                match shortcuts
+                    .iter()
+                    .find(|other| other.action == partner)
+                    .filter(|other| plain(shortcut) && plain(other))
+                {
+                    Some(other) if shortcut.action == first => rows.push(ViewerRow {
+                        shortcut: format!(
+                            "{} / {}",
+                            shortcut.trigger.display_label_for(platform),
+                            other.trigger.display_label_for(platform)
+                        ),
+                        label: description.to_owned(),
+                    }),
+                    Some(_) => {}
+                    None => rows.push(row(shortcut)),
+                }
+            }
+            ViewerGroup {
+                title: title.to_owned(),
+                rows,
+            }
+        })
+        .collect::<Vec<_>>();
+    // An overridden entry keeps its default chord's row; an unbound one has none.
+    let popup_rows = entries
+        .iter()
+        .filter_map(|entry| {
+            let (shortcut, label) = match &entry.shortcut {
+                PopupKey::Bound(shortcut) => (shortcut, entry.label.clone()),
+                PopupKey::Overridden { default, by } => (
+                    default,
+                    format!(
+                        "{} (overridden by {})",
+                        entry.label,
+                        popup_label(entries, by)
+                    ),
+                ),
+                PopupKey::Unbound => return None,
+            };
+            Some(ViewerRow {
+                shortcut: display_chord(platform, shortcut.modifiers, &shortcut.key),
+                label,
+            })
+        })
+        .collect::<Vec<_>>();
+    if !popup_rows.is_empty() {
+        groups.insert(
+            2,
+            ViewerGroup {
+                title: "Projects and tools".to_owned(),
+                rows: popup_rows,
+            },
+        );
+    }
+    groups
+}
+
+fn effective_bindings(
+    platform: Platform,
+    entries: &[PopupEntry],
+    sidebar: Sidebar,
+    running: bool,
+    number_keys: bool,
+) -> Vec<EffectiveBinding> {
+    FIXED_SHORTCUTS
+        .iter()
+        .filter(|shortcut| shortcut.applicable(sidebar, running, number_keys))
+        .map(|&shortcut| {
+            let mut chords = Vec::new();
+            let mut overridden_by = Vec::new();
+            for chord in shortcut.trigger.chords(platform) {
+                let config = config_chord_if_valid(chord.modifiers, chord.key);
+                let display = chord.display(platform);
+                if let Some(entry) = shortcut.chord_override(chord, entries) {
+                    overridden_by.push(OverrideSource {
+                        config,
+                        display,
+                        kind: "popup",
+                        id: entry.id.clone(),
+                        label: entry.label.clone(),
+                    });
+                } else {
+                    chords.push(KeyChord { config, display });
+                }
+            }
+            let display = if overridden_by.is_empty() {
+                Some(shortcut.trigger.display_label_for(platform))
+            } else if chords.is_empty() {
+                None
+            } else {
+                Some(
+                    chords
+                        .iter()
+                        .map(|chord| chord.display.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" / "),
+                )
+            };
+            EffectiveBinding {
+                action: shortcut.action.id(),
+                group: shortcut.group,
+                label: shortcut.label,
+                display,
+                source: if chords.is_empty() {
+                    "overridden"
+                } else {
+                    "default"
+                },
+                chords,
+                overridden_by,
+            }
+        })
+        .collect()
+}
+
+fn effective_popups(platform: Platform, entries: &[PopupEntry]) -> Vec<EffectivePopup> {
+    entries
+        .iter()
+        .map(|entry| match &entry.shortcut {
+            PopupKey::Bound(shortcut) => EffectivePopup {
+                id: entry.id.clone(),
+                label: entry.label.clone(),
+                keybinding: Some(config_chord(shortcut.modifiers, &shortcut.key)),
+                display: Some(display_chord(platform, shortcut.modifiers, &shortcut.key)),
+                default_keybinding: None,
+                default_display: None,
+                overridden_by: None,
+                overridden_by_label: None,
+                source: "bound",
+            },
+            PopupKey::Unbound => EffectivePopup {
+                id: entry.id.clone(),
+                label: entry.label.clone(),
+                keybinding: None,
+                display: None,
+                default_keybinding: None,
+                default_display: None,
+                overridden_by: None,
+                overridden_by_label: None,
+                source: "unbound",
+            },
+            PopupKey::Overridden { default, by } => EffectivePopup {
+                id: entry.id.clone(),
+                label: entry.label.clone(),
+                keybinding: None,
+                display: None,
+                default_keybinding: Some(config_chord(default.modifiers, &default.key)),
+                default_display: Some(display_chord(platform, default.modifiers, &default.key)),
+                overridden_by: Some(by.clone()),
+                overridden_by_label: Some(popup_label(entries, by).to_owned()),
+                source: "overridden",
+            },
+        })
+        .collect()
+}
+
+fn reserved_chords(platform: Platform) -> ReservedChords {
+    let mut strict = Vec::new();
+    let mut focus = Vec::new();
+    for &shortcut in FIXED_SHORTCUTS {
+        let destination = match shortcut.popup_policy() {
+            PopupPolicy::Overridable => continue,
+            PopupPolicy::Reserved => &mut strict,
+            PopupPolicy::Focus => &mut focus,
+        };
+        for chord in shortcut.trigger.chords(platform) {
+            destination.push(ReservedChord {
+                action: shortcut.action.id(),
+                config: config_chord_if_valid(chord.modifiers, chord.key)
+                    .expect("reserved and focus shortcuts use configurable chords"),
+                display: chord.display(platform),
+            });
+        }
+    }
+    ReservedChords { strict, focus }
+}
+
+/// Complete effective keymap derived from the shared table, popups, and window flags.
+pub fn effective_keymap(
+    platform: Platform,
+    entries: &[PopupEntry],
+    sidebar: Sidebar,
+    running: bool,
+    number_keys: bool,
+) -> EffectiveKeymap {
+    EffectiveKeymap {
+        platform,
+        sidebar,
+        number_keys,
+        running,
+        groups: viewer_groups(platform, entries, sidebar, running, number_keys),
+        bindings: effective_bindings(platform, entries, sidebar, running, number_keys),
+        popups: effective_popups(platform, entries),
+        reserved: reserved_chords(platform),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,5 +1135,340 @@ mod tests {
             "Ctrl+Alt+Shift+Super+0"
         );
         assert_eq!(display_chord(Platform::Macos, 0, "ArrowLeft"), "Left");
+    }
+
+    #[test]
+    fn action_ids_are_unique_snake_case_and_cover_fixed_shortcuts() {
+        let ids: Vec<&str> = FIXED_SHORTCUTS
+            .iter()
+            .map(|shortcut| shortcut.action.id())
+            .collect();
+        let expected = [
+            "next_tab",
+            "previous_tab",
+            "focus_left",
+            "focus_right",
+            "focus_up",
+            "focus_down",
+            "focus_tab_position",
+            "show_workspace_position",
+            "next_attention",
+            "previous_attention",
+            "toggle_inbox",
+            "cycle_focus",
+            "return_to_terminal",
+            "traverse_chrome_left",
+            "traverse_chrome_right",
+            "traverse_chrome_up",
+            "traverse_chrome_down",
+            "create_pane",
+            "create_column",
+            "create_tab",
+            "close_tab",
+            "close_pane",
+            "toggle_zoom",
+            "move_tab_left",
+            "move_tab_right",
+            "move_pane_left",
+            "move_pane_right",
+            "move_pane_up",
+            "move_pane_down",
+            "new_window",
+            "detach",
+            "quit",
+            "toggle_viewer",
+            "toggle_hints",
+            "toggle_sidebar",
+            "copy",
+            "paste",
+            "open_link",
+        ];
+        assert_eq!(ids, expected);
+        let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len());
+        for id in ids {
+            assert!(!id.is_empty());
+            assert!(
+                id.bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
+                "non-snake_case action id: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn effective_keymap_and_viewer_groups_project_overrides_and_flags() {
+        let entries = vec![
+            PopupEntry {
+                id: "pane-maker".into(),
+                label: "Pane Override".into(),
+                shortcut: PopupKey::Bound(ProtocolShortcut {
+                    modifiers: ALT,
+                    key: "KeyM".into(),
+                }),
+            },
+            PopupEntry {
+                id: "slot-one".into(),
+                label: "Slot One".into(),
+                shortcut: PopupKey::Bound(ProtocolShortcut {
+                    modifiers: ALT_SHIFT,
+                    key: "Digit1".into(),
+                }),
+            },
+            PopupEntry {
+                id: "git".into(),
+                label: "Git".into(),
+                shortcut: PopupKey::Overridden {
+                    default: ProtocolShortcut {
+                        modifiers: ALT_SHIFT,
+                        key: "KeyJ".into(),
+                    },
+                    by: "pane-maker".into(),
+                },
+            },
+            PopupEntry {
+                id: "silent".into(),
+                label: "Silent Tool".into(),
+                shortcut: PopupKey::Unbound,
+            },
+        ];
+        let linux = effective_keymap(Platform::Linux, &entries, Sidebar::Open, true, true);
+        assert_eq!(
+            linux
+                .groups
+                .iter()
+                .map(|g| g.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Navigate", "Tabs and panes", "Projects and tools", "Host"]
+        );
+        // Paired chrome rows are present in viewer groups, while bindings keeps each action.
+        let nav_rows = &linux.groups[0].rows;
+        assert!(nav_rows.iter().any(|r| r.shortcut == "Left / Right"));
+        assert!(nav_rows.iter().any(|r| r.shortcut == "Up / Down"));
+
+        let create_pane = linux
+            .bindings
+            .iter()
+            .find(|b| b.action == "create_pane")
+            .unwrap();
+        assert_eq!(create_pane.source, "overridden");
+        assert_eq!(create_pane.display, None);
+        assert!(create_pane.chords.is_empty());
+        assert_eq!(create_pane.overridden_by.len(), 1);
+        assert_eq!(create_pane.overridden_by[0].id, "pane-maker");
+        assert_eq!(create_pane.overridden_by[0].kind, "popup");
+        assert!(linux.groups[1].rows.iter().any(
+            |r| r.shortcut == "Alt+M" && r.label == "Create pane (overridden by Pane Override)"
+        ));
+
+        let show_ws = linux
+            .bindings
+            .iter()
+            .find(|b| b.action == "show_workspace_position")
+            .unwrap();
+        assert_eq!(show_ws.source, "default");
+        assert_eq!(show_ws.chords.len(), 9);
+        assert_eq!(show_ws.overridden_by.len(), 1);
+        assert_eq!(
+            show_ws.overridden_by[0].config.as_deref(),
+            Some("Alt+Shift+1")
+        );
+        assert!(
+            !show_ws
+                .display
+                .as_deref()
+                .unwrap()
+                .contains("Alt+Shift+1 /")
+        );
+        assert!(
+            nav_rows.iter().any(|r| r.label == "Show session by position (Alt+Shift+1 overridden by Slot One)")
+        );
+
+        // Non-configurable triggers report config = None.
+        let open_link = linux
+            .bindings
+            .iter()
+            .find(|b| b.action == "open_link")
+            .unwrap();
+        assert_eq!(open_link.display.as_deref(), Some("Ctrl+click"));
+        assert_eq!(open_link.chords[0].config, None);
+        let cycle_focus = linux
+            .bindings
+            .iter()
+            .find(|b| b.action == "cycle_focus")
+            .unwrap();
+        assert_eq!(cycle_focus.chords[0].config, None);
+        let paste = linux.bindings.iter().find(|b| b.action == "paste").unwrap();
+        assert_eq!(paste.chords[0].config.as_deref(), Some("Ctrl+Shift+V"));
+        assert_eq!(paste.chords[1].config, None);
+
+        // Popups include unbound and overridden state, while viewer group omits unbound.
+        assert_eq!(linux.popups.len(), 4);
+        assert_eq!(linux.popups[2].source, "overridden");
+        assert_eq!(
+            linux.popups[2].default_keybinding.as_deref(),
+            Some("Alt+Shift+J")
+        );
+        assert_eq!(
+            linux.popups[2].overridden_by_label.as_deref(),
+            Some("Pane Override")
+        );
+        assert_eq!(linux.popups[3].source, "unbound");
+        assert_eq!(linux.groups[2].rows.len(), 3);
+        assert!(
+            linux.groups[2]
+                .rows
+                .iter()
+                .any(|r| r.label == "Git (overridden by Pane Override)")
+        );
+
+        // Reserved and focus lists.
+        assert_eq!(linux.reserved.strict.len(), 11);
+        assert!(
+            linux
+                .reserved
+                .strict
+                .iter()
+                .any(|c| c.action == "toggle_viewer"
+                    && c.config == "Alt+Slash"
+                    && c.display == "Alt+/")
+        );
+        assert_eq!(linux.reserved.focus.len(), 4);
+        assert!(
+            linux
+                .reserved
+                .focus
+                .iter()
+                .all(|c| c.action.starts_with("focus_"))
+        );
+
+        // Conditional flags and macOS Quit partial/full overrides.
+        let mac_entries = [
+            PopupEntry {
+                id: "cmd-q".into(),
+                label: "Cmd Q".into(),
+                shortcut: PopupKey::Bound(ProtocolShortcut {
+                    modifiers: SUPER,
+                    key: "KeyQ".into(),
+                }),
+            },
+            PopupEntry {
+                id: "silent".into(),
+                label: "Silent".into(),
+                shortcut: PopupKey::Unbound,
+            },
+        ];
+        let filtered = effective_keymap(
+            Platform::Macos,
+            &mac_entries[1..],
+            Sidebar::Off,
+            false,
+            false,
+        );
+        assert_eq!(filtered.groups.len(), 3);
+        assert!(
+            !filtered
+                .bindings
+                .iter()
+                .any(|b| b.action == "toggle_sidebar")
+        );
+        assert!(!filtered.bindings.iter().any(|b| b.action == "quit"));
+        assert!(
+            !filtered
+                .bindings
+                .iter()
+                .any(|b| b.action == "show_workspace_position")
+        );
+
+        let mac_partial = effective_keymap(
+            Platform::Macos,
+            &mac_entries[..1],
+            Sidebar::Open,
+            true,
+            true,
+        );
+        let mac_quit = mac_partial
+            .bindings
+            .iter()
+            .find(|b| b.action == "quit")
+            .unwrap();
+        assert_eq!(mac_quit.source, "default");
+        assert_eq!(mac_quit.display.as_deref(), Some("Option+Shift+Q"));
+        assert_eq!(mac_quit.overridden_by.len(), 1);
+        assert_eq!(mac_quit.overridden_by[0].config.as_deref(), Some("Super+Q"));
+        assert_eq!(mac_quit.overridden_by[0].display, "Command+Q");
+
+        let mac_both = [
+            mac_entries[0].clone(),
+            PopupEntry {
+                id: "opt-shift-q".into(),
+                label: "Opt Shift Q".into(),
+                shortcut: PopupKey::Bound(ProtocolShortcut {
+                    modifiers: ALT_SHIFT,
+                    key: "KeyQ".into(),
+                }),
+            },
+        ];
+        let mac_full = effective_keymap(Platform::Macos, &mac_both, Sidebar::Open, true, true);
+        let mac_quit_full = mac_full
+            .bindings
+            .iter()
+            .find(|b| b.action == "quit")
+            .unwrap();
+        assert_eq!(mac_quit_full.source, "overridden");
+        assert_eq!(mac_quit_full.display, None);
+        assert_eq!(mac_quit_full.overridden_by.len(), 2);
+    }
+
+    #[test]
+    fn viewer_groups_and_effective_bindings_agree_on_every_override() {
+        for platform in [Platform::Linux, Platform::Macos] {
+            for shortcut in FIXED_SHORTCUTS {
+                for chord in shortcut.trigger.chords(platform) {
+                    let entries = [PopupEntry {
+                        id: "probe".into(),
+                        label: "Probe Override".into(),
+                        shortcut: PopupKey::Bound(ProtocolShortcut {
+                            modifiers: chord.modifiers,
+                            key: chord.key.into(),
+                        }),
+                    }];
+                    let keymap = effective_keymap(platform, &entries, Sidebar::Open, true, true);
+                    let overridden_bindings: Vec<_> = keymap
+                        .bindings
+                        .iter()
+                        .filter(|binding| !binding.overridden_by.is_empty())
+                        .collect();
+                    let overridden_rows: Vec<_> = keymap
+                        .groups
+                        .iter()
+                        .filter(|group| group.title != "Projects and tools")
+                        .flat_map(|group| group.rows.iter())
+                        .filter(|row| row.label.contains("overridden by Probe Override"))
+                        .collect();
+                    assert_eq!(
+                        overridden_rows.len(),
+                        overridden_bindings.len(),
+                        "platform={platform:?} action={} chord={chord:?}\nrows={overridden_rows:?}\nbindings={overridden_bindings:?}",
+                        shortcut.action.id()
+                    );
+                    for binding in overridden_bindings {
+                        assert!(
+                            binding
+                                .overridden_by
+                                .iter()
+                                .all(|source| source.label == "Probe Override")
+                        );
+                        assert!(
+                            overridden_rows.iter().any(|row| {
+                                row.label.starts_with(&format!("{} (", binding.label))
+                            }),
+                            "missing viewer override row for {} on {platform:?}",
+                            binding.action
+                        );
+                    }
+                }
+            }
+        }
     }
 }
