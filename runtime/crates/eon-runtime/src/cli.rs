@@ -887,6 +887,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         }
         [command, action] if command == "config" && action == "path" => print_config_path(true),
         [command, action] if command == "config" && action == "dir" => print_config_path(false),
+        [command, action, flag]
+            if command == "config" && action == "schema" && flag == "--json" =>
+        {
+            write_stdout(managed_environment::print_schema(&inputs.defaults)?)?;
+            Ok(0)
+        }
         [command, action] if command == "config" && action == "check" => {
             check_configuration(inputs, false)
         }
@@ -1248,6 +1254,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("", "its config.toml path"),
             ("config dir", "Create and print the config root"),
             ("config defaults [--json]", "Print config.toml defaults"),
+            ("config schema --json", "Describe configuration keys"),
             ("config check [--json]", "Check config.toml offline"),
             ("--skill", "Print this build's agent skill"),
             ("-V, --version", "Print this build's Eon version"),

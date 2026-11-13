@@ -7057,3 +7057,89 @@ reference to existing pane creation, not by the unapproved targeting beads.
   drain, exclusion, expiration and overrun; full applicable Rust/Nix delivery
   surfaces and one isolated installed observation using an overseer-provided
   candidate. Model-language choice and model checking remain pending.
+
+## EON-C44 — Configuration schema and named-key editing
+
+- **Status:** Planned (approved by eon-overseer under Lucca's delegation,
+  2026-11-12T23:17:46Z; eon-s0oj.1). The schema clause is Candidate;
+  get/set/unset remain Planned under `eon-s0oj.2`.
+- **Consumer:** Agents and Eon's future Ratconfig host inspecting/editing
+  configuration without duplicating Runtime's metadata or validation.
+- **Trigger:** `eon config schema --json`; later explicit get/set/unset of a
+  named key.
+- **Result — schema (Candidate):** `eon config schema --json` prints one JSON object with
+  `keys`, an array of row objects for this build's active configuration keys
+  only. Deprecated and removed names are absent. Each built-in popup field has
+  a concrete path; exactly five `popups.<id>.<field>` paths describe custom
+  popups only. Every row has these fields:
+  Each `path` appears in exactly one row; row order is unspecified.
+
+  - `path` (string): dotted configuration key or custom-popup pattern.
+  - `kind` (string): `boolean`, `integer`, `number`, `string`, `string-array`,
+    or `command`. Command means direct argv or a named command where supported.
+  - `default` (JSON boolean, number, string, string array, or null): this build's
+    configuration default; null means omitted, including an Eon-owned command
+    that has no configurable representation. It does not promise a resolved
+    Venus override or an executable name for an internal command.
+  - `bounds` (object): applicable optional numeric `minimum`/`maximum` fields
+    constrain numeric values; integer `min_length`/`max_length` constrain a
+    string's UTF-8 byte length; integer `min_items`/`max_items` constrain array
+    length; integer `item_min_length`/`item_max_length` constrain string-array
+    or argv element UTF-8 byte lengths. Limits are inclusive; absent bounds
+    make no corresponding claim. Disjoint/contextual constraints use rules.
+  - `choices` (array of JSON values): listed scalar enum values, or allowed
+    elements for a string-array; for command rows it constrains the named
+    string alternative while argv remains governed by its rules. Empty means
+    no enumerated constraint. Existing ignore policies still apply.
+  - `rules` (array of strings): human-readable constraints and ignored-value
+    policies, with no machine meaning or wording guarantee. Consumers must
+    validate through Runtime rather than interpret these strings.
+  - `description` (string): the one-line defaults description, also used by
+    `eon config defaults` where the setting appears there.
+  - `takes_effect` (array of strings): applicable triggers, initially
+    `next-window-presentation`, `next-supervisor-start`, `next-fresh-window`,
+    `next-terminal`, `next-managed-shell`, `next-directory-visit`, `next-edit`,
+    `next-editor-launch`, `next-update`. Window presentation means opening,
+    reopening after detach, or accepted reload, not merely presenting an
+    already-live Venus. Fresh window means eligible startup animation;
+    editor launch includes Editor/Scrollback commands. Existing processes
+    retain their settings; multiple triggers describe distinct consumers.
+  - `eon_owned` (boolean): the field is controlled by Eon rather than editable.
+  - `required` (boolean): the row belongs to a required built-in popup; false
+    for ordinary/custom keys. Custom field-presence conditions are rules.
+
+  Consumers ignore additional object fields and tolerate new kind, effect and
+  choice values. The command reads no user configuration, creates no directories,
+  contacts no supervisor and starts no children; broken config still works.
+  Success exits 0 with JSON stdout and no stderr. Invalid arguments exit 2.
+  Serialization or stdout write failures exit 1 with a diagnostic on stderr;
+  a closed pipe exits 0 with no stderr, through `write_stdout`.
+- **Result — named-key editing (Planned):** get reads one named key. Set/unset are the
+  only configuration-writing triggers in this contract: change only that key,
+  preserve unrelated text/comments, validate the whole candidate through Runtime
+  before writing, and replace atomically. Check is owned solely by EON-C9 and
+  is referenced rather than redefined. EON-C28/C37's prohibition on autonomous
+  config rewriting remains unchanged. Later beads specify get/set/unset syntax
+  and JSON/error details before implementing them.
+- **Important failures:** Missing metadata, wrong defaults/types/bounds/effect
+  timing, editable presentation of an owned field, or modification of user
+  configuration by schema; later invalid writes must leave the file intact.
+- **Owner:** Runtime owns active keys, metadata, resolution and validation;
+  Eon supplies product defaults. CLI and Ratconfig consume that owner.
+- **Boundary:** This contract owns configuration metadata and explicit named-key
+  editing. It does not own configuration watchers, reload lifecycle, popup
+  presentation, Ratconfig integration or the validation policy of other
+  contracts. Schema describes existing keys/defaults rather than changing them.
+- **Proof:** Schema only (`eon-s0oj.1`); named-key editing remains unimplemented.
+  - **Environment:** Automated tier, x86_64 Linux, isolated `eon-test` with
+    this repository's pinned development environment and Cargo test binaries.
+    The exact staged tree, commands and results are recorded with the bead.
+  - **Evidence:** `configuration_schema_matches_derived_defaults_and_every_key_parses`
+    ties keys/defaults to the exhaustive config structs and generates a document
+    with every editable key. `configuration_schema_bounds_and_choices_match_validation`
+    probes bounds/enums against Runtime's parser, resolvers and warning policy.
+    `config_schema_is_complete_offline_and_uses_config_cli_conventions` exercises
+    the real Eon binary with broken, unreadable and absent config, absent
+    components/runtime, argument/help handling and stdout failures/closed pipes.
+    Defaults/documentation equality and existing resolver/ownership tests remain
+    green. No installed-runtime or Darwin proof is claimed.

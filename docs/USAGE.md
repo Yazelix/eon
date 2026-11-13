@@ -936,6 +936,7 @@ line points agents to `eon --skill`.
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
+| `eon config schema --json` | Describe active configuration keys, types, defaults, bounds, choices and when changes take effect, without reading user configuration |
 | `eon config check [--json]` | Check config.toml for settings Eon would reject, without starting Eon or changing state |
 | `eon --skill` | Print the `eon` agent skill this build ships, without starting a session or reading configuration |
 | `eon -V`, `eon --version` | Print this build's Eon version as `eon VERSION`, without starting a session or reading configuration |

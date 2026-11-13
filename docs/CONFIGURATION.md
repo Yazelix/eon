@@ -66,6 +66,14 @@ send_typing_quiet_ms = 2000
 
 ## Built-in defaults
 
+`eon config schema --json` describes this build's active configuration keys,
+types, defaults (null when unset), bounds, choices, descriptions and when changes
+take effect. It also identifies Eon-owned and required built-in popup fields;
+`popups.<id>.*` rows describe custom popups only. It reads no user configuration
+and works with a broken `config.toml`. Paths are unique; row order is unspecified.
+Consumers allow extra fields and new values. `rules` is human-readable guidance;
+use Runtime's configuration checking for validation, rather than parsing rules.
+
 `eon config defaults` prints this build's defaults as commented TOML;
 `eon config defaults --json` prints the same configurable values as a nested
 object. Neither reads your configuration or creates directories, so both work

@@ -348,6 +348,109 @@ fn config_check_reports_validation_and_read_failures_as_data() {
 }
 
 #[test]
+fn config_schema_is_complete_offline_and_uses_config_cli_conventions() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    fs::create_dir(&config).unwrap();
+    let file = config.join("config.toml");
+    fs::write(&file, "broken = [").unwrap();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let run = |arguments: &[&str], config: &Path| {
+        eon_command(binary)
+            .args(arguments)
+            .env("EON_CONFIG_HOME", config)
+            .env("EON_RUNTIME_DIR", root.join("absent-runtime"))
+            .env("EON_ORBIT", root.join("absent-orbit"))
+            .env("EON_VENUS", root.join("absent-venus"))
+            .output()
+            .unwrap()
+    };
+    let output = run(&["config", "schema", "--json"], &config);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty());
+    let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let keys = schema["keys"].as_array().unwrap();
+    assert!(!keys.is_empty());
+    let mut paths = std::collections::HashSet::new();
+    for key in keys {
+        assert!(paths.insert(key["path"].as_str().unwrap()));
+        assert!(key["kind"].is_string());
+        assert!(key.get("default").is_some());
+        assert!(key["bounds"].is_object());
+        assert!(key["choices"].is_array());
+        assert!(key["rules"].is_array());
+        assert!(!key["description"].as_str().unwrap().is_empty());
+        assert!(!key["takes_effect"].as_array().unwrap().is_empty());
+        assert!(key["eon_owned"].is_boolean() && key["required"].is_boolean());
+    }
+    for path in [
+        "terminal.font_size",
+        "updates.nix_entry",
+        "popups.files.command",
+        "popups.<id>.command",
+    ] {
+        assert!(paths.contains(path), "{path}");
+    }
+    assert_eq!(fs::read_to_string(&file).unwrap(), "broken = [");
+    fs::remove_file(&file).unwrap();
+    fs::create_dir(&file).unwrap();
+    assert_eq!(
+        run(&["config", "schema", "--json"], &config).stdout,
+        output.stdout
+    );
+    let absent = root.join("absent-config");
+    assert_eq!(
+        run(&["config", "schema", "--json"], &absent).stdout,
+        output.stdout
+    );
+    assert!(!absent.exists() && !root.join("absent-runtime").exists());
+    for arguments in [
+        &["--help"][..],
+        &["config", "--help"],
+        &["config", "schema", "--help"],
+    ] {
+        let help = run(arguments, &config);
+        assert_eq!(help.status.code(), Some(0));
+        assert!(stdout(&help).contains("config schema --json"));
+    }
+    for arguments in [
+        &["config", "schema"][..],
+        &["config", "--json", "schema"],
+        &["config", "schema", "--json", "--json"],
+        &["config", "schema", "--json", "extra"],
+    ] {
+        let failure = run(arguments, &config);
+        assert_eq!(failure.status.code(), Some(2));
+        assert!(failure.stdout.is_empty());
+    }
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let closed = eon_command(binary)
+        .args(["config", "schema", "--json"])
+        .stdout(writer)
+        .output()
+        .unwrap();
+    assert_eq!(closed.status.code(), Some(0));
+    assert!(closed.stderr.is_empty());
+    #[cfg(target_os = "linux")]
+    {
+        let failure = eon_command(binary)
+            .args(["config", "schema", "--json"])
+            .stdout(
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open("/dev/full")
+                    .unwrap(),
+            )
+            .output()
+            .unwrap();
+        assert_eq!(failure.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&failure.stderr).contains("cannot write stdout"));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn config_defaults_ignore_user_configuration_and_have_documented_values() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));

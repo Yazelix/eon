@@ -213,6 +213,13 @@ windows the person asked about.
 
 ## Check configuration after edits
 
+Use `eon config schema --json` to discover this build's active configuration
+keys, types, defaults, bounds, choices and when changes take effect. Concrete
+popup paths describe built-ins; `popups.<id>.*` describes custom popups. Respect
+`eon_owned` and `required`. Paths are unique; allow any row order, extra fields
+and new values. The command works with broken configuration and changes no
+state. Treat `rules` as human guidance; Runtime owns validation.
+
 After editing Eon's `config.toml`, run `eon config check --json` before calling
 the edit done. It checks settings Eon would reject at startup or during later
 use without a running supervisor or state changes. Read `path`, `valid` and

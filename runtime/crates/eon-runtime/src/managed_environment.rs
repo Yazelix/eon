@@ -709,8 +709,573 @@ struct TerminalSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-// Keep unset keys here so defaults consumers can check the complete parser surface.
-fn defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
+#[derive(Clone, Serialize)]
+struct ConfigKey {
+    path: String,
+    kind: &'static str,
+    default: serde_json::Value,
+    bounds: serde_json::Value,
+    choices: Vec<serde_json::Value>,
+    rules: Vec<String>,
+    description: String,
+    takes_effect: &'static [&'static str],
+    eon_owned: bool,
+    required: bool,
+}
+
+impl ConfigKey {
+    fn new(
+        path: &str,
+        kind: &'static str,
+        description: &str,
+        takes_effect: &'static [&'static str],
+    ) -> Self {
+        Self {
+            path: path.into(),
+            kind,
+            default: serde_json::Value::Null,
+            bounds: serde_json::json!({}),
+            choices: Vec::new(),
+            rules: Vec::new(),
+            description: description.into(),
+            takes_effect,
+            eon_owned: false,
+            required: false,
+        }
+    }
+    fn bounds(mut self, bounds: serde_json::Value) -> Self {
+        self.bounds = bounds;
+        self
+    }
+    fn choices(mut self, choices: &[&str]) -> Self {
+        self.choices = choices
+            .iter()
+            .map(|value| serde_json::json!(value))
+            .collect();
+        self
+    }
+    fn rules(mut self, rules: &[&str]) -> Self {
+        self.rules = rules.iter().map(|value| (*value).into()).collect();
+        self
+    }
+    fn description(&self, default: &serde_json::Value) -> String {
+        if self.path == "editor.command" && default.is_null() {
+            format!(
+                "{} Unset, each edit runs $VISUAL, then $EDITOR.",
+                self.description
+            )
+        } else {
+            self.description.clone()
+        }
+    }
+}
+
+fn configuration_metadata() -> &'static [ConfigKey] {
+    static KEYS: OnceLock<Vec<ConfigKey>> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        use serde_json::json;
+        vec![
+            ConfigKey::new(
+                "bar.ram_notice_percent",
+                "integer",
+                "RAM use from which the RAM chip turns yellow.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["ram thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.ram_warning_percent",
+                "integer",
+                "RAM use from which the RAM chip turns orange.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["ram thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.ram_critical_percent",
+                "integer",
+                "RAM use from which the RAM chip turns red.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["ram thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.cpu_notice_percent",
+                "integer",
+                "CPU use from which the CPU chip turns yellow.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["cpu thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.cpu_warning_percent",
+                "integer",
+                "CPU use from which the CPU chip turns orange.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["cpu thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.cpu_critical_percent",
+                "integer",
+                "CPU use from which the CPU chip turns red.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["cpu thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.disk_notice_percent",
+                "integer",
+                "Disk use from which the disk chip turns yellow.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["disk thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.disk_warning_percent",
+                "integer",
+                "Disk use from which the disk chip turns orange.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["disk thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.disk_critical_percent",
+                "integer",
+                "Disk use from which the disk chip turns red.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":100}))
+            .rules(&["disk thresholds must be ordered notice <= warning <= critical; omitted thresholds adjust to configured neighbours."]),
+            ConfigKey::new(
+                "bar.cpu_average_seconds",
+                "integer",
+                "Seconds of CPU use that the hover's average covers.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":2,"maximum":600})),
+            ConfigKey::new(
+                "bar.cpu_temperature_warning_celsius",
+                "integer",
+                "CPU temperature in Celsius from which the CPU chip turns orange (Linux CPU sensors only).",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":30,"maximum":120}))
+            .rules(&["Critical temperature must not be below warning temperature."]),
+            ConfigKey::new(
+                "bar.cpu_temperature_critical_celsius",
+                "integer",
+                "CPU temperature in Celsius from which the CPU chip turns red (Linux CPU sensors only).",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":30,"maximum":120}))
+            .rules(&["Critical temperature must not be below warning temperature."]),
+            ConfigKey::new(
+                "bar.disk_path",
+                "string",
+                "Path whose filesystem the disk chip measures.",
+                &["next-window-presentation"],
+            )
+            .rules(&["Absolute path, ~ or ~/...; an unset/relative HOME leaves ~ paths without a reading."]),
+            ConfigKey::new(
+                "bar.widgets",
+                "string-array",
+                "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows.",
+                &["next-window-presentation"],
+            )
+            .rules(&["Ordered unique known widgets; unknown names are ignored with a warning. Clock/version positions remain fixed; quota selection also affects collection."]),
+            ConfigKey::new(
+                "terminal.background_opacity",
+                "number",
+                "Opacity of the terminal's default background.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":0.0,"maximum":1.0})),
+            ConfigKey::new(
+                "terminal.background_blur",
+                "boolean",
+                "Request compositor background blur.",
+                &["next-window-presentation"],
+            ),
+            ConfigKey::new(
+                "terminal.pane_frames",
+                "boolean",
+                "Draw rounded pane frames.",
+                &["next-window-presentation"],
+            ),
+            ConfigKey::new(
+                "terminal.detect_local_hosts",
+                "boolean",
+                "Treat plain-text localhost, 127.0.0.1 and [::1] with a port as links.",
+                &["next-window-presentation"],
+            ),
+            ConfigKey::new(
+                "terminal.padding_color",
+                "string",
+                "How terminal padding takes its background colour.",
+                &["next-window-presentation"],
+            )
+            .choices(&["extend","extend-always","background"]),
+            ConfigKey::new(
+                "panels.heading",
+                "string",
+                "Panel heading position: notch or connected. Applies on open, reopen or reload.",
+                &["next-window-presentation"],
+            )
+            .choices(&["notch","connected"]),
+            ConfigKey::new(
+                "terminal.border_width",
+                "integer",
+                "Use Venus's neutral outline width when omitted.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":3})),
+            ConfigKey::new(
+                "terminal.focus_border_width",
+                "integer",
+                "Use Venus's focus outline width when omitted.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":3})),
+            ConfigKey::new(
+                "terminal.focus_color",
+                "string",
+                "Use Venus's focus colour when omitted.",
+                &["next-window-presentation"],
+            )
+            .rules(&["Venus admission accepts preset:NAME (magma, solar, lime, forest, ice, ocean, nebula, bubblegum) or custom:#RRGGBB. Focus does not accept random."]),
+            ConfigKey::new(
+                "terminal.cursor_trail_color",
+                "string",
+                "Omission retains the session's random cursor colour.",
+                &["next-window-presentation"],
+            )
+            .rules(&["Venus admission accepts preset:NAME (magma, solar, lime, forest, ice, ocean, nebula, bubblegum) or custom:#RRGGBB. Cursor also accepts random."]),
+            ConfigKey::new(
+                "terminal.cursor_trail_duration",
+                "number",
+                "Cursor tail duration multiplier; 0 turns the trail off.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":0.0,"maximum":4.0}))
+            .rules(&["Finite 0 (off), or 0.25 through 4.0."]),
+            ConfigKey::new(
+                "terminal.font_family",
+                "string",
+                "Let Venus choose the font family when omitted.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"min_length":1,"max_length":128}))
+            .rules(&["Trimmed, no control characters; Venus admission requires an installed monospace primary family."]),
+            ConfigKey::new(
+                "terminal.font_fallbacks",
+                "string-array",
+                "Ordered fallback font families.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"max_items":8,"item_min_length":1,"item_max_length":128}))
+            .rules(&["Trimmed names without controls; Venus admission requires installed fallback families."]),
+            ConfigKey::new(
+                "terminal.font_size",
+                "number",
+                "Let Venus choose the font size when omitted.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":6.0,"maximum":96.0})),
+            ConfigKey::new(
+                "terminal.line_height",
+                "number",
+                "Let Venus choose the line height when omitted.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1.0,"maximum":3.0})),
+            ConfigKey::new(
+                "terminal.columns",
+                "integer",
+                "Let the window choose initial columns when omitted.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":65535}))
+            .rules(&["Supplied dimensions together must not exceed Orbit's 100,000-cell limit."]),
+            ConfigKey::new(
+                "terminal.rows",
+                "integer",
+                "Let the window choose initial rows when omitted.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":1,"maximum":65535}))
+            .rules(&["Supplied dimensions together must not exceed Orbit's 100,000-cell limit."]),
+            ConfigKey::new(
+                "shell.command",
+                "string-array",
+                "Direct argv for terminals without an explicit command.",
+                &["next-terminal"],
+            )
+            .bounds(json!({"min_items":1}))
+            .rules(&["First argument is nonempty; no argument contains NUL. Runs directly without a shell."]),
+            ConfigKey::new(
+                "shell.starship",
+                "boolean",
+                "Enable the managed Starship prompt integration.",
+                &["next-managed-shell"],
+            ),
+            ConfigKey::new(
+                "shell.zoxide",
+                "boolean",
+                "Enable the managed Zoxide integration and record tab-directory picks.",
+                &["next-managed-shell","next-directory-visit"],
+            ),
+            ConfigKey::new(
+                "shell.atuin",
+                "boolean",
+                "Enable the managed Atuin history integration.",
+                &["next-managed-shell"],
+            ),
+            ConfigKey::new(
+                "shell.carapace",
+                "boolean",
+                "Enable the managed Carapace completion integration.",
+                &["next-managed-shell"],
+            ),
+            ConfigKey::new(
+                "shell.mise",
+                "boolean",
+                "Activate host mise when available and not already active.",
+                &["next-managed-shell"],
+            ),
+            ConfigKey::new(
+                "anima.enabled",
+                "boolean",
+                "Enable this feature or popup.",
+                &["next-fresh-window"],
+            ),
+            ConfigKey::new(
+                "anima.style",
+                "string",
+                "Startup animation style.",
+                &["next-fresh-window"],
+            )
+            .bounds(json!({"min_length":1,"max_length":128}))
+            .rules(&["Trimmed style name without controls; availability is owned by Anima."]),
+            ConfigKey::new(
+                "anima.duration_seconds",
+                "integer",
+                "Startup animation duration in seconds.",
+                &["next-fresh-window"],
+            )
+            .bounds(json!({"minimum":1,"maximum":30})),
+            ConfigKey::new(
+                "session.warning_close_last_tab",
+                "boolean",
+                "Ask before stopping the final tab's terminals.",
+                &["next-window-presentation"],
+            ),
+            ConfigKey::new(
+                "session.animate_working_badge",
+                "boolean",
+                "Animate the working badge; false keeps it still.",
+                &["next-window-presentation"],
+            ),
+            ConfigKey::new(
+                "session.number_keys",
+                "boolean",
+                "Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10; false leaves the keys to the terminal.",
+                &["next-window-presentation"],
+            ),
+            ConfigKey::new(
+                "sidebar.enabled",
+                "boolean",
+                "Enable this feature or popup.",
+                &["next-supervisor-start"],
+            ),
+            ConfigKey::new(
+                "agents.terminal_access",
+                "string",
+                "Let `eon pane read`, `history` and `send` reach this window's terminals; \"none\" refuses all three.",
+                &["next-supervisor-start"],
+            )
+            .choices(&["window","none"]),
+            ConfigKey::new(
+                "agents.send_enter_delay_ms",
+                "integer",
+                "Wait between `eon pane send` text and its --enter.",
+                &["next-supervisor-start"],
+            )
+            .bounds(json!({"minimum":0,"maximum":MAX_ENTER_DELAY_MS})),
+            ConfigKey::new(
+                "agents.send_typing_quiet_ms",
+                "integer",
+                "Refuse unforced sends within this many ms of typing; 0 disables (0 to 60000).",
+                &["next-supervisor-start"],
+            )
+            .bounds(json!({"minimum":0,"maximum":MAX_TYPING_QUIET_MS})),
+            ConfigKey::new(
+                "editor.command",
+                "command",
+                "Direct argv that `eon edit` and Files run with the file appended.",
+                &["next-edit","next-editor-launch"],
+            )
+            .bounds(json!({"min_items":1,"max_items":128}))
+            .rules(&["Direct argv only; first argument nonempty; no NUL; at most 65536 total argument bytes. Existing editors retain their argv."]),
+            ConfigKey::new(
+                "editor.open_in",
+                "string",
+                "Open in the packaged Helix Editor popup, or \"pane\" for a new pane.",
+                &["next-edit"],
+            )
+            .choices(&["popup","pane"]),
+            ConfigKey::new(
+                "updates.nix_profile",
+                "string",
+                "Absolute profile path; set with nix_entry.",
+                &["next-update"],
+            )
+            .bounds(json!({"min_length":1}))
+            .rules(&["Absolute path without .. required.","Use nix_profile with nix_entry, or bundle_prefix, never both targets; explicit targets take precedence."]),
+            ConfigKey::new(
+                "updates.nix_entry",
+                "string",
+                "Exact profile entry name; set with nix_profile.",
+                &["next-update"],
+            )
+            .bounds(json!({"min_length":1}))
+            .rules(&["Nonempty exact entry name.","Use nix_profile with nix_entry, or bundle_prefix, never both targets; explicit targets take precedence."]),
+            ConfigKey::new(
+                "updates.bundle_prefix",
+                "string",
+                "Absolute existing managed prefix; excludes the Nix pair.",
+                &["next-update"],
+            )
+            .bounds(json!({"min_length":1}))
+            .rules(&["Absolute path without .. required.","Use nix_profile with nix_entry, or bundle_prefix, never both targets; explicit targets take precedence."]),
+            ConfigKey::new(
+                "updates.allowed_signers",
+                "string",
+                "Absolute independently trusted OpenSSH signer file.",
+                &["next-update"],
+            )
+            .bounds(json!({"min_length":1}))
+            .rules(&["Absolute path without .. required.","Trust file is independent of the installation target."]),
+            ConfigKey::new(
+                "popups.<id>.command",
+                "command",
+                "Direct argv, or auto for Agent's command selection.",
+                &["next-supervisor-start"],
+            )
+            .bounds(json!({"min_items":1,"max_items":128}))
+            .rules(&["Direct argv; first argument nonempty, no NUL, at most 65536 total argument bytes. Only built-in Agent also accepts auto."]),
+            ConfigKey::new(
+                "popups.<id>.keybinding",
+                "string",
+                "Popup shortcut using physical keys.",
+                &["next-supervisor-start"],
+            )
+            .rules(&["Empty leaves it unbound; otherwise modifiers and one supported physical key joined by +. Reserved focus keys load unbound with a warning; other reserved keys and conflicts are rejected."]),
+            ConfigKey::new(
+                "popups.<id>.label",
+                "string",
+                "Popup display name.",
+                &["next-supervisor-start"],
+            )
+            .bounds(json!({"min_length":1,"max_length":MAX_LABEL_BYTES}))
+            .rules(&["No control characters."]),
+            ConfigKey::new(
+                "popups.<id>.enabled",
+                "boolean",
+                "Enable this feature or popup.",
+                &["next-supervisor-start"],
+            ),
+            ConfigKey::new(
+                "popups.<id>.keep_alive",
+                "boolean",
+                "Keep this popup running when hidden.",
+                &["next-supervisor-start"],
+            ),
+        ]
+    })
+}
+
+fn schema_keys(defaults: &Defaults) -> Result<Vec<ConfigKey>, String> {
+    let values = all_defaults_config(defaults)?;
+    let mut keys = Vec::new();
+    for metadata in configuration_metadata() {
+        if let Some(field) = metadata.path.strip_prefix("popups.<id>.") {
+            let mut custom = metadata.clone();
+            custom.default = match field {
+                "enabled" => serde_json::json!(true),
+                "keep_alive" => serde_json::json!(defaults.custom_popup_keep_alive),
+                _ => serde_json::Value::Null,
+            };
+            if matches!(field, "command" | "keybinding") {
+                custom
+                    .rules
+                    .push("Required for an enabled custom popup.".into());
+            }
+            if field == "label" {
+                custom.rules.push(format!("Omitted label uses its ID. IDs are 1-{} ASCII letters, digits, _ or -; at most {} enabled entries.", MAX_ENTRY_ID_BYTES, MAX_ENTRIES));
+            }
+            keys.push(custom);
+            for entry in &defaults.popups.entries {
+                let mut key = metadata.clone();
+                key.path = format!("popups.{}.{field}", entry.id);
+                key.default = values["popups"][&entry.id][field].clone();
+                key.eon_owned = popup_field_owned(&entry.id, field, defaults);
+                key.required = popup_field_owned(&entry.id, "enabled", defaults);
+                if field == "command" && entry.id == "agent" {
+                    key.choices = vec![serde_json::json!("auto")];
+                }
+                if field == "enabled" && entry.command == PopupCommand::Editor {
+                    key.takes_effect = &["next-supervisor-start", "next-edit"];
+                }
+                if key.eon_owned {
+                    key.rules.push("Eon controls this field; overrides retain the existing rejection or ignore policy.".into());
+                }
+                keys.push(key);
+            }
+        } else {
+            let mut key = metadata.clone();
+            key.default = metadata
+                .path
+                .split('.')
+                .fold(&values, |value, part| &value[part])
+                .clone();
+            key.description = metadata.description(&key.default);
+            if key.path == "bar.widgets" {
+                key.choices = defaults
+                    .bar_widgets
+                    .iter()
+                    .map(|name| serde_json::json!(name))
+                    .collect();
+            }
+            keys.push(key);
+        }
+    }
+    Ok(keys)
+}
+
+pub(crate) fn print_schema(defaults: &Defaults) -> Result<String, String> {
+    serde_json::to_string_pretty(&serde_json::json!({"keys": schema_keys(defaults)?}))
+        .map(|text| text + "\n")
+        .map_err(|error| error.to_string())
+}
+
+fn popup_field_owned(id: &str, field: &str, defaults: &Defaults) -> bool {
+    match field {
+        "enabled" => matches!(id, "project" | "files"),
+        "command" | "keep_alive" => {
+            matches!(id, "project" | "files" | "anima" | "scrollback")
+                || defaults
+                    .popups
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id == id && entry.command == PopupCommand::Editor)
+        }
+        _ => false,
+    }
+}
+
+// Keep unset and owned keys here so metadata consumers see the complete parser surface.
+fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
     let mut popups = BTreeMap::new();
     for entry in &defaults.popups.entries {
         let mut keys = Vec::new();
@@ -733,10 +1298,7 @@ fn defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
                     .unwrap_or(&shortcut.key),
             );
         }
-        let command = if matches!(
-            entry.id.as_str(),
-            "project" | "files" | "anima" | "editor" | "scrollback"
-        ) {
+        let command = if popup_field_owned(&entry.id, "command", defaults) {
             None
         } else {
             Some(match &entry.command {
@@ -873,20 +1435,14 @@ fn defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
     };
     // Preserve f32 values' short decimal representation in both formats.
     let config = serde_json::to_string(&config).map_err(|error| error.to_string())?;
-    let mut config: serde_json::Value =
-        serde_json::from_str(&config).map_err(|error| error.to_string())?;
+    serde_json::from_str(&config).map_err(|error| error.to_string())
+}
+
+fn defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
+    let mut config = all_defaults_config(defaults)?;
     for (id, settings) in config["popups"].as_object_mut().unwrap() {
         let settings = settings.as_object_mut().unwrap();
-        if matches!(id.as_str(), "project" | "files") {
-            settings.remove("enabled");
-        }
-        if matches!(
-            id.as_str(),
-            "project" | "files" | "anima" | "editor" | "scrollback"
-        ) {
-            settings.remove("command");
-            settings.remove("keep_alive");
-        }
+        settings.retain(|field, _| !popup_field_owned(id, field, defaults));
     }
     Ok(config)
 }
@@ -983,90 +1539,18 @@ fn defaults_table(
         });
     }
     for (key, value) in fields {
-        let comment = match key.as_str() {
-            "nix_profile" => "Absolute profile path; set with nix_entry.",
-            "nix_entry" => "Exact profile entry name; set with nix_profile.",
-            "bundle_prefix" => "Absolute existing managed prefix; excludes the Nix pair.",
-            "allowed_signers" => "Absolute independently trusted OpenSSH signer file.",
-            "widgets" => {
-                "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows."
-            }
-            "ram_notice_percent" => "RAM use from which the RAM chip turns yellow.",
-            "ram_warning_percent" => "RAM use from which the RAM chip turns orange.",
-            "ram_critical_percent" => "RAM use from which the RAM chip turns red.",
-            "cpu_notice_percent" => "CPU use from which the CPU chip turns yellow.",
-            "cpu_critical_percent" => "CPU use from which the CPU chip turns red.",
-            "cpu_warning_percent" => "CPU use from which the CPU chip turns orange.",
-            "cpu_temperature_warning_celsius" => {
-                "CPU temperature in Celsius from which the CPU chip turns orange (Linux CPU sensors only)."
-            }
-            "cpu_temperature_critical_celsius" => {
-                "CPU temperature in Celsius from which the CPU chip turns red (Linux CPU sensors only)."
-            }
-            "cpu_average_seconds" => "Seconds of CPU use that the hover's average covers.",
-            "disk_notice_percent" => "Disk use from which the disk chip turns yellow.",
-            "disk_warning_percent" => "Disk use from which the disk chip turns orange.",
-            "disk_critical_percent" => "Disk use from which the disk chip turns red.",
-            "disk_path" => "Path whose filesystem the disk chip measures.",
-            "background_opacity" => "Opacity of the terminal's default background.",
-            "background_blur" => "Request compositor background blur.",
-            "padding_color" => "How terminal padding takes its background colour.",
-            "pane_frames" => "Draw rounded pane frames.",
-            "heading" => {
-                "Panel heading position: notch or connected. Applies on open, reopen or reload."
-            }
-            "detect_local_hosts" => {
-                "Treat plain-text localhost, 127.0.0.1 and [::1] with a port as links."
-            }
-            "focus_color" => "Use Venus's focus colour when omitted.",
-            "border_width" => "Use Venus's neutral outline width when omitted.",
-            "focus_border_width" => "Use Venus's focus outline width when omitted.",
-            "cursor_trail_color" => "Omission retains the session's random cursor colour.",
-            "cursor_trail_duration" => "Cursor tail duration multiplier; 0 turns the trail off.",
-            "font_family" => "Let Venus choose the font family when omitted.",
-            "font_fallbacks" => "Ordered fallback font families.",
-            "font_size" => "Let Venus choose the font size when omitted.",
-            "line_height" => "Let Venus choose the line height when omitted.",
-            "columns" => "Let the window choose initial columns when omitted.",
-            "rows" => "Let the window choose initial rows when omitted.",
-            "command" if section == "shell" => {
-                "Direct argv for terminals without an explicit command."
-            }
-            "command" if section == "editor" && value.is_null() => {
-                "Direct argv that `eon edit` and Files run with the file appended. Unset, each edit runs $VISUAL, then $EDITOR."
-            }
-            "command" if section == "editor" => {
-                "Direct argv that `eon edit` and Files run with the file appended."
-            }
-            "open_in" if section == "editor" => {
-                "Open in the packaged Helix Editor popup, or \"pane\" for a new pane."
-            }
-            "command" => "Direct argv, or auto for Agent's command selection.",
-            "starship" => "Enable the managed Starship prompt integration.",
-            "zoxide" => "Enable the managed Zoxide integration and record tab-directory picks.",
-            "atuin" => "Enable the managed Atuin history integration.",
-            "carapace" => "Enable the managed Carapace completion integration.",
-            "mise" => "Activate host mise when available and not already active.",
-            "enabled" => "Enable this feature or popup.",
-            "style" => "Startup animation style.",
-            "duration_seconds" => "Startup animation duration in seconds.",
-            "warning_close_last_tab" => "Ask before stopping the final tab's terminals.",
-            "animate_working_badge" => "Animate the working badge; false keeps it still.",
-            "number_keys" => {
-                "Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10; false leaves the keys to the terminal."
-            }
-            "send_enter_delay_ms" => "Wait between `eon pane send` text and its --enter.",
-            "send_typing_quiet_ms" => {
-                "Refuse unforced sends within this many ms of typing; 0 disables (0 to 60000)."
-            }
-            "terminal_access" => {
-                "Let `eon pane read`, `history` and `send` reach this window's terminals; \"none\" refuses all three."
-            }
-            "label" => "Popup display name.",
-            "keybinding" => "Popup shortcut using physical keys.",
-            "keep_alive" => "Keep this popup running when hidden.",
-            _ => "Built-in setting.",
+        let path = if section.starts_with("popups.") {
+            format!("popups.<id>.{key}")
+        } else {
+            format!("{section}.{key}")
         };
+        let comment = configuration_metadata()
+            .iter()
+            .find(|metadata| metadata.path == path)
+            .map_or_else(
+                || "Built-in setting.".into(),
+                |metadata| metadata.description(value),
+            );
         if value.is_null() {
             output.push_str(&format!("# {key}: unset. {comment}\n"));
         } else {
@@ -1508,35 +1992,31 @@ fn resolve_popups(
     for builtin in &defaults.popups.entries {
         let id = builtin.id.as_str();
         let mut settings = popups.remove(id).unwrap_or_default();
-        if id == "project" {
-            if settings.command.is_some() {
-                return Err("popups.project.command is Eon-owned".into());
+        // Every tab's Files pair is the packaged, enabled, keep-alive Yazi; a pending
+        // tab starts on it (EON-C18). `config_warnings` names each setting ignored here.
+        let ignored = id == "files" || builtin.command == PopupCommand::Editor;
+        if popup_field_owned(id, "command", defaults) {
+            if ignored {
+                settings.command = None;
+            } else if settings.command.is_some() {
+                return Err(format!("popups.{id}.command is Eon-owned"));
             }
-            if settings.enabled == Some(false) {
+        }
+        if popup_field_owned(id, "enabled", defaults) {
+            if id == "files" {
+                settings.enabled = None;
+            } else if settings.enabled == Some(false) {
                 return Err(
                     "popups.project.enabled cannot disable Eon's required quick search".into(),
                 );
             }
-            if settings.keep_alive.is_some_and(|value| value) {
-                return Err("popups.project.keep_alive must remain false".into());
+        }
+        if popup_field_owned(id, "keep_alive", defaults) {
+            if ignored {
+                settings.keep_alive = None;
+            } else if settings.keep_alive == Some(true) {
+                return Err(format!("popups.{id}.keep_alive must remain false"));
             }
-        }
-        // Every tab's Files pair is the packaged, enabled, keep-alive Yazi; a pending
-        // tab starts on it (EON-C18). `config_warnings` names each setting ignored here.
-        if id == "files" {
-            settings.command = None;
-            settings.enabled = None;
-            settings.keep_alive = None;
-        }
-        if builtin.command == PopupCommand::Editor {
-            settings.command = None;
-            settings.keep_alive = None;
-        }
-        if matches!(id, "anima" | "scrollback") && settings.command.is_some() {
-            return Err(format!("popups.{id}.command is Eon-owned"));
-        }
-        if matches!(id, "anima" | "scrollback") && settings.keep_alive == Some(true) {
-            return Err(format!("popups.{id}.keep_alive must remain false"));
         }
         if settings.enabled == Some(false) {
             continue;
@@ -2403,6 +2883,7 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
         ]
         .into_iter()
         .flatten()
+        .filter(|key| popup_field_owned("files", key, defaults))
         .map(|key| {
             format!(
                 "eon: ignoring popups.files.{key} in {path}: Files is Eon's packaged Yazi; move a custom Yazi to its own popup, such as [popups.yazi] command = [\"eon-yazi\"]"
@@ -2414,15 +2895,16 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
         .entries
         .iter()
         .find(|entry| entry.command == PopupCommand::Editor)
-        .and_then(|entry| config.popups.get(&entry.id))
+        .and_then(|entry| config.popups.get(&entry.id).map(|settings| (&entry.id, settings)))
         .into_iter()
-        .flat_map(|settings| {
+        .flat_map(|(id, settings)| {
             [
                 settings.command.is_some().then_some("command"),
                 settings.keep_alive.is_some().then_some("keep_alive"),
             ]
             .into_iter()
             .flatten()
+            .filter(move |key| popup_field_owned(id, key, defaults))
             .map(|key| {
                 format!(
                     "eon: ignoring popups.editor.{key} in {path}: Editor keeps running and uses [editor] command"
@@ -2541,6 +3023,354 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    fn schema_set(document: &mut serde_json::Value, path: &str, value: serde_json::Value) {
+        let path = path.replace("<id>", "schema_fixture");
+        let mut parts = path.split('.').peekable();
+        let mut table = document;
+        while let Some(part) = parts.next() {
+            if parts.peek().is_none() {
+                table[part] = value;
+                return;
+            }
+            table = table
+                .as_object_mut()
+                .unwrap()
+                .entry(part)
+                .or_insert_with(|| serde_json::json!({}));
+        }
+    }
+
+    fn schema_sample(key: &super::ConfigKey) -> serde_json::Value {
+        if !key.default.is_null() {
+            return key.default.clone();
+        }
+        match key.kind {
+            "boolean" => serde_json::json!(true),
+            "integer" | "number" => key
+                .bounds
+                .get("minimum")
+                .cloned()
+                .unwrap_or(serde_json::json!(1)),
+            "string-array" | "command" => serde_json::json!(["fixture"]),
+            "string" if key.path.ends_with("keybinding") => serde_json::json!(""),
+            "string" if key.path.starts_with("updates.") => serde_json::json!("/fixture"),
+            "string" if key.path.ends_with("color") => serde_json::json!("custom:#123456"),
+            "string" => serde_json::json!("fixture"),
+            kind => panic!("unsupported schema kind {kind}"),
+        }
+    }
+
+    #[test]
+    fn configuration_schema_matches_derived_defaults_and_every_key_parses() {
+        fn flatten(
+            path: &str,
+            value: &serde_json::Value,
+            fields: &mut std::collections::BTreeMap<String, serde_json::Value>,
+        ) {
+            if let Some(table) = value.as_object() {
+                for (key, value) in table {
+                    flatten(
+                        &if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        },
+                        value,
+                        fields,
+                    );
+                }
+            } else {
+                fields.insert(path.into(), value.clone());
+            }
+        }
+        let mut defaults = crate::fixtures::inputs().defaults;
+        // Include both owned Editor fields and a build without a default editor.
+        defaults.popups.entries.push(super::PopupDefinition {
+            id: "editor".into(),
+            label: "Editor".into(),
+            shortcut: super::PopupKey::Unbound,
+            command: super::PopupCommand::Editor,
+            keep_alive: true,
+        });
+        for no_editor in [false, true] {
+            if no_editor {
+                defaults.editor = None;
+                defaults.terminal.font_size = Some(19.0);
+                defaults.shell.starship = false;
+                defaults.custom_popup_keep_alive = false;
+            }
+            let keys = super::schema_keys(&defaults).unwrap();
+            let mut paths = std::collections::HashSet::new();
+            let mut actual = std::collections::BTreeMap::new();
+            let mut editable = std::collections::BTreeMap::new();
+            let mut document = serde_json::json!({});
+            for key in &keys {
+                assert!(paths.insert(&key.path), "duplicate {}", key.path);
+                assert!(
+                    !key.description.is_empty() && !key.takes_effect.is_empty(),
+                    "{}",
+                    key.path
+                );
+                if !key.path.contains("<id>") {
+                    actual.insert(key.path.clone(), key.default.clone());
+                    if !key.eon_owned {
+                        editable.insert(key.path.clone(), key.default.clone());
+                    }
+                }
+                if !key.eon_owned {
+                    schema_set(&mut document, &key.path, schema_sample(key));
+                }
+            }
+            assert_eq!(
+                keys.iter().filter(|key| key.path.contains("<id>")).count(),
+                5
+            );
+            let mut expected = std::collections::BTreeMap::new();
+            flatten(
+                "",
+                &super::all_defaults_config(&defaults).unwrap(),
+                &mut expected,
+            );
+            assert_eq!(actual, expected);
+            expected.clear();
+            flatten(
+                "",
+                &super::defaults_config(&defaults).unwrap(),
+                &mut expected,
+            );
+            assert_eq!(editable, expected);
+            let source = toml::to_string(&document).unwrap();
+            let path = Path::new("/absent/config.toml");
+            let parsed = super::parse_configuration_text(&source, path, &defaults).unwrap();
+            assert!(super::config_warnings(&parsed, path, &defaults).is_empty());
+            // Both installation targets cannot coexist, but every key must parse.
+            document["updates"]
+                .as_object_mut()
+                .unwrap()
+                .remove("bundle_prefix");
+            super::validate_configuration_text(
+                &toml::to_string(&document).unwrap(),
+                path,
+                &defaults,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn project_configuration_errors_preserve_required_popup_priority() {
+        let error = super::validate_configuration_text(
+            "[popups.project]\nenabled = false\nkeep_alive = true",
+            Path::new("/absent/config.toml"),
+            &crate::fixtures::inputs().defaults,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("cannot disable Eon's required quick search"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn configuration_schema_custom_popup_defaults_match_resolution() {
+        let mut defaults = crate::fixtures::inputs().defaults;
+        let id = "schema_fixture";
+        let source = format!("[popups.{id}]\ncommand = ['fixture']\nkeybinding = ''");
+        let path = Path::new("/absent/config.toml");
+        for keep_alive in [false, true] {
+            defaults.custom_popup_keep_alive = keep_alive;
+            let keys = super::schema_keys(&defaults).unwrap();
+            let key = |field: &str| {
+                keys.iter()
+                    .find(|key| key.path == format!("popups.<id>.{field}"))
+                    .unwrap()
+            };
+            let parsed = super::parse_configuration_text(&source, path, &defaults).unwrap();
+            let resolved = super::resolve_popups(parsed.popups, &defaults).unwrap();
+            let popup = resolved.entries.iter().find(|popup| popup.id == id);
+            assert_eq!(key("enabled").default, serde_json::json!(popup.is_some()));
+            let popup = popup.unwrap();
+            assert_eq!(
+                key("keep_alive").default,
+                serde_json::json!(popup.keep_alive)
+            );
+            assert_eq!(key("label").default.as_str().unwrap_or(id), popup.label);
+            // A minimal custom popup supplies these fields because neither has a default.
+            for (field, line) in [
+                ("command", "command = ['fixture']\n"),
+                ("keybinding", "keybinding = ''"),
+            ] {
+                assert!(key(field).default.is_null());
+                let without = source.replace(line, "");
+                let error =
+                    super::validate_configuration_text(&without, path, &defaults).unwrap_err();
+                assert!(
+                    error.contains(&format!("popups.{id}.{field} is required")),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn configuration_schema_choices_cover_supported_values() {
+        fn variants<T: serde::Deserialize<'static>>() -> &'static [&'static str] {
+            #[derive(Debug)]
+            struct Variants(&'static [&'static str]);
+            impl std::fmt::Display for Variants {
+                fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("enum variant probe")
+                }
+            }
+            impl std::error::Error for Variants {}
+            impl serde::de::Error for Variants {
+                fn custom<T: std::fmt::Display>(message: T) -> Self {
+                    panic!("unexpected enum deserialization error: {message}")
+                }
+                fn unknown_variant(_: &str, expected: &'static [&'static str]) -> Self {
+                    Self(expected)
+                }
+            }
+            // Capture serde's accepted variants without parsing diagnostic text or copying enums.
+            match T::deserialize(serde::de::value::StrDeserializer::<Variants>::new(
+                "__schema_unknown_variant__",
+            )) {
+                Err(Variants(expected)) if !expected.is_empty() => expected,
+                _ => panic!("enum probe did not return its supported variants"),
+            }
+        }
+        let defaults = crate::fixtures::inputs().defaults;
+        let keys = super::schema_keys(&defaults).unwrap();
+        for (path, supported) in [
+            ("terminal.padding_color", variants::<super::PaddingColor>()),
+            ("panels.heading", variants::<super::PanelHeading>()),
+            (
+                "agents.terminal_access",
+                variants::<super::TerminalAccess>(),
+            ),
+            ("editor.open_in", variants::<super::EditorOpenIn>()),
+            ("bar.widgets", defaults.bar_widgets),
+            ("popups.agent.command", &["auto"] as &[&str]),
+        ] {
+            let key = keys.iter().find(|key| key.path == path).unwrap();
+            let mut actual: Vec<_> = key
+                .choices
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect();
+            let mut expected = supported.to_vec();
+            actual.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(actual, expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn configuration_schema_bounds_and_choices_match_validation() {
+        use serde_json::{Value, json};
+        let defaults = crate::fixtures::inputs().defaults;
+        let probe = |key: &super::ConfigKey, value: Value| {
+            let mut document = json!({});
+            if key.path.starts_with("popups.<id>.") {
+                document["popups"] =
+                    json!({"schema_fixture":{"command":["fixture"],"keybinding":""}});
+            }
+            if key.path.starts_with("bar.cpu_temperature_") {
+                document["bar"] = json!({"cpu_temperature_warning_celsius":30,"cpu_temperature_critical_celsius":120});
+            }
+            if matches!(
+                key.path.as_str(),
+                "updates.nix_profile" | "updates.nix_entry"
+            ) {
+                document["updates"] = json!({"nix_profile":"/profile","nix_entry":"entry"});
+            }
+            schema_set(&mut document, &key.path, value);
+            let source = toml::to_string(&document).unwrap();
+            let path = Path::new("/absent/config.toml");
+            super::validate_configuration_text(&source, path, &defaults).and_then(|()| {
+                let parsed = super::parse_configuration_text(&source, path, &defaults)?;
+                let warnings = super::config_warnings(&parsed, path, &defaults);
+                if warnings.is_empty() {
+                    Ok(())
+                } else {
+                    Err(warnings.join("\n"))
+                }
+            })
+        };
+        for key in super::schema_keys(&defaults)
+            .unwrap()
+            .iter()
+            .filter(|key| !key.eon_owned)
+        {
+            for (bound, endpoint) in key.bounds.as_object().unwrap() {
+                let lower = bound.contains("min");
+                let limit = endpoint.as_f64().unwrap();
+                let outside = if key.kind == "number" {
+                    let endpoint = limit as f32;
+                    f64::from(if lower {
+                        endpoint.next_down()
+                    } else {
+                        endpoint.next_up()
+                    })
+                } else {
+                    limit + if lower { -1.0 } else { 1.0 }
+                };
+                for (number, valid) in [(limit, true), (outside, false)] {
+                    if number < 0.0 && key.kind != "number" && bound != "minimum" {
+                        continue;
+                    }
+                    let value = match bound.as_str() {
+                        "minimum" | "maximum" if key.kind == "integer" => json!(number as i64),
+                        "minimum" | "maximum" => json!(number),
+                        "min_length" | "max_length" => json!(if key.path.starts_with("updates.")
+                            && key.path != "updates.nix_entry"
+                        {
+                            "/".repeat(number as usize)
+                        } else {
+                            "x".repeat(number as usize)
+                        }),
+                        "min_items" | "max_items" => json!(vec!["x"; number as usize]),
+                        "item_min_length" | "item_max_length" => {
+                            json!(["x".repeat(number as usize)])
+                        }
+                        bound => panic!("unknown bound {bound}"),
+                    };
+                    let result = probe(key, value.clone());
+                    assert_eq!(
+                        result.is_ok(),
+                        valid,
+                        "{} {bound} {value}: {result:?}",
+                        key.path
+                    );
+                }
+            }
+            for value in &key.choices {
+                let value = if key.kind == "string-array" {
+                    json!([value])
+                } else {
+                    value.clone()
+                };
+                assert!(probe(key, value).is_ok(), "{}", key.path);
+            }
+            if !key.choices.is_empty() {
+                let outside = if key.kind == "string-array" {
+                    json!(["schema_unknown_choice"])
+                } else {
+                    json!("schema_unknown_choice")
+                };
+                assert!(probe(key, outside).is_err(), "{}", key.path);
+            }
+        }
+        let key = super::schema_keys(&defaults)
+            .unwrap()
+            .into_iter()
+            .find(|key| key.path == "terminal.cursor_trail_duration")
+            .unwrap();
+        assert!(probe(&key, json!(0.0)).is_ok());
+        assert!(probe(&key, json!(0.1)).is_err());
+        assert!(probe(&key, json!(0.25)).is_ok());
+    }
 
     #[test]
     fn configuration_text_validation_covers_all_resolvers_without_reading_disk() {

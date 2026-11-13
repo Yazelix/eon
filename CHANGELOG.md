@@ -13,6 +13,10 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   inbox badges are the font size, moving row text 4 pixels right at default
   metrics and truncating titles sooner. Tab/bar badges and popup markers
   keep their size (`eon-0ntg1`).
+- `eon config schema --json` describes active configuration keys, defaults,
+  types, bounds, choices and when changes take effect, including built-in and
+  custom popup fields. It works with broken configuration (`eon-s0oj.1`).
+
 - The Linux install instructions include the release public key. Without a
   recorded Accelerando redistribution grant, the Linux archive omits
   Accelerando and its fonts; Game of Life stays available (`eon-igae.18`).
