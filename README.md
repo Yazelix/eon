@@ -19,6 +19,9 @@ where you left it.
 
 ## Why Eon
 
+`eon agent` chooses and runs coding-agent subscriptions using rota's existing
+commands on Linux; see [Agent commands](docs/USAGE.md#agent-commands).
+
 - **Detach the window, keep the work.** [Orbit](orbit/README.md) runs each
   terminal's process and state apart from the window. Alt+Shift+D detaches;
   `eon window attach` returns to the same terminals. Closing the window quits

@@ -34,6 +34,7 @@ pub use managed_environment::{
 };
 pub use report::{ReportFacts, report_facts};
 pub use slots::{SlotClass, SlotPolicy};
+pub use supervisor::configuration_directory;
 
 #[cfg(test)]
 mod fixtures;

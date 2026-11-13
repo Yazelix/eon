@@ -766,6 +766,7 @@ mod dependency_direction {
         ("eon-bench", &["orbit-protocol"]),
         ("yazelix-venus", PROTOCOLS),
         ("eon-runtime", PROTOCOLS),
+        ("eon-agent", &[]),
         (
             "eon-manifest",
             &["eon-runtime", "orbit-protocol", "eon-workspace-protocol"],
@@ -775,6 +776,7 @@ mod dependency_direction {
             &[
                 "eon-runtime",
                 "eon-manifest",
+                "eon-agent",
                 "orbit-protocol",
                 "eon-workspace-protocol",
             ],

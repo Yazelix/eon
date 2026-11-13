@@ -6345,6 +6345,19 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   ("remove this rule / add eon agent to the queue", relayed by eon-desk).
   Slices retain their actual prerequisites and contract-approval gates;
   runtime proof is pending.
+
+  Amended on 2026-11-13: the first delivered form of `eon agent` is rota's
+  code moved unchanged into the Eon workspace (`eon-eon-agent-lr8sx.27`).
+  Until the clean-port slices (`.2` to `.16`, deferred) land, `eon agent`
+  keeps rota's commands, arguments, output, exit codes, decision records and
+  admission rules exactly, rather than the Trigger and Result text below;
+  its configuration is read from Eon's configuration home, falling back to
+  rota's file while Eon's is absent, and output names the file read. The
+  Agent popup starts agents through it (`.28`), and it reads quota from
+  Eon's own facts in process (`.29`). The Trigger and Result below stay the
+  later target; each deferred slice, when picked up, is rewritten as an
+  improvement on the moved code. Proven clauses are only those the move's
+  beads prove.
 - **Consumer:** A person or local agent choosing and starting a coding-agent
   CLI, inspecting availability or tracking an attempt, with workspace effects
   governed by C10.

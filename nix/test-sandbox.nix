@@ -139,7 +139,8 @@ pkgs.writeShellApplication {
   name = "eon-test";
   runtimeInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.getent ] ++ [
     pkgs.cargo-nextest
-    pkgs.coreutils
+    # Cap tests copy/rename sleep; multicall coreutils depends on argv[0].
+    (pkgs.coreutils.override { singleBinary = false; })
     pkgs.git
   ];
   text = if pkgs.stdenv.isLinux then ''

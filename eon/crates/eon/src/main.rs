@@ -7,6 +7,15 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let inputs = product::inputs();
     let arguments: Vec<_> = std::env::args_os().collect();
+    #[cfg(target_os = "linux")]
+    if arguments.first().is_some_and(|program| {
+        std::path::Path::new(program).file_name() == Some(std::ffi::OsStr::new("eon"))
+    }) && arguments.get(1).is_some_and(|command| command == "agent")
+    {
+        let primary =
+            eon_runtime::configuration_directory().map(|root| Some(root.join("agent.toml")));
+        return rota::cli::main(arguments.into_iter().skip(2), primary);
+    }
     let invoked = || update::Build {
         version: Some(inputs.version.into()),
         build: eon_runtime::build_identity(&inputs).ok(),

@@ -900,7 +900,7 @@ impl Drop for PresentationProcess {
     }
 }
 
-pub(super) fn configuration_directory() -> Result<PathBuf, String> {
+pub fn configuration_directory() -> Result<PathBuf, String> {
     let path = nonempty_environment_path("EON_CONFIG_HOME")
         .or_else(|| {
             xdg_path(nonempty_environment_path("XDG_CONFIG_HOME")).map(|path| path.join("eon"))

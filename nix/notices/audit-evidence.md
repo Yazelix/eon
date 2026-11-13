@@ -1,7 +1,7 @@
 # Rust audit over-report evidence
 
-These exact exceptions belong to the existing archive notice inventory. They
-were checked against the candidate produced from tree
+These exact exceptions belong to the existing archive notice inventory.
+The initial records were checked against the candidate produced from tree
 `9dbb50a4171e760efd954c0175c0894b2ffcee98` (Linux x86_64, Eon 0.1.24).
 `audit-exceptions.json` names each producer, root name and exact package version.
 The checker binds these records to the normalized Cargo.lock, resolved runtime
@@ -11,7 +11,9 @@ code and release-version changes preserve the dependency evidence. Dependency,
 feature or build-context changes require explicit inspection and reviewed renewal;
 unused exceptions and missing evidence anchors fail. The full native-binding
 graph remains intact. See the checked-in [inspection and renewal recipe](../../eon/tools/archive-notices/README.md).
-The SHA-256 values below identify the original observations, not acceptance keys.
+The binary SHA-256 values below identify observations, not acceptance keys.
+The Eon, Orbit and Venus sections record the 2026-11-13 dependency renewal for
+`eon-eon-agent-lr8sx.27`; their historical observations remain below it.
 
 Each producer section gives the exact binary, source, vendor and actual build
 flags from `nix log <producer-output>`. Its runtime graph uses
@@ -46,11 +48,42 @@ omission, are owned by eon-igae.15.8. This records no new license decision.
 
 ## eon
 
-Both exact supported variants were checked from source tree
+Renewed on 2026-11-13 from staged tree
+`85aa2da7f6c11a847fa6eb186d797c6a2c727088` (`eon-eon-agent-lr8sx.27`).
+Full and without-Accelerando observations independently reproduce dependency
+context `c70fb5048770f0f09e8ff5ed556388ba036120a596d2630ecc8614d2012726de`.
+Each has 9 exact host exceptions and 2 exact unselected exceptions.
+`equivalent 1.0.2`, `hashbrown 0.17.1` and `indexmap 2.14.0` are runtime-covered
+through the moved agent crate, so their exceptions are removed. `libm 0.2.16`
+is an unselected audit over-report: the audit records an edge from
+`num-traits 0.2.19`, but the selected feature is `std`, not `libm`.
+Neither `libm` nor the retained `foldhash 0.2.0` appears in either selected
+graph or the actual producer compilation log. No target runtime dependency is
+waived. The existing omission proof rejects removal of runtime `fs2 0.4.3`
+while the root-only baseline accepts the retained root, in both variants.
+
+- Source: `/nix/store/daqksjml0bxslvdzwk6d1am8lpiy57v8-source`.
+- Vendor: `/nix/store/gm878n1hhyy3xzjjzijarrz1rah4sdcw-cargo-vendor-dir`.
+- Manifest: `eon/crates/eon/Cargo.toml`; target `x86_64-unknown-linux-gnu`;
+  root `eon`; actual flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+- Full report: `/nix/store/sixkp1x91qblz85cj03dj6wwdr3r3jgq-eon-cargo-notices-0.1.25`.
+  Binary `/nix/store/gxgynrmkbhvrh6mdhz6phl67d1zy05rs-eon-rust-0.1.25/bin/eon`,
+  SHA-256 `61e951ae006091f1fc4054e855006777a7408836166b41367519a23be1a0e0da`.
+- Without-Accelerando report: `/nix/store/w0429hsbxkppys66vz0zkwfnsy57lxfm-eon-cargo-notices-0.1.25`.
+  Binary `/nix/store/99prj4pd9gvlc5lf5k95yr2sgi3v4g2s-eon-rust-0.1.25/bin/eon`,
+  SHA-256 `b34721930a531982ed44b3ec8b89bccae7db789dbb54a62f2f4592381b49058c`.
+
+Actual ELF reinspection reproduces each saved canonical graph. Vendor-selected
+runtime and normal/build feature trees reproduce each report after only local
+source-path normalization. The Rust renewal proposal matches all 12 producer
+sets, contexts and missing-identity sets across both variants. Full investigation
+and red/green records are owned by `eon-eon-agent-lr8sx.27`.
+
+Historical observations: both exact supported variants were checked from source tree
 `279f0494fe622b1b0c82fa51baf6501840da5813`. Their complete audit records and
-runtime/build identity sets equal the initial candidate. Each has 12 exact
+runtime/build identity sets matched the initial candidate. Each had 12 exact
 host exceptions and one exact unselected exception, with no unselected
-identity compiled during its build. Both variants share dependency evidence and
+identity compiled during its build. Both variants shared dependency evidence and
 therefore the same acceptance key. Each release route still checks its own actual
 binaries, inventory and independent artwork obligations.
 
@@ -76,6 +109,22 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-13 for `eon-eon-agent-lr8sx.27` to dependency context
+`db98f03d0c971c16d1dfac652ec82a7c25d8803af58563d45cf4ec6502626f07`.
+Only normalized lock data differs from the accepted prior context; runtime,
+native features, audited identities and the 6 host / 1 unselected exceptions
+are unchanged. Both variants use the same report and binary. Reinspection,
+exact vendor-selected trees and the actual producer log confirm the renewal.
+
+- Source: `/nix/store/1hcf0vzc01bmr3x7wzj5y5nx2nr7bj45-source`.
+- Vendor: `/nix/store/gm878n1hhyy3xzjjzijarrz1rah4sdcw-cargo-vendor-dir`.
+- Report: `/nix/store/gsjlwcp4y5qfb92dhsgh1rxp37basq61-orbit-cargo-notices-0.1.0`.
+- Binary: `/nix/store/b7pxv7j1crcxaf5rn9w1qjjix3pqv5ai-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+- SHA-256: `f54d312253f9082fb364d2d5922f7388f41dab8590a9595f295133254022da70`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical observation:
+
 - Source: `/nix/store/qvjrmxlca9drmhfjlr33zgf2iw5fab47-source`.
 - Vendor: `/nix/store/yr6yn574307ph9hzp3saylp50gx7j10b-cargo-vendor-dir`.
 - Manifest: `/nix/store/qvjrmxlca9drmhfjlr33zgf2iw5fab47-source/orbit/Cargo.toml`.
@@ -88,6 +137,25 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-13 for `eon-eon-agent-lr8sx.27` to dependency context
+`1acb176eec03eca4ae079793fed52246022c1c9b4b05146b422f8bc227944173`.
+Only normalized lock data differs from the accepted prior context; runtime,
+native features, audited identities and the 15 host / 4 unselected exceptions
+are unchanged. Both variants were reinspected independently; their binaries
+have identical SHA-256 values. Exact vendor-selected trees and each producer
+log confirm that no unselected exception was compiled.
+
+- Source: `/nix/store/ikln6ry3dn0hy1yc40wgdf8m4c3gzba7-source`.
+- Vendor: `/nix/store/gm878n1hhyy3xzjjzijarrz1rah4sdcw-cargo-vendor-dir`.
+- Full report: `/nix/store/risxjdf350hc7r7faq3khmp62nqlbx0g-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/hg799gllcixgakvwi3saq6s9bypw96y2-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Without-Accelerando report: `/nix/store/cksirsz8bhqdhh4pcbrc7iqv59njfkip-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/y46fx9mz6clamx9lac32krmrawx0rpvj-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Both binaries' SHA-256: `2c7b8f352c9d2973642faee2b93e2935eb28978c26fd673ba3ad045c475d2237`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical observation:
 
 - Source: `/nix/store/bqif93jfykfcja6kvpdhjl2lhb246ik5-source`.
 - Vendor: `/nix/store/yr6yn574307ph9hzp3saylp50gx7j10b-cargo-vendor-dir`.

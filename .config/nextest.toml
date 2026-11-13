@@ -1,5 +1,6 @@
 # These groups preserve mutexes that libtest otherwise keeps within one process.
 [test-groups]
+rota-slots = { max-threads = 1 }
 orbit-fork-and-socket = { max-threads = 1 }
 update-signals = { max-threads = 1 }
 real-pty = { max-threads = 1 }
@@ -37,3 +38,8 @@ test-group = "real-pty"
 [[profile.default.overrides]]
 filter = 'package(/^yazelix-orbit$/) & test(=metadata_observer_streams_inactive_title_and_cwd_without_owning_input)'
 success-output = "final"
+
+# Rota's slot suite uses one process-wide mutex under libtest.
+[[profile.default.overrides]]
+filter = 'package(/^eon-agent$/) & binary(/^slot$/)'
+test-group = "rota-slots"

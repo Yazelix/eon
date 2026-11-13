@@ -64,6 +64,45 @@ send_enter_delay_ms = 300
 send_typing_quiet_ms = 2000
 ```
 
+## Agent commands
+
+`eon agent` reads `agent.toml` in the directory printed by `eon config dir`:
+`$EON_CONFIG_HOME/agent.toml`, otherwise `$XDG_CONFIG_HOME/eon/agent.toml`
+(XDG_CONFIG_HOME must be absolute), otherwise `~/.config/eon/agent.toml`.
+This is a separate file with rota's existing TOML schema; it is outside
+`eon config check`, `defaults` and `schema` until the clean port.
+
+Only while `agent.toml` is absent, configuration falls back to `$ROTA_CONFIG`,
+then `$XDG_CONFIG_HOME/rota/config.toml`, or `~/.config/rota/config.toml` when
+XDG_CONFIG_HOME is unset. A present Eon file wins even when ROTA_CONFIG is set;
+an unreadable or invalid Eon file exits 2 instead of falling back. The fallback
+is transitional and is removed with rota retirement (`eon-eon-agent-lr8sx.20`).
+No command migrates or rewrites these configuration files.
+The adapter still needs a resolvable Eon configuration home: if HOME,
+XDG_CONFIG_HOME and EON_CONFIG_HOME are all unset, set HOME or EON_CONFIG_HOME
+even when ROTA_CONFIG points to the fallback file.
+
+Start from the [example](../eon/crates/eon-agent/config.example.toml), replacing
+its placeholder paths and commands. Paths are literal; `~` and environment
+variables inside TOML are not expanded. `state_file` and `log_file` are required
+distinct paths; keep them outside repositories. Backend array order is rotation
+order. Each backend specifies roles, a guard and argv commands; quota, account
+checks, caps, preparation, trust settings and headless run commands retain
+rota's schema. No backend or provider is configured implicitly.
+
+The [moved crate's configuration reference](../eon/crates/eon-agent/README.md#configuration)
+documents every field. Its unchanged defaults include implement/high for
+launch, implement/current directory for run, reader timeout 30 seconds, refresh
+timeout 90 seconds, two slots, child nice increment 19, empty slot environment
+and classes, cleanup min_idle `2h` and no store prefixes. Guard/exec behavior,
+run timeout/cleanup bounds, diagnostics and ROTA_* controls remain as in rota;
+this move adds no new preference or default backend.
+
+`eon agent status` prints `config: PATH` before backend rows.
+`eon agent status --json` keeps rota's backend array and adds `config_file`
+to every backend object (a string, or a byte array for a non-UTF-8 path).
+Other output and record formats are unchanged.
+
 ## Runtime identity and protocol bounds
 
 `generation`, `created_build`, `active_build` and known `origin_build` use the

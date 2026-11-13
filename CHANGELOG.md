@@ -12,6 +12,11 @@ installation, and proven contract changes.
 - Claude Code rows in the Agents sidebar and attention inbox show Anthropic's
   official standalone Clawd symbol in its supplied colour. Quota chips retain
   their existing marks (`eon-sidebar-app-icons-y99b7.7`).
+- `eon agent` serves rota's existing launch, run, ps, status, slot and retire
+  commands on Linux. Configuration uses Eon's `agent.toml`, with rota's file
+  as a transitional fallback; status names the file read. EON-C40 records
+  this initial mechanical move, with its clean port deferred
+  (`eon-eon-agent-lr8sx.27`).
 
 - Selected Google quota windows show text chips in the Eon Bar, with their
   exact model group, window position, remaining percentage and stale state.

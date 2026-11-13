@@ -5,6 +5,60 @@ and distribution. Orbit owns persistent terminal state and attachment; Venus
 owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
+## Agent manager tests
+
+The moved `eon-agent` crate keeps rota's library and test-driver name `rota`.
+Its ordinary tests run through `nix develop -c eon-test -p eon-agent`.
+Twenty existing headless cleanup/execution tests need a real systemd user
+manager and cgroup v2. They are marked ignored because eon-test's isolated
+namespaces hide the bus and cannot supply delegated cgroups. The Nix check
+runs the crate's ordinary tests and excludes the facility tests from its
+ignored-test step; this does not prove the facility tests. One existing slot
+test also needs the host PID namespace: /proc/locks in a nested PID namespace
+hides the legacy helper's lock after the helper exits. That test uses the same
+facility route. Three pre-existing ignored cleanup helpers are called by their
+parent tests, never as standalone tests; both routes exclude those helper names.
+
+Run those tests separately under the coordinating session's heavy-run wrapper.
+First try a private systemd user manager with a private bus, runtime directory
+and delegated cgroup (maximum 30 minutes to establish it). When the coordinator
+explicitly authorizes use of an existing manager, retain only its runtime/bus
+variables, create only uniquely named transient rota scopes, and verify those
+scopes are absent afterwards. Never operate on another unit or Eon supervisor.
+A missing manager fails these tests; there is no automatic skip.
+
+From a pinned `nix develop` shell in the workspace, with `heavy_runner`
+naming the coordinator's wrapper,
+`manager_runtime` and `manager_bus` naming the chosen manager, and
+`CARGO_TARGET_DIR` naming the already built test target, the test command is:
+
+```sh
+task_root=$(mktemp -d)
+task_cargo=${CARGO_HOME:-$HOME/.cargo}
+mkdir -p "$task_root"/{home,config,state,cache,data,tmp}
+bash "$heavy_runner" nix develop -c env -i PATH="$PATH" \
+  HOME="$task_root/home" XDG_CONFIG_HOME="$task_root/config" \
+  XDG_STATE_HOME="$task_root/state" XDG_CACHE_HOME="$task_root/cache" \
+  XDG_DATA_HOME="$task_root/data" TMPDIR="$task_root/tmp" \
+  XDG_RUNTIME_DIR="$manager_runtime" DBUS_SESSION_BUS_ADDRESS="$manager_bus" \
+  CARGO_HOME="$task_cargo" CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+  CARGO_BUILD_JOBS=6 CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+  cargo nextest run --locked --offline -p eon-agent \
+  --run-ignored only --test-threads 1 --no-tests fail \
+  -E 'not (test(=cleanup::tests::nondumpable_child) | test(=cleanup::tests::interrupted_removal_child) | test(=cleanup::tests::mount_boundary_child))'
+```
+
+Use the development shell's PATH for that command. The empty environment
+clears inherited EON_* and ROTA_* controls. Record the exact tree, manager,
+command, nextest result and before/after
+`systemctl --user list-units --all --plain --no-pager 'rota-*.scope'` output.
+When other rota users share the manager, identify this run's exact unit names
+and verify those names, preserving every pre-existing or unrelated scope.
+The two unit tests use `rota-unit-test-<random>.scope`; execution tests use
+`rota-<session>-<random>.scope`.
+
+## Development shell
+
 Enter the pinned x86_64-linux development environment with `nix develop`.
 It provides Rust/Cargo 1.96.1, formatting and lint tools, Git, `br` 0.7.2,
 `bv` 0.25.2, the pinned Ghostty source, Zig, native libraries and fonts that

@@ -1092,6 +1092,11 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("  --no-anima", "Skip the startup animation"),
         ],
     ),
+    #[cfg(target_os = "linux")]
+    (
+        "Agents",
+        &[("agent --help", "Choose and run coding agents")],
+    ),
     (
         "Windows",
         &[

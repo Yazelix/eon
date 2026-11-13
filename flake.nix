@@ -1223,7 +1223,7 @@
             doIncludeCrossToolchainEnv = false;
             CARGO_PROFILE = "dev";
             CARGO_PROFILE_DEV_DEBUG = "line-tables-only";
-            cargoExtraArgs = "--locked --offline --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} -p eon -p eon-runtime";
+            cargoExtraArgs = "--locked --offline --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} -p eon -p eon-runtime -p eon-agent";
             nativeBuildInputs = [ rustPlatform.cargoSetupHook ];
           };
           # Release artifacts cannot cover dev-profile tests; cache their dependencies separately.
@@ -1240,7 +1240,9 @@
             doInstallCargoArtifacts = false;
             allowedReferences = [ ];
             ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
-            nativeCheckInputs = [ nushellPackage pkgs.jq ];
+            nativeCheckInputs = [ nushellPackage pkgs.jq pkgs.bash
+              (pkgs.coreutils.override { singleBinary = false; }) ]
+              ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
             cargoNextestExtraArgs = ''--config-file ${./.config/nextest.toml} --no-fail-fast --no-tests fail --test-threads "$NIX_BUILD_CORES"'';
             preCheck = ''
               eonTestBuildTmpdir="$TMPDIR"
@@ -1258,6 +1260,7 @@
             postCheck = ''
               cargo nextest run --cargo-profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} \
                 --config-file ${./.config/nextest.toml} --no-fail-fast --run-ignored only \
+                -E 'not (package(eon-agent) & (binary(run) | test(=run::tests::stop_reports_survivors_then_empties_the_scope) | test(=run::tests::only_processes_in_the_scope_are_held) | test(=run::tests::a_taken_unit_name_is_never_signalled) | test(=active_legacy_and_native_waiters_run_exclusively_and_finish) | test(=cleanup::tests::nondumpable_child) | test(=cleanup::tests::interrupted_removal_child) | test(=cleanup::tests::mount_boundary_child)))' \
                 --test-threads 1 --no-tests fail --success-output immediate
               cargo test --profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} --doc
               export TMPDIR="$eonTestBuildTmpdir"

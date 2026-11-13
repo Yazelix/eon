@@ -35,6 +35,42 @@ X11, Xwayland, ARM Linux, Intel macOS, macOS direct bundles, Home Manager instal
 background updates, and release automation are unsupported. Restarting the
 machine ends live terminal process state.
 
+## Agent commands
+
+On Linux, `eon agent` runs rota's existing commands in process, without a
+running Eon window. Configure its separate
+[agent.toml](CONFIGURATION.md#agent-commands) first.
+
+```text
+eon agent launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+eon agent ps [--json] [--all]
+eon agent slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
+eon agent slot ls [--json]
+eon agent retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]
+eon agent status [--json]
+```
+
+Launch defaults to implement/high and execs the selected CLI in the current
+terminal. Dry-run prints its decision and command without changing rotation,
+logs, locks or trust settings. Status runs read-only checks without refresh.
+JSON status includes the config file used. Exit codes retain rota's meanings:
+2 for invalid input/config, 3 for admission refusal and 1 for operational error.
+Headless run passes through the agent's status after cleanup, with 124 for a
+timeout, 130 for interruption and 125 for abandoned processes.
+
+`run` retains rota's requirement for Linux 5.14+, cgroup v2, a systemd user
+manager and systemd 254+. Other Eon commands keep their existing platform
+requirements. Retire requires Linux 5.6+; use `eon agent retire --help` for its
+cleanup guards and `--dry-run` before deleting build output. The
+[moved command reference](../eon/crates/eon-agent/README.md) describes the
+unchanged behavior; replace its `rota` invocation with `eon agent`.
+Diagnostic text, session/unit names and ROTA_* variables keep rota's spellings.
+
+Agent popup integration and in-process Eon quota are separate pending changes.
+EON-C40's fuller Trigger/Result describes the later clean port, not additional
+flags supported by this initial move.
+
 ## Install and start
 
 On Linux, the [README](../README.md#linux-without-nix) and the
