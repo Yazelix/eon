@@ -5,9 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Codex rows in the Agents sidebar and attention inbox show the colour Codex
+  symbol with a transparent terminal prompt and no app tile. Quota chips keep
+  their provider marks (`eon-sidebar-app-icons-y99b7.8`).
+
 - Claude Code rows in the Agents sidebar and attention inbox show Anthropic's
-  official standalone Clawd symbol in its supplied colour. Codex rows and quota
-  chips retain their existing marks (`eon-sidebar-app-icons-y99b7.7`).
+  official standalone Clawd symbol in its supplied colour. Quota chips retain
+  their existing marks (`eon-sidebar-app-icons-y99b7.7`).
 
 - Selected Google quota windows show text chips in the Eon Bar, with their
   exact model group, window position, remaining percentage and stale state.

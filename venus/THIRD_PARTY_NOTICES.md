@@ -100,3 +100,47 @@ with the art unaltered and no implied endorsement or affiliation:
 
 > "this is nothing for us to worry about, in practice, they add this to protect
 > from people trying to use the logo for bad practices"
+
+
+## Codex colour symbol
+
+`assets/codex-symbol.svg` is the unaltered “Codex Logo - Colored” SVG from
+[Zonalogo](https://zonalogo.com), downloaded and chosen by Lucca on 2026-11-13.
+It is a third-party vector of OpenAI's Codex symbol, with unverified source;
+the site labels its content AI-generated. It is not an official OpenAI asset.
+Original SHA-256:
+`983fc436a025a9920ec2661d790e956f766f273a2240801e64c3d3d26feb7ad2`.
+
+The complete 250×250 SVG canvas retains its lilac-to-blue gradient and transparent
+terminal-prompt cutout, without cropping, recolouring or redrawing. The 16px and
+32px PNGs are rasterized directly at the corresponding default 1x/2x row sizes;
+the RGBA files store those pixels with premultiplied alpha. The 256px RGBA
+raster serves other font sizes and scales through the existing sampler.
+
+Preparation uses `rsvg-convert` 2.62.3 (cairo 1.18.4), with this command for
+SIDE 16, 32 and 256, followed by ImageMagick 7.1.2-34 Q16-HDRI:
+
+```sh
+rsvg-convert --width=SIDE --height=SIDE --output=codex-symbol-SIDE.png codex-symbol.svg
+magick codex-symbol-SIDE.png -channel RGB -fx 'u*u.a' +channel -depth 8 rgba:codex-symbol-SIDE.rgba
+```
+
+SHA-256 values (paths relative to `assets/`):
+
+| File | SHA-256 |
+| --- | --- |
+| `codex-symbol-16.png` | `fe1ea40b4bd3604d67a2d9342d2e7edfeeb406e65ba93afffeef5afef6ebac1c` |
+| `codex-symbol-16.rgba` | `ffbb26dc060b51273de363504507680d79499929ba23c34b1f91980177ed4137` |
+| `codex-symbol-32.png` | `32ad4411605c4dace9f7ee453ebc93b7815beee3683c7b876d74bdf3fceb904b` |
+| `codex-symbol-32.rgba` | `d42a3401b55899f18ea9a02e442ada027011626a7423a0ed7d5c10670e3c27c6` |
+| `codex-symbol-256.rgba` | `307c8d69585224de9e7d9a168916300d0ca648fece87ce74a416c419716e19e6` |
+
+OpenAI retains its name and marks. No permissive artwork licence is claimed;
+Eon's Apache-2.0 licence grants no rights to the artwork or trademarks.
+[OpenAI's brand guidelines](https://openai.com/brand/) govern its marks.
+
+By Lucca's decision of 2026-11-13, Eon uses this mark for identification only,
+with the art unaltered and no implied endorsement or affiliation:
+
+> "this is nothing for us to worry about, in practice, they add this to protect
+> from people trying to use the logo for bad practices"

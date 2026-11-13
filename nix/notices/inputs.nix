@@ -266,6 +266,7 @@ import ./default.nix {
     ${venusPackage.name}.embedded = [
       "system-linker-runtime" "rust-standard-library" "venus-shaders" "openai-logomark" "claude-logomark" "accesskit-chromium"
       "claude-code-mark"
+      "codex-symbol"
     ];
     ${pkgs.ncurses.name}.source = "${pkgs.ncurses.src} rebuilt with ${../../nix/ncurses-termios-speed.h}";
     ${pkgs.keyutils.name} = {
@@ -430,6 +431,27 @@ import ./default.nix {
           "9ca6ebb33e268ff95ded9b927ceb53f22deecf4f1de9988f088437621c85154c";
         ${builtins.unsafeDiscardStringContext "${../../venus/assets/claude-code-clawd-256.rgba}"} =
           "8f1969bb128bbc158d2b331ac4a428c9197a4abc921253f18c2d0d4cc7d5fb6b";
+      };
+    }
+    {
+      id = "codex-symbol";
+      version = "2026-11-13";
+      source = "https://zonalogo.com, Codex Logo - Colored; third-party vector, source unverified, chosen by Lucca 2026-11-13";
+      licenses = [ "LicenseRef-Codex-Identification-Use" ];
+      notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
+      notice_hashes = {
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol.svg}"} =
+          "983fc436a025a9920ec2661d790e956f766f273a2240801e64c3d3d26feb7ad2";
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-16.png}"} =
+          "fe1ea40b4bd3604d67a2d9342d2e7edfeeb406e65ba93afffeef5afef6ebac1c";
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-16.rgba}"} =
+          "ffbb26dc060b51273de363504507680d79499929ba23c34b1f91980177ed4137";
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-32.png}"} =
+          "32ad4411605c4dace9f7ee453ebc93b7815beee3683c7b876d74bdf3fceb904b";
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-32.rgba}"} =
+          "d42a3401b55899f18ea9a02e442ada027011626a7423a0ed7d5c10670e3c27c6";
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/codex-symbol-256.rgba}"} =
+          "307c8d69585224de9e7d9a168916300d0ca648fece87ce74a416c419716e19e6";
       };
     }
     {

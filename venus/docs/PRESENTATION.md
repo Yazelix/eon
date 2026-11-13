@@ -515,9 +515,10 @@ request, and the window still opens.
 ## Agents sidebar
 
 Sidebar and attention inbox rows identify Claude Code with Anthropic's standalone
-Clawd symbol. Its complete canvas scales proportionally inside the existing row
-icon slot, retaining its colour and transparency even when the record is stale.
-The state glyph carries stale dimming. Codex rows retain the OpenAI Blossom.
+Clawd symbol and Codex with a colour vector of Codex's symbol, without an app
+tile. Both complete canvases scale proportionally inside the existing row icon
+slot, retaining their colours and transparency even when the record is stale.
+Codex's terminal prompt is transparent. The state glyph carries stale dimming.
 Eon Bar quota chips retain their provider marks: the Claude Spark and OpenAI
 Blossom. Other app identifiers retain their existing label behavior.
 

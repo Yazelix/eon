@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+- VEN-C30: Codex sidebar and inbox rows use a colour vector of Codex's symbol,
+  preserving its colours and transparency on stale rows. Quota chips keep
+  provider marks (`eon-sidebar-app-icons-y99b7.8`, delegated approval 2026-11-13).
+
 - VEN-C30: Claude Code sidebar and inbox rows use Anthropic's official standalone
-  Clawd symbol in its supplied colour, including on stale rows. Codex rows retain
-  the OpenAI Blossom and quota chips retain their provider marks
+  Clawd symbol in its supplied colour, including on stale rows. Quota chips retain
+  their provider marks
   (`eon-sidebar-app-icons-y99b7.7`,
   delegated approval 2026-11-13).
 

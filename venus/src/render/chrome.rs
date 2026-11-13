@@ -26,6 +26,7 @@ const OPENAI_BLOSSOM_ID: u16 = 1;
 const CLAUDE_SPLAT_ID: u16 = 2;
 const EON_ICON_ID: u16 = 3;
 const CLAUDE_CODE_ID: u16 = 4;
+const CODEX_SYMBOL_ID: u16 = 5;
 const QUOTA_ICON_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
@@ -351,6 +352,12 @@ const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/claude-splat-104.alpha");
 const CLAUDE_CODE_RGBA: &[u8; 256 * 256 * 4] =
     include_bytes!("../../assets/claude-code-clawd-256.rgba");
+const CODEX_SYMBOL_RGBA_16: &[u8; 16 * 16 * 4] =
+    include_bytes!("../../assets/codex-symbol-16.rgba");
+const CODEX_SYMBOL_RGBA_32: &[u8; 32 * 32 * 4] =
+    include_bytes!("../../assets/codex-symbol-32.rgba");
+const CODEX_SYMBOL_RGBA_256: &[u8; 256 * 256 * 4] =
+    include_bytes!("../../assets/codex-symbol-256.rgba");
 
 /// Pointer hover and press state for the workspace chrome, part of the content cache key.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -747,6 +754,16 @@ pub(super) fn rasterize_bar_icon(
         OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
         CLAUDE_CODE_ID => (CLAUDE_CODE_RGBA, 4, ContentType::Color),
+        CODEX_SYMBOL_ID => (
+            // Rasterized directly at row size so the transparent prompt stays crisp.
+            match (request.width, request.height) {
+                (16, 16) => CODEX_SYMBOL_RGBA_16,
+                (32, 32) => CODEX_SYMBOL_RGBA_32,
+                _ => CODEX_SYMBOL_RGBA_256,
+            },
+            4,
+            ContentType::Color,
+        ),
         // Premultiplied, so averaging never bleeds a clear pixel's colour into the mark.
         EON_ICON_ID => (eon_icon?, 4, ContentType::Color),
         _ => return None,
@@ -3891,18 +3908,20 @@ impl Renderer {
 /// The product image is independent of the row's stale, focus and hover colours.
 fn attention_row_icon(row: &crate::SidebarRow, clip: SceneRect) -> Option<PlacedText> {
     let (mark, rect) = row.icon?;
-    let (id, color) = match mark {
-        AppMark::Codex => (OPENAI_BLOSSOM_ID, palette::QUOTA_ICON_CODEX),
-        AppMark::ClaudeCode => (
-            CLAUDE_CODE_ID,
-            SceneColor {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
-        ),
+    let id = match mark {
+        AppMark::Codex => CODEX_SYMBOL_ID,
+        AppMark::ClaudeCode => CLAUDE_CODE_ID,
     };
-    bar_icon(id, color, rect, Some(clip))
+    bar_icon(
+        id,
+        SceneColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        },
+        rect,
+        Some(clip),
+    )
 }
 
 /// Draws the custom glyph `id` in `rect`, a mask tinted `color` or a colour image as it is,
@@ -6522,11 +6541,14 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_mark_keeps_its_own_colours_and_alpha_at_row_scales() {
-        for size in [16, 20, 32, 40, 256] {
+    fn product_marks_keep_their_own_colours_and_alpha_at_row_scales() {
+        for (id, size) in [CLAUDE_CODE_ID, CODEX_SYMBOL_ID]
+            .into_iter()
+            .flat_map(|id| [16, 20, 32, 40, 256].map(|size| (id, size)))
+        {
             let image = rasterize_bar_icon(
                 RasterizeCustomGlyphRequest {
-                    id: CLAUDE_CODE_ID,
+                    id,
                     width: size,
                     height: size,
                     x_bin: SubpixelBin::Zero,
@@ -6535,7 +6557,7 @@ mod tests {
                 },
                 None,
             )
-            .expect("official product mark must rasterize without an Eon icon");
+            .expect("product mark must rasterize without an Eon icon");
             assert_eq!(image.content_type, ContentType::Color);
             assert_eq!(image.data.len(), usize::from(size) * usize::from(size) * 4);
             assert_eq!(image.data[3], 0, "the full canvas keeps its clear corner");
@@ -6546,23 +6568,38 @@ mod tests {
                     .any(|pixel| { pixel[3] > 200 && pixel[0].abs_diff(pixel[2]) > 30 }),
                 "the product's colour survives instead of a tinted silhouette"
             );
+            if id == CODEX_SYMBOL_ID && [16, 32].contains(&size) {
+                let side = usize::from(size);
+                let source = if size == 16 {
+                    CODEX_SYMBOL_RGBA_16.as_slice()
+                } else {
+                    CODEX_SYMBOL_RGBA_32.as_slice()
+                };
+                // Exact-size sources retain the SVG rasterizer's coverage, not a downsample.
+                assert!(
+                    image
+                        .data
+                        .chunks_exact(4)
+                        .zip(source.chunks_exact(4))
+                        .all(|(drawn, original)| drawn[3] == original[3])
+                );
+                let alpha = |x, y| image.data[(y * side + x) * 4 + 3];
+                assert!(alpha(side * 5 / 8, side * 5 / 8) < 80, "prompt is a cutout");
+                assert_eq!(alpha(side / 2, side / 2), 255, "cloud surrounds the prompt");
+            }
         }
     }
 
     #[test]
-    fn row_marks_preserve_clawd_colour_and_codex_mask_across_stale_rows() {
+    fn row_marks_preserve_product_colours_across_stale_rows() {
         let mut snapshot = popup_sidebar_snapshot();
         for (app, mark, id, content, color) in [
             (
                 "codex",
                 AppMark::Codex,
-                OPENAI_BLOSSOM_ID,
-                ContentType::Mask,
-                Color::rgb(
-                    palette::QUOTA_ICON_CODEX.r,
-                    palette::QUOTA_ICON_CODEX.g,
-                    palette::QUOTA_ICON_CODEX.b,
-                ),
+                CODEX_SYMBOL_ID,
+                ContentType::Color,
+                Color::rgb(255, 255, 255),
             ),
             (
                 "claude-code",

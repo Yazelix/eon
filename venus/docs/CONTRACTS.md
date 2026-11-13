@@ -2413,9 +2413,9 @@ re-proved when that platform or feature is next touched.
     - A row shows:
       - the state glyph;
       - the app icon: Venus maps `app=claude-code` to Claude Code's official
-        standalone Clawd symbol and `app=codex` to the OpenAI Blossom.
-        Clawd keeps its supplied colour and transparency, including on stale
-        rows, and scales proportionally inside the icon slot. Eon Bar quota chips
+        standalone Clawd symbol and `app=codex` to a colour vector of Codex's
+        symbol. Both keep their supplied colours and transparency, including on
+        stale rows, and scale proportionally inside the icon slot. Eon Bar quota chips
         keep their account/provider marks ([Eon Bar](PRESENTATION.md#eon-bar));
       - one label: a pane's nonempty `pinned_name` takes precedence, including over
         an agent-reported name. This also applies to an attention inbox row whose
