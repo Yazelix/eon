@@ -3,15 +3,127 @@ use eon_workspace_protocol::v44::{
     GoogleQuota, GoogleQuotaState, MAX_GOOGLE_QUOTA_WINDOWS, MAX_QUOTA_SCOPE_BYTES, QuotaWindow,
 };
 use serde_json::Value;
+use std::{
+    ffi::OsStr,
+    fs,
+    os::unix::{fs::DirBuilderExt, process::CommandExt},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-#[cfg_attr(not(test), expect(dead_code, reason = "collection is slice 4"))]
 pub(super) fn check_version(bytes: &[u8]) -> Result<(), Failure> {
     if std::str::from_utf8(bytes).is_ok_and(|version| version.trim() == "1.4.1") {
         Ok(())
     } else {
         Err(Failure::Start)
     }
+}
+
+/// Unattended collection never searches the workspace through relative PATH entries.
+pub(super) fn resolve(path: Option<&OsStr>) -> Result<PathBuf, Failure> {
+    path.map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+        .filter(|directory| directory.is_absolute())
+        .map(|directory| directory.join("agy"))
+        .find_map(|program| executable(&program).ok())
+        .ok_or(Failure::Start)
+}
+
+fn executable(program: &Path) -> Result<PathBuf, Failure> {
+    let program = fs::canonicalize(program).map_err(|_| Failure::Start)?;
+    if !program.is_file()
+        || rustix::fs::accessat(
+            rustix::fs::CWD,
+            &program,
+            rustix::fs::Access::EXEC_OK,
+            rustix::fs::AtFlags::EACCESS,
+        )
+        .is_err()
+    {
+        return Err(Failure::Start);
+    }
+    Ok(program)
+}
+
+pub(super) fn command(program: &Path, directory: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(program);
+    crate::managed_environment::remove_agent_session(&mut command)
+        .env_remove(crate::sessions::TERMINAL_VARIABLE)
+        .env_remove(crate::sessions::TAB_VARIABLE)
+        .args(args)
+        .current_dir(directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0);
+    command
+}
+
+pub(super) fn fetch(
+    program: &Path,
+    timeout: Duration,
+    stop: &mpsc::Receiver<()>,
+) -> Result<Option<Vec<u8>>, Failure> {
+    let deadline = Instant::now() + timeout;
+    let program = if program == Path::new("agy") {
+        resolve(std::env::var_os("PATH").as_deref())?
+    } else {
+        executable(program)?
+    };
+    let directory =
+        std::env::temp_dir().join(format!("eon-agy-{}", crate::supervisor::request_id()));
+    if !directory.is_absolute() {
+        return Err(Failure::Start);
+    }
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&directory)
+        .map_err(|_| Failure::Start)?;
+    let result = (|| {
+        let mut remaining = MAX_BYTES;
+        let Some((version, status)) = super::run_command(
+            command(&program, &directory, &["--version"]),
+            deadline,
+            &mut remaining,
+            stop,
+        )?
+        else {
+            return Ok(None);
+        };
+        if !status.success() {
+            return Err(Failure::Start);
+        }
+        check_version(&version)?;
+        let Some((bytes, status)) = super::run_command(
+            command(
+                &program,
+                &directory,
+                &["-p", "/usage", "--output-format", "json"],
+            ),
+            deadline,
+            &mut remaining,
+            stop,
+        )?
+        else {
+            return Ok(None);
+        };
+        if !status.success() {
+            let reported_error = serde_json::from_slice::<Value>(&bytes)
+                .is_ok_and(|report| report.is_object() && report["status"] == "ERROR");
+            return Err(if reported_error {
+                Failure::ProviderError
+            } else {
+                Failure::ExitStatus
+            });
+        }
+        Ok(Some(bytes))
+    })();
+    let _ = fs::remove_dir_all(directory);
+    result
 }
 
 #[derive(PartialEq)]
@@ -24,7 +136,6 @@ struct Bucket<'a> {
 }
 
 /// A successful empty report clears facts; an error must preserve the last good reading.
-#[cfg_attr(not(test), expect(dead_code, reason = "collection is slice 4"))]
 pub(super) fn normalize(bytes: &[u8], observed_at: u64) -> Result<Option<GoogleQuota>, Failure> {
     if bytes.len() > MAX_BYTES {
         return Err(Failure::OutputLimit);

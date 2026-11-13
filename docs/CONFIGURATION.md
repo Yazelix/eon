@@ -112,7 +112,7 @@ disk_warning_percent = 75 # Disk use from which the disk chip turns orange.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_notice_percent = 60 # RAM use from which the RAM chip turns yellow.
 ram_warning_percent = 75 # RAM use from which the RAM chip turns orange.
-widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google collection and chips are pending.
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google collection is available; chips are pending.
 
 [terminal]
 background_blur = true # Request compositor background blur.
@@ -689,8 +689,8 @@ ID dims only when the resolved fill and configured opacity permit readable contr
 
 Google selection is opt-in through exact `google_quota:<scope>:5h` and
 `google_quota:<scope>:7d` entries in `[bar] widgets`. These selectors are
-accepted and transported; Google collection and chips are pending, so they
-show nothing yet. The ten existing defaults above are unchanged.
+accepted and transported; they enable Google collection and its CLI JSON facts.
+Google chips remain pending, so they show nothing in the bar yet. The ten existing defaults above are unchanged.
 
 Scope is the exact reported model-group name: nonempty, control-free and at
 most 32 UTF-8 bytes. The last colon separates `5h` (five hours) or `7d`
@@ -709,6 +709,42 @@ widgets = ["google_quota:Gemini Models:5h", "google_quota:Gemini Models:7d", "cl
 `eon config schema --json` lists fixed widget names in `choices` and the two
 parameterized Google forms in `element_forms`, including scope byte/control
 bounds. Runtime owns validation; Venus reads only resolved launch arguments.
+
+Google collection uses your already signed-in `agy` on PATH, initially only
+version 1.4.1. Only absolute PATH entries are searched; empty and relative entries
+are skipped so an `agy` planted in the supervisor's starting directory is never
+selected through them. Each scheduled attempt verifies `agy --version` before
+running `agy -p /usage --output-format json` with that same resolved executable.
+There is no inference fallback, bundled agy, login or account switching. A missing,
+nonexecutable or unsupported agy records failure reason `start`; the last good
+reading remains available. The Google subscription scope is Antigravity's
+baseline model-group allowances, not Gemini Apps, Gemini API or AI-credit balances.
+Initial support is the verified consumer-OAuth source on x86_64 Linux native
+Wayland with Nix. API-key and enterprise setups are outside that scope; Eon
+preserves intentional provider settings rather than stripping them and does not
+read credential files or rewrite agy's settings.
+
+Any valid Google selector enables collection even if that group is unreported.
+`eon session --json` carries every active reported Google window, including
+unselected groups. Collection is checked on open, reopen and accepted reload;
+removing every Google selector cancels the current read and clears memory and
+failure, while keeping the last good disk reading. A read runs away from the
+workspace in an empty private directory with null stdin, sanitized session
+context, suppressed stderr and process-group cleanup. Its version check and
+usage command together have one ten-second deadline and one 64 KiB stdout cap.
+
+Google starts at least five minutes apart, including failures and re-enabling.
+Supervisors share `google.schedule` beside the retained reading under a short
+file lock, showing shared facts and failure while waiting; an unusable schedule
+falls back to each supervisor's own spacing. Provider errors wait 30 minutes,
+then one hour, then two hours until success restores five minutes. Successful
+readings atomically replace versioned normalized
+`$XDG_STATE_HOME/eon/quota/google.json` (`~/.local/state/eon/quota/google.json`
+by default); valid empty reports clear it. Failures keep the last good reading.
+Retained readings are available on restart, become stale after one hour and
+expire after 24 hours; each supplied reset expires its own window. Missing or
+disabled data is never zero usage. These cadence, resource, freshness and format
+bounds are fixed request-cost, safety and support limits.
 
 Eon bundles pinned CodexBar CLI for Codex and Claude quota.
 Codex uses your authenticated `codex` executable on `PATH`; Claude uses its local

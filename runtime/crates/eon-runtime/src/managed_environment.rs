@@ -304,6 +304,10 @@ fn bar_widget(name: &str) -> bool {
     if BAR_WIDGETS.contains(&name) {
         return true;
     }
+    google_quota_widget(name)
+}
+
+pub(crate) fn google_quota_widget(name: &str) -> bool {
     name.strip_prefix("google_quota:")
         .and_then(|selector| selector.rsplit_once(':'))
         .is_some_and(|(scope, period)| {
@@ -945,10 +949,10 @@ fn configuration_metadata() -> &'static [ConfigKey] {
             ConfigKey::new(
                 "bar.widgets",
                 "string-array",
-                "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google collection and chips are pending.",
+                "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google collection is available; chips are pending.",
                 &["next-window-presentation"],
             )
-            .rules(&["Ordered unique recognized widgets; unknown or malformed names warn and are ignored. Google scopes are exact, nonempty, control-free and at most 32 UTF-8 bytes; split at the final colon. Google entries are not defaults. Clock/version positions remain fixed; Google collection and chips are pending."]),
+            .rules(&["Ordered unique recognized widgets; unknown or malformed names warn and are ignored. Google scopes are exact, nonempty, control-free and at most 32 UTF-8 bytes; split at the final colon. Google entries are not defaults. Clock/version positions remain fixed; Google collection is available; chips are pending."]),
             ConfigKey::new(
                 "terminal.background_opacity",
                 "number",

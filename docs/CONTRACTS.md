@@ -4091,6 +4091,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence,
   and the installed quota observation remains pending.
+  Amended 2026-11-13 by `eon-o9f3h.4` under Lucca's approved eon-w31ps
+  decision: Google collection, shared scheduling and last-good retention.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S1): EONW v36.
 - **Consumer, trigger and result:** Full Eon reads quota through independent,
@@ -4144,16 +4146,17 @@ names its socket. CLI JSON names a session `session` and a terminal
   succeeds. A stored reading that is unreadable, malformed, dated in the future
   or in another format version is ignored, never shown as zero usage.
   While Runtime reads a provider, it keeps that provider's last failed read in
-  memory: its wall-clock end and one reason, `start` (CodexBar could not be
-  started or read), `deadline`, `output_limit`, `exit_status`, `malformed`
-  (not one result of the expected JSON shape), `provider_error` (another
-  provider or source, or a reported error, also on a nonzero CodexBar exit
-  whose one result carries it), `estimated`, `observation_time`
+  memory: its wall-clock end and one reason, `start` (the collector could not
+  be resolved, started or read, or its version preflight was unsuccessful or
+  unsupported), `deadline`, `output_limit`, `exit_status`, `malformed` (not the
+  selected collector's expected JSON report shape), `provider_error` (another
+  provider or source, or a reported error, also on a nonzero exit carrying the
+  collector's valid error envelope), `estimated`, `observation_time`
   (missing, invalid, future or over an hour old) or `invalid_window` (a window
   value, duration, count or conflicting repeat). The next successful read,
   including one that finds no quota, clears it, as unlisting the provider does.
-  It carries no CodexBar output and never enters the stored readings; Claude's
-  is shared with its read schedule.
+  It carries no collector output and never enters the stored readings;
+  Claude's and Google's are shared with their respective read schedules.
 - **Boundary:** One selected account per provider, Linux Wayland and Nix only.
   Explicit sources avoid browser fallback, interactive login and model turns.
   No credential, identity, raw output or billing data enters EONW, Eon logs or
@@ -4240,18 +4243,21 @@ names its socket. CLI JSON names a session `session` and a terminal
   remain under their existing contracts.
 
 - **Google amendment** (`eon-o9f3h`, approved by Lucca 2026-11-05):
-  Slice 1 (`eon-o9f3h.1`) supplies only canonical Google fact/failure slots
-  and their CLI JSON projection. Google parsing, collection, scheduling,
-  selection and retention below remain pending slices 2–4; chips are slice 5
-  and installed Google proof is slice 6. Existing Codex/Claude proof does not
-  prove Google behavior. The approved Google contract is:
+  Slices 1–4 supply the canonical Google fact/failure slots, CLI JSON
+  projection, structured parser, exact selectors, collection, shared scheduling
+  and retention. Google chips remain pending slice 5 and installed end-to-end
+  Google proof is slice 6. Existing Codex/Claude proof does not prove Google
+  behavior. The approved Google contract is:
 
 Full Eon may read the selected Google account's Antigravity baseline subscription
 quota through the noninteractive command `agy -p /usage --output-format json`.
 Runtime reads `command.data` only from a successful `usage` command report with no
 model turn. Initially, only agy version 1.4.1 is eligible: before invoking
-`/usage`, Runtime resolves the executable, checks its version noninteractively and
-uses that resolved executable for collection. An absent, unrecognized or different
+`/usage`, Runtime resolves the executable, checks its version noninteractively with
+`--version` and uses that resolved executable for collection. Runtime searches
+only absolute PATH entries for agy; empty and relative entries are skipped, so a
+collector planted in the supervisor's starting directory is never selected
+through them. An absent, unrecognized or different
 version is unavailable and never invokes `/usage`. Another version becomes
 eligible only after a source review confirms noninteractive slash-command dispatch
 and a compatible report proves zero turns/tokens; record that evidence in the
@@ -4265,8 +4271,8 @@ group supplies no five-hour window. Independent groups and overage credits are
 never combined into a percentage.
 
 Google collection runs only while at least one recognized Google window selector
-is listed in `[bar] widgets`, checked when a window opens or reopens. A newly
-unlisted provider stops its worker and any read in progress and drops its in-
+is listed in `[bar] widgets`, checked when a window opens, reopens, or accepts an
+EON-C11 reload. A newly unlisted provider stops its worker and any read in progress and drops its in-
 memory facts and failure; its retained disk reading is available if it is enabled
 again. Google reads start at least five minutes apart, including failures and
 stop/restart, off workspace I/O. Supervisors use one user-shared Google schedule
@@ -4286,9 +4292,10 @@ for the supported subscription scope; a report without identity does not prove t
 account or plan tier. API-key and enterprise allowances are not claimed as
 personal-subscription quota.
 
-Google reads, including the version preflight, have a ten-second deadline, 64 KiB
-stdout cap, null stdin, suppressed raw stderr, process-group cleanup and child-
-environment sanitization. The reader uses an empty private working directory
+Each Google read attempt, including its version preflight and usage command
+together, has one ten-second deadline and one aggregate 64 KiB stdout cap; both
+commands use null stdin, suppressed raw stderr, process-group cleanup and
+child-environment sanitization. The reader uses an empty private working directory
 rather than the user's workspace. A successful normalized reading contains at most
 six active windows, each scoped by a nonempty, control-free name of at most 32
 UTF-8 bytes, with duration 300 or 10080 minutes and whole remaining percent from 0
@@ -4326,8 +4333,7 @@ Extend the meanings of existing `start`, `malformed`, `provider_error`,
 rather than adding agy-only failure enums. A CLI `status=ERROR` is
 `provider_error`; nonzero exit without that valid error envelope is `exit_status`.
 A source-version preflight failure is `start`; an invalid reset timestamp is
-`invalid_window`. This classification remains pending Google reader
-implementation.
+`invalid_window`. Google reader failures use these existing reasons.
 
 ## EON-C28 — 1.x stability
 
@@ -5008,7 +5014,7 @@ implementation.
   Amended 2026-11-13 by `eon-o9f3h.3` under Lucca's approved eon-w31ps
   decision: exact Google selectors and lossless launch arguments.
 - **Consumer:** Full-Eon session users.
-- **Trigger:** A full-Eon window opens or reopens.
+- **Trigger:** A full-Eon window opens, reopens, or accepts an EON-C11 reload.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
   `codex_quota_5h`, `codex_quota_7d`,
   `claude_quota_5h`, `claude_quota_7d`, `claude_quota_scoped`, `cpu`, `ram`,
@@ -5019,11 +5025,10 @@ implementation.
   exact, nonempty, control-free and at most 32 UTF-8 bytes. Split at the
   final colon, preserving commas, colons, case and whitespace in scope.
   Each selector identifies only that scope/duration in its list position.
-  An unreported scope shows nothing and remains a recognized selector.
+  A valid selector whose scope is not currently reported shows nothing and
+  still enables Google collection.
   No Google selectors are defaulted; bare `google_quota` is not a widget.
-  Unknown or malformed names warn and are ignored. Google collection and
-  chips remain pending in slices 4 and 5; enabled-provider semantics are
-  specified by EON-C27.
+  Unknown or malformed names warn and are ignored. Google collection follows EON-C27; Google chips remain pending slice 5.
   The Eon Bar shows the listed widgets left to right in that order, between the
   drag region and Shortcuts, except `clock` and `version`, which sit at the left
   and right ends of the bottom shortcut hints while they show, whatever their

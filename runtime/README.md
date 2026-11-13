@@ -105,9 +105,21 @@ Google quota has independent optional Snapshot fact and failure slots.
 Its fresh/stale reading carries at most six windows, all scoped by the exact
 Google model group, with only 300/10080-minute periods and unique scope/period
 pairs. Scope and value/reset bounds are canonical. EONW timestamps are Unix
-seconds; CLI JSON projects milliseconds. Google slots remain null until collection
-is implemented.
-Runtime also has a dormant structured agy 1.4.1 `/usage` parser and exact version check; collection is pending.
+seconds; CLI JSON projects milliseconds. Runtime collects Google only when an exact Google selector is listed, including
+an unreported scope. All active groups reach Snapshot and CLI JSON regardless of
+selection; chips remain pending. The collector resolves agy through absolute
+PATH entries only, checks exactly 1.4.1 with `--version`, and runs the same
+resolved executable with `-p /usage --output-format json`. Both phases together
+have one ten-second deadline and aggregate 64 KiB stdout cap, null stdin,
+sanitized session context, private empty cwd and process-group cleanup. No
+inference or alternative source is attempted. agy owns authentication; Eon never
+reads credentials or changes provider settings.
+Google explicitly reuses Claude's schedule/backoff implementation through its
+own slot policy and separate `google.schedule`. The versioned `google.json`
+retains normalized last-good facts across supervisors and restart. Failure keeps
+facts; valid empty clears them. Unlisting cancels the worker and clears memory,
+while disk retention and minimum spacing remain. Google follows the same
+one-hour stale / 24-hour expiry and per-reset window expiry policy.
 Codex/Claude provider bounds stay unchanged. The prior wire version is rejected,
 never reinterpreted, and live generations are not stopped by a wire upgrade.
 

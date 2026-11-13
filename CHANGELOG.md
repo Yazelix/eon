@@ -5,14 +5,18 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Opt-in Google quota selectors collect agy 1.4.1 reports on a shared
+  five-minute schedule and retain last-good groups in workspace JSON across
+  failures and restarts; Google bar chips remain pending (`eon-o9f3h.4`).
+
 - `[bar] widgets` accepts exact `google_quota:<scope>:5h` / `:7d`
   selectors, preserving commas and colons in scopes. Google entries remain
-  opt-in and show nothing until collection and chips land. Configuration
+  opt-in; their bar chips remain pending. Configuration
   schema exposes their accepted forms beside fixed names (`eon-o9f3h.3`).
 
 - Workspace JSON includes independent `google_quota` and
-  `google_quota_failure` fields. They remain null until Google collection is
-  implemented. The canonical EONW wire advances; older live windows keep
+  `google_quota_failure` fields for enabled Google collection. The canonical
+  EONW wire advances; older live windows keep
   running and are reported as incompatible (`eon-o9f3h.1`).
 
 Eon remains in alpha. v0.2.0 is the planned first beta; its version and stage

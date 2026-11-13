@@ -21291,3 +21291,64 @@ fn keys_cli_errors_and_live_projection() {
     wait_for_successful_exit(&mut default.child);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn google_collection_never_executes_agy_planted_in_the_supervisor_start_directory() {
+    let window = PairWindow::new();
+    let configuration = window.config.join("config.toml");
+    fs::write(
+        &configuration,
+        fs::read_to_string(&configuration).unwrap().replace(
+            "widgets = []",
+            "widgets = [\"google_quota:Unreported group:7d\"]",
+        ),
+    )
+    .unwrap();
+    let marker = window.root.join("planted-agy-ran");
+    let planted = window.launch.join("planted");
+    fs::create_dir(&planted).unwrap();
+    for directory in [&window.launch, &planted] {
+        executable(
+            &directory.join("agy"),
+            format!(
+                "#!/bin/sh\necho ran >> '{}'; printf '1.4.1\\n'\n",
+                marker.display()
+            ),
+        );
+    }
+    let path = [PathBuf::new(), PathBuf::from("."), PathBuf::from("planted")]
+        .into_iter()
+        .chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap())
+                .filter(|path| path.is_absolute() && !path.join("agy").exists()),
+        )
+        .collect::<Vec<_>>();
+    let mut command = window.command(&[]);
+    command.env("PATH", std::env::join_paths(path).unwrap());
+    let supervisor = window.start(command);
+    wait_for_ready(&window.control());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut request = 0;
+    let failure = loop {
+        request += 1;
+        let snapshot = window.inspect(&format!("google-start-{request}"));
+        assert!(snapshot.google_quota.is_none());
+        if let Some(failure) = snapshot.google_quota_failure {
+            break failure;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Google worker did not attempt collection"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        !marker.exists(),
+        "the unattended collector ran a planted agy"
+    );
+    assert_eq!(
+        failure.reason,
+        eon_workspace_protocol::v44::QuotaFailureReason::Start
+    );
+    drop(supervisor);
+}

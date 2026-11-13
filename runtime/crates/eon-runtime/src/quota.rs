@@ -1,6 +1,7 @@
 use eon_workspace_protocol::v44::{
-    ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, MAX_QUOTA_SCOPE_BYTES,
-    MAX_SCOPED_QUOTA_WINDOWS, QuotaFailure, QuotaFailureReason as Failure, QuotaWindow, Snapshot,
+    ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, GoogleQuota, GoogleQuotaState,
+    MAX_GOOGLE_QUOTA_WINDOWS, MAX_QUOTA_SCOPE_BYTES, MAX_SCOPED_QUOTA_WINDOWS, QuotaFailure,
+    QuotaFailureReason as Failure, QuotaWindow, Snapshot,
 };
 
 mod google;
@@ -35,10 +36,23 @@ fn timestamp(value: &Value) -> Result<u64, ()> {
     u64::try_from(date.unix_timestamp()).map_err(|_| ())
 }
 
-/// Whether `windows` is a set Runtime can hold for `provider`: at most two unscoped windows and,
-/// for Claude only, four scoped ones, no two of one duration and scope, each of a supported
-/// duration (EON-C27).
+/// Validates each provider's own scope/count/duration bounds, including retained data (EON-C27).
 fn valid_windows(provider: &str, windows: &[QuotaWindow]) -> bool {
+    if provider == "google" {
+        return (1..=MAX_GOOGLE_QUOTA_WINDOWS).contains(&windows.len())
+            && windows.iter().enumerate().all(|(index, w)| {
+                matches!(w.duration_minutes, 300 | 10080)
+                    && w.remaining_percent <= 100
+                    && w.scope.as_deref().is_some_and(|scope| {
+                        !scope.is_empty()
+                            && scope.len() <= MAX_QUOTA_SCOPE_BYTES
+                            && !scope.chars().any(char::is_control)
+                    })
+                    && !windows[..index].iter().any(|other| {
+                        other.duration_minutes == w.duration_minutes && other.scope == w.scope
+                    })
+            });
+    }
     let scoped = windows.iter().filter(|w| w.scope.is_some()).count();
     (1..=2 + MAX_SCOPED_QUOTA_WINDOWS).contains(&windows.len())
         && windows.len() - scoped <= 2
@@ -265,7 +279,11 @@ fn load(path: &Path, provider: &str, now: u64) -> Option<CodexQuota> {
         .collect::<Vec<_>>();
     (stored.version == STORE_VERSION
         && (1..=now).contains(&stored.observed_at)
-        && valid_windows(provider, &windows))
+        && valid_windows(provider, &windows)
+        && (provider != "google"
+            || windows
+                .iter()
+                .all(|w| w.resets_at.is_none_or(|reset| reset > stored.observed_at))))
     .then_some(CodexQuota {
         state: CodexQuotaState::Fresh,
         observed_at: stored.observed_at,
@@ -298,8 +316,11 @@ fn save(path: &Path, quota: Option<&CodexQuota>) {
     };
     // Each supervisor writes its own file and renames it over the reading, so a reader never
     // sees a partial one.
-    let temporary = directory.join(format!(".{}.{}", name.display(), process::id()));
-    let _ = fs::remove_file(&temporary);
+    let temporary = directory.join(format!(
+        ".{}.{}",
+        name.display(),
+        super::supervisor::request_id()
+    ));
     let saved = fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -383,7 +404,7 @@ fn load_failure<'de, D: serde::Deserializer<'de>>(
         .transpose()
 }
 
-/// Claude's shared read schedule; Codex keeps its schedule in memory (EON-C27).
+/// A shared provider read schedule; Codex keeps its schedule in memory (EON-C27).
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Schedule {
@@ -412,7 +433,7 @@ fn milliseconds(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// Claude's wait in read intervals after consecutive provider errors: 30 min, 1 h, then 2 h.
+/// Wait in shared-provider read intervals after consecutive provider errors: 30 min, 1 h, then 2 h.
 fn backoff(failures: u32) -> u32 {
     match failures {
         0 | 1 => 6,
@@ -526,6 +547,7 @@ impl Provider {
         timeout: Duration,
         schedule_memory: Arc<Mutex<Schedule>>,
         store: Option<PathBuf>,
+        shared_schedule: bool,
     ) -> Self {
         let quota = Arc::new(Mutex::new(None));
         let shared = Arc::clone(&quota);
@@ -546,14 +568,14 @@ impl Provider {
                 }
                 let schedule_path = store
                     .as_deref()
-                    .filter(|_| provider == "claude")
+                    .filter(|_| shared_schedule)
                     .and_then(Path::parent)
-                    .map(|dir| dir.join("claude.schedule"));
+                    .map(|dir| dir.join(format!("{provider}.schedule")));
                 // The longest backoff; a schedule further ahead is ignored (EON-C27).
                 let maximum = interval * backoff(u32::MAX);
                 loop {
                     let mut wait = Duration::ZERO;
-                    let (schedule, shared_schedule) = update_schedule(
+                    let (schedule, schedule_usable) = update_schedule(
                         &schedule_memory,
                         schedule_path.as_deref(),
                         maximum,
@@ -567,7 +589,7 @@ impl Provider {
                         },
                     );
                     if !wait.is_zero() {
-                        if shared_schedule {
+                        if schedule_usable {
                             if let Ok(mut last) = failed.lock() {
                                 *last = schedule.failure;
                             }
@@ -616,12 +638,24 @@ impl Provider {
                         }
                         Ok(Some(bytes)) => epoch_seconds()
                             .ok_or(Failure::ObservationTime)
-                            .and_then(|now| normalize(&bytes, provider, now)),
+                            .and_then(|now| {
+                                if provider == "google" {
+                                    google::normalize(&bytes, now).map(|quota| {
+                                        quota.map(|quota| CodexQuota {
+                                            state: CodexQuotaState::Fresh,
+                                            observed_at: quota.observed_at,
+                                            windows: quota.windows,
+                                        })
+                                    })
+                                } else {
+                                    normalize(&bytes, provider, now)
+                                }
+                            }),
                         Err(reason) => Err(reason),
                     };
                     let success = reading.is_ok();
                     let back_off =
-                        provider == "claude" && matches!(reading, Err(Failure::ProviderError));
+                        shared_schedule && matches!(reading, Err(Failure::ProviderError));
                     // A failed read keeps the last good reading; its age alone marks it old.
                     // Without a clock to date it, a failure leaves the previous one in place.
                     let outcome = match reading {
@@ -699,6 +733,7 @@ struct Slot {
     provider: &'static str,
     widgets: &'static [&'static str],
     interval: Duration,
+    shared_schedule: bool,
     schedule_memory: Arc<Mutex<Schedule>>,
     worker: Option<Provider>,
 }
@@ -715,10 +750,12 @@ impl Slot {
 
 pub(crate) struct Quotas {
     program: PathBuf,
+    google_program: PathBuf,
     /// Where each provider's last good reading is kept, if anywhere.
     store: Option<PathBuf>,
     codex: Slot,
     claude: Slot,
+    google: Slot,
 }
 
 impl Quotas {
@@ -727,29 +764,43 @@ impl Quotas {
         Self::start_every(program, Duration::from_secs(1), store, widgets)
     }
 
-    /// Reads Codex every 60 units and Claude every 300, backing off refusals (EON-C27).
+    /// Reads Codex every 60 units and Claude/Google every 300 (EON-C27).
     fn start_every(
         program: &Path,
         unit: Duration,
         store: Option<PathBuf>,
         widgets: &[String],
     ) -> Self {
-        let slot = |provider, widgets, units| Slot {
+        Self::start_with_google(program, Path::new("agy"), unit, store, widgets)
+    }
+
+    fn start_with_google(
+        program: &Path,
+        google_program: &Path,
+        unit: Duration,
+        store: Option<PathBuf>,
+        widgets: &[String],
+    ) -> Self {
+        let slot = |provider, widgets, units, shared_schedule| Slot {
             provider,
             widgets,
             interval: unit * units,
+            shared_schedule,
             schedule_memory: Arc::default(),
             worker: None,
         };
         let mut quotas = Self {
             program: program.to_path_buf(),
+            google_program: google_program.to_path_buf(),
             store,
-            codex: slot("codex", &["codex_quota_5h", "codex_quota_7d"], 60),
+            codex: slot("codex", &["codex_quota_5h", "codex_quota_7d"], 60, false),
             claude: slot(
                 "claude",
                 &["claude_quota_5h", "claude_quota_7d", "claude_quota_scoped"],
                 300,
+                true,
             ),
+            google: slot("google", &[], 300, true),
         };
         quotas.show(widgets);
         quotas
@@ -757,15 +808,20 @@ impl Quotas {
 
     /// Polls exactly the providers whose chips `[bar] widgets` lists (EON-C27).
     pub(crate) fn show(&mut self, widgets: &[String]) {
-        for slot in [&mut self.codex, &mut self.claude] {
-            if !widgets
-                .iter()
-                .any(|widget| slot.widgets.contains(&widget.as_str()))
-            {
+        for slot in [&mut self.codex, &mut self.claude, &mut self.google] {
+            if !widgets.iter().any(|widget| {
+                slot.widgets.contains(&widget.as_str())
+                    || (slot.provider == "google"
+                        && super::managed_environment::google_quota_widget(widget))
+            }) {
                 slot.worker = None;
             } else if slot.worker.is_none() {
                 slot.worker = Some(Provider::start(
-                    self.program.clone(),
+                    if slot.provider == "google" {
+                        self.google_program.clone()
+                    } else {
+                        self.program.clone()
+                    },
                     slot.provider,
                     slot.interval,
                     Duration::from_secs(10),
@@ -773,12 +829,23 @@ impl Quotas {
                     self.store
                         .as_ref()
                         .map(|store| store.join(format!("{}.json", slot.provider))),
+                    slot.shared_schedule,
                 ));
             }
         }
     }
 
     pub(crate) fn apply(&self, snapshot: &mut Snapshot) {
+        snapshot.google_quota = self.google.snapshot().map(|quota| GoogleQuota {
+            state: if quota.state == CodexQuotaState::Stale {
+                GoogleQuotaState::Stale
+            } else {
+                GoogleQuotaState::Fresh
+            },
+            observed_at: quota.observed_at,
+            windows: quota.windows,
+        });
+        snapshot.google_quota_failure = self.google.failure();
         snapshot.codex_quota = self.codex.snapshot();
         snapshot.codex_quota_failure = self.codex.failure();
         snapshot.claude_quota_failure = self.claude.failure();
@@ -824,15 +891,42 @@ fn fetch(
     timeout: Duration,
     stop: &mpsc::Receiver<()>,
 ) -> Result<Option<Vec<u8>>, Failure> {
-    let mut child = quota_command(program, provider)
-        .spawn()
-        .map_err(|_| Failure::Start)?;
+    if provider == "google" {
+        return google::fetch(program, timeout, stop);
+    }
+    let mut remaining = MAX_BYTES;
+    run_command(quota_command(program, provider), Instant::now() + timeout, &mut remaining, stop)?
+        .map(|(bytes, status)| {
+            if status.success() {
+                return Ok(bytes);
+            }
+            let reported_error = serde_json::from_slice::<Value>(&bytes).is_ok_and(|v| {
+                matches!(v.as_array().map(Vec::as_slice), Some([result]) if !result["error"].is_null())
+            });
+            Err(if reported_error { Failure::ProviderError } else { Failure::ExitStatus })
+        })
+        .transpose()
+}
+
+/// Drains bounded output and always cleans up the command's process group.
+fn run_command(
+    mut command: Command,
+    deadline: Instant,
+    remaining: &mut usize,
+    stop: &mpsc::Receiver<()>,
+) -> Result<Option<(Vec<u8>, process::ExitStatus)>, Failure> {
+    if !matches!(stop.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+        return Ok(None);
+    }
+    if Instant::now() >= deadline {
+        return Err(Failure::Deadline);
+    }
+    let mut child = command.spawn().map_err(|_| Failure::Start)?;
     let mut output = child.stdout.take().expect("piped quota output");
     let result = (|| {
         let flags = rustix::fs::fcntl_getfl(&output).map_err(|_| Failure::Start)?;
         rustix::fs::fcntl_setfl(&output, flags | rustix::fs::OFlags::NONBLOCK)
             .map_err(|_| Failure::Start)?;
-        let deadline = Instant::now() + timeout;
         let mut bytes = Vec::new();
         let mut eof = false;
         loop {
@@ -846,10 +940,11 @@ fn fetch(
             match output.read(&mut chunk) {
                 Ok(0) => eof = true,
                 Ok(count) => {
-                    bytes.extend_from_slice(&chunk[..count]);
-                    if bytes.len() > MAX_BYTES {
+                    if count > *remaining {
                         return Err(Failure::OutputLimit);
                     }
+                    *remaining -= count;
+                    bytes.extend_from_slice(&chunk[..count]);
                 }
                 Err(e)
                     if e.kind() == io::ErrorKind::WouldBlock
@@ -859,17 +954,7 @@ fn fetch(
             if let Some(status) = child.try_wait().map_err(|_| Failure::Start)?
                 && eof
             {
-                if status.success() {
-                    return Ok(Some(bytes));
-                }
-                let reported_error = serde_json::from_slice::<Value>(&bytes).is_ok_and(|v| {
-                    matches!(v.as_array().map(Vec::as_slice), Some([result]) if !result["error"].is_null())
-                });
-                return Err(if reported_error {
-                    Failure::ProviderError
-                } else {
-                    Failure::ExitStatus
-                });
+                return Ok(Some((bytes, status)));
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -894,8 +979,9 @@ mod tests {
             "google_quota:Gemini Models:5h".to_owned(),
             "google_quota:A,B:C:7d".to_owned(),
         ];
-        let quotas = Quotas::start_every(
+        let quotas = Quotas::start_with_google(
             Path::new("/absent/codexbar"),
+            Path::new("/absent/agy"),
             Duration::from_secs(1),
             None,
             &widgets,
@@ -933,7 +1019,7 @@ mod tests {
     /// Writes an executable shell script; callers use a fresh path for each one (eon-1fxc). A
     /// child shell writes it: had this process opened it for writing, a child forked meanwhile by
     /// a parallel test would inherit that descriptor, and exec would fail with ETXTBSY.
-    fn script(path: &Path, body: &str) {
+    pub(super) fn script(path: &Path, body: &str) {
         use std::{env, os::unix::fs::PermissionsExt};
         let sh = env::split_paths(&env::var_os("PATH").unwrap())
             .map(|p| p.join("sh"))
@@ -1229,6 +1315,7 @@ mod tests {
             Duration::from_secs(1),
             Arc::default(),
             None,
+            false,
         );
         *provider.quota.lock().unwrap() = Some(quota.clone());
         // Several 20 ms intervals of failed reads leave a recent reading fresh, and say why.
@@ -1978,3 +2065,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "quota/google_collection_tests.rs"]
+mod google_collection_tests;
