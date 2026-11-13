@@ -514,6 +514,13 @@ request, and the window still opens.
 
 ## Agents sidebar
 
+Sidebar and attention inbox rows identify Claude Code with Anthropic's standalone
+Clawd symbol. Its complete canvas scales proportionally inside the existing row
+icon slot, retaining its colour and transparency even when the record is stale.
+The state glyph carries stale dimming. Codex rows retain the OpenAI Blossom.
+Eon Bar quota chips retain their provider marks: the Claude Spark and OpenAI
+Blossom. Other app identifiers retain their existing label behavior.
+
 Wheel and touchpad movement over the card scroll overflowing rows, using the
 attention inbox's three cell heights per wheel step and direct pixel movement.
 Scrolling preserves keyboard focus; keyboard navigation reveals its row.

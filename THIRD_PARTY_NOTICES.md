@@ -41,3 +41,38 @@ The Linux Nix package includes upstream CodexBar v0.74.1, source
 binary and resource bundle. Its MIT license is retained in
 [licenses/codexbar-MIT](licenses/codexbar-MIT) and the installed package.
 CodexBar owns its provider integrations; Eon exposes only normalized quota facts.
+
+## Claude Code standalone Clawd symbol
+
+`venus/assets/claude-code-clawd.svg` is the unaltered original
+`extension/resources/clawd.svg` from Anthropic's published
+[Claude Code VS Code extension](https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-code),
+version 2.1.323, publisher `Anthropic`.
+[Original VSIX download](https://anthropic.gallery.vsassets.io/_apis/public/gallery/publisher/anthropic/extension/claude-code/2.1.323/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage).
+Retrieved 2026-11-13. Original SVG SHA-256:
+`9ca6ebb33e268ff95ded9b927ceb53f22deecf4f1de9988f088437621c85154c`.
+The containing VSIX SHA-256 is
+`310d16dfb872f1f28b30189517765d790c9c077310cca55bd45b40394c1147b2`.
+
+`venus/assets/claude-code-clawd-256.rgba` rasterizes the complete 47×38 SVG canvas,
+uniformly scales it to fit 256×256 pixels, pads transparently to square and
+stores it as 8-bit premultiplied RGBA. The supplied terracotta fill `#D97757`
+and transparent eyes/background are retained; no path, crop or colour edit.
+RGBA SHA-256:
+`8f1969bb128bbc158d2b331ac4a428c9197a4abc921253f18c2d0d4cc7d5fb6b`.
+
+Copyright Anthropic PBC. No copyright licence; used under the vendor's brand
+terms. The extension reserves Anthropic's rights and points to its
+[Claude Code legal agreements](https://code.claude.com/docs/en/legal-and-compliance).
+[Anthropic's Trademark Guidelines](https://www.anthropic.com/legal/trademark-guidelines)
+(read 2026-11-13) require prior approval, supplied unaltered art, readable
+placement and spacing, and no implied endorsement or affiliation; permission
+may be terminated. These sources are not a permissive copyright licence or
+an independent redistribution grant. Eon's Apache-2.0 licence grants no
+rights to Anthropic's artwork or trademarks.
+
+By Lucca's decision of 2026-11-13, Eon uses this mark for identification only,
+with the art unaltered and no implied endorsement or affiliation:
+
+> "this is nothing for us to worry about, in practice, they add this to protect
+> from people trying to use the logo for bad practices"

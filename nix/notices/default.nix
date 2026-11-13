@@ -14,6 +14,7 @@ let
     "curl" "X11" "MIT-open-group" "HPND-doc" "HPND-sell-variant" "TekHVC"
     "HPND-doc-sell" "HPND" "Cronyx" "hyphen-bulgarian" "blessing" "LicenseRef-TZ-Public-Domain" "LicenseRef-Accelerando"
     "Apache-2.0 WITH Swift-exception" "OpenSSL" "ICU" "CC-BY-4.0"
+    "LicenseRef-Anthropic-Brand-Terms"
     "Sublime Packages license" "OLDAP-2.8" "GPL-2.0-only WITH GCC-exception-2.0" "Unicode-DFS-2016"
   ];
   omitted = builtins.fromJSON (builtins.readFile ./omitted-grammars.json);

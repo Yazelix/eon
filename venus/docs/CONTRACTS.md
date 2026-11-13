@@ -2412,9 +2412,11 @@ re-proved when that platform or feature is next touched.
       terminal with attention.
     - A row shows:
       - the state glyph;
-      - the app icon: Venus maps `app=claude-code` to the Claude splat and
-        `app=codex` to the Codex mark of the quota chips
-        ([Eon Bar](PRESENTATION.md#eon-bar));
+      - the app icon: Venus maps `app=claude-code` to Claude Code's official
+        standalone Clawd symbol and `app=codex` to the OpenAI Blossom.
+        Clawd keeps its supplied colour and transparency, including on stale
+        rows, and scales proportionally inside the icon slot. Eon Bar quota chips
+        keep their account/provider marks ([Eon Bar](PRESENTATION.md#eon-bar));
       - one label: a pane's nonempty `pinned_name` takes precedence, including over
         an agent-reported name. This also applies to an attention inbox row whose
         pane belongs to the shown session. Without a pane pin, use the first
@@ -2536,8 +2538,9 @@ re-proved when that platform or feature is next touched.
   (`quota_refresh_and_workspace_failures_preserve_structure`); a change in the
   sidebar's visibility resizes the columns as Layout says. VEN-C8 and EON-C8
   carry this clause.
-- **Consumes:** EONW v32 and the Codex and Claude marks of the quota chips
-  ([Eon Bar](PRESENTATION.md#eon-bar)), which sidebar rows reuse.
+- **Consumes:** EONW v32 attention records. The app-to-artwork mapping is
+  Venus-owned presentation, shared by sidebar and attention inbox rows;
+  it does not reuse quota-provider identity.
 - **Boundary:**
   - no interpretation of provider events, terminal output or process data,
     except mapping the reported `app` identifier to an icon and to whether

@@ -361,8 +361,8 @@ pub struct SidebarRow {
     pub(crate) rect: SceneRect,
     /// The state glyph, dimmed while the record is stale.
     pub(crate) glyph: TabBadge,
-    /// The Claude splat or Codex mark that stands for the reporting app.
-    pub(crate) icon: Option<(QuotaProvider, SceneRect)>,
+    /// The reporting program's mark, separate from its account's quota mark.
+    pub(crate) icon: Option<(AppMark, SceneRect)>,
     /// Where the row's text lines start, after the glyph and any icon.
     pub(crate) text_left: f32,
     /// Where every text line stops, clear of the popup marker.
@@ -639,6 +639,12 @@ pub(crate) struct WorkspaceControl {
     /// The horizontal centre of the control's glyph and painted button.
     pub(crate) centre: f32,
     pub(crate) label: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppMark {
+    Codex,
+    ClaudeCode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2768,8 +2774,8 @@ fn attention_row(
     let pinned_name = pinned_name.filter(|name| !name.is_empty());
     let record = attention.record.as_ref();
     let (icon, app) = match record.map(|record| record.app.as_str()) {
-        Some("claude-code") => (Some(QuotaProvider::Claude), "Claude"),
-        Some("codex") => (Some(QuotaProvider::Codex), "Codex"),
+        Some("claude-code") => (Some(AppMark::ClaudeCode), "Claude"),
+        Some("codex") => (Some(AppMark::Codex), "Codex"),
         Some(app) => (None, app),
         None => (None, ""),
     };

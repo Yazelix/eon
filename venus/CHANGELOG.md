@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C30: Claude Code sidebar and inbox rows use Anthropic's official standalone
+  Clawd symbol in its supplied colour, including on stale rows. Codex rows retain
+  the OpenAI Blossom and quota chips retain their provider marks
+  (`eon-sidebar-app-icons-y99b7.7`,
+  delegated approval 2026-11-13).
+
 - Consume canonical EONW v44 lifetime/build metadata and the `updating` End
   reason; a closed subscription reconnects without retaining partial frames.
   Reserved Stop and workspace presentation are unchanged (`eon-t3fyd.2`).

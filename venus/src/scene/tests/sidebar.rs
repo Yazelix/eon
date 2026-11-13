@@ -658,7 +658,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         &str,
         AttentionState,
         bool,
-        Option<QuotaProvider>,
+        Option<AppMark>,
         &str,
         &str,
         Option<&str>,
@@ -692,7 +692,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 "p2",
                 AttentionState::NeedsInput,
                 false,
-                Some(QuotaProvider::Claude),
+                Some(AppMark::ClaudeCode),
                 "eon-9a",
                 "4m · p2 · +2",
                 Some("Allow Bash: cargo test?"),
@@ -702,7 +702,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 "p4",
                 AttentionState::Working,
                 true,
-                Some(QuotaProvider::Codex),
+                Some(AppMark::Codex),
                 "Fix tests",
                 "now · p4 · status stale",
                 None,
@@ -739,28 +739,28 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     // Pane pins name both attention surfaces without changing the reporting app or popup.
     let mut renamed = snapshot.clone();
     for (app, name, pin, expected, provider) in [
-        ("codex", "", None, "Codex", QuotaProvider::Codex),
+        ("codex", "", None, "Codex", AppMark::Codex),
         (
             "codex",
             "",
             Some("events ciwn.8"),
             "events ciwn.8",
-            QuotaProvider::Codex,
+            AppMark::Codex,
         ),
-        ("codex", "", None, "Codex", QuotaProvider::Codex),
+        ("codex", "", None, "Codex", AppMark::Codex),
         (
             "claude-code",
             "eon-overseer",
             None,
             "eon-overseer",
-            QuotaProvider::Claude,
+            AppMark::ClaudeCode,
         ),
         (
             "claude-code",
             "eon-overseer",
             Some("person's choice"),
             "person's choice",
-            QuotaProvider::Claude,
+            AppMark::ClaudeCode,
         ),
     ] {
         let pane = &mut renamed.tabs[1].columns[0].panes[0];
@@ -793,12 +793,11 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 assert_eq!(
                     row.accessible_label,
                     match provider {
-                        QuotaProvider::Google => unreachable!("Google has no sidebar icon"),
-                        QuotaProvider::Codex =>
+                        AppMark::Codex =>
                             "Needs input (permission): Codex, events ciwn.8 \
                             in tab 2, site, p2, changed 4 minutes ago, 2 more records: \
                             Allow Bash: cargo test?",
-                        QuotaProvider::Claude =>
+                        AppMark::ClaudeCode =>
                             "Needs input (permission): Claude eon-overseer, \
                             person's choice in tab 2, site, p2, changed 4 minutes ago, \
                             2 more records: Allow Bash: cargo test?",

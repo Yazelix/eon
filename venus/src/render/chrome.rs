@@ -10,7 +10,7 @@ use super::{
 use crate::{
     DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
-        HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup,
+        AppMark, HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup,
         ShortcutHintsScene, TabBadge, WorkspaceControl,
         tokens::{self, chrome_title_metrics},
     },
@@ -25,6 +25,7 @@ use winit::dpi::PhysicalSize;
 const OPENAI_BLOSSOM_ID: u16 = 1;
 const CLAUDE_SPLAT_ID: u16 = 2;
 const EON_ICON_ID: u16 = 3;
+const CLAUDE_CODE_ID: u16 = 4;
 const QUOTA_ICON_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
@@ -348,6 +349,8 @@ const OPENAI_BLOSSOM_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/openai-blossom-104.alpha");
 const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/claude-splat-104.alpha");
+const CLAUDE_CODE_RGBA: &[u8; 256 * 256 * 4] =
+    include_bytes!("../../assets/claude-code-clawd-256.rgba");
 
 /// Pointer hover and press state for the workspace chrome, part of the content cache key.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -734,8 +737,8 @@ pub(super) fn status_glyph_ink(
     (buffer, ink)
 }
 
-/// Area-averages a provider mark, or the Eon icon when Eon supplied one, to the requested
-/// physical pixels.
+/// Area-averages a provider or app mark, or the Eon icon when Eon supplied one, to the
+/// requested physical pixels. Colour sources use premultiplied RGBA.
 pub(super) fn rasterize_bar_icon(
     request: RasterizeCustomGlyphRequest,
     eon_icon: Option<&[u8]>,
@@ -743,6 +746,7 @@ pub(super) fn rasterize_bar_icon(
     let (source, channels, content_type): (&[u8], usize, _) = match request.id {
         OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
+        CLAUDE_CODE_ID => (CLAUDE_CODE_RGBA, 4, ContentType::Color),
         // Premultiplied, so averaging never bleeds a clear pixel's colour into the mark.
         EON_ICON_ID => (eon_icon?, 4, ContentType::Color),
         _ => return None,
@@ -2241,9 +2245,7 @@ impl Renderer {
             &mut self.spinners,
             rectangles,
         );
-        if let Some((provider, rect)) = row.icon {
-            self.push_quota_icon(provider, rect, Some(list));
-        }
+        self.text.extend(attention_row_icon(row, list));
         if let Some(marker) = row.popup_marker {
             push_popup_marker(
                 rectangles,
@@ -3214,7 +3216,8 @@ impl Renderer {
                     rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
                 }
             }
-            self.push_bar_icon(EON_ICON_ID, palette::VERSION_TEXT, icon, None);
+            self.text
+                .extend(bar_icon(EON_ICON_ID, palette::VERSION_TEXT, icon, None));
         }
         // The session label shares the tab fills for hover and press, with the header controls'
         // keyboard focus and Tab order while it opens the picker.
@@ -3881,41 +3884,55 @@ impl Renderer {
             QuotaProvider::Claude => (CLAUDE_SPLAT_ID, palette::QUOTA_ICON_CLAUDE),
             QuotaProvider::Google => return,
         };
-        self.push_bar_icon(id, color, rect, clip);
+        self.text.extend(bar_icon(id, color, rect, clip));
     }
+}
 
-    /// Draws the custom glyph `id` in `rect`, a mask tinted `color` or a colour image as it is,
-    /// cut to `clip` when one is given.
-    fn push_bar_icon(
-        &mut self,
-        id: u16,
-        color: SceneColor,
-        rect: SceneRect,
-        clip: Option<SceneRect>,
-    ) {
-        let Some(bounds) = clip.map_or(Some(rect), |clip| rect.intersection(clip)) else {
-            return;
-        };
-        let mut buffer = Buffer::new_empty(Metrics::new(rect.height, rect.height));
-        buffer.set_size(Some(rect.width), Some(rect.height));
-        self.text.push(PlacedText {
-            buffer: buffer.into(),
-            custom_glyph: Some(CustomGlyph {
-                id,
-                width: rect.width,
-                height: rect.height,
-                snap_to_physical_pixel: true,
-                ..CustomGlyph::default()
-            }),
-            left: rect.left,
-            top: rect.top,
-            right: bounds.right().ceil() as i32,
-            bottom: bounds.bottom().ceil() as i32,
-            bound_left: bounds.left.floor() as i32,
-            bound_top: bounds.top.floor() as i32,
-            color: Color::rgb(color.r, color.g, color.b),
-        });
-    }
+/// The product image is independent of the row's stale, focus and hover colours.
+fn attention_row_icon(row: &crate::SidebarRow, clip: SceneRect) -> Option<PlacedText> {
+    let (mark, rect) = row.icon?;
+    let (id, color) = match mark {
+        AppMark::Codex => (OPENAI_BLOSSOM_ID, palette::QUOTA_ICON_CODEX),
+        AppMark::ClaudeCode => (
+            CLAUDE_CODE_ID,
+            SceneColor {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+        ),
+    };
+    bar_icon(id, color, rect, Some(clip))
+}
+
+/// Draws the custom glyph `id` in `rect`, a mask tinted `color` or a colour image as it is,
+/// cut to `clip` when one is given.
+fn bar_icon(
+    id: u16,
+    color: SceneColor,
+    rect: SceneRect,
+    clip: Option<SceneRect>,
+) -> Option<PlacedText> {
+    let bounds = clip.map_or(Some(rect), |clip| rect.intersection(clip))?;
+    let mut buffer = Buffer::new_empty(Metrics::new(rect.height, rect.height));
+    buffer.set_size(Some(rect.width), Some(rect.height));
+    Some(PlacedText {
+        buffer: buffer.into(),
+        custom_glyph: Some(CustomGlyph {
+            id,
+            width: rect.width,
+            height: rect.height,
+            snap_to_physical_pixel: true,
+            ..CustomGlyph::default()
+        }),
+        left: rect.left,
+        top: rect.top,
+        right: bounds.right().ceil() as i32,
+        bottom: bounds.bottom().ceil() as i32,
+        bound_left: bounds.left.floor() as i32,
+        bound_top: bounds.top.floor() as i32,
+        color: Color::rgb(color.r, color.g, color.b),
+    })
 }
 
 impl RectangleBatch {
@@ -6505,6 +6522,180 @@ mod tests {
     }
 
     #[test]
+    fn claude_code_mark_keeps_its_own_colours_and_alpha_at_row_scales() {
+        for size in [16, 20, 32, 40, 256] {
+            let image = rasterize_bar_icon(
+                RasterizeCustomGlyphRequest {
+                    id: CLAUDE_CODE_ID,
+                    width: size,
+                    height: size,
+                    x_bin: SubpixelBin::Zero,
+                    y_bin: SubpixelBin::Zero,
+                    scale: f32::from(size) / 16.0,
+                },
+                None,
+            )
+            .expect("official product mark must rasterize without an Eon icon");
+            assert_eq!(image.content_type, ContentType::Color);
+            assert_eq!(image.data.len(), usize::from(size) * usize::from(size) * 4);
+            assert_eq!(image.data[3], 0, "the full canvas keeps its clear corner");
+            assert!(
+                image
+                    .data
+                    .chunks_exact(4)
+                    .any(|pixel| { pixel[3] > 200 && pixel[0].abs_diff(pixel[2]) > 30 }),
+                "the product's colour survives instead of a tinted silhouette"
+            );
+        }
+    }
+
+    #[test]
+    fn row_marks_preserve_clawd_colour_and_codex_mask_across_stale_rows() {
+        let mut snapshot = popup_sidebar_snapshot();
+        for (app, mark, id, content, color) in [
+            (
+                "codex",
+                AppMark::Codex,
+                OPENAI_BLOSSOM_ID,
+                ContentType::Mask,
+                Color::rgb(
+                    palette::QUOTA_ICON_CODEX.r,
+                    palette::QUOTA_ICON_CODEX.g,
+                    palette::QUOTA_ICON_CODEX.b,
+                ),
+            ),
+            (
+                "claude-code",
+                AppMark::ClaudeCode,
+                CLAUDE_CODE_ID,
+                ContentType::Color,
+                Color::rgb(255, 255, 255),
+            ),
+        ] {
+            for scale in [1.0, 2.0] {
+                let metrics = CellMetrics::for_scale(scale);
+                let size = PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32);
+                let mut fresh = None;
+                for stale in [false, true] {
+                    let attention = snapshot.tabs[0].columns[0].panes[0]
+                        .attention
+                        .as_mut()
+                        .unwrap();
+                    let record = attention.record.as_mut().unwrap();
+                    record.app = app.into();
+                    record.stale = stale;
+                    snapshot.attention_queue = vec![eon_workspace_protocol::v44::QueueEntry {
+                        workspace: snapshot.workspace.clone(),
+                        tab: "t1".into(),
+                        target: "p1".into(),
+                        attention: attention.clone(),
+                    }];
+                    let scene = WorkspaceScene::from_snapshot(
+                        &snapshot,
+                        size,
+                        metrics,
+                        0.0,
+                        0.0,
+                        |_, text| (text.into(), text.len() as f32 * metrics.width),
+                    );
+                    let inbox = DialogScene::attention_inbox(
+                        &snapshot,
+                        crate::scene::AttentionFilter::All,
+                        None,
+                        size,
+                        metrics,
+                        0.0,
+                        1,
+                    );
+                    for (row, clip) in [
+                        (scene.sidebar_row("p1").unwrap(), scene.sidebar_list),
+                        (&inbox.attention_rows[0], inbox.content),
+                    ] {
+                        assert_eq!(row.icon.unwrap().0, mark);
+                        assert_eq!(row.glyph.dimmed, stale);
+                        let icon = attention_row_icon(row, clip).unwrap();
+                        let glyph = icon.custom_glyph.as_ref().unwrap();
+                        assert_eq!(glyph.id, id);
+                        assert_eq!(icon.color, color);
+                        let pixels = rasterize_bar_icon(
+                            RasterizeCustomGlyphRequest {
+                                id: glyph.id,
+                                width: glyph.width as u16,
+                                height: glyph.height as u16,
+                                x_bin: SubpixelBin::Zero,
+                                y_bin: SubpixelBin::Zero,
+                                scale: scale as f32,
+                            },
+                            None,
+                        )
+                        .unwrap();
+                        assert_eq!(pixels.content_type, content);
+                        if let Some(fresh) = &fresh {
+                            assert_eq!(&pixels.data, fresh);
+                        } else {
+                            fresh = Some(pixels.data);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn quota_chip_draw_inputs_keep_provider_glyphs_and_tints() {
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let mut renderer = Renderer::hosted(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            (320, 180),
+            1.0,
+            FontSetup::new(&FontSettings::default()).unwrap(),
+        )
+        .unwrap();
+        let rect = SceneRect {
+            left: 10.0,
+            top: 20.0,
+            width: 16.0,
+            height: 16.0,
+        };
+        for (provider, id, color) in [
+            (
+                QuotaProvider::Claude,
+                CLAUDE_SPLAT_ID,
+                palette::QUOTA_ICON_CLAUDE,
+            ),
+            (
+                QuotaProvider::Codex,
+                OPENAI_BLOSSOM_ID,
+                palette::QUOTA_ICON_CODEX,
+            ),
+        ] {
+            renderer.text.clear();
+            renderer.push_quota_icon(provider, rect, None);
+            let [icon] = renderer.text.as_slice() else {
+                panic!("one quota mark expected")
+            };
+            let glyph = icon.custom_glyph.as_ref().unwrap();
+            assert_eq!(glyph.id, id, "{provider:?} quota keeps its provider mark");
+            assert_eq!(icon.color, Color::rgb(color.r, color.g, color.b));
+            let pixels = rasterize_bar_icon(
+                RasterizeCustomGlyphRequest {
+                    id: glyph.id,
+                    width: 16,
+                    height: 16,
+                    x_bin: SubpixelBin::Zero,
+                    y_bin: SubpixelBin::Zero,
+                    scale: 1.0,
+                },
+                None,
+            )
+            .unwrap();
+            assert_eq!(pixels.content_type, ContentType::Mask);
+        }
+    }
+
+    #[test]
     fn quota_icons_preserve_transparency_and_shape_across_scales() {
         for (id, original) in [
             (OPENAI_BLOSSOM_ID, OPENAI_BLOSSOM_ALPHA),
@@ -6538,7 +6729,7 @@ mod tests {
         assert!(
             rasterize_bar_icon(
                 RasterizeCustomGlyphRequest {
-                    id: EON_ICON_ID + 1,
+                    id: u16::MAX,
                     width: 16,
                     height: 16,
                     x_bin: SubpixelBin::Zero,

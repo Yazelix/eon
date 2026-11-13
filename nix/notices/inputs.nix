@@ -265,6 +265,7 @@ import ./default.nix {
     };
     ${venusPackage.name}.embedded = [
       "system-linker-runtime" "rust-standard-library" "venus-shaders" "openai-logomark" "claude-logomark" "accesskit-chromium"
+      "claude-code-mark"
     ];
     ${pkgs.ncurses.name}.source = "${pkgs.ncurses.src} rebuilt with ${../../nix/ncurses-termios-speed.h}";
     ${pkgs.keyutils.name} = {
@@ -416,6 +417,19 @@ import ./default.nix {
       notice_hashes = {
         ${builtins.unsafeDiscardStringContext "${../../venus/assets/openai-blossom-104.alpha}"} =
           "7bf5bf047a493ef0d76177d74a3de81783b5d1038dd13fcc6cd9b1db20edec91";
+      };
+    }
+    {
+      id = "claude-code-mark";
+      version = "2.1.323";
+      source = "https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-code, extension/resources/clawd.svg; retrieved 2026-11-13";
+      licenses = [ "LicenseRef-Anthropic-Brand-Terms" ];
+      notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
+      notice_hashes = {
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/claude-code-clawd.svg}"} =
+          "9ca6ebb33e268ff95ded9b927ceb53f22deecf4f1de9988f088437621c85154c";
+        ${builtins.unsafeDiscardStringContext "${../../venus/assets/claude-code-clawd-256.rgba}"} =
+          "8f1969bb128bbc158d2b331ac4a428c9197a4abc921253f18c2d0d4cc7d5fb6b";
       };
     }
     {
