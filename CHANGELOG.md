@@ -17,6 +17,14 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   update target is specified, so a window's pinned build no longer prevents
   discovery after its profile advances. Ownership and consent checks remain
   in force; no external launcher gives target setup guidance (`eon-jbshk`).
+- Programs ended by a signal after Eon acquires their management lease propagate
+  `128 + signal` (and log the status and signal number during supervisor
+  reaping and pane/tab closes) instead of reporting status `1` (`eon run --
+  COMMAND`, `eonbase -- COMMAND`, and plain window supervisors; signals during
+  Orbit startup before management acquisition still fail startup with status
+  `1`). Lost-Orbit exits stay status `1` as local failures while supervisor logs
+  report Orbit's exit status or signal, or unknown status when Orbit's exit
+  cannot be observed (`eon-terminal-end-status-mapping-cxys`).
 
 - The Editor key starts Neovim with an Eon-owned listener. `[editor] kind`
   defaults to `"auto"`, recognizing the `nvim` basename; foreground wrappers

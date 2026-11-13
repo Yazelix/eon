@@ -1316,7 +1316,14 @@ window has ended. An `eon window attach` that runs the `eon` of another build
 exits with that `eon`'s status. Commands that run another program instead
 exit with its status:
 `eon anima` with Anima's, and `eon run -- COMMAND` or `eonbase -- COMMAND` with
-the initial command's once it has ended.
+the initial command's once it has ended after management acquisition (its exit
+code, `128 + signal` when killed by a signal, or `1` if Orbit exits without
+publishing a terminal result; a command that exits or receives a signal during
+Orbit startup before Eon acquires its management lease fails startup and exits
+`1`). When any `eon` or `eonbase` window ends, its supervisor exits with that
+initial terminal's end status if the initial terminal ended on its own after
+management acquisition (even when later terminals stayed open after it), or 0
+when the initial terminal was closed or stopped explicitly.
 
 ### Agents in Eon
 
@@ -1478,7 +1485,10 @@ composition.
   in `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default), named
   `GENERATION-SECONDS-PID.log`. It records when the window started and how it
   exited, with its error output and any crash backtrace, when terminals exit on
-  their own, and how long each tab close took. Eon keeps the newest 20 logs
+  their own (exit code, `128 + signal` with the signal number, Orbit's exit
+  status or signal when Orbit exits without publishing a result, or unknown
+  status when Orbit's exit cannot be observed), and how long each tab close
+  took. Eon keeps the newest 20 logs
   plus those of running supervisors, and stops a log at 1 MiB. Orbit's own
   diagnostics go to `$XDG_STATE_HOME/eon/logs/orbit`
   (`~/.local/state/eon/logs/orbit` by default), named

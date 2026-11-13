@@ -30,7 +30,7 @@ use eon_workspace_protocol::v43::{
     Runtime, Screen, Sent, Snapshot, TargetId, TerminalHistory, TerminalInput, TerminalText,
     UntrackedRun, VERSION, WindowEntry, WindowState, WorkspaceAction, WorkspaceTarget,
 };
-use orbit_protocol::management::{LeaseInput, Screen as OrbitScreen};
+use orbit_protocol::management::{LeaseInput, ProcessOutcome, Screen as OrbitScreen};
 use std::{
     borrow::Cow,
     env,
@@ -1948,21 +1948,36 @@ fn report_session_end(result: Result<(), Failure>, log: &DiagnosticLog) -> Resul
     }
 }
 
-/// The line that records a terminal's end, naming Orbit's log when Orbit
-/// exited without publishing its result.
-fn session_end_line(session: &RunningSession, code: i32) -> String {
-    format!(
-        "terminal {} ended with status {code}{}",
-        session.id,
-        if session.owner_lost() {
-            format!(
-                "; Orbit exited without publishing a terminal result{}",
-                session.orbit_log_suffix()
-            )
-        } else {
-            String::new()
+/// The line that records a terminal's end, including signal numbers for
+/// signalled programs and Orbit's exit status or signal when Orbit exited
+/// without publishing its result.
+fn session_end_line(session: &RunningSession, status: i32) -> String {
+    match session.end() {
+        Some(sessions::SessionEnd::Managed(_, ProcessOutcome::Signal(signal))) => format!(
+            "terminal {} ended with status {} (signal {signal})",
+            session.id,
+            sessions::outcome_status(ProcessOutcome::Signal(signal)),
+        ),
+        Some(sessions::SessionEnd::OwnerLost(Some(ProcessOutcome::ExitCode(code)))) => format!(
+            "terminal {} ended without a terminal result (Orbit status {code}); Orbit exited without publishing a terminal result{}",
+            session.id,
+            session.orbit_log_suffix(),
+        ),
+        Some(sessions::SessionEnd::OwnerLost(Some(ProcessOutcome::Signal(signal)))) => format!(
+            "terminal {} ended without a terminal result (Orbit signal {signal}, status {}); Orbit exited without publishing a terminal result{}",
+            session.id,
+            sessions::outcome_status(ProcessOutcome::Signal(signal)),
+            session.orbit_log_suffix(),
+        ),
+        Some(sessions::SessionEnd::OwnerLost(None)) => format!(
+            "terminal {} ended with unknown status; Orbit exited without publishing a terminal result{}",
+            session.id,
+            session.orbit_log_suffix(),
+        ),
+        Some(sessions::SessionEnd::Managed(_, ProcessOutcome::ExitCode(_))) | None => {
+            format!("terminal {} ended with status {status}", session.id)
         }
-    )
+    }
 }
 
 /// Notes once that a terminal which cannot be stopped or reconciled stays in
@@ -2548,7 +2563,8 @@ fn stop_generation_sessions_until(
         .zip(running)
         .filter_map(|(session, running)| running.then_some(session))
     {
-        if session.owner_lost()
+        if session.is_finished()
+            && !session.stopped()
             && let Ok(Some(code)) = session_finished(session)
         {
             state.log.record(&session_end_line(session, code));
@@ -2895,7 +2911,7 @@ fn stop_owned_sessions(
             continue;
         }
         if let Some(code) = status
-            && session.owner_lost()
+            && !session.stopped()
         {
             log.record(&session_end_line(&session, code));
         }
@@ -8200,7 +8216,7 @@ mod tests {
             .collect::<String>();
         assert!(
             owner_loss.lines().any(|line| {
-                line.contains("terminal terminal-1 ended with status 1; Orbit exited without publishing a terminal result")
+                line.contains("terminal terminal-1 ended without a terminal result (Orbit status 137); Orbit exited without publishing a terminal result")
                     && line.ends_with(&format!("; Orbit log: {}", first_orbit_log.display()))
             }),
             "{owner_loss}"
@@ -8652,7 +8668,7 @@ mod tests {
             supervisor_log
                 .lines()
                 .filter(|line| {
-                    line.contains("terminal terminal-1 ended with status 1; Orbit exited without publishing a terminal result")
+                    line.contains("terminal terminal-1 ended without a terminal result (Orbit status 137); Orbit exited without publishing a terminal result")
                         && line.ends_with(&format!("; Orbit log: {}", orbit_log.display()))
                 })
                 .count(),
@@ -10062,5 +10078,237 @@ rows = 30
 
         let absolute = PathBuf::from("/absolute");
         assert_eq!(xdg_path(Some(absolute.clone())), Some(absolute));
+    }
+
+    fn end_status_test_state(
+        sessions: Vec<sessions::RunningSession>,
+        log_root: &Path,
+    ) -> SupervisorState {
+        SupervisorState {
+            failed_starts: sessions::FailedStarts::default(),
+            registry_worker: None,
+            registry_pending: None,
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces: None,
+            sessions,
+            venus: None,
+            venus_path: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: None,
+            quotas: None,
+            attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
+            editor_sockets: Sockets::default(),
+            log: DiagnosticLog::open_in(Ok(log_root.to_path_buf()), "g1-test", "eon"),
+        }
+    }
+
+    fn read_logs(log_root: &Path) -> String {
+        fs::read_dir(log_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .map(|path| fs::read_to_string(path).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_signalled_initial_command_sets_initial_status_and_logs_signal() {
+        let root = temporary_directory();
+        let go = root.join("go");
+        let session = leased_orbit(
+            &root,
+            &format!(
+                "while [ ! -e '{}' ]; do sleep 0.02; done; kill -TERM $$",
+                go.display()
+            ),
+        );
+        let orbit = orbit_pid(&session).cast_unsigned();
+        fs::write(&go, "").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !crate::platform::process(orbit)
+            .unwrap()
+            .is_some_and(|process| process.ended)
+        {
+            assert!(std::time::Instant::now() < deadline, "Orbit never exited");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let record_bytes = fs::read(sessions::tests::record(&session)).unwrap();
+        let record = orbit_protocol::management::decode_record(&record_bytes).unwrap();
+        assert!(
+            matches!(
+                record,
+                orbit_protocol::management::Record::Tombstone(
+                    orbit_protocol::management::Tombstone {
+                        reason: orbit_protocol::management::TerminationReason::NaturalExit,
+                        outcome: orbit_protocol::management::ProcessOutcome::Signal(libc::SIGTERM),
+                        ..
+                    }
+                )
+            ),
+            "{record:?}"
+        );
+
+        let log_root = root.join("logs");
+        let mut state = end_status_test_state(vec![session], &log_root);
+        let inputs = crate::fixtures::inputs();
+        assert_eq!(reap_finished_sessions(&mut state, &inputs, &root), Ok(()));
+        assert!(state.sessions.is_empty());
+        assert_eq!(state.initial_status, Some(128 + libc::SIGTERM));
+        let log = read_logs(&log_root);
+        assert!(
+            log.lines().any(|line| {
+                line.contains(&format!(
+                    "terminal terminal-1 ended with status {} (signal {})",
+                    128 + libc::SIGTERM,
+                    libc::SIGTERM
+                ))
+            }),
+            "{log}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_orbit_killed_by_signal_reports_status_one_and_logs_orbit_signal() {
+        let root = temporary_directory();
+        let session = leased_orbit(&root, "exec sleep 30");
+        let orbit_log = session.orbit_log.clone().unwrap();
+        let orbit = orbit_pid(&session);
+        // SAFETY: signals the test-owned Orbit process.
+        assert_eq!(unsafe { libc::kill(orbit, libc::SIGKILL) }, 0);
+
+        let log_root = root.join("logs");
+        let mut state = end_status_test_state(vec![session], &log_root);
+        let inputs = crate::fixtures::inputs();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !state.sessions.is_empty() {
+            assert!(std::time::Instant::now() < deadline, "Orbit never exited");
+            assert_eq!(reap_finished_sessions(&mut state, &inputs, &root), Ok(()));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert_eq!(state.initial_status, Some(1));
+        let log = read_logs(&log_root);
+        assert!(
+            log.lines().any(|line| {
+                line.contains(&format!(
+                    "terminal terminal-1 ended without a terminal result (Orbit signal {}, status {}); Orbit exited without publishing a terminal result",
+                    libc::SIGKILL,
+                    128 + libc::SIGKILL
+                )) && line.ends_with(&format!("; Orbit log: {}", orbit_log.display()))
+            }),
+            "{log}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_recovered_orbit_without_known_exit_logs_unknown_status_and_reports_one() {
+        let root = temporary_directory();
+        let launcher = root.join("orbit-grandchild");
+        script(
+            &launcher,
+            "#!/bin/sh\n\"$ORBIT_BIN\" \"$@\" &\nwait \"$!\"\n",
+        );
+        let session = sessions::tests::leased_orbit_with_program(&root, "exec sleep 30", &launcher);
+        let sh_pid = orbit_pid(&session);
+        let orbit = children(sh_pid)
+            .into_iter()
+            .next()
+            .expect("launcher spawned Orbit");
+        let orbit_logs = root.join("launch-logs/orbit");
+        let orbit_log = orbit_logs.join(format!("component-1-terminal-1-{}.log", session.run_id()));
+        sessions::tests::release_lease(session);
+        let (sessions, _) = sessions::recover_sessions(
+            &root,
+            LaunchMode::Workspace,
+            "component-1",
+            Some(&orbit_logs),
+            Instant::now() + SESSION_CLEANUP_TIMEOUT,
+        )
+        .unwrap();
+        kill_orbit_worker(orbit);
+
+        let log_root = root.join("logs");
+        let mut state = end_status_test_state(sessions, &log_root);
+        let inputs = crate::fixtures::inputs();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !state.sessions.is_empty() {
+            assert!(std::time::Instant::now() < deadline, "Orbit never exited");
+            assert_eq!(reap_finished_sessions(&mut state, &inputs, &root), Ok(()));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert_eq!(state.initial_status, Some(1));
+        let log = read_logs(&log_root);
+        assert!(
+            log.lines().any(|line| {
+                line.contains(
+                    "terminal terminal-1 ended with unknown status; Orbit exited without publishing a terminal result",
+                ) && line.ends_with(&format!("; Orbit log: {}", orbit_log.display()))
+            }),
+            "{log}"
+        );
+        let _ = rustix::process::waitpid(
+            rustix::process::Pid::from_raw(sh_pid),
+            rustix::process::WaitOptions::empty(),
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_signalled_program_reconciled_during_close_logs_its_signal() {
+        let root = temporary_directory();
+        let go = root.join("go");
+        let session = leased_orbit(
+            &root,
+            &format!(
+                "while [ ! -e '{}' ]; do sleep 0.02; done; kill -TERM $$",
+                go.display()
+            ),
+        );
+        let orbit = orbit_pid(&session).cast_unsigned();
+        fs::write(&go, "").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !crate::platform::process(orbit)
+            .unwrap()
+            .is_some_and(|process| process.ended)
+        {
+            assert!(std::time::Instant::now() < deadline, "Orbit never exited");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let log_root = root.join("logs");
+        let log = DiagnosticLog::open_in(Ok(log_root.clone()), "g1-test", "eon");
+        let mut sessions = vec![session];
+        assert_eq!(
+            stop_owned_session(&mut sessions, "terminal-1", &log),
+            Ok(Some(128 + libc::SIGTERM))
+        );
+        assert!(sessions.is_empty());
+        let supervisor_log = read_logs(&log_root);
+        assert!(
+            supervisor_log.lines().any(|line| {
+                line.contains(&format!(
+                    "terminal terminal-1 ended with status {} (signal {})",
+                    128 + libc::SIGTERM,
+                    libc::SIGTERM
+                ))
+            }),
+            "{supervisor_log}"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

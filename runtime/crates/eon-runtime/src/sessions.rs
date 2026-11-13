@@ -28,9 +28,10 @@ use std::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         net::UnixStream,
+        process::ExitStatusExt,
     },
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::Arc,
     thread,
     time::{Duration, Instant},
@@ -649,21 +650,19 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
             path.display()
         ));
     }
+    // Remove ancillary pair artifacts before deleting the record so a retry
+    // after a cleanup failure never loses a known terminal outcome.
+    if let Some(endpoint) = path.as_os_str().as_bytes().strip_suffix(b".record") {
+        let endpoint = Path::new(OsStr::from_bytes(endpoint));
+        remove_pair_socket(endpoint)?;
+        settle_pending_pair(endpoint)?;
+    }
     fs::remove_file(path).map_err(|error| {
         format!(
             "cannot remove ended terminal record {}: {error}",
             path.display()
         )
-    })?;
-    // An ended pair's marker and quick search socket go with its record.
-    match path.as_os_str().as_bytes().strip_suffix(b".record") {
-        Some(endpoint) => {
-            let endpoint = Path::new(OsStr::from_bytes(endpoint));
-            remove_pair_socket(endpoint)?;
-            settle_pending_pair(endpoint)
-        }
-        None => Ok(()),
-    }
+    })
 }
 
 /// Removes the quick search socket a pair's fzf leaves behind when it ends
@@ -722,11 +721,13 @@ fn retire_dead_run(
     record: &Path,
     object: ObjectIdentity,
     identity: &LiveIdentity,
+    child: Option<&mut Child>,
     deadline: Instant,
-) -> Result<(), String> {
+) -> Result<Option<ProcessOutcome>, String> {
     remove_dead_endpoints(identity)?;
-    reap_untracked_child(identity.process_id, deadline)?;
-    cleanup_record(record, object)
+    let host_outcome = reap_child_process(child, identity.process_id, deadline)?;
+    cleanup_record(record, object)?;
+    Ok(host_outcome)
 }
 
 fn remove_dead_endpoints(identity: &LiveIdentity) -> Result<(), String> {
@@ -885,7 +886,7 @@ fn reconcile_if_ended(
             if !recorded_process_is_dead(identity)? {
                 return Ok(false);
             }
-            retire_dead_run(record_path, object, identity, deadline)?;
+            retire_dead_run(record_path, object, identity, None, deadline)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -964,7 +965,7 @@ fn discover_untracked_runs(
             ));
         }
         if recorded_process_is_dead(&identity)? {
-            retire_dead_run(&record_path, snapshot.object, &identity, deadline)?;
+            retire_dead_run(&record_path, snapshot.object, &identity, None, deadline)?;
             continue;
         }
         before_endpoint_check(&identity);
@@ -1043,10 +1044,10 @@ pub(super) struct RunningSession {
     finished: Option<SessionEnd>,
 }
 
-#[derive(Clone, Copy)]
-enum SessionEnd {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SessionEnd {
     Managed(TerminationReason, ProcessOutcome),
-    OwnerLost,
+    OwnerLost(Option<ProcessOutcome>),
 }
 
 /// The one request in flight on a lease: what it asks, so its reply is never
@@ -1722,9 +1723,8 @@ fn naming_failed(
 }
 
 impl RunningSession {
-    /// Whether Orbit exited without publishing this terminal's result.
-    pub(super) fn owner_lost(&self) -> bool {
-        matches!(self.finished, Some(SessionEnd::OwnerLost))
+    pub(super) fn end(&self) -> Option<SessionEnd> {
+        self.finished
     }
 
     pub(super) fn is_finished(&self) -> bool {
@@ -2199,7 +2199,33 @@ fn endpoint_removed(path: &Path, expected: ObjectIdentity) -> Result<bool, Strin
     }
 }
 
-fn reap_untracked_child(process_id: u32, deadline: Instant) -> Result<(), String> {
+pub(super) fn outcome_status(outcome: ProcessOutcome) -> i32 {
+    match outcome {
+        ProcessOutcome::ExitCode(code) => code,
+        ProcessOutcome::Signal(signal) => 128 + signal,
+    }
+}
+
+fn outcome_from_exit_status(status: ExitStatus) -> Option<ProcessOutcome> {
+    if let Some(code) = status.code() {
+        Some(ProcessOutcome::ExitCode(code))
+    } else {
+        status.signal().map(ProcessOutcome::Signal)
+    }
+}
+
+fn outcome_from_wait_status(status: rustix::process::WaitStatus) -> Option<ProcessOutcome> {
+    if let Some(code) = status.exit_status() {
+        Some(ProcessOutcome::ExitCode(code))
+    } else {
+        status.terminating_signal().map(ProcessOutcome::Signal)
+    }
+}
+
+fn reap_untracked_child(
+    process_id: u32,
+    deadline: Instant,
+) -> Result<Option<ProcessOutcome>, String> {
     let pid = i32::try_from(process_id)
         .ok()
         .and_then(rustix::process::Pid::from_raw)
@@ -2208,10 +2234,31 @@ fn reap_untracked_child(process_id: u32, deadline: Instant) -> Result<(), String
         // Discovery can precede the failed-start owner's next reap.
         // Recovered runs return ECHILD; only an exact child can be reaped.
         match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
-            Ok(Some(_)) | Err(rustix::io::Errno::CHILD) => return Ok(()),
+            Ok(Some((_, status))) => return Ok(outcome_from_wait_status(status)),
+            Err(rustix::io::Errno::CHILD) => return Ok(None),
             Err(rustix::io::Errno::INTR) => continue,
             Err(error) => return Err(format!("cannot reap ended terminal: {error}")),
             Ok(None) => {}
+        }
+        operation_timeout(deadline, "terminal process reaping")?;
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn reap_child_process(
+    child: Option<&mut Child>,
+    process_id: u32,
+    deadline: Instant,
+) -> Result<Option<ProcessOutcome>, String> {
+    let Some(child) = child else {
+        return reap_untracked_child(process_id, deadline);
+    };
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("cannot reap ended terminal: {error}"))?
+        {
+            return Ok(outcome_from_exit_status(status));
         }
         operation_timeout(deadline, "terminal process reaping")?;
         thread::sleep(Duration::from_millis(25));
@@ -2223,14 +2270,27 @@ fn reap_untracked_child(process_id: u32, deadline: Instant) -> Result<(), String
 fn owner_lost(
     session: &mut RunningSession,
     reason: Option<TerminationReason>,
+    host_outcome: Option<ProcessOutcome>,
 ) -> Result<SessionEnd, String> {
-    session.finished = Some(SessionEnd::OwnerLost);
-    eprintln!(
-        "terminal {}: Orbit exited without publishing a terminal result",
-        session.id
-    );
+    let end = SessionEnd::OwnerLost(host_outcome);
+    session.finished = Some(end);
+    match host_outcome {
+        Some(ProcessOutcome::ExitCode(code)) => eprintln!(
+            "terminal {}: Orbit exited with status {code} without publishing a terminal result",
+            session.id
+        ),
+        Some(ProcessOutcome::Signal(signal)) => eprintln!(
+            "terminal {}: Orbit killed by signal {signal} (status {}) without publishing a terminal result",
+            session.id,
+            outcome_status(ProcessOutcome::Signal(signal))
+        ),
+        None => eprintln!(
+            "terminal {}: Orbit exited without publishing a terminal result",
+            session.id
+        ),
+    }
     if reason != Some(TerminationReason::ExplicitStop) {
-        Ok(SessionEnd::OwnerLost)
+        Ok(end)
     } else {
         Err("terminal owner exited without completing Stop".into())
     }
@@ -2249,8 +2309,12 @@ fn wait_and_finalize_tombstone(
             // publishes no result.
             if recorded_process_is_dead(&session.identity)? {
                 remove_dead_endpoints(&session.identity)?;
-                reap_untracked_child(session.identity.process_id, deadline)?;
-                return owner_lost(session, reason);
+                let host_outcome = reap_child_process(
+                    session.child.as_mut(),
+                    session.identity.process_id,
+                    deadline,
+                )?;
+                return owner_lost(session, reason, host_outcome);
             }
             if Instant::now() >= deadline {
                 return Err(format!(
@@ -2275,8 +2339,14 @@ fn wait_and_finalize_tombstone(
                     if current.object != session.record_object {
                         return Err("terminal Live record changed before cleanup".into());
                     }
-                    retire_dead_run(&session.record, current.object, &identity, deadline)?;
-                    return owner_lost(session, reason);
+                    let host_outcome = retire_dead_run(
+                        &session.record,
+                        current.object,
+                        &identity,
+                        session.child.as_mut(),
+                        deadline,
+                    )?;
+                    return owner_lost(session, reason, host_outcome);
                 }
                 operation_timeout(deadline, "terminal tombstone reconciliation")?;
                 thread::sleep(Duration::from_millis(25));
@@ -2303,21 +2373,11 @@ fn wait_and_finalize_tombstone(
         operation_timeout(deadline, "terminal endpoint cleanup")?;
         thread::sleep(Duration::from_millis(25));
     }
-    if let Some(child) = &mut session.child {
-        loop {
-            if child
-                .try_wait()
-                .map_err(|error| format!("cannot reap ended terminal: {error}"))?
-                .is_some()
-            {
-                break;
-            }
-            operation_timeout(deadline, "terminal process reaping")?;
-            thread::sleep(Duration::from_millis(25));
-        }
-    } else {
-        reap_untracked_child(session.identity.process_id, deadline)?;
-    }
+    reap_child_process(
+        session.child.as_mut(),
+        session.identity.process_id,
+        deadline,
+    )?;
     cleanup_record(&session.record, record_object)?;
     let end = SessionEnd::Managed(reason, outcome);
     session.finished = Some(end);
@@ -2369,8 +2429,8 @@ pub(super) fn session_finished_within(
         wait_and_finalize_tombstone(session, None, None, Instant::now() + wait)?
     };
     Ok(Some(match end {
-        SessionEnd::Managed(_, ProcessOutcome::ExitCode(code)) => code,
-        SessionEnd::Managed(_, ProcessOutcome::Signal(_)) | SessionEnd::OwnerLost => 1,
+        SessionEnd::Managed(_, outcome) => outcome_status(outcome),
+        SessionEnd::OwnerLost(_) => 1,
     }))
 }
 
@@ -3096,6 +3156,12 @@ pub(crate) mod tests {
             .is_err()
         );
         assert_eq!(super::session_finished(&mut session).unwrap(), Some(1));
+        assert_eq!(
+            session.end(),
+            Some(super::SessionEnd::OwnerLost(Some(ProcessOutcome::Signal(
+                libc::SIGKILL
+            ))))
+        );
         assert!(session.is_finished());
         assert!(
             crate::platform::process(child.id()).unwrap().is_none(),
@@ -4116,7 +4182,7 @@ pub(crate) mod tests {
 
     /// Marks a run ended before the supervisor reaps it.
     pub(crate) fn finish(session: &mut RunningSession) {
-        session.finished = Some(super::SessionEnd::OwnerLost);
+        session.finished = Some(super::SessionEnd::OwnerLost(None));
     }
 
     /// Shuts the lease's read side, so the Runtime reads it as closed.
@@ -5110,6 +5176,80 @@ pub(crate) mod tests {
             }
             assert_eq!(command_environment(command, "CLAUDE_CONFIG_DIR"), None);
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_signalled_program_maps_to_128_plus_signal() {
+        let root = temporary_directory();
+        let go = root.join("go");
+        let mut session = leased_orbit(
+            &root,
+            &format!(
+                "while [ ! -e '{}' ]; do sleep 0.02; done; kill -TERM $$",
+                go.display()
+            ),
+        );
+        let orbit = orbit_pid(&session).cast_unsigned();
+        fs::write(&go, "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !crate::platform::process(orbit)
+            .unwrap()
+            .is_some_and(|process| process.ended)
+        {
+            assert!(Instant::now() < deadline, "Orbit did not exit");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            super::session_finished(&mut session),
+            Ok(Some(128 + libc::SIGTERM))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_ancillary_cleanup_preserves_tombstone_and_real_status() {
+        let root = temporary_directory();
+        let go = root.join("go");
+        let mut session = leased_orbit(
+            &root,
+            &format!(
+                "while [ ! -e '{}' ]; do sleep 0.02; done; kill -TERM $$",
+                go.display()
+            ),
+        );
+        let orbit = orbit_pid(&session).cast_unsigned();
+        fs::write(&go, "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !crate::platform::process(orbit)
+            .unwrap()
+            .is_some_and(|process| process.ended)
+        {
+            assert!(Instant::now() < deadline, "Orbit did not exit");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let quick_socket = crate::pair::socket(&session.endpoint);
+        fs::create_dir(&quick_socket).unwrap();
+        assert!(super::session_finished(&mut session).is_err());
+        assert!(
+            session.record.exists(),
+            "failed ancillary cleanup erased the tombstone record"
+        );
+        assert!(!session.is_finished());
+
+        fs::remove_dir(&quick_socket).unwrap();
+        assert_eq!(
+            super::session_finished(&mut session),
+            Ok(Some(128 + libc::SIGTERM))
+        );
+        assert_eq!(
+            session.end(),
+            Some(super::SessionEnd::Managed(
+                TerminationReason::NaturalExit,
+                ProcessOutcome::Signal(libc::SIGTERM)
+            ))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
