@@ -65,6 +65,22 @@ process authority. Format version 1 has these required fields:
 Arrays belong to their parent; references cannot cross sessions or duplicate
 a terminal/run in two slots. Paths use explicit base64-encoded raw Unix bytes,
 not lossy display strings; decoded bounds are the existing path bounds.
+Each pane/popup has a required tagged `run` union:
+`{kind: "start-intent", terminal_id, run_id}` or
+`{kind: "confirmed-run", terminal_id, run_id}`. Both IDs are nonempty and
+valid under their canonical identity grammar. `confirmed-run` is written only
+after canonical Ready confirmation for that exact pair; a saved tag is not
+current liveness evidence. A successful confirmation replaces the intent tag
+for the same slot/pair in a new revision. Missing/unknown tags, missing IDs,
+multiple discriminators, unrecognized evidence fields or duplicate run pairs
+invalidate the checkpoint. Separately, the writer must reject changing a
+slot's pair without an explicit structural replacement; a single decoded
+snapshot cannot prove that historical transition. There is no persisted boolean `live` or third unresolved variant. Following complete
+C15 acquisition, no matching record maps `start-intent` to `start-unconfirmed`
+and `confirmed-run` to `ended`; a validated matching run is live regardless of
+which tag was last committed. A discovered inadmissible record still refuses
+the whole set instead of being treated as absent.
+
 Session names come from the registry, not an authoritative checkpoint copy.
 Terminal provenance (`origin_build`, `record_generation`, protocols) comes
 from validated records; unknown provenance stays null, never inferred from
@@ -99,7 +115,13 @@ is replied. Runtime serializes revisions on bounded off-control-loop I/O;
 stale completion cannot overwrite newer state or republish a closed target.
 Terminal I/O, Inspect, navigation and canonical Stop remain serviceable.
 
-A Start first reserves its exact slot, terminal ID and opaque run ID and
+Two independent gates precede every new Start: the target session's exact C38
+registration must be confirmed, and its new checkpoint intent must be durable.
+A writable checkpoint does not satisfy registration. Pending/failed recovered
+registration leaves validated existing terminals usable but refuses new Starts
+with the existing registry outcome/diagnostic; it neither spawns nor substitutes
+a new identity. New-session creation keeps C38's validation-before-registration
+order. After confirmed registration, a Start reserves its exact slot, terminal ID and opaque run ID and
 commits that intent. Only then may Runtime create the empty management record
 and spawn. Orbit publishes Ready, not Runtime. Confirming the same run updates
 the checkpoint; recovery never repeats Start. Failure before durable intent
@@ -191,7 +213,8 @@ allowing new durable structure/Start. A missing file needs no rename. If
 preservation or fresh commit fails, keep the diagnostic and write refusal;
 never overwrite an unpreserved damaged file. Safe existing input, reading,
 Inspect, navigation, close and canonical Stop continue. Successful preservation
-and fresh commit reopen creation, not the old topology; the recovery diagnostic
+and fresh commit reopen checkpoint-gated mutations, not the old topology;
+new Starts additionally wait for confirmed C38 registration; the recovery diagnostic
 and preserved path remain visible for this recovered window's lifetime.
 
 A close/Stop can have a real process effect despite failed persistence. Report
@@ -259,9 +282,20 @@ Amend C15/C33 for checkpoint/reconciliation; C8 for explicit consistency with
 last-live exit, not a new empty-window exception; C10/C39 for shared projection
 and outcomes; C11/C17/C18 for durable structural action and no picker replay;
 C38 for exact registration reconciliation. **C42 is already Planned on edge**:
-a validated checkpoint can restore the original session/in-use tie, but a
-flat/degraded projection cannot prove that an old registration is unused.
-Do not allow Forget from that uncertainty. Forget itself stays outside 2b.
+a validated checkpoint restores tab launch-directory bytes, from which C42
+derives worktree usage by resolving symlinks/`..` and checking equality or
+containment within the worktree. There is no stored worktree/session tie.
+A flat/degraded projection that lost those directories cannot certify that
+no former tab used a worktree. This is a limitation of recovered evidence,
+not a new removal gate: retain C42's current visibility limits, including its
+exclusion of synthetic recovered tabs and no-window behavior with
+`window_checked: false`. Do not claim that degraded recovery protects the old
+worktree usage or reconstruct missing launch directories from process guesses.
+Valid restoration makes original tabs/directories available to C42's existing
+addressed-window check; no scan of other windows or new fail-closed removal
+policy is added here. Session
+registration Forget is unrelated and stays outside 2b; this draft adds no
+Forget policy.
 No new contract ID is allocated. Existing proofs keep their recorded scope.
 
 ## Acceptance matrix
@@ -281,8 +315,8 @@ installed platform, commands, artifacts and observed identities/counters.
 | R7 | Inject failures at file write/fsync/rename/parent-sync and registry-then-checkpoint; report real effects/durability; stale worker/picker completion cannot republish after Stop |
 | R8 | Every enumerated structural action commits before success; selection coalescing bounded under continuous changes; control-loop I/O, Inspect and Stop stay serviceable |
 | R9 | Full/partial canonical Stop and failed checkpoint clearing: exact stopped targets, checkpoint_cleared, retained owner only for unfinished process cleanup |
-| R10 | Duplicate/cross-session refs, wrong generation, exhausted revision/IDs/size, replacement local-ID ranges and terminal intent high-water; no old ID retargeting |
-| R11 | Registry pending/failure/retry preserves exact IDs and old registrations; extras follow originals; degraded state cannot prove old registration unused for C42 |
+| R10 | Invalid/missing/mixed run-union tags and fields, confirmation crash before/after commit, duplicate/cross-session refs, wrong generation, exhausted revision/IDs/size, replacement local-ID ranges and terminal intent high-water; no old ID retargeting |
+| R11 | Registry pending/failure/retry preserves exact IDs and old registrations; extras follow originals; failed/pending registration with a successfully written fresh checkpoint still refuses Start while existing terminals remain usable; only exact registration confirmation opens Start; lost launch-directory evidence cannot certify C42 worktree non-use |
 | R12 | Inspect/list, initial/gap/live C39 projection and exit codes agree; null stopped endpoints, distinct diagnostics, fresh STREAM and no event/input replay |
 | R13 | Shared topology format review with Update owners; independent Update transition/dedup proofs remain pending and cannot be claimed by 2b proof |
 
