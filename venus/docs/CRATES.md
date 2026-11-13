@@ -489,6 +489,11 @@ the complete text-area stream and rectangle scene. Damage is derived locally
 after measurement and never becomes wire state. The implementation is smaller
 than the gate estimate; the README scorecard records the exact owned size.
 
+Cursor bodies and the selected cursor's trail use the existing dynamic rectangle
+batch, with each terminal's clips. Cursor-only blink phases reuse cached grid
+rectangles and text preparation; SGR-blinking foregrounds retain the phase in
+the grid key. Native and hosted presentation share this preparation path.
+
 If corpus and native checks show that glyphon cannot preserve exact graphemes,
 cell alignment, clipping, color glyphs, or acceptable sustained redraw latency,
 retain the protocol, scene, winit, wgpu, and AccessKit owners and reopen only

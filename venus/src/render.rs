@@ -51,9 +51,9 @@ mod images;
 mod palette;
 
 use cells::{
-    BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_scene_rectangles, cell_ink_right,
-    cell_text_attrs, cell_text_segments, cursor_bounds, cursor_outline, fitted_cell_font,
-    set_cell_layer, shape_cell_text, symbol_spans,
+    BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_scene_cursor, build_scene_rectangles,
+    cell_ink_right, cell_text_attrs, cell_text_segments, cursor_bounds, cursor_outline,
+    fitted_cell_font, set_cell_layer, shape_cell_text, symbol_spans,
 };
 pub use chrome::read_eon_icon;
 use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_bar_icon, spinners_turn};
@@ -627,7 +627,7 @@ struct ContentKey {
     column_revisions: Vec<Option<u64>>,
     scroll_offset: f32,
     workspace_focus: WorkspaceFocus,
-    blink_visible: bool,
+    text_blink_visible: bool,
     preedit: String,
     status: String,
     hyperlink: Option<(u16, u16)>,
@@ -1495,6 +1495,10 @@ struct WindowedTarget {
 
 /// One shared GPU/text owner, optionally presenting to its own native window.
 pub struct Renderer {
+    #[cfg(test)]
+    grid_rebuilds: u64,
+    #[cfg(test)]
+    glyphon_prepares: u64,
     windowed: Option<WindowedTarget>,
     device: wgpu::Device,
     device_lost: Arc<AtomicBool>,
@@ -1889,6 +1893,10 @@ impl Renderer {
             TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         ensure_device_available(&device_lost)?;
         Ok(Self {
+            #[cfg(test)]
+            grid_rebuilds: 0,
+            #[cfg(test)]
+            glyphon_prepares: 0,
             windowed,
             device,
             device_lost,
@@ -1977,12 +1985,20 @@ impl Renderer {
         crate::transport::bench_trace("rebuild_end", content_changed);
         let rebuild_ns = crate::transport::frame_elapsed(rebuild_started);
         let prepare_started = crate::transport::frame_time();
-        if scroll_offset == 0.0 && dialog.is_none() {
-            self.rebuild_dynamic_cursor(scene, workspace, blink_visible);
-        } else {
-            self.reset_cursor_animation();
-        }
+        let cursors = self.build_dynamic_cursors(
+            scene,
+            scroll_offset,
+            workspace,
+            columns,
+            dialog,
+            blink_visible,
+        );
+        self.upload_dynamic_vertices(&cursors.bytes);
         if content_changed {
+            #[cfg(test)]
+            {
+                self.glyphon_prepares += 1;
+            }
             self.viewport.update(
                 &self.queue,
                 Resolution {
@@ -2358,6 +2374,15 @@ impl Renderer {
         preedit: &str,
         generation: u64,
     ) -> bool {
+        let preview = scene.and_then(|_| preview_rows(scroll_preview));
+        let text_blink_visible = blink_visible
+            || !std::iter::once(scene)
+                .chain(columns.iter().copied())
+                .flatten()
+                .flat_map(|scene| &scene.content)
+                .chain(preview.into_iter().flat_map(|(_, rows)| rows))
+                .flat_map(|row| &row.cells)
+                .any(|cell| cell.style.blink && cell.style.foreground_visible(true));
         let graphics = std::iter::once(scene)
             .chain(columns.iter().copied())
             .map(|scene| scene.map(|scene| &scene.graphics))
@@ -2371,7 +2396,7 @@ impl Renderer {
                 .collect(),
             scroll_offset,
             workspace_focus,
-            blink_visible,
+            text_blink_visible,
             preedit: preedit.to_owned(),
             status: status.to_owned(),
             hyperlink: self.terminal.hyperlink,
@@ -2404,6 +2429,10 @@ impl Renderer {
             return false;
         }
 
+        #[cfg(test)]
+        {
+            self.grid_rebuilds += 1;
+        }
         self.text.clear();
         self.row_text.begin();
         self.text_overlay = None;
@@ -2561,7 +2590,6 @@ impl Renderer {
                     text_clip,
                     text_slot + 1,
                 );
-                // The cursor trail follows the selected column; other columns draw a static cursor.
                 build_scene_rectangles(
                     &mut rectangles,
                     scene,
@@ -2570,11 +2598,12 @@ impl Renderer {
                     blink_visible,
                     self.metrics,
                     column.terminal,
-                    true,
                 );
                 rectangles.clip = None;
                 rectangles.card_clip = None;
             }
+            // Other columns still have cursors while the selected attachment is absent.
+            cursor_vertex_boundary = vertex_count(&rectangles.bytes);
             if let Some((terminal, card_clip)) = terminal_paint_clip(
                 workspace,
                 workspace.chrome,
@@ -2602,7 +2631,6 @@ impl Renderer {
                     blink_visible,
                     self.metrics,
                     origin,
-                    self.cursor_tail.is_none(),
                 );
                 self.build_preedit(scene, preedit, &mut rectangles, origin, text_clip);
                 self.build_hyperlink(scene, &mut rectangles, origin);
@@ -2659,7 +2687,6 @@ impl Renderer {
                 blink_visible,
                 self.metrics,
                 origin,
-                self.cursor_tail.is_none(),
             );
             self.build_preedit(scene, preedit, &mut rectangles, origin, clip);
             self.build_hyperlink(scene, &mut rectangles, origin);
@@ -2710,31 +2737,58 @@ impl Renderer {
         true
     }
 
-    fn rebuild_dynamic_cursor(
+    fn build_dynamic_cursors(
         &mut self,
         scene: Option<&Scene>,
+        scroll_offset: f32,
         workspace: Option<&WorkspaceScene>,
+        columns: &[Option<&Scene>],
+        dialog: Option<&DialogScene>,
         blink_visible: bool,
-    ) {
-        let Some((trail_color, outline_color, duration_scale)) = self.cursor_tail else {
-            self.reset_cursor_animation();
-            return;
-        };
-        let (viewport, clip, card_clip) = if let Some(workspace) = workspace {
-            let Some((clip, card_clip)) = terminal_paint_clip(
+    ) -> RectangleBatch {
+        let mut rectangles = RectangleBatch::new(self.config.width, self.config.height);
+        if let Some(workspace) = workspace {
+            for (column, scene) in workspace.other_columns.iter().zip(columns) {
+                let Some(scene) = scene else {
+                    continue;
+                };
+                let Some((terminal, card_clip)) = terminal_paint_clip(
+                    workspace,
+                    column.chrome,
+                    column.terminal,
+                    self.metrics,
+                    self.pane_frames,
+                    self.card_stroke_width(),
+                ) else {
+                    continue;
+                };
+                rectangles.clip = Some(
+                    scene_grid(scene, column.terminal, self.metrics)
+                        .intersection(terminal)
+                        .unwrap_or(terminal),
+                );
+                rectangles.card_clip = card_clip;
+                build_scene_cursor(
+                    &mut rectangles,
+                    scene,
+                    blink_visible,
+                    self.metrics,
+                    column.terminal,
+                );
+            }
+        }
+        let target = if let Some(workspace) = workspace {
+            terminal_paint_clip(
                 workspace,
                 workspace.chrome,
                 workspace.terminal,
                 self.metrics,
                 self.pane_frames,
                 self.card_stroke_width(),
-            ) else {
-                self.reset_cursor_animation();
-                return;
-            };
-            (workspace.terminal, Some(clip), card_clip)
+            )
+            .map(|(clip, card_clip)| (workspace.terminal, Some(clip), card_clip))
         } else {
-            (
+            Some((
                 SceneRect {
                     left: 0.0,
                     top: 0.0,
@@ -2743,38 +2797,61 @@ impl Renderer {
                 },
                 None,
                 None,
-            )
+            ))
         };
-        if scene.is_none() && self.terminal.cursor_handoff {
-            return;
-        }
-        self.terminal.cursor_handoff = false;
-        let now = Instant::now();
-        let delta = self
-            .terminal
-            .last_cursor_frame
-            .replace(now)
-            .map_or(0.0, |last| now.duration_since(last).as_secs_f32());
-        let mut rectangles = RectangleBatch::new(self.config.width, self.config.height);
-        rectangles.clip = clip;
-        rectangles.card_clip = card_clip;
-        if let Some(scene) = scene {
-            build_tail_cursor(
-                &mut rectangles,
-                &mut self.terminal.cursor_animation,
-                scene,
-                blink_visible,
-                self.metrics,
-                viewport,
-                trail_color,
-                outline_color,
-                duration_scale,
-                delta,
-            );
+        if let Some((viewport, clip, card_clip)) = target {
+            rectangles.card_clip = card_clip;
+            if scroll_offset == 0.0
+                && dialog.is_none()
+                && let Some((trail_color, outline_color, duration_scale)) = self.cursor_tail
+            {
+                rectangles.clip = clip;
+                if !(scene.is_none() && self.terminal.cursor_handoff) {
+                    self.terminal.cursor_handoff = false;
+                    let now = Instant::now();
+                    let delta = self
+                        .terminal
+                        .last_cursor_frame
+                        .replace(now)
+                        .map_or(0.0, |last| now.duration_since(last).as_secs_f32());
+                    if let Some(scene) = scene {
+                        build_tail_cursor(
+                            &mut rectangles,
+                            &mut self.terminal.cursor_animation,
+                            scene,
+                            blink_visible,
+                            self.metrics,
+                            viewport,
+                            trail_color,
+                            outline_color,
+                            duration_scale,
+                            delta,
+                        );
+                    } else {
+                        self.terminal.cursor_animation.reset();
+                    }
+                }
+            } else {
+                self.reset_cursor_animation();
+                if self.cursor_tail.is_none()
+                    && let Some(scene) = scene
+                {
+                    let grid = scene_grid(scene, viewport, self.metrics);
+                    rectangles.clip =
+                        Some(clip.map_or(grid, |clip| grid.intersection(clip).unwrap_or(clip)));
+                    build_scene_cursor(
+                        &mut rectangles,
+                        scene,
+                        blink_visible,
+                        self.metrics,
+                        shifted(viewport, scroll_offset),
+                    );
+                }
+            }
         } else {
-            self.terminal.cursor_animation.reset();
+            self.reset_cursor_animation();
         }
-        self.upload_dynamic_vertices(&rectangles.bytes);
+        rectangles
     }
 
     fn scrollback_geometry(

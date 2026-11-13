@@ -121,6 +121,9 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 
 - Quota, CPU, RAM and disk chips keep neutral text and show their percentage
   and grade colour in a thin meter along the capsule's bottom (`eon-wuau8.6`).
+- Venus keeps cursor-only blink out of grid rebuilding and glyph preparation,
+  including static cursors in other columns. Cursor appearance and cadence stay
+  the same, and SGR-blinking text retains its phase (`eon-venus-blink-no-rebuild-h222`).
 - Packaged Helix uses carbonfox, soft wrapping, a bufferline for multiple
   buffers, cursorline, colored modes, an insert bar cursor and indent guides.
   These nova-helix defaults sit below user and trusted workspace settings;

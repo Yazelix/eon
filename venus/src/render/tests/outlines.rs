@@ -416,7 +416,7 @@ fn title_return_arcs_keep_normal_stroke_width_at_their_tangent_join() {
     );
 }
 
-fn popup_title_snapshot(
+pub(super) fn popup_title_snapshot(
     label: &str,
     vertical_margin: f32,
 ) -> eon_workspace_protocol::v44::Snapshot {
@@ -3381,7 +3381,6 @@ fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
                         top: top - metrics.padding,
                         ..card
                     },
-                    false,
                 );
                 assert_corners_clear(&cells);
                 assert!(
@@ -3592,7 +3591,13 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                                     true,
                                     metrics,
                                     terminal,
+                                );
+                                build_scene_cursor(
+                                    &mut cells,
+                                    &terminal_scene,
                                     true,
+                                    metrics,
+                                    terminal,
                                 );
                                 for vertex in cells.bytes.chunks_exact(VERTEX_SIZE as usize) {
                                     let y = (1.0

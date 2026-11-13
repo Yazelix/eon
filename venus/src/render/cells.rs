@@ -291,9 +291,8 @@ pub(super) fn shape_cell_text(
 }
 
 /// Draws one terminal's cell rectangles in its layers: every background of the live and preview
-/// rows, then the terminal's image band, then foreground rectangles and the cursor (VEN-C31).
-/// Returns the vertex count after the cursor, where a trailing cursor draws.
-#[allow(clippy::too_many_arguments)]
+/// rows, then the terminal's image band, then foreground rectangles (VEN-C31).
+/// Returns the insertion point for dynamic cursors, before preview foregrounds.
 pub(super) fn build_scene_rectangles(
     rectangles: &mut RectangleBatch,
     scene: &Scene,
@@ -302,7 +301,6 @@ pub(super) fn build_scene_rectangles(
     blink_visible: bool,
     metrics: CellMetrics,
     origin: SceneRect,
-    draw_cursor: bool,
 ) -> u32 {
     let grid = metrics.grid_rect(origin, scene.columns, scene.rows);
     let (left, top) = (grid.left, grid.top);
@@ -344,19 +342,27 @@ pub(super) fn build_scene_rectangles(
     for (row, top) in &live {
         build_row_foregrounds(rectangles, row, blink_visible, metrics, left, *top);
     }
-    if draw_cursor
-        && let Some(cursor) = scene
-            .cursor
-            .filter(|cursor| cursor.visible && (blink_visible || !cursor.blinking))
-        && let Some(bounds) = cursor_bounds(scene, cursor, metrics, origin)
-    {
-        push_cursor(rectangles, cursor, bounds, metrics, None);
-    }
     let cursor_boundary = vertex_count(&rectangles.bytes);
     for (row, top) in &previewed {
         build_row_foregrounds(rectangles, row, blink_visible, metrics, left, *top);
     }
     cursor_boundary
+}
+
+pub(super) fn build_scene_cursor(
+    rectangles: &mut RectangleBatch,
+    scene: &Scene,
+    blink_visible: bool,
+    metrics: CellMetrics,
+    origin: SceneRect,
+) {
+    if let Some(cursor) = scene
+        .cursor
+        .filter(|cursor| cursor.visible && (blink_visible || !cursor.blinking))
+        && let Some(bounds) = cursor_bounds(scene, cursor, metrics, origin)
+    {
+        push_cursor(rectangles, cursor, bounds, metrics, None);
+    }
 }
 
 fn build_row_backgrounds(
@@ -1036,7 +1042,6 @@ pub(super) mod tests {
                 width: 100.0,
                 height: 100.0,
             },
-            true,
         );
 
         assert!(rectangles.bytes.is_empty());
@@ -1101,16 +1106,7 @@ pub(super) mod tests {
                     height: 200.0,
                 };
                 let mut actual = RectangleBatch::new(300, 300);
-                build_scene_rectangles(
-                    &mut actual,
-                    &scene,
-                    &[],
-                    None,
-                    true,
-                    metrics,
-                    viewport,
-                    true,
-                );
+                build_scene_rectangles(&mut actual, &scene, &[], None, true, metrics, viewport);
                 let mut expected = RectangleBatch::new(300, 300);
                 for (index, color) in colors.into_iter().enumerate() {
                     expected.push(
@@ -1211,7 +1207,6 @@ pub(super) mod tests {
                         blink_visible,
                         metrics,
                         origin,
-                        false,
                     );
                     let mut expected = RectangleBatch::new(300, 300);
                     expected.clip = Some(clip);
@@ -1306,11 +1301,9 @@ pub(super) mod tests {
         let mut draw_cursor = |cursor| {
             scene.cursor = Some(cursor);
             let mut rectangles = RectangleBatch::new(100, 100);
-            build_scene_rectangles(
+            build_scene_cursor(
                 &mut rectangles,
                 &scene,
-                &[],
-                None,
                 true,
                 metrics,
                 SceneRect {
@@ -1319,7 +1312,6 @@ pub(super) mod tests {
                     width: 100.0,
                     height: 100.0,
                 },
-                true,
             );
             rectangles.bytes
         };
@@ -1527,16 +1519,7 @@ pub(super) mod tests {
             height: 100.0,
         };
         let mut actual = RectangleBatch::new(100, 100);
-        build_scene_rectangles(
-            &mut actual,
-            &scene,
-            &[],
-            None,
-            true,
-            metrics,
-            viewport,
-            true,
-        );
+        build_scene_rectangles(&mut actual, &scene, &[], None, true, metrics, viewport);
         let mut expected = RectangleBatch::new(100, 100);
         expected.push(
             metrics.padding + metrics.width,

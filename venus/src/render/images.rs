@@ -446,12 +446,12 @@ pub(super) struct ImageDraw {
 #[derive(Debug, PartialEq)]
 pub(super) enum DrawStep {
     Rectangles(Range<u32>),
-    /// The trailing cursor's own vertices.
+    /// The dynamic cursor bodies and selected trail.
     Cursor,
     Image(usize),
 }
 
-/// Interleaves the static rectangles with the image draws and the trailing cursor, which draws
+/// Interleaves the static rectangles with image draws and dynamic cursors, which draw
 /// after the vertex `cursor` and after any image at that vertex.
 pub(super) fn draw_steps(
     total: u32,
@@ -1101,7 +1101,6 @@ mod tests {
             true,
             metrics,
             origin,
-            true,
         );
 
         // The live and the preview row backgrounds come first, then the band in frame order: an
@@ -1144,10 +1143,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(after, key(1)), (marked, key(2))]
         );
-        // Underlines of both live rows and the cursor follow; preview foregrounds come last.
+        // Live underlines precede the dynamic cursor boundary; preview foregrounds come last.
         let underline = 6;
-        assert_eq!(cursor, marked + 4 * underline + 6);
+        assert_eq!(cursor, marked + 4 * underline);
         assert_eq!(vertex_count(&batch.bytes), cursor + 2 * underline);
+        let mut dynamic = RectangleBatch::new(400, 300);
+        super::super::cells::build_scene_cursor(&mut dynamic, &scene, true, metrics, origin);
+        assert_eq!(vertex_count(&dynamic.bytes), 6);
+        assert_eq!(
+            draw_steps(vertex_count(&batch.bytes), Some(cursor), &batch.images),
+            [
+                DrawStep::Rectangles(0..after),
+                DrawStep::Image(0),
+                DrawStep::Rectangles(after..marked),
+                DrawStep::Image(1),
+                DrawStep::Rectangles(marked..cursor),
+                DrawStep::Cursor,
+                DrawStep::Rectangles(cursor..cursor + 2 * underline),
+            ],
+        );
         // The first image reaches into the preview row but stops at the live rows.
         let live_bottom = metrics.padding + 2.0 * metrics.height;
         assert!(
@@ -1173,7 +1187,7 @@ mod tests {
         });
         let mut no_band = RectangleBatch::new(400, 300);
         no_band.clip = batch.clip;
-        build_scene_rectangles(&mut no_band, &scene, &[], None, true, metrics, origin, true);
+        build_scene_rectangles(&mut no_band, &scene, &[], None, true, metrics, origin);
         build_scene_rectangles(
             &mut batch,
             &scene,
@@ -1185,7 +1199,6 @@ mod tests {
             true,
             metrics,
             origin,
-            true,
         );
         assert!(batch.images.is_empty() && batch.image_bytes.is_empty());
         assert_eq!(batch.bytes, no_band.bytes);
