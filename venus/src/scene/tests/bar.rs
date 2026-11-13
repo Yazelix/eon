@@ -3615,9 +3615,11 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
     assert!(!google.selects(Some("A,B:C"), 10080));
     assert!(!google.selects(Some("a,b:c"), 300));
     assert!(!google.selects(None, 300));
+    let mut google_shown = false;
     for width in (500..1800).step_by(10) {
         let empty = project(&snapshot, &[], width);
         let google_only = project(&snapshot, std::slice::from_ref(&google), width);
+        google_shown |= !google_only.quotas.is_empty();
         assert!(
             google_only
                 .quotas
@@ -3627,6 +3629,7 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
         assert_eq!(google_only.eon_icon, empty.eon_icon);
         assert_eq!(google_only.terminal, empty.terminal);
     }
+    assert!(google_shown, "selected Google window shows when it fits");
     let scene = project(&snapshot, &selected, 3000);
     assert_eq!(
         scene
@@ -3981,6 +3984,11 @@ fn google_chips_follow_exact_selectors_and_source_windows() {
         assert_eq!(q.provider.name(), "Google");
         assert_eq!(q.accessible_label, q.label);
         assert_eq!(
+            q.logo,
+            SceneRect::default(),
+            "text-only Google has no logo geometry"
+        );
+        assert_eq!(
             q.rect.width,
             q.label.chars().count() as f32 * 10.0 + 2.0 * CellMetrics::for_scale(1.0).padding
         );
@@ -4102,6 +4110,31 @@ fn google_chip_truth_includes_old_reset_and_read_time() {
             }
             if stale || !reset {
                 assert!(q.pace.is_none());
+            }
+            let quota = snapshot.google_quota.as_ref().unwrap();
+            let no_zone = quota_text(
+                QuotaProvider::Google,
+                if stale {
+                    CodexQuotaState::Stale
+                } else {
+                    CodexQuotaState::Fresh
+                },
+                quota.observed_at,
+                Some(&quota.windows[0]),
+                None,
+            );
+            assert_eq!(no_zone.label, q.label);
+            for text in [&no_zone.tooltip, &no_zone.description] {
+                assert!(text.contains("Read time unavailable"), "{text}");
+                assert!(
+                    text.contains(if reset {
+                        "Reset available; local time unavailable"
+                    } else {
+                        "Reset time unavailable"
+                    }),
+                    "{text}"
+                );
+                assert!(!text.contains("Read at ") && !text.contains("Resets at "));
             }
         }
     }

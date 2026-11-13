@@ -1,7 +1,7 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v44::{
-    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, PopupEntry, Sidebar,
+    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, PopupEntry, Sidebar, Snapshot,
     WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
@@ -889,6 +889,40 @@ impl ClosePrompt {
             PromptTarget::CloseColumn { scope, .. } => snapshot_has_pane(snapshot, &scope.pane),
         }
     }
+}
+
+/// Quota metadata repaints the bar without resetting workspace navigation.
+fn quota_change(current: &Snapshot, next: &Snapshot) -> (bool, bool) {
+    let changed = current.codex_quota != next.codex_quota
+        || current.claude_quota != next.claude_quota
+        || current.google_quota != next.google_quota
+        || current.codex_quota_failure != next.codex_quota_failure
+        || current.claude_quota_failure != next.claude_quota_failure
+        || current.google_quota_failure != next.google_quota_failure;
+    let only = changed && {
+        let mut plain = next.clone();
+        plain.codex_quota.clone_from(&current.codex_quota);
+        plain.claude_quota.clone_from(&current.claude_quota);
+        plain.google_quota.clone_from(&current.google_quota);
+        plain
+            .codex_quota_failure
+            .clone_from(&current.codex_quota_failure);
+        plain
+            .claude_quota_failure
+            .clone_from(&current.claude_quota_failure);
+        plain
+            .google_quota_failure
+            .clone_from(&current.google_quota_failure);
+        current == &plain || attention_only_change(current, &plain)
+    };
+    (changed, only)
+}
+
+/// Either workspace loss path must retire cached quota presentation.
+fn has_quota(snapshot: &Snapshot) -> bool {
+    snapshot.codex_quota.is_some()
+        || snapshot.claude_quota.is_some()
+        || snapshot.google_quota.is_some()
 }
 
 /// Whether `pane` is a pane of some tab of the snapshot.
@@ -3654,29 +3688,9 @@ impl Application {
                 let current = self.workspace_model.snapshot();
                 let attention_only =
                     current.is_some_and(|current| attention_only_change(current, snapshot));
-                let quota_changed = current.is_some_and(|current| {
-                    current.codex_quota != snapshot.codex_quota
-                        || current.claude_quota != snapshot.claude_quota
-                        || current.google_quota != snapshot.google_quota
-                        || current.codex_quota_failure != snapshot.codex_quota_failure
-                        || current.claude_quota_failure != snapshot.claude_quota_failure
-                        || current.google_quota_failure != snapshot.google_quota_failure
-                });
-                let metadata_only = attention_only
-                    || quota_changed
-                        && current.is_some_and(|current| {
-                            let mut next = snapshot.clone();
-                            next.codex_quota.clone_from(&current.codex_quota);
-                            next.claude_quota.clone_from(&current.claude_quota);
-                            next.google_quota.clone_from(&current.google_quota);
-                            next.codex_quota_failure
-                                .clone_from(&current.codex_quota_failure);
-                            next.claude_quota_failure
-                                .clone_from(&current.claude_quota_failure);
-                            next.google_quota_failure
-                                .clone_from(&current.google_quota_failure);
-                            current == &next || attention_only_change(current, &next)
-                        });
+                let (quota_changed, quota_only) =
+                    current.map_or((false, false), |current| quota_change(current, snapshot));
+                let metadata_only = attention_only || quota_only;
                 (
                     true,
                     current != Some(snapshot),
@@ -3694,12 +3708,7 @@ impl Application {
         let sidebar_before = (received_snapshot && snapshot_changed)
             .then(|| self.workspace_scene())
             .flatten();
-        let quota_expired = unavailable
-            && self.workspace_model.snapshot().is_some_and(|snapshot| {
-                snapshot.codex_quota.is_some()
-                    || snapshot.claude_quota.is_some()
-                    || snapshot.google_quota.is_some()
-            });
+        let quota_expired = unavailable && self.workspace_model.snapshot().is_some_and(has_quota);
         let (mut view_changed, workspace_changed) = match event {
             WorkspaceEvent::Response(eon_workspace_protocol::v44::Response::Failure(failure))
                 if failure.code == "stop-incomplete" =>
@@ -3943,11 +3952,7 @@ impl Application {
                 Some(ticket)
             }
             Err(error) => {
-                let quota_expired = self.workspace_model.snapshot().is_some_and(|snapshot| {
-                    snapshot.codex_quota.is_some()
-                        || snapshot.claude_quota.is_some()
-                        || snapshot.google_quota.is_some()
-                });
+                let quota_expired = self.workspace_model.snapshot().is_some_and(has_quota);
                 if self
                     .workspace_model
                     .mark_unavailable(format!("Cannot queue Eon workspace action: {error}"), true)

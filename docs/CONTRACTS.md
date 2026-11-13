@@ -5028,8 +5028,8 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   A valid selector whose scope is not currently reported shows nothing and
   still enables Google collection.
   No Google selectors are defaulted; bare `google_quota` is not a widget.
-  Unknown or malformed names warn and are ignored. Google collection follows EON-C27; chip presentation is documented in
-  `venus/docs/PRESENTATION.md`.
+  Unknown or malformed names warn and are ignored. Google collection follows
+  EON-C27; chip presentation is documented in `venus/docs/PRESENTATION.md`.
   The Eon Bar shows the listed widgets left to right in that order, between the
   drag region and Shortcuts, except `clock` and `version`, which sit at the left
   and right ends of the bottom shortcut hints while they show, whatever their

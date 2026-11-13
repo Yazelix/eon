@@ -1991,3 +1991,83 @@ fn stack_close_focus_stays_on_a_shown_button_and_returns_to_the_titles() {
         assert_eq!(focus_after_stack_close(focus), focus);
     }
 }
+
+#[test]
+fn google_quota_events_keep_navigation() {
+    use eon_workspace_protocol::v44::{
+        GoogleQuota, GoogleQuotaState, QuotaFailure, QuotaFailureReason, QuotaWindow,
+    };
+    let base = quit_snapshot();
+    let quota = GoogleQuota {
+        state: GoogleQuotaState::Fresh,
+        observed_at: 1_000_000,
+        windows: vec![QuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: 50,
+            resets_at: None,
+            scope: Some("Group".into()),
+        }],
+    };
+    let failure = QuotaFailure {
+        at: 1_000_001,
+        reason: QuotaFailureReason::Deadline,
+    };
+    assert_eq!(quota_change(&base, &base), (false, false));
+    for (fact, failure) in [
+        (Some(quota.clone()), None),
+        (None, Some(failure)),
+        (Some(quota), Some(failure)),
+    ] {
+        let mut next = base.clone();
+        next.google_quota = fact;
+        next.google_quota_failure = failure;
+        assert_eq!(
+            quota_change(&base, &next),
+            (true, true),
+            "Google fact/failure metadata keeps navigation"
+        );
+        assert_eq!(
+            quota_change(&next, &base),
+            (true, true),
+            "removing metadata also keeps navigation"
+        );
+        assert_eq!(quota_change(&next, &next), (false, false));
+        next.geometry.side_margin += 1.0;
+        assert_eq!(
+            quota_change(&base, &next),
+            (true, false),
+            "a structural change is not hidden by quota metadata"
+        );
+    }
+}
+
+#[test]
+fn google_quota_expiry_depends_on_facts() {
+    use eon_workspace_protocol::v44::{
+        GoogleQuota, GoogleQuotaState, QuotaFailure, QuotaFailureReason, QuotaWindow,
+    };
+    let mut snapshot = quit_snapshot();
+    assert!(!has_quota(&snapshot));
+    snapshot.google_quota_failure = Some(QuotaFailure {
+        at: 1_000_000,
+        reason: QuotaFailureReason::Start,
+    });
+    assert!(
+        !has_quota(&snapshot),
+        "failure alone has no displayed quota to retire"
+    );
+    snapshot.google_quota = Some(GoogleQuota {
+        state: GoogleQuotaState::Fresh,
+        observed_at: 1_000_000,
+        windows: vec![QuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: 50,
+            resets_at: None,
+            scope: Some("Group".into()),
+        }],
+    });
+    assert!(
+        has_quota(&snapshot),
+        "Google-only presentation must expire in both application loss paths"
+    );
+}

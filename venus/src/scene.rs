@@ -3338,8 +3338,7 @@ fn quota_text(
             CodexQuotaState::Unknown => "permission: unknown.",
         }
     );
-    // Hover lists one fact per line and leaves out what the chip shows: the remaining share
-    // and the time into the window.
+    // Hover omits the chip's time position; Google repeats remaining share for its model-group readout.
     let mut tooltip = format!("{name} quota");
     if let Some(window) = window {
         let duration = quota_duration(window.duration_minutes);
@@ -3390,8 +3389,8 @@ fn quota_text(
             // clock, rather than state it in UTC.
             (Some(_), None) => {
                 if provider == QuotaProvider::Google {
-                    tooltip.push_str("\nReset time available");
-                    description.push_str(" Reset time available.");
+                    tooltip.push_str("\nReset available; local time unavailable");
+                    description.push_str(" Reset available; local time unavailable.");
                 }
             }
             (None, _) => {
@@ -3971,7 +3970,10 @@ impl WorkspaceScene {
                 rect,
             });
         }
-        for quota in &mut quotas {
+        for quota in quotas
+            .iter_mut()
+            .filter(|quota| quota.provider != QuotaProvider::Google)
+        {
             quota.logo.top =
                 pill_band.start + (pill_band.end - pill_band.start - quota.logo.height) / 2.0;
         }
@@ -4147,7 +4149,9 @@ impl WorkspaceScene {
             } else {
                 for quota in quotas.iter_mut().filter(|quota| quota.item == *item) {
                     quota.rect.left = left;
-                    quota.logo.left = left + metrics.padding;
+                    if quota.provider != QuotaProvider::Google {
+                        quota.logo.left = left + metrics.padding;
+                    }
                     left = quota.rect.right();
                 }
             }

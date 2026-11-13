@@ -260,7 +260,8 @@ bar's left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
 list above. The list applies when a window next opens, reopens or reloads.
-It also accepts opt-in exact Google scope/window selectors for text chips. See [Agent quota](#agent-quota) for grammar and examples.
+It also accepts opt-in exact Google scope/window selectors for text chips.
+See [Agent quota](#agent-quota) for grammar and examples.
 Unknown names are ignored with a warning; repeated known names are a
 configuration error. Narrow windows hide the Eon logo first, then disk, RAM
 and CPU, whatever the order, then quota chips one by
