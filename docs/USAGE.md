@@ -125,11 +125,18 @@ object (EON-C41). It checks only when you run it.
 - A tag or commit stays pinned and reports how to follow `main` instead.
 - Home Manager, NixOS and nix-darwin installs are updated through their own
   configuration, which the check names.
-- The check knows the installation from the path that started `eon`, such as
-  `~/.nix-profile/bin/eon`. Inside an Eon terminal, `eon` is that window's
-  own build, and `nix run` or a local build belongs to no installation; there,
-  name it: `eon update --check --profile ~/.nix-profile --entry eon`, with
-  absolute paths.
+- The check knows the installation from its launcher, such as
+  `~/.nix-profile/bin/eon`. Inside an Eon terminal, package updates use the
+  first external `eon` on PATH, skipping Eon's internal command directories
+  and empty or relative PATH entries. That installation may select a newer
+  build than the window. Explicit CLI or configured targets take precedence.
+  Ambiguous ownership still refuses and names the candidate entries.
+- If PATH has no external launcher, configure the update target or name it:
+  `eon update --check --profile ~/.nix-profile --entry eon`, with absolute
+  paths. This can happen with macOS Dock launches because launchd's PATH may
+  omit your profile's `bin`; adding its absolute directory to PATH is another
+  option. This route has no native macOS installed proof. `nix run` and local
+  builds still belong to no installation unless you name a managed target.
 
 For an installer-owned Linux prefix, use `eon update --check --prefix /ABS/PREFIX`
 or run the selected prefix's `bin/eon update --check`. This discovers published
@@ -931,8 +938,8 @@ line points agents to `eon --skill`.
 | `eon focus PANE\|left\|right\|up\|down [--json]` | Focus pane PANE, switching to its tab, or traverse the session; switch tabs with `eon tab switch` |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon report` | Print a Markdown bug report for this window, with paths under your home as `~` and long environment values (8 bytes or more) removed, to read and then paste into the bug form; see [Troubleshooting and reporting](#troubleshooting-and-reporting) |
-| `eon update --install [--yes] [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Update one eligible Nix entry on its original ref or one managed Linux prefix through its bundled installer for fresh launches; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
-| `eon update --check [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Report this installation's owner, source and installed build, whether an update exists, and whether Eon may install it, without changing anything; see [Update](#update) |
+| `eon update --install [--yes] [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Update one eligible Nix entry on its original ref or one managed Linux prefix through its bundled installer for fresh launches; inside a window, untargeted package updates use external PATH's `eon`; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
+| `eon update --check [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Report the installation's owner, source, installed build, update availability and capability without changes; inside a window, untargeted package updates use external PATH's `eon`; see [Update](#update) |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
 | `eon config dir` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |

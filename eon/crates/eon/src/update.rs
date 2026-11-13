@@ -12,7 +12,11 @@ use std::{
     io::{IsTerminal, Read, Write},
     os::{
         fd::AsRawFd,
-        unix::{ffi::OsStrExt, fs::OpenOptionsExt, process::CommandExt},
+        unix::{
+            ffi::OsStrExt,
+            fs::{OpenOptionsExt, PermissionsExt},
+            process::CommandExt,
+        },
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
@@ -31,6 +35,26 @@ const API: &str = "https://api.github.com/repos/Yazelix/eon";
 const RECEIPT: &str = "share/eon-source-receipt.json";
 /// The words that select a package mode; bare `eon update` is live adoption's.
 const PACKAGE_WORDS: [&str; 5] = ["--check", "--install", "--profile", "--entry", "--prefix"];
+const HANDOFF_MARKER: &str = "EON_UPDATE_HANDOFF";
+const BUILD_LOCATORS: [&str; 17] = [
+    "EON_ORBIT",
+    "EON_VENUS",
+    "EON_CODEXBAR",
+    "EON_ANIMA",
+    "EON_CURL",
+    "EON_ICON",
+    "EON_NU",
+    "EON_BASH",
+    "EON_YAZI",
+    "EON_FILES_CONFIG",
+    "EON_YA",
+    "EON_LAZYGIT",
+    "EON_NU_VENDOR_AUTOLOAD",
+    "EON_BASH_RC",
+    "EON_SESSION_BIN",
+    "EON_HX",
+    "EON_INSTALLER",
+];
 /// How long `nix profile list` may take: a fixed safety budget for a local read.
 const NIX_LIMIT: Duration = Duration::from_secs(30);
 /// curl's own limit is 30 s; this bounds a curl that ignores it.
@@ -59,6 +83,35 @@ pub(crate) fn wanted(arguments: &[OsString]) -> bool {
 /// Runs `eon update` from `arguments` (the whole command line), prints the
 /// result and returns the exit status.
 pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime::Defaults) -> u8 {
+    let mut places = Places::of_this_process(&arguments[0]);
+    if let Err((code, message)) = handoff(arguments, &places) {
+        let request = parse(&arguments[2..]);
+        if let Err(message) = &request.selection {
+            return print_report(
+                &Report::invalid(request.operation, message.clone()),
+                request.json,
+            );
+        }
+        let mut report = Report::invalid(request.operation, message.clone());
+        report.error.as_mut().unwrap().code = code;
+        if code == "install-ambiguous" {
+            report.invoked = Some(invoked);
+            report.owner = Some(message.clone());
+            report.availability = unknown(Some(code));
+            report.capability = Capability {
+                install: false,
+                reason: Some(code),
+                next_step: Some(message),
+            };
+            if request.operation == Some("install") {
+                report.outcome = "refused";
+            } else {
+                report.outcome = "checked";
+                report.error = None;
+            }
+        }
+        return print_report(&report, request.json);
+    }
     let mut request = parse(&arguments[2..]);
     let mut config_error = None;
     let mut signers = None;
@@ -78,7 +131,6 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
             Err(message) => config_error = Some(message),
         }
     }
-    let mut places = Places::of_this_process(&arguments[0]);
     places.signers = signers;
     let system = System {
         version: env!("CARGO_PKG_VERSION"),
@@ -132,7 +184,11 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
         },
         Err(message) => Report::invalid(request.operation, message.clone()),
     };
-    if request.json {
+    print_report(&report, request.json)
+}
+
+fn print_report(report: &Report, json: bool) -> u8 {
+    if json {
         println!("{}", report.json());
         // The object has no place for why discovery could not decide.
         if report.capability.reason == Some("install-ambiguous") {
@@ -148,6 +204,86 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
         eprintln!("eon update: {}", error.message);
     }
     report.status()
+}
+
+/// Maintenance follows the person's external PATH; workspace commands keep the window's build.
+fn handoff(arguments: &[OsString], places: &Places) -> Result<(), Trouble> {
+    let Some(bin) = env::var_os("EON_SESSION_BIN")
+        .map(PathBuf::from)
+        .filter(|bin| bin.is_absolute())
+    else {
+        return Ok(());
+    };
+    if !places
+        .launcher
+        .as_deref()
+        .is_some_and(|launcher| through(launcher, &bin))
+        || arguments[2..].iter().any(|word| {
+            ["--profile", "--entry", "--prefix"]
+                .iter()
+                .any(|target| word == target)
+        })
+    {
+        return Ok(());
+    }
+    if eon_runtime::update_target_configured()
+        .map_err(|message| ("invalid-configuration", message))?
+    {
+        return Ok(());
+    }
+    let manual = "Configure an update target, name --profile /ABS/PROFILE --entry ENTRY or --prefix /ABS/PREFIX, or add its absolute launcher directory to PATH";
+    if env::var_os(HANDOFF_MARKER).is_some() {
+        return Err((
+            "install-ambiguous",
+            format!("{HANDOFF_MARKER} is set; refusing a second update handoff. {manual}."),
+        ));
+    }
+    let launcher = env::var_os("PATH")
+        .and_then(|path| external_launcher(&path))
+        .ok_or_else(|| {
+            (
+                "install-ambiguous",
+                format!("No external eon launcher on PATH. {manual}."),
+            )
+        })?;
+    let mut command = Command::new(&launcher);
+    command.args(&arguments[1..]).env(HANDOFF_MARKER, "1");
+    for name in BUILD_LOCATORS {
+        command.env_remove(name);
+    }
+    let error = command.exec();
+    Err((
+        "selection-failed",
+        format!("cannot run external eon {}: {error}", launcher.display()),
+    ))
+}
+
+fn external_launcher(path: &OsStr) -> Option<PathBuf> {
+    env::split_paths(path)
+        .filter(|directory| directory.is_absolute())
+        .map(|directory| directory.join("eon"))
+        .find(|launcher| {
+            fs::metadata(launcher)
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+                && !internal_launcher(launcher)
+        })
+}
+
+fn internal_launcher(launcher: &Path) -> bool {
+    let mut hop = launcher.to_path_buf();
+    for _ in 0..32 {
+        if hop.ancestors().skip(1).any(|directory| {
+            fs::canonicalize(directory)
+                .is_ok_and(|directory| directory.ends_with("libexec/eon/bin"))
+        }) {
+            return true;
+        }
+        let (Ok(target), Some(directory)) = (fs::read_link(&hop), hop.parent()) else {
+            return false;
+        };
+        hop = directory.join(target);
+    }
+    true
 }
 
 /// The EON-C41 `install_kind` of this `eon`, started as `program`, by local inspection
@@ -3517,6 +3653,34 @@ mod tests {
     }
 
     #[test]
+    fn maintenance_path_distinguishes_internal_aliases_from_a_same_build_profile() {
+        let tree = Tree::new();
+        let product = tree.package("eon", receipt(Some(OLD), BUILD));
+        let profile = tree.home_profile(&product);
+        fs::set_permissions(product.join("bin/eon"), fs::Permissions::from_mode(0o755)).unwrap();
+        let internal = product.join("libexec/eon/bin");
+        let directory_alias = tree.0.join("directory-alias");
+        symlink(&internal, &directory_alias).unwrap();
+        let file_alias = tree.0.join("file-alias");
+        fs::create_dir(&file_alias).unwrap();
+        symlink(internal.join("eon"), file_alias.join("eon")).unwrap();
+        let non_executable = tree.0.join("non-executable");
+        fs::create_dir(&non_executable).unwrap();
+        fs::write(non_executable.join("eon"), "").unwrap();
+        let directories = [
+            PathBuf::new(),
+            PathBuf::from("relative"),
+            directory_alias,
+            file_alias,
+            non_executable,
+        ];
+        let rejected = env::join_paths(&directories).unwrap();
+        assert_eq!(external_launcher(&rejected), None);
+        let path = env::join_paths(directories.into_iter().chain([profile.join("bin")])).unwrap();
+        assert_eq!(external_launcher(&path), Some(profile.join("bin/eon")));
+    }
+
+    #[test]
     fn conflicting_owners_a_windows_own_build_and_no_home_are_ambiguous() {
         let ambiguous = |places: &Places, fake: &Fake, why: &str| {
             let report = check(None, invoked(), places, fake, at(0));
@@ -3526,6 +3690,7 @@ mod tests {
             let owner = report.owner.unwrap();
             assert!(owner.contains(why), "{owner}");
             assert!(fake.requests.borrow().is_empty());
+            owner
         };
         // Two entries of one profile install this eon.
         let tree = Tree::new();
@@ -3552,7 +3717,9 @@ mod tests {
                 ),
             ]),
         )]);
-        ambiguous(&places, &fake, "several installations");
+        let candidates = ambiguous(&places, &fake, "several installations");
+        assert!(candidates.contains(&format!("{} entry eon;", profile.display())));
+        assert!(candidates.contains(&format!("{} entry eon-1", profile.display())));
         // The profile started it, yet lists no entry that installs it.
         fake.listings = HashMap::from([(profile, listing(&[]))]);
         ambiguous(&places, &fake, "none of its entries");

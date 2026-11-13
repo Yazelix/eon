@@ -115,6 +115,30 @@ pub fn update_target(defaults: &Defaults, explicit: bool) -> Result<UpdateSettin
         .resolve(explicit)
 }
 
+/// Whether any installation target key is present, before another build validates settings.
+pub fn update_target_configured() -> Result<bool, String> {
+    if ["EON_CONFIG_HOME", "XDG_CONFIG_HOME", "HOME"]
+        .iter()
+        .all(|name| nonempty_environment_path(name).is_none())
+    {
+        return Ok(false);
+    }
+    let path = super::supervisor::configuration_directory()?.join(CONFIG_FILE);
+    update_target_present(&read_configuration(&path)?)
+        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))
+}
+
+fn update_target_present(source: &str) -> Result<bool, String> {
+    let table: toml::Table = toml::from_str(source).map_err(|error| error.to_string())?;
+    let Some(updates) = table.get("updates") else {
+        return Ok(false);
+    };
+    let updates = updates.as_table().ok_or("updates must be a table")?;
+    Ok(["nix_profile", "nix_entry", "bundle_prefix"]
+        .iter()
+        .any(|key| updates.contains_key(*key)))
+}
+
 impl UpdateSettings {
     fn resolve(mut self, explicit: bool) -> Result<Self, String> {
         let absolute = |path: &Path| {
@@ -3485,6 +3509,28 @@ mod tests {
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn update_target_probe_leaves_other_settings_for_the_receiving_build() {
+        for source in [
+            "",
+            "[updates]",
+            "[terminal]\nfont_size = 'future'",
+            "[updates]\nallowed_signers = 7",
+        ] {
+            assert!(!super::update_target_present(source).unwrap(), "{source}");
+        }
+        for source in [
+            "[updates]\nnix_entry = ''",
+            "[updates]\nnix_profile = false",
+            "[updates]\nbundle_prefix = []",
+        ] {
+            assert!(super::update_target_present(source).unwrap(), "{source}");
+        }
+        for source in ["[updates", "updates = 5", "updates = []"] {
+            assert!(super::update_target_present(source).is_err(), "{source}");
+        }
     }
 
     #[test]

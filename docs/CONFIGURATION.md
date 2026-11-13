@@ -1048,7 +1048,11 @@ your config directory or in a repository's `.helix` directory.
 `updates.nix_profile` and `updates.nix_entry` are unset by default. Set both to
 choose the absolute Nix user-profile path and its exact entry name for
 `eon update --check` and `--install`. A CLI `--profile ABS --entry NAME`
-replaces this pair. With neither, Eon discovers only the invoking installation.
+replaces this pair. With neither, Eon discovers the invoking installation;
+inside an Eon terminal, package update modes first run the external `eon`
+selected by absolute PATH entries, skipping Eon's internal command directories.
+That CLI validates its own installation, even when it selects a newer build
+than the window. Without an external launcher, configure or name the target.
 An incomplete pair, a relative profile, a `nix_profile` path containing `..`,
 or an empty name fails without mutation.
 `updates.bundle_prefix`, also unset, selects an existing absolute installer-owned

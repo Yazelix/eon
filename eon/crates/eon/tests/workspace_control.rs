@@ -173,6 +173,14 @@ fn temporary_directory() -> PathBuf {
     path
 }
 
+fn bash_executable() -> PathBuf {
+    // Nix builders supply Bash on PATH without /usr/bin/env.
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .filter_map(|directory| fs::canonicalize(directory.join("bash")).ok())
+        .find(|path| path.is_file())
+        .expect("the test environment supplies Bash")
+}
+
 fn executable(path: &Path, source: impl AsRef<[u8]>) {
     // A concurrent test's forked child keeps this process's descriptors until it execs, and
     // exec fails with ETXTBSY while any writer is open, so a child process writes the script.
@@ -4402,9 +4410,163 @@ fn a_failing_test_closes_its_terminals_before_reaping_their_child() {
 }
 
 #[test]
+fn update_handoff_preserves_the_process_boundary_and_bounds_script_recursion() {
+    let root = temporary_directory();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let bash = bash_executable();
+    let internal = root.join("window/libexec/eon/bin");
+    fs::create_dir_all(&internal).unwrap();
+    executable(
+        &internal.join("eon"),
+        format!(
+            "#!{}\nexport EON_SESSION_BIN='{}'\nexec -a \"$0\" '{}' \"$@\"\n",
+            bash.display(),
+            internal.display(),
+            binary.display(),
+        ),
+    );
+    let external = root.join("external");
+    fs::create_dir(&external).unwrap();
+    let config = root.join("config");
+    fs::create_dir(&config).unwrap();
+    let argv = root.join("argv");
+    let environment = root.join("environment");
+    executable(
+        &external.join("eon"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nenv -0 > '{}'\ncat\nexit 7\n",
+            argv.display(),
+            environment.display(),
+        ),
+    );
+    let path = std::env::join_paths(
+        [internal.clone(), external.clone()]
+            .into_iter()
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let command = || {
+        let mut command = eon_command(&internal.join("eon"));
+        command.env("PATH", &path).env("EON_CONFIG_HOME", &config);
+        command
+    };
+    // Only target presence is the old build's concern; the receiving CLI validates the rest.
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nfont_size = 'future-value'\n",
+    )
+    .unwrap();
+    let locators = [
+        "EON_ORBIT",
+        "EON_VENUS",
+        "EON_CODEXBAR",
+        "EON_ANIMA",
+        "EON_CURL",
+        "EON_ICON",
+        "EON_NU",
+        "EON_BASH",
+        "EON_YAZI",
+        "EON_FILES_CONFIG",
+        "EON_YA",
+        "EON_LAZYGIT",
+        "EON_NU_VENDOR_AUTOLOAD",
+        "EON_BASH_RC",
+        "EON_SESSION_BIN",
+        "EON_HX",
+        "EON_INSTALLER",
+    ];
+    let mut cmd = command();
+    cmd.args(["update", "--check", "--json", "--future-option"])
+        .envs(locators.iter().map(|name| (*name, "/window-build")))
+        .env("EON_TERMINAL", "context-only")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"external-build-result\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(7), "{output:?}");
+    assert_eq!(output.stdout, b"external-build-result\n");
+    assert_eq!(
+        fs::read_to_string(&argv).unwrap(),
+        "update\n--check\n--json\n--future-option\n"
+    );
+    let environment = fs::read(&environment).unwrap();
+    let variables: Vec<_> = environment.split(|byte| *byte == 0).collect();
+    for name in locators {
+        let prefix = format!("{name}=");
+        assert!(
+            !variables
+                .iter()
+                .any(|entry| entry.starts_with(prefix.as_bytes())),
+            "{name}"
+        );
+    }
+    assert!(variables.contains(&b"EON_UPDATE_HANDOFF=1".as_slice()));
+    assert!(variables.contains(&b"EON_TERMINAL=context-only".as_slice()));
+    assert!(variables.contains(&format!("EON_CONFIG_HOME={}", config.display()).as_bytes()));
+    fs::remove_file(&argv).unwrap();
+
+    // A present (even invalid) target prevents handoff and keeps existing validation.
+    fs::write(
+        config.join("config.toml"),
+        "[updates]\nnix_entry = 'incomplete'\n",
+    )
+    .unwrap();
+    let output = bounded_output(command().args(["update", "--check", "--json"]));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["error"]["code"], "invalid-configuration");
+    assert!(!argv.exists());
+    fs::remove_file(config.join("config.toml")).unwrap();
+    let output = bounded_output(command().args([
+        "update",
+        "--check",
+        "--json",
+        "--profile",
+        root.join("missing").to_str().unwrap(),
+        "--entry",
+        "eon",
+    ]));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["error"]["code"], "unknown-target");
+    assert!(!argv.exists());
+
+    let output = bounded_output(
+        eon_command(binary)
+            .arg0("eon")
+            .args(["update", "--check", "--json"])
+            .env("PATH", &path)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_SESSION_BIN", &internal),
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["capability"]["reason"], "install-ambiguous");
+    assert!(
+        !argv.exists(),
+        "an unrecoverable argv[0] authorized handoff"
+    );
+
+    // A wrapper may invoke bare eon again; the original internal wrapper resets its bin locator.
+    executable(&external.join("eon"), "#!/bin/sh\nexec eon \"$@\"\n");
+    let output = bounded_output(command().args(["update", "--check", "--json"]));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["capability"]["reason"], "install-ambiguous",
+        "{output:?}"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("EON_UPDATE_HANDOFF"));
+}
+
+#[test]
 fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let bash = bash_executable();
     let platform = if cfg!(target_os = "macos") {
         "aarch64-darwin"
     } else {
@@ -4592,6 +4754,71 @@ fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it()
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(report(&output)["install_kind"], "unmanaged");
+
+    // A window keeps its internal launcher after its profile selects another package.
+    // Wrappers retain argv[0] and supply their own build paths, as the package does.
+    let retained = root.join("retained");
+    let internal = retained.join("libexec/eon/bin");
+    fs::create_dir_all(&internal).unwrap();
+    fs::create_dir_all(retained.join("bin")).unwrap();
+    executable(
+        &retained.join("bin/.eon-wrapped"),
+        fs::read(binary).unwrap(),
+    );
+    symlink("../../../bin/eon", internal.join("eon")).unwrap();
+    let wrapper = |package: &Path, session_bin: &Path| {
+        executable(
+            &package.join("bin/eon"),
+            format!(
+                "#!{}\nexport EON_SESSION_BIN='{}' EON_CURL='{}'\nexec -a \"$0\" '{}' \"$@\"\n",
+                bash.display(),
+                session_bin.display(),
+                curl.display(),
+                package.join("bin/.eon-wrapped").display(),
+            ),
+        );
+    };
+    wrapper(&retained, &internal);
+    fs::rename(package.join("bin/eon"), package.join("bin/.eon-wrapped")).unwrap();
+    wrapper(&package, &package.join("libexec/eon/bin"));
+    let alias = root.join("internal-alias");
+    symlink(&internal, &alias).unwrap();
+    let handoff_path = std::env::join_paths(
+        [
+            PathBuf::new(),
+            PathBuf::from("relative"),
+            alias,
+            internal.clone(),
+            root.join("home/.nix-profile/bin"),
+        ]
+        .into_iter()
+        .chain(path.iter().cloned()),
+    )
+    .unwrap();
+    fs::create_dir(root.join("relative")).unwrap();
+    for directory in [&root, &root.join("relative")] {
+        executable(&directory.join("eon"), "#!/bin/sh\nexit 77\n");
+    }
+    let output = eon_command(&internal.join("eon"))
+        .args(["update", "--check", "--json"])
+        .env("PATH", &handoff_path)
+        .env("HOME", root.join("home"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("EON_CONFIG_HOME", root.join("absent-config"))
+        .env("USER", "eon-update-test-nobody")
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let handed_off = report(&output);
+    assert_eq!(handed_off["target"], discovered["target"], "{output:?}");
+    assert_eq!(handed_off["installed"]["build"], build);
+    assert_eq!(handed_off["availability"]["state"], "available");
+    assert_eq!(
+        fs::read_link(&profile).unwrap(),
+        Path::new("profile-1-link")
+    );
 
     // Install binds consent to the exact name and source and reads back the manager result.
     let selected_b = root.join("store/eon-b");
@@ -19986,6 +20213,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
 fn update_direct_checks_and_installs_only_through_the_owned_payload_helper() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let bash = bash_executable();
     let versions = Command::new(binary).arg("versions").output().unwrap();
     let text = stdout(&versions);
     let identity: Vec<_> = text.lines().next().unwrap().split_whitespace().collect();
@@ -20087,6 +20315,55 @@ fn update_direct_checks_and_installs_only_through_the_owned_payload_helper() {
     assert!(stdout(&output).contains("verifies no signature or archive bytes"));
     assert_eq!(fs::read_link(prefix.join("current")).unwrap(), before);
     assert_eq!(fs::read_dir(prefix.join("versions")).unwrap().count(), 1);
+
+    // A window's package helper must come from the selected external payload.
+    let internal = root.join("window/libexec/eon/bin");
+    fs::create_dir_all(&internal).unwrap();
+    executable(
+        &internal.join("eon"),
+        format!(
+            "#!{}\nexport EON_SESSION_BIN='{}'\nexec -a \"$0\" '{}' \"$@\"\n",
+            bash.display(),
+            internal.display(),
+            binary.display(),
+        ),
+    );
+    fs::rename(package.join("bin/eon"), package.join("bin/.eon-wrapped")).unwrap();
+    let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+    executable(
+        &package.join("bin/eon"),
+        format!(
+            "#!{}\nexport EON_CURL={} EON_INSTALLER={}\nexec -a \"$0\" {} \"$@\"\n",
+            bash.display(),
+            quote(&curl),
+            quote(&installer),
+            quote(&package.join("bin/.eon-wrapped")),
+        ),
+    );
+    let path = std::env::join_paths(
+        [internal.clone(), prefix.join("bin")]
+            .into_iter()
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let output = bounded_output(
+        eon_command(&internal.join("eon"))
+            .args(["update", "--check", "--json"])
+            .env("PATH", path)
+            .env("EON_CONFIG_HOME", root.join("absent-config"))
+            .env("EON_UPDATE_FIXTURE", &metadata)
+            .env("EON_INSTALLER", "/window-wrong-installer"),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"));
+    assert_eq!(report["target"], serde_json::json!({"prefix":prefix}));
+    assert_eq!(
+        report["capability"]["reason"], "trust-unconfigured",
+        "{output:?}"
+    );
+    fs::remove_file(package.join("bin/eon")).unwrap();
+    fs::rename(package.join("bin/.eon-wrapped"), package.join("bin/eon")).unwrap();
 
     let config = root.join("direct-config");
     fs::create_dir(&config).unwrap();

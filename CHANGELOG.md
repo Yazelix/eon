@@ -13,6 +13,11 @@ installation, and proven contract changes.
 Eon remains in alpha. v0.2.0 is the planned first beta; its version and stage
 switch requires explicit approval of the release cut (`eon-igae.9`).
 
+- In-window package updates use external PATH's installed `eon` when no
+  update target is specified, so a window's pinned build no longer prevents
+  discovery after its profile advances. Ownership and consent checks remain
+  in force; no external launcher gives target setup guidance (`eon-jbshk`).
+
 - The Editor key starts Neovim with an Eon-owned listener. `[editor] kind`
   defaults to `"auto"`, recognizing the `nvim` basename; foreground wrappers
   opt in with `"neovim"`. Neovim Files and `eon edit` still open new panes

@@ -6483,6 +6483,9 @@ reference to existing pane creation, not by the unapproved targeting beads.
   are implemented (`eon-update-button-f10d1.7`).
   Amended on 2026-11-11 (approved by Lucca, relayed by eon-overseer) by
   `eon-igae.17.4`: Nix profile updates retain `default` or `no-helix`.
+  Amended on 2026-11-13 (approved by eon-overseer under Lucca's delegation)
+  by `eon-jbshk`: untargeted in-window package maintenance uses external
+  PATH's `eon`, with a one-hop guard and independent build locators.
 - **Consumer:** A person or local agent acting as that person, using full
   Eon's product CLI or its future Commands/menu action to inspect or update
   one installation. eonbase is outside this scope.
@@ -6510,18 +6513,51 @@ reference to existing pane creation, not by the unapproved targeting beads.
     manager output. Orbit retains terminal authority.
   - **One target.** An explicit CLI selector replaces the configured target
     for that operation. With no CLI selector, use the complete configured
-    target, else discover only from the validated invoking installation's
-    external launcher/selector chain and, for Nix, its selected/default user
-    profile. Do not scan every profile or the store. Automatic discovery
-    requires exactly one matching owner and entry with no conflicting
-    declarative ownership evidence. Matching a store output, version or build
-    alone never establishes that owner or a channel. An old terminal's pinned
-    executable does not authorize choosing a similarly named newer install.
-    Discovery proceeds only when the invoked executable resolves through the
-    selected launcher or profile entry; otherwise refuse `install-ambiguous`.
-    An explicit selector can address a different supported installation, but
-    never overrides its ownership or source restrictions. Display the exact
-    profile and entry, or prefix, before consent.
+    target. With neither, package update modes invoked through the internal
+    command directory identified by the build-supplied absolute
+    `EON_SESSION_BIN`, including a symlink chain through that directory, run
+    through the first external `eon` on inherited PATH. Consider only absolute
+    PATH directories whose `eon` resolves to an executable regular file. Omit
+    candidates whose directory or a symlink hop passes through a directory
+    canonicalizing to a build's `libexec/eon/bin`; comparing resolved
+    executable files alone does not distinguish an internal launcher from a
+    profile selecting that build. Before handoff, inspect only CLI
+    target-selector presence and configured target-key presence. A present
+    target key keeps ordinary target validation; A missing configuration file
+    sets no target; an unreadable file, malformed TOML or a non-table
+    `updates` refuses `invalid-configuration`. The receiving CLI performs full
+    argument and configuration validation. Set `EON_UPDATE_HANDOFF` on
+    handoff; a process seeing that marker, at any value, refuses another
+    handoff with `install-ambiguous`. Clear every `EON_*` variable the
+    packaged Eon wrapper sets, including `EON_SESSION_BIN` and
+    `EON_INSTALLER`, while preserving PATH, user configuration/trust settings
+    and window/terminal context. The receiving package supplies its own
+    locators; an unwrapped CLI cannot borrow the window build's helpers.
+    Handoff preserves arguments, standard streams and exit status and does not
+    address or replace a running window. A missing external launcher refuses
+    `install-ambiguous` with guidance to configure or name a target or put its
+    launcher directory on PATH; an exec failure is `selection-failed`, stage
+    `resolve`. Never try a later launcher to bypass an ownership, source or
+    installation refusal. Inside a window, package maintenance targets the
+    installation selected by the person's external PATH, as in any terminal,
+    even if that installation selects a newer build. It need not be the
+    window's original launcher. A similar name, version or store output never
+    establishes installation ownership. Dock/launchd PATH may contain no
+    external launcher; this handoff does not promise discovery outside PATH or
+    establish macOS installed proof. Otherwise, and after that handoff,
+    discover only from the validated invoking installation's external
+    launcher/selector chain and, for Nix, its selected/default user profile.
+    Do not scan every profile or the store. Automatic discovery requires
+    exactly one matching owner and entry with no conflicting declarative
+    ownership evidence. Several owning candidates refuse `install-ambiguous`,
+    naming their profiles and entries or managers in human output and
+    JSON-mode diagnostics. Matching a store output, version or build alone
+    never establishes that owner or a channel. Discovery proceeds only when
+    the executable performing it resolves through the selected launcher or
+    profile entry; otherwise refuse `install-ambiguous`. An explicit selector
+    can address a different supported installation, but never overrides its
+    ownership or source restrictions. Display the exact profile and entry, or
+    prefix, before consent.
   - **Check.** Inspect without selecting a package, creating an installation,
     changing configuration or changing live work. Report the owner and source,
     invoked and installed builds, contextual running build when readable,

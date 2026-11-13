@@ -30,7 +30,7 @@ pub use generation::current_generation as build_identity;
 pub use managed_environment::{
     BarLoad, Defaults, EditorKind, EditorOpenIn, ManagedPrograms, PaddingColor, PanelHeading,
     PopupCatalog, PopupCommand, PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess,
-    TerminalConfig, UpdateSettings, update_target,
+    TerminalConfig, UpdateSettings, update_target, update_target_configured,
 };
 pub use report::{ReportFacts, report_facts};
 pub use slots::{SlotClass, SlotPolicy};
