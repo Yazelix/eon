@@ -7,6 +7,7 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
+rmp = "=0.8.15"
 eon-workspace-protocol = { path = "../eon-workspace-protocol" }
 libc = "=0.2.189"
 orbit-protocol = { path = "../../../orbit/crates/protocol" }

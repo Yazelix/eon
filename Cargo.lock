@@ -769,6 +769,7 @@ dependencies = [
  "eon-workspace-protocol",
  "libc",
  "orbit-protocol",
+ "rmp",
  "serde_json",
 ]
 
@@ -795,6 +796,7 @@ dependencies = [
  "eon-workspace-protocol",
  "libc",
  "orbit-protocol",
+ "rmp",
  "rustix 1.1.4",
  "serde",
  "serde_json",
@@ -2221,6 +2223,15 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "roxmltree"

@@ -33,6 +33,16 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   listener metadata refuses file routing
   after supervisor recovery; save your work and restart that Editor popup.
   Eon does not restart it automatically (`eon-xodrj.6.2.1`).
+- Files and `eon edit` open files in the owned Neovim Editor popup, retaining
+  its process and unsaved buffers. Reopening a buffer never reloads it;
+  `FILE:LINE[:COL]` uses native Neovim byte columns, with literal filenames
+  taking precedence. `kind = "auto"` recognizes `nvim`; foreground wrappers
+  opt in with `"neovim"`. Popup prefixes cannot preselect another editing
+  target; pane opt-out remains available. Refused or uncertain
+  requests never start a second editor; timeout advice names the configured
+  Editor key for possible hidden prompts. Unsupported listener metadata after
+  recovery requires saving work and restarting only that Editor popup; Eon
+  does not restart it automatically (`eon-xodrj.6.2.1`, `eon-xodrj.6.2.2`).
 
 - Attention badges have no backing square on translucent rows; a thin glyph
   outline appears only where colour adaptation cannot reach 3:1. Sidebar and

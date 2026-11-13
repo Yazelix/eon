@@ -1409,14 +1409,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
-- **Neovim S1 scope (`eon-xodrj.6.2.1`):** The approved eon-xodrj.6.1
-  amendments B/C below cover Editor key launch and versioned listener
-  ownership. Neovim Files and `eon edit` still use the ordinary pane route,
-  including with a live recorded Neovim listener after configuration changes.
-  Neovim initial positions and acknowledged file reuse are gated on
-  `eon-xodrj.6.2.2` (S2); amendment A remains for that slice. Existing Helix
-  proof does not prove Neovim behavior. Approval: eon-overseer under Lucca's
-  delegation, recorded on eon-xodrj.6.1 on 2026-11-12.
+- **Neovim amendment (`eon-xodrj.6.2`):** EON-C10 amendments A-C were
+  approved by eon-overseer under Lucca's delegation on 2026-11-12, recorded
+  on eon-xodrj.6.1. S1 owns listener launch/metadata; S2 owns file routing,
+  positions and acknowledged reuse. Existing Helix proof covers Helix only;
+  Neovim proof is recorded separately in eon-xodrj.6.2.2.
 
 - **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer, in
   `eon-g3vdz` / `eon-l4e7s`: startup failures report stage observations,
@@ -1654,33 +1651,60 @@ names its socket. CLI JSON names a session `session` and a terminal
     An `eon` run by path, or put first by a shell or script, is that build's.
   - `eon edit [--json] -- FILE` opens FILE in the configured editor. A relative
     FILE resolves against the caller's working directory. With `[editor] open_in =
-    "popup"` (the default), an enabled Editor popup, and the packaged Helix as
-    `[editor] command`, FILE opens in the target tab's Editor popup if there is
-    no live Editor instance or its live instance was started with Eon's
-    packaged-Helix listener. When an Editor instance started without that
-    listener is live, or `[popups.editor] enabled = false`, FILE opens in a new
-    pane using the configured editor, and the existing Editor instance and its
-    buffers remain untouched. On the popup route, Editor shows: when its editor
-    is live, FILE opens there as a buffer through its private socket, and its
-    other buffers, unsaved edits included, stay; otherwise a fresh Editor popup
-    starts with FILE. FILE reaches Helix unchanged, so Helix's `FILE:LINE[:COL]`
-    form applies when no file has that literal name.
-    An editor that does not answer within 1 second fails with
-    `editor-unresponsive`, one that is live but not listening fails with
-    `editor-unavailable`, and one that refuses FILE fails with `editor-rejected`;
-    each exits 1 and leaves Eon's workspace topology and selection unchanged.
-    A client timeout or a lost or invalid reply does not prove that FILE was not
-    opened; it may have opened already or open later. For a sent request, only an
-    explicit editor timeout reply guarantees that the queued open was abandoned
-    before execution and cannot run later. Eon does not retry an uncertain request
-    or start a second editor for it.
-    With `open_in = "pane"`, any other `[editor] command`, or a FILE that is a
-    directory, FILE opens in a new pane, as `pane create` would for the same
-    caller, with the tab directory as its working directory: the pane runs
-    `[editor] command` with FILE's absolute path appended as its last argument.
-    The result names the popup or pane that shows FILE. The editor's argv and
-    socket are runtime policy and do not cross EONW. EONW v43 distinguishes
-    this edit result from earlier builds that assume pane creation.
+    "popup"` (the default) and an enabled Editor popup, the recognized packaged
+    Helix or a selected Neovim command uses the target tab's Editor popup when
+    there is no live instance or its live instance has Eon's owned listener
+    marker. Neovim is selected by `kind = "neovim"`, or under `kind = "auto"`
+    when argv[0]'s basename is exactly `nvim` and its flags permit owned-listener
+    routing. This applies with or without packaged Helix. A live instance uses
+    the listener kind recorded at its start, regardless of later command or kind
+    changes. A live Editor without an owned marker uses the ordinary pane route;
+    an invalid marker fails with editor-unavailable rather than permitting fallback.
+
+    On the popup route, Editor shows: when its editor is live, FILE opens there
+    through its private socket, preserving unsaved buffers and without reloading
+    an already-loaded target buffer; otherwise a fresh Editor popup starts with
+    FILE. Reopening the same file selects its existing buffer. Different files
+    open as separate buffers. Unmodified buffers follow the editor's native
+    lifecycle, including scratch/dashboard buffers with bufhidden=wipe. Neovim
+    refuses a switch only when the current buffer is modified and the switch
+    would unload, delete or wipe it; Eon never force-reloads or discards unsaved work.
+
+    Helix receives FILE unchanged, including its native FILE:LINE[:COL] handling
+    when no file has that literal name. A fresh Helix start retains raw Unix path
+    bytes; its native-listener reuse requires UTF-8. Neovim popup paths require
+    UTF-8 before either initial launch or a remote request. For Neovim, an existing
+    literal name takes precedence over a final numeric :LINE[:COL] suffix.
+    Positions are one-based with native Neovim byte columns, zero clamps to one,
+    and positions beyond the buffer clamp to its bounds. Invalid or overflowing
+    suffixes remain literal names. Initial launch and reuse have the same meaning.
+    An exact directory uses the pane route; a Neovim popup candidate whose
+    interpreted path is a directory also uses it. Helix parsing remains unchanged.
+
+    An editor that does not answer within 1 second fails with editor-unresponsive,
+    one that is live but not listening fails with editor-unavailable, and one that
+    refuses FILE fails with editor-rejected. Each exits 1 and leaves Eon's topology
+    and selection unchanged. A client timeout or lost or invalid reply does not
+    prove that FILE was not opened: it may have opened already or open later.
+    For a sent Helix request, only its explicit native-listener timeout reply
+    guarantees the queued open was abandoned before execution and cannot run later.
+    Neovim has no cancellation acknowledgement in this exchange; its client
+    timeout leaves the outcome unknown. Eon never retries an uncertain request
+    or starts a second editor for it. A Neovim answer-timeout diagnostic says
+    Editor may be waiting for input and names its effective configured shortcut;
+    when unbound, it says no shortcut is active and names `[popups.editor] keybinding`.
+    Eon does not select or focus Editor to show that possible prompt. A valid RPC
+    refusal is editor-rejected; failures do not promise rollback of editor
+    autocommands or partial editor effects.
+
+    With open_in = "pane", a disabled Editor, a command not selected for owned-
+    listener routing, or a directory, FILE opens in a new pane as pane create
+    would for the same caller, with the tab directory as its working directory.
+    The pane runs the configured editor argv with FILE's absolute path appended
+    as its last argument, preserving raw Unix bytes. The result names the popup
+    or pane that shows FILE. Editor argv and sockets are runtime policy and do
+    not cross EONW. EONW v43 distinguishes this edit result from earlier builds
+    that assume pane creation.
   - `eon pane create [--json] -- COMMAND [ARGS...]`, run from an Eon terminal,
     opens a new pane exactly where `pane create` would for that caller, with
     the tab directory as its working directory, running COMMAND and its

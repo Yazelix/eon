@@ -1167,7 +1167,7 @@ fn configuration_metadata() -> &'static [ConfigKey] {
             ConfigKey::new(
                 "editor.open_in",
                 "string",
-                "Open in the packaged Helix Editor popup, or \"pane\" for a new pane.",
+                "Open in the Helix or Neovim Editor popup, or \"pane\" for a new pane.",
                 &["next-edit"],
             )
             .choices(&["popup","pane"]),
@@ -1321,30 +1321,35 @@ fn popup_field_owned(id: &str, field: &str, defaults: &Defaults) -> bool {
     }
 }
 
+pub(crate) fn popup_shortcut(key: &PopupKey) -> String {
+    let mut keys = Vec::new();
+    if let Some(shortcut) = key.bound() {
+        for (bit, name) in [
+            (CTRL, "Ctrl"),
+            (ALT, "Alt"),
+            (SHIFT, "Shift"),
+            (SUPER, "Super"),
+        ] {
+            if shortcut.modifiers & bit != 0 {
+                keys.push(name);
+            }
+        }
+        keys.push(
+            shortcut
+                .key
+                .strip_prefix("Key")
+                .or_else(|| shortcut.key.strip_prefix("Digit"))
+                .unwrap_or(&shortcut.key),
+        );
+    }
+    keys.join("+")
+}
+
 // Keep unset and owned keys here so metadata consumers see the complete parser surface.
 fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String> {
     let mut popups = BTreeMap::new();
     for entry in &defaults.popups.entries {
-        let mut keys = Vec::new();
-        if let Some(shortcut) = entry.shortcut.bound() {
-            for (bit, name) in [
-                (CTRL, "Ctrl"),
-                (ALT, "Alt"),
-                (SHIFT, "Shift"),
-                (SUPER, "Super"),
-            ] {
-                if shortcut.modifiers & bit != 0 {
-                    keys.push(name);
-                }
-            }
-            keys.push(
-                shortcut
-                    .key
-                    .strip_prefix("Key")
-                    .or_else(|| shortcut.key.strip_prefix("Digit"))
-                    .unwrap_or(&shortcut.key),
-            );
-        }
+        let keybinding = popup_shortcut(&entry.shortcut);
         let command = if popup_field_owned(&entry.id, "command", defaults) {
             None
         } else {
@@ -1370,7 +1375,7 @@ fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String>
             entry.id.clone(),
             PopupEntrySettings {
                 command,
-                keybinding: Some(keys.join("+")),
+                keybinding: Some(keybinding),
                 label: Some(entry.label.clone()),
                 enabled: Some(true),
                 keep_alive: Some(entry.keep_alive),
@@ -1742,26 +1747,56 @@ fn editor_from_settings(
     Ok(argv)
 }
 
-/// Resolve command and route from one config read for this edit.
+/// Resolve one edit, using a live listener before preparing a future command.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_edit(
     root: &Path,
     defaults: &Defaults,
     programs: &ManagedPrograms,
     directory: &Path,
     file: &Path,
+    live: Option<&Path>,
+    available: bool,
     log: Option<&DiagnosticLog>,
-) -> Result<super::editor::EditCommand, String> {
-    let config = read_config(root, defaults, log)?;
-    let popup = config.editor.open_in.unwrap_or(defaults.editor_open_in) == EditorOpenIn::Popup
+) -> Result<super::editor::EditCommand, eon_workspace_protocol::v43::Failure> {
+    use super::editor::{self, EditCommand, ListenerKind};
+    let command_error = |detail| eon_workspace_protocol::v43::Failure {
+        code: "edit-command".into(),
+        detail,
+    };
+    let config = read_config(root, defaults, log).map_err(command_error)?;
+    let popup = available
+        && config.editor.open_in.unwrap_or(defaults.editor_open_in) == EditorOpenIn::Popup
         && config.popups.get("editor").and_then(|popup| popup.enabled) != Some(false)
         && !file.is_dir();
-    let command = prepare_editor(config.editor, defaults, programs, directory, popup)?;
-    // Neovim file routing belongs to S2. Only Helix can use the popup here.
+    if popup
+        && let Some(endpoint) = live
+        && let Some(kind) = editor::listener_kind(endpoint)?
+    {
+        if kind != ListenerKind::Neovim || !Path::new(editor::neovim_location(file)?.path).is_dir()
+        {
+            return Ok(EditCommand::Reuse(kind));
+        }
+        let command = prepare_editor(config.editor, defaults, programs, directory, false)
+            .map_err(command_error)?;
+        return Ok(EditCommand::Pane(command));
+    }
     let popup = popup
-        && command
-            .listener
-            .is_some_and(|(kind, _)| kind == super::editor::ListenerKind::Helix);
-    Ok(super::editor::EditCommand { command, popup })
+        && !(live.is_none()
+            && config.editor.kind.unwrap_or(defaults.editor_kind) == EditorKind::Neovim
+            && Path::new(editor::neovim_location(file)?.path).is_dir());
+    let mut command = prepare_editor(
+        config.editor,
+        defaults,
+        programs,
+        directory,
+        popup && live.is_none(),
+    )
+    .map_err(command_error)?;
+    if popup && live.is_none() && editor::initial_file(&mut command, file)? {
+        return Ok(EditCommand::Popup(command));
+    }
+    Ok(EditCommand::Pane(command))
 }
 
 fn prepare_editor(
@@ -3847,12 +3882,16 @@ mod tests {
             &root,
             Path::new("/a"),
             None,
+            true,
+            None,
         )
         .unwrap();
-        assert!(!edit.popup);
-        assert_eq!(edit.command.listener, None);
+        let super::super::editor::EditCommand::Pane(command) = edit else {
+            panic!("pane opt-out");
+        };
+        assert_eq!(command.listener, None);
         assert_eq!(
-            edit.command.argv,
+            command.argv,
             [bin.join("nvim").into_os_string(), "--headless".into()]
         );
         fs::remove_dir_all(root).unwrap();

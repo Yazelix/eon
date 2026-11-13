@@ -151,7 +151,7 @@ terminal_access = "window" # Let `eon pane read`, `history` and `send` reach thi
 [editor]
 command = ["hx"] # Direct argv that `eon edit` and Files run with the file appended.
 kind = "auto" # Recognize packaged Helix or nvim; "neovim" opts a wrapper in.
-open_in = "popup" # Open in the packaged Helix Editor popup, or "pane" for a new pane.
+open_in = "popup" # Open in the Helix or Neovim Editor popup, or "pane" for a new pane.
 
 # [updates]
 # nix_profile: unset. Absolute profile path; set with nix_entry.
@@ -835,8 +835,9 @@ priority. Set `open_in = "pane"` to open a new pane instead.
 
 Directories, other editors, a disabled Editor popup, and a live Editor started
 without Eon's listener use the new-pane path. That preserves the existing
-editor's buffers. A build without packaged Helix (`no-helix`) always uses this
-path, including for a user's own `hx`; it has no default command (see below).
+editor's buffers. A build without packaged Helix (`no-helix`) has no default
+command (see below); selected Neovim uses its Editor popup there too, while a
+user's own `hx` uses a pane.
 Any terminal editor works:
 
 ```toml
@@ -848,9 +849,9 @@ command = ["nvim"]
 `["emacs", "-nw"]` rather than `"emacs -nw"`. A bare name resolves through the
 terminal PATH, as popup commands do, and a relative path such as `./bin/ed`
 against the tab's directory. Each edit reads the setting again, so a
-change to `command` or `open_in` applies to the next file you open without
-restarting the window. When
-the editor is not on the terminal PATH, the edit fails with `edit-command` and
+change to `open_in` applies to the next file you open. Command and kind
+changes govern fresh Editor starts; a live owned Editor retains its recorded
+listener kind. When a fresh editor is not on the terminal PATH, the edit fails with `edit-command` and
 opens no pane; Eon does not fall back to Helix.
 
 In the package without Helix, while `command` is unset each edit runs
@@ -877,10 +878,24 @@ kind = "neovim"
 ```
 
 The wrapper must stay in the foreground and forward Eon's appended Neovim
-arguments unchanged. Neovim Editor key launch has an owned listener; **Neovim
-Files and `eon edit` currently open a new pane**, even when that popup is live.
-Acknowledged file reuse and Neovim popup positions are planned for a later release
-(`eon-xodrj.6.2.2`). `open_in = "pane"` retains the configured argv for edits.
+arguments unchanged. With `open_in = "popup"` (default), Files and `eon edit`
+start that tab's Editor or reuse its owned listener, including in the package
+without Helix. Reopening a file selects its existing buffer without reloading;
+different files open as separate buffers. Unsaved work stays in memory even
+with Neovim's `hidden` disabled. A modified current buffer whose `bufhidden`
+would unload, delete or wipe it refuses the switch; an unmodified dashboard
+may follow its native wipe lifecycle. `open_in = "pane"` retains the configured
+argv and opens a pane instead.
+
+Neovim popup paths require UTF-8. An existing literal filename wins over a
+final `:LINE[:COL]` suffix; otherwise numeric suffixes select a one-based line
+and byte column (Helix uses its own native position semantics). Zero becomes
+one and positions beyond the buffer clamp to its bounds. Invalid suffixes or
+numbers beyond Neovim's signed 32-bit native position range remain literal
+filenames. Initial opens and reuse interpret positions identically; an initial
+position uses one generated `+call cursor(L,C)` within Neovim's ten-command
+limit. A directory, including one found after interpreting a Neovim position,
+uses the pane route with the original absolute file argument.
 
 The Editor popup (Alt+Shift+O) uses the same editor resolution when it starts.
 The editor keeps its buffers and working directory when the popup hides or
@@ -892,12 +907,16 @@ still pass that option to Helix.
 For Neovim, Eon appends its own `--listen` socket. `--listen`, `--server`,
 `--remote*`, standalone `--`, `--embed`, `--headless`, `-l`, and
 `-e`/`-E`/`-es`/`-Es` conflict with this route, as does an incompatible startup
-command prefix. Under `auto`, a key-only popup runs that command without
+command prefix. A prefix that supplies files, stdin (`-`), a tag (`-t`) or a
+quickfix target (`-q`) is incompatible: it could select that target instead
+of the requested file. Option values such as the filename after `-u` remain
+valid. Under `auto`, a key-only popup runs that command without
 Eon's listener; explicit `kind = "neovim"` refuses with `popup-command`
 before another popup is displaced. For file opens with an enabled Editor and
 `open_in = "popup"`, explicit `kind = "neovim"` also refuses these conflicts
-with `edit-command` in Files and `eon edit`, even though Neovim file opens
-currently use panes; `open_in = "pane"` passes the configured argv unchanged.
+with `edit-command` for fresh Editor starts from Files and `eon edit`.
+Under `auto`, those edits use panes; `open_in = "pane"` passes configured
+argv unchanged.
 Neovim popup launches require a canonical runtime path without `:` because
 Neovim interprets it as a TCP address; choose an `EON_RUNTIME_DIR` whose
 resolved path contains no colon. Command and kind changes affect fresh
@@ -913,10 +932,17 @@ fails with `editor-rejected`; a reply deadline fails with `editor-unresponsive`.
 Each exits 1 and leaves workspace topology and selection unchanged. Connect is
 bounded to 100 ms and the answer to 1 second. A lost reply or client timeout can
 leave the file open already or later; Eon never retries that uncertain request
-or starts a second editor. Only an explicit editor timeout reply confirms that
-queued work was abandoned. A live listener accepts UTF-8 filenames; an
-unrepresentable filename is rejected before sending. A fresh editor's argv
-retains filename bytes unchanged.
+or starts a second editor. Only Helix's explicit native-listener timeout reply
+confirms that queued work was abandoned; Neovim provides no cancellation
+acknowledgement. A Neovim answer timeout explains that Editor may be waiting
+for input and names its effective configured key, or names `[popups.editor]
+keybinding` when no shortcut is active. Reveal Editor manually and answer any
+prompt without resending the open. Errors do not roll back editor plugins or
+autocommands. RPC receives at most 64 KiB in total, nesting depth 32 and 16
+notifications: fixed trust/resource limits within the same deadline.
+Neovim popup paths require UTF-8 before startup or sending. Helix's live
+listener requires UTF-8, while its fresh argv and all pane routes retain Unix
+filename bytes unchanged.
 
 The Scrollback popup (Alt+Shift+E, or `eon pane history TARGET --edit`) opens
 its snapshot file with the same command, in a popup instead of a pane. When

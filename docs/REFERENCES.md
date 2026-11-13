@@ -281,8 +281,16 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
   recognition under auto, explicit foreground-wrapper opt-in, recorded transport
   kind, private parent and safe stale cleanup. Reject script introspection,
   supervisor-wide umask changes, old empty-marker compatibility and automatic
-  restarts. S1 starts the listener from the Editor key; Neovim Files/eon edit
-  remain ordinary pane opens until S2. Source evidence is not installed proof.
+  restarts. Remote opens use one constant nvim_exec_lua request with argument
+  data and a numeric buffer switch; never interpolate a filename into code.
+  Read `eval/funcs.c`, `pos_defs.h` and `runtime/doc/windows.txt` for native
+  cursor/bufhidden semantics, and `msgpack_rpc/channel.c` for broadcasts.
+  The exact rmp 0.8.15 primitives own MessagePack encoding/headers; Runtime
+  bounds and walks notifications, including extension values. Its MessageLen
+  helper accepts the reserved marker and has unimplemented extension paths,
+  so it cannot validate this boundary. Keep aggregate byte/depth/count/time
+  bounds and unknown-outcome/no-retry semantics. Source evidence is not
+  installed proof; S2's actual observations are in eon-xodrj.6.2.2.
 
 ### How should a tab picker reach folders absent from Zoxide history?
 

@@ -70,12 +70,15 @@ person's selected pane; it does not identify the new pane.
 ## Open files, tabs and sessions
 
 When asked to open a file for the person, run `eon edit --json -- FILE` to open
-the file in the person's configured editor in your tab. Packaged Helix uses
-Editor by default, retaining its buffers and unsaved edits and showing in place
-of Files; read its ID from that tab's selected_popup. Other editors, directories,
-no-Helix builds, a disabled Editor, an existing Editor without Eon's listener,
-and [editor] open_in = "pane" use a new pane named in created. A timeout or lost
-reply can leave the file open already or later; inspect before retrying.
+the file in the person's configured editor in your tab. Packaged Helix and
+selected Neovim use Editor by default, retaining loaded buffers and unsaved
+edits and showing in place of Files; read its ID from that tab's selected_popup.
+Neovim also works without packaged Helix. Other editors, directories, a disabled
+Editor, an existing Editor without Eon's listener, and [editor] open_in = "pane"
+use a new pane named in created. Neovim FILE:LINE[:COL] uses one-based byte
+columns; an existing literal name wins. A timeout or lost reply leaves the
+outcome unknown; never resend that request. Neovim timeout advice names the
+Editor key for a possible hidden prompt; let the person reveal and answer it.
 For a work tab, read `eon session --json` first, then run
 `eon tab create --no-focus --json --dir DIR`. This starts a tab at DIR
 without quick search and leaves the person's view alone. Append `-- COMMAND ARGS...`

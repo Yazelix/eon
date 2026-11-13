@@ -886,8 +886,18 @@ impl WorkspaceSet {
         request_id: &str,
         caller: Option<&str>,
         file: Vec<u8>,
-        mut prepare: impl FnMut(&Path, &Path) -> Result<super::editor::EditCommand, String>,
-        mut reuse: impl FnMut(&Session, &Path) -> Result<bool, Failure>,
+        mut prepare: impl FnMut(
+            &Path,
+            &Path,
+            Option<&Path>,
+            bool,
+        ) -> Result<super::editor::EditCommand, Failure>,
+        mut reuse: impl FnMut(
+            &Session,
+            &Path,
+            super::editor::ListenerKind,
+            &PopupKey,
+        ) -> Result<(), Failure>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.reject_duplicate(request_id)?;
@@ -899,39 +909,48 @@ impl WorkspaceSet {
         let (target, pane) = workspace.target_tab(caller)?;
         workspace.require_established(target)?;
         let file = PathBuf::from(OsString::from_vec(file));
-        let mut command = prepare(&workspace.tabs[target].directory, &file)
-            .map_err(|detail| action_error("edit-command", detail))?;
-        if command.popup && workspace.definition("editor").is_ok() {
-            let live = workspace.tabs[target]
-                .popups
-                .iter()
-                .find(|popup| popup.entry == "editor")
-                .cloned();
-            if let Some(popup) = live {
+        let live = workspace.tabs[target]
+            .popups
+            .iter()
+            .find(|popup| popup.entry == "editor")
+            .cloned();
+        let available = workspace.definition("editor").is_ok();
+        let command = prepare(
+            &workspace.tabs[target].directory,
+            &file,
+            live.as_ref().map(|popup| popup.session.endpoint.as_path()),
+            available,
+        )?;
+        let mut command = match command {
+            super::editor::EditCommand::Reuse(kind) => {
+                let popup = live.ok_or_else(|| {
+                    action_error("editor-unavailable", "Editor is no longer live")
+                })?;
                 let displaced = workspace.displaced_transient(target, Some(&popup.id))?;
-                if reuse(&popup.session, &file)? {
-                    if let Some(displaced) = displaced {
-                        workspace.stop_popup(target, displaced, &mut operate)?;
-                    }
-                    let tab = &mut workspace.tabs[target];
-                    tab.covered_popup = None;
-                    tab.selected_popup = Some(popup.id);
-                    return Ok(());
+                let key = &workspace.definition("editor")?.shortcut;
+                reuse(&popup.session, &file, kind, key)?;
+                if let Some(displaced) = displaced {
+                    workspace.stop_popup(target, displaced, &mut operate)?;
                 }
-            } else {
-                command.command.argv.push(file.into_os_string());
+                let tab = &mut workspace.tabs[target];
+                tab.covered_popup = None;
+                tab.selected_popup = Some(popup.id);
+                return Ok(());
+            }
+            super::editor::EditCommand::Popup(command) => {
                 return workspace.open_popup(
                     &mut self.ids,
                     allowance,
                     target,
                     "editor",
-                    &mut |_, _| Ok(command.command.clone()),
+                    &mut |_, _| Ok(command.clone()),
                     &mut operate,
                     false,
                 );
             }
-        }
-        command.command.argv.push(file.into_os_string());
+            super::editor::EditCommand::Pane(command) => command,
+        };
+        command.argv.push(file.into_os_string());
         let previous = pane.map(|pane| workspace.select(target, pane));
         let result = workspace.create_pane(
             &mut self.ids,
@@ -939,7 +958,7 @@ impl WorkspaceSet {
             target,
             caller.is_some(),
             true,
-            LaunchCommand::Tool(command.command.argv),
+            LaunchCommand::Tool(command.argv),
             &mut operate,
         );
         if result.is_err()
@@ -9080,12 +9099,29 @@ mod tests {
                 "missing",
                 Some(&files.session),
                 edit(),
-                |_, _| Err("no editor".into()),
-                |_, _| panic!("no reuse"),
+                |_, _, _, _| Err(action_error("edit-command", "no editor")),
+                |_, _, _, _| panic!("no reuse"),
                 |_| Err("nothing starts".into()),
             )
             .unwrap_err();
         assert_eq!(failure.code, "edit-command");
+        assert_eq!(workspace.snapshot(), before);
+
+        let unavailable = workspace
+            .edit(
+                "no-live-editor",
+                Some(&files.session),
+                edit(),
+                |_, _, _, _| {
+                    Ok(super::super::editor::EditCommand::Reuse(
+                        super::super::editor::ListenerKind::Neovim,
+                    ))
+                },
+                |_, _, _, _| panic!("no live Editor can receive a request"),
+                |_| panic!("no terminal starts"),
+            )
+            .unwrap_err();
+        assert_eq!(unavailable.code, "editor-unavailable");
         assert_eq!(workspace.snapshot(), before);
 
         let mut started = Vec::new();
@@ -9094,16 +9130,13 @@ mod tests {
                 "edit",
                 Some(&files.session),
                 edit(),
-                |_, _| {
-                    Ok(super::super::editor::EditCommand {
-                        command: PreparedCommand {
-                            argv: vec!["editor".into()],
-                            listener: None,
-                        },
-                        popup: false,
-                    })
+                |_, _, _, _| {
+                    Ok(super::super::editor::EditCommand::Pane(PreparedCommand {
+                        argv: vec!["editor".into()],
+                        listener: None,
+                    }))
                 },
-                |_, _| panic!("pane route"),
+                |_, _, _, _| panic!("pane route"),
                 |operation| {
                     started.push(operation);
                     Ok(())

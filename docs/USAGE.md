@@ -730,11 +730,11 @@ operations, works as usual; Z, q and Q do nothing. Files keeps its place when
 hidden and when the tab's directory changes. Only a folder you use enters
 Zoxide history, as Zoxide records it (by default it skips your home
 directory); browsing and searching add none, and `[shell] zoxide = false`
-stops even that. Enter on a text file opens it in a new pane running your editor
-([`[editor] command`](CONFIGURATION.md#editor): Helix by default, or `$VISUAL`
-or `$EDITOR` in the package without Helix) beside your
-work and hides Files, one pane per selected file; other files keep Yazi's
-default openers. A new tab must have its directory first: until then, Enter on
+stops even that. Enter on a text file opens it with your
+[configured editor](CONFIGURATION.md#editor), hiding Files. Packaged Helix and
+selected Neovim use that tab's Editor popup and keep its buffers; other editors
+and the pane opt-out open a pane per selected file. Neovim also works in the
+package without Helix. Other files keep Yazi's default openers. A new tab must have its directory first: until then, Enter on
 a text file refuses with `choose-directory-first`.
 
 A new tab has no terminal until you choose its directory: it starts on quick
@@ -924,7 +924,7 @@ line points agents to `eon --skill`.
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are. The JSON reply names the new pane and its tab in `created`, as `{"tab": "tN", "pane": "pN"}` |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` and `created` as above; refused with exit 1 outside an Eon terminal |
-| `eon edit [--json] -- FILE` | Open FILE in the configured editor: packaged Helix uses the tab's Editor popup by default, retaining its buffers and unsaved edits; `[editor] open_in = "pane"`, other editors, directories, disabled Editor, an existing Editor without Eon's listener, and no-Helix builds use a new pane placed as `pane create` places it; JSON names Editor in the tab's `selected_popup`, or the new pane in `created` |
+| `eon edit [--json] -- FILE` | Open FILE in the configured editor: packaged Helix and selected Neovim use the tab's Editor popup by default, retaining loaded buffers and unsaved edits (Neovim works without Helix too); `[editor] open_in = "pane"`, other editors, directories, disabled Editor and an existing Editor without Eon's listener use a new pane placed as `pane create` places it; JSON names Editor in the tab's `selected_popup`, or the new pane in `created` |
 | `eon pane close PANE [--yes] [--json]` | Close any pane of the addressed session, stopping its terminal without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab's last pane quits the window, or closes the session while others remain, asking first from a terminal |
 | `eon column close PANE --yes [--json]` | Close the column (Stack) holding PANE. Without `--yes`, list every terminal it would stop and fail `not-confirmed` (exit 1); never reads stdin. A changed scope fails `close-changed` (exit 1) and stops nothing |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
@@ -947,6 +947,16 @@ line points agents to `eon --skill`.
 | `eon config check [--json]` | Check config.toml for settings Eon would reject, without starting Eon or changing state |
 | `eon --skill` | Print the `eon` agent skill this build ships, without starting a session or reading configuration |
 | `eon -V`, `eon --version` | Print this build's Eon version as `eon VERSION`, without starting a session or reading configuration |
+
+For Neovim, an existing literal filename wins over `FILE:LINE[:COL]`; positions
+are one-based lines and byte columns, with zero and positions beyond the
+buffer clamped to its bounds. Popup paths require UTF-8. Reopening a loaded
+buffer selects it without reloading. A modified buffer whose `bufhidden`
+would unload, delete or wipe it refuses a switch, while an unmodified wipe
+dashboard may close normally. See [Editor settings](CONFIGURATION.md#editor).
+A timeout or lost reply leaves an unknown open outcome: do not resend the
+request. Neovim timeout advice names the configured Editor key so you can
+reveal a possible prompt and answer it; Eon does not move focus to reveal it.
 
 Window IDs: `default` is the window bare `eon` opens. One that another Eon build
 opened that way, such as the old build's window after an upgrade, has the 32 hex

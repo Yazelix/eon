@@ -2274,10 +2274,11 @@ fn managed_orbit_helper() {
         presentation: endpoint_identity(&presentation),
         management: endpoint_identity(&management_path),
     };
-    let command = arguments
+    // The child argv can contain its own -- (for example Neovim's file boundary).
+    let command = arguments[serve..]
         .iter()
-        .rposition(|argument| argument == OsStr::new("--"))
-        .map(|separator| &arguments[separator + 1..])
+        .position(|argument| argument == OsStr::new("--"))
+        .map(|separator| &arguments[serve + separator + 1..])
         .unwrap_or(&[]);
     // A Scrollback editor, whose snapshot must already name its terminal.
     let snapshot = command
@@ -16707,12 +16708,18 @@ fn editor_popup_socket_helper() {
         }
         return;
     }
-    assert!((2..=3).contains(&arguments.len()));
+    assert!((2..=5).contains(&arguments.len()));
     let listen = arguments
         .iter()
         .position(|argument| argument == "--listen")
         .unwrap();
     let path = Path::new(&arguments[listen + 1]);
+    let marker: Option<serde_json::Value> = fs::read(path.with_extension("owner"))
+        .ok()
+        .map(|bytes| serde_json::from_slice(&bytes).unwrap());
+    let neovim = marker
+        .as_ref()
+        .is_some_and(|marker| marker["kind"] == "neovim");
     let hold = PathBuf::from(std::env::var_os("EON_TEST_EDITOR_BIND_HOLD").unwrap());
     let stop = PathBuf::from(std::env::var_os("EON_TEST_STOP").unwrap());
     while hold.exists() {
@@ -16749,7 +16756,10 @@ fn editor_popup_socket_helper() {
     writeln!(
         opened,
         "{}",
-        serde_json::json!({"initial":arguments.iter().enumerate().find(|(index, _)| *index != listen && *index != listen + 1).map(|(_, file)| file.to_string_lossy())})
+        serde_json::json!({
+            "initial": if neovim { arguments.iter().position(|argument| argument == "--").and_then(|index| arguments.get(index + 1)) } else { arguments.iter().enumerate().find(|(index, _)| *index != listen && *index != listen + 1).map(|(_, file)| file) }.map(|file| file.to_string_lossy()),
+            "arguments": arguments.iter().map(|argument| argument.to_string_lossy()).collect::<Vec<_>>()
+        })
     )
     .unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -16765,11 +16775,50 @@ fn editor_popup_socket_helper() {
                     stream
                         .set_read_timeout(Some(Duration::from_secs(3)))
                         .unwrap();
-                    let mut line = String::new();
-                    std::io::BufReader::new(&mut stream)
-                        .read_line(&mut line)
-                        .unwrap();
-                    let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    let request = if neovim {
+                        use rmp::decode::{read_array_len, read_int};
+                        fn string(stream: &mut UnixStream) -> String {
+                            let len = rmp::decode::read_str_len(stream).unwrap() as usize;
+                            assert!(len <= 65_536);
+                            let mut bytes = vec![0; len];
+                            stream.read_exact(&mut bytes).unwrap();
+                            String::from_utf8(bytes).unwrap()
+                        }
+                        fn position(stream: &mut UnixStream) -> Option<i32> {
+                            let marker = rmp::decode::read_marker(stream).unwrap();
+                            if marker == rmp::Marker::Null {
+                                None
+                            } else {
+                                Some(
+                                    read_int(
+                                        &mut std::io::Cursor::new([marker.to_u8()]).chain(stream),
+                                    )
+                                    .unwrap(),
+                                )
+                            }
+                        }
+                        assert_eq!(read_array_len(&mut stream).unwrap(), 4);
+                        assert_eq!(read_int::<u8, _>(&mut stream).unwrap(), 0);
+                        assert_eq!(read_int::<u8, _>(&mut stream).unwrap(), 1);
+                        assert_eq!(string(&mut stream), "nvim_exec_lua");
+                        assert_eq!(read_array_len(&mut stream).unwrap(), 2);
+                        let lua = string(&mut stream);
+                        assert!(
+                            lua.contains("vim.fn.bufadd(path)")
+                                && lua.contains("args = {tostring(target)}")
+                        );
+                        assert_eq!(read_array_len(&mut stream).unwrap(), 3);
+                        let path = string(&mut stream);
+                        let line = position(&mut stream);
+                        let column = position(&mut stream);
+                        serde_json::json!({"paths":[path],"line":line,"column":column})
+                    } else {
+                        let mut line = String::new();
+                        std::io::BufReader::new(&mut stream)
+                            .read_line(&mut line)
+                            .unwrap();
+                        serde_json::from_str(&line).unwrap()
+                    };
                     writeln!(opened, "{request}").unwrap();
                     if mode == "hang" {
                         while fs::read_to_string(root.join("editor-mode")).unwrap_or_default()
@@ -16778,6 +16827,26 @@ fn editor_popup_socket_helper() {
                         {
                             thread::sleep(Duration::from_millis(10));
                         }
+                    }
+                    if neovim {
+                        if mode == "lost" {
+                            continue;
+                        }
+                        if mode == "rejected" {
+                            stream
+                                .write_all(b"\x94\x01\x01\x92\x00\xb3fake editor failure\xc0")
+                                .unwrap();
+                        } else if mode == "invalid" {
+                            stream.write_all(b"\x94\x01\x02\xc0\xc3").unwrap();
+                        } else {
+                            if mode == "notify" {
+                                stream
+                                    .write_all(b"\x93\x02\xa5event\x91\xc7\x01\0x")
+                                    .unwrap();
+                            }
+                            let _ = stream.write_all(b"\x94\x01\x01\xc0\xc3");
+                        }
+                        continue;
                     }
                     let reply = if matches!(
                         mode.as_str(),
@@ -16897,6 +16966,223 @@ fn edit_as(window: &PairWindow, file: &OsStr, caller: Option<&str>) -> Output {
 }
 
 #[test]
+fn neovim_initial_edit_uses_the_popup_and_one_numeric_cursor_argument() {
+    let window = editor_popup_window();
+    writeln!(
+        fs::OpenOptions::new()
+            .append(true)
+            .open(window.config.join("config.toml"))
+            .unwrap(),
+        "\n[editor]\ncommand = ['nvim']"
+    )
+    .unwrap();
+    let mut command = editor_popup_command(&window);
+    command.env_remove("EON_HX");
+    let mut supervisor = window.start(command);
+    wait_for_ready(&window.control());
+    pick_editor_popup_tab(&window);
+    let edited = edit_as(&window, OsStr::new("a.txt:2:3"), None);
+    assert!(edited.status.success(), "{edited:?}");
+    let json: serde_json::Value = serde_json::from_slice(&edited.stdout).unwrap();
+    assert!(json.get("created").is_none(), "{json}");
+    assert!(json["tabs"][0]["selected_popup"].is_string(), "{json}");
+    let initial: serde_json::Value =
+        serde_json::from_str(&wait_for_lines(&window.root.join("editor-open.log"), 1)[0]).unwrap();
+    assert_eq!(initial["arguments"][2], "+call cursor(2,3)");
+    assert_eq!(initial["arguments"][3], "--");
+    assert_eq!(
+        initial["initial"],
+        window.root.join("a.txt").to_str().unwrap()
+    );
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn neovim_failures_preserve_selection_and_name_the_effective_editor_key() {
+    for (configuration, shortcut) in [
+        (
+            "[popups.editor]\nkeybinding = 'Ctrl+Alt+N'",
+            Some("Ctrl+Alt+N"),
+        ),
+        ("[popups.editor]\nkeybinding = ''", None),
+        (
+            "[popups.custom]\ncommand = ['eon-nu']\nkeybinding = 'Alt+Shift+O'",
+            None,
+        ),
+    ] {
+        let window = editor_popup_window();
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(window.config.join("config.toml"))
+                .unwrap(),
+            "\n[editor]\ncommand = ['nvim']\n{configuration}"
+        )
+        .unwrap();
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        let popup = open_editor_popup(&window, "nvim-key");
+        wait_for_lines(&window.root.join("editor-open.log"), 1);
+        window.invoke_popup("files", "files", None);
+        let before = stable_tabs(&window.inspect("before-failure").tabs);
+        let log = window.root.join("editor-open.log");
+        for (mode, code) in [
+            ("rejected", "editor-rejected"),
+            ("invalid", "editor-unavailable"),
+            ("lost", "editor-unavailable"),
+            ("hang", "editor-unresponsive"),
+        ] {
+            fs::write(window.root.join("editor-mode"), mode).unwrap();
+            let count = log_lines(&log).len();
+            let failed = edit_as(&window, OsStr::new("b.txt:3:5"), None);
+            assert_eq!(failed.status.code(), Some(1), "{mode}: {failed:?}");
+            let error: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
+            assert_eq!(error["error"]["code"], code);
+            let detail = error["error"]["detail"].as_str().unwrap();
+            if mode == "hang" {
+                assert!(
+                    detail.contains("may be waiting for input")
+                        && detail.contains("outcome is unknown"),
+                    "{detail}"
+                );
+                if let Some(shortcut) = shortcut {
+                    assert!(detail.contains(shortcut), "{detail}");
+                } else {
+                    assert!(
+                        detail.contains("no Editor shortcut is active")
+                            && detail.contains("[popups.editor] keybinding"),
+                        "{detail}"
+                    );
+                }
+            }
+            assert_eq!(
+                stable_tabs(&window.inspect(&format!("after-{mode}")).tabs),
+                before
+            );
+            assert_eq!(log_lines(&log).len(), count + 1, "one RPC request per edit");
+            assert_eq!(log_lines(&window.root.join("editor-socket.log")).len(), 1);
+            fs::write(window.root.join("editor-mode"), "").unwrap();
+        }
+        fs::write(window.root.join("editor-mode"), "notify").unwrap();
+        let acknowledged = edit_as(&window, OsStr::new("c.txt:2:4"), None);
+        assert!(acknowledged.status.success(), "{acknowledged:?}");
+        assert_eq!(
+            window.inspect("acknowledged").tabs[0]
+                .selected_popup
+                .as_ref(),
+            Some(&popup.id)
+        );
+        let request: serde_json::Value =
+            serde_json::from_str(log_lines(&log).last().unwrap()).unwrap();
+        assert_eq!(request["line"], 2);
+        assert_eq!(request["column"], 4);
+        window.stop_generation(&mut supervisor);
+    }
+}
+
+#[test]
+fn neovim_pane_choices_preserve_arguments_and_interpreted_directories() {
+    for (settings, file) in [
+        (
+            "[editor]\ncommand = ['nvim']\nopen_in = 'pane'",
+            OsStr::new("-odd \"\n|:2:3").to_owned(),
+        ),
+        (
+            "[editor]\ncommand = ['nvim']\n[popups.editor]\nenabled = false",
+            "a.txt:2:3".into(),
+        ),
+        (
+            "[editor]\ncommand = ['nvim', '--headless']",
+            "a.txt:2:3".into(),
+        ),
+        ("[editor]\ncommand = ['nvim']", "directory:2:3".into()),
+        (
+            "[editor]\ncommand = ['nvim', '--headless']\nkind = 'neovim'",
+            "directory:2:3".into(),
+        ),
+    ] {
+        let window = editor_popup_window();
+        // The ordinary pane editor records each argument without interpreting it.
+        let editor = window.root.join("session-bin/nvim");
+        fs::remove_file(&editor).unwrap();
+        executable(
+            &editor,
+            r#"#!/bin/sh
+printf '%s\000' "$@" > "$EON_TEST_EDITOR_SOCKET_LOG.pane"
+while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
+"#,
+        );
+        fs::create_dir(window.root.join("directory")).unwrap();
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(window.config.join("config.toml"))
+                .unwrap(),
+            "\n{settings}"
+        )
+        .unwrap();
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        let opened = edit_as(&window, &file, None);
+        assert!(
+            opened.status.success() && stdout(&opened).contains("\"created\""),
+            "{settings}: {opened:?}"
+        );
+        assert!(!window.generation().join("editor").exists());
+        let arguments = window.root.join("editor-socket.log.pane");
+        wait_for(&arguments);
+        let bytes = fs::read(arguments).unwrap();
+        let path = window.root.join(&file);
+        assert!(
+            bytes.ends_with(&[path.as_os_str().as_bytes(), b"\0"].concat()),
+            "{bytes:?}"
+        );
+        window.stop_generation(&mut supervisor);
+    }
+}
+
+#[test]
+fn neovim_initial_targets_disqualify_auto_and_refuse_explicit_popup_routing() {
+    for kind in ["auto", "neovim"] {
+        let window = editor_popup_window();
+        fs::write(window.root.join("README.md"), "existing target").unwrap();
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(window.config.join("config.toml"))
+                .unwrap(),
+            "\n[editor]\ncommand = ['nvim', 'README.md']\nkind = '{kind}'"
+        )
+        .unwrap();
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        window.invoke_popup("files", "files", None);
+        let before = stable_tabs(&window.inspect("before-target-prefix").tabs);
+        let opened = edit_as(&window, OsStr::new("other.rs"), None);
+        let response: serde_json::Value = serde_json::from_slice(&opened.stdout).unwrap();
+        if kind == "auto" {
+            assert!(
+                opened.status.success() && response["created"]["pane"].is_string(),
+                "{opened:?}"
+            );
+            assert!(
+                response["tabs"][0]["selected_popup"].is_null(),
+                "{response}"
+            );
+        } else {
+            assert_eq!(opened.status.code(), Some(1));
+            assert_eq!(response["error"]["code"], "edit-command");
+            assert_eq!(
+                stable_tabs(&window.inspect("after-target-prefix").tabs),
+                before
+            );
+        }
+        assert!(!window.generation().join("editor").exists());
+        window.stop_generation(&mut supervisor);
+    }
+}
+
+#[test]
 fn neovim_colon_listener_refuses_before_displacing_the_shown_popup() {
     let mut window = editor_popup_window();
     window.runtime = window.root.join("r:t");
@@ -16977,7 +17263,7 @@ fn neovim_editor_key_launch_without_helix_keeps_identity_and_cleans_its_listener
 }
 
 #[test]
-fn neovim_s1_edits_use_panes_even_after_configuration_changes_to_helix() {
+fn neovim_edits_reuse_the_recorded_kind_after_configuration_changes() {
     let window = editor_popup_window();
     let settings = window.config.join("config.toml");
     let base = fs::read_to_string(&settings).unwrap();
@@ -16989,26 +17275,34 @@ fn neovim_s1_edits_use_panes_even_after_configuration_changes_to_helix() {
     let identity = live_identity(endpoint);
     let log = window.root.join("editor-open.log");
     wait_for_lines(&log, 1);
-    for (index, editor) in ["nvim", "hx"].into_iter().enumerate() {
+    for (index, (command, kind)) in [
+        ("['nvim']", "auto"),
+        ("['hx']", "auto"),
+        ("['missing-future-editor']", "auto"),
+        ("['nvim', 'README.md']", "neovim"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         fs::write(
             &settings,
-            format!("{base}\n[editor]\ncommand = ['{editor}']\nkind = 'auto'\n"),
+            format!("{base}\n[editor]\ncommand = {command}\nkind = '{kind}'\n"),
         )
         .unwrap();
         let edited = edit_as(&window, OsStr::new("a.txt"), None);
         assert!(edited.status.success(), "{edited:?}");
-        assert!(stdout(&edited).contains("\"created\""), "{edited:?}");
+        assert!(!stdout(&edited).contains("\"created\""), "{edited:?}");
         assert_eq!(
             window.inspect(&format!("pane-result-{index}")).tabs[0]
                 .panes()
                 .count(),
-            index + 2
+            1
         );
         assert_eq!(live_identity(endpoint), identity);
         assert_eq!(
             log_lines(&log).len(),
-            1,
-            "Neovim received a native-v1 request"
+            index + 2,
+            "Neovim did not receive its RPC request"
         );
     }
     let marker = window
@@ -17091,77 +17385,91 @@ fn explicit_neovim_wrappers_listen_and_conflicts_refuse_before_displacement() {
 
 #[test]
 fn editor_edits_start_reuse_and_restart_the_files_callers_popup() {
-    let window = editor_popup_window();
-    let mut supervisor = start_editor_popup_window(&window);
-    pick_editor_popup_tab(&window);
-    let files = window.inspect("files-caller").tabs[0].popups[0].clone();
-    let process = live_identity(Path::new(OsStr::from_bytes(&files.endpoint))).process_id;
-    let caller = process::environ(process)
-        .split(|byte| *byte == 0)
-        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
-        .map(|token| String::from_utf8(token.to_vec()).unwrap())
+    for kind in ["hx", "nvim"] {
+        let window = editor_popup_window();
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(window.config.join("config.toml"))
+                .unwrap(),
+            "\n[editor]\ncommand = ['{kind}']"
+        )
         .unwrap();
-    let opened = edit_as(&window, OsStr::new("a.txt:2:3"), Some(&caller));
-    assert!(opened.status.success(), "{opened:?}");
-    let json: serde_json::Value = serde_json::from_str(stdout(&opened)).unwrap();
-    assert!(json.get("created").is_none(), "{json}");
-    let before = window.inspect("first-file");
-    let editor = before.tabs[0]
-        .popups
-        .iter()
-        .find(|popup| popup.entry == "editor")
-        .unwrap()
-        .clone();
-    assert_eq!(before.tabs[0].selected_popup.as_ref(), Some(&editor.id));
-    assert_eq!(before.tabs[0].panes().count(), 1);
-    let endpoint = Path::new(OsStr::from_bytes(&editor.endpoint));
-    let identity = live_identity(endpoint);
-    let log = window.root.join("editor-open.log");
-    let first: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 1)[0]).unwrap();
-    assert_eq!(
-        first["initial"],
-        window.root.join("a.txt:2:3").to_str().unwrap()
-    );
-
-    // A hidden Files caller targets its own tab, preserving the shown one.
-    assert!(window.eon(&["tab", "create"]).status.success());
-    let shown = window.inspect("other-tab").active_tab;
-    let edited = edit_as(&window, OsStr::new("b\n\".txt"), Some(&caller));
-    assert!(edited.status.success(), "{edited:?}");
-    let json: serde_json::Value = serde_json::from_str(stdout(&edited)).unwrap();
-    assert!(json.get("created").is_none(), "{json}");
-    let after = window.inspect("reused-editor");
-    assert_eq!(after.active_tab, shown);
-    assert_eq!(after.tabs[0].selected_popup.as_ref(), Some(&editor.id));
-    assert_eq!(live_identity(endpoint), identity);
-    let request: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 2)[1]).unwrap();
-    assert_eq!(
-        request["paths"][0],
-        window.root.join("b\n\".txt").to_str().unwrap()
-    );
-
-    // No live instance after editor exit: a later edit starts a fresh one.
-    fs::write(
-        window
-            .root
-            .join("editor-release")
-            .with_extension(&editor.session),
-        "",
-    )
-    .unwrap();
-    wait_for_snapshot(&window.control(), "editor-exit", |snapshot| {
-        !snapshot.tabs[0]
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        let files = window.inspect("files-caller").tabs[0].popups[0].clone();
+        let process = live_identity(Path::new(OsStr::from_bytes(&files.endpoint))).process_id;
+        let caller = process::environ(process)
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+            .map(|token| String::from_utf8(token.to_vec()).unwrap())
+            .unwrap();
+        let opened = edit_as(&window, OsStr::new("a.txt:2:3"), Some(&caller));
+        assert!(opened.status.success(), "{opened:?}");
+        let json: serde_json::Value = serde_json::from_str(stdout(&opened)).unwrap();
+        assert!(json.get("created").is_none(), "{json}");
+        let before = window.inspect("first-file");
+        let editor = before.tabs[0]
             .popups
             .iter()
-            .any(|popup| popup.id == editor.id)
-    });
-    let restarted = edit_as(&window, OsStr::new("c.txt"), Some(&caller));
-    assert!(restarted.status.success(), "{restarted:?}");
-    let after = window.inspect("restarted-editor");
-    assert_eq!(after.active_tab, shown);
-    assert_ne!(after.tabs[0].selected_popup.as_ref(), Some(&editor.id));
-    assert_eq!(wait_for_lines(&log, 3).len(), 3);
-    window.stop_generation(&mut supervisor);
+            .find(|popup| popup.entry == "editor")
+            .unwrap()
+            .clone();
+        assert_eq!(before.tabs[0].selected_popup.as_ref(), Some(&editor.id));
+        assert_eq!(before.tabs[0].panes().count(), 1);
+        let endpoint = Path::new(OsStr::from_bytes(&editor.endpoint));
+        let identity = live_identity(endpoint);
+        let log = window.root.join("editor-open.log");
+        let first: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 1)[0]).unwrap();
+        assert_eq!(
+            first["initial"],
+            window
+                .root
+                .join(if kind == "nvim" { "a.txt" } else { "a.txt:2:3" })
+                .to_str()
+                .unwrap()
+        );
+
+        // A hidden Files caller targets its own tab, preserving the shown one.
+        assert!(window.eon(&["tab", "create"]).status.success());
+        let shown = window.inspect("other-tab").active_tab;
+        let edited = edit_as(&window, OsStr::new("b\n\".txt"), Some(&caller));
+        assert!(edited.status.success(), "{edited:?}");
+        let json: serde_json::Value = serde_json::from_str(stdout(&edited)).unwrap();
+        assert!(json.get("created").is_none(), "{json}");
+        let after = window.inspect("reused-editor");
+        assert_eq!(after.active_tab, shown);
+        assert_eq!(after.tabs[0].selected_popup.as_ref(), Some(&editor.id));
+        assert_eq!(live_identity(endpoint), identity);
+        let request: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 2)[1]).unwrap();
+        assert_eq!(
+            request["paths"][0],
+            window.root.join("b\n\".txt").to_str().unwrap()
+        );
+
+        // No live instance after editor exit: a later edit starts a fresh one.
+        fs::write(
+            window
+                .root
+                .join("editor-release")
+                .with_extension(&editor.session),
+            "",
+        )
+        .unwrap();
+        wait_for_snapshot(&window.control(), "editor-exit", |snapshot| {
+            !snapshot.tabs[0]
+                .popups
+                .iter()
+                .any(|popup| popup.id == editor.id)
+        });
+        let restarted = edit_as(&window, OsStr::new("c.txt"), Some(&caller));
+        assert!(restarted.status.success(), "{restarted:?}");
+        let after = window.inspect("restarted-editor");
+        assert_eq!(after.active_tab, shown);
+        assert_ne!(after.tabs[0].selected_popup.as_ref(), Some(&editor.id));
+        assert_eq!(wait_for_lines(&log, 3).len(), 3);
+        window.stop_generation(&mut supervisor);
+    }
 }
 
 #[test]

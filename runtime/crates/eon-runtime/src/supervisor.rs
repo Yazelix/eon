@@ -3933,17 +3933,21 @@ fn dispatch_registered_request(
                     &request.id,
                     caller.as_deref(),
                     file.clone(),
-                    |directory, file| {
+                    |directory, file, live, available| {
                         managed_environment::prepare_edit(
                             config,
                             &inputs.defaults,
                             &inputs.managed,
                             directory,
                             file,
+                            live,
+                            available,
                             Some(log),
                         )
                     },
-                    |session, file| editor::reuse(&session.endpoint, file, &request.id),
+                    |session, file, kind, key| {
+                        editor::reuse(&session.endpoint, file, &request.id, kind, key)
+                    },
                     |operation| {
                         apply_session_operation(
                             inputs,
