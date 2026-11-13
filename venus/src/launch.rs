@@ -25,7 +25,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--panel-heading notch|connected] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION [--eon-release-stage alpha|beta|stable]] [--eon-icon ABSOLUTE_PATH] [--bar-items ITEM,...] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--detect-local-hosts true|false] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--panel-heading notch|connected] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--number-keys true|false] [--eon-version VERSION [--eon-release-stage alpha|beta|stable]] [--eon-icon ABSOLUTE_PATH] [--bar-item ITEM ... | --bar-empty] [--ram-notice-percent 1..100] [--ram-warning-percent 1..100] [--ram-critical-percent 1..100] [--cpu-notice-percent 1..100] [--cpu-warning-percent 1..100] [--cpu-critical-percent 1..100] [--cpu-average-seconds 2..600] [--cpu-temperature-warning-celsius 30..120] [--cpu-temperature-critical-celsius 30..120] [--disk-notice-percent 1..100] [--disk-warning-percent 1..100] [--disk-critical-percent 1..100] [--disk-path ABSOLUTE_PATH] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--detect-local-hosts true|false] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0|0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -85,7 +85,8 @@ pub(super) fn launch_arguments(
     let mut eon_version = None;
     let mut eon_release_stage = None;
     let mut eon_icon: Option<PathBuf> = None;
-    let mut bar_items = None;
+    let mut bar_items: Option<Vec<BarItem>> = None;
+    let mut bar_empty = false;
     let mut ram_notice_percent = None;
     let mut ram_warning_percent = None;
     let mut ram_critical_percent = None;
@@ -154,17 +155,26 @@ pub(super) fn launch_arguments(
                     _ => return Err(USAGE.into()),
                 },
             );
-        } else if argument == "--bar-items" {
+        } else if argument == "--bar-item" {
+            if bar_empty {
+                return Err(USAGE.into());
+            }
+            let item = arguments
+                .next()
+                .and_then(|value| value.into_string().ok())
+                .and_then(|value| parse_bar_item(&value))
+                .ok_or(USAGE)?;
+            let items = bar_items.get_or_insert_with(Vec::new);
+            if items.contains(&item) {
+                return Err(USAGE.into());
+            }
+            items.push(item);
+        } else if argument == "--bar-empty" {
             if bar_items.is_some() {
                 return Err(USAGE.into());
             }
-            bar_items = arguments
-                .next()
-                .and_then(|value| value.into_string().ok())
-                .and_then(|value| parse_bar_items(&value));
-            if bar_items.is_none() {
-                return Err(USAGE.into());
-            }
+            bar_empty = true;
+            bar_items = Some(Vec::new());
         } else if argument == "--ram-notice-percent"
             || argument == "--ram-warning-percent"
             || argument == "--ram-critical-percent"
@@ -573,30 +583,38 @@ fn option_value<T: std::str::FromStr>(slot: &mut Option<T>, value: Option<OsStri
     Ok(())
 }
 
-/// Parses comma-separated item names in their left-to-right order. An empty list shows no
-/// item; an unknown, repeated or empty name is invalid.
-fn parse_bar_items(list: &str) -> Option<Vec<BarItem>> {
-    let mut items = Vec::new();
-    for name in list.split(',').filter(|_| !list.is_empty()) {
-        let item = match name {
-            "codex_quota_5h" => BarItem::CodexQuota5h,
-            "codex_quota_7d" => BarItem::CodexQuota7d,
-            "claude_quota_5h" => BarItem::ClaudeQuota5h,
-            "claude_quota_7d" => BarItem::ClaudeQuota7d,
-            "claude_quota_scoped" => BarItem::ClaudeQuotaScoped,
-            "cpu" => BarItem::Cpu,
-            "ram" => BarItem::Ram,
-            "disk" => BarItem::Disk,
-            "clock" => BarItem::Clock,
-            "version" => BarItem::Version,
-            _ => return None,
-        };
-        if items.contains(&item) {
-            return None;
+/// One resolved item; commas and earlier colons belong to a Google scope.
+fn parse_bar_item(name: &str) -> Option<BarItem> {
+    Some(match name {
+        "codex_quota_5h" => BarItem::CodexQuota5h,
+        "codex_quota_7d" => BarItem::CodexQuota7d,
+        "claude_quota_5h" => BarItem::ClaudeQuota5h,
+        "claude_quota_7d" => BarItem::ClaudeQuota7d,
+        "claude_quota_scoped" => BarItem::ClaudeQuotaScoped,
+        "cpu" => BarItem::Cpu,
+        "ram" => BarItem::Ram,
+        "disk" => BarItem::Disk,
+        "clock" => BarItem::Clock,
+        "version" => BarItem::Version,
+        _ => {
+            let (scope, period) = name.strip_prefix("google_quota:")?.rsplit_once(':')?;
+            if scope.is_empty()
+                || scope.len() > eon_workspace_protocol::v44::MAX_QUOTA_SCOPE_BYTES
+                || scope.chars().any(char::is_control)
+            {
+                return None;
+            }
+            let duration_minutes = match period {
+                "5h" => 300,
+                "7d" => 10080,
+                _ => return None,
+            };
+            BarItem::GoogleQuota {
+                scope: scope.into(),
+                duration_minutes,
+            }
         }
-        items.push(item);
-    }
-    Some(items)
+    })
 }
 
 fn valid_application_id(value: &str) -> bool {
@@ -719,6 +737,65 @@ mod tests {
     }
 
     #[test]
+    fn google_quota_selector_boundaries() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!(
+            "../../runtime/crates/eon-workspace-protocol/testdata/google-quota-selectors.json"
+        ))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let name = case["selector"].as_str().unwrap();
+            let parsed = launch_arguments(
+                ["--workspace", "eon.sock", "--bar-item", name]
+                    .into_iter()
+                    .map(OsString::from),
+                None,
+            );
+            assert_eq!(parsed.is_ok(), case["scope"].is_string(), "{case}");
+            if let Ok(parsed) = parsed {
+                assert_eq!(
+                    parsed.bar_items,
+                    [BarItem::GoogleQuota {
+                        scope: case["scope"].as_str().unwrap().into(),
+                        duration_minutes: case["duration_minutes"].as_u64().unwrap() as u32,
+                    }]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_bar_items_and_explicit_empty_are_distinct_from_omission() {
+        let parse = |args: &[&str]| {
+            launch_arguments(
+                args.iter()
+                    .copied()
+                    .chain(["--workspace", "eon.sock"])
+                    .map(OsString::from),
+                None,
+            )
+        };
+        assert_eq!(parse(&[]).unwrap().bar_items, BarItem::DEFAULT);
+        assert!(parse(&["--bar-empty"]).unwrap().bar_items.is_empty());
+        assert_eq!(
+            parse(&["--bar-item", "clock", "--bar-item", "ram"])
+                .unwrap()
+                .bar_items,
+            [BarItem::Clock, BarItem::Ram]
+        );
+        for args in [
+            vec!["--bar-items", "cpu"],
+            vec!["--bar-item", ""],
+            vec!["--bar-item", "cpu", "--bar-item", "cpu"],
+            vec!["--bar-empty", "--bar-empty"],
+            vec!["--bar-empty", "--bar-item", "cpu"],
+            vec!["--bar-item", "cpu", "--bar-empty"],
+            vec!["--bar-item"],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
     fn bar_items_are_an_ordered_workspace_choice() {
         let parse = |items: &[&str]| {
             launch_arguments(
@@ -732,52 +809,77 @@ mod tests {
         };
         assert_eq!(parse(&[]).unwrap().bar_items, BarItem::DEFAULT);
         assert_eq!(
-            parse(&["--bar-items", "clock,claude_quota_5h,cpu"])
-                .unwrap()
-                .bar_items,
-            [BarItem::Clock, BarItem::ClaudeQuota5h, BarItem::Cpu]
-        );
-        assert_eq!(
-            parse(&["--bar-items", "disk,ram"]).unwrap().bar_items,
-            [BarItem::Disk, BarItem::Ram]
-        );
-        assert!(parse(&["--bar-items", ""]).unwrap().bar_items.is_empty());
-        assert_eq!(
             parse(&[
-                "--bar-items",
-                "claude_quota_7d,claude_quota_5h,claude_quota_scoped,codex_quota_5h,codex_quota_7d"
+                "--bar-item",
+                "clock",
+                "--bar-item",
+                "claude_quota_5h",
+                "--bar-item",
+                "cpu"
             ])
             .unwrap()
             .bar_items,
-            [
-                BarItem::ClaudeQuota7d,
-                BarItem::ClaudeQuota5h,
-                BarItem::ClaudeQuotaScoped,
-                BarItem::CodexQuota5h,
-                BarItem::CodexQuota7d
-            ]
+            [BarItem::Clock, BarItem::ClaudeQuota5h, BarItem::Cpu]
         );
-        for items in [
-            vec!["--bar-items", "codex_quota"],
-            vec!["--bar-items", "claude_quota"],
-            vec!["--bar-items", "gpu"],
-            vec!["--bar-items", "CPU"],
-            vec!["--bar-items", "cpu,cpu"],
-            vec!["--bar-items", "cpu,"],
-            vec!["--bar-items", "cpu, ram"],
-            vec!["--bar-items", "cpu", "--bar-items", "ram"],
+        assert_eq!(
+            parse(&["--bar-item", "disk", "--bar-item", "ram"])
+                .unwrap()
+                .bar_items,
+            [BarItem::Disk, BarItem::Ram]
+        );
+        for name in [
+            "codex_quota",
+            "claude_quota",
+            "google_quota",
+            "gpu",
+            "CPU",
+            "cpu,cpu",
+            "cpu,",
+            "cpu, ram",
         ] {
-            assert!(parse(&items).is_err(), "accepted {items:?}");
+            assert!(parse(&["--bar-item", name]).is_err(), "{name}");
         }
         for arguments in [
-            &["--bar-items", "cpu", "orbit.sock"][..],
-            &["--workspace", "eon.sock", "--bar-items"],
+            &["--bar-item", "cpu", "orbit.sock"][..],
+            &["--bar-empty", "orbit.sock"],
+            &["--workspace", "eon.sock", "--bar-item"],
         ] {
-            assert!(
-                launch_arguments(arguments.iter().map(OsString::from), None).is_err(),
-                "accepted {arguments:?}"
-            );
+            assert!(launch_arguments(arguments.iter().map(OsString::from), None).is_err());
         }
+        use std::os::unix::ffi::OsStringExt;
+        assert!(
+            launch_arguments(
+                [
+                    OsString::from("--workspace"),
+                    OsString::from("eon.sock"),
+                    OsString::from("--bar-item"),
+                    OsString::from_vec(vec![0xff]),
+                ],
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            parse(&[
+                "--bar-item",
+                "google_quota:A:5h",
+                "--bar-item",
+                "google_quota:A:5h"
+            ])
+            .is_err()
+        );
+        assert_eq!(
+            parse(&[
+                "--bar-item",
+                "google_quota:A:5h",
+                "--bar-item",
+                "google_quota:A:7d"
+            ])
+            .unwrap()
+            .bar_items
+            .len(),
+            2
+        );
     }
 
     #[test]

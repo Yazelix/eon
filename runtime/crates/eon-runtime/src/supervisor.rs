@@ -519,7 +519,7 @@ fn venus_command(
                 command.arg(flag).arg(width.to_string());
             }
         }
-        let shown = |widget| bar.widgets.contains(&widget);
+        let shown = |widget: &str| bar.widgets.iter().any(|name| name == widget);
         if shown("version") {
             command
                 .arg("--eon-version")
@@ -567,7 +567,13 @@ fn venus_command(
                 command.arg("--disk-path").arg(path);
             }
         }
-        command.arg("--bar-items").arg(bar.widgets.join(","));
+        if bar.widgets.is_empty() {
+            command.arg("--bar-empty");
+        } else {
+            for widget in &bar.widgets {
+                command.arg("--bar-item").arg(widget);
+            }
+        }
         command
             .arg("--panel-heading")
             .arg(terminal.panel_heading.as_str())
@@ -7032,7 +7038,11 @@ mod tests {
             } else {
                 &[]
             };
-            fixture.state.quotas = Some(super::quota::Quotas::start(&backend, initial_widgets));
+            let initial_widgets = initial_widgets
+                .iter()
+                .map(|name| (*name).into())
+                .collect::<Vec<_>>();
+            fixture.state.quotas = Some(super::quota::Quotas::start(&backend, &initial_widgets));
             let quota_failure = |state: &SupervisorState| {
                 let mut snapshot = state.workspaces.as_ref().unwrap().snapshot();
                 state.quotas.as_ref().unwrap().apply(&mut snapshot);
@@ -9132,6 +9142,48 @@ mod tests {
     }
 
     #[test]
+    fn bar_launch_preserves_each_selector_and_explicit_empty() {
+        let inputs = crate::fixtures::inputs();
+        let mut bar = inputs.defaults.bar();
+        let args = |bar: &crate::managed_environment::Bar| {
+            venus_command(
+                &inputs,
+                &inputs.venus,
+                Path::new("/config"),
+                Path::new("/runtime.sock"),
+                LaunchMode::Workspace,
+                &inputs.defaults.terminal,
+                bar,
+                "eon",
+                true,
+                true,
+                true,
+                true,
+            )
+            .get_args()
+            .map(OsString::from)
+            .collect::<Vec<_>>()
+        };
+        bar.widgets = vec!["clock".into(), "google_quota:A,B:C:7d".into(), "ram".into()];
+        let actual = args(&bar);
+        let items = actual
+            .windows(2)
+            .filter(|pair| pair[0] == "--bar-item")
+            .map(|pair| pair[1].to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(items, ["clock", "google_quota:A,B:C:7d", "ram"]);
+        assert!(
+            !actual
+                .iter()
+                .any(|arg| arg == "--bar-empty" || arg == "--bar-items")
+        );
+        bar.widgets.clear();
+        let actual = args(&bar);
+        assert_eq!(actual.iter().filter(|arg| *arg == "--bar-empty").count(), 1);
+        assert!(!actual.iter().any(|arg| arg == "--bar-item"));
+    }
+
+    #[test]
     fn version_badge_uses_supervising_product_and_visibility_at_each_launch() {
         let mut inputs = crate::fixtures::inputs();
         inputs.version = "9.8.7-alpha.2+proof";
@@ -9187,8 +9239,12 @@ mod tests {
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert_eq!(
-                launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
-                [widgets]
+                launch_input(&inputs, LaunchMode::Workspace, "--bar-item"),
+                if widgets.is_empty() {
+                    Vec::<&str>::new()
+                } else {
+                    widgets.split(',').collect()
+                }
             );
             let versions = launch_input(&inputs, LaunchMode::Workspace, "--eon-version");
             if visible {
@@ -9203,7 +9259,12 @@ mod tests {
                     launch_input(&inputs, LaunchMode::Workspace, "--eon-release-stage").is_empty()
                 );
             }
-            for flag in ["--bar-items", "--eon-version", "--eon-release-stage"] {
+            for flag in [
+                "--bar-item",
+                "--bar-empty",
+                "--eon-version",
+                "--eon-release-stage",
+            ] {
                 assert!(launch_input(&inputs, LaunchMode::Terminal, flag).is_empty());
             }
             // The Eon icon reaches every workspace window, whatever the widgets, as the opaque
@@ -9330,14 +9391,14 @@ mod tests {
         inputs.defaults.bar_widgets = &["ram", "clock"];
         fs::write(root.join("config.toml"), "[bar]\nunknown = true\n").unwrap();
         assert_eq!(
-            launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
-            ["ram,clock"]
+            launch_input(&inputs, LaunchMode::Workspace, "--bar-item"),
+            ["ram", "clock"]
         );
         for source in ["[bar]\nwidgets = ['gpu']\n", "[bar]\nwidgets = ['RAM']\n"] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert_eq!(
-                launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
-                [""]
+                launch_input(&inputs, LaunchMode::Workspace, "--bar-item"),
+                Vec::<&str>::new()
             );
         }
         // Known names are checked where the bar launches; malformed input fails every read.
@@ -10011,7 +10072,7 @@ rows = 30
                 "85",
                 "--cpu-temperature-critical-celsius",
                 "95",
-                "--bar-items",
+                "--bar-item",
                 "cpu",
                 "--panel-heading",
                 "connected",

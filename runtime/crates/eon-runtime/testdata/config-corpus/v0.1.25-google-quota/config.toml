@@ -1,0 +1,2 @@
+[bar]
+widgets = ["clock", "google_quota:A,B:C:7d", "google_quota:Gemini Models:5h", "google_quota:Gemini Models:7d", "ram", "google_quota", "google_quota::5h", "google_quota:A:weekly", "future_quota", "future_quota"]

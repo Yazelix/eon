@@ -1,0 +1,4 @@
+{
+  "error": "bar.widgets repeats \"google_quota:A,B:C:7d\"",
+  "expected_failure": "A recognized Google scope/window selector cannot repeat."
+}

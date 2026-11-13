@@ -1,0 +1,2 @@
+[bar]
+widgets = ["google_quota:A,B:C:7d", "google_quota:A,B:C:7d"]

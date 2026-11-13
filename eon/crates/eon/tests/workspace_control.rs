@@ -386,6 +386,7 @@ fn config_schema_is_complete_offline_and_uses_config_cli_conventions() {
         assert!(key.get("default").is_some());
         assert!(key["bounds"].is_object());
         assert!(key["choices"].is_array());
+        assert!(key["element_forms"].is_array());
         assert!(key["rules"].is_array());
         assert!(!key["description"].as_str().unwrap().is_empty());
         assert!(!key["takes_effect"].as_array().unwrap().is_empty());
@@ -400,6 +401,18 @@ fn config_schema_is_complete_offline_and_uses_config_cli_conventions() {
     ] {
         assert!(paths.contains(path), "{path}");
     }
+    let widgets = keys
+        .iter()
+        .find(|key| key["path"] == "bar.widgets")
+        .unwrap();
+    assert_eq!(widgets["choices"].as_array().unwrap().len(), 10);
+    assert_eq!(
+        widgets["element_forms"],
+        serde_json::json!([
+            {"prefix":"google_quota:","suffix":":5h","min_length":1,"max_length":32,"control_free":true},
+            {"prefix":"google_quota:","suffix":":7d","min_length":1,"max_length":32,"control_free":true}
+        ])
+    );
     assert_eq!(fs::read_to_string(&file).unwrap(), "broken = [");
     fs::remove_file(&file).unwrap();
     fs::create_dir(&file).unwrap();
@@ -7479,7 +7492,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--detect-local-hosts\ntrue\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--eon-release-stage\nalpha\n--eon-icon\n/fixture/eon-icon.rgba\n--ram-notice-percent\n60\n--ram-warning-percent\n75\n--ram-critical-percent\n90\n--cpu-notice-percent\n60\n--cpu-warning-percent\n75\n--cpu-critical-percent\n90\n--cpu-average-seconds\n30\n--cpu-temperature-warning-celsius\n85\n--cpu-temperature-critical-celsius\n95\n--disk-notice-percent\n60\n--disk-warning-percent\n75\n--disk-critical-percent\n90\n--disk-path\n{}\n--bar-items\ncodex_quota_5h,codex_quota_7d,claude_quota_5h,claude_quota_7d,claude_quota_scoped,cpu,ram,disk,clock,version\n--panel-heading\nconnected\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--number-keys\ntrue\n--workspace\n{}\n",
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--detect-local-hosts\ntrue\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--eon-release-stage\nalpha\n--eon-icon\n/fixture/eon-icon.rgba\n--ram-notice-percent\n60\n--ram-warning-percent\n75\n--ram-critical-percent\n90\n--cpu-notice-percent\n60\n--cpu-warning-percent\n75\n--cpu-critical-percent\n90\n--cpu-average-seconds\n30\n--cpu-temperature-warning-celsius\n85\n--cpu-temperature-critical-celsius\n95\n--disk-notice-percent\n60\n--disk-warning-percent\n75\n--disk-critical-percent\n90\n--disk-path\n{}\n--bar-item\ncodex_quota_5h\n--bar-item\ncodex_quota_7d\n--bar-item\nclaude_quota_5h\n--bar-item\nclaude_quota_7d\n--bar-item\nclaude_quota_scoped\n--bar-item\ncpu\n--bar-item\nram\n--bar-item\ndisk\n--bar-item\nclock\n--bar-item\nversion\n--panel-heading\nconnected\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--animate-working-badge\ntrue\n--number-keys\ntrue\n--workspace\n{}\n",
             env!("CARGO_PKG_VERSION"),
             std::env::temp_dir().display(),
             control.display(),

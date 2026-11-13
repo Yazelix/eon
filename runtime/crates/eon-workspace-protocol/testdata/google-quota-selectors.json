@@ -1,0 +1,120 @@
+[
+  {
+    "selector": "google_quota:Gemini Models:5h",
+    "scope": "Gemini Models",
+    "duration_minutes": 300
+  },
+  {
+    "selector": "google_quota:Gemini Models:7d",
+    "scope": "Gemini Models",
+    "duration_minutes": 10080
+  },
+  {
+    "selector": "google_quota:A,B:C:5h",
+    "scope": "A,B:C",
+    "duration_minutes": 300
+  },
+  {
+    "selector": "google_quota:A,B:C:7d",
+    "scope": "A,B:C",
+    "duration_minutes": 10080
+  },
+  {
+    "selector": "google_quota:A::5h",
+    "scope": "A:",
+    "duration_minutes": 300
+  },
+  {
+    "selector": "google_quota:A::7d",
+    "scope": "A:",
+    "duration_minutes": 10080
+  },
+  {
+    "selector": "google_quota: Gemini :5h",
+    "scope": " Gemini ",
+    "duration_minutes": 300
+  },
+  {
+    "selector": "google_quota: Gemini :7d",
+    "scope": " Gemini ",
+    "duration_minutes": 10080
+  },
+  {
+    "selector": "google_quota:gemini:5h",
+    "scope": "gemini",
+    "duration_minutes": 300
+  },
+  {
+    "selector": "google_quota:gemini:7d",
+    "scope": "gemini",
+    "duration_minutes": 10080
+  },
+  {
+    "selector": "google_quota:éééééééééééééééé:5h",
+    "scope": "éééééééééééééééé",
+    "duration_minutes": 300
+  },
+  {
+    "selector": "google_quota:éééééééééééééééé:7d",
+    "scope": "éééééééééééééééé",
+    "duration_minutes": 10080
+  },
+  {
+    "selector": "google_quota:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:5h",
+    "scope": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "duration_minutes": 300
+  },
+  {
+    "selector": "google_quota:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:7d",
+    "scope": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "duration_minutes": 10080
+  },
+  {
+    "selector": "google_quota",
+    "scope": null
+  },
+  {
+    "selector": "google_quota::5h",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:A:weekly",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:A:5H",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:A",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:5h",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:ééééééééééééééééé:7d",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:A\u0000B:5h",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:A\nB:5h",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:A\tB:5h",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:AB:5h",
+    "scope": null
+  },
+  {
+    "selector": "google_quota:AB:5h",
+    "scope": null
+  }
+]

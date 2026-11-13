@@ -16,8 +16,8 @@ use std::{
 
 use eon_workspace_protocol::shortcuts::{PopupPolicy, popup_policy};
 use eon_workspace_protocol::v44::{
-    ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry,
-    PopupKey, SHIFT, SUPER, Shortcut,
+    ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES,
+    MAX_QUOTA_SCOPE_BYTES, PopupGeometry, PopupKey, SHIFT, SUPER, Shortcut,
 };
 
 pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
@@ -246,7 +246,7 @@ pub struct BarLoad {
 /// The window's `[bar]` settings, read when it opens.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Bar {
-    pub(crate) widgets: Vec<&'static str>,
+    pub(crate) widgets: Vec<String>,
     pub(crate) load: BarLoad,
     /// The absolute path the disk chip measures; none when `~` names a HOME that is unset or
     /// relative, so the chip has no reading.
@@ -258,7 +258,7 @@ impl Defaults {
     /// The `[bar]` settings of an empty configuration.
     pub(crate) fn bar(&self) -> Bar {
         Bar {
-            widgets: self.bar_widgets.to_vec(),
+            widgets: self.bar_widgets.iter().map(|name| (*name).into()).collect(),
             load: self.bar_load,
             disk_path: disk_path(self.bar_disk_path, nonempty_environment_path("HOME")).unwrap(),
         }
@@ -286,12 +286,32 @@ struct BarSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-fn bar_widget(name: &str, defaults: &Defaults) -> Option<&'static str> {
-    defaults
-        .bar_widgets
-        .iter()
-        .copied()
-        .find(|widget| *widget == name)
+const BAR_WIDGETS: [&str; 10] = [
+    "codex_quota_5h",
+    "codex_quota_7d",
+    "claude_quota_5h",
+    "claude_quota_7d",
+    "claude_quota_scoped",
+    "cpu",
+    "ram",
+    "disk",
+    "clock",
+    "version",
+];
+const GOOGLE_QUOTA_PERIODS: [&str; 2] = ["5h", "7d"];
+
+fn bar_widget(name: &str) -> bool {
+    if BAR_WIDGETS.contains(&name) {
+        return true;
+    }
+    name.strip_prefix("google_quota:")
+        .and_then(|selector| selector.rsplit_once(':'))
+        .is_some_and(|(scope, period)| {
+            !scope.is_empty()
+                && scope.len() <= MAX_QUOTA_SCOPE_BYTES
+                && !scope.chars().any(char::is_control)
+                && GOOGLE_QUOTA_PERIODS.contains(&period)
+        })
 }
 
 /// The absolute path `value` names: itself when absolute, or under `home` for `~` and `~/...`.
@@ -477,20 +497,24 @@ fn resolve_bar(settings: BarSettings, defaults: &Defaults) -> Result<Bar, String
     };
     let Some(names) = settings.widgets else {
         return Ok(Bar {
-            widgets: defaults.bar_widgets.to_vec(),
+            widgets: defaults
+                .bar_widgets
+                .iter()
+                .map(|name| (*name).into())
+                .collect(),
             load,
             disk_path,
         });
     };
     let mut widgets = Vec::with_capacity(names.len());
     for name in names {
-        let Some(widget) = bar_widget(&name, defaults) else {
+        if !bar_widget(&name) {
             continue;
-        };
-        if widgets.contains(&widget) {
+        }
+        if widgets.contains(&name) {
             return Err(format!("bar.widgets repeats {name:?}"));
         }
-        widgets.push(widget);
+        widgets.push(name);
     }
     Ok(Bar {
         widgets,
@@ -755,6 +779,7 @@ struct ConfigKey {
     default: serde_json::Value,
     bounds: serde_json::Value,
     choices: Vec<serde_json::Value>,
+    element_forms: Vec<serde_json::Value>,
     rules: Vec<String>,
     description: String,
     takes_effect: &'static [&'static str],
@@ -775,6 +800,7 @@ impl ConfigKey {
             default: serde_json::Value::Null,
             bounds: serde_json::json!({}),
             choices: Vec::new(),
+            element_forms: Vec::new(),
             rules: Vec::new(),
             description: description.into(),
             takes_effect,
@@ -919,10 +945,10 @@ fn configuration_metadata() -> &'static [ConfigKey] {
             ConfigKey::new(
                 "bar.widgets",
                 "string-array",
-                "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows.",
+                "Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google collection and chips are pending.",
                 &["next-window-presentation"],
             )
-            .rules(&["Ordered unique known widgets; unknown names are ignored with a warning. Clock/version positions remain fixed; quota selection also affects collection."]),
+            .rules(&["Ordered unique recognized widgets; unknown or malformed names warn and are ignored. Google scopes are exact, nonempty, control-free and at most 32 UTF-8 bytes; split at the final colon. Google entries are not defaults. Clock/version positions remain fixed; Google collection and chips are pending."]),
             ConfigKey::new(
                 "terminal.background_opacity",
                 "number",
@@ -1288,11 +1314,14 @@ fn schema_keys(defaults: &Defaults) -> Result<Vec<ConfigKey>, String> {
                 .clone();
             key.description = metadata.description(&key.default);
             if key.path == "bar.widgets" {
-                key.choices = defaults
-                    .bar_widgets
+                key.choices = BAR_WIDGETS
                     .iter()
                     .map(|name| serde_json::json!(name))
                     .collect();
+                key.element_forms = GOOGLE_QUOTA_PERIODS.iter().map(|period| serde_json::json!({
+                    "prefix": "google_quota:", "suffix": format!(":{period}"),
+                    "min_length": 1, "max_length": MAX_QUOTA_SCOPE_BYTES, "control_free": true,
+                })).collect();
             }
             keys.push(key);
         }
@@ -2997,7 +3026,7 @@ fn config_warnings(config: &EonConfig, path: &Path, defaults: &Defaults) -> Vec<
         .widgets
         .iter()
         .flatten()
-        .filter(|name| bar_widget(name, defaults).is_none())
+        .filter(|name| !bar_widget(name))
         .map(|name| format!("eon: ignoring unknown bar.widgets name {name:?} in {path}"));
     // Files is always the packaged Yazi (EON-C18), which earlier releases let a
     // configuration replace, disable or stop when hidden.
@@ -3390,6 +3419,22 @@ mod tests {
 
     #[test]
     fn configuration_schema_choices_cover_supported_values() {
+        let defaults = crate::fixtures::inputs().defaults;
+        let schema: serde_json::Value =
+            serde_json::from_str(&super::print_schema(&defaults).unwrap()).unwrap();
+        let widgets = schema["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|key| key["path"] == "bar.widgets")
+            .unwrap();
+        assert_eq!(
+            widgets["element_forms"],
+            serde_json::json!([
+                {"prefix":"google_quota:","suffix":":5h","min_length":1,"max_length":32,"control_free":true},
+                {"prefix":"google_quota:","suffix":":7d","min_length":1,"max_length":32,"control_free":true}
+            ])
+        );
         fn variants<T: serde::Deserialize<'static>>() -> &'static [&'static str] {
             #[derive(Debug)]
             struct Variants(&'static [&'static str]);
@@ -3426,7 +3471,7 @@ mod tests {
             ),
             ("editor.kind", variants::<super::EditorKind>()),
             ("editor.open_in", variants::<super::EditorOpenIn>()),
-            ("bar.widgets", defaults.bar_widgets),
+            ("bar.widgets", &super::BAR_WIDGETS[..]),
             ("popups.agent.command", &["auto"] as &[&str]),
         ] {
             let key = keys.iter().find(|key| key.path == path).unwrap();
@@ -3440,6 +3485,16 @@ mod tests {
             expected.sort_unstable();
             assert_eq!(actual, expected, "{path}");
         }
+        let mut reduced = defaults;
+        reduced.bar_widgets = &["clock"];
+        let reduced_keys = super::schema_keys(&reduced).unwrap();
+        let widgets = keys.iter().find(|key| key.path == "bar.widgets").unwrap();
+        let reduced_widgets = reduced_keys
+            .iter()
+            .find(|key| key.path == "bar.widgets")
+            .unwrap();
+        assert_eq!(widgets.choices, reduced_widgets.choices);
+        assert_eq!(widgets.element_forms, reduced_widgets.element_forms);
     }
 
     #[test]
@@ -3528,6 +3583,31 @@ mod tests {
                     value.clone()
                 };
                 assert!(probe(key, value).is_ok(), "{}", key.path);
+            }
+            if key.path == "bar.widgets" {
+                let cases: Value = serde_json::from_str(include_str!(
+                    "../../eon-workspace-protocol/testdata/google-quota-selectors.json"
+                ))
+                .unwrap();
+                for case in cases.as_array().unwrap() {
+                    let name = case["selector"].as_str().unwrap();
+                    let declared = key.choices.contains(&json!(name))
+                        || key.element_forms.iter().any(|form| {
+                            name.strip_prefix(form["prefix"].as_str().unwrap())
+                                .and_then(|rest| {
+                                    rest.strip_suffix(form["suffix"].as_str().unwrap())
+                                })
+                                .is_some_and(|scope| {
+                                    scope.len() >= form["min_length"].as_u64().unwrap() as usize
+                                        && scope.len()
+                                            <= form["max_length"].as_u64().unwrap() as usize
+                                        && (!form["control_free"].as_bool().unwrap()
+                                            || !scope.chars().any(char::is_control))
+                                })
+                        });
+                    assert_eq!(declared, case["scope"].is_string(), "{case}");
+                    assert_eq!(probe(key, json!([name])).is_ok(), declared, "{case}");
+                }
             }
             if !key.choices.is_empty() {
                 let outside = if key.kind == "string-array" {
@@ -4073,7 +4153,13 @@ mod tests {
         let anima = startup_animation(root, defaults, None)?;
         let resolved = super::Defaults {
             // `Defaults` holds a static widget list.
-            bar_widgets: Box::leak(bar.widgets.into_boxed_slice()),
+            bar_widgets: Box::leak(
+                bar.widgets
+                    .into_iter()
+                    .map(|name| &*Box::leak(name.into_boxed_str()))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
             bar_load: bar.load,
             // The configured path, as `eon config defaults` prints it, not its expansion.
             bar_disk_path: super::read_config(root, defaults, None)?
@@ -4417,6 +4503,54 @@ nested = { value = true }
             "{logged}"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn google_quota_selector_boundaries() {
+        let mut defaults = crate::fixtures::inputs().defaults;
+        defaults.bar_widgets = &["clock"];
+        let cases: serde_json::Value = serde_json::from_str(include_str!(
+            "../../eon-workspace-protocol/testdata/google-quota-selectors.json"
+        ))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let name = case["selector"].as_str().unwrap();
+            let bar = super::resolve_bar(
+                super::BarSettings {
+                    widgets: Some(vec![name.into()]),
+                    ..Default::default()
+                },
+                &defaults,
+            )
+            .unwrap();
+            assert_eq!(!bar.widgets.is_empty(), case["scope"].is_string(), "{case}");
+            if !bar.widgets.is_empty() {
+                assert_eq!(bar.widgets, [name]);
+            }
+            let source = toml::to_string(&serde_json::json!({"bar":{"widgets":[name]}})).unwrap();
+            let path = Path::new("config.toml");
+            let config = super::parse_configuration_text(&source, path, &defaults).unwrap();
+            let warnings = super::config_warnings(&config, path, &defaults);
+            if case["scope"].is_string() {
+                assert!(warnings.is_empty(), "{case}: {warnings:?}");
+            } else {
+                assert_eq!(
+                    warnings,
+                    [format!(
+                        "eon: ignoring unknown bar.widgets name {name:?} in config.toml"
+                    )]
+                );
+            }
+        }
+        let bar = super::resolve_bar(
+            super::BarSettings {
+                widgets: Some(vec!["ram".into()]),
+                ..Default::default()
+            },
+            &defaults,
+        )
+        .unwrap();
+        assert_eq!(bar.widgets, ["ram"]);
     }
 
     #[test]

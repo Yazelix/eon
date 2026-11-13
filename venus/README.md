@@ -33,7 +33,7 @@ Eon supplies its running version and release stage together through
 `--eon-version` and `--eon-release-stage alpha|beta|stable` in workspace mode.
 A version without stage metadata remains unmarked for older-supervisor reloads.
 The read-only label uses spare header space and yields before tabs and controls.
-`--bar-items` lets Eon choose which bar items show and in what order. The
+`--bar-item ITEM` pairs choose bar items in order; `--bar-empty` selects none. The
 `--*-percent` load levels set when the CPU, RAM and disk bottom meters turn
 yellow, orange or red while chip text stays neutral. `--cpu-average-seconds`
 sets the window of the CPU average that hover and accessibility give, and

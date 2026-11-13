@@ -769,13 +769,17 @@ pub enum HeaderText<'a> {
 }
 
 /// One item Eon may place in the Eon Bar between the drag region and Shortcuts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BarItem {
     CodexQuota5h,
     CodexQuota7d,
     ClaudeQuota5h,
     ClaudeQuota7d,
     ClaudeQuotaScoped,
+    GoogleQuota {
+        scope: String,
+        duration_minutes: u32,
+    },
     Cpu,
     Ram,
     Disk,
@@ -784,11 +788,15 @@ pub enum BarItem {
 }
 
 impl BarItem {
-    fn selects(self, scope: Option<&str>, minutes: u32) -> bool {
+    fn selects(&self, scope: Option<&str>, minutes: u32) -> bool {
         match self {
             Self::CodexQuota5h | Self::ClaudeQuota5h => scope.is_none() && minutes == 300,
             Self::CodexQuota7d | Self::ClaudeQuota7d => scope.is_none() && minutes == 10080,
             Self::ClaudeQuotaScoped => scope.is_some(),
+            Self::GoogleQuota {
+                scope: selected,
+                duration_minutes,
+            } => scope == Some(selected.as_str()) && minutes == *duration_minutes,
             _ => false,
         }
     }
@@ -3678,7 +3686,7 @@ impl WorkspaceScene {
                                                 == window.duration_minutes,
                                     );
                                     (
-                                        *item,
+                                        item.clone(),
                                         QuotaProvider::Codex,
                                         Some(QuotaWindowIdentity::Codex {
                                             duration: window.duration_minutes,
@@ -3699,7 +3707,7 @@ impl WorkspaceScene {
                             if *item == BarItem::CodexQuota5h =>
                         {
                             vec![(
-                                *item,
+                                item.clone(),
                                 QuotaProvider::Codex,
                                 None,
                                 quota_text(
@@ -3740,7 +3748,7 @@ impl WorkspaceScene {
                                 item.selects(window.scope.as_deref(), window.duration_minutes)
                                     .then(|| {
                                         (
-                                            *item,
+                                            item.clone(),
                                             QuotaProvider::Claude,
                                             Some(identity),
                                             quota_text(

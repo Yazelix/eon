@@ -3602,6 +3602,26 @@ fn quota_window_widgets_filter_order_and_reserve_only_selected_windows() {
         )
     };
     let selected = [BarItem::ClaudeQuota7d, BarItem::Cpu, BarItem::ClaudeQuota5h];
+    snapshot.google_quota = Some(eon_workspace_protocol::v44::GoogleQuota {
+        state: eon_workspace_protocol::v44::GoogleQuotaState::Fresh,
+        observed_at: 100,
+        windows: vec![window(300, Some("A,B:C"))],
+    });
+    let google = BarItem::GoogleQuota {
+        scope: "A,B:C".into(),
+        duration_minutes: 300,
+    };
+    assert!(google.selects(Some("A,B:C"), 300));
+    assert!(!google.selects(Some("A,B:C"), 10080));
+    assert!(!google.selects(Some("a,b:c"), 300));
+    assert!(!google.selects(None, 300));
+    for width in (500..1800).step_by(10) {
+        let empty = project(&snapshot, &[], width);
+        let google_only = project(&snapshot, std::slice::from_ref(&google), width);
+        assert!(google_only.quotas.is_empty());
+        assert_eq!(google_only.eon_icon, empty.eon_icon);
+        assert_eq!(google_only.tabs, empty.tabs);
+    }
     let scene = project(&snapshot, &selected, 3000);
     assert_eq!(
         scene

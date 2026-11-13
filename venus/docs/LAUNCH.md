@@ -91,17 +91,26 @@ and the session label yield before the icon. Only the existing tiny-width
 minimum, where the icon, one tab's minimum and trailing controls cannot fit,
 hides it. Changes to quota and reading values do not hide it.
 
-The supervising Eon may also pass `--bar-items ITEM,...` to choose which Eon
-Bar items show and in what order ([Eon Bar](PRESENTATION.md#eon-bar)). Items
-are `codex_quota_5h`, `codex_quota_7d`,
-`claude_quota_5h`, `claude_quota_7d`, `claude_quota_scoped`, `cpu`, `ram`,
-`disk`, `clock` and `version`,
-each at most once; an empty value shows none, and absence keeps all ten in
-the order above. Duration names select unscoped windows only, and
-`claude_quota_scoped` selects all scoped Claude windows. An item
-without data, such as a version Eon did not pass, still shows nothing. The input
-is workspace-only, and a missing value, an unknown, repeated or empty item, or a
-repeated flag fails before window creation.
+The supervising Eon may pass repeatable `--bar-item ITEM` pairs to choose
+which Eon Bar items show and in what order
+([Eon Bar](PRESENTATION.md#eon-bar)). Each pair carries one whole name;
+commas and colons are never list separators. Fixed names are
+`codex_quota_5h`, `codex_quota_7d`, `claude_quota_5h`, `claude_quota_7d`,
+`claude_quota_scoped`, `cpu`, `ram`, `disk`, `clock` and `version`.
+Google selectors are `google_quota:<scope>:5h` and `google_quota:<scope>:7d`:
+separate the final suffix at the last colon. Scope is exact, nonempty,
+control-free and at most 32 UTF-8 bytes. For example,
+`--bar-item 'google_quota:A,B:C:7d'` carries scope `A,B:C` unchanged.
+Google selectors are retained but show nothing until Google presentation lands.
+There is no bare provider alias.
+
+With neither input, Venus uses all ten fixed items in the order above.
+`--bar-empty` is a valueless marker for an explicitly empty list. It cannot
+repeat or appear beside any `--bar-item`, in either order. Both inputs are
+workspace-only. A missing, empty, non-UTF-8, unknown or repeated item fails
+before window creation. The old `--bar-items` flag is not accepted.
+Duration names select unscoped windows only; `claude_quota_scoped` selects
+all scoped Claude windows. An item without data still shows nothing.
 
 With each of the `cpu`, `ram` and `disk` items Eon may pass
 `--<chip>-notice-percent N`, `--<chip>-warning-percent N` and

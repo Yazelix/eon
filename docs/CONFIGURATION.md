@@ -112,7 +112,7 @@ disk_warning_percent = 75 # Disk use from which the disk chip turns orange.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_notice_percent = 60 # RAM use from which the RAM chip turns yellow.
 ram_warning_percent = 75 # RAM use from which the RAM chip turns orange.
-widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows.
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google collection and chips are pending.
 
 [terminal]
 background_blur = true # Request compositor background blur.
@@ -260,6 +260,8 @@ bar's left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
 list above. The list applies when a window next opens, reopens or reloads.
+It also accepts opt-in exact Google scope/window selectors; collection and
+chips remain pending. See [Agent quota](#agent-quota) for grammar and examples.
 Unknown names are ignored with a warning; repeated known names are a
 configuration error. Narrow windows hide the Eon logo first, then disk, RAM
 and CPU, whatever the order, then quota chips one by
@@ -684,6 +686,29 @@ set or clear a pin; pins are session state rather than configuration. The pane
 ID dims only when the resolved fill and configured opacity permit readable contrast.
 
 ## Agent quota
+
+Google selection is opt-in through exact `google_quota:<scope>:5h` and
+`google_quota:<scope>:7d` entries in `[bar] widgets`. These selectors are
+accepted and transported; Google collection and chips are pending, so they
+show nothing yet. The ten existing defaults above are unchanged.
+
+Scope is the exact reported model-group name: nonempty, control-free and at
+most 32 UTF-8 bytes. The last colon separates `5h` (five hours) or `7d`
+(seven days); commas and earlier colons belong to scope. Case and whitespace
+are preserved. For example, `"google_quota:A,B:C:7d"` selects scope `A,B:C`.
+A source rename needs a configuration edit. There is no bare `google_quota`
+widget or separate hide key. Unknown or malformed selectors warn and are ignored;
+duplicate recognized entries and non-string/non-list values are errors.
+Omitting `widgets` keeps the defaults; `widgets = []` selects none.
+
+```toml
+[bar]
+widgets = ["google_quota:Gemini Models:5h", "google_quota:Gemini Models:7d", "clock", "version"]
+```
+
+`eon config schema --json` lists fixed widget names in `choices` and the two
+parameterized Google forms in `element_forms`, including scope byte/control
+bounds. Runtime owns validation; Venus reads only resolved launch arguments.
 
 Eon bundles pinned CodexBar CLI for Codex and Claude quota.
 Codex uses your authenticated `codex` executable on `PATH`; Claude uses its local

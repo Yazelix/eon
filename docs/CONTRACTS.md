@@ -1202,8 +1202,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   - An Eon build ignores a configuration key it does not know, with one warning
     naming the key and file, so a newer setting never breaks an older running
     window. A known key with a wrong type or value still fails.
-  - An unknown name in `[bar] widgets` is ignored with a warning naming the
-    value and file; known repeated names and wrong types still fail.
+  - An unknown or malformed name in `[bar] widgets` is ignored with a warning
+    naming the value and file; known repeated names and wrong types still fail.
+    Recognized names include EON-C32's exact Google scope/window selectors,
+    without a bare `google_quota` alias.
   - When mise is enabled and the inherited PATH has a `mise` executable, an
     interactive managed shell evaluates that host mise's own `mise activate`
     output after Eon's other integrations, so mise-managed tools and
@@ -5003,6 +5005,8 @@ implementation.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-chip-grade-60-21mnn`: common notice, warning and critical percentage
   levels for CPU, RAM and disk.
+  Amended 2026-11-13 by `eon-o9f3h.3` under Lucca's approved eon-w31ps
+  decision: exact Google selectors and lossless launch arguments.
 - **Consumer:** Full-Eon session users.
 - **Trigger:** A full-Eon window opens or reopens.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -5010,7 +5014,16 @@ implementation.
   `claude_quota_5h`, `claude_quota_7d`, `claude_quota_scoped`, `cpu`, `ram`,
   `disk`, `clock` and `version`. `_5h` and `_7d` select only unscoped five-hour and seven-day
   windows, and `claude_quota_scoped` selects every model-scoped Claude window.
-  Unknown names warn and are ignored.
+  The list also accepts `google_quota:<scope>:5h` and
+  `google_quota:<scope>:7d`. Prefix and final suffix are literal; scope is
+  exact, nonempty, control-free and at most 32 UTF-8 bytes. Split at the
+  final colon, preserving commas, colons, case and whitespace in scope.
+  Each selector identifies only that scope/duration in its list position.
+  An unreported scope shows nothing and remains a recognized selector.
+  No Google selectors are defaulted; bare `google_quota` is not a widget.
+  Unknown or malformed names warn and are ignored. Google collection and
+  chips remain pending in slices 4 and 5; enabled-provider semantics are
+  specified by EON-C27.
   The Eon Bar shows the listed widgets left to right in that order, between the
   drag region and Shortcuts, except `clock` and `version`, which sit at the left
   and right ends of the bottom shortcut hints while they show, whatever their
@@ -5062,7 +5075,9 @@ implementation.
   that is not true or false fails through the existing startup and replacement
   handling, preserving live terminals.
 - **Owner:** Eon owns the settings, their names and defaults. Runtime parses
-  and validates them and passes the recognized list to Venus as `--bar-items`,
+  and validates them and passes individual recognized names to Venus as
+  separate launch arguments, preserving scope text and explicit empty lists
+  ([internal inputs](../venus/docs/LAUNCH.md#workspace-mode)),
   with `--eon-release-stage` beside `--eon-version` only when `version` is
   listed, the Eon icon's path
   (`--eon-icon`) whenever Eon has one, the RAM levels only when
@@ -5074,6 +5089,17 @@ implementation.
   one of its quota widgets is listed (EON-C27). Selection affects only
   presentation and its logo-room reservation; `eon session --json` retains
   every reported window.
+- **Selector/transport evidence (`eon-o9f3h.3`):** Runtime
+  `google_quota_selector_boundaries`,
+  `configuration_corpus_loads_from_the_migration_floor`,
+  `bar_launch_preserves_each_selector_and_explicit_empty`,
+  `version_badge_uses_supervising_product_and_visibility_at_each_launch`,
+  `google_only_widgets_start_no_existing_provider_workers`; Venus
+  `google_quota_selector_boundaries`, `bar_items_are_an_ordered_workspace_choice`,
+  `repeated_bar_items_and_explicit_empty_are_distinct_from_omission`,
+  `quota_window_widgets_filter_order_and_reserve_only_selected_windows`;
+  Eon `bare_eon_attaches_only_to_the_live_current_generation`.
+  These checks cover configuration and argv, not Google collection or chips.
 - **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns` and
   `eon-0oh9v`, for the disk widget `eon-d7itl`, and for the leftover
   `show_version` alias `eon-wc119`
@@ -7391,6 +7417,9 @@ reference to existing pane creation, not by the unapproved targeting beads.
 - **Status:** Planned (approved by eon-overseer under Lucca's delegation,
   2026-11-12T23:17:46Z; eon-s0oj.1). The schema clause is Candidate;
   get/set/unset remain Planned under `eon-s0oj.2`.
+  Amended 2026-11-13 by `eon-o9f3h.3` (approved by eon-overseer under
+  Lucca's auto-decide delegation): fixed choices plus machine-readable
+  parameterized array elements; schema status remains Candidate.
 - **Consumer:** Agents and Eon's future Ratconfig host inspecting/editing
   configuration without duplicating Runtime's metadata or validation.
 - **Trigger:** `eon config schema --json`; later explicit get/set/unset of a
@@ -7415,10 +7444,35 @@ reference to existing pane creation, not by the unapproved targeting beads.
     length; integer `item_min_length`/`item_max_length` constrain string-array
     or argv element UTF-8 byte lengths. Limits are inclusive; absent bounds
     make no corresponding claim. Disjoint/contextual constraints use rules.
-  - `choices` (array of JSON values): listed scalar enum values, or allowed
-    elements for a string-array; for command rows it constrains the named
-    string alternative while argv remains governed by its rules. Empty means
-    no enumerated constraint. Existing ignore policies still apply.
+  - `choices` (array of JSON values): listed scalar enum values, or fixed
+    allowed elements for a string-array. For a string-array with nonempty
+    `choices` or `element_forms`, a recognized element is a fixed choice or
+    matches one of the element forms. Empty `choices` (and, for string-arrays,
+    empty `element_forms`) means no enumerated constraint. For command rows,
+    `choices` constrains the named string alternative while argv remains
+    governed by its rules. Existing ignore and duplicate policies still apply.
+  - `element_forms` (array of objects): additional accepted parameterized
+    elements for a string-array; empty for rows without such forms. Each
+    object has literal string `prefix` and `suffix`, inclusive integer
+    `min_length` and `max_length`, and boolean `control_free`. An element
+    matches when it starts with the prefix and ends with the suffix without
+    overlap, and the intervening string has a UTF-8 byte length within the
+    limits. When `control_free` is true, that string contains no Unicode
+    control characters (General Category Cc, Rust's `char::is_control`).
+    All text is case-sensitive and exact, without trimming or normalization;
+    metacharacters have no special meaning. `bar.widgets` has the ten fixed
+    recognized names in `choices` and exactly these two forms. Length limits
+    constrain the scope, not the whole selector:
+
+    ```json
+    [
+      {"prefix":"google_quota:","suffix":":5h","min_length":1,"max_length":32,"control_free":true},
+      {"prefix":"google_quota:","suffix":":7d","min_length":1,"max_length":32,"control_free":true}
+    ]
+    ```
+
+    Consumers may match elements against this union; complete configuration
+    validation remains Runtime-owned.
   - `rules` (array of strings): human-readable constraints and ignored-value
     policies, with no machine meaning or wording guarantee. Consumers must
     validate through Runtime rather than interpret these strings.
@@ -7436,8 +7490,12 @@ reference to existing pane creation, not by the unapproved targeting beads.
   - `required` (boolean): the row belongs to a required built-in popup; false
     for ordinary/custom keys. Custom field-presence conditions are rules.
 
-  Consumers ignore additional object fields and tolerate new kind, effect and
-  choice values. The command reads no user configuration, creates no directories,
+  Consumers ignore additional object fields and tolerate new kind, effect,
+  choice and element-form values. They must not reject an array element solely
+  because it is absent from `choices` when it matches an `element_forms` entry.
+  Consumers must validate complete edits through Runtime rather than interpret
+  human-readable rules. The command reads no user configuration, creates no
+  directories,
   contacts no supervisor and starts no children; broken config still works.
   Success exits 0 with JSON stdout and no stderr. Invalid arguments exit 2.
   Serialization or stdout write failures exit 1 with a diagnostic on stderr;
@@ -7458,6 +7516,12 @@ reference to existing pane creation, not by the unapproved targeting beads.
   editing. It does not own configuration watchers, reload lifecycle, popup
   presentation, Ratconfig integration or the validation policy of other
   contracts. Schema describes existing keys/defaults rather than changing them.
+- **Element-form evidence (`eon-o9f3h.3`):**
+  `configuration_schema_choices_cover_supported_values`,
+  `configuration_schema_bounds_and_choices_match_validation` and
+  `config_schema_is_complete_offline_and_uses_config_cli_conventions`
+  check fixed choices, the two Google forms and agreement with validation.
+  This does not prove named-key editing.
 - **Proof:** Schema only (`eon-s0oj.1`); named-key editing remains unimplemented.
   - **Environment:** Automated tier, x86_64 Linux, isolated `eon-test` with
     this repository's pinned development environment and Cargo test binaries.

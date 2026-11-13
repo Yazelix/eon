@@ -2301,7 +2301,7 @@ re-proved when that platform or feature is next touched.
 - **Status:** Retired 2026-10-30 by Lucca: demoted to a feature; behavior in
   [Eon Bar](PRESENTATION.md#eon-bar); proof in `eon-igae.14.1`, `eon-vn0nk`.
 - **Reason:** Item order is presentation. EON-C32 owns the setting, and the
-  `--bar-items` launch argument is an internal interface documented in
+  `--bar-item` / `--bar-empty` launch inputs are an internal interface documented in
   [Workspace mode](LAUNCH.md#workspace-mode).
 
 ## VEN-C30 — Agent sidebar

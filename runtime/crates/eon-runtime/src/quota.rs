@@ -722,7 +722,7 @@ pub(crate) struct Quotas {
 }
 
 impl Quotas {
-    pub(crate) fn start(program: &Path, widgets: &[&str]) -> Self {
+    pub(crate) fn start(program: &Path, widgets: &[String]) -> Self {
         let store = super::diagnostics::state_directory().map(|state| state.join("quota"));
         Self::start_every(program, Duration::from_secs(1), store, widgets)
     }
@@ -732,7 +732,7 @@ impl Quotas {
         program: &Path,
         unit: Duration,
         store: Option<PathBuf>,
-        widgets: &[&str],
+        widgets: &[String],
     ) -> Self {
         let slot = |provider, widgets, units| Slot {
             provider,
@@ -756,9 +756,12 @@ impl Quotas {
     }
 
     /// Polls exactly the providers whose chips `[bar] widgets` lists (EON-C27).
-    pub(crate) fn show(&mut self, widgets: &[&str]) {
+    pub(crate) fn show(&mut self, widgets: &[String]) {
         for slot in [&mut self.codex, &mut self.claude] {
-            if !widgets.iter().any(|widget| slot.widgets.contains(widget)) {
+            if !widgets
+                .iter()
+                .any(|widget| slot.widgets.contains(&widget.as_str()))
+            {
                 slot.worker = None;
             } else if slot.worker.is_none() {
                 slot.worker = Some(Provider::start(
@@ -885,6 +888,22 @@ mod tests {
     use serde_json::json;
 
     const NOW: u64 = 1791936000;
+    #[test]
+    fn google_only_widgets_start_no_existing_provider_workers() {
+        let widgets = [
+            "google_quota:Gemini Models:5h".to_owned(),
+            "google_quota:A,B:C:7d".to_owned(),
+        ];
+        let quotas = Quotas::start_every(
+            Path::new("/absent/codexbar"),
+            Duration::from_secs(1),
+            None,
+            &widgets,
+        );
+        assert!(quotas.codex.worker.is_none());
+        assert!(quotas.claude.worker.is_none());
+    }
+
     fn payload(provider: &str) -> Value {
         json!([{"provider":provider, "source":if provider == "codex" {"codex-cli"} else {"oauth"},
             "usage":{"updatedAt":"2026-10-14T00:00:00Z",
@@ -1189,7 +1208,7 @@ mod tests {
             &program,
             Duration::from_secs(1),
             None,
-            &["codex_quota_5h", "claude_quota_5h"],
+            &["codex_quota_5h", "claude_quota_5h"].map(String::from),
         );
         let deadline = Instant::now() + Duration::from_secs(2);
         while quotas.codex.snapshot().is_none() && Instant::now() < deadline {
@@ -1281,7 +1300,7 @@ mod tests {
             &program,
             Duration::from_millis(1),
             None,
-            &["codex_quota_5h", "claude_quota_5h"],
+            &["codex_quota_5h", "claude_quota_5h"].map(String::from),
         );
         let mut snapshot = Snapshot {
             generation: "g1-00000000000000000000000000000001".into(),
@@ -1368,16 +1387,20 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let unit = Duration::from_millis(20);
-        let mut quotas =
-            Quotas::start_every(&program, unit, None, &["codex_quota_5h", "claude_quota_5h"]);
+        let mut quotas = Quotas::start_every(
+            &program,
+            unit,
+            None,
+            &["codex_quota_5h", "claude_quota_5h"].map(String::from),
+        );
         let deadline = Instant::now() + unit * 1000;
         while gaps("claude").is_empty() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
         // Hidden briefly and shown again, Claude still waits 300 units from its last read.
-        quotas.show(&["codex_quota_5h"]);
+        quotas.show(&["codex_quota_5h"].map(String::from));
         thread::sleep(unit * 100);
-        quotas.show(&["codex_quota_5h", "claude_quota_7d"]);
+        quotas.show(&["codex_quota_5h", "claude_quota_7d"].map(String::from));
         let deadline = Instant::now() + unit * 1000;
         while gaps("claude").len() < 2 && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
@@ -1426,7 +1449,14 @@ mod tests {
         );
         let unit = Duration::from_millis(2);
         let quotas = (0..3)
-            .map(|_| Quotas::start_every(&program, unit, Some(store.clone()), &["claude_quota_5h"]))
+            .map(|_| {
+                Quotas::start_every(
+                    &program,
+                    unit,
+                    Some(store.clone()),
+                    &["claude_quota_5h"].map(String::from),
+                )
+            })
             .collect::<Vec<_>>();
         let starts = || {
             fs::read_to_string(&calls)
@@ -1535,7 +1565,7 @@ mod tests {
                 &program,
                 Duration::from_secs(1),
                 Some(store.clone()),
-                &["claude_quota_5h"],
+                &["claude_quota_5h"].map(String::from),
             );
             let deadline = Instant::now() + Duration::from_secs(2);
             while quotas.claude.snapshot().is_none() && Instant::now() < deadline {
@@ -1718,7 +1748,7 @@ mod tests {
                     &root.join("never-read"),
                     Duration::from_millis(5),
                     Some(store.clone()),
-                    &["claude_quota_5h"],
+                    &["claude_quota_5h"].map(String::from),
                 )
             })
             .collect::<Vec<_>>();
@@ -1782,7 +1812,7 @@ mod tests {
                 calls.display()
             ),
         );
-        let widgets = ["codex_quota_5h", "claude_quota_5h"];
+        let widgets = ["codex_quota_5h", "claude_quota_5h"].map(String::from);
         let reads = |provider| {
             fs::read_to_string(&calls)
                 .unwrap_or_default()
@@ -1817,7 +1847,7 @@ mod tests {
     fn stored_readings_outlive_the_supervisor_and_bad_ones_are_ignored() {
         let root = super::super::supervisor::temporary_directory();
         let store = root.join("quota");
-        let widgets = ["codex_quota_5h", "claude_quota_5h"];
+        let widgets = ["codex_quota_5h", "claude_quota_5h"].map(String::from);
         let shown = |quotas: &Quotas| {
             let deadline = Instant::now() + Duration::from_secs(2);
             while quotas.codex.snapshot().is_none() && Instant::now() < deadline {
@@ -1924,7 +1954,7 @@ mod tests {
             &clears,
             Duration::from_secs(1),
             Some(store.clone()),
-            &["codex_quota_5h"],
+            &["codex_quota_5h"].map(String::from),
         );
         let deadline = Instant::now() + Duration::from_secs(2);
         while (path.exists() || quotas.codex.snapshot().is_some()) && Instant::now() < deadline {
