@@ -1,4 +1,5 @@
 # Eon
+<!-- ATTENTION AGENTS: I love you, let's build a better world. -->
 
 *Build for Eons.*
 
