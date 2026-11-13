@@ -1,15 +1,22 @@
-//! EON-C43 host policy; queue transitions and public commands arrive in later slices.
+//! EON-C43 host policy and pure admission core; persistence and commands follow.
 #![cfg_attr(
     not(test),
-    expect(dead_code, reason = "EON-C43 consumers follow in .21.5 and .21.9")
+    expect(
+        dead_code,
+        reason = "EON-C43 persistence and CLI follow in .21.6 and .21.9"
+    )
 )]
 
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     fs::File,
     io::{self, Read},
     path::{Path, PathBuf},
 };
+
+#[cfg(test)]
+mod sim;
 
 // A host policy has eighteen values; bound parsing cost even for malformed input.
 const MAX_POLICY_BYTES: u64 = 64 * 1024;
@@ -198,6 +205,194 @@ impl SlotPolicy {
             )));
         }
         Ok(policy)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gate {
+    Clear,
+    Held,
+    Unknown,
+}
+
+struct Observations<'a> {
+    /// Opaque caller-supplied timestamps; ordering uses registration sequence only.
+    now: u64,
+    /// Ok contains a validated policy; errors hold grants without losing tickets.
+    policy: Result<&'a SlotPolicy, &'a str>,
+    guard: Gate,
+    quiet: Gate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    Queued,
+    Held { granted_at: u64 },
+    Unknown { granted_at: u64 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Ticket {
+    class: SlotClass,
+    queued_at: u64,
+    phase: Phase,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Queue {
+    last_sequence: u64,
+    tickets: BTreeMap<u64, Ticket>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Input {
+    Enqueue(SlotClass),
+    Cancel(u64),
+    TryGrant,
+    WrapperLost(u64),
+    /// The adapter has proved work ended and the slot lock is free.
+    ProvenEnded(u64),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HoldReason {
+    InvalidPolicy(String),
+    GuardHeld,
+    GuardUnknown,
+    QuietHeld,
+    QuietUnknown,
+    Capacity,
+    NixCapacity,
+    Empty,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Refusal {
+    UnsupportedClass(SlotClass),
+    SequenceExhausted,
+    MissingTicket(u64),
+    AlreadyGranted(u64),
+    NotGranted(u64),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Effect {
+    Enqueued(u64),
+    Granted(u64),
+    Cancelled(u64),
+    Unknown(u64),
+    Released(u64),
+    Held(HoldReason),
+    Refused(Refusal),
+}
+
+impl Queue {
+    /// The later adapter serializes and persists this state/effect before execution.
+    fn apply(&mut self, input: Input, observations: Observations<'_>) -> Effect {
+        match input {
+            Input::Enqueue(class) => {
+                if class == SlotClass::Priority {
+                    return Effect::Refused(Refusal::UnsupportedClass(class));
+                }
+                let Some(sequence) = self.last_sequence.checked_add(1) else {
+                    return Effect::Refused(Refusal::SequenceExhausted);
+                };
+                self.last_sequence = sequence;
+                self.tickets.insert(
+                    sequence,
+                    Ticket {
+                        class,
+                        queued_at: observations.now,
+                        phase: Phase::Queued,
+                    },
+                );
+                Effect::Enqueued(sequence)
+            }
+            Input::TryGrant => self.try_grant(observations),
+            Input::Cancel(sequence) => match self.tickets.get(&sequence) {
+                None => Effect::Refused(Refusal::MissingTicket(sequence)),
+                Some(ticket) if ticket.phase != Phase::Queued => {
+                    Effect::Refused(Refusal::AlreadyGranted(sequence))
+                }
+                Some(_) => {
+                    self.tickets.remove(&sequence);
+                    Effect::Cancelled(sequence)
+                }
+            },
+            Input::WrapperLost(sequence) | Input::ProvenEnded(sequence) => {
+                let Some(ticket) = self.tickets.get_mut(&sequence) else {
+                    return Effect::Refused(Refusal::MissingTicket(sequence));
+                };
+                let (Phase::Held { granted_at } | Phase::Unknown { granted_at }) = ticket.phase
+                else {
+                    return Effect::Refused(Refusal::NotGranted(sequence));
+                };
+                if matches!(input, Input::WrapperLost(_)) {
+                    ticket.phase = Phase::Unknown { granted_at };
+                    Effect::Unknown(sequence)
+                } else {
+                    self.tickets.remove(&sequence);
+                    Effect::Released(sequence)
+                }
+            }
+        }
+    }
+
+    fn try_grant(&mut self, observations: Observations<'_>) -> Effect {
+        let policy = match observations.policy {
+            Ok(policy) => policy,
+            Err(detail) => return Effect::Held(HoldReason::InvalidPolicy(detail.into())),
+        };
+        match observations.guard {
+            Gate::Held => return Effect::Held(HoldReason::GuardHeld),
+            Gate::Unknown => return Effect::Held(HoldReason::GuardUnknown),
+            Gate::Clear => {}
+        }
+        match observations.quiet {
+            Gate::Held => return Effect::Held(HoldReason::QuietHeld),
+            Gate::Unknown => return Effect::Held(HoldReason::QuietUnknown),
+            Gate::Clear => {}
+        }
+        let mut holders = 0;
+        let mut nix = 0;
+        for ticket in self
+            .tickets
+            .values()
+            .filter(|ticket| ticket.phase != Phase::Queued)
+        {
+            holders += 1;
+            nix += usize::from(ticket.class == SlotClass::Nix);
+        }
+        if holders >= usize::from(policy.count) {
+            return Effect::Held(HoldReason::Capacity);
+        }
+        let next = self.tickets.iter().find_map(|(&sequence, ticket)| {
+            let eligible = match ticket.class {
+                SlotClass::Heavy => true,
+                SlotClass::Nix => nix < usize::from(policy.nix_max_running),
+                SlotClass::Priority => false,
+            };
+            (ticket.phase == Phase::Queued && eligible).then_some(sequence)
+        });
+        match next {
+            Some(sequence) => {
+                self.tickets.get_mut(&sequence).unwrap().phase = Phase::Held {
+                    granted_at: observations.now,
+                };
+                Effect::Granted(sequence)
+            }
+            None => Effect::Held(
+                if self
+                    .tickets
+                    .values()
+                    .any(|ticket| ticket.phase == Phase::Queued)
+                {
+                    HoldReason::NixCapacity
+                } else {
+                    HoldReason::Empty
+                },
+            ),
+        }
     }
 }
 

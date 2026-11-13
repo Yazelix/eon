@@ -364,6 +364,26 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
   HOME alone does not isolate an account-scoped queue. Public commands remain
   Planned until their implementation/proof slice.
 
+### How is slot ordering kept independent of I/O and repeatable under contention?
+
+- **Owner:** Eon Runtime's private [slots core](../runtime/crates/eon-runtime/src/slots.rs).
+- **Read first:** [EON-C43](CONTRACTS.md#eon-c43--per-user-host-wide-heavy-run-admission)
+  and the decisions/references on `eon-eon-agent-lr8sx.21.1` and `.21.5`.
+  The comparable implementations inspected there are heavy.sh SHA-256
+  `562199bdfe838f26c732055d0ee2a396c273bd8370b6c3c104510e7374ed5b3e`,
+  rota `22abc72834e309173eb17051ee6418d9bee61ffa` (`src/slots.rs`),
+  and Blaze `7260ad3a8da324b2be3e92759d5c739e9019a38c`
+  (`crates/blaze-core/src/{lib,sim}.rs` and planted-control tests).
+- **Preserve / reject:** Serialized registration sequence owns FIFO; explicit
+  time/policy/guard/quiet inputs and ordered state make transitions repeatable.
+  Unknown work counts against global and class capacity until proven ended.
+  The [test-only scheduler](../runtime/crates/eon-runtime/src/slots/sim.rs)
+  delays contenders and checks a separate operation-log oracle, including
+  planted capacity/FIFO faults and exact seed/trace replay. Retain that shape,
+  not outside code, timestamp ordering, project ranking, bypass flags or a
+  generic I/O framework. Simulation does not prove kernel locks, persistence,
+  process cleanup or installed behavior; later adapters own those checks.
+
 ### How should Eon integrate existing coding agents without parsing terminal output or treating a provider conversation as Eon work?
 
 - **Owner:** Eon provider adapter
