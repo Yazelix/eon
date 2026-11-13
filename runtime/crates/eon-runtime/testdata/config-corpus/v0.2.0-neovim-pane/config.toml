@@ -1,0 +1,7 @@
+[panels]
+heading = "connected"
+
+[editor]
+command = ["my-nvim", "-u", "NONE"]
+kind = "neovim"
+open_in = "pane"

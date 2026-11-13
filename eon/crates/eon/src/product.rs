@@ -221,6 +221,7 @@ pub(crate) fn inputs() -> Inputs {
             custom_popup_keep_alive: true,
             // The packaged Helix on Eon's terminal PATH; none in a build without Helix.
             editor: helix.as_ref().map(|_| &["hx"][..]),
+            editor_kind: eon_runtime::EditorKind::Auto,
             editor_open_in: eon_runtime::EditorOpenIn::Popup,
             agent_commands: &[
                 // Codex's shared daemon would run this terminal's eon commands as another terminal.

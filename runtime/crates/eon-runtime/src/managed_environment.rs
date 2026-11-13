@@ -177,6 +177,7 @@ pub struct Defaults {
     /// edit (EON-C10).
     pub editor: Option<&'static [&'static str]>,
     pub editor_open_in: EditorOpenIn,
+    pub editor_kind: EditorKind,
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
     pub agent_commands: &'static [&'static [&'static str]],
@@ -541,11 +542,25 @@ pub enum EditorOpenIn {
     Pane,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EditorKind {
+    Auto,
+    Neovim,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PreparedCommand {
+    pub(crate) argv: Vec<OsString>,
+    pub(crate) listener: Option<(super::editor::ListenerKind, usize)>,
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct EditorSettings {
     command: Option<PopupCommandSetting>,
     open_in: Option<EditorOpenIn>,
+    kind: Option<EditorKind>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -1118,6 +1133,14 @@ fn configuration_metadata() -> &'static [ConfigKey] {
             .bounds(json!({"min_items":1,"max_items":128}))
             .rules(&["Direct argv only; first argument nonempty; no NUL; at most 65536 total argument bytes. Existing editors retain their argv."]),
             ConfigKey::new(
+                "editor.kind",
+                "string",
+                "Recognize packaged Helix or nvim; \"neovim\" opts a wrapper in.",
+                &["next-edit","next-editor-launch"],
+            )
+            .choices(&["auto","neovim"])
+            .rules(&["Reread for each edit and fresh Editor launch; a live owned listener retains its recorded kind."]),
+            ConfigKey::new(
                 "editor.open_in",
                 "string",
                 "Open in the packaged Helix Editor popup, or \"pane\" for a new pane.",
@@ -1416,6 +1439,7 @@ fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String>
         },
         editor: EditorSettings {
             open_in: Some(defaults.editor_open_in),
+            kind: Some(defaults.editor_kind),
             command: defaults.editor.map(|argv| {
                 PopupCommandSetting::Argv(argv.iter().map(|argument| (*argument).into()).collect())
             }),
@@ -1707,7 +1731,36 @@ pub(crate) fn prepare_edit(
     let popup = config.editor.open_in.unwrap_or(defaults.editor_open_in) == EditorOpenIn::Popup
         && config.popups.get("editor").and_then(|popup| popup.enabled) != Some(false)
         && !file.is_dir();
-    let mut argv = editor_from_settings(config.editor, defaults)?;
+    let command = prepare_editor(config.editor, defaults, programs, directory, popup)?;
+    // Neovim file routing belongs to S2. Only Helix can use the popup here.
+    let popup = popup
+        && command
+            .listener
+            .is_some_and(|(kind, _)| kind == super::editor::ListenerKind::Helix);
+    Ok(super::editor::EditCommand { command, popup })
+}
+
+fn prepare_editor(
+    settings: EditorSettings,
+    defaults: &Defaults,
+    programs: &ManagedPrograms,
+    directory: &Path,
+    owned_listener: bool,
+) -> Result<PreparedCommand, String> {
+    use super::editor::ListenerKind;
+    let kind = settings.kind.unwrap_or(defaults.editor_kind);
+    let mut argv = editor_from_settings(settings, defaults)?;
+    let neovim =
+        kind == EditorKind::Neovim || Path::new(&argv[0]).file_name() == Some(OsStr::new("nvim"));
+    let mut listener = if owned_listener && neovim {
+        match super::editor::neovim_position(&argv) {
+            Ok(position) => Some((ListenerKind::Neovim, position)),
+            Err(error) if kind == EditorKind::Neovim => return Err(error),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     argv[0] = popup_executable(&argv[0], programs.shell_bin.as_deref(), directory)?
         .ok_or_else(|| {
             format!(
@@ -1716,8 +1769,11 @@ pub(crate) fn prepare_edit(
             )
         })?
         .into_os_string();
-    let popup = popup && super::editor::listen_position(&argv, programs, directory)?.is_some();
-    Ok(super::editor::EditCommand { argv, popup })
+    if owned_listener && !neovim {
+        listener = super::editor::listen_position(&argv, programs, directory)?
+            .map(|position| (ListenerKind::Helix, position));
+    }
+    Ok(PreparedCommand { argv, listener })
 }
 
 /// The first of `$VISUAL` and `$EDITOR` that names an editor, with its name: the value
@@ -2249,19 +2305,28 @@ fn resolve_popup_entries(
 
 pub(crate) fn prepare_popup_command(
     command: &PopupCommand,
-    session_bin: Option<&Path>,
+    programs: &ManagedPrograms,
     directory: &Path,
     config: &Path,
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
-) -> Result<Vec<OsString>, String> {
-    let mut argv = match command {
+) -> Result<PreparedCommand, String> {
+    if *command == PopupCommand::Editor {
+        return prepare_editor(
+            read_config(config, defaults, log)?.editor,
+            defaults,
+            programs,
+            directory,
+            true,
+        );
+    }
+    let argv = match command {
         // Project, which shows the tab's Files instead.
         PopupCommand::Argv(argv) if argv.is_empty() => {
             return Err("this popup has no command".into());
         }
         PopupCommand::Argv(argv) => argv.clone(),
-        PopupCommand::Editor => editor_command(config, defaults, log)?,
+        PopupCommand::Editor => unreachable!("Editor was resolved above"),
         // An unavailable or unresolved editor fails the edit; nothing falls back to Helix.
         PopupCommand::Edit(file) => {
             let mut argv = editor_command(config, defaults, log)?;
@@ -2274,24 +2339,26 @@ pub(crate) fn prepare_popup_command(
         PopupCommand::AgentAuto => {
             for candidate in defaults.agent_commands {
                 let argv = candidate.iter().map(OsString::from).collect::<Vec<_>>();
-                if popup_executable(&argv[0], session_bin, directory)?.is_some() {
-                    return Ok(argv);
+                if popup_executable(&argv[0], programs.shell_bin.as_deref(), directory)?.is_some() {
+                    return Ok(PreparedCommand {
+                        argv,
+                        listener: None,
+                    });
                 }
             }
             return Err("no supported Agent executable is available on Eon's terminal PATH; install codex, grok, opencode, pi, or claude, or configure popups.agent.command".into());
         }
     };
-    let program = popup_executable(&argv[0], session_bin, directory)?.ok_or_else(|| {
+    popup_executable(&argv[0], programs.shell_bin.as_deref(), directory)?.ok_or_else(|| {
         format!(
             "executable {:?} is unavailable on Eon's terminal PATH",
             argv[0]
         )
     })?;
-    if *command == PopupCommand::Editor {
-        // Preserve the multicall launcher's basename and run the executable we checked.
-        argv[0] = program.into_os_string();
-    }
-    Ok(argv)
+    Ok(PreparedCommand {
+        argv,
+        listener: None,
+    })
 }
 
 fn popup_executable(
@@ -3249,6 +3316,7 @@ mod tests {
                 "agents.terminal_access",
                 variants::<super::TerminalAccess>(),
             ),
+            ("editor.kind", variants::<super::EditorKind>()),
             ("editor.open_in", variants::<super::EditorOpenIn>()),
             ("bar.widgets", defaults.bar_widgets),
             ("popups.agent.command", &["auto"] as &[&str]),
@@ -3666,7 +3734,10 @@ mod tests {
         assert!(json["session"].get("future_option").is_none());
         assert!(json["popups"]["git"].get("future_option").is_none());
         assert!(json.get("updates").is_none());
-        assert_eq!(json["editor"], serde_json::json!({"open_in":"popup"}));
+        assert_eq!(
+            json["editor"],
+            serde_json::json!({"kind":"auto","open_in":"popup"})
+        );
         // A future configured update default must no longer hide its section.
         config["updates"]["future_value"] = true.into();
         let toml = super::format_defaults(config.clone(), false).unwrap();
@@ -3675,6 +3746,86 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(&super::format_defaults(config, true).unwrap()).unwrap();
         assert_eq!(json["updates"], serde_json::json!({"future_value": true}));
+    }
+
+    #[test]
+    fn neovim_recognition_uses_the_original_name_and_explicit_wrapper_setting() {
+        use super::super::editor::ListenerKind;
+        let root = crate::supervisor::temporary_directory();
+        let bin = root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let wrapper = bin.join("my-editor");
+        fs::write(&wrapper, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+        std::os::unix::fs::symlink(&wrapper, bin.join("nvim")).unwrap();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.managed.helix = None;
+        inputs.managed.shell_bin = Some(bin.clone());
+        let prepare = |source: &str| {
+            fs::write(root.join("config.toml"), source).unwrap();
+            prepare_popup_command(
+                &PopupCommand::Editor,
+                &inputs.managed,
+                &root,
+                &root,
+                &inputs.defaults,
+                None,
+            )
+        };
+        for command in ["nvim".to_owned(), bin.join("nvim").display().to_string()] {
+            let prepared = prepare(&format!("[editor]\ncommand = [{command:?}]\n")).unwrap();
+            assert_eq!(prepared.listener, Some((ListenerKind::Neovim, 1)));
+            assert_eq!(prepared.argv[0], bin.join("nvim"));
+        }
+        assert_eq!(
+            prepare("[editor]\ncommand = ['my-editor', 'nvim']\n")
+                .unwrap()
+                .listener,
+            None
+        );
+        assert_eq!(
+            prepare("[editor]\ncommand = ['my-editor']\nkind = 'neovim'\n")
+                .unwrap()
+                .listener,
+            Some((ListenerKind::Neovim, 1))
+        );
+        let source = "[editor]\ncommand = ['nvim', '--headless']\n";
+        assert_eq!(prepare(source).unwrap().listener, None);
+        assert!(prepare(&format!("{source}kind = 'neovim'\n")).is_err());
+        let pane = format!("{source}kind = 'neovim'\nopen_in = 'pane'\n");
+        fs::write(root.join("config.toml"), pane).unwrap();
+        let edit = super::prepare_edit(
+            &root,
+            &inputs.defaults,
+            &inputs.managed,
+            &root,
+            Path::new("/a"),
+            None,
+        )
+        .unwrap();
+        assert!(!edit.popup);
+        assert_eq!(edit.command.listener, None);
+        assert_eq!(
+            edit.command.argv,
+            [bin.join("nvim").into_os_string(), "--headless".into()]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn editor_kind_is_printed_and_rejects_unknown_values() {
+        let defaults = crate::fixtures::inputs().defaults;
+        let json: serde_json::Value =
+            serde_json::from_str(&print_defaults(&defaults, true).unwrap()).unwrap();
+        assert_eq!(json["editor"]["kind"], "auto");
+        assert!(
+            super::validate_configuration_text(
+                "[editor]\nkind = 'unknown'\n",
+                Path::new("config.toml"),
+                &defaults,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -3703,6 +3854,7 @@ mod tests {
                 defaults.send_typing_quiet_ms = 0;
                 // A build without Helix has no default editor.
                 defaults.editor = None;
+                defaults.editor_kind = super::EditorKind::Neovim;
                 defaults.popups.entries[1].command = PopupCommand::Argv(vec![
                     "fixture-git".into(),
                     "quote\"and\\slash".into(),
@@ -3758,6 +3910,11 @@ mod tests {
                     sidebar_enabled(root, &defaults, None).unwrap(),
                     super::agents(root, &defaults, None).unwrap(),
                     super::editor_setting(root, &defaults, None).unwrap(),
+                    super::read_config(root, &defaults, None)
+                        .unwrap()
+                        .editor
+                        .kind
+                        .unwrap_or(defaults.editor_kind),
                 )
             };
             assert_eq!(policy(&empty), policy(&printed));
@@ -3809,6 +3966,10 @@ mod tests {
                         .collect::<Box<[_]>>(),
                 )
             }),
+            editor_kind: super::read_config(root, defaults, None)?
+                .editor
+                .kind
+                .unwrap_or(defaults.editor_kind),
             editor_open_in: super::read_config(root, defaults, None)?
                 .editor
                 .open_in
@@ -5162,7 +5323,7 @@ label = "Browse"
         assert_eq!(
             prepare_popup_command(
                 &PopupCommand::Scrollback,
-                None,
+                &inputs.managed,
                 &root,
                 &root,
                 &inputs.defaults,
@@ -5176,7 +5337,8 @@ label = "Browse"
 
     #[test]
     fn popup_executable_preflight_uses_the_session_context() {
-        let inputs = crate::fixtures::inputs();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.managed.shell_bin = None;
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-popup-cwd",
             std::process::id()
@@ -5189,18 +5351,42 @@ label = "Browse"
         let command = PopupCommand::Argv(vec!["./tool".into()]);
 
         assert_eq!(
-            prepare_popup_command(&command, None, &launch, &root, &inputs.defaults, None).unwrap(),
+            prepare_popup_command(
+                &command,
+                &inputs.managed,
+                &launch,
+                &root,
+                &inputs.defaults,
+                None
+            )
+            .unwrap()
+            .argv,
             [OsString::from("./tool")]
         );
         assert!(
-            prepare_popup_command(&command, None, &root, &root, &inputs.defaults, None).is_err()
+            prepare_popup_command(
+                &command,
+                &inputs.managed,
+                &root,
+                &root,
+                &inputs.defaults,
+                None
+            )
+            .is_err()
         );
         if crate::supervisor::effective_uid() != 0 {
             // The owner cannot execute this file, even though the group bit is set.
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o010)).unwrap();
             assert!(
-                prepare_popup_command(&command, None, &launch, &root, &inputs.defaults, None)
-                    .is_err()
+                prepare_popup_command(
+                    &command,
+                    &inputs.managed,
+                    &launch,
+                    &root,
+                    &inputs.defaults,
+                    None
+                )
+                .is_err()
             );
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         }
@@ -5211,19 +5397,26 @@ label = "Browse"
         assert_eq!(
             prepare_popup_command(
                 &PopupCommand::Argv(vec!["path-tool".into()]),
-                Some(Path::new("bin")),
+                &ManagedPrograms {
+                    shell_bin: Some("bin".into()),
+                    ..crate::fixtures::inputs().managed
+                },
                 &launch,
                 &root,
                 &inputs.defaults,
                 None
             )
-            .unwrap(),
+            .unwrap()
+            .argv,
             [OsString::from("path-tool")]
         );
         assert!(
             prepare_popup_command(
                 &PopupCommand::Argv(vec![path_tool.into_os_string()]),
-                Some(Path::new("invalid:path")),
+                &ManagedPrograms {
+                    shell_bin: Some("invalid:path".into()),
+                    ..crate::fixtures::inputs().managed
+                },
                 &launch,
                 &root,
                 &inputs.defaults,
@@ -5240,13 +5433,14 @@ label = "Browse"
         assert_eq!(
             prepare_popup_command(
                 &PopupCommand::AgentAuto,
-                None,
+                &inputs.managed,
                 &launch,
                 &root,
                 &defaults,
                 None
             )
-            .unwrap(),
+            .unwrap()
+            .argv,
             [OsString::from("./tool"), OsString::from("--fallback")]
         );
         let preferred = launch.join("preferred-agent");
@@ -5255,13 +5449,14 @@ label = "Browse"
         assert_eq!(
             prepare_popup_command(
                 &PopupCommand::AgentAuto,
-                None,
+                &inputs.managed,
                 &launch,
                 &root,
                 &defaults,
                 None
             )
-            .unwrap(),
+            .unwrap()
+            .argv,
             [
                 OsString::from("./preferred-agent"),
                 OsString::from("--preferred")
@@ -5274,7 +5469,7 @@ label = "Browse"
             fs::write(root.join("config.toml"), config).unwrap();
             prepare_popup_command(
                 &PopupCommand::Edit("/src/a b.rs".into()),
-                None,
+                &inputs.managed,
                 &launch,
                 &root,
                 &inputs.defaults,
@@ -5282,7 +5477,9 @@ label = "Browse"
             )
         };
         assert_eq!(
-            edit("[editor]\ncommand = [\"./tool\", \"--wait\"]\n").unwrap(),
+            edit("[editor]\ncommand = [\"./tool\", \"--wait\"]\n")
+                .unwrap()
+                .argv,
             ["./tool", "--wait", "/src/a b.rs"].map(OsString::from)
         );
         assert!(

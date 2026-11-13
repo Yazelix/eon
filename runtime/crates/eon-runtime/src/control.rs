@@ -1055,7 +1055,12 @@ mod tests {
                 root.clone(),
                 None,
                 fixtures::inputs().defaults.popups,
-                |_, _| Ok(vec!["fixture-files".into()]),
+                |_, _| {
+                    Ok(super::super::managed_environment::PreparedCommand {
+                        argv: vec!["fixture-files".into()],
+                        listener: None,
+                    })
+                },
                 |operation| {
                     assert!(matches!(operation, SessionOperation::Start { .. }));
                     starts += 1;

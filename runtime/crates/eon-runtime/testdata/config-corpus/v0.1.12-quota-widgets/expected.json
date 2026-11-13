@@ -38,7 +38,8 @@
       "open_in": "popup",
       "command": [
         "fixture-editor"
-      ]
+      ],
+      "kind": "auto"
     },
     "popups": {
       "agent": {

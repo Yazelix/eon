@@ -8,6 +8,14 @@ installation, and proven contract changes.
 Eon remains in alpha. v0.2.0 is the planned first beta; its version and stage
 switch requires explicit approval of the release cut (`eon-igae.9`).
 
+- The Editor key starts Neovim with an Eon-owned listener. `[editor] kind`
+  defaults to `"auto"`, recognizing the `nvim` basename; foreground wrappers
+  opt in with `"neovim"`. Neovim Files and `eon edit` still open new panes
+  while popup reuse is planned for a later release. Unsupported Editor
+  listener metadata refuses file routing
+  after supervisor recovery; save your work and restart that Editor popup.
+  Eon does not restart it automatically (`eon-xodrj.6.2.1`).
+
 - Attention badges have no backing square on translucent rows; a thin glyph
   outline appears only where colour adaptation cannot reach 3:1. Sidebar and
   inbox badges are the font size, moving row text 4 pixels right at default

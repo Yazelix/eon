@@ -1,4 +1,4 @@
-//! Private listener paths for the packaged Helix in Editor popups (EON-C10).
+//! Owned Helix and Neovim listeners for Editor popups (EON-C10).
 
 use super::{
     diagnostics::DiagnosticLog,
@@ -18,8 +18,22 @@ use std::{
 };
 
 pub(crate) struct EditCommand {
-    pub(crate) argv: Vec<OsString>,
+    pub(crate) command: managed_environment::PreparedCommand,
     pub(crate) popup: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ListenerKind {
+    Helix,
+    Neovim,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct Marker {
+    version: u8,
+    kind: ListenerKind,
 }
 
 const FRAME_LIMIT: usize = 65_536;
@@ -33,28 +47,64 @@ fn failure(code: &str, detail: impl Into<String>) -> Failure {
     }
 }
 
-/// S3's marker survives recovery and the Ready-before-bind interval.
-pub(super) fn has_listener(endpoint: &Path) -> Result<bool, Failure> {
+/// The marker preserves transport identity across recovery and Ready-before-bind.
+pub(super) fn listener_kind(endpoint: &Path) -> Result<Option<ListenerKind>, Failure> {
     let path = socket_path(endpoint).with_extension("owner");
-    match fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Ok(metadata)
-            if metadata.is_file()
-                && metadata.uid() == effective_uid()
-                && metadata.mode() & 0o077 == 0 =>
-        {
-            validate_private_directory(path.parent().unwrap())
-                .map_err(|detail| failure("editor-unavailable", detail))?;
-            Ok(true)
-        }
-        _ => Err(failure(
+    let unsafe_marker = || {
+        failure(
             "editor-unavailable",
             "Editor listener marker is not an owned private file",
-        )),
+        )
+    };
+    let mut file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(unsafe_marker()),
+    };
+    let metadata = file.metadata().map_err(|_| unsafe_marker())?;
+    if !metadata.is_file() || metadata.uid() != effective_uid() || metadata.mode() & 0o7777 != 0o600
+    {
+        return Err(unsafe_marker());
     }
+    validate_private_directory(path.parent().unwrap())
+        .map_err(|detail| failure("editor-unavailable", detail))?;
+    // Fixed bound for this tiny version/kind record, never an untrusted allocation.
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(257)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unsafe_marker())?;
+    if !fs::symlink_metadata(&path).is_ok_and(|current| same_file(&metadata, &current)) {
+        return Err(unsafe_marker());
+    }
+    let marker: Marker = serde_json::from_slice(&bytes).map_err(|_| unsupported_marker())?;
+    if bytes.len() > 256 || marker.version != 1 {
+        return Err(unsupported_marker());
+    }
+    Ok(Some(marker.kind))
 }
 
-pub(super) fn open(endpoint: &Path, file: &Path, id: &str) -> Result<(), Failure> {
+fn unsupported_marker() -> Failure {
+    failure(
+        "editor-unavailable",
+        "Editor listener metadata is unsupported; save your work, then restart the Editor popup",
+    )
+}
+
+pub(super) fn reuse(endpoint: &Path, file: &Path, id: &str) -> Result<bool, Failure> {
+    // S1 has no Neovim file client. A recorded Neovim listener always uses a pane.
+    if listener_kind(endpoint)? != Some(ListenerKind::Helix) {
+        return Ok(false);
+    }
+    open(endpoint, file, id)?;
+    Ok(true)
+}
+
+fn open(endpoint: &Path, file: &Path, id: &str) -> Result<(), Failure> {
     let path = file.to_str().ok_or_else(|| {
         failure(
             "editor-rejected",
@@ -86,7 +136,10 @@ pub(super) fn open(endpoint: &Path, file: &Path, id: &str) -> Result<(), Failure
         }
         match sessions::unix_connect_with_timeout(&socket, remaining) {
             Ok(stream) => break stream,
-            Err(error) if error.kind() == io::ErrorKind::NotFound && has_listener(endpoint)? => {
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && listener_kind(endpoint)? == Some(ListenerKind::Helix) =>
+            {
                 waiting_for_bind = true;
                 std::thread::sleep(remaining.min(Duration::from_millis(5)));
             }
@@ -279,8 +332,125 @@ pub(super) fn listen_position(
     Ok(Some(argv.len()))
 }
 
+/// Check Neovim's startup prefix without interpreting option values as flags.
+pub(super) fn neovim_position(argv: &[OsString]) -> Result<usize, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let incompatible = || {
+        "[editor] command conflicts with Eon's Neovim listener; remove --listen, --server, --remote*, --, --embed, --headless, -l or Ex mode flags, and leave room in Neovim's ten startup commands".to_owned()
+    };
+    let mut arguments = argv.iter().skip(1).peekable();
+    let mut commands = 0;
+    let mut pre_commands = 0;
+    while let Some(argument) = arguments.next() {
+        let bytes = argument.as_bytes();
+        if bytes.starts_with(b"+") {
+            commands += 1;
+        } else if bytes.starts_with(b"--") {
+            let option = bytes.to_ascii_lowercase();
+            if option == b"--"
+                || option == b"--embed"
+                || option == b"--headless"
+                || option.starts_with(b"--listen")
+                || option.starts_with(b"--server")
+                || option.starts_with(b"--remote")
+            {
+                return Err(incompatible());
+            }
+            if option == b"--cmd" || option == b"--startuptime" {
+                if option == b"--cmd" {
+                    pre_commands += 1;
+                }
+                arguments.next().ok_or_else(incompatible)?;
+            }
+        } else if bytes.starts_with(b"-") {
+            let mut index = 1;
+            while index < bytes.len() {
+                let option = bytes[index];
+                index += 1;
+                match option {
+                    b'e' | b'E' | b'l' => return Err(incompatible()),
+                    b'c' => {
+                        commands += 1;
+                        if index == bytes.len() {
+                            arguments.next().ok_or_else(incompatible)?;
+                        }
+                        break;
+                    }
+                    b'S' => {
+                        commands += 1;
+                        if index != bytes.len() {
+                            return Err(incompatible());
+                        }
+                        if arguments
+                            .peek()
+                            .is_some_and(|next| !next.as_bytes().starts_with(b"-"))
+                        {
+                            arguments.next();
+                        }
+                        break;
+                    }
+                    b'i' | b'u' | b'U' | b'W' | b's' => {
+                        if index != bytes.len() {
+                            return Err(incompatible());
+                        }
+                        arguments.next().ok_or_else(incompatible)?;
+                        break;
+                    }
+                    b't' | b'q' => {
+                        if index == bytes.len() {
+                            arguments.next().ok_or_else(incompatible)?;
+                        }
+                        break;
+                    }
+                    b'V' => break, // The remaining bytes are a level or filename.
+                    b'w' if !bytes.get(index).is_some_and(u8::is_ascii_digit) => {
+                        if index != bytes.len() {
+                            return Err(incompatible());
+                        }
+                        arguments.next().ok_or_else(incompatible)?;
+                        break;
+                    }
+                    b'w' | b'o' | b'O' | b'p' => {
+                        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+                            index += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Reserve one post-config command for Eon's initial cursor position.
+        if commands >= 10 || pre_commands > 10 {
+            return Err(incompatible());
+        }
+    }
+    Ok(argv.len())
+}
+
 fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     (left.dev(), left.ino()) == (right.dev(), right.ino())
+}
+
+pub(super) fn validate_listener_path(endpoint: &Path, kind: ListenerKind) -> Result<(), String> {
+    if kind == ListenerKind::Neovim {
+        let runtime = fs::canonicalize(endpoint.parent().expect("terminal endpoint has a parent"))
+            .map_err(|error| format!("cannot resolve Neovim Editor runtime directory: {error}"))?;
+        let path = socket_path(
+            &runtime.join(
+                endpoint
+                    .file_name()
+                    .expect("terminal endpoint has a filename"),
+            ),
+        );
+        // Neovim parses the last colon as host:port even in an absolute path.
+        if path.as_os_str().as_encoded_bytes().contains(&b':') {
+            return Err(format!(
+                "Neovim Editor listener path {} contains ':' and would be interpreted as a TCP address; choose EON_RUNTIME_DIR with a resolved path without ':'",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -338,7 +508,9 @@ impl Sockets {
         &mut self,
         endpoint: &Path,
         sessions: &[RunningSession],
+        kind: ListenerKind,
     ) -> Result<PathBuf, String> {
+        validate_listener_path(endpoint, kind)?;
         let path = socket_path(endpoint);
         let directory = path.parent().expect("Editor socket has a parent");
         prepare_runtime(directory)?;
@@ -365,8 +537,8 @@ impl Sockets {
             remove_stale(&canonical)?;
             let marker = canonical.with_extension("owner");
             remove_marker(&marker)?;
-            // Orbit can report Ready, and the supervisor can restart, before Helix binds.
-            fs::OpenOptions::new()
+            // Orbit can report Ready, and the supervisor can restart, before the editor binds.
+            let mut record = fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
                 .mode(0o600)
@@ -374,6 +546,15 @@ impl Sockets {
                 .map_err(|error| {
                     format!("cannot mark Editor listener {}: {error}", marker.display())
                 })?;
+            let bytes = serde_json::to_vec(&Marker { version: 1, kind })
+                .expect("listener marker serializes");
+            if let Err(error) = record.write_all(&bytes) {
+                let _ = fs::remove_file(&marker);
+                return Err(format!(
+                    "cannot write Editor listener {}: {error}",
+                    marker.display()
+                ));
+            }
             Ok(canonical)
         })();
         if prepared.is_ok() {
@@ -513,6 +694,151 @@ mod tests {
     use std::os::unix::{fs::symlink, net::UnixListener};
 
     #[test]
+    fn neovim_listener_refuses_colons_in_the_canonical_runtime_path() {
+        let root = super::super::supervisor::temporary_directory();
+        let runtime = root.join("with:colon");
+        fs::create_dir(&runtime).unwrap();
+        let alias = root.join("alias");
+        symlink(&runtime, &alias).unwrap();
+        let endpoint = alias.join("terminal-1.sock");
+        let mut sockets = Sockets::default();
+        let error = sockets
+            .prepare(&endpoint, &[], ListenerKind::Neovim)
+            .unwrap_err();
+        assert!(
+            error.contains("TCP") && error.contains("EON_RUNTIME_DIR"),
+            "{error}"
+        );
+        assert!(
+            !runtime.join("editor").exists(),
+            "refusal created listener state"
+        );
+        // Helix's Unix socket parser accepts colons, so its existing route stays usable.
+        let socket = sockets
+            .prepare(&endpoint, &[], ListenerKind::Helix)
+            .unwrap();
+        assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
+        assert_eq!(socket.parent().unwrap(), runtime.join("editor"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recorded_neovim_never_receives_a_helix_request() {
+        let root = super::super::supervisor::temporary_directory();
+        let endpoint = root.join("terminal-1.sock");
+        let path = Sockets::default()
+            .prepare(&endpoint, &[], ListenerKind::Neovim)
+            .unwrap();
+        let listener = UnixListener::bind(path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            listener_kind(&endpoint).unwrap(),
+            Some(ListenerKind::Neovim)
+        );
+        assert!(!reuse(&endpoint, Path::new("/a"), "edit-1").unwrap());
+        assert!(
+            listener.accept().is_err(),
+            "Neovim must receive no Helix connection"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn listener_markers_are_versioned_private_and_fail_closed() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = super::super::supervisor::temporary_directory();
+        let endpoint = root.join("terminal-1.sock");
+        assert_eq!(listener_kind(&endpoint).unwrap(), None);
+        let mut sockets = Sockets::default();
+        for kind in [ListenerKind::Helix, ListenerKind::Neovim] {
+            let path = sockets.prepare(&endpoint, &[], kind).unwrap();
+            assert_eq!(listener_kind(&endpoint).unwrap(), Some(kind));
+            assert_eq!(
+                fs::metadata(path.with_extension("owner")).unwrap().mode() & 0o7777,
+                0o600
+            );
+        }
+        let marker = socket_path(&endpoint).with_extension("owner");
+        for bytes in [
+            "",
+            "{}",
+            "not json",
+            r#"{"version":2,"kind":"helix"}"#,
+            r#"{"version":1,"kind":"other"}"#,
+            r#"{"version":1,"kind":"helix","extra":true}"#,
+        ] {
+            fs::write(&marker, bytes).unwrap();
+            let error = reuse(&endpoint, Path::new("/a"), "edit-1").unwrap_err();
+            assert_eq!(error.code, "editor-unavailable");
+            assert!(
+                error
+                    .detail
+                    .contains("save your work, then restart the Editor popup")
+            );
+        }
+        fs::write(&marker, vec![b' '; 257]).unwrap();
+        assert!(
+            listener_kind(&endpoint)
+                .unwrap_err()
+                .detail
+                .contains("save your work, then restart the Editor popup")
+        );
+        fs::set_permissions(&marker, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            !listener_kind(&endpoint)
+                .unwrap_err()
+                .detail
+                .contains("restart")
+        );
+        fs::remove_file(&marker).unwrap();
+        symlink(root.join("absent"), &marker).unwrap();
+        assert!(listener_kind(&endpoint).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn neovim_prefix_checks_flags_option_values_and_the_command_quota() {
+        let check =
+            |args: &[&str]| neovim_position(&args.iter().map(OsString::from).collect::<Vec<_>>());
+        for flag in [
+            "--listen",
+            "--listen=x",
+            "--server",
+            "--remote",
+            "--remote-tab-silent",
+            "--",
+            "--embed",
+            "--headless",
+            "--HEADLESS",
+            "-l",
+            "-e",
+            "-E",
+            "-es",
+            "-Es",
+            "-ne",
+        ] {
+            assert!(check(&["nvim", flag]).is_err(), "{flag}");
+        }
+        for args in [
+            vec!["nvim", "-u", "--listen"],
+            vec!["nvim", "-c", "--embed"],
+            vec!["nvim", "--cmd", "--server"],
+            vec!["nvim", "-n", "-u", "NONE", "+set nu"],
+            vec!["nvim", "-Vfile", "-p2"],
+            vec!["nvim", "-S"],
+        ] {
+            assert_eq!(check(&args).unwrap(), args.len(), "{args:?}");
+        }
+        assert!(check(&["nvim", "-u"]).is_err());
+        assert!(check(&["nvim", "-c"]).is_err());
+        let mut args = vec!["nvim".into()];
+        args.extend(std::iter::repeat_n(OsString::from("+set nu"), 9));
+        assert!(neovim_position(&args).is_ok());
+        args.push("+set nu".into());
+        assert!(neovim_position(&args).is_err());
+    }
+
+    #[test]
     fn editor_replies_distinguish_rejection_timeout_and_uncertain_delivery() {
         for (class, code) in [
             ("timeout", "editor-unresponsive"),
@@ -627,13 +953,10 @@ mod tests {
         let endpoint = root.join("terminal-1.sock");
         let socket = socket_path(&endpoint);
         prepare_runtime(socket.parent().unwrap()).unwrap();
-        fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(socket.with_extension("owner"))
+        Sockets::default()
+            .prepare(&endpoint, &[], ListenerKind::Helix)
             .unwrap();
-        assert!(has_listener(&endpoint).unwrap());
+        assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
         let bound = socket.clone();
         let (ready, started) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
@@ -760,13 +1083,15 @@ mod tests {
         let mut sockets = Sockets::default();
         assert!(
             sockets
-                .prepare(&endpoint, &[])
+                .prepare(&endpoint, &[], ListenerKind::Helix)
                 .unwrap_err()
                 .contains("may still be listening")
         );
         assert!(path.exists());
         drop(listener);
-        let selected = sockets.prepare(&endpoint, &[]).unwrap();
+        let selected = sockets
+            .prepare(&endpoint, &[], ListenerKind::Helix)
+            .unwrap();
         assert_eq!(
             selected,
             root.canonicalize().unwrap().join("editor/terminal-2.sock")
@@ -782,7 +1107,9 @@ mod tests {
         let log = DiagnosticLog::open_in(Ok(logs.clone()), "g1-test", "eon");
         let endpoint = root.join("terminal-2.sock");
         let mut sockets = Sockets::default();
-        let path = sockets.prepare(&endpoint, &[]).unwrap();
+        let path = sockets
+            .prepare(&endpoint, &[], ListenerKind::Helix)
+            .unwrap();
         let listener = UnixListener::bind(&path).unwrap();
         let marker = path.with_extension("owner");
         let now = Instant::now();

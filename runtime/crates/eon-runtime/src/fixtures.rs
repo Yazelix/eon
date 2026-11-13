@@ -162,6 +162,7 @@ pub(crate) fn inputs() -> Inputs {
             ansi_palette: "111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111",
             custom_popup_keep_alive: true,
             editor: Some(&["fixture-editor"]),
+            editor_kind: crate::EditorKind::Auto,
             editor_open_in: crate::EditorOpenIn::Popup,
             agent_commands: &[],
         },

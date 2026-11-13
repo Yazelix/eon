@@ -2481,7 +2481,7 @@ mod tests {
                     name: None,
                     focus: false,
                 }),
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
             .unwrap();
@@ -2526,7 +2526,7 @@ mod tests {
                 "local-same-focus",
                 None,
                 already_shown.clone(),
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
             .unwrap();
@@ -2544,7 +2544,7 @@ mod tests {
                 "shown-from-hidden",
                 Some(&hidden.session),
                 already_shown.clone(),
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
             .unwrap();
@@ -2570,7 +2570,7 @@ mod tests {
                     tab: tab.clone(),
                     target: "missing-pane".into(),
                 },
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
             .unwrap_err();
@@ -2586,7 +2586,7 @@ mod tests {
                 "focus",
                 None,
                 action.clone(),
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
             .unwrap();

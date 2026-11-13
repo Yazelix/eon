@@ -384,6 +384,7 @@ fn config_schema_is_complete_offline_and_uses_config_cli_conventions() {
         assert!(key["eon_owned"].is_boolean() && key["required"].is_boolean());
     }
     for path in [
+        "editor.kind",
         "terminal.font_size",
         "updates.nix_entry",
         "popups.files.command",
@@ -5853,7 +5854,7 @@ fn a_build_without_helix_omits_it_from_versions_and_defaults_and_refuses_its_nam
     assert_eq!(json(true)["editor"]["command"], serde_json::json!(["hx"]));
     assert_eq!(
         json(false)["editor"],
-        serde_json::json!({"open_in":"popup"})
+        serde_json::json!({"kind":"auto","open_in":"popup"})
     );
 
     // The Helix names refuse with one line, before anything is prepared. Running an
@@ -16557,10 +16558,15 @@ fn editor_popup_window() -> PairWindow {
         &launcher,
         format!("#!/bin/sh\nexec '{}' \"$@\"\n", editor.display()),
     );
+    std::os::unix::fs::symlink(&editor, window.root.join("session-bin/nvim")).unwrap();
+    executable(
+        &window.root.join("session-bin/my-nvim"),
+        format!("#!/bin/sh\nexec '{}' \"$@\"\n", editor.display()),
+    );
     window
 }
 
-fn start_editor_popup_window(window: &PairWindow) -> TestProcess {
+fn editor_popup_command(window: &PairWindow) -> Command {
     let mut command = window.command(&[]);
     command
         .env("EON_HX", window.root.join("packaged-hx"))
@@ -16576,7 +16582,11 @@ fn start_editor_popup_window(window: &PairWindow) -> TestProcess {
             "EON_TEST_EDITOR_BIND_HOLD",
             window.root.join("editor-bind-hold"),
         );
-    let supervisor = window.start(command);
+    command
+}
+
+fn start_editor_popup_window(window: &PairWindow) -> TestProcess {
+    let supervisor = window.start(editor_popup_command(window));
     wait_for_ready(&window.control());
     supervisor
 }
@@ -16628,6 +16638,199 @@ fn edit_as(window: &PairWindow, file: &OsStr, caller: Option<&str>) -> Output {
         command.env("EON_TERMINAL", caller);
     }
     command.output().unwrap()
+}
+
+#[test]
+fn neovim_colon_listener_refuses_before_displacing_the_shown_popup() {
+    let mut window = editor_popup_window();
+    window.runtime = window.root.join("r:t");
+    writeln!(
+        fs::OpenOptions::new()
+            .append(true)
+            .open(window.config.join("config.toml"))
+            .unwrap(),
+        "\n[editor]\ncommand = ['nvim']\n[popups.commands]\ncommand = ['eon-nu']"
+    )
+    .unwrap();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let Response::Snapshot(before) = window.invoke_popup("commands", "commands", None) else {
+        panic!("Commands did not open");
+    };
+    assert!(
+        matches!(window.invoke_popup("colon-editor", "editor", None),
+        Response::Failure(error) if error.code == "popup-command" && error.detail.contains("TCP") && error.detail.contains("EON_RUNTIME_DIR"))
+    );
+    assert_eq!(
+        stable_tabs(&window.inspect("colon-refused").tabs),
+        stable_tabs(&before.tabs)
+    );
+    assert!(!window.generation().join("editor").exists());
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn neovim_editor_key_launch_without_helix_keeps_identity_and_cleans_its_listener() {
+    let window = editor_popup_window();
+    let mut command = editor_popup_command(&window);
+    command
+        .env_remove("EON_HX")
+        .env_remove("VISUAL")
+        .env("EDITOR", "nvim");
+    let mut supervisor = window.start(command);
+    wait_for_ready(&window.control());
+    pick_editor_popup_tab(&window);
+    let popup = open_editor_popup(&window, "nvim-key");
+    let endpoint = Path::new(OsStr::from_bytes(&popup.endpoint));
+    let identity = live_identity(endpoint);
+    let socket = window
+        .generation()
+        .join("editor")
+        .join(format!("{}.sock", popup.session));
+    wait_for_lines(&window.root.join("editor-socket.log"), 1);
+    let marker = socket.with_extension("owner");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&marker).unwrap()).unwrap(),
+        serde_json::json!({"version":1,"kind":"neovim"})
+    );
+    assert_eq!(fs::metadata(&marker).unwrap().mode() & 0o7777, 0o600);
+    assert!(window.eon(&["popup", "hide", &popup.id]).status.success());
+    let Response::Snapshot(reopened) =
+        window.invoke_popup("nvim-reopen", "editor", Some(&popup.id))
+    else {
+        panic!("Neovim did not reopen");
+    };
+    assert_eq!(reopened.tabs[0].selected_popup.as_ref(), Some(&popup.id));
+    assert_eq!(live_identity(endpoint), identity);
+    assert_eq!(log_lines(&window.root.join("editor-socket.log")).len(), 1);
+    fs::write(
+        window
+            .root
+            .join(format!("editor-release.{}", popup.session)),
+        "",
+    )
+    .unwrap();
+    wait_for_removal(&socket);
+    wait_for_removal(&marker);
+    let next = open_editor_popup(&window, "nvim-fresh");
+    assert_ne!(next.session, popup.session);
+    wait_for_lines(&window.root.join("editor-socket.log"), 2);
+    let directory = window.generation().join("editor");
+    window.stop_generation(&mut supervisor);
+    assert!(!directory.exists());
+}
+
+#[test]
+fn neovim_s1_edits_use_panes_even_after_configuration_changes_to_helix() {
+    let window = editor_popup_window();
+    let settings = window.config.join("config.toml");
+    let base = fs::read_to_string(&settings).unwrap();
+    fs::write(&settings, format!("{base}\n[editor]\ncommand = ['nvim']\n")).unwrap();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let popup = open_editor_popup(&window, "nvim");
+    let endpoint = Path::new(OsStr::from_bytes(&popup.endpoint));
+    let identity = live_identity(endpoint);
+    let log = window.root.join("editor-open.log");
+    wait_for_lines(&log, 1);
+    for (index, editor) in ["nvim", "hx"].into_iter().enumerate() {
+        fs::write(
+            &settings,
+            format!("{base}\n[editor]\ncommand = ['{editor}']\nkind = 'auto'\n"),
+        )
+        .unwrap();
+        let edited = edit_as(&window, OsStr::new("a.txt"), None);
+        assert!(edited.status.success(), "{edited:?}");
+        assert!(stdout(&edited).contains("\"created\""), "{edited:?}");
+        assert_eq!(
+            window.inspect(&format!("pane-result-{index}")).tabs[0]
+                .panes()
+                .count(),
+            index + 2
+        );
+        assert_eq!(live_identity(endpoint), identity);
+        assert_eq!(
+            log_lines(&log).len(),
+            1,
+            "Neovim received a native-v1 request"
+        );
+    }
+    let marker = window
+        .generation()
+        .join("editor")
+        .join(format!("{}.owner", popup.session));
+    fs::write(marker, "").unwrap();
+    let before = window.inspect("old-marker-before");
+    let edited = edit_as(&window, OsStr::new("b.txt"), None);
+    assert!(!edited.status.success(), "{edited:?}");
+    let error: serde_json::Value = serde_json::from_slice(&edited.stdout).unwrap();
+    assert_eq!(error["error"]["code"], "editor-unavailable");
+    assert!(
+        error["error"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("save your work, then restart the Editor popup"),
+        "{edited:?}"
+    );
+    assert_eq!(
+        stable_tabs(&window.inspect("old-marker-after").tabs),
+        stable_tabs(&before.tabs)
+    );
+    assert_eq!(live_identity(endpoint), identity);
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn explicit_neovim_wrappers_listen_and_conflicts_refuse_before_displacement() {
+    for (command, kind, listening) in [
+        ("['my-nvim']", "auto", false),
+        ("['my-nvim']", "neovim", true),
+        ("['nvim', '--headless']", "auto", false),
+    ] {
+        let window = editor_popup_window();
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(window.config.join("config.toml"))
+                .unwrap(),
+            "\n[editor]\ncommand = {command}\nkind = '{kind}'"
+        )
+        .unwrap();
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        let popup = open_editor_popup(&window, "wrapper");
+        let marker = window
+            .generation()
+            .join("editor")
+            .join(format!("{}.owner", popup.session));
+        assert_eq!(marker.exists(), listening);
+        if listening {
+            wait_for_lines(&window.root.join("editor-socket.log"), 1);
+        }
+        window.stop_generation(&mut supervisor);
+    }
+    let window = editor_popup_window();
+    writeln!(fs::OpenOptions::new().append(true).open(window.config.join("config.toml")).unwrap(),
+        "\n[editor]\ncommand = ['nvim', '--headless']\nkind = 'neovim'\n[popups.commands]\ncommand = ['eon-nu']").unwrap();
+    let mut supervisor = start_editor_popup_window(&window);
+    pick_editor_popup_tab(&window);
+    let Response::Snapshot(before) = window.invoke_popup("commands", "commands", None) else {
+        panic!("Commands did not open");
+    };
+    assert!(
+        matches!(window.invoke_popup("refused-neovim", "editor", None), Response::Failure(error) if error.code == "popup-command")
+    );
+    let edited = edit_as(&window, OsStr::new("a.txt"), None);
+    assert!(!edited.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&edited.stdout).unwrap();
+    assert_eq!(error["error"]["code"], "edit-command");
+    assert_eq!(
+        stable_tabs(&window.inspect("not-displaced").tabs),
+        stable_tabs(&before.tabs)
+    );
+    assert!(!window.generation().join("editor").exists());
+    window.stop_generation(&mut supervisor);
 }
 
 #[test]
@@ -16974,42 +17177,62 @@ fn editor_popup_keeps_its_terminal_and_cleans_up_the_packaged_listener() {
 
 #[test]
 fn editor_popup_recovery_preserves_a_listener_that_has_yet_to_bind() {
-    let window = editor_popup_window();
-    let mut supervisor = start_editor_popup_window(&window);
-    pick_editor_popup_tab(&window);
-    let hold = window.root.join("editor-bind-hold");
-    fs::write(&hold, "").unwrap();
-    let starting = open_editor_popup(&window, "starting-editor");
-    let directory = window.generation().join("editor");
-    let canonical = directory.canonicalize().unwrap();
-    let socket = canonical.join(format!("{}.sock", starting.session));
-    assert!(!socket.exists());
-    let unrelated = canonical.join("terminal-99.sock");
-    drop(UnixListener::bind(&unrelated).unwrap());
-    window.crash(&mut supervisor);
-    let mut supervisor = start_editor_popup_window(&window);
-    let recovered = window.inspect("recovered-editor");
-    assert!(
-        recovered.tabs[0]
-            .panes()
-            .any(|pane| pane.session == starting.session)
-    );
-    assert!(!unrelated.exists());
-    assert!(directory.is_dir(), "the adopted editor has yet to bind");
-    assert!(!socket.exists());
-    fs::remove_file(&hold).unwrap();
-    wait_for_lines(&window.root.join("editor-socket.log"), 1);
-    assert!(socket.exists());
-    fs::write(
-        window
-            .root
-            .join(format!("editor-release.{}", starting.session)),
-        "",
-    )
-    .unwrap();
-    wait_for_removal(&socket);
-    window.stop_generation(&mut supervisor);
-    assert!(!directory.exists());
+    for kind in ["helix", "neovim"] {
+        let window = editor_popup_window();
+        if kind == "neovim" {
+            writeln!(
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(window.config.join("config.toml"))
+                    .unwrap(),
+                "\n[editor]\ncommand = [\"nvim\"]"
+            )
+            .unwrap();
+        }
+        let mut supervisor = start_editor_popup_window(&window);
+        pick_editor_popup_tab(&window);
+        let hold = window.root.join("editor-bind-hold");
+        fs::write(&hold, "").unwrap();
+        let starting = open_editor_popup(&window, "starting-editor");
+        let directory = window.generation().join("editor");
+        let canonical = directory.canonicalize().unwrap();
+        let socket = canonical.join(format!("{}.sock", starting.session));
+        assert!(!socket.exists());
+        let marker = socket.with_extension("owner");
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
+        assert_eq!(record, serde_json::json!({"version":1,"kind":kind}));
+        let unrelated = canonical.join("terminal-99.sock");
+        drop(UnixListener::bind(&unrelated).unwrap());
+        window.crash(&mut supervisor);
+        let mut supervisor = start_editor_popup_window(&window);
+        let recovered = window.inspect("recovered-editor");
+        assert!(
+            recovered.tabs[0]
+                .panes()
+                .any(|pane| pane.session == starting.session)
+        );
+        assert!(!unrelated.exists());
+        assert!(directory.is_dir(), "the adopted editor has yet to bind");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&marker).unwrap()).unwrap(),
+            record
+        );
+        assert!(!socket.exists());
+        fs::remove_file(&hold).unwrap();
+        wait_for_lines(&window.root.join("editor-socket.log"), 1);
+        assert!(socket.exists());
+        fs::write(
+            window
+                .root
+                .join(format!("editor-release.{}", starting.session)),
+            "",
+        )
+        .unwrap();
+        wait_for_removal(&socket);
+        window.stop_generation(&mut supervisor);
+        assert!(!directory.exists());
+    }
 }
 
 #[test]

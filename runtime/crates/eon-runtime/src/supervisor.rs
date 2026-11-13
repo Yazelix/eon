@@ -1179,7 +1179,7 @@ fn supervise(
                     env::home_dir(),
                     popup_catalog.clone(),
                     pair,
-                    |_, _| Ok(Vec::new()),
+                    |_, _| Ok(Default::default()),
                     |_| Ok(()),
                 )
                 .map_err(&startup_error)?
@@ -1301,7 +1301,7 @@ fn supervise(
                     |command, directory| {
                         managed_environment::prepare_popup_command(
                             command,
-                            inputs.managed.shell_bin.as_deref(),
+                            &inputs.managed,
                             directory,
                             config,
                             &inputs.defaults,
@@ -2732,12 +2732,14 @@ fn apply_session_operation(
             pair_command(argv, quick, &session, pair_start)?
         }
         LaunchCommand::Tool(argv) => argv,
-        LaunchCommand::Editor(mut argv) => {
-            if let Some(index) = editor::listen_position(&argv, &inputs.managed, &directory)? {
-                let socket = editor_sockets.prepare(&session.endpoint, sessions)?;
-                argv.splice(index..index, ["--listen".into(), socket.into_os_string()]);
+        LaunchCommand::Editor(mut command) => {
+            if let Some((kind, index)) = command.listener {
+                let socket = editor_sockets.prepare(&session.endpoint, sessions, kind)?;
+                command
+                    .argv
+                    .splice(index..index, ["--listen".into(), socket.into_os_string()]);
             }
-            argv
+            command.argv
         }
         LaunchCommand::Pane if session.id == "terminal-1" => initial_child.clone(),
         LaunchCommand::Pane => Vec::new(),
@@ -3925,13 +3927,7 @@ fn dispatch_registered_request(
                             Some(log),
                         )
                     },
-                    |session, file| {
-                        if !editor::has_listener(&session.endpoint)? {
-                            return Ok(false);
-                        }
-                        editor::open(&session.endpoint, file, &request.id)?;
-                        Ok(true)
-                    },
+                    |session, file| editor::reuse(&session.endpoint, file, &request.id),
                     |operation| {
                         apply_session_operation(
                             inputs,
@@ -3956,15 +3952,12 @@ fn dispatch_registered_request(
                     |command, directory| {
                         let argv = managed_environment::prepare_popup_command(
                             &snapshot_command(command, snapshot.as_ref()),
-                            inputs.managed.shell_bin.as_deref(),
+                            &inputs.managed,
                             directory,
                             config,
                             &inputs.defaults,
                             Some(log),
                         )?;
-                        if *command == PopupCommand::Editor {
-                            editor::listen_position(&argv, &inputs.managed, directory)?;
-                        }
                         Ok(argv)
                     },
                     |operation| {
@@ -4127,7 +4120,7 @@ fn edit_terminal_history(
         |command, directory| {
             managed_environment::prepare_popup_command(
                 &snapshot_command(command, Some(&snapshot)),
-                inputs.managed.shell_bin.as_deref(),
+                &inputs.managed,
                 directory,
                 config,
                 &inputs.defaults,
@@ -4786,7 +4779,7 @@ mod tests {
                 &super::request_id(),
                 None,
                 action,
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |operation| {
                     if let SessionOperation::Start { session, .. } = operation {
                         starts.push(session);
@@ -5068,7 +5061,7 @@ mod tests {
                     &super::request_id(),
                     None,
                     Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-                    |_, _| Ok(Vec::new()),
+                    |_, _| Ok(Default::default()),
                     |operation| {
                         if let SessionOperation::Start { session, .. } = operation {
                             failed.push(start_column_run(
@@ -6132,7 +6125,7 @@ mod tests {
                 Some(root.clone()),
                 inputs.defaults.popups.clone(),
                 true,
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
             .unwrap(),
@@ -6281,7 +6274,7 @@ mod tests {
             root.clone(),
             Some(root.clone()),
             inputs.defaults.popups.clone(),
-            |_, _| Ok(Vec::new()),
+            |_, _| Ok(Default::default()),
             |_| Ok(()),
         )
         .unwrap();
@@ -6466,7 +6459,7 @@ mod tests {
                     workspace: None,
                     name: "tended".into(),
                 }),
-                |_, _| Ok(Vec::new()),
+                |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
             .unwrap();
@@ -6494,7 +6487,7 @@ mod tests {
             root.clone(),
             Some(root.clone()),
             inputs.defaults.popups.clone(),
-            |_, _| Ok(Vec::new()),
+            |_, _| Ok(Default::default()),
             |_| Ok(()),
         )
         .unwrap();
@@ -8053,7 +8046,7 @@ mod tests {
             root.clone(),
             Some(root.clone()),
             inputs.defaults.popups.clone(),
-            |_, _| Ok(Vec::new()),
+            |_, _| Ok(Default::default()),
             |_| Ok(()),
         )
         .unwrap();

@@ -1,5 +1,5 @@
 use super::cli::WORKSPACE_PICKER;
-use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
+use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition, PreparedCommand};
 use super::session_registry::{Completion, Operation, Registration, Registry};
 use eon_workspace_protocol::v42::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
@@ -39,7 +39,7 @@ pub(crate) enum LaunchCommand {
         pending: bool,
     },
     Tool(Vec<OsString>),
-    Editor(Vec<OsString>),
+    Editor(PreparedCommand),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -230,7 +230,7 @@ impl WorkspaceSet {
         directory: PathBuf,
         home: Option<PathBuf>,
         catalog: PopupCatalog,
-        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<Self, String> {
         let registry =
@@ -255,7 +255,7 @@ impl WorkspaceSet {
         directory: PathBuf,
         home: Option<PathBuf>,
         catalog: PopupCatalog,
-        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         let registration = self.registry.as_ref().unwrap().create(None).unwrap();
@@ -301,7 +301,7 @@ impl WorkspaceSet {
         home: Option<PathBuf>,
         catalog: PopupCatalog,
         pair: bool,
-        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<Self, String> {
         let mut set = Self {
@@ -367,7 +367,7 @@ impl WorkspaceSet {
         home: Option<PathBuf>,
         catalog: PopupCatalog,
         pair: bool,
-        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         let allowance = self.pending_allowance().map_err(|error| error.detail)?;
@@ -542,7 +542,7 @@ impl WorkspaceSet {
         request_id: &str,
         caller: Option<&str>,
         action: Action,
-        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         // State tests execute prepared I/O directly; supervisor tests exercise the worker.
@@ -919,19 +919,19 @@ impl WorkspaceSet {
                     return Ok(());
                 }
             } else {
-                command.argv.push(file.into_os_string());
+                command.command.argv.push(file.into_os_string());
                 return workspace.open_popup(
                     &mut self.ids,
                     allowance,
                     target,
                     "editor",
-                    &mut |_, _| Ok(command.argv.clone()),
+                    &mut |_, _| Ok(command.command.clone()),
                     &mut operate,
                     false,
                 );
             }
         }
-        command.argv.push(file.into_os_string());
+        command.command.argv.push(file.into_os_string());
         let previous = pane.map(|pane| workspace.select(target, pane));
         let result = workspace.create_pane(
             &mut self.ids,
@@ -939,7 +939,7 @@ impl WorkspaceSet {
             target,
             caller.is_some(),
             true,
-            LaunchCommand::Tool(command.argv),
+            LaunchCommand::Tool(command.command.argv),
             &mut operate,
         );
         if result.is_err()
@@ -956,7 +956,7 @@ impl WorkspaceSet {
         caller: Option<&str>,
         action: Action,
         registration: Option<Registration>,
-        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.reject_duplicate(request_id)?;
@@ -1386,7 +1386,7 @@ impl Workspace {
         home: Option<PathBuf>,
         catalog: PopupCatalog,
         pair: bool,
-        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<Self, String> {
         let mut workspace = Self {
@@ -1571,7 +1571,7 @@ impl Workspace {
         allowance: usize,
         caller: Option<&str>,
         action: Action,
-        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         check_popup_action(&self.snapshot(), &action)
@@ -1631,7 +1631,7 @@ impl Workspace {
         action: Action,
         target: usize,
         called: bool,
-        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         match action {
@@ -1741,7 +1741,7 @@ impl Workspace {
                     target,
                     called,
                     focus,
-                    LaunchCommand::Tool(argv),
+                    LaunchCommand::Tool(argv.argv),
                     &mut operate,
                 )?;
             }
@@ -1771,7 +1771,7 @@ impl Workspace {
         action: WorkspaceAction,
         target: usize,
         called: bool,
-        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         match action {
@@ -1854,7 +1854,7 @@ impl Workspace {
         &mut self,
         ids: &mut IdAllocator,
         allowance: usize,
-        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if ids.next_tab >= ids.limit {
@@ -1905,7 +1905,7 @@ impl Workspace {
         argv: Vec<Vec<u8>>,
         focus: bool,
         called: bool,
-        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if !argv.is_empty() && !called {
@@ -1932,7 +1932,8 @@ impl Workspace {
                     &PopupCommand::Argv(argv.into_iter().map(OsString::from_vec).collect()),
                     &directory,
                 )
-                .map_err(|detail| action_error("pane-command", detail))?,
+                .map_err(|detail| action_error("pane-command", detail))?
+                .argv,
             )
         };
         self.tabs.push(Tab {
@@ -1967,7 +1968,7 @@ impl Workspace {
         tab: &str,
         entry: &str,
         intent: InvokeIntent,
-        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         let tab_index = self
@@ -2064,7 +2065,7 @@ impl Workspace {
         allowance: usize,
         tab_index: usize,
         entry: &str,
-        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
         pending: bool,
     ) -> Result<(), Failure> {
@@ -2154,20 +2155,24 @@ impl Workspace {
         popup: &Popup,
         definition: &PopupDefinition,
         quick: bool,
-        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
     ) -> Result<SessionOperation, Failure> {
-        let argv = prepare(&definition.command, &popup.launch_directory)
+        let prepared = prepare(&definition.command, &popup.launch_directory)
             .map_err(|detail| action_error("popup-command", detail))?;
         let command = if definition.id == FILES_ENTRY {
             LaunchCommand::Files {
-                argv,
+                argv: prepared.argv,
                 quick,
                 pending: self.tabs[tab_index].pending,
             }
         } else if definition.command == PopupCommand::Editor {
-            LaunchCommand::Editor(argv)
+            if let Some((kind, _)) = prepared.listener {
+                super::editor::validate_listener_path(&popup.session.endpoint, kind)
+                    .map_err(|detail| action_error("popup-command", detail))?;
+            }
+            LaunchCommand::Editor(prepared)
         } else {
-            LaunchCommand::Tool(argv)
+            LaunchCommand::Tool(prepared.argv)
         };
         Ok(SessionOperation::Start {
             session: popup.session.clone(),
@@ -6673,14 +6678,18 @@ mod tests {
         }
     }
 
-    fn prepared(command: &PopupCommand, _: &Path) -> Result<Vec<OsString>, String> {
-        match command {
-            PopupCommand::Argv(argv) => Ok(argv.clone()),
-            PopupCommand::Editor => Ok(vec!["editor".into()]),
-            PopupCommand::Edit(file) => Ok(vec!["editor".into(), file.clone()]),
-            PopupCommand::Scrollback => Ok(vec!["snapshot-editor".into()]),
+    fn prepared(command: &PopupCommand, _: &Path) -> Result<PreparedCommand, String> {
+        let argv = match command {
+            PopupCommand::Argv(argv) => argv.clone(),
+            PopupCommand::Editor => vec!["editor".into()],
+            PopupCommand::Edit(file) => vec!["editor".into(), file.clone()],
+            PopupCommand::Scrollback => vec!["snapshot-editor".into()],
             PopupCommand::AgentAuto => unreachable!(),
-        }
+        };
+        Ok(PreparedCommand {
+            argv,
+            listener: None,
+        })
     }
 
     /// Scrollback snapshots what its active tab shows, its shown popup else
@@ -9040,7 +9049,10 @@ mod tests {
                 edit(),
                 |_, _| {
                     Ok(super::super::editor::EditCommand {
-                        argv: vec!["editor".into()],
+                        command: PreparedCommand {
+                            argv: vec!["editor".into()],
+                            listener: None,
+                        },
                         popup: false,
                     })
                 },

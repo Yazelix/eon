@@ -264,6 +264,26 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
   claims that codec tests prove installed popup behavior. The earlier
   picker-only route describes the historical v4 contract.
 
+### How should Editor recognize Neovim and own its listener?
+
+- **Owner:** Eon Runtime's `editor.rs`, configuration resolver and supervisor
+  launch path; EON-C10. Approved design and split: `eon-xodrj.6.1`.
+- **Read first:** Neovim v0.12.6 at
+  [`779c369`](https://github.com/neovim/neovim/tree/779c36969e31080503be2dfccbcc3f999e289606),
+  especially `src/nvim/main.c` (startup options and command quota),
+  `src/nvim/msgpack_rpc/server.c`, `src/nvim/event/socket.c`, and
+  `runtime/doc/{starting,api}.txt` (listener and permissions).
+- **Comparable implementation:** the existing Runtime Helix `listen_position`,
+  socket registry, marker and recovery checks, with the packaged Helix pin
+  `Yazelix/nova-helix@77e6f3ff8c72d147418e1fc28a3f8cf8b28a4761`, especially
+  `helix-term/src/{args.rs,remote/native.rs}`.
+- **Preserve / reject:** Preserve one listener owner, original-argv basename
+  recognition under auto, explicit foreground-wrapper opt-in, recorded transport
+  kind, private parent and safe stale cleanup. Reject script introspection,
+  supervisor-wide umask changes, old empty-marker compatibility and automatic
+  restarts. S1 starts the listener from the Editor key; Neovim Files/eon edit
+  remain ordinary pane opens until S2. Source evidence is not installed proof.
+
 ### How should a tab picker reach folders absent from Zoxide history?
 
 - **Owner:** Eon selection policy; Yazi filesystem navigation

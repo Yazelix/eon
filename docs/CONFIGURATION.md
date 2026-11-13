@@ -150,6 +150,7 @@ terminal_access = "window" # Let `eon pane read`, `history` and `send` reach thi
 
 [editor]
 command = ["hx"] # Direct argv that `eon edit` and Files run with the file appended.
+kind = "auto" # Recognize packaged Helix or nvim; "neovim" opts a wrapper in.
 open_in = "popup" # Open in the packaged Helix Editor popup, or "pane" for a new pane.
 
 # [updates]
@@ -862,12 +863,50 @@ trying the other. With neither naming an editor, the edit fails with
 `edit-command` and names this setting; Eon picks no editor for you.
 `eon config defaults` shows `command` as unset there.
 
+`[editor] kind` accepts `"auto"` (default) or `"neovim"`. Auto recognizes
+Eon's packaged Helix and a command whose original argv[0] basename is exactly
+`nvim`, before PATH or symlink resolution. This also works without packaged
+Helix, including an unset command resolved from `EDITOR=nvim`. Auto does not
+inspect scripts or inner arguments such as `["env", "NAME=value", "nvim"]`.
+Other wrappers opt in explicitly:
+
+```toml
+[editor]
+command = ["my-nvim"]
+kind = "neovim"
+```
+
+The wrapper must stay in the foreground and forward Eon's appended Neovim
+arguments unchanged. Neovim Editor key launch has an owned listener; **Neovim
+Files and `eon edit` currently open a new pane**, even when that popup is live.
+Acknowledged file reuse and Neovim popup positions are planned for a later release
+(`eon-xodrj.6.2.2`). `open_in = "pane"` retains the configured argv for edits.
+
 The Editor popup (Alt+Shift+O) uses the same editor resolution when it starts.
 The editor keeps its buffers and working directory when the popup hides or
 the tab directory changes. When the popup starts the packaged Helix, Eon
 supplies its private listener socket. Remove Helix's own `--listen` option
 from `[editor] command` to use the popup. The `open_in = "pane"` route can
 still pass that option to Helix.
+
+For Neovim, Eon appends its own `--listen` socket. `--listen`, `--server`,
+`--remote*`, standalone `--`, `--embed`, `--headless`, `-l`, and
+`-e`/`-E`/`-es`/`-Es` conflict with this route, as does an incompatible startup
+command prefix. Under `auto`, a key-only popup runs that command without
+Eon's listener; explicit `kind = "neovim"` refuses with `popup-command`
+before another popup is displaced. For file opens with an enabled Editor and
+`open_in = "popup"`, explicit `kind = "neovim"` also refuses these conflicts
+with `edit-command` in Files and `eon edit`, even though Neovim file opens
+currently use panes; `open_in = "pane"` passes the configured argv unchanged.
+Neovim popup launches require a canonical runtime path without `:` because
+Neovim interprets it as a TCP address; choose an `EON_RUNTIME_DIR` whose
+resolved path contains no colon. Command and kind changes affect fresh
+Editor starts; an existing listener keeps its recorded kind after recovery.
+The private socket directory is mode 0700 and its versioned marker mode 0600.
+Neovim's socket inherits its umask; Eon does not change its supervisor's umask.
+Same-user processes can access the listener. Unsupported listener metadata,
+including an old empty marker, refuses routing: save your work and restart
+that Editor popup. Eon never restarts it automatically.
 
 A live editor that is not listening fails with `editor-unavailable`; a refusal
 fails with `editor-rejected`; a reply deadline fails with `editor-unresponsive`.

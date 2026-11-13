@@ -1409,6 +1409,15 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Neovim S1 scope (`eon-xodrj.6.2.1`):** The approved eon-xodrj.6.1
+  amendments B/C below cover Editor key launch and versioned listener
+  ownership. Neovim Files and `eon edit` still use the ordinary pane route,
+  including with a live recorded Neovim listener after configuration changes.
+  Neovim initial positions and acknowledged file reuse are gated on
+  `eon-xodrj.6.2.2` (S2); amendment A remains for that slice. Existing Helix
+  proof does not prove Neovim behavior. Approval: eon-overseer under Lucca's
+  delegation, recorded on eon-xodrj.6.1 on 2026-11-12.
+
 - **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer, in
   `eon-g3vdz` / `eon-l4e7s`: startup failures report stage observations,
   cleanup confirmation and command replay uncertainty. Proof is scoped to
@@ -1999,18 +2008,37 @@ names its socket. CLI JSON names a session `session` and a terminal
   An unresolved editor or unavailable executable fails with `popup-command`
   and starts no terminal. If no editor is resolved, the resolver's message
   names `[editor] command`.
-  When Editor runs the packaged Helix, Eon supplies `--listen` with an
-  instance-specific Unix socket path under a mode-0700 directory in the
-  window's private runtime directory. Eon requires its packaged Helix to
-  bind that socket as mode 0600. A Helix `--listen` option in `[editor] command`
-  fails the popup with `popup-command`. The pane route of `eon edit` still
-  passes that option to Helix. Before a new launch, Eon removes an owned non-listening
-  socket left at the instance's path. A live or non-owned leftover fails
-  the popup start. Eon removes leftover sockets when their terminals end and
-  sweeps stale sockets on supervisor start, keeping the sockets of terminals
-  it adopts until they end. The Unix permissions admit any same-user process,
-  including agents with `[agents] terminal_access = "none"`. Eon exports
-  the path to no terminal. The argv and socket path are runtime policy.
+  For the recognized packaged Helix or a selected Neovim command, Eon supplies
+  --listen with an instance-specific Unix socket under an owner-only mode-0700
+  directory in the window's private runtime directory. The mode-0600 marker
+  records a version and listener kind for that terminal, including across
+  supervisor recovery. Unknown or invalid marker formats refuse routing.
+  For an owned empty or unsupported marker the error tells the user to save
+  their work and restart the Editor popup; Eon never restarts it automatically.
+  Eon requires its packaged Helix to bind its socket as mode 0600.
+  Neovim's socket uses its inherited umask, with access restricted by the
+  private parent directory. Eon never changes
+  its supervisor's umask for this launch.
+
+  A packaged-Helix --listen option refuses its popup with popup-command.
+  For Neovim, --listen, --server, --remote*, standalone --, --embed, --headless,
+  -l and -e/-E/-es/-Es conflict with owned-listener popup routing. Under auto
+  such a command uses the ordinary pane route for edits and a key-only popup
+  launches without Eon's listener. With explicit kind = "neovim", popup command
+  preparation fails before another popup is displaced: popup-command for a
+  popup invocation or edit-command for an edit. A generated initial cursor
+  position uses at most one +call cursor(L,C), containing only numbers, within
+  Neovim's ten + or -c command limit. An incompatible command prefix is handled
+  like conflicting flags. The pane route retains its configured argv.
+
+  Before a new launch, Eon removes an owned non-listening socket left at the
+  instance's path. A live or non-owned leftover fails the popup start. Eon
+  removes leftover sockets when their terminals end and sweeps stale sockets
+  on supervisor start, keeping sockets of terminals it adopts until they end.
+  The Unix permissions admit any same-user process, including agents with
+  agents.terminal_access = "none". Eon exports the path to no unrelated terminal;
+  Neovim may expose its own server identity to processes it starts. The argv
+  and socket path are runtime policy.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
@@ -2123,6 +2151,15 @@ names its socket. CLI JSON names a session `session` and a terminal
   on ASCII whitespace. With no editor configured or resolved, or an editor
   executable that is unavailable on the terminal PATH, the edit refuses with
   `edit-command` and opens no pane; Eon never falls back to Helix.
+  [editor] kind accepts "auto" (default) or "neovim". Auto retains exact
+  packaged-Helix recognition and also recognizes an effective command argv[0]
+  whose basename is exactly nvim before PATH or symlink resolution. Conflicting
+  flags disqualify that command from owned-listener routing. Auto does not
+  inspect scripts or a wrapper's inner argv; other wrapper names opt in with
+  kind = "neovim". A wrapper must remain in the foreground and forward Eon's
+  appended Neovim arguments unchanged. Each edit rereads kind and open_in;
+  command and kind govern fresh Editor starts, while an existing owned listener
+  retains its recorded kind. open_in = "pane" always selects the pane route.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
   distinct. Dismissal requires the exact live instance;
