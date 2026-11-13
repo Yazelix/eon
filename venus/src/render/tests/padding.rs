@@ -127,14 +127,14 @@ fn padding_color_whole_scroll_uses_visible_row_color_and_exceptions() {
 
 #[test]
 fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
-    use eon_workspace_protocol::v42::{
+    use eon_workspace_protocol::v43::{
         ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Sidebar, Snapshot,
         Tab,
     };
     let mut snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -190,6 +190,8 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
         }],
         codex_quota: None,
         claude_quota: None,
+        google_quota: None,
+        google_quota_failure: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,

@@ -1,12 +1,12 @@
 use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition, PreparedCommand};
 use super::session_registry::{Completion, Operation, Registration, Registry};
-use eon_workspace_protocol::v42::{
+use eon_workspace_protocol::v43::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
-    InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY,
-    Pane as SnapshotPane, Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupKey,
-    PopupTarget, QuotaFailure, QuotaWindow, Screen, Sent, Side, Sidebar, Snapshot,
+    GoogleQuotaState, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS,
+    PROJECT_ENTRY, Pane as SnapshotPane, Popup as SnapshotPopup, PopupEntry as SnapshotEntry,
+    PopupKey, PopupTarget, QuotaFailure, QuotaWindow, Screen, Sent, Side, Sidebar, Snapshot,
     Tab as SnapshotTab, TargetId, TerminalHistory, TerminalTarget, TerminalText, WorkspaceAction,
     WorkspaceTarget, check_popup_action,
 };
@@ -327,7 +327,7 @@ impl WorkspaceSet {
     }
 
     fn pending_allowance(&self) -> Result<usize, Failure> {
-        if self.workspaces.len() >= eon_workspace_protocol::v42::MAX_WORKSPACES {
+        if self.workspaces.len() >= eon_workspace_protocol::v43::MAX_WORKSPACES {
             return Err(action_error(
                 "session-limit",
                 "a window holds at most 32 sessions",
@@ -442,7 +442,7 @@ impl WorkspaceSet {
         match action {
             Action::Workspace(WorkspaceAction::NewWorkspace { name, .. }) => {
                 if let Some(name) = name {
-                    eon_workspace_protocol::v42::validate_workspace_name(name)
+                    eon_workspace_protocol::v43::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -457,7 +457,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v42::validate_workspace_name(name)
+                    eon_workspace_protocol::v43::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -598,7 +598,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v42::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v43::WorkspaceInfo {
                 id: workspace.id.clone(),
                 persistent_id: workspace.persistent_id.clone(),
                 registration_error: workspace.registration_error.clone(),
@@ -746,13 +746,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v42::pane_label_character(character) {
+                if eon_workspace_protocol::v43::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v42::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v43::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -974,7 +974,7 @@ impl WorkspaceSet {
             Action::RenamePane { pane, name, tag } => {
                 let name = name.as_deref().map(str::trim);
                 let tag = tag.as_deref().map(str::trim);
-                eon_workspace_protocol::v42::validate_pane_rename(name, tag)
+                eon_workspace_protocol::v43::validate_pane_rename(name, tag)
                     .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 let target = self.workspaces[index]
                     .tabs
@@ -992,7 +992,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v42::validate_workspace_name(name)
+                    eon_workspace_protocol::v43::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -1047,7 +1047,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v42::validate_workspace_name(&name)
+                    eon_workspace_protocol::v43::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -1475,7 +1475,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
                 id: self.id.clone(),
                 persistent_id: self.persistent_id.clone(),
                 registration_error: self.registration_error.clone(),
@@ -1552,6 +1552,8 @@ impl Workspace {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
+            google_quota: None,
+            google_quota_failure: None,
             codex_quota_failure: None,
             claude_quota_failure: None,
             running: None,
@@ -3615,10 +3617,23 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
             (state, quota.observed_at, quota.windows.as_slice())
         }),
     );
+    output.push_str(",\"google_quota\":");
+    json_quota(
+        &mut output,
+        snapshot.google_quota.as_ref().map(|quota| {
+            let state = match quota.state {
+                GoogleQuotaState::Fresh => "fresh",
+                GoogleQuotaState::Stale => "stale",
+            };
+            (state, quota.observed_at, quota.windows.as_slice())
+        }),
+    );
     output.push_str(",\"codex_quota_failure\":");
     json_quota_failure(&mut output, snapshot.codex_quota_failure);
     output.push_str(",\"claude_quota_failure\":");
     json_quota_failure(&mut output, snapshot.claude_quota_failure);
+    output.push_str(",\"google_quota_failure\":");
+    json_quota_failure(&mut output, snapshot.google_quota_failure);
     output.push_str(",\"attention_queue\":[");
     for (index, entry) in snapshot.attention_queue.iter().enumerate() {
         if index != 0 {
@@ -3660,8 +3675,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v42::WindowState) -> &'static str {
-    use eon_workspace_protocol::v42::WindowState;
+fn window_state(state: eon_workspace_protocol::v43::WindowState) -> &'static str {
+    use eon_workspace_protocol::v43::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -3671,7 +3686,7 @@ fn window_state(state: eon_workspace_protocol::v42::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v42::WindowEntry,
+    entry: &eon_workspace_protocol::v43::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -3804,7 +3819,7 @@ pub(crate) fn list_human(snapshot: &Snapshot) -> String {
 /// One session object, shared by inspection and event output.
 pub(crate) fn json_workspace(
     output: &mut String,
-    workspace: &eon_workspace_protocol::v42::WorkspaceInfo,
+    workspace: &eon_workspace_protocol::v43::WorkspaceInfo,
     shown: bool,
 ) {
     output.push_str(&format!(
@@ -3821,7 +3836,7 @@ pub(crate) fn json_workspace(
     output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
 }
 
-pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v42::WorkspaceInfo) -> String {
+pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v43::WorkspaceInfo) -> String {
     let mut output = String::from("\"persistent_id\":");
     json_option(&mut output, workspace.persistent_id.as_deref());
     output.push_str(",\"registration_error\":");
@@ -3948,7 +3963,7 @@ pub(crate) fn resolve_target<'a>(
 ) -> Result<usize, Failure> {
     match target {
         WorkspaceTarget::Selector(selector) => {
-            eon_workspace_protocol::v42::validate_workspace_name(selector)
+            eon_workspace_protocol::v43::validate_workspace_name(selector)
                 .map_err(|error| action_error("malformed-action", error.to_string()))?;
             resolve_selector(workspaces.map(|(id, name, _)| (id, name)), selector)
         }
@@ -4013,7 +4028,7 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v42::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v43::Shortcut) -> String {
     eon_workspace_protocol::shortcuts::config_chord(shortcut.modifiers, &shortcut.key)
 }
 
@@ -4060,7 +4075,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v42::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v43::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn c38_set(root: &Path) -> (Registry, WorkspaceSet) {
         let registry = Registry::in_test_directory(root.join("sessions"));
@@ -4865,8 +4880,8 @@ mod tests {
             ("s1", "s3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v42::encode_response(
-            &eon_workspace_protocol::v42::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v43::encode_response(
+            &eon_workspace_protocol::v43::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -4876,7 +4891,7 @@ mod tests {
                 "ambiguous",
                 None,
                 Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector(
+                    workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector(
                         "work".into(),
                     ),
                 }),
@@ -4891,7 +4906,7 @@ mod tests {
             "same",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s3".into()),
+                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s3".into()),
             }),
             prepared,
             |_| panic!("a switch starts nothing"),
@@ -4964,7 +4979,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v42::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v43::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -5020,8 +5035,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v42::encode_response(
-            &eon_workspace_protocol::v42::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v43::encode_response(
+            &eon_workspace_protocol::v43::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -5093,8 +5108,8 @@ mod tests {
         assert_eq!(error.code, "terminal-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v42::encode_response(
-            &eon_workspace_protocol::v42::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v43::encode_response(
+            &eon_workspace_protocol::v43::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "s1");
@@ -5108,7 +5123,7 @@ mod tests {
             "name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v42::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v43::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s2".into(),
@@ -5121,7 +5136,7 @@ mod tests {
             "live-id",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5132,7 +5147,7 @@ mod tests {
             "absent-id-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v42::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v43::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s99".into(),
@@ -5145,7 +5160,7 @@ mod tests {
             "switch-name",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s99".into()),
+                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s99".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5156,7 +5171,7 @@ mod tests {
             "rename-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v42::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v43::WorkspaceTarget::Selector(
                     "s99".into(),
                 )),
                 name: "s100".into(),
@@ -5203,7 +5218,7 @@ mod tests {
         );
         for (request, workspace) in [("third", "s3"), ("second", "s2")] {
             let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector(workspace.into()),
             });
             set.dispatch(request, None, switch, prepared, |_| Ok(()))
                 .unwrap();
@@ -5347,7 +5362,7 @@ mod tests {
             "show-second",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -5747,7 +5762,7 @@ mod tests {
             focus: false,
         });
         let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s2".into()),
         });
         set.dispatch("create", None, create.clone(), prepared, |_| Ok(()))
             .unwrap();
@@ -6040,7 +6055,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v42::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v43::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6109,7 +6124,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v42::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v43::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6170,9 +6185,9 @@ mod tests {
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v42::{
+        use eon_workspace_protocol::v43::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
-            CodexQuotaState, QuotaWindow,
+            CodexQuotaState, GoogleQuota, QuotaWindow,
         };
 
         let workspace = WorkspaceSet::with_recovered_sessions(
@@ -6274,8 +6289,30 @@ mod tests {
             at: 1_720_000_002,
             reason: QuotaFailureReason::InvalidWindow,
         });
+        snapshot.google_quota = Some(GoogleQuota {
+            state: GoogleQuotaState::Stale,
+            observed_at: 1_720_000_003,
+            windows: vec![
+                QuotaWindow {
+                    duration_minutes: 300,
+                    remaining_percent: 100,
+                    resets_at: Some(1_720_000_600),
+                    scope: Some("Gemini: \"g\",x".into()),
+                },
+                QuotaWindow {
+                    duration_minutes: 10080,
+                    remaining_percent: 0,
+                    resets_at: None,
+                    scope: Some("Claude and GPT models".into()),
+                },
+            ],
+        });
+        snapshot.google_quota_failure = Some(QuotaFailure {
+            at: 1_720_000_004,
+            reason: QuotaFailureReason::Start,
+        });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v42::QueueEntry {
+            eon_workspace_protocol::v43::QueueEntry {
                 workspace: "s1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -6284,7 +6321,7 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v42::QueueEntry {
+            eon_workspace_protocol::v43::QueueEntry {
                 workspace: "s2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -6317,16 +6354,26 @@ mod tests {
         assert!(output.ends_with(concat!(
             r#"],"sidebar":"closed","codex_quota":{"state":"stale","observed_at":1720000000000,"windows":[{"duration_minutes":300,"remaining_percent":80,"resets_at":1720000300000,"scope":null},{"duration_minutes":10080,"remaining_percent":60,"resets_at":null,"scope":null}]}"#,
             r#","claude_quota":{"state":"fresh","observed_at":1720000001000,"windows":[{"duration_minutes":300,"remaining_percent":25,"resets_at":1720000600000,"scope":null},{"duration_minutes":10080,"remaining_percent":40,"resets_at":null,"scope":"Fable \"x\""}]}"#,
+            r#","google_quota":{"state":"stale","observed_at":1720000003000,"windows":[{"duration_minutes":300,"remaining_percent":100,"resets_at":1720000600000,"scope":"Gemini: \"g\",x"},{"duration_minutes":10080,"remaining_percent":0,"resets_at":null,"scope":"Claude and GPT models"}]}"#,
             r#","codex_quota_failure":null,"claude_quota_failure":{"at":1720000002000,"reason":"invalid_window"}"#,
+            r#","google_quota_failure":{"at":1720000004000,"reason":"start"}"#,
             r#","attention_queue":[{"session":"s1","tab":"t1","target":"p1","attention":{"state":"needs-input","app":"codex","name":"eon \"9a\"","kind":"permission","progress":40,"title":"secret \"title\"","message":"secret \"message\"\\path","changed_at":1720000000123,"stale":true,"others":3}},{"session":"s2","tab":"t\"2","target":"p\\2","attention":{"state":"finished","app":null,"name":null,"kind":null,"progress":null,"title":null,"message":null,"changed_at":1720000000456,"stale":false,"others":0}}],"running":null,"busy":null}"#,
             "\n"
         )));
         assert!(
             json(&workspace.snapshot())
-                .ends_with("\"sidebar\":\"off\",\"codex_quota\":null,\"claude_quota\":null,\"codex_quota_failure\":null,\"claude_quota_failure\":null,\"attention_queue\":[],\"running\":null,\"busy\":null}\n")
+                .ends_with("\"sidebar\":\"off\",\"codex_quota\":null,\"claude_quota\":null,\"google_quota\":null,\"codex_quota_failure\":null,\"claude_quota_failure\":null,\"google_quota_failure\":null,\"attention_queue\":[],\"running\":null,\"busy\":null}\n")
         );
         snapshot.codex_quota.as_mut().unwrap().windows[0].resets_at = Some(18_446_744_073_709_552);
         assert!(json(&snapshot).contains(r#""resets_at":18446744073709552000"#));
+        let google = snapshot.google_quota.as_mut().unwrap();
+        google.observed_at = u64::MAX;
+        google.windows[0].resets_at = Some(u64::MAX);
+        snapshot.google_quota_failure.as_mut().unwrap().at = u64::MAX;
+        let output = json(&snapshot);
+        for field in ["observed_at", "resets_at", "at"] {
+            assert!(output.contains(&format!("\"{field}\":18446744073709551615000")));
+        }
         let human = human(&snapshot);
         assert!(human.starts_with("active t1\nsidebar closed\ntab t1 "));
         assert!(human.contains(" attention=needs-input\n"));
@@ -6836,8 +6883,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v42::encode_response(
-            &eon_workspace_protocol::v42::Response::Snapshot(after),
+        eon_workspace_protocol::v43::encode_response(
+            &eon_workspace_protocol::v43::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -8460,7 +8507,7 @@ mod tests {
         };
         let switch = |workspace: &str| {
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector(workspace.into()),
             })
         };
         // Opens the picker over the shown terminal and returns its terminal.
@@ -9288,8 +9335,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "terminal-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v42::encode_response(
-            &eon_workspace_protocol::v42::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v43::encode_response(
+            &eon_workspace_protocol::v43::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -9352,8 +9399,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v42::encode_response(
-                &eon_workspace_protocol::v42::Response::Snapshot(state),
+            eon_workspace_protocol::v43::encode_response(
+                &eon_workspace_protocol::v43::Response::Snapshot(state),
             )
             .unwrap();
         }

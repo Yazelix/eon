@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume the canonical workspace wire with separate Google quota fact and
+  failure slots (`eon-o9f3h.1`). Google chip presentation is planned in
+  `eon-o9f3h.5`.
+
 - VEN-C30: attention badges have no backing at any opacity, with two-surface
   colour adaptation and a glyph-only outline when needed. Sidebar/inbox badge
   boxes are the font size (`eon-0ntg1`, approved 2026-11-12).

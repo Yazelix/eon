@@ -23,7 +23,7 @@ use super::{
         terminal_editing_json, terminal_history_json, terminal_sent_json, terminal_text_json,
     },
 };
-use eon_workspace_protocol::v42::{
+use eon_workspace_protocol::v43::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
     MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
     TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
@@ -2229,7 +2229,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v42::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v43::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2875,7 +2875,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         ),
         _ => return Err(Error::usage(EON_USAGE)),
     };
-    eon_workspace_protocol::v42::validate_pane_rename(name, tag)
+    eon_workspace_protocol::v43::validate_pane_rename(name, tag)
         .map_err(|error| Error::usage(error.to_string()))?;
     Ok((
         Action::RenamePane {
@@ -3179,7 +3179,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v42::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v43::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -4203,7 +4203,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v42::{
+        use eon_workspace_protocol::v43::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4284,6 +4284,8 @@ mod tests {
             ],
             codex_quota: None,
             claude_quota: None,
+            google_quota: None,
+            google_quota_failure: None,
             codex_quota_failure: None,
             claude_quota_failure: None,
             sidebar: Sidebar::Off,
@@ -4454,7 +4456,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v42::{
+        use eon_workspace_protocol::v43::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4504,6 +4506,8 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
+            google_quota: None,
+            google_quota_failure: None,
             codex_quota_failure: None,
             claude_quota_failure: None,
             sidebar: Sidebar::Off,

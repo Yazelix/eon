@@ -3,7 +3,7 @@ use super::*;
 /// One tab of two one-pane columns and the hidden popup `u1`, labelled Agent, with the sidebar
 /// open.
 fn sidebar_snapshot() -> Snapshot {
-    use eon_workspace_protocol::v42::{
+    use eon_workspace_protocol::v43::{
         Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -20,7 +20,7 @@ fn sidebar_snapshot() -> Snapshot {
     Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -65,6 +65,8 @@ fn sidebar_snapshot() -> Snapshot {
         }],
         codex_quota: None,
         claude_quota: None,
+        google_quota: None,
+        google_quota_failure: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
@@ -387,7 +389,7 @@ fn heading_hide_targets_sit_in_their_title_rows_and_yield_when_narrow() {
 
 #[test]
 fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
-    use eon_workspace_protocol::v42::AttentionState;
+    use eon_workspace_protocol::v43::AttentionState;
 
     let mut snapshot = sidebar_snapshot();
     let metrics = CellMetrics::for_scale(1.0);
@@ -464,7 +466,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
     // Any attention replaces the empty state.
     snapshot.sidebar = Sidebar::Open;
-    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v42::Attention {
+    snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v43::Attention {
         state: AttentionState::Unavailable,
         record: None,
     });
@@ -474,7 +476,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 
 #[test]
 fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
-    use eon_workspace_protocol::v42::{
+    use eon_workspace_protocol::v43::{
         Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
     };
 
@@ -546,7 +548,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -596,6 +598,8 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         ],
         codex_quota: None,
         claude_quota: None,
+        google_quota: None,
+        google_quota_failure: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
@@ -760,7 +764,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         record.app = app.into();
         record.name = name.into();
         record.title.clear();
-        renamed.attention_queue = vec![eon_workspace_protocol::v42::QueueEntry {
+        renamed.attention_queue = vec![eon_workspace_protocol::v43::QueueEntry {
             workspace: renamed.workspace.clone(),
             tab: "t2".into(),
             target: "p2".into(),
@@ -803,7 +807,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     let mut other_session = renamed.clone();
     other_session
         .workspaces
-        .push(eon_workspace_protocol::v42::WorkspaceInfo {
+        .push(eon_workspace_protocol::v43::WorkspaceInfo {
             id: "s2".into(),
             persistent_id: Some("0123456789abcdef0123456789abcdef0000000000000002".into()),
             registration_error: None,
@@ -1058,7 +1062,7 @@ fn agent_sidebar_ages_count_whole_minutes_hours_and_days() {
 
 #[test]
 fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
-    use eon_workspace_protocol::v42::{Attention, AttentionRecord, AttentionState};
+    use eon_workspace_protocol::v43::{Attention, AttentionRecord, AttentionState};
 
     for scale in [0.75, 1.0, 1.25, 1.5, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
@@ -1147,7 +1151,7 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
 
 #[test]
 fn popup_detail_keeps_metadata_ltr_after_an_rtl_catalog_label() {
-    use eon_workspace_protocol::v42::{Attention, AttentionRecord, AttentionState};
+    use eon_workspace_protocol::v43::{Attention, AttentionRecord, AttentionState};
     use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Wrap};
 
     let metrics = CellMetrics::for_scale(1.0);

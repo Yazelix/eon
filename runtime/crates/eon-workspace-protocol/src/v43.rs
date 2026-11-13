@@ -1,10 +1,18 @@
-//! Eon-owned values and bounded EONW v42 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v43 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
 //! Strings and byte fields carry a little-endian `u16` length prefix, except
 //! pasted, visible and history terminal text, which carry a `u32` one. Every
 //! message is at most 2 MiB, except a `History` response.
+//!
+//! Snapshot's optional Google quota/failure records are independent of Codex
+//! and Claude. Google permits only fresh/stale readings with one to six
+//! scoped windows, 300/10080-minute periods and unique scope/period pairs.
+//! Scopes are nonempty, control-free and at most 32 UTF-8 bytes; percentages
+//! are 0–100 and supplied resets strictly follow the nonzero observation.
+//! Times remain Unix seconds. Older versions are rejected, not reinterpreted;
+//! adopting this wire never stops a live generation.
 
 use std::{collections::HashSet, fmt, str};
 
@@ -17,7 +25,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 42;
+pub const VERSION: u16 = 43;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -49,6 +57,8 @@ pub const MAX_CODEX_QUOTA_WINDOWS: usize = 2;
 pub const MAX_SCOPED_QUOTA_WINDOWS: usize = 4;
 pub const MAX_QUOTA_WINDOWS: usize = 2 + MAX_SCOPED_QUOTA_WINDOWS;
 pub const MAX_QUOTA_SCOPE_BYTES: usize = 32;
+pub const MAX_GOOGLE_QUOTA_WINDOWS: usize = 6;
+const _: () = assert!(MAX_GOOGLE_QUOTA_WINDOWS <= MAX_QUOTA_WINDOWS);
 pub const MAX_COMMAND_ARGUMENTS: usize = 256;
 pub const MAX_COMMAND_ARGUMENT_BYTES: usize = 32 * 1024;
 /// The bounds of a status record and the terminal title in Orbit's
@@ -586,10 +596,24 @@ pub struct ClaudeQuota {
     pub windows: Vec<QuotaWindow>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoogleQuotaState {
+    Fresh,
+    Stale,
+}
+
+/// Google subscription model-group windows; every window must carry a scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GoogleQuota {
+    pub state: GoogleQuotaState,
+    pub observed_at: u64,
+    pub windows: Vec<QuotaWindow>,
+}
+
 /// Why a provider's last quota read failed (EON-C27).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuotaFailureReason {
-    /// CodexBar could not be started or its output could not be read.
+    /// The collector could not be started or its output could not be read.
     Start,
     Deadline,
     OutputLimit,
@@ -685,6 +709,8 @@ pub struct Snapshot {
     /// Each provider's last failed read, until a read succeeds (EON-C27).
     pub codex_quota_failure: Option<QuotaFailure>,
     pub claude_quota_failure: Option<QuotaFailure>,
+    pub google_quota: Option<GoogleQuota>,
+    pub google_quota_failure: Option<QuotaFailure>,
     pub sidebar: Sidebar,
     /// The window-wide queue in EON-C31's total order; consumers never sort it.
     pub attention_queue: Vec<QueueEntry>,
@@ -1759,7 +1785,8 @@ impl From<&Tab> for WireTab {
 }
 
 /// A snapshot payload is the column layout, the workspace with flattened
-/// panes, then the Codex and Claude quotas and their last failures, sidebar,
+/// panes, then the Codex and Claude quotas and their last failures, Google's
+/// quota and last failure, sidebar,
 /// workspace summaries, the window-wide attention queue and running windows.
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
@@ -1767,11 +1794,14 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
         Response::Snapshot(snapshot) => {
             let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
             let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
+            let google = snapshot.google_quota.as_ref().map(google_as_codex);
             validate_workspace(snapshot, &tabs)?;
             validate_running(snapshot.running.as_ref())?;
             validate_busy(snapshot.busy.as_ref())?;
             validate_codex(snapshot.codex_quota.as_ref())?;
             validate_claude(claude.as_ref())?;
+            validate_google(google.as_ref())?;
+            validate_failure(snapshot.google_quota_failure)?;
             validate_failure(snapshot.codex_quota_failure)?;
             validate_failure(snapshot.claude_quota_failure)?;
             payload.count(snapshot.tabs.len());
@@ -1783,6 +1813,8 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_quota(&mut payload, claude.as_ref());
             encode_failure_record(&mut payload, snapshot.codex_quota_failure);
             encode_failure_record(&mut payload, snapshot.claude_quota_failure);
+            encode_quota(&mut payload, google.as_ref());
+            encode_failure_record(&mut payload, snapshot.google_quota_failure);
             encode_sidebar(&mut payload, snapshot.sidebar);
             encode_workspace_set(&mut payload, snapshot);
             encode_attention_queue(&mut payload, &snapshot.attention_queue);
@@ -2219,6 +2251,19 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     let claude = decode_quota(&mut decoder)?;
     snapshot.codex_quota_failure = decode_failure_record(&mut decoder)?;
     snapshot.claude_quota_failure = decode_failure_record(&mut decoder)?;
+    let google = decode_quota(&mut decoder)?;
+    validate_google(google.as_ref())?;
+    snapshot.google_quota = google.map(|quota| GoogleQuota {
+        state: if quota.state == CodexQuotaState::Stale {
+            GoogleQuotaState::Stale
+        } else {
+            GoogleQuotaState::Fresh
+        },
+        observed_at: quota.observed_at,
+        windows: quota.windows,
+    });
+    snapshot.google_quota_failure = decode_failure_record(&mut decoder)?;
+    validate_failure(snapshot.google_quota_failure)?;
     snapshot.sidebar = match decoder.byte()? {
         0 => Sidebar::Open,
         1 => Sidebar::Closed,
@@ -2475,6 +2520,8 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         tabs: Vec::with_capacity(tabs.len()),
         codex_quota: None,
         claude_quota: None,
+        google_quota: None,
+        google_quota_failure: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
         sidebar: Sidebar::Off,
@@ -2909,6 +2956,38 @@ fn claude_as_codex(quota: &ClaudeQuota) -> CodexQuota {
         observed_at: quota.observed_at,
         windows: quota.windows.clone(),
     }
+}
+
+fn google_as_codex(quota: &GoogleQuota) -> CodexQuota {
+    CodexQuota {
+        state: match quota.state {
+            GoogleQuotaState::Fresh => CodexQuotaState::Fresh,
+            GoogleQuotaState::Stale => CodexQuotaState::Stale,
+        },
+        observed_at: quota.observed_at,
+        windows: quota.windows.clone(),
+    }
+}
+
+fn validate_google(quota: Option<&CodexQuota>) -> Result<()> {
+    validate_quota(quota)?;
+    let Some(quota) = quota else { return Ok(()) };
+    if !matches!(quota.state, CodexQuotaState::Fresh | CodexQuotaState::Stale)
+        || quota.windows.len() > MAX_GOOGLE_QUOTA_WINDOWS
+        || quota.windows.iter().enumerate().any(|(index, window)| {
+            window.scope.is_none()
+                || !matches!(window.duration_minutes, 300 | 10080)
+                || quota.windows[..index].iter().any(|previous| {
+                    previous.duration_minutes == window.duration_minutes
+                        && previous.scope == window.scope
+                })
+        })
+    {
+        return Err(Error::InvalidSnapshot {
+            field: "Google quota",
+        });
+    }
+    Ok(())
 }
 
 fn validate_quota(quota: Option<&CodexQuota>) -> Result<()> {
@@ -4003,18 +4082,18 @@ mod tests {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e572a0001000700000002007231002d00",
+                "454f4e572b0001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e572a0001000700000002007231002d01",
+                "454f4e572b0001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e572a0001000b00000002007231002c0200703200",
+                "454f4e572b0001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -4050,14 +4129,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572a0001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e572b0001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572a008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e572b008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -4593,6 +4672,8 @@ mod tests {
                     },
                 ],
             }),
+            google_quota: None,
+            google_quota_failure: None,
             codex_quota_failure: None,
             claude_quota_failure: Some(QuotaFailure {
                 at: 120,
@@ -4624,6 +4705,9 @@ mod tests {
         encode_quota(&mut payload, claude.as_ref());
         encode_failure_record(&mut payload, snapshot.codex_quota_failure);
         encode_failure_record(&mut payload, snapshot.claude_quota_failure);
+        let google = snapshot.google_quota.as_ref().map(google_as_codex);
+        encode_quota(&mut payload, google.as_ref());
+        encode_failure_record(&mut payload, snapshot.google_quota_failure);
         encode_sidebar(&mut payload, snapshot.sidebar);
         encode_workspace_set(&mut payload, snapshot);
         encode_attention_queue(&mut payload, &snapshot.attention_queue);
@@ -5471,14 +5555,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e572a0001000a00000002007231001202007431",
+                "454f4e572b0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e572a0001001000000002007231000c0200743104002f746d70",
+                "454f4e572b0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -5487,29 +5571,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572a00010015000000020072310013020074310300676974010200753101",
+                "454f4e572b00010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572a00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572b00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e572a0001000a00000002007231001702007032",
+                "454f4e572b0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572a00010006000000020072310019",
+                "454f4e572b00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e572a0001000e00000002007231001a06002f746d702f61",
+                "454f4e572b0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e572a0001001000000002007231001b00020002006878010061",
+                "454f4e572b0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -5517,7 +5601,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e572a0001000f00000002007231002504002f746d70000001",
+                "454f4e572b0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -5525,44 +5609,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e572a0001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e572b0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e572a0001000600000002007231001c",
+                "454f4e572b0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e572a0001000e00000002007231001d0200743102007032",
+                "454f4e572b0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e572a0001000600000002007231001e",
+                "454f4e572b0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e572a0001000600000002007231001f",
+                "454f4e572b0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e572a0001000a00000002007231002602007032",
+                "454f4e572b0001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e572a0001000a00000002007231002902007032",
+                "454f4e572b0001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e572a0001000a00000002007231002a02007032",
+                "454f4e572b0001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -5571,7 +5655,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572a00010012000000020072310027020070320000020000006869",
+                "454f4e572b00010012000000020072310027020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -5579,7 +5663,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e572a0001000c000000020072310027020075310101",
+                "454f4e572b0001000c000000020072310027020075310101",
             ),
         ] {
             let request = Request {
@@ -5599,7 +5683,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572a0001001700000002007231010e007465726d696e616c2d322e392d310201",
+            "454f4e572b0001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -5698,6 +5782,8 @@ mod tests {
                     },
                 ],
             }),
+            google_quota: None,
+            google_quota_failure: None,
             codex_quota_failure: None,
             claude_quota_failure: Some(QuotaFailure {
                 at: 95,
@@ -5716,7 +5802,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e572a008100530100000100020002000100010000000200743100000041",
+                    "454f4e572b008100550100000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "0200703100000002007032030073703203002f70320102007032000000020070",
@@ -5724,7 +5810,7 @@ mod tests {
                     "6e2d396101007401006d01000000000000000002000100020075310300676974",
                     "030073753103002f753100010100640000000000000001002c0100002a01f401",
                     "0000000000000001015a00000000000000020060270000070000602700003c00",
-                    "0105004661626c6500015f00000000000000010102007331020073",
+                    "0105004661626c6500015f000000000000000100000102007331020073",
                     // s1's local/persistent IDs, absent name, tab count, rollup and rank.
                     "3101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100",
                     "0001",
@@ -5733,7 +5819,7 @@ mod tests {
                     "00010000000000",
                 ),
             ),
-            (failure, "454f4e572a0082000a00000004006275737902006e6f"),
+            (failure, "454f4e572b0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -5748,7 +5834,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572a00860038000000",
+                    "454f4e572b00860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -5771,7 +5857,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572a008d003c000000",
+                    "454f4e572b008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -5787,7 +5873,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572a00870036000000",
+                    "454f4e572b00870036000000",
                     "020073310200743100020070320a007465726d696e616c2d32",
                     "01020073310200743101020075310a007465726d696e616c2d33",
                     "012c01",
@@ -5800,7 +5886,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e572a008e0033000000",
+                    "454f4e572b008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -5811,7 +5897,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e572a0085000400000002006731",
+                "454f4e572b0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -5840,7 +5926,7 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e572a00830031000000020067310500302e392e302a0002006f6b010002",
+                "454f4e572b00830031000000020067310500302e392e302b0002006f6b010002",
                 "007331010500726561647900040062757379",
                 // v28: absent name, supervisor start in Unix milliseconds.
                 "000000000000000000",
@@ -5917,6 +6003,8 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
+            google_quota: None,
+            google_quota_failure: None,
             codex_quota_failure: None,
             claude_quota_failure: None,
             sidebar: Sidebar::Off,
@@ -5938,9 +6026,11 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572a008100bf00000001000100010000000100740000000000000000",
+                "454f4e572b008100c100000001000100010000000100740000000000000000",
                 "0000010001007401002f00010100700001000100700200737002002f700101007000",
                 "000101280000000000000000010000000000000000000000000100000000",
+                // Absent Google quota and last failure.
+                "0000",
                 "0202007331020073310100020073310130003031323334353637383961626364656630313233343536373839616263646566303030303030303030303030303030310000010001",
                 // u16 count, workspace, tab, target, then needs-input permission at 40%.
                 "0001000200733101007401007001012800000000000000000100000000000000000000",
@@ -5978,9 +6068,9 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572a008100f00000000100010001000000010074000000000000000000",
+                "454f4e572b008100f20000000100010001000000010074000000000000000000",
                 "00010001007401002f00010100700001000100700200737002002f7001010070",
-                "0000010128000000000000000001000000000000000000000000010000000002",
+                "00000101280000000000000000010000000000000000000000000100000000000002",
                 "020073310200733101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100010001000200733101007401007001",
                 "0128000000000000000001000000000000000000000101080031323334616263",
                 "640200673101040068657265012a000000000000000103000001010000020067",
@@ -6051,7 +6141,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572a00830064000000020067310500302e392e302a0002006f6b0000",
+                "454f4e572b00830064000000020067310500302e392e302b0002006f6b0000",
                 "01050072656164790105007265616479",
                 "000000000000000000",
             )
@@ -6956,10 +7046,142 @@ mod tests {
         );
     }
 
+    fn google() -> GoogleQuota {
+        GoogleQuota {
+            state: GoogleQuotaState::Fresh,
+            observed_at: 77_777,
+            windows: [
+                ("Gemini Models", 300),
+                ("Gemini Models", 10080),
+                ("Claude and GPT models", 300),
+                ("Claude and GPT models", 10080),
+                ("Gemini 4 Argon", 10080),
+            ]
+            .map(|(scope, duration_minutes)| QuotaWindow {
+                duration_minutes,
+                remaining_percent: 0,
+                resets_at: None,
+                scope: Some(scope.into()),
+            })
+            .to_vec(),
+        }
+    }
+
+    #[test]
+    fn google_windows_round_trip_without_weakening_other_providers() {
+        let mut state = snapshot();
+        state.google_quota = Some(google());
+        for stale in [false, true] {
+            state.google_quota.as_mut().unwrap().state = if stale {
+                GoogleQuotaState::Stale
+            } else {
+                GoogleQuotaState::Fresh
+            };
+            for count in [5, MAX_GOOGLE_QUOTA_WINDOWS] {
+                let mut candidate = state.clone();
+                let quota = candidate.google_quota.as_mut().unwrap();
+                if count == 6 {
+                    quota.windows.push(QuotaWindow {
+                        scope: Some("é".repeat(MAX_QUOTA_SCOPE_BYTES / 2)),
+                        ..window(300, Some(quota.observed_at + 1))
+                    });
+                }
+                candidate.google_quota_failure = Some(QuotaFailure {
+                    at: 88_888,
+                    reason: QuotaFailureReason::ProviderError,
+                });
+                let response = Response::Snapshot(candidate);
+                let bytes = encode_response(&response).unwrap();
+                assert_eq!(decode_response(&bytes), Ok(response));
+            }
+        }
+        state.google_quota = None;
+        state.google_quota_failure = None;
+        let response = Response::Snapshot(state);
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap()),
+            Ok(response)
+        );
+    }
+
+    #[test]
+    fn google_rejects_invalid_windows_on_both_sides() {
+        let mutations: &[fn(&mut GoogleQuota)] = &[
+            |q| q.observed_at = 0,
+            |q| q.windows.clear(),
+            |q| q.windows[0].scope = None,
+            |q| q.windows[0].scope = Some(String::new()),
+            |q| q.windows[0].scope = Some("x\n".into()),
+            |q| q.windows[0].scope = Some("é".repeat(17)),
+            |q| q.windows[0].duration_minutes = 60,
+            |q| q.windows[0].remaining_percent = 101,
+            |q| q.windows[0].resets_at = Some(q.observed_at),
+            |q| q.windows[0].resets_at = Some(q.observed_at - 1),
+            |q| q.windows.push(q.windows[0].clone()),
+        ];
+        for mutate in mutations {
+            let mut state = snapshot();
+            state.google_quota = Some(google());
+            mutate(state.google_quota.as_mut().unwrap());
+            assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+            assert!(decode_response(&forge(&state)).is_err());
+        }
+        let mut state = snapshot();
+        let mut quota = google();
+        for scope in ["sixth", "seventh"] {
+            quota.windows.push(QuotaWindow {
+                scope: Some(scope.into()),
+                ..window(300, None)
+            });
+        }
+        state.google_quota = Some(quota);
+        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+        assert_eq!(
+            decode_response(&forge(&state)),
+            Err(Error::InvalidSnapshot {
+                field: "quota windows"
+            })
+        );
+        state.google_quota = None;
+        state.google_quota_failure = Some(QuotaFailure {
+            at: 0,
+            reason: QuotaFailureReason::Start,
+        });
+        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+        assert!(decode_response(&forge(&state)).is_err());
+    }
+
+    #[test]
+    fn google_rejects_malformed_tags_and_truncated_records() {
+        let mut state = snapshot();
+        state.google_quota = Some(google());
+        let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
+        let mut record = Encoder::default();
+        encode_quota(
+            &mut record,
+            Some(&google_as_codex(state.google_quota.as_ref().unwrap())),
+        );
+        let offset = bytes
+            .windows(record.bytes.len())
+            .position(|part| part == record.bytes)
+            .unwrap();
+        for (field, value) in [(0, 2), (1, 2), (1, 3), (1, 4)] {
+            let mut malformed = bytes.clone();
+            malformed[offset + field] = value;
+            assert!(decode_response(&malformed).is_err());
+        }
+        for end in offset..offset + record.bytes.len() {
+            let mut truncated = bytes[..end].to_vec();
+            let len = (end - HEADER_BYTES) as u32;
+            truncated[8..12].copy_from_slice(&len.to_le_bytes());
+            assert!(decode_response(&truncated).is_err());
+        }
+    }
+
     #[test]
     fn every_legal_snapshot_fits_the_frame_budget() {
         // Bound panes and popups separately; charge selected-popup IDs to popups.
-        // Every tab reserves the most columns, and both quotas carry
+        // Every tab reserves the most columns, and all three quotas carry
         // every window with a reset and the longest scope, and a failure.
         let id = 2 + MAX_ID_BYTES;
         let entry_id = 2 + MAX_ENTRY_ID_BYTES;
@@ -7006,7 +7228,7 @@ mod tests {
             + 2
             + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 + id + 2 + 2 + 1)
             + MAX_SESSIONS * surface
-            + 2 * quota
+            + 3 * quota
             + 1
             + 2 * workspace_id
             + 2

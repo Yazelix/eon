@@ -216,13 +216,13 @@ fn clipping_test_fonts() -> FontSetup {
 }
 
 fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRect) {
-    use eon_workspace_protocol::v42::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v43::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let metrics = CellMetrics::for_scale(1.0);
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -261,6 +261,8 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
         entries: vec![],
         codex_quota: None,
         claude_quota: None,
+        google_quota: None,
+        google_quota_failure: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,
@@ -311,12 +313,12 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
 
 fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
     use crate::scene::{EonBar, ShortcutHintsScene};
-    use eon_workspace_protocol::v42::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+    use eon_workspace_protocol::v43::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
     let snapshot = Snapshot {
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v42::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v43::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -357,6 +359,8 @@ fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
         entries: vec![],
         codex_quota: None,
         claude_quota: None,
+        google_quota: None,
+        google_quota_failure: None,
         codex_quota_failure: None,
         claude_quota_failure: None,
         running: None,

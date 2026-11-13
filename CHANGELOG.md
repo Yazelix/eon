@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Workspace JSON includes independent `google_quota` and
+  `google_quota_failure` fields. They remain null until Google collection is
+  implemented. The canonical EONW wire advances; older live windows keep
+  running and are reported as incompatible (`eon-o9f3h.1`).
+
 Eon remains in alpha. v0.2.0 is the planned first beta; its version and stage
 switch requires explicit approval of the release cut (`eon-igae.9`).
 

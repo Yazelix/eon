@@ -7,7 +7,7 @@ use super::{
     supervisor::{effective_uid, supervisor_lock_path},
     windows::valid_window_id,
 };
-use eon_workspace_protocol::v42::{
+use eon_workspace_protocol::v43::{
     MAX_RUNNING_WINDOWS, RunningWindows, Snapshot, WindowEntry, WindowState,
 };
 use std::{

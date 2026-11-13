@@ -1625,7 +1625,7 @@ mod tests {
     fn images_draw_in_panes_and_popups_and_refusals_keep_the_renderer() {
         use super::super::{FontSettings, FontSetup, PaddingColor, PresentOutcome, Renderer};
         use crate::{WorkspaceFocus, WorkspaceScene};
-        use eon_workspace_protocol::v42::{
+        use eon_workspace_protocol::v43::{
             ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Sidebar,
             Snapshot, Tab, WorkspaceInfo,
         };
@@ -1718,6 +1718,8 @@ mod tests {
                 }],
                 codex_quota: None,
                 claude_quota: None,
+                google_quota: None,
+                google_quota_failure: None,
                 codex_quota_failure: None,
                 claude_quota_failure: None,
                 running: None,

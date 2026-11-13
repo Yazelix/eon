@@ -831,7 +831,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     a terminal that ended naturally during the request is reconciled as an
     exit. Venus maps Alt+W directly to the selected pane without a mode;
     `eon pane close PANE` sends the same target-bearing EONW action.
-  - Closing a column sends EONW v42's `CloseColumn { pane, consent }`, which
+  - Closing a column sends EONW v43's `CloseColumn { pane, consent }`, which
     closes every pane of the column that holds the named live pane, in one
     request. What it would stop is its scope: that column's panes' terminals,
     with the end `column`; or, when the column is its tab's only column and
@@ -918,7 +918,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v42 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v43 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1679,7 +1679,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     caller, with the tab directory as its working directory: the pane runs
     `[editor] command` with FILE's absolute path appended as its last argument.
     The result names the popup or pane that shows FILE. The editor's argv and
-    socket are runtime policy and do not cross EONW. EONW v42 distinguishes
+    socket are runtime policy and do not cross EONW. EONW v43 distinguishes
     this edit result from earlier builds that assume pane creation.
   - `eon pane create [--json] -- COMMAND [ARGS...]`, run from an Eon terminal,
     opens a new pane exactly where `pane create` would for that caller, with
@@ -1846,7 +1846,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     A background column's close leaves the shown session, active tab,
     selection, shown popup and desktop focus alone.
   - CLI JSON carries each pane's and popup's full EON-C31 attention record, the window's
-    EON-C31 attention queue in order, and the window's Codex and Claude quota readings
+    EON-C31 attention queue in order, and the window's Codex, Claude and Google quota readings
     (EON-C27), as EON-C31's CLI JSON rule lists them. It also carries the window's
     running-windows summary (EON-C23) as `running`, with `this`, `others` and
     `omitted`; each window holds `window`, `generation`, `name`, `started_at` and
@@ -1955,7 +1955,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v42 and accepted Orbit management operations.
+- **Consumes:** Current EONW v43 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -1967,8 +1967,17 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v42 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v43 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
+  The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
+  failure records to Snapshot: fresh/stale state, observation and windows,
+  with at most six scoped windows, only 300/10080-minute periods and unique
+  scope/duration pairs. Canonical scope/value/reset validation applies;
+  Codex and Claude's provider-specific bounds stay unchanged. EONW times
+  remain Unix seconds. Encoder, decoder, empty snapshots and frame bounds
+  include the new slots. The previous version is rejected, never reinterpreted,
+  and adopting the new wire does not stop older live generations.
+
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
   defaults to `eon-lazygit` on Alt+Shift+J;
@@ -2095,8 +2104,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   fzf list of the popup's window's sessions (EON-C33's picker); Commands >
   Switch session runs the same list in the Commands popup. Each row shows
   the session's name, or its `sN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v42 `attention` is needs input. Rows run by
-  EONW v42 `recency`, most recently shown first, with the shown session last
+  ` · needs input` when its EONW v43 `attention` is needs input. Rows run by
+  EONW v43 `recency`, most recently shown first, with the shown session last
   and marked ` · shown`, and the query matches only that name or `sN`. Enter on the highlighted row,
   including on an empty query, runs `eon session switch sN` once the CLI
   has checked again that the `sN` is live; otherwise it changes nothing and
@@ -2726,7 +2735,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     presenting executable path or null while detached. Reload success JSON
     is `{"window":ID,"generation":GENERATION,"venus":PATH,"accepted":true,"replaced":null,"config_reloaded":null}`.
     `accepted:true` confirms that the supervisor accepted the request. On
-    EONW v42, `replaced:null` and `config_reloaded:null` mean this reply does
+    EONW v43, `replaced:null` and `config_reloaded:null` mean this reply does
     not confirm Venus replacement or configuration rereading; neither null
     means false. A supervisor implementing `eon-u199d.3` replaces Venus with
     current configuration arguments on success. Earlier supervisors still
@@ -3414,7 +3423,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v42 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v43 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -3940,7 +3949,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Reason:** The status-line collector this contract described no longer
   exists, so it cannot be proved in this repository.
 
-## EON-C27 — CodexBar quota collection
+## EON-C27 — Agent subscription quota collection
 
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence,
   and the installed quota observation remains pending.
@@ -4091,6 +4100,96 @@ names its socket. CLI JSON names a session `session` and a terminal
   (`#D97757`) within the existing quota chip bounds and owns the immutable mask
   and tint. Quota facts, layout, hover, accessibility and provider mechanisms
   remain under their existing contracts.
+
+- **Google amendment** (`eon-o9f3h`, approved by Lucca 2026-11-05):
+  Slice 1 (`eon-o9f3h.1`) supplies only canonical Google fact/failure slots
+  and their CLI JSON projection. Google parsing, collection, scheduling,
+  selection and retention below remain pending slices 2–4; chips are slice 5
+  and installed Google proof is slice 6. Existing Codex/Claude proof does not
+  prove Google behavior. The approved Google contract is:
+
+Full Eon may read the selected Google account's Antigravity baseline subscription
+quota through the noninteractive command `agy -p /usage --output-format json`.
+Runtime reads `command.data` only from a successful `usage` command report with no
+model turn. Initially, only agy version 1.4.1 is eligible: before invoking
+`/usage`, Runtime resolves the executable, checks its version noninteractively and
+uses that resolved executable for collection. An absent, unrecognized or different
+version is unavailable and never invokes `/usage`. Another version becomes
+eligible only after a source review confirms noninteractive slash-command dispatch
+and a compatible report proves zero turns/tokens; record that evidence in the
+owning bead and update the accepted-version rule. Unsupported sources never fall
+back to an inference prompt. The provider is `google_quota`, not an agy-specific
+allowance. One Google window is one active reported model-group bucket: `5h` is
+300 minutes and `weekly` is 10080 minutes, remaining percent is the validated
+remaining fraction multiplied by 100 and rounded down, and scope is the exact
+reported group name. A disabled bucket supplies no numeric window. A weekly-only
+group supplies no five-hour window. Independent groups and overage credits are
+never combined into a percentage.
+
+Google collection runs only while at least one recognized Google window selector
+is listed in `[bar] widgets`, checked when a window opens or reopens. A newly
+unlisted provider stops its worker and any read in progress and drops its in-
+memory facts and failure; its retained disk reading is available if it is enabled
+again. Google reads start at least five minutes apart, including failures and
+stop/restart, off workspace I/O. Supervisors use one user-shared Google schedule
+beside the stored readings under a short file lock; peers show retained facts and
+the shared last failure while waiting. A `provider_error` waits 30 minutes, then
+one hour, then two hours on further consecutive provider errors; success restores
+five-minute spacing. An unusable shared schedule falls back to each supervisor's
+own schedule, as for Claude.
+
+agy owns Google credential selection, authentication, refresh and the backend
+request. Eon neither reads credential files nor rewrites provider settings.
+Runtime owns the bounded process, validation, observation time, normalized
+retention and freshness; EONW owns the typed fact; Venus owns presentation. Google
+observations use the successful command's wall-clock completion time, not an
+invented provider timestamp. Consumer-OAuth account/source setup must be verified
+for the supported subscription scope; a report without identity does not prove the
+account or plan tier. API-key and enterprise allowances are not claimed as
+personal-subscription quota.
+
+Google reads, including the version preflight, have a ten-second deadline, 64 KiB
+stdout cap, null stdin, suppressed raw stderr, process-group cleanup and child-
+environment sanitization. The reader uses an empty private working directory
+rather than the user's workspace. A successful normalized reading contains at most
+six active windows, each scoped by a nonempty, control-free name of at most 32
+UTF-8 bytes, with duration 300 or 10080 minutes and whole remaining percent from 0
+through 100. Identical repeated scope/duration values count once; conflicting
+repeats, excess windows, invalid fractions, incompatible shapes and unsupported
+durations fail the read. A missing reset remains absent. A malformed reset
+timestamp fails the read; a valid RFC 3339 reset at or before local successful-
+read completion omits that expired window. Every admitted reset is therefore
+strictly after `observed_at`. An empty valid report, including one with only
+disabled or expired windows, clears previous facts; a failed read retains the last
+good facts unchanged. Google facts become old after one hour, expire after 24
+hours, and each supplied reset expires its own window. No percentage or reset is
+invented for missing or disabled data.
+
+Each successful Google report atomically replaces the versioned normalized last-
+good reading at `$XDG_STATE_HOME/eon/quota/google.json`, shared across the user's
+generations, or clears it when no active quota is supplied. Only observation time,
+scope, duration, remaining percent and optional reset are stored; permissions and
+validation follow the existing retained-reading policy. The last failure uses the
+existing bounded `at`/`reason` record, without raw output. The next successful
+read or disabling collection clears it; a shared schedule may retain that bounded
+failure as Claude's does. No credential, identity, raw report, credit balance or
+billing data enters EONW, logs or retained quota facts.
+
+Google source identity and the fixed Google label identify the subscription owner.
+The five-minute minimum, backoff, ten-second deadline, 64 KiB cap, six-
+window/32-byte bounds and existing freshness/expiry limits stay fixed as request-
+cost, safety and support bounds. Widget selection is configurable. This addition
+claims only the verified account/source class on x86_64 Linux native Wayland with
+Nix; it does not claim one quota across all Google products or add login, account
+switching, billing, credits or inference actions.
+
+Extend the meanings of existing `start`, `malformed`, `provider_error`,
+`observation_time` and `invalid_window` descriptions to the selected collector,
+rather than adding agy-only failure enums. A CLI `status=ERROR` is
+`provider_error`; nonzero exit without that valid error envelope is `exit_status`.
+A source-version preflight failure is `start`; an invalid reset timestamp is
+`invalid_window`. This classification remains pending Google reader
+implementation.
 
 ## EON-C28 — 1.x stability
 
@@ -4447,6 +4546,16 @@ names its socket. CLI JSON names a session `session` and a terminal
         v27): null unless the provider's last read failed (EON-C27), else
         `{"at", "reason"}`, with `at` in wall-clock Unix milliseconds and
         `reason` one of EON-C27's reasons;
+      - The snapshot also carries `google_quota` and `google_quota_failure`.
+        `google_quota` is null without retained active Google quota, else an object with
+        `state` (`fresh` or `stale`), `observed_at` and `windows`. Every window carries
+        `duration_minutes`, `remaining_percent`, `resets_at` (null when unavailable) and
+        `scope` (the Google model group, always non-null). `google_quota_failure` is
+        null without a last failed Google read, else `{"at", "reason"}` with EON-C27's
+        failure meanings. Observation, reset and failure times in CLI JSON are wall-
+        clock Unix milliseconds. Selection of chips never removes data from this
+        projection. Human workspace output continues to omit quotas. Google
+        slots remain null until its reader is implemented.
       - `attention_queue` on the snapshot: the same entries in the same order, each
         `{"session", "tab", "target", "attention"}`, with `attention` the object panes and
         popups carry;
@@ -4580,7 +4689,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
 - **Consumes:** ORB-C15, ORB-C13 generation 8, EON-C8 topology, and EON-C10
-  (EONW v42, request and response). EON-C39 exposes a stream of its changes.
+  (EONW v43, request and response). EON-C39 exposes a stream of its changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no screen, transcript or provider-state parsing; Runtime recognizes only
@@ -5818,7 +5927,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon pane wait TARGET --until done|needs-input|attention|ended
     [--timeout SECONDS] [--json]`.
 - **Result:**
-  - **One subscription.** The CLI sends one EONW v42 `Subscribe` request.
+  - **One subscription.** The CLI sends one EONW v43 `Subscribe` request.
     The supervisor either refuses it with an ordinary EONW `Failure` reply
     and closes the connection, or answers `SUBSCRIBED` and keeps the
     connection open for `TABS`, `EVENT`, `GAP` and `END` messages. A
@@ -6001,9 +6110,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     subscriber, the attention poller or Stop.
 - **Owner:** Eon Runtime: the event projection, sequence, retained events,
   filters, subscriber bounds and CLI projection. Its canonical EONW package
-  owns the v42 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
+  owns the v43 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v42; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v43; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

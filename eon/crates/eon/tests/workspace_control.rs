@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v42::{
+use eon_workspace_protocol::v43::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -7969,7 +7969,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -7979,7 +7979,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -7990,7 +7990,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -8005,7 +8005,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -8023,14 +8023,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -8052,7 +8052,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -10593,7 +10593,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v42::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v43::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -12933,7 +12933,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v42::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v43::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -15279,6 +15279,35 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     let done = root.join("done");
     let id = format!("g1-{:032x}", 21);
     let server = other_eonw_supervisor(&runtime, &id, &done, VERSION - 1);
+    // Inspect rejects the immediately preceding wire without sending Stop.
+    // The same server must remain alive for the routing checks below.
+    let mut stream =
+        UnixStream::connect(runtime.join("generations").join(&id).join("eon.sock")).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .write_all(
+            &encode_request(&Request {
+                id: "quota-wire-upgrade".into(),
+                caller: None,
+                action: ProtocolAction::Workspace(Action::Inspect),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).unwrap();
+    assert_eq!(
+        decode_response(&reply),
+        Err(eon_workspace_protocol::v43::Error::UnsupportedVersion {
+            version: VERSION - 1
+        })
+    );
+    assert!(
+        !server.is_finished(),
+        "wire rejection stopped the older generation"
+    );
     let log = root.join("log");
     let newer_eon = root.join("newer-eon");
     recording_eon(&newer_eon, &log);
@@ -18955,8 +18984,10 @@ fn presented(output: &Output) -> serde_json::Value {
         "busy",
         "codex_quota",
         "claude_quota",
+        "google_quota",
         "codex_quota_failure",
         "claude_quota_failure",
+        "google_quota_failure",
     ] {
         object.remove(field);
     }

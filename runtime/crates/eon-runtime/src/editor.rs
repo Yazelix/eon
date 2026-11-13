@@ -7,7 +7,7 @@ use super::{
     sessions::{self, RunningSession},
     supervisor::{effective_uid, prepare_runtime, validate_private_directory},
 };
-use eon_workspace_protocol::v42::Failure;
+use eon_workspace_protocol::v43::Failure;
 use std::{
     ffi::OsString,
     fs,
