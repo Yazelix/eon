@@ -677,7 +677,7 @@ pub(crate) struct WorkspaceQuota {
     pub(crate) rect: SceneRect,
     pub(crate) logo: SceneRect,
     pub(crate) label: String,
-    /// The displayed remaining share; blocked and unknown observations have no meter.
+    /// The displayed remaining share; exhausted fresh windows keep a warning outline.
     pub(crate) remaining_percent: Option<u8>,
     /// How early the fresh window's linear pace runs out before reset, as a share of
     /// the window; negative means it lasts with that share spare. None means no judgment.
@@ -714,8 +714,6 @@ pub(crate) struct WorkspaceLabel {
     pub(crate) description: String,
     /// The machine load a CPU, RAM or disk label shows; other labels stay normal.
     pub(crate) load: Load,
-    /// The displayed use; clock and version labels have no meter.
-    pub(crate) percent: Option<u64>,
 }
 
 /// The Eon Bar's leading workspace label (VEN-C21).
@@ -4116,7 +4114,6 @@ impl WorkspaceScene {
                     tooltip,
                     description,
                     load,
-                    percent: Some(percent),
                 },
             )
         });
@@ -4180,7 +4177,6 @@ impl WorkspaceScene {
                 tooltip: clock.tooltip.clone(),
                 description: clock.description.clone(),
                 load: Load::Normal,
-                percent: None,
             });
         let version = hints
             .as_ref()
@@ -4192,7 +4188,6 @@ impl WorkspaceScene {
                 tooltip: bar.release_stage.version_name(version),
                 description: String::new(),
                 load: Load::Normal,
-                percent: None,
             });
         let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);
         let active = tabs[active_tab].rect;

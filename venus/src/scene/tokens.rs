@@ -6,6 +6,9 @@
 
 use crate::render::CellMetrics;
 
+/// Bar reading status outlines use one logical pixel, rounded to whole physical pixels.
+pub(crate) const CHIP_OUTLINE_WIDTH: u8 = 1;
+
 // Radii.
 /// The radius that rounds a shape `thickness` across into a pill or a disc: tab pills, the bar's
 /// chips and controls, the scrollback pill, and the dialog's scroll track.

@@ -325,14 +325,21 @@ mint keyboard-focus treatment.
 These fills and glyphs follow the fixed chrome palette and typography policy;
 there is no separate widget style setting. Clock and version keep their
 bottom-corner monospace text and cyan colour.
-Bottom meters use fixed geometry and the existing palette; chip text stays neutral.
+Status outlines use the existing palette and a fixed 1 logical pixel width,
+rounded to whole physical pixels with a minimum of 1. One shared recipe keeps
+bar readings coherent and bounds supported style variants; chip text stays neutral.
+Quota outlines start at yellow when the projected shortfall reaches 5% of the
+window, then blend through orange at 10% and red at 25%. An exhausted fresh
+window with a known reset keeps at least yellow. Healthy, stale, reset-less,
+blocked and unknown quota has no tint. Mint remains the keyboard-focus colour;
+reading chips cannot take focus. There are no progress meters.
 
-The CPU, RAM and disk bottom meters use the same three grades by default: yellow
-from 60% use, orange from 75% and red from 90%, otherwise neutral. For each
+The CPU, RAM and disk capsule outlines use the same three grades by default: yellow
+from 60% use, orange from 75% and red from 90%, otherwise untinted. For each
 chip, `<chip>_notice_percent`, `<chip>_warning_percent` and
 `<chip>_critical_percent` set those levels (`cpu`, `ram` or `disk`). CPU
 compares the 2-second use it shows, so bursts show. On Linux with a supported
-CPU sensor, its meter also turns orange from `cpu_temperature_warning_celsius`
+CPU sensor, its outline also turns orange from `cpu_temperature_warning_celsius`
 (85 °C) and red from `cpu_temperature_critical_celsius` (95 °C); the stronger
 colour wins. Both temperature levels accept whole degrees from 30 through
 120, with critical not below warning; equal levels skip orange. macOS has no
@@ -740,7 +747,7 @@ reset availability, local read time and freshness. Disabled windows have no
 chip; weekly-only groups get no invented five-hour chip. Hide Argon by leaving
 out `google_quota:Gemini 4 Argon:7d`; all its active facts remain in
 `eon session --json` while any Google selector is enabled. Google text uses the
-existing chip typography, padding and meters without a provider bitmap.
+existing chip typography, padding and status outlines without a provider bitmap.
 The fixed Google label identifies the subscription owner; source group names
 keep independent allowances distinct.
 

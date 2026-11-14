@@ -5093,6 +5093,12 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   levels for CPU, RAM and disk.
   Amended 2026-11-13 by `eon-o9f3h.3` under Lucca's approved eon-w31ps
   decision: exact Google selectors and lossless launch arguments.
+  Amended on 2026-11-13 (approved by eon-overseer under Lucca's standing rule)
+  by `eon-wuau8.8`: the configured grades colour the capsule outline; proved
+  with an isolated installed x86_64 Linux Wayland candidate on 2026-11-14
+  (render source `f1e37f1a0107a1326e5fc68fe34f3b927371536b`).
+  The same render source passed the two-run local Tier 2 render gate
+  on 2026-11-14 (`eon-wuau8.8` proof).
 - **Consumer:** Full-Eon session users.
 - **Trigger:** A full-Eon window opens, reopens, or accepts an EON-C11 reload.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -5129,7 +5135,7 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   each widget. Narrow windows keep the fixed hiding priority it gives, whatever
   the order. For each of `cpu`, `ram` and `disk`, `<chip>_notice_percent`,
   `<chip>_warning_percent` and `<chip>_critical_percent` set the whole displayed
-  use percentage from which its bottom meter turns yellow, orange and red, respectively
+  use percentage from which its capsule outline turns yellow, orange and red, respectively
   (defaults 60, 75 and 90 for all three). Percentages are whole numbers from 1
   through 100, with notice not above warning and warning not above critical;
   equal levels skip the lower colour. Omitted levels start at their defaults
@@ -5141,11 +5147,11 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   last 2 seconds. `cpu_average_seconds` sets the window of the average CPU use
   that hover and accessibility also give (default 30; 2 through 600 seconds).
   `cpu_temperature_warning_celsius` and `cpu_temperature_critical_celsius` set
-  the CPU temperature from which the CPU chip's bottom meter turns orange and red (defaults
+  the CPU temperature from which the CPU chip's capsule outline turns orange and red (defaults
   85 and 95 °C). Both are whole degrees Celsius from 30 through 120, and the
   critical level is not below the warning level. Temperature is available only
   on Linux with a supported CPU sensor; unavailable temperature does not colour
-  the meter. The stronger utilization or temperature colour wins. `disk_path`
+  the outline. The stronger utilization or temperature colour wins. `disk_path`
   (default `~`) names the path whose filesystem `disk` measures: `~` or a path
   starting with `~/` under HOME, or an absolute path. These settings apply when
   a window opens or reopens, like the list.

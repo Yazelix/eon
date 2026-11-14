@@ -102,25 +102,25 @@ order, selection, and popups; Venus draws the visible scene.
   reserved; text uses the existing horizontal padding and shared chip styling.
 - Quota, CPU, RAM and disk chip text stays neutral, at least 4.5:1 on the chip
   fill; the CPU, RAM and disk icons are neutral too. Provider marks keep their
-  brand colours. A thin bottom meter carries the displayed percentage: quota
-  remaining, or CPU, RAM and disk in use. It fills left to right, with no empty
-  track; 0% has no fill and 100% fills the inner width. The meter is 2 logical
-  pixels thick, 1 logical pixel above the capsule's bottom and inset horizontally
-  by its radius to clear the curves, with edges snapped to physical pixels.
-- A fresh window with a reset and at least 1% used grades its bottom meter by
-  pace on a continuous green, yellow, orange and red scale, projecting the
-  snapshot's used and elapsed shares of the window linearly to the reset: green
-  is comfortably under pace, exactly on pace is a light green turning toward
-  yellow, and a window that runs out a twentieth of a window before the reset
-  is yellow, a tenth orange, and a quarter or more full red. A used-up window
-  keeps its exhausted grade, with no filled meter at 0%. Stale and reset-less
-  windows, and windows with under 1% used, use a neutral meter. Blocked and
-  unknown observations have no percentage meter. Hover and accessibility say
-  in words that at this pace the window lasts until reset,
-  runs out about a stated time before it, or is used up, so colour is never the
-  only signal. Once the reset has passed, hover drops the pace line; the meter
-  colour and accessible description still reflect the reading. Every colour
-  keeps at least 4.5:1 contrast on the chip fill.
+  brand colours. A level-coloured capsule outline signals adverse readings;
+  the numeric label already gives the percentage, so there is no progress meter.
+  The outline is 1 logical pixel thick, rounded to whole physical pixels with
+  a minimum of 1, and its bounds snap to physical pixels. Yellow, orange and red
+  status hues stay separate from the mint keyboard-focus ring. These read-only
+  chips cannot take keyboard focus.
+- A fresh window with a reset and at least 1% used grades its outline by pace,
+  projecting the snapshot's used and elapsed shares of the window linearly to
+  the reset. A window that runs out a twentieth of a window before the reset
+  is yellow, a tenth orange, and a quarter or more full red, interpolating
+  continuously between those anchors. Below the yellow threshold, including
+  on-pace and comfortably under-pace windows, there is no tint. A used-up
+  window keeps at least a yellow outline even close to reset. Stale, reset-less,
+  blocked and unknown windows, and windows with under 1% used, have no tint.
+  Hover and accessibility say in words that at this pace the window lasts
+  until reset, runs out about a stated time before it, or is used up, so colour
+  is never the only signal. Once the reset has passed, hover drops the pace
+  line; the outline and accessible description still reflect the reading.
+  Every status colour keeps at least 4.5:1 contrast on the chip fill.
 - The CPU and RAM chips show whole-machine use as an icon and a percentage,
   such as `12%`, refreshed every 2 seconds. CPU covers the last 2 seconds and
   first appears 2 seconds after the window opens; on macOS user, system and
@@ -172,10 +172,10 @@ order, selection, and popups; Venus draws the visible scene.
   Sizes keep one decimal, like RAM's. A path that does not exist, or a
   reading that cannot be taken, shows no label, never 0%, until the next valid
   one. Other platforms show no label.
-- CPU, RAM and disk bottom meters share three inclusive use grades: yellow
-  from 60%, orange from 75% and red from 90%, neutral below 60%. The grade follows the
+- CPU, RAM and disk capsule outlines share three inclusive use grades: yellow
+  from 60%, orange from 75% and red from 90%, with no tint below 60%. The grade follows the
   whole percentage displayed, so CPU bursts show. A supported Linux CPU
-  temperature also colours the CPU meter orange from 85 °C and red from 95 °C,
+  temperature also colours the CPU outline orange from 85 °C and red from 95 °C,
   using the stronger temperature or utilization severity. Hover adds
   `Running hot` and accessibility appends `; running hot` at either thermal
   level. Each chip names yellow as `Elevated use` in hover and `: elevated use`

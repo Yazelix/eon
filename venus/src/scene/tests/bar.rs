@@ -2112,7 +2112,6 @@ fn cpu_and_ram_chips_colour_under_load_and_say_so() {
     );
     let (cpu, ram) = (scene.cpu.unwrap(), scene.ram.unwrap());
     assert_eq!((cpu.load, ram.load), (Load::Critical, Load::Critical));
-    assert_eq!((cpu.percent, ram.percent), (Some(100), Some(91)));
     assert_eq!(cpu.description, busy.description);
     assert_eq!(
         ram.description,
@@ -2297,7 +2296,6 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
     let shown = scene.disk.as_ref().unwrap();
     assert_eq!(shown.label, "\u{f0a0} 95%");
     assert_eq!(shown.load, Load::Critical);
-    assert_eq!(shown.percent, Some(95));
     assert_eq!(shown.description, full.description);
     assert_eq!(
         shown.tooltip,
@@ -2562,7 +2560,6 @@ fn reading_slots_only_grow_and_reflow_at_one_hundred_percent() {
                 let labels = [&scene.cpu, &scene.ram, &scene.disk];
                 let slots: [_; 3] = std::array::from_fn(|index| {
                     labels[index].as_ref().map(|label| {
-                        assert_eq!(label.percent, Some(readings[index]));
                         if scale == 1.0 {
                             let width = if readings[index] == 100 { 106.5 } else { 95.5 };
                             assert_eq!(label.rect.width, width);
@@ -3097,9 +3094,6 @@ fn a_full_bar_with_room_shows_the_icon() {
                 .iter()
                 .all(|quota| quota.remaining_percent == Some(60))
         );
-        assert_eq!(scene.cpu.as_ref().unwrap().percent, Some(12));
-        assert_eq!(scene.ram.as_ref().unwrap().percent, Some(50));
-        assert_eq!(scene.disk.as_ref().unwrap().percent, Some(100));
         assert!(scene.eon_icon.is_some(), "{} tabs", snapshot.tabs.len());
     }
 }
@@ -3236,7 +3230,6 @@ fn shortcuts_and_close_end_the_bar_one_edge_from_the_corner() {
             // The version label sits at the right end of the hints, and hides with them.
             assert_eq!(scene.version.is_some(), version.is_some() && shown);
             if let Some(label) = &scene.version {
-                assert_eq!(label.percent, None);
                 let hints = scene.hints.as_ref().unwrap();
                 assert_eq!(label.label, "EON 9.8.7");
                 assert_eq!(label.tooltip, "Eon 9.8.7");

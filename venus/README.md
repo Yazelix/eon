@@ -34,7 +34,7 @@ Eon supplies its running version and release stage together through
 A version without stage metadata remains unmarked for older-supervisor reloads.
 The read-only label uses spare header space and yields before tabs and controls.
 `--bar-item ITEM` pairs choose bar items in order; `--bar-empty` selects none. The
-`--*-percent` load levels set when the CPU, RAM and disk bottom meters turn
+`--*-percent` load levels set when the CPU, RAM and disk capsule outlines turn
 yellow, orange or red while chip text stays neutral. `--cpu-average-seconds`
 sets the window of the CPU average that hover and accessibility give, and
 `--disk-path` names the path whose filesystem the disk

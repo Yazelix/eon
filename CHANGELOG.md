@@ -125,8 +125,9 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   even when a preceding request's reply fails during disconnect. This preserves
   focus-out delivery for programs that save on focus loss (`eon-lobng`).
 
-- Quota, CPU, RAM and disk chips keep neutral text and show their percentage
-  and grade colour in a thin meter along the capsule's bottom (`eon-wuau8.6`).
+- Quota, CPU, RAM and disk chips keep neutral values and show warning levels
+  with yellow, orange or red capsule outlines. Healthy and unknown readings
+  stay untinted (`eon-wuau8.8`).
 - Venus keeps cursor-only blink out of grid rebuilding and glyph preparation,
   including static cursors in other columns. Cursor appearance and cadence stay
   the same, and SGR-blinking text retains its phase (`eon-venus-blink-no-rebuild-h222`).

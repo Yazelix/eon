@@ -86,11 +86,7 @@ pub(super) const QUOTA_ICON_CODEX: SceneColor = rgb(255, 255, 255);
 pub(super) const QUOTA_ICON_CLAUDE: SceneColor = rgb(217, 119, 87);
 /// Quota window pace (`docs/PRESENTATION.md`, Eon Bar): anchors by how early, as a share of the
 /// window, the window's pace runs out before its reset; colors blend linearly between them.
-pub(super) const QUOTA_PACE: [(f32, SceneColor); 5] = [
-    // Comfortably under pace.
-    (-0.25, rgb(96, 196, 96)),
-    // Exactly on pace: a light green 30% of the way to yellow.
-    (0.0, rgb(144, 196, 93)),
+pub(super) const QUOTA_PACE: [(f32, SceneColor); 3] = [
     (0.05, rgb(255, 196, 87)),
     (0.10, rgb(255, 150, 70)),
     // A quarter of a window early or more: alarm red at 4.5:1 on the chip fill.
@@ -98,6 +94,6 @@ pub(super) const QUOTA_PACE: [(f32, SceneColor); 5] = [
 ];
 /// CPU, RAM and disk chips under load (`docs/PRESENTATION.md`, Eon Bar): the pace scale's yellow,
 /// orange and red.
-pub(super) const LOAD_NOTICE: SceneColor = QUOTA_PACE[2].1;
-pub(super) const LOAD_HIGH: SceneColor = QUOTA_PACE[3].1;
-pub(super) const LOAD_CRITICAL: SceneColor = QUOTA_PACE[4].1;
+pub(super) const LOAD_NOTICE: SceneColor = QUOTA_PACE[0].1;
+pub(super) const LOAD_HIGH: SceneColor = QUOTA_PACE[1].1;
+pub(super) const LOAD_CRITICAL: SceneColor = QUOTA_PACE[2].1;

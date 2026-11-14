@@ -1977,28 +1977,30 @@ fn push_bar_widget(rectangles: &mut RectangleBatch, visual: SceneRect) {
     );
 }
 
-/// The displayed percentage along the capsule's bottom, clear of its curves and label ink.
-fn push_chip_meter(
+/// A status stroke uses the existing palette; mint remains exclusive to keyboard focus.
+fn push_chip_outline(
     rectangles: &mut RectangleBatch,
     visual: SceneRect,
-    percent: f32,
     color: SceneColor,
     metrics: CellMetrics,
 ) {
-    let radius = tokens::capsule_radius(visual.height);
-    let left = (visual.left + radius).ceil();
-    let right = (visual.right() - radius).floor();
-    let bottom = (visual.bottom() - metrics.scale).floor();
-    let thickness = (2.0 * metrics.scale).round().max(1.0);
-    let top = (bottom - thickness).max(visual.top.ceil());
-    rectangles.push(
-        left,
-        top,
-        ((right - left) * percent / 100.0).round(),
-        bottom - top,
+    let visual = SceneRect {
+        left: visual.left.round(),
+        top: visual.top.round(),
+        width: visual.right().round() - visual.left.round(),
+        height: visual.bottom().round() - visual.top.round(),
+    };
+    rectangles.push_rounded_outline_width(
+        visual,
+        tokens::capsule_radius(visual.height),
+        physical_outline_width(tokens::CHIP_OUTLINE_WIDTH, metrics.scale),
         color,
-        1.0,
     );
+}
+
+fn quota_outline_color(remaining: Option<u8>, pace: Option<f32>) -> Option<SceneColor> {
+    pace.filter(|pace| *pace >= palette::QUOTA_PACE[0].0 || remaining == Some(0))
+        .map(quota_pace_color)
 }
 
 fn push_session_label_surface(
@@ -3283,14 +3285,8 @@ impl Renderer {
             let visual =
                 workspace.bar_pill_rect(header_item_visual(quota.rect, self.metrics), self.metrics);
             push_bar_widget(rectangles, visual);
-            if let Some(percent) = quota.remaining_percent {
-                push_chip_meter(
-                    rectangles,
-                    visual,
-                    f32::from(percent),
-                    quota.pace.map_or(palette::SECONDARY_TEXT, quota_pace_color),
-                    self.metrics,
-                );
+            if let Some(color) = quota_outline_color(quota.remaining_percent, quota.pace) {
+                push_chip_outline(rectangles, visual, color, self.metrics);
             }
             let label_left = if quota.provider == QuotaProvider::Google {
                 quota.rect.left + self.metrics.padding
@@ -3318,14 +3314,8 @@ impl Renderer {
             let visual =
                 workspace.bar_pill_rect(header_item_visual(label.rect, self.metrics), self.metrics);
             push_bar_widget(rectangles, visual);
-            if let Some(percent) = label.percent {
-                push_chip_meter(
-                    rectangles,
-                    visual,
-                    percent as f32,
-                    load_color(label.load),
-                    self.metrics,
-                );
+            if label.load != Load::Normal {
+                push_chip_outline(rectangles, visual, load_color(label.load), self.metrics);
             }
             let icon = label.label.chars().next().map_or(0, char::len_utf8);
             let (icon, value) = label.label.split_at(icon);
@@ -4640,11 +4630,11 @@ mod tests {
             assert_eq!(quota_pace_color(shortfall), color);
             assert!(contrast(color, palette::TAB_IDLE) >= 4.5, "{shortfall}");
         }
-        assert_eq!(quota_pace_color(-1.0), palette::QUOTA_PACE[0].1);
-        assert_eq!(quota_pace_color(1.0), palette::QUOTA_PACE[4].1);
-        // On pace is a light green; a window a quarter early is already the full red.
+        // Exhausted quotas near reset stay yellow; a quarter early is full red.
+        assert_eq!(quota_pace_color(-1.0), palette::LOAD_NOTICE);
+        assert_eq!(quota_pace_color(1.0), palette::LOAD_CRITICAL);
         let rgb = |r, g, b| SceneColor { r, g, b };
-        assert_eq!(quota_pace_color(0.0), rgb(144, 196, 93));
+        assert_eq!(quota_pace_color(0.0), palette::LOAD_NOTICE);
         assert_eq!(quota_pace_color(0.05), rgb(255, 196, 87));
         assert_eq!(quota_pace_color(0.10), rgb(255, 150, 70));
         assert_eq!(quota_pace_color(0.25), rgb(255, 75, 75));
@@ -4660,96 +4650,95 @@ mod tests {
     }
 
     #[test]
-    fn chip_meters_follow_percentages_inside_the_capsule_on_whole_pixels() {
-        let snapshot = popup_sidebar_snapshot();
-        for scale in [1.0, 1.25, 1.5, 2.0] {
-            let metrics = CellMetrics::for_scale(scale);
-            let workspace = WorkspaceScene::from_snapshot(
-                &snapshot,
-                PhysicalSize::new(1600, 900),
-                metrics,
-                0.0,
-                0.0,
-                |_, text| (text.to_owned(), text.len() as f32 * metrics.width),
+    fn chip_outlines_show_only_adverse_grades_and_snap_at_fractional_scales() {
+        for remaining in [Some(1), Some(50), Some(100), None] {
+            for pace in [None, Some(-0.25), Some(0.0), Some(0.049)] {
+                assert_eq!(quota_outline_color(remaining, pace), None);
+            }
+        }
+        assert_eq!(quota_outline_color(Some(0), None), None, "unjudged quota");
+        for pace in [0.0, 0.01, 0.049] {
+            assert_eq!(
+                quota_outline_color(Some(0), Some(pace)),
+                Some(palette::LOAD_NOTICE)
             );
-            for offset in [0.0, 0.25] {
-                let visual = workspace.bar_pill_rect(
-                    header_item_visual(
-                        SceneRect {
-                            left: 100.0 + offset,
-                            width: 120.0 * metrics.scale,
-                            ..workspace.header
-                        },
-                        metrics,
-                    ),
-                    metrics,
+        }
+        for pace in [0.05, 0.075, 0.10, 0.175, 0.25, 1.0] {
+            for remaining in [Some(0), Some(50)] {
+                assert_eq!(
+                    quota_outline_color(remaining, Some(pace)),
+                    Some(quota_pace_color(pace))
                 );
-                let radius = tokens::capsule_radius(visual.height);
-                let inner_left = (visual.left + radius).ceil();
-                let inner_right = (visual.right() - radius).floor();
+            }
+        }
+        for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            for offset in [0.0, 0.25, 0.5, 0.75] {
+                let visual = SceneRect {
+                    left: 100.0 + offset,
+                    top: 10.25,
+                    width: 120.0 * metrics.scale,
+                    height: 30.0 * metrics.scale,
+                };
+                let snapped = SceneRect {
+                    left: visual.left.round(),
+                    top: visual.top.round(),
+                    width: visual.right().round() - visual.left.round(),
+                    height: visual.bottom().round() - visual.top.round(),
+                };
+                let width = physical_outline_width(tokens::CHIP_OUTLINE_WIDTH, metrics.scale);
                 for color in [
-                    load_color(Load::Normal),
                     load_color(Load::Notice),
                     load_color(Load::High),
                     load_color(Load::Critical),
-                    quota_pace_color(-0.25),
-                    quota_pace_color(0.0),
                     quota_pace_color(0.075),
-                    quota_pace_color(0.25),
                 ] {
-                    for percent in [0, 1, 8, 50, 99, 100] {
-                        let mut rectangles = RectangleBatch::new(1600, 900);
-                        push_chip_meter(&mut rectangles, visual, percent as f32, color, metrics);
-                        if percent == 0 {
-                            assert!(rectangles.bytes.is_empty());
-                            continue;
-                        }
-                        assert_eq!(rectangles.bytes.len(), 6 * 24);
-                        let points = rectangles
-                            .bytes
+                    assert_ne!(color, palette::ACCENT);
+                    let mut actual = RectangleBatch::new(1600, 900);
+                    push_chip_outline(&mut actual, visual, color, metrics);
+                    let mut expected = RectangleBatch::new(1600, 900);
+                    expected.push_rounded_outline_width(
+                        snapped,
+                        tokens::capsule_radius(snapped.height),
+                        width,
+                        color,
+                    );
+                    assert_eq!(actual.bytes, expected.bytes);
+                    assert!(!actual.bytes.is_empty());
+                    for rectangle in actual.bytes.chunks_exact(144) {
+                        let coordinates: Vec<_> = rectangle
                             .chunks_exact(24)
                             .map(|vertex| {
-                                assert_eq!(vertex_color(vertex), color);
-                                let value =
-                                    |at| f32::from_ne_bytes(vertex[at..at + 4].try_into().unwrap());
-                                let x = (value(0) + 1.0) * 800.0;
-                                let y = (1.0 - value(4)) * 450.0;
-                                assert!((x - x.round()).abs() < 0.001);
-                                assert!((y - y.round()).abs() < 0.001);
+                                let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0)
+                                    * 800.0;
+                                let y = (1.0
+                                    - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
+                                    * 450.0;
                                 (x.round(), y.round())
                             })
-                            .collect::<Vec<_>>();
-                        let (left, top) = points[0];
-                        let (right, bottom) = points[2];
-                        assert_eq!(left, inner_left);
-                        assert!(right <= inner_right);
-                        let expected = (inner_right - inner_left) * percent as f32 / 100.0;
-                        assert!((right - left - expected).abs() <= 0.5);
-                        assert_eq!(bottom - top, (2.0 * metrics.scale).round().max(1.0));
-                        assert!(bottom <= visual.bottom() - metrics.scale);
-                        assert!(top >= visual.top && bottom > top);
-                        if percent == 100 {
-                            assert_eq!(right, inner_right);
-                        }
+                            .collect();
+                        let (left, top) = coordinates[0];
+                        let (right, bottom) = coordinates[2];
+                        assert!(
+                            right <= snapped.left + snapped.height / 2.0
+                                || left >= snapped.right() - snapped.height / 2.0
+                                || bottom <= snapped.top + width
+                                || top >= snapped.bottom() - width,
+                            "no meter or fill across the capsule interior"
+                        );
+                    }
+                    for vertex in actual.bytes.chunks_exact(24) {
+                        assert_eq!(vertex_color(vertex), color);
+                        let value = |at| f32::from_ne_bytes(vertex[at..at + 4].try_into().unwrap());
+                        let x = (value(0) + 1.0) * 800.0;
+                        let y = (1.0 - value(4)) * 450.0;
+                        assert!((x - x.round()).abs() < 0.001);
+                        assert!((y - y.round()).abs() < 0.001);
+                        assert!(x >= snapped.left - 0.001 && x <= snapped.right() + 0.001);
+                        assert!(y >= snapped.top - 0.001 && y <= snapped.bottom() + 0.001);
                     }
                 }
             }
-        }
-        for (width, height) in [(10.0, 30.0), (80.0, 2.0)] {
-            let mut rectangles = RectangleBatch::new(1600, 900);
-            push_chip_meter(
-                &mut rectangles,
-                SceneRect {
-                    left: 100.25,
-                    top: 10.25,
-                    width,
-                    height,
-                },
-                100.0,
-                palette::SECONDARY_TEXT,
-                CellMetrics::for_scale(1.0),
-            );
-            assert!(rectangles.bytes.is_empty(), "no room inside this capsule");
         }
     }
 
@@ -7359,43 +7348,40 @@ mod tests {
         };
 
         fn assert_reading_alignment(renderer: &mut Renderer) {
-            fn assert_meter(
+            fn assert_outline(
                 rectangles: &RectangleBatch,
                 visual: SceneRect,
-                percent: f32,
-                color: SceneColor,
-                scale: f32,
+                color: Option<SceneColor>,
+                metrics: CellMetrics,
             ) {
-                let radius = tokens::capsule_radius(visual.height);
-                let left = (visual.left + radius).ceil();
-                let right = (visual.right() - radius).floor();
-                let bottom = (visual.bottom() - scale).floor();
-                let top = bottom - (2.0 * scale).round().max(1.0);
-                let width = rectangles
+                let within = |vertex: &[u8]| {
+                    let x = (f32::from_ne_bytes(vertex[0..4].try_into().unwrap()) + 1.0)
+                        * rectangles.width as f32
+                        / 2.0;
+                    let y = (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
+                        * rectangles.height as f32
+                        / 2.0;
+                    x >= visual.left.floor() - 0.01
+                        && x <= visual.right().ceil() + 0.01
+                        && y >= visual.top.floor() - 0.01
+                        && y <= visual.bottom().ceil() + 0.01
+                };
+                let mut expected = RectangleBatch::new(rectangles.width, rectangles.height);
+                push_bar_widget(&mut expected, visual);
+                if let Some(color) = color {
+                    push_chip_outline(&mut expected, visual, color, metrics);
+                }
+                let actual: Vec<u8> = rectangles
                     .bytes
                     .chunks_exact(72)
-                    .find_map(|triangle| {
-                        let value = |vertex: usize, component: usize| {
-                            let offset = vertex * 24 + component * 4;
-                            f32::from_ne_bytes(triangle[offset..offset + 4].try_into().unwrap())
-                        };
-                        let x = (value(0, 0) + 1.0) * rectangles.width as f32 / 2.0;
-                        let y = (1.0 - value(0, 1)) * rectangles.height as f32 / 2.0;
-                        let end_y = (1.0 - value(2, 1)) * rectangles.height as f32 / 2.0;
-                        if (x - left).abs() < 0.001
-                            && (y - top).abs() < 0.001
-                            && (end_y - bottom).abs() < 0.001
-                        {
-                            for vertex in triangle.chunks_exact(24) {
-                                assert_eq!(vertex_color(vertex), color, "bar meter grade");
-                            }
-                            Some((value(2, 0) - value(0, 0)) * rectangles.width as f32 / 2.0)
-                        } else {
-                            None
-                        }
-                    })
-                    .expect("bar paint must emit the chip's meter");
-                assert!((width - (right - left) * percent / 100.0).abs() <= 0.51);
+                    .filter(|triangle| triangle.chunks_exact(24).all(within))
+                    .flatten()
+                    .copied()
+                    .collect();
+                assert_eq!(
+                    actual, expected.bytes,
+                    "chip surface must contain only its fill and optional status outline"
+                );
             }
             fn assert_neutral(text: &PlacedText) {
                 let neutral = palette::SECONDARY_TEXT;
@@ -7435,6 +7421,8 @@ mod tests {
                     [61, 100, 8],
                     [100, 8, 61],
                     [100, 100, 100],
+                    [80, 80, 80],
+                    [0, 0, 0],
                 ] {
                     let [cpu_percent, ram_percent, disk_percent] = readings;
                     let cpu = crate::CpuUse {
@@ -7442,7 +7430,12 @@ mod tests {
                         label: format!("{} {cpu_percent}%", crate::system::CPU_ICON),
                         tooltip: "CPU".into(),
                         description: "CPU".into(),
-                        load: Load::High,
+                        load: match cpu_percent {
+                            0..60 => Load::Normal,
+                            60..75 => Load::Notice,
+                            75..90 => Load::High,
+                            _ => Load::Critical,
+                        },
                     };
                     let ram = crate::RamUse::parse(&format!(
                         "MemTotal: 100000 kB\nMemAvailable: {} kB\n",
@@ -7488,13 +7481,7 @@ mod tests {
                     let quota = &workspace.quotas[0];
                     let visual =
                         workspace.bar_pill_rect(header_item_visual(quota.rect, metrics), metrics);
-                    assert_meter(
-                        &rectangles,
-                        visual,
-                        50.0,
-                        quota_pace_color(0.0),
-                        metrics.scale,
-                    );
+                    assert_outline(&rectangles, visual, None, metrics);
                     assert_neutral(
                         renderer
                             .text
@@ -7515,12 +7502,11 @@ mod tests {
                         let percent = readings[index];
                         let visual = workspace
                             .bar_pill_rect(header_item_visual(chip.rect, metrics), metrics);
-                        assert_meter(
+                        assert_outline(
                             &rectangles,
                             visual,
-                            percent as f32,
-                            load_color(chip.load),
-                            metrics.scale,
+                            (chip.load != Load::Normal).then(|| load_color(chip.load)),
+                            metrics,
                         );
                         let icon = chip.label.chars().next().unwrap().to_string();
                         let index = renderer
@@ -7641,14 +7627,173 @@ mod tests {
                 assert_eq!(text.left, quota.rect.left + metrics.padding);
                 assert_neutral(text);
                 assert!(!renderer.text.iter().any(|text| text.custom_glyph.is_some()));
-                assert_meter(
+                assert_outline(
                     &rectangles,
                     workspace.bar_pill_rect(header_item_visual(quota.rect, metrics), metrics),
-                    74.0,
-                    quota_pace_color(quota.pace.unwrap()),
-                    metrics.scale,
+                    quota_outline_color(quota.remaining_percent, quota.pace),
+                    metrics,
                 );
             }
+            use eon_workspace_protocol::v44::{
+                ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, GoogleQuota,
+                GoogleQuotaState, QuotaWindow,
+            };
+            let items = [
+                crate::BarItem::CodexQuota5h,
+                crate::BarItem::ClaudeQuota5h,
+                crate::BarItem::ClaudeQuotaScoped,
+                crate::BarItem::GoogleQuota {
+                    scope: "Gemini Models".into(),
+                    duration_minutes: 300,
+                },
+            ];
+            for scale in [1.0, 1.25, 2.0] {
+                let size = PhysicalSize::new((2400.0 * scale) as u32, 900);
+                renderer.resize(size, scale);
+                let metrics = renderer.metrics();
+                for (remaining, reset, stale, expected) in [
+                    (50, Some(1_009_000), false, None), // On pace.
+                    (50, Some(1_008_000), false, None), // Comfortably under pace.
+                    (50, Some(1_009_450), false, Some(quota_pace_color(0.05))),
+                    (50, Some(1_009_900), false, Some(quota_pace_color(0.10))),
+                    (50, Some(1_011_250), false, Some(quota_pace_color(0.25))),
+                    (0, Some(1_000_001), false, Some(palette::LOAD_NOTICE)),
+                    (0, Some(1_011_250), false, Some(quota_pace_color(0.625))),
+                    (50, Some(1_011_250), true, None),
+                    (50, None, false, None),
+                    (100, Some(1_009_000), false, None),
+                ] {
+                    let window = QuotaWindow {
+                        duration_minutes: 300,
+                        remaining_percent: remaining,
+                        resets_at: reset,
+                        scope: None,
+                    };
+                    let mut scoped = window.clone();
+                    scoped.scope = Some("Fable".into());
+                    let mut google = window.clone();
+                    google.scope = Some("Gemini Models".into());
+                    let mut snapshot = popup_sidebar_snapshot();
+                    snapshot.codex_quota = Some(CodexQuota {
+                        state: if stale {
+                            CodexQuotaState::Stale
+                        } else {
+                            CodexQuotaState::Fresh
+                        },
+                        observed_at: 1_000_000,
+                        windows: vec![window.clone()],
+                    });
+                    snapshot.claude_quota = Some(ClaudeQuota {
+                        state: if stale {
+                            ClaudeQuotaState::Stale
+                        } else {
+                            ClaudeQuotaState::Fresh
+                        },
+                        observed_at: 1_000_000,
+                        windows: vec![window, scoped],
+                    });
+                    snapshot.google_quota = Some(GoogleQuota {
+                        state: if stale {
+                            GoogleQuotaState::Stale
+                        } else {
+                            GoogleQuotaState::Fresh
+                        },
+                        observed_at: 1_000_000,
+                        windows: vec![google],
+                    });
+                    let workspace = WorkspaceScene::from_snapshot_with_bar(
+                        &snapshot,
+                        EonBar {
+                            items: &items,
+                            ..EonBar::default()
+                        },
+                        size,
+                        metrics,
+                        0.0,
+                        0.0,
+                        |_, text| renderer.measure_header_text(text),
+                        None,
+                    );
+                    assert_eq!(workspace.quotas.len(), 4);
+                    renderer.text.clear();
+                    let title_tabs = renderer.workspace_title_tabs(&workspace);
+                    let pane_tabs = renderer.workspace_pane_tabs(&workspace);
+                    let mut rectangles = RectangleBatch::new(size.width, size.height);
+                    renderer.build_workspace(
+                        &workspace,
+                        WorkspaceFocus::Terminal,
+                        &mut rectangles,
+                        &[],
+                        &title_tabs,
+                        &pane_tabs,
+                    );
+                    for quota in &workspace.quotas {
+                        // Computed shortfalls can differ by a float rounding unit at anchors.
+                        let color = expected.map(|_| {
+                            quota_outline_color(quota.remaining_percent, quota.pace)
+                                .expect("adverse quota must be tinted")
+                        });
+                        if let (Some(actual), Some(expected)) = (color, expected) {
+                            for (a, e) in [
+                                (actual.r, expected.r),
+                                (actual.g, expected.g),
+                                (actual.b, expected.b),
+                            ] {
+                                assert!(a.abs_diff(e) <= 1);
+                            }
+                        }
+                        assert_outline(
+                            &rectangles,
+                            workspace
+                                .bar_pill_rect(header_item_visual(quota.rect, metrics), metrics),
+                            color,
+                            metrics,
+                        );
+                    }
+                }
+                for state in [CodexQuotaState::Blocked, CodexQuotaState::Unknown] {
+                    let mut snapshot = popup_sidebar_snapshot();
+                    snapshot.codex_quota = Some(CodexQuota {
+                        state,
+                        observed_at: 1_000_000,
+                        windows: vec![],
+                    });
+                    let workspace = WorkspaceScene::from_snapshot_with_bar(
+                        &snapshot,
+                        EonBar {
+                            items: &items,
+                            ..EonBar::default()
+                        },
+                        size,
+                        metrics,
+                        0.0,
+                        0.0,
+                        |_, text| renderer.measure_header_text(text),
+                        None,
+                    );
+                    renderer.text.clear();
+                    let title_tabs = renderer.workspace_title_tabs(&workspace);
+                    let pane_tabs = renderer.workspace_pane_tabs(&workspace);
+                    let mut rectangles = RectangleBatch::new(size.width, size.height);
+                    renderer.build_workspace(
+                        &workspace,
+                        WorkspaceFocus::Terminal,
+                        &mut rectangles,
+                        &[],
+                        &title_tabs,
+                        &pane_tabs,
+                    );
+                    assert_eq!(workspace.quotas.len(), 1);
+                    let quota = &workspace.quotas[0];
+                    assert_outline(
+                        &rectangles,
+                        workspace.bar_pill_rect(header_item_visual(quota.rect, metrics), metrics),
+                        None,
+                        metrics,
+                    );
+                }
+            }
+
             renderer.resize(PhysicalSize::new(1600, 900), 1.0);
         }
 
@@ -8769,17 +8914,8 @@ mod tests {
                 ..workspace.header
             };
             let visual = workspace.bar_pill_rect(header_item_visual(slot, metrics), metrics);
-            let mut rectangles = RectangleBatch::new(size.width, size.height);
-            push_chip_meter(
-                &mut rectangles,
-                visual,
-                100.0,
-                palette::SECONDARY_TEXT,
-                metrics,
-            );
-            let meter_top = (1.0 - f32::from_ne_bytes(rectangles.bytes[4..8].try_into().unwrap()))
-                * size.height as f32
-                / 2.0;
+            let outline_top = visual.bottom().round()
+                - physical_outline_width(tokens::CHIP_OUTLINE_WIDTH, metrics.scale);
             for text in ["100%", "gpy 2h30m/5h 50% old"] {
                 let (_, _, ink) = place(
                     &mut fonts.font_system,
@@ -8791,8 +8927,8 @@ mod tests {
                     },
                 );
                 assert!(
-                    ink.3 as f32 <= meter_top.round(),
-                    "{text} at {case}: ink bottom {} overlaps meter top {meter_top}",
+                    ink.3 as f32 <= outline_top,
+                    "{text} at {case}: ink bottom {} overlaps outline interior edge {outline_top}",
                     ink.3
                 );
             }
