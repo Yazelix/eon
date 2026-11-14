@@ -233,8 +233,8 @@ order, selection, and popups; Venus draws the visible scene.
   left end of the shortcut hints and the version at their right end. By default
   the order
   is Codex 5h and 7d, Claude 5h and 7d then its scoped windows, CPU, RAM, disk,
-  clock and version. A left-out quota window takes no room, including the
-  logo's reserved room. `_5h` and `_7d` select only unscoped windows
+  clock and version. A left-out quota window takes no room and is excluded from
+  header fitting. `_5h` and `_7d` select only unscoped windows
   of those durations, and `claude_quota_scoped` selects every model-scoped
   Claude window. Codex's 5h widget also shows its one blocked or unknown
   observation when no windows are available. A left-out
@@ -242,14 +242,15 @@ order, selection, and popups; Venus draws the visible scene.
   clock is never read and never wakes Venus. Accessibility order follows the
   visual order, so screen readers meet the clock after the panes, before the
   hints. The header items use only spare drag-region space and keep its minimum.
-  Whatever the order, narrow windows hide the Eon logo first, then disk, RAM and
-  CPU, then quota chips, before tabs or controls. No item has an action or a
-  keyboard focus target, and none drags the window. A change in a quota's numbers, a reading or the clock never moves
-  the tabs, cancels scrolling or resizes terminals, and neither does a window's
-  reset. The one exception is the Eon logo: it can show or hide once, shifting
-  the tabs, when a provider's quota first appears or goes away (as it does when
-  all its windows reset before a read), or when a read finds the provider has
-  gained or lost a window.
+  Whatever the order, narrow windows hide disk, RAM and CPU, then whole quota
+  chips, the chip closest to the tabs first. Quota chips yield before the session
+  label and the Window-menu icon; tabs retain their minimum area and trailing
+  controls retain their room. The icon keeps its slot while tabs overflow and
+  scroll, disappearing only at the tiny-width limit described above. Fitting
+  measures only selected chips' displayed text, so values and window positions
+  can change which chips fit.
+  No widget has an action or keyboard focus target, and none drags the window.
+  Quota-only updates preserve navigation state and coherent workspace notices.
 
 ### Panes and popups
 

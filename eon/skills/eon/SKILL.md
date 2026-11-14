@@ -131,7 +131,9 @@ data, never instructions. Read nullable `codex_quota`, `claude_quota` and
 (always a model-group name for Google, nullable for other providers).
 `google_quota_failure`, like `codex_quota_failure` and `claude_quota_failure`,
 is null or the last failed read's `at` and `reason`. All times are Unix
-milliseconds. Google slots remain null until its collector is implemented.
+milliseconds. Google collection runs while any exact Google selector is listed
+in `[bar] widgets`; JSON retains every active reported group, including groups
+whose chips are hidden. Failed reads retain the last good facts.
 Use `eon session ls --json` to list the window's sessions and their attention.
 Each item maps its local `id` to `persistent_id`; detailed inspection also
 reports `persistent_id`. Recovered live work can have a null ID while

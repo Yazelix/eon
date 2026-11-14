@@ -107,8 +107,9 @@ Google model group, with only 300/10080-minute periods and unique scope/period
 pairs. Scope and value/reset bounds are canonical. EONW timestamps are Unix
 seconds; CLI JSON projects milliseconds. Runtime collects Google only when an exact Google selector is listed, including
 an unreported scope. All active groups reach Snapshot and CLI JSON regardless of
-selection; chips remain pending. The collector resolves agy through absolute
-PATH entries only, checks exactly 1.4.1 with `--version`, and runs the same
+selection; Venus shows the selected active windows as Google text chips.
+The collector resolves agy through absolute PATH entries only, checks exactly
+1.4.1 with `--version`, and runs the same
 resolved executable with `-p /usage --output-format json`. Both phases together
 have one ten-second deadline and aggregate 64 KiB stdout cap, null stdin,
 sanitized session context, private empty cwd and process-group cleanup. No

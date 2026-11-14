@@ -497,8 +497,15 @@ authentication. Codex also needs a compatible `codex` executable on `PATH`.
 Codex chips show its white mark and Claude chips its orange splat.
 Both providers show one chip per available window, five-hour then seven-day,
 then one Claude chip for each model-scoped weekly window, such as `Fable`.
-Each window shows its remaining percentage; hover lists when it resets, in
-local time, the pace, and whether the reading is old. Missing resets stay unknown.
+Opt-in Google chips use your already signed-in agy 1.4.1 and show one selected
+active model-group window each, as text:
+`Google <group> <position>/<duration> <remaining>%`. Without a reset they omit
+the elapsed position and slash. Hover and accessibility include the group,
+reset availability, local read time and freshness. Unselected groups remain
+in `eon session --json` while Google collection is enabled.
+Each Codex or Claude window shows its remaining percentage; hover lists when
+it resets, in local time, the pace, and whether the reading is old. Missing
+resets stay unknown.
 Chip text stays neutral. A thin bottom meter shows the remaining percentage,
 coloured by pace; old and reset-less readings use a neutral meter.
 Readings say `old` once they are more than an hour old and disappear after 24
@@ -529,15 +536,13 @@ and screen readers spell out a supplied stage, such as `Eon alpha 0.1.24`;
 hover opens above the label. The Eon logo leads the bar, before the tabs.
 `[bar] widgets` chooses which of these show and in what order (see
 [Configuration](CONFIGURATION.md#configuration-behavior)). When the bar runs
-short of space the Eon logo hides first; then disk, RAM and CPU, before any
-quota chip. The logo also hides whenever the
-tabs would not all fit beside it, however wide the window, so tabs never lose
-room to it, and it leaves room for a chip for each window each provider's latest
-read reported and for each reading, all at their widest, so a changing quota,
-reading, or a quota window's reset, never shows or hides it. It can
-show or hide once, shifting the tabs, when a provider's quota first appears or
-goes away (as it does when all its windows reset before a read), or when a read
-finds the provider has gained or lost a window.
+short of space, disk, RAM and CPU yield before quota chips. Whole quota chips
+yield before the session label and Eon icon, protecting room for the Window
+menu, the tabs' minimum area and trailing controls. Tabs scroll beside the icon
+when they overflow. Only a tiny width that cannot fit the icon with those
+minima hides it. Fitting measures selected chips' displayed text, so changing
+values or window positions can change which chips fit. Unselected quota
+windows reserve no room.
 See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar) for the details of each
 item.
 

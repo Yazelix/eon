@@ -302,18 +302,16 @@ list above. The list applies when a window next opens, reopens or reloads.
 It also accepts opt-in exact Google scope/window selectors for text chips.
 See [Agent quota](#agent-quota) for grammar and examples.
 Unknown names are ignored with a warning; repeated known names are a
-configuration error. Narrow windows hide the Eon logo first, then disk, RAM
-and CPU, whatever the order, then quota chips one by
-one, the one closest to the tabs first; in the shortcut hints the version hides
-first and then the clock, once the keycaps no longer fit beside them. The logo
-also hides whenever the tabs would not all fit beside it, however wide the
-window, and it leaves room for a chip for each selected window each provider's latest
-read reported and for every reading, all at their widest, so their changing
-values and a window's reset never show or hide it; it can change once when a
-provider's quota first appears or goes away (as it does when all its windows
-reset before a read), or when a read finds the provider has gained or lost a
-window. The version belongs to its
-running supervisor; updating the installation does not change it.
+configuration error. Narrow windows hide disk, RAM and CPU, whatever the order,
+then quota chips one by one, the one closest to the tabs first. Quota chips
+yield before the session label and Eon icon, preserving room for the Window
+menu, the tabs' minimum area and trailing controls. Tabs can overflow and
+scroll beside the icon; only a tiny width that cannot fit the icon with those
+minima hides it. Only selected quota chips are measured, using their displayed
+text; hidden windows reserve no room. Changing values or window positions can
+change which whole chips fit. In the shortcut hints the version hides first
+and then the clock once the keycaps no longer fit beside them. The version
+belongs to its running supervisor; updating the installation does not change it.
 
 Header widgets and the session label use the unselected tab's filled capsule,
 without resting outlines. CPU, RAM and disk percentages share the interface
@@ -727,11 +725,12 @@ ID dims only when the resolved fill and configured opacity permit readable contr
 ## Agent quota
 
 Google selection is opt-in through exact `google_quota:<scope>:5h` and
-`google_quota:<scope>:7d` entries in `[bar] widgets`. These selectors are
-accepted and transported; they enable Google collection and its CLI JSON facts.
-Each selected active Google window shows a text chip; unselected or missing windows show nothing. The ten existing defaults above are unchanged.
+`google_quota:<scope>:7d` entries in `[bar] widgets`. These selectors
+enable Google collection and its CLI JSON facts. Each selected active Google
+window shows a text chip; unselected or missing windows show nothing. The ten
+existing defaults above include no Google entries.
 
-Google chips read `Google <group> <elapsed>/<duration> <remaining>%`, with
+Google chips read `Google <group> <position>/<duration> <remaining>%`, with
 `old` when stale. Without a reset they omit the elapsed position and slash.
 Hover and accessibility name the model group, period, remaining allowance,
 reset availability, local read time and freshness. Disabled windows have no
@@ -769,8 +768,11 @@ There is no inference fallback, bundled agy, login or account switching. A missi
 nonexecutable or unsupported agy records failure reason `start`; the last good
 reading remains available. The Google subscription scope is Antigravity's
 baseline model-group allowances, not Gemini Apps, Gemini API or AI-credit balances.
-Initial support is the verified consumer-OAuth source on x86_64 Linux native
-Wayland with Nix. API-key and enterprise setups are outside that scope; Eon
+The intended support scope is consumer OAuth on x86_64 Linux native Wayland
+with Nix; account-class and plan-tier verification remains open. The installed
+observation did not verify either, and a successful usage report alone does not
+establish them. API-key and
+enterprise setups are outside that scope; Eon
 preserves intentional provider settings rather than stripping them and does not
 read credential files or rewrite agy's settings.
 

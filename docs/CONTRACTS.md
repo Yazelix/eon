@@ -4089,8 +4089,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C27 — Agent subscription quota collection
 
-- **Status:** Partially proved; the pre-Bend baseline is candidate evidence,
-  and the installed quota observation remains pending.
+- **Status:** Partially proved. The pre-Bend Codex/Claude baseline remains
+  candidate evidence, with current-component installed re-proof pending under
+  `eon-igae.7.1`. Google has the separate lower and installed evidence below;
+  its account-class and plan-tier verification remains open.
   Amended 2026-11-13 by `eon-o9f3h.4` under Lucca's approved eon-w31ps
   decision: Google collection, shared scheduling and last-good retention.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -4245,8 +4247,8 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Google amendment** (`eon-o9f3h`, approved by Lucca 2026-11-05):
   Slices 1–4 supply the canonical Google fact/failure slots, CLI JSON
   projection, structured parser, exact selectors, collection, shared scheduling
-  and retention. Slice 5 supplies Google chip presentation; installed end-to-end
-  Google proof is slice 6. Existing Codex/Claude proof does not prove Google
+  and retention. Slice 5 supplies Google chip presentation; slice 6 records
+  installed Google observations and their remaining gaps. Existing Codex/Claude proof does not prove Google
   behavior. The approved Google contract is:
 
 Full Eon may read the selected Google account's Antigravity baseline subscription
@@ -4334,6 +4336,38 @@ rather than adding agy-only failure enums. A CLI `status=ERROR` is
 `provider_error`; nonzero exit without that valid error envelope is `exit_status`.
 A source-version preflight failure is `start`; an invalid reset timestamp is
 `invalid_window`. Google reader failures use these existing reasons.
+
+- **Google installed evidence** (`eon-o9f3h.6`, x86_64 Linux native Wayland/Nix):
+  candidate tree `f0b2a736c067dd5738da7942acdb19be0e28002c` at
+  `cbd26cc9338a92f2104b719e611957a484c11921`, artifact
+  `/nix/store/zz3hyqvl60qvyjq5j4i9ph5iwq06jgl2-eon-0.1.25`, with installed
+  agy 1.4.1 and its existing sign-in. Ten reads through the candidate's own
+  reader, spaced at least five minutes apart under normal machine load, all
+  exited 0 with zero turns and tokens. Instrumented version-plus-usage p50
+  was 3.929 s and nearest-rank p95 (the slowest read) 6.533 s; no sample met
+  the >8.0 s deadline-amendment trigger. These ten samples are not a general
+  latency guarantee. The bead retains phase timings, load, corrected competing
+  heavy-slot metadata and the measurement boundary.
+  Native output/input echo, selected real-source chips, hover/accessibility and
+  same-session JSON retaining hidden groups were observed. Separately labelled
+  fixture observations using retained real-source facts cover retained startup,
+  failure retention, unlisting through `eon window reload default`, a narrow
+  bar and successful empty-report clearing within the same surviving client.
+  Workspace transport loss also cleared Google nodes from four to zero in the
+  same surviving Venus process, with `Cannot reach Eon.` shown. The final
+  installed recheck used tree `ad6f02d7b6799585793e53bd583ac17d32d367ae`,
+  artifact `/nix/store/x271bhvz5s4j39jzh11za9c1f5z0b69c-eon-0.1.25`, and
+  confirmed retained facts, selected/hidden windows, a narrow bar and both
+  clearing paths. This evidence does not prove unrelated Codex/Claude or
+  platform claims.
+- **Google open proof:** Account class and plan tier were not verified by the
+  checked agy report fields. An identity-free successful read and authorization
+  to use a personal subscription do not establish either. Verify them through
+  an agy-supported read-only status report that explicitly supplies both, after
+  confirming that command's behavior, or an account owner's verification that
+  records only class and tier. No credential/account-identifier inspection,
+  reauthentication, desktop pooling, Gemini Apps/API or credit-balance proof
+  is claimed.
 
 ## EON-C28 — 1.x stability
 
@@ -4698,8 +4732,10 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
         null without a last failed Google read, else `{"at", "reason"}` with EON-C27's
         failure meanings. Observation, reset and failure times in CLI JSON are wall-
         clock Unix milliseconds. Selection of chips never removes data from this
-        projection. Human workspace output continues to omit quotas. Google
-        slots remain null until its reader is implemented.
+        projection. Human workspace output continues to omit quotas.
+        Installed Google projection evidence is recorded under `eon-o9f3h.6`
+        and EON-C27, including active unselected groups and bounded failure
+        beside retained facts; unrelated attention proof gaps remain separate.
       - `attention_queue` on the snapshot: the same entries in the same order, each
         `{"session", "tab", "target", "attention"}`, with `attention` the object panes and
         popups carry;
@@ -5106,6 +5142,13 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   `quota_window_widgets_filter_order_and_reserve_only_selected_windows`;
   Eon `bare_eon_attaches_only_to_the_live_current_generation`.
   These checks cover configuration and argv, not Google collection or chips.
+- **Google installed evidence:** `eon-o9f3h.6`, on the exact x86_64 Linux
+  Wayland/Nix candidate named in EON-C27: selected real-source chips follow
+  the configured order while unselected groups remain in `eon session --json`.
+  Retained-source fixture observations cover whole-chip hiding in a narrow bar
+  and removal of every selector through `eon window reload default`, stopping
+  reads without erasing retained disk facts. This adds no default Google
+  selector or proof for unrelated bar amendments.
 - **Proof:** `eon-igae.14.2`, for the load levels `eon-hjtns` and
   `eon-0oh9v`, for the disk widget `eon-d7itl`, and for the leftover
   `show_version` alias `eon-wc119`
