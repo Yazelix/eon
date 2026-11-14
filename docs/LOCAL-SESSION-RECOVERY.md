@@ -274,11 +274,14 @@ to equal **both** the reader's build and the independently validated private
 `checkpoint-build-mismatch`, reporting all three build identities, and leaves
 the checkpoint untouched: no rename, preserve-aside, replacement or fresh
 checkpoint. Header namespace must match the targeted namespace root;
-generation and `created_build` must match the private record. Any readable
-namespace, generation or creation-build conflict refuses with exit 1,
-`checkpoint-unavailable`, identifies the conflicting field and leaves the
-checkpoint untouched, with no preserve-aside, replacement or fresh checkpoint.
-This no-touch rule also applies when another part of that file is corrupt.
+generation and `created_build` must match the private record. Once
+`active_build` matches both the reader and the private record, this build owns
+the file, so a namespace, generation or creation-build conflict is damage: it
+takes the preserve-and-fresh path below, and the degraded `invalid` reason's
+detail names the conflicting field. The checkpoint has no checksum, so refusing
+here would let one changed byte block recovery permanently. Among header
+identity checks, only the active-build mismatch above leaves the checkpoint
+untouched.
 A corrupt or ambiguous private identity refuses checkpoint recovery with exit 1,
 `checkpoint-unavailable`, without guessing. A missing one takes only the flat
 path above, under its stated build-derived preconditions. Once lifetimes allocate
@@ -289,12 +292,11 @@ a lifetime, not a build digest. This grants no cross-build takeover.
 An unknown version means valid `EONR` magic and a readable version other than 1;
 it or an unknown required section refuses with exit 1, `checkpoint-unavailable`,
 leaving the file untouched. Any other bad header is corrupt, including bad
-magic or a truncated header. Only unreadable/corrupt checkpoint state of a
-matching build takes the preserve-and-fresh path; if its header is unreadable,
-the private record must independently establish that its active build equals
-the reader's, with no readable conflicting namespace, generation or build
-accepted. Missing-file and topology-plus-extra capacity cases retain the
-rules below.
+magic or a truncated header. Unreadable/corrupt checkpoint state of a matching
+build, including a namespace, generation or creation-build conflict, takes the
+preserve-and-fresh path; if its header is unreadable, the private record must
+independently establish that its active build equals the reader's.
+Missing-file and topology-plus-extra capacity cases retain the rules below.
 
 After matching-build admission and safe full-set C15 acquisition, checkpoint
 damage, missing required core state or topology-plus-extra capacity overflow uses the same
@@ -341,6 +343,9 @@ C39 initial/gap snapshots and live events; adapters do not invent states:
   authority. Inert-tab and popup-catalog fields follow the schema above.
 - `registration_error` remains registry-only. It is not overloaded with
   checkpoint, process, directory or catalog failures.
+- Checkpoint, reader and private-record active-build disagreement: exit 1,
+  `checkpoint-build-mismatch`, reporting all three build identities, with the
+  checkpoint untouched.
 - Pre-effect write refusal: exit 1, `checkpoint-unavailable`. A refused action
   whose required stopped-slot edit was not persisted reports
   `stopped-not-persisted` and exact stopped target IDs. Post-effect persistence
@@ -423,7 +428,7 @@ installed platform, commands, artifacts and observed identities/counters.
 | R11 | Registry pending/failure/retry preserves exact IDs and old registrations; extras follow originals; failed/pending registration with a successfully written fresh checkpoint still refuses Start while existing terminals remain usable; only exact registration confirmation opens Start; lost launch-directory evidence cannot certify C42 worktree non-use |
 | R12 | Inspect/list, initial/gap/live C39 projection and exit codes agree; null stopped endpoints, distinct diagnostics, fresh STREAM and no event/input replay |
 | R13 | Shared v1 envelope review with Update owners; unknown optional section survives a rewrite unchanged; unknown required section/version refuses without touching the file; checkpoint/reader/private-record active-build disagreement refuses without preserve-and-replace; creation A / active B once lifetimes allocate independently of build (in-place update S2b, `eon-t3fyd.3`) admits reader B and refuses reader A; independent Update transition/dedup proofs remain pending and cannot be claimed by 2b proof |
-| R14 | Missing private identity retains only eligible legacy flat recovery without checkpoint read/replacement; corrupt/ambiguous private identity refuses; readable namespace/generation/creation-build conflicts, including otherwise damaged files, leave the checkpoint untouched |
+| R14 | Missing private identity retains only eligible legacy flat recovery without checkpoint read/replacement; corrupt/ambiguous private identity refuses; with a matching active build, a namespace/generation/creation-build conflict is damage (R10) and takes preserve-and-fresh with the conflicting field named, never refuse-untouched |
 | R15 | Malformed selection rejects the checkpoint; valid selection lost during reconciliation uses deterministic fallback without input redirection; malformed encodings, lengths, presence/kind tags, ID grammars and pin/tag bounds reject; unknown optional sections survive every successful rewrite byte-for-byte |
 
 ## Reference and verification notes
