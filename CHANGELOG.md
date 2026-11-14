@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Background attention badges use gently pulsing round dots; Idle rings and
+  Unavailable dots have smooth anti-aliased edges. The attention animation-off
+  switch keeps both Working and Background still (`eon-sidebar-app-icons-y99b7.10`).
+
 - Agents sidebar and attention inbox status glyphs and app marks are larger
   and vertically centred across the full row (`eon-sidebar-app-icons-y99b7.9`).
 - `default` keeps addressing the sole running default-namespace window after

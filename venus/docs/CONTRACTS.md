@@ -1855,6 +1855,10 @@ re-proved when that platform or feature is next touched.
   Presentation amended by `eon-wuau8.3`, approved by Lucca on 2026-11-10
   (selection, accents and labels), with zoom and contrast decisions relayed
   by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
+  Amended by `eon-sidebar-app-icons-y99b7.10`, approved by eon-overseer under
+  Lucca's delegation on 2026-11-14: Background's round-dot pulse shares the
+  attention-motion guard and update budget; colour adaptation precedes pulse
+  opacity and stale dimming.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the session header;
@@ -1936,13 +1940,16 @@ re-proved when that platform or feature is next touched.
 - **Attention badges (EON-C31):** These rules apply while the agent sidebar is
   not visible (`Closed`, `Off`, or hidden for width):
   - every tab whose rollup is needs input, error, finished, working or
-    background shows a corner badge (◆, ✕, ✓, braille dots, or three still
+    background shows a corner badge (◆, ✕, ✓, braille dots, or three round
     dots), the active tab included. A stale tab's badge is dimmed;
   - the working badge's dots step through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏, repainting at no more
     than 10 Hz under AP-PERF-001, and only the badge. On a software (CPU)
     graphics adapter, or when Eon passes `--animate-working-badge false`, it
     is the still frame ⠋ and never repaints to animate;
-  - the background badge (three dots) never animates; its accessible state is
+  - the Background badge uses three round dots with the staggered pulse described
+    in [Agents sidebar](PRESENTATION.md#agents-sidebar). It shares Working's
+    at-most-10Hz badge-only update budget and stays static on a CPU adapter or
+    when `--animate-working-badge false` is passed. Its accessible state remains
     `waiting on background work`.
   - the badge changes neither the tab's width nor its label text;
   - with tab overflow, the scroll edge shows the most urgent hidden badge;
@@ -2360,6 +2367,10 @@ re-proved when that platform or feature is next touched.
   Amended by `eon-sidebar-app-icons-y99b7.9`, approved by eon-overseer under
   Lucca's delegation on 2026-11-14: sidebar/inbox badge and app-mark sizing and
   whole-row centring follow their shared presentation owner.
+  Amended by `eon-sidebar-app-icons-y99b7.10`, approved by eon-overseer under
+  Lucca's delegation on 2026-11-14: Background's round-dot pulse shares the
+  attention-motion guard and update budget; colour adaptation precedes pulse
+  opacity and stale dimming.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2471,7 +2482,8 @@ re-proved when that platform or feature is next touched.
       Current text starts in the primary role and retains 4.5:1, including
       stale text. Attention badges draw directly on their surface, with no
       backing shape at any
-      opacity. Each glyph colour, before stale dimming, adapts only as needed
+      opacity. Each glyph colour, before pulse opacity and stale dimming, adapts
+      only as needed
       for 3:1 against its opaque surface. On a translucent row, it adapts
       against both the card colour composited at the configured background
       opacity over black and the same card colour composited over white. Only
@@ -2479,10 +2491,13 @@ re-proved when that platform or feature is next touched.
       the glyph retain its source state or configured focus colour and
       receive a thin outline following its own shape. The outline is black or
       white, whichever contrasts more with the glyph, reaching at least 3:1
-      against the glyph before stale dimming. It is about one physical pixel
+      against the glyph before pulse opacity and stale dimming. It is about one
+      physical pixel
       wide, reduced only as needed to fit small glyphs without closing their
       gaps; no filled backing is drawn. Stale glyphs and their outlines
-      retain the intentional 0.45 alpha and may read below 3:1. Sidebar and
+      apply the intentional 0.45 dimming multiplier after pulse opacity and may
+      read below 3:1. Pulse opacity may also lower instantaneous contrast.
+      Sidebar and
       inbox row badge and app-mark boxes use the shared sizing and whole-row
       centring in [Agents sidebar](PRESENTATION.md#agents-sidebar). Rows
       have no mint pressed flash. Rows in other tabs never take the current

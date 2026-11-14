@@ -569,16 +569,16 @@ needed for 3:1 against the row fill. Rows have no mint pressed flash. Current
 text uses the primary role, adjusted for 4.5:1 contrast. Accessible names
 include "popup" and, for the current row, "current".
 
-Attention badges draw no backing at any opacity. Each glyph colour, before
-stale dimming, adapts only as needed for 3:1 against its surface; working and
-background dots start in the configured focus colour. On a translucent row,
-the glyph must contrast against the card at the configured background opacity
-over both black and white. Only where no single colour reaches 3:1 against
-both does it retain its source colour and take a black or white outline,
-whichever contrasts more with the glyph. The outline follows the glyph's own
-shape, about one physical pixel wide, reduced only to fit small glyphs without
-closing their gaps. Stale glyphs and outlines keep their intentional 0.45 alpha
-after colour adaptation. No square or other backing shape is drawn.
+Attention badges draw no backing at any opacity. Each glyph colour, before pulse opacity
+and stale dimming, adapts only as needed for 3:1 against its surface; working and
+background dots start in the configured focus colour. On a translucent row, the glyph
+must contrast against the card at the configured background opacity over both black and
+white. Only where no single colour reaches 3:1 against both does it retain its source
+colour and take a black or white outline, whichever contrasts more with the glyph. The
+outline follows the glyph's own shape, about one physical pixel wide, reduced only to
+fit small glyphs without closing their gaps. Stale glyphs and outlines apply the
+intentional 0.45 dimming multiplier after pulse opacity; either multiplier may reduce
+instantaneous contrast below 3:1. No square or other backing shape is drawn.
 Sidebar/inbox status glyphs and app marks share a square spanning three quarters
 of the two-line text block (27 physical pixels at default 1x metrics, 54 at 2x),
 capped at twice the font size and 256 physical pixels. Both centre vertically
@@ -589,9 +589,15 @@ right compared with the former 16px symbols at default metrics, so long titles
 truncate earlier. Both marks have direct 27/54px rasters; other sizes use the
 larger source without upscaling. Tab,
 session-label and edge badges retain their 0.75× font size and padding cap.
-Plain spinner dots are 7 physical pixels across in default sidebar/inbox rows
+Working's plain spinner dots are 7 physical pixels across in default sidebar/inbox rows
 and retain their 2-pixel size on the bar. Row dots and gaps scale with the box;
 the contour stays about one physical pixel, with clear gaps in the fitted grid.
+Background uses three anti-aliased round dots with a gentle staggered pulse,
+0.65–1.0 opacity over a three-second cycle, on the existing attention tick. The
+same round coverage primitive draws Idle's hollow ring and Unavailable's dot,
+including their optional glyph contour. Working retains its square braille dots.
+The animation-off switch and CPU adapter guard keep Background's dots fully lit
+and still. Compact Background dots use about 3px discs with clear gaps at 1x.
 The popup marker keeps its independent 1.25× font-size box and hollow windows.
 Bar corner badges retain contrast against both their pill and the surrounding
 bar; overflow badges adapt against the visible tab fills beneath them.

@@ -825,20 +825,21 @@ pub(super) fn rasterize_bar_icon(
 /// U+2800: dot n, numbered down the left column (1–3) and then the right (4–6), is bit n − 1.
 const SPINNER_FRAMES: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F];
 
-/// A working badge's spinner within the static rectangle vertices: a tick rewrites only these
+/// An animated badge within the static rectangle vertices: a tick rewrites only these
 /// bytes, which keep their length in every phase. The badge lies wholly inside its clip, so the
 /// rewrite needs none.
 struct SpinnerSlot {
     offset: usize,
+    length: usize,
     badge: TabBadge,
     color: SceneColor,
     outline: Option<SceneColor>,
     row: bool,
 }
 
-/// The working badges in the current static vertices and the phase they are drawn at. On a
+/// The animated badges in the current static vertices and the phase they are drawn at. On a
 /// software adapter, where every turn re-rasterizes the whole frame, or when Eon turns the
-/// animation off, there is no phase: working badges are drawn still and never tick (VEN-C21).
+/// animation off, there is no phase: Working and Background badges are drawn still and never tick (VEN-C21).
 /// Working and background badges take the window's focus color.
 pub(super) struct Spinners {
     slots: Vec<SpinnerSlot>,
@@ -868,7 +869,7 @@ impl Backing {
     }
 }
 
-/// Whether working badges turn: only on a hardware adapter, and only while
+/// Whether Working and Background badges animate: only on a hardware adapter, and only while
 /// `--animate-working-badge` is true (VEN-C21).
 pub(super) fn spinners_turn(device: wgpu::DeviceType, animate: bool) -> bool {
     animate && device != wgpu::DeviceType::Cpu
@@ -887,7 +888,7 @@ impl Spinners {
         self.slots.clear();
     }
 
-    /// Resolve contrast before stale dimming; spinner ticks retain the same colour and contour.
+    /// Resolve contrast before pulse opacity and stale dimming; spinner ticks retain the same colour and contour.
     fn push_badge(&mut self, badge: TabBadge, backing: Backing, rectangles: &mut RectangleBatch) {
         if !badge_inside(badge, rectangles.clip) {
             return;
@@ -931,16 +932,24 @@ impl Spinners {
                 }
             }
         };
-        if badge.state == AttentionState::Working && self.phase.is_some() {
+        let offset = rectangles.bytes.len();
+        push_badge_glyph(rectangles, badge, self.phase, color, outline, row);
+        let length = rectangles.bytes.len() - offset;
+        if matches!(
+            badge.state,
+            AttentionState::Working | AttentionState::Background
+        ) && self.phase.is_some()
+            && length > 0
+        {
             self.slots.push(SpinnerSlot {
-                offset: rectangles.bytes.len(),
+                offset,
+                length,
                 badge,
                 color,
                 outline,
                 row,
             });
         }
-        push_badge_glyph(rectangles, badge, self.phase, color, outline, row);
     }
 
     fn push_edge_badge(
@@ -1084,7 +1093,7 @@ fn push_attention_row_surface(
 }
 
 /// Draws one attention badge's glyph in its resolved `color`: ◆ needs input, ✕ error, ✓ finished, the
-/// braille frame at `phase` for working, or the first frame without one, three still dots for
+/// braille frame at `phase` for working, or the first frame without one, three pulsing round dots for
 /// background, and, in sidebar rows, ○ idle and · unavailable. Quads keep the
 /// glyphs independent of fonts.
 fn push_badge_glyph(
@@ -1109,19 +1118,50 @@ fn push_badge_glyph(
         height: badge.rect.height - ring * 2.0,
     };
     let alpha = if badge.dimmed { 0.45 } else { 1.0 };
-    if matches!(
-        badge.state,
-        AttentionState::Working | AttentionState::Background
-    ) {
-        let (grid, lit) = if badge.state == AttentionState::Working {
-            ((2, 3), SPINNER_FRAMES[phase.unwrap_or(0)])
+    if badge.state == AttentionState::Background {
+        let size = badge.rect.width.min(badge.rect.height);
+        let gap = (size / 16.0).round().max(1.0).min(size / 6.0);
+        let side = (size / 4.0)
+            .round()
+            .max(gap * 2.0)
+            .min((size - 2.0 * gap) / 3.0);
+        let contour = if outline.is_some() {
+            ((side - gap.min(1.0)) / 2.0).min(1.0)
         } else {
-            ((3, 1), 0b111)
+            0.0
         };
+        let left = badge.rect.left + ((badge.rect.width - 3.0 * side - 2.0 * gap) / 2.0).floor();
+        let top = badge.rect.top + ((badge.rect.height - side) / 2.0).floor();
+        let dots = std::array::from_fn::<_, 3, _>(|dot| {
+            let opacity = phase.map_or(1.0, |phase| {
+                let frames = tokens::BACKGROUND_PULSE_FRAMES;
+                let offset = (phase % frames + frames - dot * (frames / 3)) % frames;
+                let wave =
+                    (1.0 + (std::f32::consts::TAU * offset as f32 / frames as f32).cos()) / 2.0;
+                tokens::BACKGROUND_PULSE_MIN_ALPHA
+                    + (1.0 - tokens::BACKGROUND_PULSE_MIN_ALPHA) * wave
+            });
+            RoundGlyph {
+                center: CursorPoint {
+                    x: left + dot as f32 * (side + gap) + side / 2.0,
+                    y: top + side / 2.0,
+                },
+                outer: side / 2.0 - contour,
+                inner: 0.0,
+                opacity,
+            }
+        });
+        push_round_glyph(
+            rectangles, badge.rect, &dots, color, outline, contour, alpha,
+        );
+        return;
+    }
+    if badge.state == AttentionState::Working {
+        let lit = SPINNER_FRAMES[phase.unwrap_or(0) % SPINNER_FRAMES.len()];
         if row || outline.is_some() {
-            push_fitted_dots(rectangles, badge.rect, grid, lit, color, outline, alpha);
+            push_fitted_dots(rectangles, badge.rect, (2, 3), lit, color, outline, alpha);
         } else {
-            push_dots(rectangles, glyph, grid, lit, color, alpha);
+            push_dots(rectangles, glyph, (2, 3), lit, color, alpha);
         }
         return;
     }
@@ -1183,21 +1223,26 @@ fn push_badge_glyph(
             } else {
                 (glyph.width * 0.15, 0.0)
             };
-            let step = std::f32::consts::TAU / 16.0;
-            let point = |radius: f32, angle: f32| CursorPoint {
-                x: center.x + radius * angle.cos(),
-                y: center.y + radius * angle.sin(),
+            let contour = if outline.is_some() {
+                (badge.rect.width / 12.0).min(1.0)
+            } else {
+                0.0
             };
-            for segment in 0..16 {
-                let start = segment as f32 * step;
-                let end = start + step;
-                quads.push([
-                    point(outer, start),
-                    point(outer, end),
-                    point(inner, end),
-                    point(inner, start),
-                ]);
-            }
+            push_round_glyph(
+                rectangles,
+                badge.rect,
+                &[RoundGlyph {
+                    center,
+                    outer,
+                    inner,
+                    opacity: 1.0,
+                }],
+                color,
+                outline,
+                contour,
+                alpha,
+            );
+            return;
         }
         AttentionState::Working | AttentionState::Background => unreachable!(),
     }
@@ -1206,6 +1251,90 @@ fn push_badge_glyph(
     } else {
         for quad in quads {
             rectangles.push_quad(quad, color, alpha);
+        }
+    }
+}
+
+/// Circle or hollow ring; coverage and run grouping stay independent of pulse opacity.
+struct RoundGlyph {
+    center: CursorPoint,
+    outer: f32,
+    inner: f32,
+    opacity: f32,
+}
+
+/// Emit one premixed core/contour union per pixel, so soft edges never double stale opacity.
+fn push_round_glyph(
+    rectangles: &mut RectangleBatch,
+    bounds: SceneRect,
+    shapes: &[RoundGlyph],
+    color: SceneColor,
+    outline: Option<SceneColor>,
+    contour: f32,
+    alpha: f32,
+) {
+    const STEPS: f32 = 32.0;
+    let left = bounds.left.floor() as i32;
+    let right = bounds.right().ceil() as i32;
+    for y in bounds.top.floor() as i32..bounds.bottom().ceil() as i32 {
+        let mut start = left;
+        let mut previous = None;
+        for x in left..=right {
+            let next = if x == right {
+                None
+            } else {
+                let (owner, distance) = shapes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, shape)| {
+                        let radius = (x as f32 + 0.5 - shape.center.x)
+                            .hypot(y as f32 + 0.5 - shape.center.y);
+                        let distance = radius - shape.outer;
+                        (
+                            i,
+                            if shape.inner > 0.0 {
+                                distance.max(shape.inner - radius)
+                            } else {
+                                distance
+                            },
+                        )
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .unwrap();
+                let core = ((0.5 - distance).clamp(0.0, 1.0) * STEPS).round() as u8;
+                let union = ((0.5 + contour - distance).clamp(0.0, 1.0) * STEPS).round() as u8;
+                (union > 0).then_some((core, union, owner))
+            };
+            if next != previous {
+                if let Some((core, union, owner)) = previous {
+                    let outline = outline.unwrap_or(color);
+                    let mix = |core_channel: u8, outline_channel: u8| {
+                        ((f32::from(core_channel) * f32::from(core)
+                            + f32::from(outline_channel) * f32::from(union - core))
+                            / f32::from(union))
+                        .round() as u8
+                    };
+                    let color = SceneColor {
+                        r: mix(color.r, outline.r),
+                        g: mix(color.g, outline.g),
+                        b: mix(color.b, outline.b),
+                    };
+                    let x0 = (start as f32).max(bounds.left);
+                    let x1 = (x as f32).min(bounds.right());
+                    let y0 = (y as f32).max(bounds.top);
+                    let y1 = (y as f32 + 1.0).min(bounds.bottom());
+                    rectangles.push(
+                        x0,
+                        y0,
+                        x1 - x0,
+                        y1 - y0,
+                        color,
+                        f32::from(union) / STEPS * shapes[owner].opacity * alpha,
+                    );
+                }
+                start = x;
+                previous = next;
+            }
         }
     }
 }
@@ -1331,8 +1460,8 @@ fn push_fitted_dots(
 
 /// Draws a `columns` by `rows` grid of square dots centred on the whole pixels inside `glyph`,
 /// lighting the dots whose bit is set in `lit`, numbered down each column and then across, as a
-/// braille cell numbers them: a working badge's 2x3 braille frame, or the background badge's
-/// three dots in a row, in `color`. Dots are twice as wide as the gaps between them, two pixels
+/// braille cell numbers them: a Working badge's 2x3 braille frame in `color`.
+/// Dots are twice as wide as the gaps between them, two pixels
 /// and one at the default badge, scaled by whole pixels with the glyph. Every dot is pushed, unlit
 /// ones at zero alpha, so each spinner phase writes the same vertices and only alpha changes. A
 /// glyph too small for the grid keeps the dots that fit; none leave `glyph`, so the badge's clip
@@ -1928,13 +2057,13 @@ impl Renderer {
         .collect()
     }
 
-    /// Steps every drawn working badge one frame by rewriting only its own uploaded vertices,
+    /// Steps every drawn animated badge one frame by rewriting only its own uploaded vertices,
     /// so the scene, text and terminal layers stay cached.
     pub fn turn_spinners(&mut self) {
         let Some(phase) = &mut self.spinners.phase else {
             return;
         };
-        *phase = (*phase + 1) % SPINNER_FRAMES.len();
+        *phase = (*phase + 1) % tokens::BACKGROUND_PULSE_FRAMES;
         for slot in &self.spinners.slots {
             let mut batch = RectangleBatch::new(self.config.width, self.config.height);
             push_badge_glyph(
@@ -1945,12 +2074,17 @@ impl Renderer {
                 slot.outline,
                 slot.row,
             );
+            debug_assert_eq!(
+                batch.bytes.len(),
+                slot.length,
+                "badge ticks must keep their byte range"
+            );
             self.queue
                 .write_buffer(&self.vertices, slot.offset as u64, &batch.bytes);
         }
     }
 
-    /// Whether the current frame draws a working badge's spinner.
+    /// Whether the current frame draws an animated badge.
     #[must_use]
     pub fn spinning(&self) -> bool {
         !self.spinners.slots.is_empty()
@@ -5305,72 +5439,320 @@ mod tests {
     }
 
     #[test]
-    fn background_badges_draw_three_still_dots_that_never_tick() {
-        let art = |size| badge_art(AttentionState::Background, 4.0, 4.0, size, None);
-        let mut small = vec!["            "; 12];
-        small[5..7].fill("  ## ## ##  ");
-        assert_eq!(art(12.0), small);
-        let mut large = vec!["                        "; 24];
-        large[10..14].fill("    ####  ####  ####    ");
-        assert_eq!(art(24.0), large);
+    fn background_badges_pulse_round_dots_and_keep_rewrite_geometry() {
         let badge = TabBadge {
             state: AttentionState::Background,
             dimmed: false,
             rect: SceneRect {
-                width: 12.0,
-                height: 12.0,
-                ..SceneRect::default()
+                left: 20.0,
+                top: 30.0,
+                width: 27.0,
+                height: 27.0,
             },
         };
-        let mut spinners = Spinners::new(true, DEFAULT_FOCUS);
-        let mut rectangles = RectangleBatch::new(800, 600);
-        spinners.push_badge(
-            badge,
-            Backing::Surface(palette::BAR_BACKGROUND),
-            &mut rectangles,
-        );
-        assert!(
-            spinners.slots.is_empty(),
-            "a background badge schedules no tick"
-        );
-        // A phase never changes it.
-        let mut turned = RectangleBatch::new(800, 600);
-        push_badge_glyph(&mut turned, badge, Some(4), DEFAULT_FOCUS, None, true);
-        assert_eq!(turned.bytes, rectangles.bytes);
+        for turning in [false, true] {
+            let mut spinners = Spinners::new(turning, DEFAULT_FOCUS);
+            let mut batch = RectangleBatch::new(800, 600);
+            spinners.push_badge(badge, Backing::Surface(palette::BAR_BACKGROUND), &mut batch);
+            assert_eq!(spinners.slots.len(), usize::from(turning));
+        }
+        let draw = |phase| {
+            let mut batch = RectangleBatch::new(800, 600);
+            push_badge_glyph(&mut batch, badge, phase, DEFAULT_FOCUS, None, true);
+            batch.bytes
+        };
+        let first = draw(Some(0));
+        assert_ne!(first, draw(Some(10)), "Background must pulse");
+        for phase in 0..30 {
+            let current = draw(Some(phase));
+            assert_eq!(current.len(), first.len());
+            for (current, first) in current.chunks_exact(24).zip(first.chunks_exact(24)) {
+                assert_eq!(current[..20], first[..20], "ticks change alpha only");
+            }
+        }
+        let peaks = |bytes: &[u8]| {
+            let mut peaks = [0.0_f32; 3];
+            for quad in bytes.chunks_exact(24 * 6) {
+                let x = (f32::from_ne_bytes(quad[..4].try_into().unwrap()) + 1.0) * 400.0;
+                let dot =
+                    (((x - badge.rect.left) / badge.rect.width * 3.0).floor() as usize).min(2);
+                let alpha = f32::from_ne_bytes(quad[20..24].try_into().unwrap());
+                peaks[dot] = peaks[dot].max(alpha);
+            }
+            peaks
+        };
+        assert_eq!(peaks(&draw(None)), [1.0; 3]);
+        for (phase, dot) in [(0, 0), (10, 1), (20, 2)] {
+            let peaks = peaks(&draw(Some(phase)));
+            assert_eq!(peaks[dot], 1.0);
+            assert!(peaks.into_iter().all(|alpha| (0.65..=1.0).contains(&alpha)));
+            assert!(peaks.into_iter().filter(|alpha| *alpha == 1.0).count() == 1);
+        }
     }
 
     #[test]
-    fn software_adapters_draw_working_badges_still_and_never_tick() {
-        let badge = TabBadge {
-            state: AttentionState::Working,
-            dimmed: false,
-            rect: SceneRect {
-                width: 12.0,
-                height: 12.0,
-                ..SceneRect::default()
-            },
-        };
-        let draw = |turning| {
-            let mut spinners = Spinners::new(turning, DEFAULT_FOCUS);
-            let mut rectangles = RectangleBatch::new(800, 600);
-            spinners.push_badge(
-                badge,
+    fn round_attention_glyphs_have_soft_edges_and_bounded_axis_aligned_vertices() {
+        let mut maximum = (0.0_f32, String::new());
+        for size in [6.0, 12.0, 15.0, 27.0, 35.0, 41.0, 54.0, 256.0] {
+            for state in [
+                AttentionState::Background,
+                AttentionState::Idle,
+                AttentionState::Unavailable,
+            ] {
+                for outline in [None, Some(palette::PRIMARY_TEXT)] {
+                    for dimmed in [false, true] {
+                        let badge = TabBadge {
+                            state,
+                            dimmed,
+                            rect: SceneRect {
+                                left: 20.25,
+                                top: 30.5,
+                                width: size,
+                                height: size,
+                            },
+                        };
+                        let mut batch = RectangleBatch::new(800, 600);
+                        push_badge_glyph(&mut batch, badge, None, DEFAULT_FOCUS, outline, true);
+                        let opacity = if dimmed { 0.45 } else { 1.0 };
+                        assert!(
+                            batch.bytes.chunks_exact(24).any(|v| {
+                                let alpha = f32::from_ne_bytes(v[20..24].try_into().unwrap());
+                                alpha > 0.0 && alpha < opacity
+                            }),
+                            "round edges need fractional coverage, {state:?}, {size}"
+                        );
+                        let ratio = batch.bytes.len() as f32 / 24.0 / size.ceil();
+                        if ratio > maximum.0 {
+                            maximum = (ratio, format!("{state:?} size={size} outline={outline:?}"));
+                        }
+                        assert!(
+                            batch.bytes.len() / 24 <= 96 * size.ceil() as usize,
+                            "{state:?} size={size} outline={outline:?}: {} vertices",
+                            batch.bytes.len() / 24
+                        );
+                        for quad in batch.bytes.chunks_exact(24 * 6) {
+                            let mut xs = Vec::new();
+                            let mut ys = Vec::new();
+                            for vertex in quad.chunks_exact(24) {
+                                let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0)
+                                    * 400.0;
+                                let y = (1.0
+                                    - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
+                                    * 300.0;
+                                let alpha = f32::from_ne_bytes(vertex[20..24].try_into().unwrap());
+                                assert!(
+                                    x >= badge.rect.left - 0.001 && x <= badge.rect.right() + 0.001
+                                );
+                                assert!(
+                                    y >= badge.rect.top - 0.001 && y <= badge.rect.bottom() + 0.001
+                                );
+                                assert!(alpha >= 0.0 && alpha <= opacity);
+                                xs.push(x);
+                                ys.push(y);
+                            }
+                            for values in [&mut xs, &mut ys] {
+                                values.sort_by(f32::total_cmp);
+                                values.dedup();
+                                assert!(
+                                    values.len() <= 2,
+                                    "round edges use coverage, not angled quads"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("maximum vertices/side: {maximum:?}");
+    }
+
+    #[test]
+    fn animated_badge_ranges_keep_neighbor_bytes_and_soft_edges_in_every_backing() {
+        for size in [12.0, 27.0, 35.0, 54.0] {
+            for backing in [
+                Backing::BarPill(palette::TAB_SELECTED),
                 Backing::Surface(palette::BAR_BACKGROUND),
-                &mut rectangles,
+                Backing::card(
+                    SceneColor {
+                        r: 10,
+                        g: 13,
+                        b: 20,
+                    },
+                    0.4,
+                    true,
+                ),
+            ] {
+                let mut batch = RectangleBatch::new(800, 600);
+                let mut spinners = Spinners::new(true, DEFAULT_FOCUS);
+                for (index, state) in [AttentionState::Working, AttentionState::Background]
+                    .into_iter()
+                    .enumerate()
+                {
+                    batch.push(0.0, index as f32, 1.0, 1.0, palette::PRIMARY_TEXT, 1.0);
+                    let badge = TabBadge {
+                        state,
+                        dimmed: true,
+                        rect: SceneRect {
+                            left: 20.25 + index as f32 * 100.0,
+                            top: 30.5,
+                            width: size,
+                            height: size,
+                        },
+                    };
+                    spinners.push_badge(badge, backing, &mut batch);
+                }
+                batch.push(0.0, 2.0, 1.0, 1.0, palette::PRIMARY_TEXT, 1.0);
+                assert_eq!(spinners.slots.len(), 2);
+                for phase in 0..tokens::BACKGROUND_PULSE_FRAMES {
+                    let mut rewritten = batch.bytes.clone();
+                    for slot in &spinners.slots {
+                        let mut tick = RectangleBatch::new(800, 600);
+                        push_badge_glyph(
+                            &mut tick,
+                            slot.badge,
+                            Some(phase),
+                            slot.color,
+                            slot.outline,
+                            slot.row,
+                        );
+                        assert_eq!(tick.bytes.len(), slot.length);
+                        let original = &batch.bytes[slot.offset..slot.offset + slot.length];
+                        for (first, current) in
+                            original.chunks_exact(24).zip(tick.bytes.chunks_exact(24))
+                        {
+                            assert_eq!(first[..20], current[..20]);
+                        }
+                        if slot.badge.state == AttentionState::Background {
+                            assert!(
+                                tick.bytes.chunks_exact(24).any(|v| {
+                                    let alpha = f32::from_ne_bytes(v[20..24].try_into().unwrap());
+                                    alpha > 0.0 && alpha < 0.45 * tokens::BACKGROUND_PULSE_MIN_ALPHA
+                                }),
+                                "soft edges survive pulse and stale opacity"
+                            );
+                        }
+                        rewritten[slot.offset..slot.offset + slot.length]
+                            .copy_from_slice(&tick.bytes);
+                    }
+                    for (index, (original, current)) in
+                        batch.bytes.iter().zip(&rewritten).enumerate()
+                    {
+                        if !spinners
+                            .slots
+                            .iter()
+                            .any(|s| (s.offset..s.offset + s.length).contains(&index))
+                        {
+                            assert_eq!(
+                                original, current,
+                                "neighbor outside badge upload stays cached"
+                            );
+                        }
+                    }
+                }
+                spinners.clear();
+                assert!(
+                    spinners.slots.is_empty(),
+                    "no visible badge means no animation"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn round_glyph_coverage_is_symmetric_hollow_and_leaves_compact_dot_gaps() {
+        for size in [12.0, 27.0, 54.0] {
+            for state in [
+                AttentionState::Idle,
+                AttentionState::Unavailable,
+                AttentionState::Background,
+            ] {
+                for outline in [None, Some(palette::PRIMARY_TEXT)] {
+                    let badge = TabBadge {
+                        state,
+                        dimmed: false,
+                        rect: SceneRect {
+                            left: 20.0,
+                            top: 30.0,
+                            width: size,
+                            height: size,
+                        },
+                    };
+                    let mut batch = RectangleBatch::new(800, 600);
+                    push_badge_glyph(&mut batch, badge, None, DEFAULT_FOCUS, outline, true);
+                    let mut coverage = vec![vec![0.0_f32; size as usize]; size as usize];
+                    for quad in batch.bytes.chunks_exact(24 * 6) {
+                        let value = |at| f32::from_ne_bytes(quad[at..at + 4].try_into().unwrap());
+                        let left = (((value(0) + 1.0) * 400.0 - badge.rect.left).round()) as usize;
+                        let right =
+                            (((value(48) + 1.0) * 400.0 - badge.rect.left).round()) as usize;
+                        let y = (((1.0 - value(4)) * 300.0 - badge.rect.top).round()) as usize;
+                        coverage[y][left..right].fill(value(20));
+                    }
+                    if state == AttentionState::Background {
+                        if size == 12.0 {
+                            assert!(
+                                (0..12).all(|y| coverage[y][3] == 0.0 && coverage[y][7] == 0.0),
+                                "one clear pixel between 3px compact discs"
+                            );
+                            assert!((0..3).all(|x| coverage[5][x] > 0.0));
+                            assert!(
+                                coverage[4][0] < coverage[5][1],
+                                "round corner has less coverage than the centre"
+                            );
+                        }
+                    } else {
+                        for (y, row) in coverage.iter().enumerate() {
+                            for (x, value) in row.iter().enumerate() {
+                                assert_eq!(
+                                    *value,
+                                    coverage[x][size as usize - 1 - y],
+                                    "quarter-turn symmetry, {state:?} {size}"
+                                );
+                            }
+                        }
+                        if state == AttentionState::Idle {
+                            assert_eq!(
+                                coverage[size as usize / 2][size as usize / 2],
+                                0.0,
+                                "ring centre remains transparent"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn software_adapters_draw_animated_badges_still_and_never_tick() {
+        for state in [AttentionState::Working, AttentionState::Background] {
+            let badge = TabBadge {
+                state,
+                dimmed: false,
+                rect: SceneRect {
+                    width: 12.0,
+                    height: 12.0,
+                    ..SceneRect::default()
+                },
+            };
+            let mut spinners = Spinners::new(false, DEFAULT_FOCUS);
+            let mut batch = RectangleBatch::new(800, 600);
+            spinners.push_badge(badge, Backing::Surface(palette::BAR_BACKGROUND), &mut batch);
+            assert!(
+                spinners.slots.is_empty(),
+                "motion-off/CPU schedules no tick"
             );
-            let alphas = rectangles
-                .bytes
-                .chunks_exact(24)
-                .map(|vertex| f32::from_ne_bytes(vertex[20..].try_into().unwrap()))
-                .collect::<Vec<_>>();
-            (spinners.slots.len(), alphas)
-        };
-        let (turning_slots, turning) = draw(true);
-        let (still_slots, still) = draw(false);
-        // Only a turning badge is recorded, so a software adapter's frame reports no spinner and
-        // `update_spinner` schedules no tick.
-        assert_eq!((turning_slots, still_slots), (1, 0));
-        assert_eq!(turning, still);
+            let mut expected = RectangleBatch::new(800, 600);
+            push_badge_glyph(
+                &mut expected,
+                badge,
+                None,
+                blend_to_contrast(DEFAULT_FOCUS, palette::BAR_BACKGROUND, 3.0),
+                None,
+                true,
+            );
+            assert_eq!(batch.bytes, expected.bytes);
+        }
     }
 
     fn popup_sidebar_snapshot() -> eon_workspace_protocol::v44::Snapshot {
@@ -6026,7 +6408,7 @@ mod tests {
                             for vertex in actual.bytes.chunks_exact(24) {
                                 let color = vertex_color(vertex);
                                 let value = f32::from_ne_bytes(vertex[20..24].try_into().unwrap());
-                                assert!(value == 0.0 || value == alpha);
+                                assert!((0.0..=alpha).contains(&value));
                                 if let Some(resolved) = resolved {
                                     assert_eq!(
                                         color, resolved,
@@ -6038,6 +6420,37 @@ mod tests {
                                             .all(|surface| contrast_ratio(color, surface) >= 3.0)
                                     );
                                 } else if color != source {
+                                    if matches!(
+                                        state,
+                                        AttentionState::Background
+                                            | AttentionState::Idle
+                                            | AttentionState::Unavailable
+                                    ) {
+                                        let black = SceneColor { r: 0, g: 0, b: 0 };
+                                        let white = SceneColor {
+                                            r: 255,
+                                            g: 255,
+                                            b: 255,
+                                        };
+                                        let outline = if contrast_ratio(source, black)
+                                            >= contrast_ratio(source, white)
+                                        {
+                                            black
+                                        } else {
+                                            white
+                                        };
+                                        for (value, core, edge) in [
+                                            (color.r, source.r, outline.r),
+                                            (color.g, source.g, outline.g),
+                                            (color.b, source.b, outline.b),
+                                        ] {
+                                            assert!(
+                                                (core.min(edge)..=core.max(edge)).contains(&value),
+                                                "edge colour is a core/outline mixture"
+                                            );
+                                        }
+                                        continue;
+                                    }
                                     assert!(
                                         color == SceneColor { r: 0, g: 0, b: 0 }
                                             || color
@@ -6060,7 +6473,11 @@ mod tests {
                             }
                             assert_eq!(
                                 spinners.slots.first().map(|slot| slot.offset),
-                                (state == AttentionState::Working).then_some(0)
+                                matches!(
+                                    state,
+                                    AttentionState::Working | AttentionState::Background
+                                )
+                                .then_some(0)
                             );
                         }
                     }
@@ -6113,86 +6530,78 @@ mod tests {
             (54.0, Backing::Surface(palette::BAR_BACKGROUND), 14.0),
             (12.0, Backing::BarPill(palette::TAB_SELECTED), 2.0),
         ] {
-            for state in [AttentionState::Working, AttentionState::Background] {
-                let badge = TabBadge {
-                    state,
-                    dimmed: false,
-                    rect: SceneRect {
-                        width: size,
-                        height: size,
-                        ..SceneRect::default()
-                    },
-                };
-                let mut batch = RectangleBatch::new(800, 600);
-                let mut spinners = Spinners::new(true, DEFAULT_FOCUS);
-                spinners.push_badge(badge, surface, &mut batch);
-                let x =
-                    |at| f32::from_ne_bytes(batch.bytes[at..at + 4].try_into().unwrap()) * 400.0;
-                assert!(
-                    (x(48) - x(0) - expected).abs() < 0.001,
-                    "size={size}, {surface:?}"
+            let badge = TabBadge {
+                state: AttentionState::Working,
+                dimmed: false,
+                rect: SceneRect {
+                    width: size,
+                    height: size,
+                    ..SceneRect::default()
+                },
+            };
+            let mut batch = RectangleBatch::new(800, 600);
+            let mut spinners = Spinners::new(true, DEFAULT_FOCUS);
+            spinners.push_badge(badge, surface, &mut batch);
+            let x = |at| f32::from_ne_bytes(batch.bytes[at..at + 4].try_into().unwrap()) * 400.0;
+            assert!(
+                (x(48) - x(0) - expected).abs() < 0.001,
+                "size={size}, {surface:?}"
+            );
+            let slot = &spinners.slots[0];
+            let mut visited = [false; 6];
+            let mut lit_bounds = [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ];
+            for phase in 0..SPINNER_FRAMES.len() {
+                let mut turned = RectangleBatch::new(800, 600);
+                push_badge_glyph(
+                    &mut turned,
+                    slot.badge,
+                    Some(phase),
+                    slot.color,
+                    slot.outline,
+                    slot.row,
                 );
-                if state == AttentionState::Background {
-                    assert!(spinners.slots.is_empty());
-                    continue;
+                assert_eq!(turned.bytes.len(), batch.bytes.len());
+                for (first, turned) in batch
+                    .bytes
+                    .chunks_exact(24)
+                    .zip(turned.bytes.chunks_exact(24))
+                {
+                    assert_eq!(first[..20], turned[..20], "ticks only change dot alpha");
                 }
-                let slot = &spinners.slots[0];
-                let mut visited = [false; 6];
-                let mut lit_bounds = [
-                    f32::INFINITY,
-                    f32::INFINITY,
-                    f32::NEG_INFINITY,
-                    f32::NEG_INFINITY,
-                ];
-                for phase in 0..SPINNER_FRAMES.len() {
-                    let mut turned = RectangleBatch::new(800, 600);
-                    push_badge_glyph(
-                        &mut turned,
-                        slot.badge,
-                        Some(phase),
-                        slot.color,
-                        slot.outline,
-                        slot.row,
-                    );
-                    assert_eq!(turned.bytes.len(), batch.bytes.len());
-                    for (first, turned) in batch
-                        .bytes
-                        .chunks_exact(24)
-                        .zip(turned.bytes.chunks_exact(24))
-                    {
-                        assert_eq!(first[..20], turned[..20], "ticks only change dot alpha");
+                for (index, dot) in turned.bytes.chunks_exact(24 * 6).enumerate() {
+                    if f32::from_ne_bytes(dot[20..24].try_into().unwrap()) == 0.0 {
+                        continue;
                     }
-                    for (index, dot) in turned.bytes.chunks_exact(24 * 6).enumerate() {
-                        if f32::from_ne_bytes(dot[20..24].try_into().unwrap()) == 0.0 {
-                            continue;
-                        }
-                        visited[index] = true;
-                        for vertex in dot.chunks_exact(24) {
-                            let x =
-                                (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 400.0;
-                            let y = (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
-                                * 300.0;
-                            lit_bounds[0] = lit_bounds[0].min(x);
-                            lit_bounds[1] = lit_bounds[1].min(y);
-                            lit_bounds[2] = lit_bounds[2].max(x);
-                            lit_bounds[3] = lit_bounds[3].max(y);
-                        }
+                    visited[index] = true;
+                    for vertex in dot.chunks_exact(24) {
+                        let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 400.0;
+                        let y =
+                            (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap())) * 300.0;
+                        lit_bounds[0] = lit_bounds[0].min(x);
+                        lit_bounds[1] = lit_bounds[1].min(y);
+                        lit_bounds[2] = lit_bounds[2].max(x);
+                        lit_bounds[3] = lit_bounds[3].max(y);
                     }
                 }
+            }
+            assert!(
+                visited.into_iter().all(|lit| lit),
+                "the cycle lights the complete grid"
+            );
+            for (low, high) in [
+                (lit_bounds[0], lit_bounds[2]),
+                (lit_bounds[1], lit_bounds[3]),
+            ] {
                 assert!(
-                    visited.into_iter().all(|lit| lit),
-                    "the cycle lights the complete grid"
+                    ((low + high) / 2.0 - size / 2.0).abs() < 0.501,
+                    "the animated grid stays centred, size={size}, {surface:?}"
                 );
-                for (low, high) in [
-                    (lit_bounds[0], lit_bounds[2]),
-                    (lit_bounds[1], lit_bounds[3]),
-                ] {
-                    assert!(
-                        ((low + high) / 2.0 - size / 2.0).abs() < 0.501,
-                        "the animated grid stays centred, size={size}, {surface:?}"
-                    );
-                    assert!(low >= -0.001 && high <= size + 0.001);
-                }
+                assert!(low >= -0.001 && high <= size + 0.001);
             }
         }
     }
@@ -6335,7 +6744,20 @@ mod tests {
                         .collect::<Vec<_>>();
                     assert!(!rects.is_empty());
                     if size >= 12.0 {
-                        assert!(rects.iter().any(|(_, color, a)| *color == core && *a > 0.0));
+                        if matches!(state, AttentionState::Idle | AttentionState::Background)
+                            && size < 20.0
+                        {
+                            assert!(
+                                rects
+                                    .iter()
+                                    .any(|(_, color, a)| *color != outline && *a > 0.0)
+                            );
+                        } else {
+                            assert!(
+                                rects.iter().any(|(_, color, a)| *color == core && *a > 0.0),
+                                "{state:?} size={size}"
+                            );
+                        }
                         assert!(
                             rects
                                 .iter()
@@ -6359,7 +6781,7 @@ mod tests {
                         && r.top >= 19.999
                         && r.right() <= 20.001 + size
                         && r.bottom() <= 20.001 + size
-                        && (*a == 0.0 || *a == 0.45)));
+                        && (0.0..=0.45).contains(a)));
                     // Every fragment belongs to exactly one core/contour rectangle: stale joins cannot brighten.
                     for y in 0..(size * 4.0) as u32 {
                         for x in 0..(size * 4.0) as u32 {
@@ -6743,6 +7165,154 @@ mod tests {
         }
     }
 
+    fn assert_production_badge_alpha(
+        batch: &RectangleBatch,
+        badge: TabBadge,
+        phase: Option<usize>,
+        row: bool,
+    ) {
+        let mut expected = RectangleBatch::new(batch.width, batch.height);
+        push_badge_glyph(&mut expected, badge, phase, DEFAULT_FOCUS, None, row);
+        let mut peaks = [0.0_f32; 3];
+        for quad in expected.bytes.chunks_exact(24 * 6) {
+            let actual = batch
+                .bytes
+                .chunks_exact(24 * 6)
+                .find(|actual| {
+                    actual
+                        .chunks_exact(24)
+                        .zip(quad.chunks_exact(24))
+                        .all(|(actual, expected)| {
+                            actual[..8] == expected[..8] && actual[20..24] == expected[20..24]
+                        })
+                })
+                .expect("production caller emits the badge geometry and phase alpha");
+            if badge.state == AttentionState::Background {
+                let x = (f32::from_ne_bytes(actual[..4].try_into().unwrap()) + 1.0)
+                    * batch.width as f32
+                    / 2.0;
+                let dot =
+                    (((x - badge.rect.left) / badge.rect.width * 3.0).floor() as usize).min(2);
+                let alpha = f32::from_ne_bytes(actual[20..24].try_into().unwrap());
+                peaks[dot] = peaks[dot].max(alpha);
+            }
+        }
+        if badge.state == AttentionState::Background {
+            if phase.is_none() {
+                assert_eq!(peaks, [1.0; 3], "static Background cores are all fully lit");
+            } else {
+                assert_eq!(peaks[0], 1.0);
+                assert!(
+                    peaks[1] < 1.0 && peaks[2] < 1.0,
+                    "enabled Background has staggered pulse alpha"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn production_tab_and_overflow_callers_keep_background_soft_and_animated() {
+        for scale in [1.0, 1.5, 2.0] {
+            let size = PhysicalSize::new((800.0 * scale) as u32, (600.0 * scale) as u32);
+            let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+            let mut renderer = Renderer::hosted(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                (size.width, size.height),
+                scale,
+                FontSetup::new(&FontSettings::default()).unwrap(),
+            )
+            .unwrap();
+            let metrics = renderer.metrics();
+            let mut snapshot = popup_sidebar_snapshot();
+            snapshot.sidebar = eon_workspace_protocol::v44::Sidebar::Closed;
+            let mut tab = snapshot.tabs.remove(0);
+            tab.popups.clear();
+            tab.attention_rollup = Some(AttentionState::Background);
+            tab.columns[0].panes[0].attention.as_mut().unwrap().state = AttentionState::Background;
+            for index in 1..=8 {
+                let mut tab = tab.clone();
+                tab.id = format!("t{index}");
+                tab.directory = format!("/tmp/a-long-agent-directory-{index}").into_bytes();
+                snapshot.tabs.push(tab);
+            }
+            let scene =
+                WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                    (text.into(), text.len() as f32 * metrics.width)
+                });
+            let tabs: Vec<_> = scene
+                .tabs
+                .iter()
+                .filter_map(|tab| tab.badge)
+                .filter(|badge| badge_inside(*badge, Some(scene.tab_viewport)))
+                .collect();
+            assert!(!tabs.is_empty());
+            assert!(!scene.edge_badges.is_empty());
+            for (adapter, animate, turning) in [
+                (wgpu::DeviceType::IntegratedGpu, true, true),
+                (wgpu::DeviceType::IntegratedGpu, false, false),
+                (wgpu::DeviceType::Cpu, true, false),
+            ] {
+                assert_eq!(spinners_turn(adapter, animate), turning);
+                renderer.spinners = Spinners::new(spinners_turn(adapter, animate), DEFAULT_FOCUS);
+                let mut batch = RectangleBatch::new(size.width, size.height);
+                let titles = renderer.workspace_title_tabs(&scene);
+                let panes = renderer.workspace_pane_tabs(&scene);
+                renderer.build_workspace(
+                    &scene,
+                    WorkspaceFocus::Terminal,
+                    &mut batch,
+                    &[],
+                    &titles,
+                    &panes,
+                );
+                assert_eq!(
+                    renderer.spinners.slots.len(),
+                    if turning {
+                        tabs.len() + scene.edge_badges.len()
+                    } else {
+                        0
+                    }
+                );
+                assert_eq!(renderer.spinning(), turning);
+                for badge in tabs.iter().chain(&scene.edge_badges) {
+                    assert_production_badge_alpha(&batch, *badge, turning.then_some(0), false);
+                    let Some(slot) = renderer
+                        .spinners
+                        .slots
+                        .iter()
+                        .find(|slot| slot.badge.rect == badge.rect)
+                    else {
+                        assert!(!turning);
+                        continue;
+                    };
+                    assert_eq!(slot.badge.state, AttentionState::Background);
+                    let bytes = &batch.bytes[slot.offset..slot.offset + slot.length];
+                    assert!(
+                        bytes.chunks_exact(24).any(|v| {
+                            let alpha = f32::from_ne_bytes(v[20..24].try_into().unwrap());
+                            alpha > 0.0 && alpha < tokens::BACKGROUND_PULSE_MIN_ALPHA
+                        }),
+                        "production tab/overflow has soft round edges"
+                    );
+                    for phase in 0..tokens::BACKGROUND_PULSE_FRAMES {
+                        let mut turned = RectangleBatch::new(size.width, size.height);
+                        push_badge_glyph(
+                            &mut turned,
+                            slot.badge,
+                            Some(phase),
+                            slot.color,
+                            slot.outline,
+                            slot.row,
+                        );
+                        assert_eq!(turned.bytes.len(), slot.length);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn sidebar_and_inbox_render_full_row_symbols_and_keep_text_positions() {
         for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
@@ -6762,6 +7332,9 @@ mod tests {
             for (app, id) in [("codex", CODEX_SYMBOL_ID), ("claude-code", CLAUDE_CODE_ID)] {
                 for (state, message) in [
                     (AttentionState::Working, ""),
+                    (AttentionState::Background, ""),
+                    (AttentionState::Idle, ""),
+                    (AttentionState::Unavailable, ""),
                     (AttentionState::NeedsInput, "Allow this action?"),
                 ] {
                     let mut snapshot = popup_sidebar_snapshot();
@@ -6797,84 +7370,95 @@ mod tests {
                         0.0,
                         1,
                     );
-                    for inbox_view in [false, true] {
-                        let row = if inbox_view {
-                            &inbox.attention_rows[0]
-                        } else {
-                            scene.sidebar_row("p1").unwrap()
-                        };
-                        renderer.text.clear();
-                        renderer.spinners = Spinners::new(true, DEFAULT_FOCUS);
-                        let mut batch = RectangleBatch::new(size.width, size.height);
-                        if inbox_view {
-                            renderer.build_dialog(&inbox, &mut batch);
-                        } else {
-                            let titles = renderer.workspace_title_tabs(&scene);
-                            let panes = renderer.workspace_pane_tabs(&scene);
-                            renderer.build_workspace(
-                                &scene,
-                                WorkspaceFocus::Terminal,
-                                &mut batch,
-                                &[],
-                                &titles,
-                                &panes,
-                            );
-                        }
-                        let marks: Vec<_> = renderer
-                            .text
-                            .iter()
-                            .filter(|text| {
-                                text.custom_glyph.as_ref().is_some_and(|glyph| {
-                                    matches!(glyph.id, CODEX_SYMBOL_ID | CLAUDE_CODE_ID)
+                    for (adapter, animate, turning) in [
+                        (wgpu::DeviceType::IntegratedGpu, true, true),
+                        (wgpu::DeviceType::IntegratedGpu, false, false),
+                        (wgpu::DeviceType::Cpu, true, false),
+                    ] {
+                        assert_eq!(spinners_turn(adapter, animate), turning);
+                        for inbox_view in [false, true] {
+                            let row = if inbox_view {
+                                &inbox.attention_rows[0]
+                            } else {
+                                scene.sidebar_row("p1").unwrap()
+                            };
+                            renderer.text.clear();
+                            renderer.spinners =
+                                Spinners::new(spinners_turn(adapter, animate), DEFAULT_FOCUS);
+                            let mut batch = RectangleBatch::new(size.width, size.height);
+                            if inbox_view {
+                                renderer.build_dialog(&inbox, &mut batch);
+                            } else {
+                                let titles = renderer.workspace_title_tabs(&scene);
+                                let panes = renderer.workspace_pane_tabs(&scene);
+                                renderer.build_workspace(
+                                    &scene,
+                                    WorkspaceFocus::Terminal,
+                                    &mut batch,
+                                    &[],
+                                    &titles,
+                                    &panes,
+                                );
+                            }
+                            let marks: Vec<_> = renderer
+                                .text
+                                .iter()
+                                .filter(|text| {
+                                    text.custom_glyph.as_ref().is_some_and(|glyph| {
+                                        matches!(glyph.id, CODEX_SYMBOL_ID | CLAUDE_CODE_ID)
+                                    })
                                 })
-                            })
-                            .collect();
-                        let [mark] = marks.as_slice() else {
-                            panic!("one row app mark expected")
-                        };
-                        let symbol = row.icon.unwrap().1;
-                        let glyph = mark.custom_glyph.as_ref().unwrap();
-                        assert_eq!(glyph.id, id);
-                        assert_eq!((mark.left, mark.top), (symbol.left, symbol.top));
-                        assert_eq!((glyph.width, glyph.height), (symbol.width, symbol.height));
-                        let mut expected = RectangleBatch::new(size.width, size.height);
-                        push_badge_glyph(
-                            &mut expected,
-                            row.glyph,
-                            Some(0),
-                            DEFAULT_FOCUS,
-                            None,
-                            true,
-                        );
-                        for quad in expected.bytes.chunks_exact(24 * 6) {
-                            assert!(
-                                batch.bytes.chunks_exact(24 * 6).any(|actual| {
-                                    actual
-                                        .chunks_exact(24)
-                                        .zip(quad.chunks_exact(24))
-                                        .all(|(actual, expected)| actual[..8] == expected[..8])
-                                }),
-                                "the production caller emits the scene's status geometry"
+                                .collect();
+                            let [mark] = marks.as_slice() else {
+                                panic!("one row app mark expected")
+                            };
+                            let symbol = row.icon.unwrap().1;
+                            let glyph = mark.custom_glyph.as_ref().unwrap();
+                            assert_eq!(glyph.id, id);
+                            assert_eq!((mark.left, mark.top), (symbol.left, symbol.top));
+                            assert_eq!((glyph.width, glyph.height), (symbol.width, symbol.height));
+                            assert_production_badge_alpha(
+                                &batch,
+                                row.glyph,
+                                turning.then_some(0),
+                                true,
                             );
-                        }
-                        let lines: Vec<_> = renderer
-                            .text
-                            .iter()
-                            .filter(|text| {
-                                text.custom_glyph.is_none()
-                                    && text.left == row.text_left
-                                    && text.top >= row.rect.top
-                                    && text.top < row.rect.bottom()
-                            })
-                            .collect();
-                        assert_eq!(lines.len(), if message.is_empty() { 2 } else { 3 });
-                        for (index, text) in lines.iter().enumerate() {
+                            let animated = turning
+                                && matches!(
+                                    state,
+                                    AttentionState::Working | AttentionState::Background
+                                );
                             assert_eq!(
-                                text.top,
-                                row.rect.top
-                                    + tokens::attention_row_gap(metrics) / 2.0
-                                    + metrics.height * index as f32
+                                renderer
+                                    .spinners
+                                    .slots
+                                    .iter()
+                                    .filter(|slot| slot.badge.rect == row.glyph.rect)
+                                    .count(),
+                                usize::from(animated)
                             );
+                            if !turning {
+                                assert!(!renderer.spinning());
+                            }
+                            let lines: Vec<_> = renderer
+                                .text
+                                .iter()
+                                .filter(|text| {
+                                    text.custom_glyph.is_none()
+                                        && text.left == row.text_left
+                                        && text.top >= row.rect.top
+                                        && text.top < row.rect.bottom()
+                                })
+                                .collect();
+                            assert_eq!(lines.len(), if message.is_empty() { 2 } else { 3 });
+                            for (index, text) in lines.iter().enumerate() {
+                                assert_eq!(
+                                    text.top,
+                                    row.rect.top
+                                        + tokens::attention_row_gap(metrics) / 2.0
+                                        + metrics.height * index as f32
+                                );
+                            }
                         }
                     }
                 }

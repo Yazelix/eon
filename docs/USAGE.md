@@ -847,10 +847,11 @@ the panes' rows in pane order. A row shows:
 
 - the state: ◆ needs input, ✕ error, ✓ finished, stepping braille dots while
   working (still without GPU rendering or with
-  `[session] animate_working_badge = false`), three still dots in a row while
+  `[session] animate_working_badge = false`), three gently pulsing round dots while
   the agent waits on background work (it reported done or idle while processes
   it started still run), or ○ idle; the dots take the window's focus colour
-  (`[terminal] focus_color`);
+  (`[terminal] focus_color`); the same animation-off setting keeps Background
+  dots steadily lit;
 - the Claude or Codex icon;
 - a Claude Code session's name, such as `eon-9a` for a session started
   with `claude --name eon-9a`; otherwise the title the agent reports, and

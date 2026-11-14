@@ -1142,7 +1142,7 @@ fn configuration_metadata() -> &'static [ConfigKey] {
             ConfigKey::new(
                 "session.animate_working_badge",
                 "boolean",
-                "Animate the working badge; false keeps it still.",
+                "Animate Working and Background badges; false keeps both still.",
                 &["next-window-presentation"],
             ),
             ConfigKey::new(

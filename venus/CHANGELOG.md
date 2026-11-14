@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C21/VEN-C30: Background attention uses a calm round-dot pulse on the shared
+  tick; Idle rings and Unavailable dots use anti-aliased round coverage. The
+  existing animation-off/CPU guards keep both animated states still
+  (`eon-sidebar-app-icons-y99b7.10`, delegated approval 2026-11-14).
+
 - VEN-C30: centre Agents sidebar and attention inbox status glyphs and app marks
   across the full row, enlarge their boxes, and use crisp direct-size Clawd/Codex rasters
   (`eon-sidebar-app-icons-y99b7.9`).

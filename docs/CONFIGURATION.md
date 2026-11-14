@@ -188,7 +188,7 @@ enabled = true # Enable this feature or popup.
 style = "random" # Startup animation style.
 
 [session]
-animate_working_badge = true # Animate the working badge; false keeps it still.
+animate_working_badge = true # Animate Working and Background badges; false keeps both still.
 number_keys = true # Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10; false leaves the keys to the terminal.
 warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
@@ -392,8 +392,9 @@ when pane frames are on, the current Agents row's outline, and the working and
 background dots of agent attention badges on tabs, in the agent sidebar and
 in the attention inbox. Each attention glyph starts in its state colour;
 working and background dots start in `focus_color`. Every glyph adapts only
-as far as needed for 3:1 against its surface, before stale dimming. Stale
-glyphs and outlines keep their intentional 0.45 alpha and may read below 3:1.
+as far as needed for 3:1 against its surface, before pulse opacity and stale
+dimming. Stale glyphs and outlines apply a 0.45 dimming multiplier after pulse
+opacity; either multiplier may reduce instantaneous contrast below 3:1.
 Badges draw no backing at any opacity. Bar corner badges retain contrast
 against both their pill and the surrounding bar; overflow badges use the
 visible tab fills beneath them. Under a translucent terminal background
@@ -685,11 +686,18 @@ ignored for 400 ms after the list first appears; this confirmation delay is
 fixed, a safety floor that keeps a key pressed before the list could be read
 from approving it.
 
-`animate_working_badge = true` steps the working attention badge, on tabs and
-in the agent sidebar, through the braille dots ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ten times a
-second. `false` keeps it still at ⠋, for people who prefer no motion. Without
-GPU rendering (a software graphics adapter) the badge is always still. The
-window reads the setting when it starts.
+`animate_working_badge = true` animates Working and Background attention badges
+on tabs, bar corners, sidebar and inbox rows. Working steps through the braille
+dots ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ten times a second. Background uses three round dots with a
+slower staggered pulse, repeating every three seconds between 0.65 and 1.0
+opacity. Idle keeps a hollow round ring; Unavailable keeps a round dot. Their
+edges use one-physical-pixel anti-aliased coverage.
+
+`false` keeps Working at ⠋ and Background's round dots steadily lit, for people
+who prefer no motion. A software (CPU) graphics adapter also keeps both still.
+The existing key retains its name and governs both attention animations; there
+is no second pulse switch. Cadence and pulse range stay fixed to bound wake cost
+and readability variants. The window reads the setting when it starts.
 
 `number_keys = true` makes Alt+Shift+1 through Alt+Shift+9 show the window's
 first through ninth session, in `eon session ls` order, and Alt+Shift+0 the

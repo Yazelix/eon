@@ -186,12 +186,12 @@ of first showing the close prompt (VEN-C8). The default is `true`. Missing,
 duplicate or invalid boolean values fail before window creation. Eon passes its
 `[session] warning_close_last_tab` setting on every workspace launch.
 
-Pass `--animate-working-badge false` to draw the working attention badge as the
-still braille frame ⠋ instead of stepping through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ at 10 Hz
-(VEN-C21). The default is `true`; a software (CPU) graphics adapter draws the
-badge still either way. Missing, duplicate or invalid boolean values fail
-before window creation. Eon passes its `[session] animate_working_badge`
-setting on every workspace launch.
+Pass `--animate-working-badge false` to keep the Working badge at the still braille
+frame ⠋ and Background's three round dots steadily lit (VEN-C21). With the default
+`true`, Working steps through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ at 10 Hz and Background pulses more slowly on
+the same tick. A software (CPU) graphics adapter keeps both still either way. Missing,
+duplicate or invalid boolean values fail before window creation. Eon passes its
+`[session] animate_working_badge` setting on every workspace launch.
 
 Pass `--number-keys false` to leave Alt+Shift+1 through Alt+Shift+9 and
 Alt+Shift+0 to the terminal instead of showing session positions 1 to 10
