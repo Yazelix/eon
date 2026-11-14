@@ -440,6 +440,7 @@ fn window_bar(
             widgets: Vec::new(),
             load: inputs.defaults.bar_load,
             disk_path: None,
+            gpu_interval_seconds: inputs.defaults.bar_gpu_interval_seconds,
         }),
     }
 }
@@ -554,6 +555,11 @@ fn venus_command(
                 .arg(load.cpu_temperature_warning_celsius.to_string())
                 .arg("--cpu-temperature-critical-celsius")
                 .arg(load.cpu_temperature_critical_celsius.to_string());
+        }
+        if shown("gpu") {
+            command
+                .arg("--gpu-interval-seconds")
+                .arg(bar.gpu_interval_seconds.to_string());
         }
         if shown("disk") {
             command
@@ -9289,6 +9295,22 @@ mod tests {
                 [expected]
             );
         }
+        fs::write(
+            root.join("config.toml"),
+            "[bar]\nwidgets = ['gpu']\ngpu_interval_seconds = 45\n",
+        )
+        .unwrap();
+        assert_eq!(
+            launch_input(&inputs, LaunchMode::Workspace, "--bar-item"),
+            ["gpu"]
+        );
+        assert_eq!(
+            launch_input(&inputs, LaunchMode::Workspace, "--gpu-interval-seconds"),
+            ["45"]
+        );
+        assert!(launch_input(&inputs, LaunchMode::Terminal, "--gpu-interval-seconds").is_empty());
+        fs::write(root.join("config.toml"), "[bar]\nwidgets = []\n").unwrap();
+        assert!(launch_input(&inputs, LaunchMode::Workspace, "--gpu-interval-seconds").is_empty());
         // Load levels and the disk path reach Venus with the chip they belong to, and never a
         // terminal window. `~` names the supervisor's HOME.
         let levels = |inputs: &crate::Inputs, mode| {
@@ -9394,7 +9416,10 @@ mod tests {
             launch_input(&inputs, LaunchMode::Workspace, "--bar-item"),
             ["ram", "clock"]
         );
-        for source in ["[bar]\nwidgets = ['gpu']\n", "[bar]\nwidgets = ['RAM']\n"] {
+        for source in [
+            "[bar]\nwidgets = ['future_gpu']\n",
+            "[bar]\nwidgets = ['RAM']\n",
+        ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert_eq!(
                 launch_input(&inputs, LaunchMode::Workspace, "--bar-item"),

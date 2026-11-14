@@ -52,6 +52,7 @@ pub(super) struct LaunchArguments {
     pub(super) eon_icon: Option<PathBuf>,
     pub(super) bar_items: Vec<BarItem>,
     pub(super) load_levels: LoadLevels,
+    pub(super) gpu_interval: Duration,
     /// The absolute path whose filesystem the disk chip measures: `--disk-path`, else an absolute
     /// HOME, else none.
     pub(super) disk_path: Option<PathBuf>,
@@ -94,6 +95,7 @@ pub(super) fn launch_arguments(
     let mut cpu_warning_percent = None;
     let mut cpu_critical_percent = None;
     let mut cpu_average_seconds = None;
+    let mut gpu_interval_seconds = None;
     let mut cpu_temperature_warning_celsius = None;
     let mut cpu_temperature_critical_celsius = None;
     let mut disk_notice_percent = None;
@@ -211,6 +213,11 @@ pub(super) fn launch_arguments(
             };
             option_value(temperature, arguments.next())?;
             if !temperature.is_some_and(|value| (30..=120).contains(&value)) {
+                return Err(USAGE.into());
+            }
+        } else if argument == "--gpu-interval-seconds" {
+            option_value(&mut gpu_interval_seconds, arguments.next())?;
+            if !gpu_interval_seconds.is_some_and(|seconds| (5..=3600).contains(&seconds)) {
                 return Err(USAGE.into());
             }
         } else if argument == "--cpu-average-seconds" {
@@ -386,6 +393,7 @@ pub(super) fn launch_arguments(
         .or(disk_critical_percent)
         .is_some()
         || cpu_average_seconds.is_some()
+        || gpu_interval_seconds.is_some()
         || disk_path.is_some();
     let defaults = LoadLevels::default();
     let percentages = |input: [Option<u8>; 3], defaults: [u8; 3]| -> Result<[u8; 3]> {
@@ -555,6 +563,7 @@ pub(super) fn launch_arguments(
         eon_icon,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
         load_levels,
+        gpu_interval: Duration::from_secs(gpu_interval_seconds.unwrap_or(30)),
         disk_path: disk_path.or_else(|| {
             env::var_os("HOME")
                 .map(PathBuf::from)
@@ -594,6 +603,7 @@ fn parse_bar_item(name: &str) -> Option<BarItem> {
         "cpu" => BarItem::Cpu,
         "ram" => BarItem::Ram,
         "disk" => BarItem::Disk,
+        "gpu" => BarItem::Gpu,
         "clock" => BarItem::Clock,
         "version" => BarItem::Version,
         _ => {
@@ -796,6 +806,45 @@ mod tests {
     }
 
     #[test]
+    fn gpu_interval_is_bounded_and_workspace_only() {
+        let parse =
+            |values: &[&str]| launch_arguments(values.iter().copied().map(OsString::from), None);
+        assert!(
+            !parse(&["--workspace", "eon.sock"])
+                .unwrap()
+                .bar_items
+                .contains(&BarItem::Gpu)
+        );
+        let gpu = parse(&[
+            "--bar-item",
+            "gpu",
+            "--gpu-interval-seconds",
+            "45",
+            "--workspace",
+            "eon.sock",
+        ])
+        .unwrap();
+        assert_eq!(gpu.bar_items, [BarItem::Gpu]);
+        assert_eq!(gpu.gpu_interval, Duration::from_secs(45));
+        for args in [
+            vec!["--gpu-interval-seconds", "4", "--workspace", "eon.sock"],
+            vec!["--gpu-interval-seconds", "3601", "--workspace", "eon.sock"],
+            vec!["--gpu-interval-seconds", "5.5", "--workspace", "eon.sock"],
+            vec![
+                "--gpu-interval-seconds",
+                "5",
+                "--gpu-interval-seconds",
+                "5",
+                "--workspace",
+                "eon.sock",
+            ],
+            vec!["--gpu-interval-seconds", "5", "orbit.sock"],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
     fn bar_items_are_an_ordered_workspace_choice() {
         let parse = |items: &[&str]| {
             launch_arguments(
@@ -831,7 +880,7 @@ mod tests {
             "codex_quota",
             "claude_quota",
             "google_quota",
-            "gpu",
+            "future_gpu",
             "CPU",
             "cpu,cpu",
             "cpu,",

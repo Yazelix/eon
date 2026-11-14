@@ -5099,12 +5099,18 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   (render source `f1e37f1a0107a1326e5fc68fe34f3b927371536b`).
   The same render source passed the two-run local Tier 2 render gate
   on 2026-11-14 (`eon-wuau8.8` proof).
+  Amended on 2026-11-14 (approved by eon-overseer under Lucca's delegation,
+  child bead comment at 04:24 UTC) by `eon-gpu-widget-eon-bar-ri16.1`: NVIDIA
+  `gpu` and active-gated shared query cadence. The 09:28 UTC
+  overseer decision makes GPU opt-in pending power proof (`eon-9wewk`). The 04:26 UTC
+  INBOX relay adds `gpu_interval_seconds` for NVIDIA's driver-specific idle
+  timer. **GPU amendment proof pending; existing proof does not cover it.**
 - **Consumer:** Full-Eon session users.
 - **Trigger:** A full-Eon window opens, reopens, or accepts an EON-C11 reload.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
   `codex_quota_5h`, `codex_quota_7d`,
   `claude_quota_5h`, `claude_quota_7d`, `claude_quota_scoped`, `cpu`, `ram`,
-  `disk`, `clock` and `version`. `_5h` and `_7d` select only unscoped five-hour and seven-day
+  `disk`, `gpu`, `clock` and `version`. `_5h` and `_7d` select only unscoped five-hour and seven-day
   windows, and `claude_quota_scoped` selects every model-scoped Claude window.
   The list also accepts `google_quota:<scope>:5h` and
   `google_quota:<scope>:7d`. Prefix and final suffix are literal; scope is
@@ -5122,7 +5128,8 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   places in the list. The
   quota widgets select Codex and Claude windows (EON-C27), `cpu`
   and `ram` the whole-machine CPU and memory use labels, `disk` the used
-  percentage of the filesystem holding the configured path, `clock` the local
+  percentage of the filesystem holding the configured path, `gpu` GPU
+  utilization sampled by Venus, `clock` the local
   24-hour clock, and `version` the read-only `EON` label of the supervisor
   serving the window, with an optional stage glyph before its version:
   `α` for alpha, `β` for beta, and no glyph for stable. The Eon icon at the bar's leading
@@ -5159,8 +5166,16 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   warning naming `bar.widgets`: `false` reads as the default list without
   `version`, `true` as the default list, and a `widgets` key set beside it
   wins.
+  `[bar] gpu_interval_seconds` sets the minimum time between NVIDIA GPU
+  queries across all NVIDIA devices and Eon windows (5 through 3600 whole
+  seconds), rotating one device per interval. GPU is opt-in; it does not join
+  the default list until power validation (`eon-9wewk`). The default is documented in
+  [Configuration](CONFIGURATION.md). A larger readable kernel autosuspend
+  delay extends this interval, with a one-second margin. These settings apply
+  when a window opens, reopens or accepts a reload.
 - **Important failures:** A repeated known name, a non-string entry, a
-  value that is not a list, a load level that is not a whole number in its
+  value that is not a list, a GPU query interval that is not a whole number
+  from 5 through 3600, a load level that is not a whole number in its
   range, explicitly inverted percentage levels, a critical temperature below
   its warning level, a `disk_path` other than
   `~`, a path starting with `~/` or an absolute path, or a `[bar] show_version`
@@ -5176,11 +5191,19 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   `ram` is listed, the CPU levels only when `cpu` is listed, and the disk
   levels and resolved path only when `disk` is listed. Venus owns placement,
   fitting, colour, hover and accessibility.
+  Venus owns GPU discovery, identity, sampling, validity, aggregation and
+  shared query throttling. Runtime resolves and forwards the configured
+  interval; it does not sample GPUs.
 - **Boundary:** No configurable hiding priority, live reload, settings UI,
   EONW change or platform expansion. Runtime reads a provider while at least
   one of its quota widgets is listed (EON-C27). Selection affects only
   presentation and its logo-room reservation; `eon session --json` retains
   every reported window.
+  Venus queries a GPU only when the kernel reports it runtime-active, and
+  spaces queries beyond its idle-suspend delay so its own queries cannot keep
+  it awake. A GPU that suspends between that check and the query may wake once
+  for one idle delay. GPU reading CLI/JSON parity is tracked by
+  `eon-agent-parity-a9g0.12`; this amendment adds no EONW change or CLI command.
 - **Selector/transport evidence (`eon-o9f3h.3`):** Runtime
   `google_quota_selector_boundaries`,
   `configuration_corpus_loads_from_the_migration_floor`,

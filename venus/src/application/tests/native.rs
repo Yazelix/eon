@@ -3401,3 +3401,29 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
     server.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn gpu_deadline_stops_when_occluded_and_refreshes_on_visibility() {
+    let now = Instant::now();
+    let mut next = Some(now - Duration::from_secs(1));
+    assert!(!gpu_reading_due(true, true, &mut next, now));
+    assert_eq!(next, None);
+    assert!(gpu_reading_due(true, false, &mut next, now));
+    assert_eq!(next, Some(now + READING_INTERVAL));
+    assert!(!gpu_reading_due(true, false, &mut next, now));
+    assert!(!gpu_reading_due(
+        true,
+        true,
+        &mut next,
+        now + Duration::from_secs(1)
+    ));
+    assert_eq!(next, None);
+    assert!(gpu_reading_due(
+        true,
+        false,
+        &mut next,
+        now + Duration::from_secs(1)
+    ));
+    assert!(!gpu_reading_due(false, false, &mut next, now));
+    assert_eq!(next, None);
+}

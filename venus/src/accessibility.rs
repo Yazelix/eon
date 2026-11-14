@@ -40,6 +40,7 @@ const SIDEBAR: NodeId = NodeId(18);
 const SIDEBAR_EMPTY_STATE: NodeId = NodeId(19);
 const WORKSPACE_LABEL: NodeId = NodeId(20);
 const DISK: NodeId = NodeId(21);
+const GPU: NodeId = NodeId(71);
 const HINT_PIECES: NodeId = NodeId(22);
 const WINDOW_MENU: NodeId = NodeId(64);
 const POPUP_HIDE: NodeId = NodeId(65);
@@ -486,6 +487,7 @@ impl Snapshot {
                         (CPU, &workspace.cpu),
                         (RAM, &workspace.ram),
                         (DISK, &workspace.disk),
+                        (GPU, &workspace.gpu),
                     ]
                     .into_iter()
                     .filter_map(|(id, label)| Some((label.as_ref()?.rect.left, id))),
@@ -647,6 +649,7 @@ impl Snapshot {
                 (CPU, &workspace.cpu),
                 (RAM, &workspace.ram),
                 (DISK, &workspace.disk),
+                (GPU, &workspace.gpu),
                 (CLOCK, &workspace.clock),
                 (VERSION, &workspace.version),
             ] {
@@ -2168,7 +2171,7 @@ mod tests {
     }
 
     #[test]
-    fn readings_yield_disk_first_and_have_no_actions() {
+    fn readings_yield_gpu_first_and_have_no_actions() {
         let cpu = crate::CpuUse::between(
             &crate::CpuTimes::parse(
                 "cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 0 0 0 0 0",
@@ -2184,6 +2187,21 @@ mod tests {
             crate::RamUse::parse("MemTotal: 32800000 kB\nMemAvailable: 18677760 kB\n").unwrap();
         let gib = 1 << 18;
         let disk = crate::DiskUse::of(1000 * gib, 200 * gib, 200 * gib, 4096, "/").unwrap();
+        let gpu = crate::GpuUse::of(vec![
+            crate::GpuDevice {
+                pci_bus_id: "0000:01:00.0".into(),
+                name: Some("NVIDIA RTX 3050".into()),
+                percent: Some(37),
+                status: crate::GpuStatus::Active,
+            },
+            crate::GpuDevice {
+                pci_bus_id: "0000:02:00.0".into(),
+                name: None,
+                percent: None,
+                status: crate::GpuStatus::Suspended,
+            },
+        ])
+        .unwrap();
         let clock = crate::LocalClock::new(
             &jiff::civil::date(2026, 10, 21)
                 .at(14, 5, 0, 0)
@@ -2233,33 +2251,38 @@ mod tests {
             sidebar: eon_workspace_protocol::v44::Sidebar::Open,
             attention_queue: Vec::new(),
         };
-        let project = |logical_width: u32, version, cpu, ram, disk, clock| {
-            WorkspaceScene::from_snapshot_with_bar(
-                &snapshot,
-                EonBar {
-                    version,
-                    cpu,
-                    ram,
-                    disk,
-                    clock,
-                    ..EonBar::default()
-                },
-                PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600),
-                metrics,
-                0.0,
-                0.0,
-                |_, text| {
-                    (
-                        text.to_owned(),
-                        text.chars().count() as f32 * 10.0 * metrics.scale,
-                    )
-                },
-                None,
-            )
-        };
+        let mut items = crate::BarItem::DEFAULT.to_vec();
+        items.insert(8, crate::BarItem::Gpu);
+        let project =
+            |logical_width: u32, version, cpu: Option<&crate::CpuUse>, ram, disk, clock| {
+                WorkspaceScene::from_snapshot_with_bar(
+                    &snapshot,
+                    EonBar {
+                        items: &items,
+                        version,
+                        cpu,
+                        ram,
+                        disk,
+                        gpu: cpu.map(|_| &gpu),
+                        clock,
+                        ..EonBar::default()
+                    },
+                    PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| {
+                        (
+                            text.to_owned(),
+                            text.chars().count() as f32 * 10.0 * metrics.scale,
+                        )
+                    },
+                    None,
+                )
+            };
         let full_quotas = project(3000, None, None, None, None, None).quotas;
         // Widths that show CPU use without RAM, RAM without disk, and every reading.
-        let mut partial = [false; 3];
+        let mut partial = [false; 4];
         for version in [None, Some("9.8.7")] {
             for logical_width in (100..=1600).step_by(5) {
                 let baseline = project(logical_width, version, None, None, None, None);
@@ -2279,6 +2302,7 @@ mod tests {
                 // then RAM and CPU use, before the quotas.
                 assert!(scene.clock.is_none());
                 assert!(scene.disk.is_none() || scene.ram.is_some());
+                assert!(scene.gpu.is_none() || scene.disk.is_some());
                 assert!(scene.ram.is_none() || scene.cpu.is_some());
                 let Some(shown_cpu) = &scene.cpu else {
                     assert!(logical_width < 1600, "a wide bar shows CPU use");
@@ -2286,7 +2310,8 @@ mod tests {
                 };
                 partial[0] |= scene.ram.is_none();
                 partial[1] |= scene.ram.is_some() && scene.disk.is_none();
-                partial[2] |= scene.disk.is_some();
+                partial[2] |= scene.disk.is_some() && scene.gpu.is_none();
+                partial[3] |= scene.gpu.is_some();
                 assert_eq!(scene.quotas.len(), full_quotas.len());
                 assert_eq!(scene.quotas[0].label, full_quotas[0].label);
                 // The version label sits in the shortcut hints, never the header.
@@ -2303,6 +2328,7 @@ mod tests {
                     (CPU, Some(shown_cpu)),
                     (RAM, scene.ram.as_ref()),
                     (DISK, scene.disk.as_ref()),
+                    (GPU, scene.gpu.as_ref()),
                 ]
                 .into_iter()
                 .filter_map(|(id, label)| Some((id, label?)))
@@ -2326,6 +2352,7 @@ mod tests {
                     (Some(shown_cpu), crate::WorkspaceHit::Cpu),
                     (scene.ram.as_ref(), crate::WorkspaceHit::Ram),
                     (scene.disk.as_ref(), crate::WorkspaceHit::Disk),
+                    (scene.gpu.as_ref(), crate::WorkspaceHit::Gpu),
                 ] {
                     let Some(label) = label else { continue };
                     assert_eq!(
@@ -2356,8 +2383,12 @@ mod tests {
                     ),
                     (RAM, "RAM use 43%, 13.5 GiB of 31.3 GiB"),
                     (DISK, "Disk use 80% of 1000.0 GiB on /, 200.0 GiB free"),
+                    (GPU, gpu.description.as_str()),
                 ] {
-                    if (id == RAM && scene.ram.is_none()) || (id == DISK && scene.disk.is_none()) {
+                    if (id == RAM && scene.ram.is_none())
+                        || (id == DISK && scene.disk.is_none())
+                        || (id == GPU && scene.gpu.is_none())
+                    {
                         continue;
                     }
                     let node = node(&tree, id);
@@ -2368,7 +2399,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(partial, [true; 3]);
+        assert_eq!(partial, [true; 4]);
     }
 
     #[test]
@@ -2453,6 +2484,7 @@ mod tests {
                     cpu: Some(&cpu),
                     ram: Some(&ram),
                     disk: None,
+                    gpu: None,
                     clock: Some(&clock),
                     workspace_picker: None,
                     ..EonBar::default()

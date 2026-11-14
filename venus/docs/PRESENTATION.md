@@ -157,6 +157,22 @@ order, selection, and popups; Venus draws the visible scene.
   omits the busiest line; an unavailable detail omits only that detail.
   Accessibility appends the same name, temperature, busiest CPU and load,
   separated by semicolons.
+- The opt-in GPU chip uses the bundled Symbols Nerd Font's expansion card
+  (`nf-md-expansion_card`, U+F08AE) and the existing compact percentage layout.
+  It shows the busiest available NVIDIA GPU on Linux, with every discovered
+  GPU's measured name, PCI address and reading in hover and accessibility.
+  A suspended NVIDIA GPU displays `0%` and `asleep, not queried`, with no actual
+  measurement. A missing or failed reading contributes no percentage; if no
+  valid or suspended NVIDIA GPU remains the chip is absent. Unsupported Intel
+  and AMD devices can appear in the hover but supply no utilization. The chip
+  has no actions and a neutral outline. It yields before disk, RAM and CPU
+  irrespective of configured display order. Eon's `gpu_interval_seconds`
+  controls a machine-wide vendor query cadence, rotating one NVIDIA device per
+  interval. Sysfs/cache refresh every two seconds keeps sleep status current
+  without a vendor query. Occluded windows stop scheduling these reads and
+  refresh when visible again, subject to the shared query interval. Sampling does not use Venus's
+  rendering adapter name. CLI/JSON parity for this sample belongs to
+  `eon-agent-parity-a9g0.12`.
 - The disk chip shows, as its icon and a percentage, the used share of the
   filesystem holding the path Eon's `[bar] disk_path` names, by default the
   home directory, as GNU df computes it from `statvfs` on Linux and macOS: used
@@ -238,11 +254,11 @@ order, selection, and popups; Venus draws the visible scene.
   of those durations, and `claude_quota_scoped` selects every model-scoped
   Claude window. Codex's 5h widget also shows its one blocked or unknown
   observation when no windows are available. A left-out
-  item has no chip, hover or accessible node, and a left-out CPU, RAM, disk or
+  item has no chip, hover or accessible node, and a left-out CPU, RAM, disk, GPU or
   clock is never read and never wakes Venus. Accessibility order follows the
   visual order, so screen readers meet the clock after the panes, before the
   hints. The header items use only spare drag-region space and keep its minimum.
-  Whatever the order, narrow windows hide disk, RAM and CPU, then whole quota
+  Whatever the order, narrow windows hide GPU, disk, RAM and CPU, then whole quota
   chips, the chip closest to the tabs first. Quota chips yield before the session
   label and the Window-menu icon; tabs retain their minimum area and trailing
   controls retain their room. The icon keeps its slot while tabs overflow and

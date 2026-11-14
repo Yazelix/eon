@@ -73,6 +73,7 @@ pub(crate) fn inputs() -> Inputs {
                 disk_warning_percent: 75,
                 disk_critical_percent: 90,
             },
+            bar_gpu_interval_seconds: 30,
             bar_disk_path: "~",
             shell: ShellConfig {
                 command: vec!["eon-nu".into()],

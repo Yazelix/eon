@@ -35,7 +35,9 @@ pub use scene::{
     window_summary, workspace_column_width, wrapped_lines,
 };
 pub(crate) use system::Load;
-pub use system::{CpuReadings, CpuTimes, CpuUse, DiskUse, LoadLevels, RamUse};
+pub use system::{
+    CpuReadings, CpuTimes, CpuUse, DiskUse, GpuDevice, GpuStatus, GpuUse, LoadLevels, RamUse,
+};
 pub use transport::{
     BenchTrace, Outgoing, SendError, Transport, TransportEvent, WorkspaceEvent, WorkspaceTransport,
     bench_trace, bench_tracing, frame_elapsed, frame_time, read_workspace_response,

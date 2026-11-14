@@ -405,7 +405,7 @@ fn config_schema_is_complete_offline_and_uses_config_cli_conventions() {
         .iter()
         .find(|key| key["path"] == "bar.widgets")
         .unwrap();
-    assert_eq!(widgets["choices"].as_array().unwrap().len(), 10);
+    assert_eq!(widgets["choices"].as_array().unwrap().len(), 11);
     assert_eq!(
         widgets["element_forms"],
         serde_json::json!([

@@ -19,6 +19,7 @@
       "disk_notice_percent": 60,
       "disk_path": "~",
       "disk_warning_percent": 75,
+      "gpu_interval_seconds": 30,
       "ram_critical_percent": 90,
       "ram_notice_percent": 60,
       "ram_warning_percent": 75,

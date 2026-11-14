@@ -1783,6 +1783,7 @@ fn cpu_ram_and_disk_share_three_inclusive_use_levels() {
                 cpu: Some(&cpu),
                 ram: Some(&ram),
                 disk: Some(&disk),
+                gpu: None,
                 ..EonBar::default()
             },
             PhysicalSize::new(3000, 600),
@@ -2537,6 +2538,7 @@ fn reading_slots_only_grow_and_reflow_at_one_hundred_percent() {
                         cpu: Some(&cpu),
                         ram: Some(&ram),
                         disk: Some(&disk),
+                        gpu: None,
                         ..EonBar::default()
                     },
                     PhysicalSize::new((logical_width as f64 * scale) as u32, 800),
@@ -3076,6 +3078,7 @@ fn a_full_bar_with_room_shows_the_icon() {
                 cpu: Some(&cpu),
                 ram: Some(&ram),
                 disk: Some(&disk),
+                gpu: None,
                 clock: Some(&clock),
                 ..EonBar::default()
             },
@@ -4131,4 +4134,59 @@ fn google_chip_truth_includes_old_reset_and_read_time() {
             }
         }
     }
+}
+
+#[test]
+fn gpu_yields_before_disk_in_reversed_display_order() {
+    let snapshot = one_pane_snapshot();
+    let cpu = crate::CpuUse {
+        percent: 12,
+        label: "CPU 12%".into(),
+        tooltip: "CPU".into(),
+        description: "CPU".into(),
+        load: Load::Normal,
+    };
+    let ram = crate::RamUse::parse("MemTotal: 1000 kB\nMemAvailable: 500 kB\n").unwrap();
+    let disk = crate::DiskUse::of(100, 50, 50, 4096, "/").unwrap();
+    let gpu = crate::GpuUse::of(vec![crate::GpuDevice {
+        pci_bus_id: "0000:01:00.0".into(),
+        name: Some("NVIDIA".into()),
+        percent: Some(100),
+        status: crate::GpuStatus::Active,
+    }])
+    .unwrap();
+    let mut saw_disk_without_gpu = false;
+    let mut saw_all = false;
+    for width in (100..=2400).step_by(5) {
+        let scene = WorkspaceScene::from_snapshot_with_bar(
+            &snapshot,
+            EonBar {
+                items: &[BarItem::Gpu, BarItem::Disk, BarItem::Ram, BarItem::Cpu],
+                cpu: Some(&cpu),
+                ram: Some(&ram),
+                disk: Some(&disk),
+                gpu: Some(&gpu),
+                ..EonBar::default()
+            },
+            PhysicalSize::new(width, 800),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+            None,
+        );
+        assert!(scene.gpu.is_none() || scene.disk.is_some());
+        assert!(scene.disk.is_none() || scene.ram.is_some());
+        assert!(scene.ram.is_none() || scene.cpu.is_some());
+        saw_disk_without_gpu |= scene.disk.is_some() && scene.gpu.is_none();
+        if let Some(gpu) = &scene.gpu {
+            saw_all = true;
+            assert_eq!(gpu.label, "\u{f08ae} 100%");
+            assert!(gpu.rect.right() <= scene.disk.as_ref().unwrap().rect.left);
+            assert!(
+                scene.disk.as_ref().unwrap().rect.right() <= scene.ram.as_ref().unwrap().rect.left
+            );
+        }
+    }
+    assert!(saw_disk_without_gpu && saw_all);
 }

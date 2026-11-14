@@ -130,6 +130,34 @@ native comparison: reuse measurement, row priority, hover and static AccessKit
 projection. Claude uses a plain C monogram, without copied brand artwork.
 Provider collection and freshness remain Runtime responsibilities.
 
+### NVIDIA utilization without continuous driver activity
+
+`eon-gpu-widget-eon-bar-ri16.1` inspects nvtop
+`406d6142d7ba216dde4ee81d4a6eddb8fa928b61`
+(`src/extract_gpuinfo_nvidia.c`), btop
+`5d03929a45e0720a4c8e2d189360ff1eb9ce1731`
+(`src/linux/btop_collect.cpp`), and Mission Center
+`039b19761dafccb74a205249ee1129d871f6196f`, whose magpie/gng owner is
+`19568ad9a2ec998b05f98b3b8f4766a6f22255db`
+(`platform-linux/src/gpus/mod.rs`) and pins nvtop to
+`71094a9f7dfbfe7cbe9faebfdf055e580a034283`. All three NVIDIA paths initialize
+NVML and acquire indexed device handles without a runtime-status gate.
+Keep independent validity and measured identity; reject their eager vendor
+enumeration and extra sensor/process queries. None proves a no-wake guarantee.
+
+Venus discovers PCI identity through sysfs and uses bounded per-PCI host-driver
+`nvidia-smi` queries instead of in-process dlopen NVML: no new ABI/unsafe code,
+process-isolated stalls, and no extra driver pin. NVIDIA documents that NVML
+PCI-handle acquisition initializes the target and can initialize an SLI peer;
+selecting a device is not an atomic skip-if-suspended operation. The accepted
+2026-11-14 overseer decision permits the check/query race, but requires active
+state immediately before query and enough time between queries to allow sleep.
+A shared runtime lock/cache prevents separate Venus windows from defeating the
+interval. A sleeping or unknown NVIDIA peer suppresses vendor initialization.
+`autosuspend_delay_ms` can return EIO on NVIDIA; Eon's configured interval then
+applies. Natural-use sysfs observation and installed keep-awake proof, recorded
+on the bead, remain necessary to validate the default on the actual driver.
+
 ### CPU and memory use
 
 `eon-cpu-widget-eon-bar-acxs` compares btop v1.4.7

@@ -603,6 +603,7 @@ fn content_cache_separates_generations_and_viewer_state() {
         cpu: None,
         ram: None,
         disk: None,
+        gpu: None,
         clock: None,
         quota_tooltips: Vec::new(),
         images: Vec::new(),

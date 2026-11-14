@@ -1,5 +1,5 @@
 use crate::{
-    CpuUse, DiskUse, Load, MAX_LINK_BYTES, RamUse,
+    CpuUse, DiskUse, GpuUse, Load, MAX_LINK_BYTES, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
     render::CellMetrics,
 };
@@ -794,6 +794,7 @@ pub enum BarItem {
     Cpu,
     Ram,
     Disk,
+    Gpu,
     Clock,
     Version,
 }
@@ -866,6 +867,7 @@ pub struct EonBar<'a> {
     pub cpu: Option<&'a CpuUse>,
     pub ram: Option<&'a RamUse>,
     pub disk: Option<&'a DiskUse>,
+    pub gpu: Option<&'a GpuUse>,
     pub clock: Option<&'a LocalClock>,
     /// The local wall-clock time the scene is built at, which places quota resets in local
     /// time; none when the local time zone is unknown.
@@ -885,6 +887,7 @@ impl Default for EonBar<'_> {
             cpu: None,
             ram: None,
             disk: None,
+            gpu: None,
             clock: None,
             now: None,
             workspace_picker: None,
@@ -926,6 +929,7 @@ pub enum WorkspaceHit<'a> {
     Cpu,
     Ram,
     Disk,
+    Gpu,
     Clock,
     Control(WorkspaceHeaderControl),
     Drag,
@@ -2502,6 +2506,7 @@ pub struct WorkspaceScene {
     pub(crate) cpu: Option<WorkspaceLabel>,
     pub(crate) ram: Option<WorkspaceLabel>,
     pub(crate) disk: Option<WorkspaceLabel>,
+    pub(crate) gpu: Option<WorkspaceLabel>,
     pub(crate) clock: Option<WorkspaceLabel>,
     pub(crate) controls: [WorkspaceControl; 3],
     pub hints: Option<ShortcutHintsScene>,
@@ -4060,7 +4065,7 @@ impl WorkspaceScene {
             - drag_region.left)
             .max(0.0);
         // Read-only labels take spare header space without shortening tabs, in this order, and
-        // stop at the first that does not fit: disk yields first, then RAM and CPU use. The
+        // stop at the first that does not fit: GPU yields first, then disk, RAM and CPU use. The
         // readings also need every quota chip shown.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| quotas.len() == quota_count && shown(item);
@@ -4093,6 +4098,15 @@ impl WorkspaceScene {
                     disk.description.clone(),
                     disk.load,
                     disk.percent,
+                )
+            }),
+            bar.gpu.filter(|_| reading(BarItem::Gpu)).map(|gpu| {
+                (
+                    gpu.label.clone(),
+                    gpu.tooltip.clone(),
+                    gpu.description.clone(),
+                    Load::Normal,
+                    gpu.percent,
                 )
             }),
         ]
@@ -4137,11 +4151,12 @@ impl WorkspaceScene {
         }
         // Quota chips and labels sit in Eon's order between the drag region and Shortcuts; the
         // clock and the version label sit at the ends of the shortcut hints instead.
-        let [cpu, ram, disk] = labels;
+        let [cpu, ram, disk, gpu] = labels;
         let mut labels = [
             (BarItem::Cpu, cpu),
             (BarItem::Ram, ram),
             (BarItem::Disk, disk),
+            (BarItem::Gpu, gpu),
         ];
         let mut left = drag_region.right();
         for item in bar.items {
@@ -4161,7 +4176,7 @@ impl WorkspaceScene {
                 }
             }
         }
-        let [(_, cpu), (_, ram), (_, disk)] = labels;
+        let [(_, cpu), (_, ram), (_, disk), (_, gpu)] = labels;
         // Shortcuts' target reaches back over that space, so it only grows.
         let grow = if spaced { before_shortcuts } else { 0.0 };
         controls[1].centre += left + grow - controls[1].rect.left;
@@ -4253,6 +4268,7 @@ impl WorkspaceScene {
                 cpu,
                 ram,
                 disk,
+                gpu,
                 clock,
                 controls,
                 hints,
@@ -4492,6 +4508,7 @@ impl WorkspaceScene {
             cpu,
             ram,
             disk,
+            gpu,
             clock,
             controls,
             hints,
@@ -4893,6 +4910,9 @@ impl WorkspaceScene {
         }
         if self.cpu.as_ref().is_some_and(|cpu| cpu.rect.contains(x, y)) {
             return Some(WorkspaceHit::Cpu);
+        }
+        if self.gpu.as_ref().is_some_and(|gpu| gpu.rect.contains(x, y)) {
+            return Some(WorkspaceHit::Gpu);
         }
         if self.ram.as_ref().is_some_and(|ram| ram.rect.contains(x, y)) {
             return Some(WorkspaceHit::Ram);

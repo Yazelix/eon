@@ -148,6 +148,7 @@ disk_critical_percent = 90 # Disk use from which the disk chip turns red.
 disk_notice_percent = 60 # Disk use from which the disk chip turns yellow.
 disk_path = "~" # Path whose filesystem the disk chip measures.
 disk_warning_percent = 75 # Disk use from which the disk chip turns orange.
+gpu_interval_seconds = 30 # Minimum seconds between NVIDIA GPU queries; a larger readable kernel autosuspend delay extends it.
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_notice_percent = 60 # RAM use from which the RAM chip turns yellow.
 ram_warning_percent = 75 # RAM use from which the RAM chip turns orange.
@@ -291,8 +292,8 @@ over it. v0.1.20 renamed `[workspace]` to `[session]` and
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
 right between the tabs and the Shortcuts button, except `clock` and `version`,
 which sit at the left and right ends of the bottom shortcut hints while they
-show, wherever they are in the list: the Codex and Claude quota chips, CPU, RAM
-and disk use, the local clock and the version label (`EON α0.1.24`,
+show, wherever they are in the list: the Codex and Claude quota chips, CPU, RAM,
+disk and NVIDIA GPU use, the local clock and the version label (`EON α0.1.24`,
 `EON β0.2.0`, or `EON 1.0.0`). The release stage is a fixed build identity,
 not a preference; omit `version` to hide the entire label. The Eon logo at the
 bar's left end is not a widget and shows whatever the list holds. Each name
@@ -302,7 +303,7 @@ list above. The list applies when a window next opens, reopens or reloads.
 It also accepts opt-in exact Google scope/window selectors for text chips.
 See [Agent quota](#agent-quota) for grammar and examples.
 Unknown names are ignored with a warning; repeated known names are a
-configuration error. Narrow windows hide disk, RAM and CPU, whatever the order,
+configuration error. Narrow windows hide GPU, disk, RAM and CPU, whatever the order,
 then quota chips one by one, the one closest to the tabs first. Quota chips
 yield before the session label and Eon icon, preserving room for the Window
 menu, the tabs' minimum area and trailing controls. Tabs can overflow and
@@ -314,7 +315,7 @@ and then the clock once the keycaps no longer fit beside them. The version
 belongs to its running supervisor; updating the installation does not change it.
 
 Header widgets and the session label use the unselected tab's filled capsule,
-without resting outlines. CPU, RAM and disk percentages share the interface
+without resting outlines. CPU, RAM, disk and GPU percentages share the interface
 font with tab labels and quota chips; each reserves its widest value through
 99%. Only 100% widens a chip by the extra digit and reflows it and the chips
 to its left. Falling below 100% shrinks that chip and reverses the reflow.
@@ -366,6 +367,36 @@ busiest logical CPU over the same 2 seconds (numbered from zero), and the
 coretemp’s Package id 0 or k10temp’s Tctl (Tdie when Tctl is unavailable),
 never from a board or ACPI zone. Missing details are omitted.
 See [Eon Bar](../venus/docs/PRESENTATION.md#eon-bar).
+
+The opt-in GPU chip (`gpu`, add it to your `[bar] widgets` list) shows the busiest NVIDIA
+GPU's utilization on Linux. Its expansion-card symbol is fixed by the bundled
+Symbols font. Hover and accessibility list every discovered GPU by its measured
+name and PCI address, with each reading or unavailable/unsupported status.
+A sleeping NVIDIA GPU shows `0%` with `asleep, not queried`; its actual sampled
+percentage is absent. Missing tools, permissions or failed readings contribute
+no value. Intel and AMD utilization are unsupported in this reader.
+
+`gpu_interval_seconds` (default 30; whole seconds from 5 through 3600) sets the
+minimum time between NVIDIA queries across every NVIDIA device and Eon window,
+measured from completion, including failed queries. Devices are queried in turn,
+one per interval; hover retains their most recent readings. The 30-second default is provisional: early power-state observations
+showed active-to-suspended windows of about 10.3 seconds, but the delay after
+other GPU work ends has not yet been isolated. Live sleep/default validation
+remains pending while other applications keep the GPU active. GPU is excluded
+from the default list until that proof is available (`eon-9wewk`). The largest
+readable kernel autosuspend delay among NVIDIA devices extends the interval by
+a one-second margin. The host driver's `nvidia-smi` must be available on PATH. Queries are
+PCI-specific, bounded to one second and 4 KiB output, and coordinated across
+Venus windows through a private runtime cache. There are no immediate retries. Occluded windows stop scheduling GPU reads;
+becoming visible refreshes immediately subject to the same shared interval.
+Only a currently runtime-active GPU is queried; a sleeping or unknown-state
+NVIDIA peer suppresses vendor queries too. A GPU that suspends in the gap
+between the check and query can wake for an extra idle delay. These settings
+apply on open, reopen or reload. GPU colour grades are not used: utilization
+alone is not evidence of thermal or memory pressure.
+
+GPU readings are not yet in `eon session --json`; shared CPU/RAM/disk/GPU data
+parity is tracked by `eon-agent-parity-a9g0.12`, without extra GPU queries.
 
 The disk chip shows how full the filesystem holding `disk_path` is, read every
 30 seconds: used space over used plus available space, rounded up as GNU df

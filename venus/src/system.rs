@@ -80,6 +80,469 @@ fn percent(part: u64, whole: u64) -> u64 {
     ((u128::from(part) * 200 + u128::from(whole)) / (u128::from(whole) * 2)) as u64
 }
 
+/// Symbols Nerd Font's expansion card, approved for the GPU chip.
+pub(crate) const GPU_ICON: char = '\u{f08ae}';
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GpuStatus {
+    Active,
+    Suspended,
+    Unavailable,
+    Unsupported,
+}
+
+/// Sampler identity and actual measurement, retained for the system-reading parity owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GpuDevice {
+    pub pci_bus_id: String,
+    pub name: Option<String>,
+    pub percent: Option<u64>,
+    pub status: GpuStatus,
+}
+
+/// The busiest available NVIDIA GPU; sleeping is displayed as zero, never measured as zero.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GpuUse {
+    pub devices: Vec<GpuDevice>,
+    pub(crate) percent: u64,
+    pub(crate) label: String,
+    pub(crate) tooltip: String,
+    pub(crate) description: String,
+}
+
+impl GpuUse {
+    const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+
+    /// Keeps brief lock contention from refitting the bar, while bounding a hung peer's stale value.
+    pub fn update(
+        current: &mut Option<Self>,
+        busy_since: &mut Option<Instant>,
+        reading: std::io::Result<Option<Self>>,
+        now: Instant,
+        poll_interval: Duration,
+    ) -> bool {
+        let reading = match reading {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let since = *busy_since.get_or_insert(now);
+                let budget = Self::QUERY_TIMEOUT + poll_interval;
+                if now.saturating_duration_since(since) < budget {
+                    return false;
+                }
+                None
+            }
+            reading => {
+                *busy_since = None;
+                reading.unwrap_or(None)
+            }
+        };
+        let changed = *current != reading;
+        *current = reading;
+        changed
+    }
+
+    pub fn read(interval: Duration) -> std::io::Result<Option<Self>> {
+        #[cfg(target_os = "linux")]
+        {
+            let cache = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .map(|path| path.join("eon-gpu-v1"))
+                .unwrap_or_default();
+            Self::read_in(
+                Path::new("/sys/bus/pci/devices"),
+                &cache,
+                interval,
+                &mut query_gpu,
+            )
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = interval;
+            Ok(None)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_in(
+        pci: &Path,
+        cache: &Path,
+        interval: Duration,
+        query: &mut impl FnMut(&str) -> Option<(u64, String)>,
+    ) -> std::io::Result<Option<Self>> {
+        use std::io::Read;
+        let mut devices = std::fs::read_dir(pci)?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let bdf = entry.file_name().into_string().ok()?;
+                (gpu_pci_id(&bdf).as_deref() == Some(bdf.as_str())).then_some(())?;
+                let path = entry.path();
+                let class = std::fs::read_to_string(path.join("class")).ok()?;
+                class.trim().starts_with("0x03").then_some(())?;
+                let vendor = std::fs::read_to_string(path.join("vendor")).ok()?;
+                let device = std::fs::read_to_string(path.join("device")).ok()?;
+                Some((bdf, vendor.trim() == "0x10de", device.trim().to_owned()))
+            })
+            .collect::<Vec<_>>();
+        devices.sort();
+        let mut contention = None;
+        let mut gate = match gpu_cache_lock(cache).transpose() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                contention = Some(error);
+                None
+            }
+            result => result?,
+        };
+        let wait = devices.iter().filter(|(_, nvidia, _)| *nvidia).fold(
+            gpu_interval(interval, None),
+            |wait, (bdf, _, _)| {
+                let delay =
+                    std::fs::read_to_string(pci.join(bdf).join("power/autosuspend_delay_ms")).ok();
+                wait.max(gpu_interval(interval, delay.as_deref()))
+            },
+        );
+        let mut last = Vec::new();
+        let ready = gate.as_mut().is_some_and(|file| {
+            // shortcut: wall-clock corrections can shorten one cooldown; use boot time if this affects sleep.
+            let ready = file.metadata().ok().is_some_and(|metadata| {
+                metadata.len() == 0
+                    || metadata
+                        .modified()
+                        .ok()
+                        .and_then(|time| time.elapsed().ok())
+                        .is_some_and(|age| age >= wait)
+            });
+            let _ = file.take(257).read_to_end(&mut last);
+            ready
+        });
+        let last = serde_json::from_slice::<serde_json::Value>(&last).ok();
+        let start = last
+            .as_ref()
+            .and_then(|value| value["last_gpu"].as_str())
+            .and_then(|last| devices.iter().position(|(bdf, _, _)| bdf == last))
+            .map_or(0, |index| index + 1);
+        let selected = devices
+            .iter()
+            .cycle()
+            .skip(start)
+            .take(devices.len())
+            .find(|(bdf, nvidia, _)| {
+                *nvidia
+                    && std::fs::read_to_string(pci.join(bdf).join("power/runtime_status"))
+                        .is_ok_and(|state| state.trim() == "active")
+            })
+            .map(|(bdf, _, _)| bdf.clone());
+        let mut active_waiting = false;
+        let mut rows = Vec::new();
+        for (bdf, nvidia, device_id) in &devices {
+            let path = pci.join(bdf);
+            let mut name = None;
+            let mut percent = None;
+            let mut status = if *nvidia {
+                GpuStatus::Unavailable
+            } else {
+                GpuStatus::Unsupported
+            };
+            if *nvidia {
+                let mut file = gate.as_ref().and_then(|_| gpu_cache_file(&cache.join(bdf)));
+                if let Some(file) = &mut file {
+                    let mut bytes = Vec::new();
+                    if file.take(4097).read_to_end(&mut bytes).is_ok()
+                        && bytes.len() <= 4096
+                        && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        && value["version"] == 1
+                        && value["pci_bus_id"].as_str() == Some(bdf)
+                        && value["device_id"].as_str() == Some(device_id)
+                    {
+                        name = value["name"]
+                            .as_str()
+                            .filter(|name| gpu_name(name))
+                            .map(str::to_owned);
+                        percent = value["percent"].as_u64().filter(|value| *value <= 100);
+                    }
+                }
+                let power = || std::fs::read_to_string(path.join("power/runtime_status")).ok();
+                match power().as_deref().map(str::trim) {
+                    Some("suspended") => {
+                        status = GpuStatus::Suspended;
+                        percent = None;
+                    }
+                    Some("active") => {
+                        active_waiting = true;
+                        if let Some(file) = &mut file {
+                            if ready && selected.as_ref() == Some(bdf) {
+                                percent = None;
+                                let pending = serde_json::json!({"version":1,"pci_bus_id":bdf,"device_id":device_id,"name":name,"percent":null});
+                                let marker = serde_json::json!({"version":1,"last_gpu":bdf});
+                                if gpu_cache_store(file, &pending).is_some()
+                                    && gate.as_mut().is_some_and(|gate| gpu_cache_store(gate, &marker).is_some())
+                                    // Vendor initialization can touch peers: guard every NVIDIA device.
+                                    && devices.iter().filter(|(_, nvidia, _)| *nvidia).all(|(id, _, _)| {
+                                        std::fs::read_to_string(pci.join(id).join("power/runtime_status"))
+                                            .is_ok_and(|state| state.trim() == "active")
+                                    })
+                                {
+                                    if let Some((use_percent, measured_name)) = query(bdf)
+                                        .filter(|(value, name)| *value <= 100 && gpu_name(name))
+                                    {
+                                        percent = Some(use_percent);
+                                        name = Some(measured_name);
+                                    }
+                                    let value = serde_json::json!({"version":1,"pci_bus_id":bdf,"device_id":device_id,"name":name,"percent":percent});
+                                    if gpu_cache_store(file, &value).is_none()
+                                        || !gate.as_mut().is_some_and(|gate| {
+                                            gpu_cache_store(gate, &marker).is_some()
+                                        })
+                                    {
+                                        percent = None;
+                                    }
+                                }
+                            }
+                            if percent.is_some() {
+                                status = GpuStatus::Active;
+                            }
+                        }
+                        // A suspend during a query never leaves a stale active percentage.
+                        if power().as_deref().map(str::trim) == Some("suspended") {
+                            percent = None;
+                            status = GpuStatus::Suspended;
+                        }
+                    }
+                    _ => {
+                        percent = None;
+                    }
+                }
+            }
+            rows.push(GpuDevice {
+                pci_bus_id: bdf.clone(),
+                name,
+                percent,
+                status,
+            });
+        }
+        let reading = Self::of(rows);
+        if reading.is_none()
+            && active_waiting
+            && let Some(error) = contention
+        {
+            return Err(error);
+        }
+        Ok(reading)
+    }
+
+    #[cfg_attr(
+        not(target_os = "linux"),
+        expect(dead_code, reason = "GPU sampling is Linux-only")
+    )]
+    pub(crate) fn of(devices: Vec<GpuDevice>) -> Option<Self> {
+        let percent = devices
+            .iter()
+            .filter_map(|gpu| {
+                if gpu.status == GpuStatus::Suspended {
+                    Some(0)
+                } else {
+                    gpu.percent
+                }
+            })
+            .max()?;
+        let facts = devices
+            .iter()
+            .map(|gpu| {
+                let name = gpu.name.as_deref().unwrap_or("GPU");
+                let value = match gpu.status {
+                    GpuStatus::Suspended => "asleep, not queried".into(),
+                    GpuStatus::Active => format!("{}%", gpu.percent?),
+                    GpuStatus::Unavailable => "unavailable".into(),
+                    GpuStatus::Unsupported => "unsupported".into(),
+                };
+                Some(format!("{name} · {}: {value}", gpu.pci_bus_id))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            percent,
+            label: format!("{GPU_ICON} {percent}%"),
+            tooltip: format!("GPU\n{}", facts.join("\n")),
+            description: format!("GPU use {percent}%; {}", facts.join("; ")),
+            devices,
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_interval(configured: Duration, delay: Option<&str>) -> Duration {
+    let delay = delay
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|milliseconds| {
+            Duration::from_millis(milliseconds).saturating_add(Duration::from_secs(1))
+        })
+        .unwrap_or_default();
+    configured.max(Duration::from_secs(5)).max(delay)
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_cache_store(file: &mut std::fs::File, value: &serde_json::Value) -> Option<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let bytes = value.to_string();
+    file.write_all(bytes.as_bytes()).ok()?;
+    file.set_len(bytes.len() as u64).ok()
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_cache_file(path: &Path) -> Option<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    (metadata.is_file()
+        && metadata.nlink() == 1
+        && metadata.mode() & 0o077 == 0
+        && metadata.uid() == std::fs::metadata("/proc/self").ok()?.uid())
+    .then_some(file)
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_cache_lock(cache: &Path) -> Option<std::io::Result<std::fs::File>> {
+    use std::os::unix::fs::DirBuilderExt;
+    if !cache.is_absolute() {
+        return None;
+    }
+    if !cache.exists() {
+        std::fs::DirBuilder::new().mode(0o700).create(cache).ok()?;
+    }
+    let metadata = std::fs::symlink_metadata(cache).ok()?;
+    if !metadata.is_dir()
+        || metadata.mode() & 0o077 != 0
+        || metadata.uid() != std::fs::metadata("/proc/self").ok()?.uid()
+    {
+        return None;
+    }
+    let lock = gpu_cache_file(&cache.join("query.lock"))?;
+    Some(
+        rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+            .map(|()| lock)
+            .map_err(Into::into),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 256 && !name.chars().any(char::is_control)
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_pci_id(value: &str) -> Option<String> {
+    let mut parts = value.split(':');
+    let domain = u16::from_str_radix(parts.next()?, 16).ok()?;
+    let bus = u8::from_str_radix(parts.next()?, 16).ok()?;
+    let (device, function) = parts.next()?.split_once('.')?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let device = u8::from_str_radix(device, 16).ok()?;
+    let function = u8::from_str_radix(function, 16).ok()?;
+    (device <= 31 && function <= 7)
+        .then(|| format!("{domain:04x}:{bus:02x}:{device:02x}.{function:x}"))
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_record(bdf: &str, bytes: &[u8]) -> Option<(u64, String)> {
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    if text.lines().count() != 1 {
+        return None;
+    }
+    let mut fields = text.splitn(3, ',');
+    (gpu_pci_id(fields.next()?.trim()).as_deref() == Some(bdf)).then_some(())?;
+    let percent = fields
+        .next()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value <= 100)?;
+    let name = fields.next()?.trim();
+    let name = if let Some(quoted) = name.strip_prefix('"') {
+        let quoted = quoted.strip_suffix('"')?;
+        if quoted.replace("\"\"", "").contains('"') {
+            return None;
+        }
+        quoted.replace("\"\"", "\"")
+    } else {
+        if name.contains('"') {
+            return None;
+        }
+        name.to_owned()
+    };
+    gpu_name(&name).then_some((percent, name))
+}
+
+#[cfg(target_os = "linux")]
+fn query_gpu(bdf: &str) -> Option<(u64, String)> {
+    let mut command = std::process::Command::new("nvidia-smi");
+    command.args([
+        &format!("--id={bdf}"),
+        "--query-gpu=pci.bus_id,utilization.gpu,name",
+        "--format=csv,noheader,nounits",
+    ]);
+    gpu_command_output(&mut command, GpuUse::QUERY_TIMEOUT)
+        .and_then(|bytes| gpu_record(bdf, &bytes))
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_command_output(command: &mut std::process::Command, timeout: Duration) -> Option<Vec<u8>> {
+    use std::{io::Read, process::Stdio};
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let result = (|| {
+        let mut stdout = child.stdout.take()?;
+        let flags = rustix::fs::fcntl_getfl(&stdout).ok()?;
+        rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).ok()?;
+        let mut output = Vec::new();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let mut buffer = [0; 1024];
+            loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        output.extend_from_slice(&buffer[..count]);
+                        if output.len() > 4096 {
+                            return None;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => return None,
+                }
+            }
+            if let Some(status) = child.try_wait().ok()? {
+                stdout
+                    .take(4097 - output.len() as u64)
+                    .read_to_end(&mut output)
+                    .ok()?;
+                return (status.success() && output.len() <= 4096).then_some(output);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    })();
+    // Never on the UI thread. An unreapable child retains the shared query lock.
+    let _ = child.kill();
+    let _ = child.wait();
+    result
+}
+
 /// Cumulative whole-machine CPU time since boot, in kernel ticks, and the logical CPUs online.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CpuTimes {
@@ -960,6 +1423,446 @@ mod host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    struct GpuFixture(PathBuf);
+
+    #[cfg(target_os = "linux")]
+    impl GpuFixture {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("venus-gpu-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("pci")).unwrap();
+            Self(root)
+        }
+        fn device(&self, bdf: &str, state: &str) {
+            let p = self.0.join("pci").join(bdf);
+            std::fs::create_dir_all(p.join("power")).unwrap();
+            for (file, value) in [
+                ("vendor", "0x10de"),
+                ("device", "0x25ec"),
+                ("class", "0x030000"),
+                ("power/runtime_status", state),
+                ("power/autosuspend_delay_ms", "1000"),
+            ] {
+                std::fs::write(p.join(file), value).unwrap();
+            }
+        }
+        fn read(&self, query: &mut impl FnMut(&str) -> Option<(u64, String)>) -> Option<GpuUse> {
+            GpuUse::read_in(
+                &self.0.join("pci"),
+                &self.0.join("cache"),
+                Duration::from_secs(5),
+                query,
+            )
+            .unwrap()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for GpuFixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_production_reader_never_queries_suspended_or_unknown_devices() {
+        let f = GpuFixture::new("power");
+        f.device("0000:01:00.0", "suspended");
+        let sleep = f.read(&mut |_| panic!("queried sleeping device")).unwrap();
+        assert_eq!(sleep.percent, 0);
+        assert!(sleep.tooltip.contains("asleep, not queried"));
+        assert!(sleep.description.contains("0000:01:00.0"));
+        for state in ["", "unknown", "suspending", "resuming", "unavailable"] {
+            f.device("0000:01:00.0", state);
+            assert!(f.read(&mut |_| panic!("queried {state}")).is_none());
+        }
+        f.device("0000:01:00.0", "active");
+        f.device("0000:02:00.0", "suspended");
+        assert!(
+            f.read(&mut |_| panic!("vendor init beside sleeping peer"))
+                .unwrap()
+                .tooltip
+                .contains("asleep")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_production_reader_aggregates_identity_and_shares_query_cooldown() {
+        let f = GpuFixture::new("identity");
+        f.device("0000:01:00.0", "active");
+        f.device("0000:02:00.0", "active");
+        f.read(&mut |bdf| Some((0, format!("GPU {bdf}")))).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(f.0.join("cache/query.lock"))
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::SystemTime::now() - Duration::from_secs(6)),
+            )
+            .unwrap();
+        let shown = f
+            .read(&mut |bdf| {
+                Some((
+                    if bdf == "0000:01:00.0" { 0 } else { 78 },
+                    format!("GPU {bdf}"),
+                ))
+            })
+            .unwrap();
+        assert_eq!(shown.percent, 78);
+        assert!(shown.tooltip.contains("GPU 0000:01:00.0"));
+        assert!(shown.tooltip.contains("GPU 0000:02:00.0"));
+        assert_eq!(
+            f.read(&mut |_| panic!("another window bypassed cooldown")),
+            Some(shown)
+        );
+        std::fs::write(f.0.join("pci/0000:01:00.0/device"), "0x9999").unwrap();
+        let replaced = f
+            .read(&mut |_| panic!("replacement bypassed cooldown"))
+            .unwrap();
+        assert_eq!(replaced.devices[0].name, None);
+        assert_eq!(replaced.devices[0].percent, None);
+        assert_eq!(replaced.percent, 78, "independent GPU remains valid");
+        f.device("0000:01:00.0", "suspended");
+        f.device("0000:02:00.0", "suspended");
+        assert_eq!(
+            f.read(&mut |_| panic!("queried asleep")).unwrap().percent,
+            0
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_busy_reader_keeps_the_chip_but_not_indefinitely_after_a_hang() {
+        let f = GpuFixture::new("busy-display");
+        f.device("0000:01:00.0", "active");
+        let previous = f.read(&mut |_| Some((37, "NVIDIA".into()))).unwrap();
+        let mut current = Some(previous.clone());
+        let mut busy_since = None;
+        let now = Instant::now();
+        let busy = || Err(std::io::Error::from(std::io::ErrorKind::WouldBlock));
+        assert!(!GpuUse::update(
+            &mut current,
+            &mut busy_since,
+            busy(),
+            now,
+            Duration::from_secs(2)
+        ));
+        assert_eq!(
+            current,
+            Some(previous.clone()),
+            "another window's query must not hide the chip"
+        );
+        assert!(!GpuUse::update(
+            &mut current,
+            &mut busy_since,
+            busy(),
+            now + Duration::from_secs(2),
+            Duration::from_secs(2)
+        ));
+        assert!(GpuUse::update(
+            &mut current,
+            &mut busy_since,
+            busy(),
+            now + Duration::from_secs(5),
+            Duration::from_secs(2)
+        ));
+        assert!(
+            current.is_none(),
+            "a hung peer cannot preserve a stale percentage forever"
+        );
+        assert!(GpuUse::update(
+            &mut current,
+            &mut busy_since,
+            Ok(Some(previous)),
+            now + Duration::from_secs(6),
+            Duration::from_secs(2)
+        ));
+        assert!(busy_since.is_none());
+        assert!(GpuUse::update(
+            &mut current,
+            &mut busy_since,
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            now + Duration::from_secs(7),
+            Duration::from_secs(2)
+        ));
+        assert!(current.is_none(), "actual failures clear the reading");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_vendor_cooldown_covers_every_adapter_and_rotates_queries() {
+        let f = GpuFixture::new("global-cooldown");
+        f.device("0000:01:00.0", "active");
+        f.device("0000:02:00.0", "active");
+        std::fs::write(
+            f.0.join("pci/0000:02:00.0/power/autosuspend_delay_ms"),
+            "12000",
+        )
+        .unwrap();
+        let mut calls = Vec::new();
+        let first = f
+            .read(&mut |bdf| {
+                calls.push(bdf.to_owned());
+                Some((37, bdf.into()))
+            })
+            .unwrap();
+        assert_eq!(
+            calls,
+            ["0000:01:00.0"],
+            "a second cold adapter must not bypass vendor cooldown"
+        );
+        assert_eq!(first.percent, 37);
+        let lock = std::fs::OpenOptions::new()
+            .write(true)
+            .open(f.0.join("cache/query.lock"))
+            .unwrap();
+        lock.set_times(
+            std::fs::FileTimes::new()
+                .set_modified(std::time::SystemTime::now() - Duration::from_secs(6)),
+        )
+        .unwrap();
+        f.read(&mut |_| panic!("queried before the largest peer delay elapsed"))
+            .unwrap();
+        lock.set_times(
+            std::fs::FileTimes::new()
+                .set_modified(std::time::SystemTime::now() - Duration::from_secs(14)),
+        )
+        .unwrap();
+        let second = f
+            .read(&mut |bdf| {
+                calls.push(bdf.to_owned());
+                Some((78, bdf.into()))
+            })
+            .unwrap();
+        assert_eq!(calls, ["0000:01:00.0", "0000:02:00.0"]);
+        assert_eq!(second.percent, 78);
+        f.read(&mut |_| panic!("another window bypassed global cooldown"))
+            .unwrap();
+        lock.set_times(
+            std::fs::FileTimes::new()
+                .set_modified(std::time::SystemTime::now() - Duration::from_secs(14)),
+        )
+        .unwrap();
+        let failed = f
+            .read(&mut |bdf| {
+                assert_eq!(bdf, "0000:01:00.0");
+                None
+            })
+            .unwrap();
+        assert_eq!(
+            failed.percent, 78,
+            "failed adapter must not erase its peer's last valid sample"
+        );
+        f.read(&mut |_| panic!("failed query did not consume global cooldown"))
+            .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_dispatch_rechecks_peers_and_keeps_partial_results() {
+        let f = GpuFixture::new("dispatch");
+        f.device("0000:01:00.0", "active");
+        f.device("0000:02:00.0", "active");
+        let mut calls = 0;
+        let shown = f
+            .read(&mut |bdf| {
+                assert_eq!(
+                    bdf, "0000:01:00.0",
+                    "queried a device suspended after discovery"
+                );
+                calls += 1;
+                f.device("0000:02:00.0", "suspended");
+                Some((37, "Measured NVIDIA".into()))
+            })
+            .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(shown.percent, 37);
+        assert!(shown.tooltip.contains("Measured NVIDIA"));
+        assert!(shown.tooltip.contains("asleep, not queried"));
+        assert_eq!(shown.devices[1].percent, None);
+        assert_eq!(shown.devices[1].status, GpuStatus::Suspended);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_queries_stop_extending_idle_after_foreign_load_stops() {
+        use std::{cell::Cell, fs::FileTimes, time::SystemTime};
+        let f = GpuFixture::new("idle");
+        let bdf = "0000:01:00.0";
+        f.device(bdf, "active");
+        std::fs::write(
+            f.0.join("pci").join(bdf).join("power/autosuspend_delay_ms"),
+            "unreadable",
+        )
+        .unwrap();
+        let now = Cell::new(0);
+        let touched = Cell::new(0);
+        let calls = Cell::new(0);
+        let mut query = |_: &str| {
+            touched.set(now.get());
+            calls.set(calls.get() + 1);
+            Some((23, "NVIDIA".into()))
+        };
+        let read = |query: &mut dyn FnMut(&str) -> Option<(u64, String)>| {
+            GpuUse::read_in(
+                &f.0.join("pci"),
+                &f.0.join("cache"),
+                Duration::from_secs(1),
+                &mut |bdf| query(bdf),
+            )
+            .unwrap()
+        };
+        read(&mut query).unwrap();
+        let cache = std::fs::OpenOptions::new()
+            .write(true)
+            .open(f.0.join("cache/query.lock"))
+            .unwrap();
+        // Fake driver: each vendor touch restarts a four-second idle timer.
+        for second in 1..=9 {
+            now.set(second);
+            let asleep = second - touched.get() >= 4;
+            f.device(bdf, if asleep { "suspended" } else { "active" });
+            std::fs::write(
+                f.0.join("pci").join(bdf).join("power/autosuspend_delay_ms"),
+                "unreadable",
+            )
+            .unwrap();
+            cache
+                .set_times(
+                    FileTimes::new().set_modified(
+                        SystemTime::now() - Duration::from_secs(second - touched.get()),
+                    ),
+                )
+                .unwrap();
+            let shown = read(&mut query).unwrap();
+            if asleep {
+                assert_eq!(shown.devices[0].status, GpuStatus::Suspended);
+            }
+        }
+        assert_eq!(
+            calls.get(),
+            1,
+            "an interval at/below idle delay keeps the GPU awake"
+        );
+        assert_eq!(
+            gpu_interval(Duration::from_secs(1), None),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            gpu_interval(Duration::from_secs(5), Some("12000")),
+            Duration::from_secs(13)
+        );
+        assert_eq!(
+            gpu_interval(Duration::from_secs(30), Some("-1")),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_failures_and_untrusted_cache_do_not_become_zero_or_bypass_cooldown() {
+        use std::os::unix::fs::symlink;
+        let f = GpuFixture::new("failure");
+        let bdf = "0000:01:00.0";
+        f.device(bdf, "active");
+        assert!(f.read(&mut |_| None).is_none());
+        assert!(
+            f.read(&mut |_| panic!("failed query retried inside cooldown"))
+                .is_none()
+        );
+        let cached = f.0.join("cache").join(bdf);
+        std::fs::write(&cached, "broken").unwrap();
+        assert!(
+            f.read(&mut |_| panic!("bad recent cache bypassed cooldown"))
+                .is_none()
+        );
+        let target = f.0.join("untouched");
+        std::fs::write(&target, "preserve").unwrap();
+        std::fs::remove_file(&cached).unwrap();
+        symlink(&target, &cached).unwrap();
+        assert!(
+            f.read(&mut |_| panic!("followed a cache symlink"))
+                .is_none()
+        );
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "preserve");
+        let _held = gpu_cache_lock(&f.0.join("cache")).unwrap().unwrap();
+        let busy = GpuUse::read_in(
+            &f.0.join("pci"),
+            &f.0.join("cache"),
+            Duration::from_secs(5),
+            &mut |_| panic!("overlapped another window's driver query"),
+        );
+        assert_eq!(busy.unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        f.device(bdf, "suspended");
+        let asleep = f
+            .read(&mut |_| panic!("query during lock contention"))
+            .unwrap();
+        assert_eq!(asleep.percent, 0);
+        assert_eq!(asleep.devices[0].status, GpuStatus::Suspended);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_records_reject_false_identity_invalid_percent_and_malformed_names() {
+        let bdf = "0000:01:00.0";
+        assert_eq!(
+            gpu_record(bdf, b"00000000:01:00.0, 0, NVIDIA RTX 3050\n"),
+            Some((0, "NVIDIA RTX 3050".into()))
+        );
+        assert_eq!(
+            gpu_record(bdf, b"00000000:01:00.0, 100, \"NVIDIA, card\"\n"),
+            Some((100, "NVIDIA, card".into()))
+        );
+        for value in ["-1", "101", "12.5", "NaN", "N/A", ""] {
+            assert!(
+                gpu_record(bdf, format!("{bdf}, {value}, NVIDIA").as_bytes()).is_none(),
+                "{value}"
+            );
+        }
+        for record in [
+            "0000:02:00.0, 55, NVIDIA",
+            "0000:01:00.0, 5, \"unclosed",
+            "0000:01:00.0, 5, A\tB",
+            "0000:01:00.0, 5, A\n0000:01:00.0, 8, B",
+        ] {
+            assert!(gpu_record(bdf, record.as_bytes()).is_none(), "{record}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_subprocess_failures_and_limits_are_bounded_without_hardware() {
+        use std::process::Command;
+        assert!(
+            gpu_command_output(
+                &mut Command::new("/no/such/nvidia-tool"),
+                Duration::from_millis(10)
+            )
+            .is_none()
+        );
+        for script in ["exit 1", "exec sleep 10", "head -c 5000 /dev/zero"] {
+            assert!(
+                gpu_command_output(
+                    Command::new("sh").args(["-c", script]),
+                    Duration::from_millis(20)
+                )
+                .is_none()
+            );
+        }
+        assert_eq!(
+            gpu_command_output(
+                Command::new("sh").args(["-c", "printf sample"]),
+                Duration::from_secs(1)
+            ),
+            Some(b"sample".to_vec())
+        );
+    }
 
     #[test]
     fn cpu_detail_parsers_reject_bad_readings() {

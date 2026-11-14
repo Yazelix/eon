@@ -9,6 +9,15 @@ installation, and proven contract changes.
   Unavailable dots have smooth anti-aliased edges. The attention animation-off
   switch keeps both Working and Background still (`eon-sidebar-app-icons-y99b7.10`).
 
+- The Eon Bar offers an opt-in Linux NVIDIA `gpu` chip: busiest utilization, every
+  device in hover/accessibility, and `0%` for sleeping GPUs without querying
+  them. Queries are runtime-active gated and coordinated across devices and windows;
+  `[bar] gpu_interval_seconds` controls their minimum interval (provisional default 30 s).
+  Occluded windows stop scheduling GPU reads. GPU stays out of the default
+  list pending live power validation (`eon-9wewk`).
+  A suspend between the check and query can add one idle delay. GPU data parity
+  is tracked by `eon-agent-parity-a9g0.12` (`eon-gpu-widget-eon-bar-ri16.1`).
+
 - Agents sidebar and attention inbox status glyphs and app marks are larger
   and vertically centred across the full row (`eon-sidebar-app-icons-y99b7.9`).
 - `default` keeps addressing the sole running default-namespace window after

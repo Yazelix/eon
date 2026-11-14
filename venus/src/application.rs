@@ -40,9 +40,9 @@ use winit::{
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, AttentionFilter, BarItem, BenchTrace, CellMetrics,
     CellText, ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
-    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, FrameTimings, HeaderText,
-    HeadingAction, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels, LocalClock,
-    LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor,
+    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, FrameTimings, GpuUse,
+    HeaderText, HeadingAction, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels,
+    LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor,
     PaneHeaderAction, PresentOutcome, RamUse, ReleaseStage, Renderer, Scene, SceneRect,
     SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction,
     WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
@@ -506,6 +506,7 @@ enum UserEvent {
     WindowCommandFailed(String),
     /// A disk reading taken off the event-loop thread, not yet rated.
     Disk(Option<DiskUse>),
+    Gpu(io::Result<Option<GpuUse>>),
 }
 
 impl From<AccessKitEvent> for UserEvent {
@@ -1332,6 +1333,7 @@ struct Application {
     eon_icon: Option<Arc<[u8]>>,
     bar_items: Vec<BarItem>,
     load_levels: LoadLevels,
+    gpu_interval: Duration,
     /// The absolute path whose filesystem the disk chip measures, if any.
     disk_path: Option<PathBuf>,
     background_opacity: f32,
@@ -1382,6 +1384,10 @@ struct Application {
     next_disk: Option<Instant>,
     /// Whether a disk reading is outstanding; while one is, due readings are skipped.
     disk_reading: bool,
+    gpu: Option<GpuUse>,
+    next_gpu: Option<Instant>,
+    gpu_reading: bool,
+    gpu_busy_since: Option<Instant>,
     window_focused: bool,
     /// Reports `window_focused` to a supervising Eon workspace (VEN-C14).
     focus_reporter: Option<FocusReporter>,
@@ -1445,6 +1451,7 @@ impl Application {
             eon_icon,
             bar_items,
             load_levels,
+            gpu_interval,
             disk_path,
             background_opacity,
             padding_color,
@@ -1491,6 +1498,7 @@ impl Application {
             eon_icon,
             bar_items,
             load_levels,
+            gpu_interval,
             disk_path,
             background_opacity,
             padding_color,
@@ -1523,6 +1531,10 @@ impl Application {
             disk: None,
             next_disk: None,
             disk_reading: false,
+            gpu: None,
+            next_gpu: None,
+            gpu_reading: false,
+            gpu_busy_since: None,
             next_animation: None,
             window_focused: false,
             focus_reporter: None,
@@ -1802,6 +1814,7 @@ impl Application {
                     cpu: self.cpu.as_ref(),
                     ram: self.ram.as_ref(),
                     disk: self.disk.as_ref(),
+                    gpu: self.gpu.as_ref(),
                     clock: self.clock.as_ref(),
                     now: now.as_ref(),
                     workspace_picker: picker.as_deref(),
@@ -2782,6 +2795,7 @@ impl Application {
                 cpu: self.cpu.as_ref(),
                 ram: self.ram.as_ref(),
                 disk: self.disk.as_ref(),
+                gpu: self.gpu.as_ref(),
                 clock: self.clock.as_ref(),
                 now: now.as_ref(),
                 workspace_picker: picker.as_deref(),
@@ -4044,6 +4058,20 @@ impl Application {
         self.disk_reading = result.is_ok();
         if result.is_err() {
             self.show_disk(None);
+        }
+    }
+
+    fn read_gpu(&mut self) {
+        let proxy = self.proxy.clone();
+        let interval = self.gpu_interval;
+        self.gpu_reading = thread::Builder::new()
+            .name("venus-gpu-reading".into())
+            .spawn(move || {
+                let _ = proxy.send_event(UserEvent::Gpu(GpuUse::read(interval)));
+            })
+            .is_ok();
+        if !self.gpu_reading && self.gpu.take().is_some() {
+            self.refresh_client_view();
         }
     }
 
@@ -5389,6 +5417,7 @@ impl Application {
         let hint_popup = self.hint_popup.popup(hint_group_hovered);
         let cpu_hovered = matches!(hovered_hit, Some(WorkspaceHit::Cpu));
         let ram_hovered = matches!(hovered_hit, Some(WorkspaceHit::Ram));
+        let gpu_hovered = matches!(hovered_hit, Some(WorkspaceHit::Gpu));
         let disk_hovered = matches!(hovered_hit, Some(WorkspaceHit::Disk));
         let clock_hovered = matches!(hovered_hit, Some(WorkspaceHit::Clock));
         let mut refresh = false;
@@ -5410,6 +5439,7 @@ impl Application {
         );
         state.renderer.set_cpu_hovered(cpu_hovered);
         state.renderer.set_ram_hovered(ram_hovered);
+        state.renderer.set_gpu_hovered(gpu_hovered);
         state.renderer.set_disk_hovered(disk_hovered);
         state.renderer.set_clock_hovered(clock_hovered);
         state
@@ -5728,6 +5758,7 @@ impl ApplicationHandler<UserEvent> for Application {
             }
             WindowEvent::Occluded(occluded) => {
                 self.window_occluded = occluded;
+                self.next_gpu = None;
                 self.next_animation = None;
                 self.terminal
                     .terminal_scroll
@@ -5870,6 +5901,7 @@ impl ApplicationHandler<UserEvent> for Application {
                                 | WorkspaceHit::Cpu
                                 | WorkspaceHit::Ram
                                 | WorkspaceHit::Disk
+                                | WorkspaceHit::Gpu
                                 | WorkspaceHit::Clock
                                 | WorkspaceHit::Control(_)
                                 | WorkspaceHit::HintGroup(_),
@@ -6178,6 +6210,7 @@ impl ApplicationHandler<UserEvent> for Application {
                             | WorkspaceHit::Cpu
                             | WorkspaceHit::Ram
                             | WorkspaceHit::Disk
+                            | WorkspaceHit::Gpu
                             | WorkspaceHit::Clock
                             | WorkspaceHit::HintGroup(_),
                         ) => None,
@@ -6336,6 +6369,18 @@ impl ApplicationHandler<UserEvent> for Application {
                     .model
                     .set_venus_notice(LocalNoticeSource::Input, detail);
                 self.refresh_client_view();
+            }
+            UserEvent::Gpu(gpu) => {
+                self.gpu_reading = false;
+                if GpuUse::update(
+                    &mut self.gpu,
+                    &mut self.gpu_busy_since,
+                    gpu,
+                    Instant::now(),
+                    READING_INTERVAL,
+                ) {
+                    self.refresh_client_view();
+                }
             }
             UserEvent::Disk(disk) => {
                 self.disk_reading = false;
@@ -6553,11 +6598,12 @@ impl ApplicationHandler<UserEvent> for Application {
         self.retry_column_views(now);
         // Items Eon leaves out of the bar are never read and never wake Venus.
         let shown = |item| self.bar_items.contains(&item);
-        let (show_clock, show_cpu, show_ram, show_disk) = (
+        let (show_clock, show_cpu, show_ram, show_disk, show_gpu) = (
             shown(BarItem::Clock),
             shown(BarItem::Cpu),
             shown(BarItem::Ram),
             shown(BarItem::Disk),
+            shown(BarItem::Gpu),
         );
         if self.workspace_model.snapshot().is_some()
             && show_clock
@@ -6607,6 +6653,22 @@ impl ApplicationHandler<UserEvent> for Application {
             self.next_disk = Some(now + DISK_INTERVAL);
             if !self.disk_reading {
                 self.read_disk();
+            }
+        }
+        if gpu_reading_due(
+            self.workspace_model.snapshot().is_some() && cfg!(target_os = "linux") && show_gpu,
+            self.window_occluded,
+            &mut self.next_gpu,
+            now,
+        ) {
+            // Only sysfs/cache are polled here; the shared query gate owns driver cadence.
+            if self.gpu_reading {
+                // A hung driver child cannot leave an old reading visible or start another child.
+                if self.gpu.take().is_some() {
+                    self.refresh_client_view();
+                }
+            } else {
+                self.read_gpu();
             }
         }
         if self.next_age.is_some_and(|due| now >= due) {
@@ -6669,6 +6731,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.next_age,
                 self.next_reading,
                 self.next_disk,
+                self.next_gpu,
                 next_marker.filter(|due| *due > now),
                 self.terminal.selection_scroll.next,
                 self.terminal.terminal_scroll.preview_retry_at(),
@@ -6697,6 +6760,24 @@ impl ApplicationHandler<UserEvent> for Application {
 /// The local wall-clock time, or none rather than UTC when the local time zone is unknown.
 fn local_now() -> Option<jiff::Zoned> {
     Some(jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::try_system().ok()?))
+}
+
+fn gpu_reading_due(
+    selected: bool,
+    occluded: bool,
+    next: &mut Option<Instant>,
+    now: Instant,
+) -> bool {
+    if !selected || occluded {
+        *next = None;
+        return false;
+    }
+    if next.is_none_or(|due| now >= due) {
+        *next = Some(now + READING_INTERVAL);
+        true
+    } else {
+        false
+    }
 }
 
 /// Reads the local wall clock and the wait until its next minute. An unknown local time zone

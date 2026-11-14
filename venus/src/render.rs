@@ -635,12 +635,13 @@ struct ContentKey {
     scrollback_label: Option<String>,
     /// The whole dialog, since its rows and kind change without a new generation.
     dialog: Option<DialogScene>,
-    /// CPU, RAM and disk use and the clock change without a new presentation generation. The
+    /// CPU, RAM, disk and GPU use and the clock change without a new presentation generation. The
     /// readings key on their accessible descriptions, which hold both the use the label shows and
     /// every fact the hover lists.
     cpu: Option<String>,
     ram: Option<String>,
     disk: Option<String>,
+    gpu: Option<String>,
     clock: Option<String>,
     /// Quota hovers name resets against the local day, which turns without a new generation.
     quota_tooltips: Vec<String>,
@@ -2412,6 +2413,9 @@ impl Renderer {
             disk: workspace
                 .and_then(|workspace| workspace.disk.as_ref())
                 .map(|disk| disk.description.clone()),
+            gpu: workspace
+                .and_then(|workspace| workspace.gpu.as_ref())
+                .map(|gpu| gpu.description.clone()),
             clock: workspace
                 .and_then(|workspace| workspace.clock.as_ref())
                 .map(|clock| clock.label.clone()),

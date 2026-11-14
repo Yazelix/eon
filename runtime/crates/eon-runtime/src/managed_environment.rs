@@ -175,6 +175,8 @@ pub struct Defaults {
     pub bar_widgets: &'static [&'static str],
     /// When the Eon Bar's CPU, RAM and disk chips colour, and the CPU hover's averaging window.
     pub bar_load: BarLoad,
+    /// Minimum interval between NVIDIA queries, including across windows.
+    pub bar_gpu_interval_seconds: u16,
     /// The path whose filesystem the Eon Bar's disk chip measures: absolute, `~` or `~/...`.
     pub bar_disk_path: &'static str,
     pub shell: ShellConfig,
@@ -251,6 +253,7 @@ pub(crate) struct Bar {
     /// The absolute path the disk chip measures; none when `~` names a HOME that is unset or
     /// relative, so the chip has no reading.
     pub(crate) disk_path: Option<PathBuf>,
+    pub(crate) gpu_interval_seconds: u16,
 }
 
 #[cfg(test)]
@@ -260,6 +263,7 @@ impl Defaults {
         Bar {
             widgets: self.bar_widgets.iter().map(|name| (*name).into()).collect(),
             load: self.bar_load,
+            gpu_interval_seconds: self.bar_gpu_interval_seconds,
             disk_path: disk_path(self.bar_disk_path, nonempty_environment_path("HOME")).unwrap(),
         }
     }
@@ -268,6 +272,7 @@ impl Defaults {
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct BarSettings {
+    gpu_interval_seconds: Option<u64>,
     widgets: Option<Vec<String>>,
     ram_notice_percent: Option<u64>,
     ram_warning_percent: Option<u64>,
@@ -286,7 +291,7 @@ struct BarSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-const BAR_WIDGETS: [&str; 10] = [
+const BAR_WIDGETS: [&str; 11] = [
     "codex_quota_5h",
     "codex_quota_7d",
     "claude_quota_5h",
@@ -295,6 +300,7 @@ const BAR_WIDGETS: [&str; 10] = [
     "cpu",
     "ram",
     "disk",
+    "gpu",
     "clock",
     "version",
 ];
@@ -499,6 +505,15 @@ fn resolve_bar(settings: BarSettings, defaults: &Defaults) -> Result<Bar, String
         disk_warning_percent,
         disk_critical_percent,
     };
+    let gpu_interval_seconds =
+        settings
+            .gpu_interval_seconds
+            .map_or(Ok(defaults.bar_gpu_interval_seconds), |value| {
+                u16::try_from(value)
+                    .ok()
+                    .filter(|value| (5..=3600).contains(value))
+                    .ok_or("bar.gpu_interval_seconds must be from 5 through 3600")
+            })?;
     let Some(names) = settings.widgets else {
         return Ok(Bar {
             widgets: defaults
@@ -507,6 +522,7 @@ fn resolve_bar(settings: BarSettings, defaults: &Defaults) -> Result<Bar, String
                 .map(|name| (*name).into())
                 .collect(),
             load,
+            gpu_interval_seconds,
             disk_path,
         });
     };
@@ -523,6 +539,7 @@ fn resolve_bar(settings: BarSettings, defaults: &Defaults) -> Result<Bar, String
     Ok(Bar {
         widgets,
         load,
+        gpu_interval_seconds,
         disk_path,
     })
 }
@@ -946,6 +963,13 @@ fn configuration_metadata() -> &'static [ConfigKey] {
                 &["next-window-presentation"],
             )
             .rules(&["Absolute path, ~ or ~/...; an unset/relative HOME leaves ~ paths without a reading."]),
+            ConfigKey::new(
+                "bar.gpu_interval_seconds",
+                "integer",
+                "Minimum seconds between NVIDIA GPU queries; a larger readable kernel autosuspend delay extends it.",
+                &["next-window-presentation"],
+            )
+            .bounds(json!({"minimum":5,"maximum":3600})),
             ConfigKey::new(
                 "bar.widgets",
                 "string-array",
@@ -1451,6 +1475,7 @@ fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String>
             unknown: BTreeMap::new(),
         },
         bar: BarSettings {
+            gpu_interval_seconds: Some(u64::from(defaults.bar_gpu_interval_seconds)),
             widgets: Some(
                 defaults
                     .bar_widgets
@@ -4165,6 +4190,7 @@ mod tests {
                     .into_boxed_slice(),
             ),
             bar_load: bar.load,
+            bar_gpu_interval_seconds: bar.gpu_interval_seconds,
             // The configured path, as `eon config defaults` prints it, not its expansion.
             bar_disk_path: super::read_config(root, defaults, None)?
                 .bar
@@ -4507,6 +4533,35 @@ nested = { value = true }
             "{logged}"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn gpu_selection_and_interval_are_resolved_with_bar_settings() {
+        let defaults = crate::fixtures::inputs().defaults;
+        let resolve = |source: &str| -> Result<super::Bar, String> {
+            let settings = toml::from_str(source).map_err(|error| error.to_string())?;
+            super::resolve_bar(settings, &defaults)
+        };
+        let bar = resolve("widgets = ['gpu']\ngpu_interval_seconds = 5").unwrap();
+        assert_eq!(bar.widgets, ["gpu"]);
+        assert_eq!(bar.gpu_interval_seconds, 5);
+        assert!(
+            !resolve("")
+                .unwrap()
+                .widgets
+                .iter()
+                .any(|widget| widget == "gpu")
+        );
+        assert!(resolve("widgets = []").unwrap().widgets.is_empty());
+        for source in [
+            "gpu_interval_seconds = 4",
+            "gpu_interval_seconds = 3601",
+            "gpu_interval_seconds = -1",
+            "gpu_interval_seconds = 5.5",
+            "widgets = ['gpu', 'gpu']",
+        ] {
+            assert!(resolve(source).is_err(), "{source}");
+        }
     }
 
     #[test]

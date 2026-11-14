@@ -96,7 +96,7 @@ which Eon Bar items show and in what order
 ([Eon Bar](PRESENTATION.md#eon-bar)). Each pair carries one whole name;
 commas and colons are never list separators. Fixed names are
 `codex_quota_5h`, `codex_quota_7d`, `claude_quota_5h`, `claude_quota_7d`,
-`claude_quota_scoped`, `cpu`, `ram`, `disk`, `clock` and `version`.
+`claude_quota_scoped`, `cpu`, `ram`, `disk`, `gpu`, `clock` and `version`.
 Google selectors are `google_quota:<scope>:5h` and `google_quota:<scope>:7d`:
 separate the final suffix at the last colon. Scope is exact, nonempty,
 control-free and at most 32 UTF-8 bytes. For example,
@@ -105,7 +105,8 @@ Each Google selector shows its matching active model-group window as a Google
 text chip; an unreported window shows nothing.
 There is no bare provider alias.
 
-With neither input, Venus uses all ten fixed items in the order above.
+With neither input, Venus uses the ten fixed items other than opt-in `gpu`
+in the order above.
 `--bar-empty` is a valueless marker for an explicitly empty list. It cannot
 repeat or appear beside any `--bar-item`, in either order. Both inputs are
 workspace-only. A missing, empty, non-UTF-8, unknown or repeated item fails
@@ -132,6 +133,13 @@ They colour the CPU chip only with a supported Linux CPU sensor; the stronger
 utilization or temperature colour wins. These inputs are workspace-only;
 missing, out-of-range, explicitly inverted or repeated values fail before window
 creation. Eon owns the `[bar]` settings.
+
+With `gpu` Eon passes `--gpu-interval-seconds N`, a whole number from 5 through
+3600 (omission defaults to 30). It is workspace-only and cannot repeat. Venus
+uses the larger of that interval and a readable kernel autosuspend delay plus
+one second, coordinated across windows. NVIDIA sampling is Linux-only; other
+platforms have no GPU reading. This flag adds no headless mode or EONW field;
+`eon-agent-parity-a9g0.12` owns publishing the displayed sample to agents.
 
 With `disk` Eon may also pass `--disk-path PATH`, the path whose filesystem it
 measures. The path must be absolute, since Eon expands `~` from HOME, and may

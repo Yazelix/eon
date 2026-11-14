@@ -376,6 +376,7 @@ pub(super) struct HeaderInteraction {
     cpu_hovered: bool,
     ram_hovered: bool,
     disk_hovered: bool,
+    gpu_hovered: bool,
     clock_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
     pub(super) pressed_pane: Option<(String, crate::PaneHeaderAction)>,
@@ -2356,6 +2357,10 @@ impl Renderer {
         self.header.ram_hovered = hovered;
     }
 
+    pub fn set_gpu_hovered(&mut self, hovered: bool) {
+        self.header.gpu_hovered = hovered;
+    }
+
     pub fn set_disk_hovered(&mut self, hovered: bool) {
         self.header.disk_hovered = hovered;
     }
@@ -2619,6 +2624,10 @@ impl Renderer {
             && let Some(ram) = &workspace.ram
         {
             (ram.tooltip.as_str(), ram.rect)
+        } else if self.header.gpu_hovered
+            && let Some(gpu) = &workspace.gpu
+        {
+            (gpu.tooltip.as_str(), gpu.rect)
         } else if self.header.disk_hovered
             && let Some(disk) = &workspace.disk
         {
@@ -3440,7 +3449,12 @@ impl Renderer {
                 quota.rect,
             );
         }
-        for label in [&workspace.cpu, &workspace.ram, &workspace.disk] {
+        for label in [
+            &workspace.cpu,
+            &workspace.ram,
+            &workspace.disk,
+            &workspace.gpu,
+        ] {
             let Some(label) = label else {
                 continue;
             };
@@ -7760,6 +7774,7 @@ mod tests {
                         crate::system::CPU_ICON,
                         crate::system::RAM_ICON,
                         crate::system::DISK_ICON,
+                        crate::system::GPU_ICON,
                     ] {
                         let buffer = shape_styled_text(
                             &mut fonts.font_system,
@@ -7805,6 +7820,7 @@ mod tests {
                     crate::system::CPU_ICON,
                     crate::system::RAM_ICON,
                     crate::system::DISK_ICON,
+                    crate::system::GPU_ICON,
                 ] {
                     let buffer = shape_styled_text(
                         &mut fonts,
@@ -8035,6 +8051,7 @@ mod tests {
                             cpu: Some(&cpu),
                             ram: Some(&ram),
                             disk: Some(&disk),
+                            gpu: None,
                             ..EonBar::default()
                         },
                         size,

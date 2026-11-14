@@ -514,7 +514,7 @@ Readings say `old` once they are more than an hour old and disappear after 24
 hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
-After the quota chips come three readings, each an icon and a percentage such
+After the quota chips come CPU, RAM and disk readings, each an icon and a percentage such
 as `12%`: a processor chip shows whole-machine CPU use over the last 2 seconds,
 a memory stick whole-machine memory in use, and a drive how full the filesystem
 holding your home directory is, refreshed every 30 seconds; hover them for
@@ -525,6 +525,17 @@ Their capsule outlines turn yellow from 60%,
 orange from 75% and red from 90% use by default, at
 the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
 chooses the path the disk chip measures.
+Add `gpu` to `[bar] widgets` to show the expansion-card chip with the busiest
+NVIDIA GPU's use on Linux; hover
+and accessibility list every GPU by measured name and PCI address. Sleeping
+NVIDIA GPUs show `0%` and `asleep, not queried`. Missing or failed readings
+are absent. NVIDIA sampling uses the host driver's `nvidia-smi`, only for
+runtime-active devices, with a machine-wide query interval (provisional default 30 seconds).
+GPU is opt-in while live sleep/default validation remains pending (`eon-9wewk`).
+The GPU chip hides before the other system readings when space runs out.
+See [GPU settings](CONFIGURATION.md#configuration-behavior) for bounds and the
+check/query race. GPU data in `eon session --json` is pending with the other
+system readings in `eon-agent-parity-a9g0.12`.
 A reading that can't be taken shows no label rather than 0%. A 24-hour clock
 showing local time sits at the left end of the bottom hints bar, as plain text
 in the version label's softened cyan, and hides with it; hover it for the date
