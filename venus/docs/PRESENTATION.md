@@ -517,7 +517,7 @@ request, and the window still opens.
 
 Sidebar and attention inbox rows identify Claude Code with Anthropic's standalone
 Clawd symbol and Codex with a colour vector of Codex's symbol, without an app
-tile. Both complete canvases scale proportionally inside the existing row icon
+tile. Both complete canvases scale proportionally inside the row icon
 slot, retaining their colours and transparency even when the record is stale.
 Codex's terminal prompt is transparent. The state glyph carries stale dimming.
 Eon Bar quota chips retain their provider marks: the Claude Spark and OpenAI
@@ -579,11 +579,17 @@ whichever contrasts more with the glyph. The outline follows the glyph's own
 shape, about one physical pixel wide, reduced only to fit small glyphs without
 closing their gaps. Stale glyphs and outlines keep their intentional 0.45 alpha
 after colour adaptation. No square or other backing shape is drawn.
-Sidebar/inbox badge boxes are the font size (16 physical pixels at default
-metrics); row heights stay fixed by the text lines. Their larger boxes move
-row text 4 pixels right at default metrics, so titles truncate earlier. Tab,
+Sidebar/inbox status glyphs and app marks share a square spanning three quarters
+of the two-line text block (27 physical pixels at default 1x metrics, 54 at 2x),
+capped at twice the font size and 256 physical pixels. Both centre vertically
+within the complete row, including a needs-input message's third line, with their
+shared top floored to a whole pixel. Row heights and text line positions stay
+fixed. Half a cell separates symbols and text; the larger boxes move text 22px
+right compared with the former 16px symbols at default metrics, so long titles
+truncate earlier. Both marks have direct 27/54px rasters; other sizes use the
+larger source without upscaling. Tab,
 session-label and edge badges retain their 0.75× font size and padding cap.
-Plain spinner dots are 4 physical pixels across in default sidebar/inbox rows
+Plain spinner dots are 7 physical pixels across in default sidebar/inbox rows
 and retain their 2-pixel size on the bar. Row dots and gaps scale with the box;
 the contour stays about one physical pixel, with clear gaps in the fitted grid.
 The popup marker keeps its independent 1.25× font-size box and hollow windows.

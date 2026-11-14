@@ -102,6 +102,20 @@ pub(crate) const fn attention_row_gap(metrics: CellMetrics) -> f32 {
     (metrics.padding / 2.0).round()
 }
 
+/// Both row symbols span three quarters of the two-line text block. The font cap keeps
+/// tall line pitches from crowding text; 256 is the largest bundled mark raster.
+pub(crate) const fn attention_symbol_size(metrics: CellMetrics) -> f32 {
+    (metrics.height * 1.5)
+        .min(metrics.font_size * 2.0)
+        .round()
+        .clamp(1.0, 256.0)
+}
+
+/// The space between row symbols and before their text, in whole physical pixels.
+pub(crate) const fn attention_symbol_gap(metrics: CellMetrics) -> f32 {
+    (metrics.width / 2.0).round()
+}
+
 /// The space between a sidebar heading and its first row, in whole pixels.
 pub(crate) const fn sidebar_heading_gap(metrics: CellMetrics) -> f32 {
     (metrics.padding / 3.0).round()

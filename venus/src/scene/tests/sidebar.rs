@@ -1067,10 +1067,20 @@ fn agent_sidebar_ages_count_whole_minutes_hours_and_days() {
 }
 
 #[test]
+fn row_symbols_cap_tall_line_pitches_and_never_upscale_mark_rasters() {
+    let mut metrics = CellMetrics::for_scale(1.0);
+    metrics.height = 100.0;
+    assert_eq!(attention_symbol_size(metrics), 32.0);
+    metrics.font_size = 500.0;
+    metrics.height = 600.0;
+    assert_eq!(attention_symbol_size(metrics), 256.0);
+}
+
+#[test]
 fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
     use eon_workspace_protocol::v44::{Attention, AttentionRecord, AttentionState};
 
-    for scale in [0.75, 1.0, 1.25, 1.5, 2.0] {
+    for scale in [0.75, 1.0, 1.25, 1.5, 1.75, 2.0] {
         let metrics = CellMetrics::for_scale(scale);
         for message in ["", "A long question that occupies the third line"] {
             for width in [0.0, metrics.font_size, 28.0 * metrics.width] {
@@ -1109,7 +1119,7 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                     },
                 );
                 let glyph = row.glyph.rect;
-                assert_eq!(glyph.width, metrics.font_size.round().max(1.0));
+                assert_eq!(glyph.width, (metrics.height * 1.5).round());
                 assert_eq!(glyph.height, glyph.width);
                 let lines = if message.is_empty() { 2.0 } else { 3.0 };
                 assert_eq!(
@@ -1117,10 +1127,13 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                     metrics.height * lines + attention_row_gap(metrics)
                 );
                 assert!(glyph.top >= row.rect.top);
-                assert!(
-                    glyph.bottom()
-                        <= row.rect.top + attention_row_gap(metrics) / 2.0 + metrics.height
-                );
+                assert!(glyph.bottom() <= row.rect.bottom());
+                let icon = row.icon.unwrap().1;
+                assert_eq!(icon.top, glyph.top);
+                assert_eq!(icon.width, glyph.width);
+                assert_eq!(glyph.top.fract(), 0.0);
+                let centre = row.rect.top + row.rect.height / 2.0;
+                assert!((glyph.top + glyph.height / 2.0 - centre).abs() <= 0.5);
                 let marker = row.popup_marker.unwrap();
                 assert_eq!(
                     marker.width,
@@ -1150,6 +1163,11 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                 row.shift(-13.0);
                 assert_eq!(row.rect.top, top - 13.0);
                 assert_eq!(row.popup_marker.unwrap().top, marker.top - 13.0);
+                row.shift(-0.25);
+                assert_eq!(row.glyph.rect.top.fract(), 0.0);
+                assert_eq!(row.icon.unwrap().1.top, row.glyph.rect.top);
+                let centre = row.rect.top + row.rect.height / 2.0;
+                assert!((row.glyph.rect.top + glyph.height / 2.0 - centre).abs() < 1.0);
             }
         }
     }

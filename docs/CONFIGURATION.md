@@ -396,11 +396,14 @@ the card colour composited at that opacity over both black and white. Only
 where no single colour reaches 3:1 against both does it retain its source
 colour and take a black or white outline, whichever contrasts more with the
 glyph. This contour follows the glyph itself, about one physical pixel wide,
-reduced only to preserve gaps in small glyphs. Sidebar/inbox badge boxes are
-the font size; tab and bar badge sizes and the popup marker retain their own
+reduced only to preserve gaps in small glyphs. Sidebar/inbox status glyphs and
+app marks share square boxes of 1.5 line heights, capped at twice the font size
+and 256 physical pixels (27px at default 1x metrics, 54px at 2x). They centre
+across the full row and keep a half-cell gap between symbols and text. Tab and
+bar badge sizes and the popup marker retain their own
 metrics. These sizes and the automatic contrast/outline recipe stay fixed to
 bound layout and readability variants; font size and opacity remain
-configurable (`eon-0ntg1`). `focus_color` accepts
+configurable (`eon-0ntg1`, `eon-sidebar-app-icons-y99b7.9`). `focus_color` accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
 invalid. The setting is omitted by default, leaving Venus's built-in focus
 colour in use. The example selects `custom:#b207fb`. F6 keyboard focus colours a framed pane title's edge span mint;

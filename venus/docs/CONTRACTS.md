@@ -2357,6 +2357,9 @@ re-proved when that platform or feature is next touched.
   font-sized sidebar/inbox badges; tab/bar sizes and the popup marker stay
   unchanged. Scale-1 installed proof is recorded in `eon-0ntg1`;
   Lucca's live look remains pending.
+  Amended by `eon-sidebar-app-icons-y99b7.9`, approved by eon-overseer under
+  Lucca's delegation on 2026-11-14: sidebar/inbox badge and app-mark sizing and
+  whole-row centring follow their shared presentation owner.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2480,7 +2483,8 @@ re-proved when that platform or feature is next touched.
       wide, reduced only as needed to fit small glyphs without closing their
       gaps; no filled backing is drawn. Stale glyphs and their outlines
       retain the intentional 0.45 alpha and may read below 3:1. Sidebar and
-      inbox row badge boxes are the font size. Rows
+      inbox row badge and app-mark boxes use the shared sizing and whole-row
+      centring in [Agents sidebar](PRESENTATION.md#agents-sidebar). Rows
       have no mint pressed flash. Rows in other tabs never take the current
       outline. Its accessible label adds "current" (`eon-wuau8.4`, approved by
       Lucca on 2026-11-11: "ahhh i like it").

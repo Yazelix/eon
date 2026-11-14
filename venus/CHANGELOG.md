@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C30: centre Agents sidebar and attention inbox status glyphs and app marks
+  across the full row, enlarge their boxes, and use crisp direct-size Clawd/Codex rasters
+  (`eon-sidebar-app-icons-y99b7.9`).
+
 - VEN-C30: Codex sidebar and inbox rows use a colour vector of Codex's symbol,
   preserving its colours and transparency on stale rows. Quota chips keep
   provider marks (`eon-sidebar-app-icons-y99b7.8`, delegated approval 2026-11-13).
@@ -22,8 +26,8 @@
   hover and accessibility read/reset facts (`eon-o9f3h.5`).
 
 - VEN-C30: attention badges have no backing at any opacity, with two-surface
-  colour adaptation and a glyph-only outline when needed. Sidebar/inbox badge
-  boxes are the font size (`eon-0ntg1`, approved 2026-11-12).
+  colour adaptation and a glyph-only outline when needed
+  (`eon-0ntg1`, approved 2026-11-12).
 
 - VEN-C30: attention badges adapt every glyph colour for 3:1 before stale
   dimming, with no backing on opaque surfaces and a quiet opaque rounded

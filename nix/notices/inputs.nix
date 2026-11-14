@@ -439,6 +439,22 @@ import ./default.nix {
           hash = "9ca6ebb33e268ff95ded9b927ceb53f22deecf4f1de9988f088437621c85154c";
         }
         {
+          file = ../../venus/assets/claude-code-clawd-27.png;
+          hash = "1ee2ed0c8060dc40aa342f6411a4fa44ec075dcc2c84741f64ed910647554116";
+        }
+        {
+          file = ../../venus/assets/claude-code-clawd-27.rgba;
+          hash = "a6b1a0ce1277de56209f05a9681b57fb6ed7096f4c754cd22210c85e0769f980";
+        }
+        {
+          file = ../../venus/assets/claude-code-clawd-54.png;
+          hash = "2cc8ff31dd258113e697eff0c4357da19cf0c24daf553ce9c5dbbfe7acd37966";
+        }
+        {
+          file = ../../venus/assets/claude-code-clawd-54.rgba;
+          hash = "7797047bc4befe0634326775ec19e54afe7f4403dee93f5529d549e00b05802d";
+        }
+        {
           file = ../../venus/assets/claude-code-clawd-256.rgba;
           hash = "8f1969bb128bbc158d2b331ac4a428c9197a4abc921253f18c2d0d4cc7d5fb6b";
         }
@@ -456,20 +472,20 @@ import ./default.nix {
           hash = "983fc436a025a9920ec2661d790e956f766f273a2240801e64c3d3d26feb7ad2";
         }
         {
-          file = ../../venus/assets/codex-symbol-16.png;
-          hash = "fe1ea40b4bd3604d67a2d9342d2e7edfeeb406e65ba93afffeef5afef6ebac1c";
+          file = ../../venus/assets/codex-symbol-27.png;
+          hash = "90b3eb958d0a7299d92289913411d97ded923382a4a282c27a4326069060cc73";
         }
         {
-          file = ../../venus/assets/codex-symbol-16.rgba;
-          hash = "ffbb26dc060b51273de363504507680d79499929ba23c34b1f91980177ed4137";
+          file = ../../venus/assets/codex-symbol-27.rgba;
+          hash = "a0d99ed69ef19322844c453016f8f0583b0d941da2ae2179f607904a50acf4a6";
         }
         {
-          file = ../../venus/assets/codex-symbol-32.png;
-          hash = "32ad4411605c4dace9f7ee453ebc93b7815beee3683c7b876d74bdf3fceb904b";
+          file = ../../venus/assets/codex-symbol-54.png;
+          hash = "ebb4684136304faad4ae14ec9c8fe114d95ff24264549c56bce052fa999c5f1b";
         }
         {
-          file = ../../venus/assets/codex-symbol-32.rgba;
-          hash = "d42a3401b55899f18ea9a02e442ada027011626a7423a0ed7d5c10670e3c27c6";
+          file = ../../venus/assets/codex-symbol-54.rgba;
+          hash = "71b2f6c6873009affcfbe09089644eca3531c62c63dd6c8e39a976dfb23fd927";
         }
         {
           file = ../../venus/assets/codex-symbol-256.rgba;

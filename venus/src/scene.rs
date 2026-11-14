@@ -27,9 +27,10 @@ use winit::dpi::PhysicalSize;
 pub(crate) mod tokens;
 
 use tokens::{
-    WRAPPED_LINE_ROWS, attention_row_gap, badge_size, card_gap, chrome_title_metrics,
-    dialog_padding, hint_hover_reach, icon_gap, inner_inset, pill_gap, popup_label_font_size,
-    popup_title_gutter, sidebar_heading_gap, stack_inset, title_tab_return, title_tab_rise,
+    WRAPPED_LINE_ROWS, attention_row_gap, attention_symbol_gap, attention_symbol_size, badge_size,
+    card_gap, chrome_title_metrics, dialog_padding, hint_hover_reach, icon_gap, inner_inset,
+    pill_gap, popup_label_font_size, popup_title_gutter, sidebar_heading_gap, stack_inset,
+    title_tab_return, title_tab_rise,
 };
 
 /// Physical rectangle shared by workspace drawing, hit testing, and accessibility.
@@ -386,12 +387,14 @@ pub struct SidebarRow {
 impl SidebarRow {
     fn shift(&mut self, delta: f32) {
         self.rect.top += delta;
-        self.glyph.rect.top += delta;
+        let symbol_top =
+            (self.rect.top + (self.rect.height - self.glyph.rect.height) / 2.0).floor();
+        self.glyph.rect.top = symbol_top;
         if let Some(rect) = &mut self.popup_marker {
             rect.top += delta;
         }
         if let Some((_, rect)) = &mut self.icon {
-            rect.top += delta;
+            rect.top = symbol_top;
         }
     }
 }
@@ -2766,9 +2769,8 @@ fn attention_row(
 ) -> SidebarRow {
     let line = metrics.height;
     let row_gap = attention_row_gap(metrics);
-    let glyph_size = metrics.font_size.round().max(1.0);
-    let icon_size = metrics.font_size.round().max(1.0);
-    let spacing = (metrics.width / 2.0).round();
+    let symbol_size = attention_symbol_size(metrics);
+    let spacing = attention_symbol_gap(metrics);
     let content_left = rect.left + inner_inset(metrics);
     let top = rect.top;
     let pinned_name = pinned_name.filter(|name| !name.is_empty());
@@ -2867,28 +2869,28 @@ fn attention_row(
         let _ = write!(accessible_label, ": {message}");
     }
     let lines = if message.is_some() { 3.0 } else { 2.0 };
-    let text_top = top + row_gap / 2.0;
+    let rect = SceneRect {
+        height: line * lines + row_gap,
+        ..rect
+    };
+    let symbol_top = (top + (rect.height - symbol_size) / 2.0).floor();
     let glyph = SceneRect {
         left: content_left,
-        top: text_top + (line - glyph_size) / 2.0,
-        width: glyph_size,
-        height: glyph_size,
+        top: symbol_top,
+        width: symbol_size,
+        height: symbol_size,
     };
     let icon = icon.map(|provider| {
         (
             provider,
             SceneRect {
                 left: glyph.right() + spacing,
-                top: text_top + (line - icon_size) / 2.0,
-                width: icon_size,
-                height: icon_size,
+                top: symbol_top,
+                width: symbol_size,
+                height: symbol_size,
             },
         )
     });
-    let rect = SceneRect {
-        height: line * lines + row_gap,
-        ..rect
-    };
     let right = (rect.right() - inner_inset(metrics)).max(rect.left);
     let popup_marker = popup.then(|| {
         let size = (metrics.font_size * 1.25)

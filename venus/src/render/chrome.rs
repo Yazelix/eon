@@ -350,12 +350,16 @@ const OPENAI_BLOSSOM_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/openai-blossom-104.alpha");
 const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/claude-splat-104.alpha");
-const CLAUDE_CODE_RGBA: &[u8; 256 * 256 * 4] =
+const CLAUDE_CODE_RGBA_27: &[u8; 27 * 27 * 4] =
+    include_bytes!("../../assets/claude-code-clawd-27.rgba");
+const CLAUDE_CODE_RGBA_54: &[u8; 54 * 54 * 4] =
+    include_bytes!("../../assets/claude-code-clawd-54.rgba");
+const CLAUDE_CODE_RGBA_256: &[u8; 256 * 256 * 4] =
     include_bytes!("../../assets/claude-code-clawd-256.rgba");
-const CODEX_SYMBOL_RGBA_16: &[u8; 16 * 16 * 4] =
-    include_bytes!("../../assets/codex-symbol-16.rgba");
-const CODEX_SYMBOL_RGBA_32: &[u8; 32 * 32 * 4] =
-    include_bytes!("../../assets/codex-symbol-32.rgba");
+const CODEX_SYMBOL_RGBA_27: &[u8; 27 * 27 * 4] =
+    include_bytes!("../../assets/codex-symbol-27.rgba");
+const CODEX_SYMBOL_RGBA_54: &[u8; 54 * 54 * 4] =
+    include_bytes!("../../assets/codex-symbol-54.rgba");
 const CODEX_SYMBOL_RGBA_256: &[u8; 256 * 256 * 4] =
     include_bytes!("../../assets/codex-symbol-256.rgba");
 
@@ -753,12 +757,20 @@ pub(super) fn rasterize_bar_icon(
     let (source, channels, content_type): (&[u8], usize, _) = match request.id {
         OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
-        CLAUDE_CODE_ID => (CLAUDE_CODE_RGBA, 4, ContentType::Color),
+        CLAUDE_CODE_ID => (
+            match (request.width, request.height) {
+                (27, 27) => CLAUDE_CODE_RGBA_27,
+                (54, 54) => CLAUDE_CODE_RGBA_54,
+                _ => CLAUDE_CODE_RGBA_256,
+            },
+            4,
+            ContentType::Color,
+        ),
         CODEX_SYMBOL_ID => (
             // Rasterized directly at row size so the transparent prompt stays crisp.
             match (request.width, request.height) {
-                (16, 16) => CODEX_SYMBOL_RGBA_16,
-                (32, 32) => CODEX_SYMBOL_RGBA_32,
+                (27, 27) => CODEX_SYMBOL_RGBA_27,
+                (54, 54) => CODEX_SYMBOL_RGBA_54,
                 _ => CODEX_SYMBOL_RGBA_256,
             },
             4,
@@ -2272,7 +2284,7 @@ impl Renderer {
             );
         }
         let text_width = (row.text_right - row.text_left).max(0.0);
-        let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
+        let text_top = row.rect.top + tokens::attention_row_gap(self.metrics) / 2.0;
         for (index, (text, color)) in [
             (Some(row.title.as_str()), title),
             (Some(row.detail.as_str()), detail),
@@ -6107,7 +6119,9 @@ mod tests {
             (12.0, Backing::Surface(palette::BAR_BACKGROUND), 3.0),
             (20.0, Backing::Surface(palette::BAR_BACKGROUND), 5.0),
             (24.0, Backing::Surface(palette::BAR_BACKGROUND), 6.0),
+            (27.0, Backing::Surface(palette::BAR_BACKGROUND), 7.0),
             (32.0, Backing::Surface(palette::BAR_BACKGROUND), 8.0),
+            (54.0, Backing::Surface(palette::BAR_BACKGROUND), 14.0),
             (12.0, Backing::BarPill(palette::TAB_SELECTED), 2.0),
         ] {
             for state in [AttentionState::Working, AttentionState::Background] {
@@ -6134,6 +6148,13 @@ mod tests {
                     continue;
                 }
                 let slot = &spinners.slots[0];
+                let mut visited = [false; 6];
+                let mut lit_bounds = [
+                    f32::INFINITY,
+                    f32::INFINITY,
+                    f32::NEG_INFINITY,
+                    f32::NEG_INFINITY,
+                ];
                 for phase in 0..SPINNER_FRAMES.len() {
                     let mut turned = RectangleBatch::new(800, 600);
                     push_badge_glyph(
@@ -6152,6 +6173,36 @@ mod tests {
                     {
                         assert_eq!(first[..20], turned[..20], "ticks only change dot alpha");
                     }
+                    for (index, dot) in turned.bytes.chunks_exact(24 * 6).enumerate() {
+                        if f32::from_ne_bytes(dot[20..24].try_into().unwrap()) == 0.0 {
+                            continue;
+                        }
+                        visited[index] = true;
+                        for vertex in dot.chunks_exact(24) {
+                            let x =
+                                (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 400.0;
+                            let y = (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
+                                * 300.0;
+                            lit_bounds[0] = lit_bounds[0].min(x);
+                            lit_bounds[1] = lit_bounds[1].min(y);
+                            lit_bounds[2] = lit_bounds[2].max(x);
+                            lit_bounds[3] = lit_bounds[3].max(y);
+                        }
+                    }
+                }
+                assert!(
+                    visited.into_iter().all(|lit| lit),
+                    "the cycle lights the complete grid"
+                );
+                for (low, high) in [
+                    (lit_bounds[0], lit_bounds[2]),
+                    (lit_bounds[1], lit_bounds[3]),
+                ] {
+                    assert!(
+                        ((low + high) / 2.0 - size / 2.0).abs() < 0.501,
+                        "the animated grid stays centred, size={size}, {surface:?}"
+                    );
+                    assert!(low >= -0.001 && high <= size + 0.001);
                 }
             }
         }
@@ -6544,7 +6595,7 @@ mod tests {
     fn product_marks_keep_their_own_colours_and_alpha_at_row_scales() {
         for (id, size) in [CLAUDE_CODE_ID, CODEX_SYMBOL_ID]
             .into_iter()
-            .flat_map(|id| [16, 20, 32, 40, 256].map(|size| (id, size)))
+            .flat_map(|id| [27, 35, 41, 48, 54, 256].map(|size| (id, size)))
         {
             let image = rasterize_bar_icon(
                 RasterizeCustomGlyphRequest {
@@ -6568,13 +6619,15 @@ mod tests {
                     .any(|pixel| { pixel[3] > 200 && pixel[0].abs_diff(pixel[2]) > 30 }),
                 "the product's colour survives instead of a tinted silhouette"
             );
-            if id == CODEX_SYMBOL_ID && [16, 32].contains(&size) {
+            let source = match (id, size) {
+                (CLAUDE_CODE_ID, 27) => Some(CLAUDE_CODE_RGBA_27.as_slice()),
+                (CLAUDE_CODE_ID, 54) => Some(CLAUDE_CODE_RGBA_54.as_slice()),
+                (CODEX_SYMBOL_ID, 27) => Some(CODEX_SYMBOL_RGBA_27.as_slice()),
+                (CODEX_SYMBOL_ID, 54) => Some(CODEX_SYMBOL_RGBA_54.as_slice()),
+                _ => None,
+            };
+            if let Some(source) = source {
                 let side = usize::from(size);
-                let source = if size == 16 {
-                    CODEX_SYMBOL_RGBA_16.as_slice()
-                } else {
-                    CODEX_SYMBOL_RGBA_32.as_slice()
-                };
                 // Exact-size sources retain the SVG rasterizer's coverage, not a downsample.
                 assert!(
                     image
@@ -6583,9 +6636,11 @@ mod tests {
                         .zip(source.chunks_exact(4))
                         .all(|(drawn, original)| drawn[3] == original[3])
                 );
-                let alpha = |x, y| image.data[(y * side + x) * 4 + 3];
-                assert!(alpha(side * 5 / 8, side * 5 / 8) < 80, "prompt is a cutout");
-                assert_eq!(alpha(side / 2, side / 2), 255, "cloud surrounds the prompt");
+                if id == CODEX_SYMBOL_ID {
+                    let alpha = |x, y| image.data[(y * side + x) * 4 + 3];
+                    assert_eq!(alpha(side * 2 / 3, side * 13 / 20), 0, "prompt is a cutout");
+                    assert_eq!(alpha(side / 2, side / 2), 255, "cloud surrounds the prompt");
+                }
             }
         }
     }
@@ -6609,18 +6664,127 @@ mod tests {
                 Color::rgb(255, 255, 255),
             ),
         ] {
-            for scale in [1.0, 2.0] {
+            for scale in [0.75, 1.0, 1.25, 1.5, 1.75, 2.0] {
                 let metrics = CellMetrics::for_scale(scale);
                 let size = PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32);
-                let mut fresh = None;
-                for stale in [false, true] {
+                for state in [
+                    AttentionState::Working,
+                    AttentionState::Finished,
+                    AttentionState::NeedsInput,
+                    AttentionState::Error,
+                    AttentionState::Idle,
+                    AttentionState::Background,
+                    AttentionState::Unavailable,
+                ] {
+                    let mut fresh = None;
+                    for stale in [false, true] {
+                        let attention = snapshot.tabs[0].columns[0].panes[0]
+                            .attention
+                            .as_mut()
+                            .unwrap();
+                        attention.state = state;
+                        let record = attention.record.as_mut().unwrap();
+                        record.message = "A question on the third line".into();
+                        record.app = app.into();
+                        record.stale = stale;
+                        snapshot.attention_queue = vec![eon_workspace_protocol::v44::QueueEntry {
+                            workspace: snapshot.workspace.clone(),
+                            tab: "t1".into(),
+                            target: "p1".into(),
+                            attention: attention.clone(),
+                        }];
+                        let scene = WorkspaceScene::from_snapshot(
+                            &snapshot,
+                            size,
+                            metrics,
+                            0.0,
+                            0.0,
+                            |_, text| (text.into(), text.len() as f32 * metrics.width),
+                        );
+                        let inbox = DialogScene::attention_inbox(
+                            &snapshot,
+                            crate::scene::AttentionFilter::All,
+                            None,
+                            size,
+                            metrics,
+                            0.0,
+                            1,
+                        );
+                        for (row, clip) in [
+                            (scene.sidebar_row("p1").unwrap(), scene.sidebar_list),
+                            (&inbox.attention_rows[0], inbox.content),
+                        ] {
+                            assert_eq!(row.icon.unwrap().0, mark);
+                            assert_eq!(row.glyph.dimmed, stale);
+                            let symbol = row.icon.unwrap().1;
+                            assert_eq!(symbol.top, row.glyph.rect.top);
+                            assert_eq!(symbol.top.fract(), 0.0);
+                            let centre = row.rect.top + row.rect.height / 2.0;
+                            assert!((symbol.top + symbol.height / 2.0 - centre).abs() <= 0.5);
+                            assert!(row.text_right - row.text_left >= row.rect.width / 2.0);
+                            if scale == 1.0 || scale == 2.0 {
+                                assert_eq!(symbol.width, 27.0 * scale as f32);
+                            }
+                            let icon = attention_row_icon(row, clip).unwrap();
+                            let glyph = icon.custom_glyph.as_ref().unwrap();
+                            assert_eq!(glyph.id, id);
+                            assert_eq!(icon.color, color);
+                            let pixels = rasterize_bar_icon(
+                                RasterizeCustomGlyphRequest {
+                                    id: glyph.id,
+                                    width: glyph.width as u16,
+                                    height: glyph.height as u16,
+                                    x_bin: SubpixelBin::Zero,
+                                    y_bin: SubpixelBin::Zero,
+                                    scale: scale as f32,
+                                },
+                                None,
+                            )
+                            .unwrap();
+                            assert_eq!(pixels.content_type, content);
+                            if let Some(fresh) = &fresh {
+                                assert_eq!(&pixels.data, fresh);
+                            } else {
+                                fresh = Some(pixels.data);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sidebar_and_inbox_render_full_row_symbols_and_keep_text_positions() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            let size = PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32);
+            let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+            let mut renderer = Renderer::hosted(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                (size.width, size.height),
+                scale,
+                FontSetup::new(&FontSettings::default()).unwrap(),
+            )
+            .unwrap();
+            renderer.background_opacity = 1.0;
+            let metrics = renderer.metrics();
+            for (app, id) in [("codex", CODEX_SYMBOL_ID), ("claude-code", CLAUDE_CODE_ID)] {
+                for (state, message) in [
+                    (AttentionState::Working, ""),
+                    (AttentionState::NeedsInput, "Allow this action?"),
+                ] {
+                    let mut snapshot = popup_sidebar_snapshot();
+                    snapshot.tabs[0].popups[0].attention = None;
                     let attention = snapshot.tabs[0].columns[0].panes[0]
                         .attention
                         .as_mut()
                         .unwrap();
+                    attention.state = state;
                     let record = attention.record.as_mut().unwrap();
                     record.app = app.into();
-                    record.stale = stale;
+                    record.message = message.into();
                     snapshot.attention_queue = vec![eon_workspace_protocol::v44::QueueEntry {
                         workspace: snapshot.workspace.clone(),
                         tab: "t1".into(),
@@ -6644,33 +6808,84 @@ mod tests {
                         0.0,
                         1,
                     );
-                    for (row, clip) in [
-                        (scene.sidebar_row("p1").unwrap(), scene.sidebar_list),
-                        (&inbox.attention_rows[0], inbox.content),
-                    ] {
-                        assert_eq!(row.icon.unwrap().0, mark);
-                        assert_eq!(row.glyph.dimmed, stale);
-                        let icon = attention_row_icon(row, clip).unwrap();
-                        let glyph = icon.custom_glyph.as_ref().unwrap();
-                        assert_eq!(glyph.id, id);
-                        assert_eq!(icon.color, color);
-                        let pixels = rasterize_bar_icon(
-                            RasterizeCustomGlyphRequest {
-                                id: glyph.id,
-                                width: glyph.width as u16,
-                                height: glyph.height as u16,
-                                x_bin: SubpixelBin::Zero,
-                                y_bin: SubpixelBin::Zero,
-                                scale: scale as f32,
-                            },
-                            None,
-                        )
-                        .unwrap();
-                        assert_eq!(pixels.content_type, content);
-                        if let Some(fresh) = &fresh {
-                            assert_eq!(&pixels.data, fresh);
+                    for inbox_view in [false, true] {
+                        let row = if inbox_view {
+                            &inbox.attention_rows[0]
                         } else {
-                            fresh = Some(pixels.data);
+                            scene.sidebar_row("p1").unwrap()
+                        };
+                        renderer.text.clear();
+                        renderer.spinners = Spinners::new(true, DEFAULT_FOCUS);
+                        let mut batch = RectangleBatch::new(size.width, size.height);
+                        if inbox_view {
+                            renderer.build_dialog(&inbox, &mut batch);
+                        } else {
+                            let titles = renderer.workspace_title_tabs(&scene);
+                            let panes = renderer.workspace_pane_tabs(&scene);
+                            renderer.build_workspace(
+                                &scene,
+                                WorkspaceFocus::Terminal,
+                                &mut batch,
+                                &[],
+                                &titles,
+                                &panes,
+                            );
+                        }
+                        let marks: Vec<_> = renderer
+                            .text
+                            .iter()
+                            .filter(|text| {
+                                text.custom_glyph.as_ref().is_some_and(|glyph| {
+                                    matches!(glyph.id, CODEX_SYMBOL_ID | CLAUDE_CODE_ID)
+                                })
+                            })
+                            .collect();
+                        let [mark] = marks.as_slice() else {
+                            panic!("one row app mark expected")
+                        };
+                        let symbol = row.icon.unwrap().1;
+                        let glyph = mark.custom_glyph.as_ref().unwrap();
+                        assert_eq!(glyph.id, id);
+                        assert_eq!((mark.left, mark.top), (symbol.left, symbol.top));
+                        assert_eq!((glyph.width, glyph.height), (symbol.width, symbol.height));
+                        let mut expected = RectangleBatch::new(size.width, size.height);
+                        push_badge_glyph(
+                            &mut expected,
+                            row.glyph,
+                            Some(0),
+                            DEFAULT_FOCUS,
+                            None,
+                            true,
+                        );
+                        for quad in expected.bytes.chunks_exact(24 * 6) {
+                            assert!(
+                                batch.bytes.chunks_exact(24 * 6).any(|actual| {
+                                    actual
+                                        .chunks_exact(24)
+                                        .zip(quad.chunks_exact(24))
+                                        .all(|(actual, expected)| actual[..8] == expected[..8])
+                                }),
+                                "the production caller emits the scene's status geometry"
+                            );
+                        }
+                        let lines: Vec<_> = renderer
+                            .text
+                            .iter()
+                            .filter(|text| {
+                                text.custom_glyph.is_none()
+                                    && text.left == row.text_left
+                                    && text.top >= row.rect.top
+                                    && text.top < row.rect.bottom()
+                            })
+                            .collect();
+                        assert_eq!(lines.len(), if message.is_empty() { 2 } else { 3 });
+                        for (index, text) in lines.iter().enumerate() {
+                            assert_eq!(
+                                text.top,
+                                row.rect.top
+                                    + tokens::attention_row_gap(metrics) / 2.0
+                                    + metrics.height * index as f32
+                            );
                         }
                     }
                 }

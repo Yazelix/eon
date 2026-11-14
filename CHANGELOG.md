@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Agents sidebar and attention inbox status glyphs and app marks are larger
+  and vertically centred across the full row (`eon-sidebar-app-icons-y99b7.9`).
+
 - Codex rows in the Agents sidebar and attention inbox show the colour Codex
   symbol with a transparent terminal prompt and no app tile. Quota chips keep
   their provider marks (`eon-sidebar-app-icons-y99b7.8`).
@@ -89,9 +92,8 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   does not restart it automatically (`eon-xodrj.6.2.1`, `eon-xodrj.6.2.2`).
 
 - Attention badges have no backing square on translucent rows; a thin glyph
-  outline appears only where colour adaptation cannot reach 3:1. Sidebar and
-  inbox badges are the font size, moving row text 4 pixels right at default
-  metrics and truncating titles sooner. Tab/bar badges and popup markers
+  outline appears only where colour adaptation cannot reach 3:1. Tab/bar badges
+  and popup markers
   keep their size (`eon-0ntg1`).
 - `eon config schema --json` describes active configuration keys, defaults,
   types, bounds, choices and when changes take effect, including built-in and
