@@ -4,7 +4,7 @@
 //! publishes and serves subscribers; nothing here touches a connection.
 
 use super::{supervisor::request_id, workspace::resolve_selector};
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     self as eonw, AttentionState as State, Failure, Snapshot, TargetId, TerminalTarget,
 };
 use std::{
@@ -1177,7 +1177,7 @@ impl Events {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use eon_workspace_protocol::v44::{
+    use eon_workspace_protocol::v45::{
         AttentionRecord, BusyTerminal, Column, PopupGeometry, QueueEntry, Sidebar, WorkspaceInfo,
     };
     use std::collections::BTreeMap;
@@ -1270,6 +1270,7 @@ pub(super) mod tests {
         workspaces
             .into_iter()
             .map(|(id, _, tabs)| Snapshot {
+                focus: None,
                 generation: "g1-00000000000000000000000000000001".into(),
                 created_build: "g1-00000000000000000000000000000001".into(),
                 active_build: "g1-00000000000000000000000000000001".into(),
@@ -2984,7 +2985,7 @@ pub(super) mod tests {
         projection.queue = queue;
     }
 
-    /// What the v44 codec checks of a pane or popup event: but for a close,
+    /// What the v45 codec checks of a pane or popup event: but for a close,
     /// its `column` and `expanded` and its `chosen` agree with the order it
     /// carries, and only a close may carry the empty order of a gone tab.
     fn assert_placed(event: &Event) {

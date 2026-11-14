@@ -24,7 +24,7 @@ use super::{
         terminal_text_json,
     },
 };
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
     MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
     TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
@@ -1214,11 +1214,11 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Print a pane's or popup's history",
             ),
             (
-                "pane send PANE|POPUP [--enter] [--force]",
+                "pane send PANE|POPUP|focused [--enter]",
                 "Paste TEXT, then Enter if asked",
             ),
             (
-                "  [--json] [--stdin | -- TEXT]",
+                "  [--force] [--json] [--stdin | -- TEXT]",
                 "TEXT up to 64 KiB, or Enter alone",
             ),
             (
@@ -1418,6 +1418,10 @@ edit uses the packaged Helix Editor popup by default; set [editor]
 open_in = \"pane\" for a new pane.
 pane history --edit opens the history in a Scrollback editor popup,
 only in the shown session's active tab.
+pane send focused explicitly targets the person's keyboard-focused terminal.
+It refuses unknown or unfocused windows and missing terminal focus.
+--force cannot bypass these focus checks.
+With focused --enter, Enter requires the same focused terminal after the delay.
 pane send refuses while a person is typing; --force bypasses the typing check.
 Where shown, {command}--json{reset} prints JSON and never asks.
 Busy tab/pane closes require {command}--yes{reset} with {command}--json{reset};
@@ -2045,14 +2049,18 @@ fn window_json(window: Option<&str>) -> String {
 /// counts as none.
 fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Result<i32, Error> {
     let json = send.json;
-    let action = |input| Action::SendTerminal {
-        target: send.target.clone(),
+    let action = |input, expected_terminal| Action::SendTerminal {
+        target: if send.target == "focused" {
+            eon_workspace_protocol::v45::SendTarget::Focused { expected_terminal }
+        } else {
+            eon_workspace_protocol::v45::SendTarget::Id(send.target.clone())
+        },
         input,
         force: send.force,
     };
     let resolve = || {
         let caller = calling_terminal()?;
-        validate_action(caller.clone(), action(TerminalInput::Enter))
+        validate_action(caller.clone(), action(TerminalInput::Enter, None))
             .map_err(|error| failure("malformed-action", error.detail))?;
         let resolved = resolve_workspace(inputs, target.clone(), caller.as_deref())?;
         Ok::<_, Failure>((caller, resolved))
@@ -2108,33 +2116,38 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
         Ok(resolved) => resolved,
         Err(error) => return Ok(report_failure(&error, json)?),
     };
-    let request =
-        |input| match send_action_from(Ok(&resolved.socket), caller.clone(), action(input)) {
-            Ok(ControlResponse::Workspace(Response::Sent(sent))) => Ok(sent),
-            Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(failure),
-            Ok(_) => Err(failure(
-                "unrepresentable-state",
-                "Eon returned the wrong result for a terminal send",
-            )),
-            Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
-                Err(failure("malformed-action", error.detail))
-            }
-            Err(error) => Err(unreachable_supervisor(error, &resolved.label)),
-        };
+    let request = |input, expected| match send_action_from(
+        Ok(&resolved.socket),
+        caller.clone(),
+        action(input, expected),
+    ) {
+        Ok(ControlResponse::Workspace(Response::Sent(sent))) => Ok(sent),
+        Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(failure),
+        Ok(_) => Err(failure(
+            "unrepresentable-state",
+            "Eon returned the wrong result for a terminal send",
+        )),
+        Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
+            Err(failure("malformed-action", error.detail))
+        }
+        Err(error) => Err(unreachable_supervisor(error, &resolved.label)),
+    };
     // No TEXT means --enter alone. The Enter goes after the window's delay, so
     // the program takes the whole paste first; once the paste is in, an Enter
     // failure leaves it there.
     let bytes = text.as_ref().map_or(0, String::len);
     let (sent, mut enter_failure) = match text {
-        None => match request(TerminalInput::Enter) {
+        None => match request(TerminalInput::Enter, None) {
             Ok(sent) => (sent, None),
             Err(failure) => return Ok(report_failure(&failure, json)?),
         },
-        Some(text) => match request(TerminalInput::Paste(text)) {
+        Some(text) => match request(TerminalInput::Paste(text), None) {
             Err(failure) => return Ok(report_failure(&failure, json)?),
             Ok(pasted) if send.enter => {
                 thread::sleep(Duration::from_millis(pasted.enter_delay_ms.into()));
-                (pasted, request(TerminalInput::Enter).err())
+                let enter_failure =
+                    request(TerminalInput::Enter, Some(pasted.target.terminal.clone())).err();
+                (pasted, enter_failure)
             }
             Ok(pasted) => (pasted, None),
         },
@@ -2251,7 +2264,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v44::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v45::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2938,7 +2951,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         ),
         _ => return Err(Error::usage(EON_USAGE)),
     };
-    eon_workspace_protocol::v44::validate_pane_rename(name, tag)
+    eon_workspace_protocol::v45::validate_pane_rename(name, tag)
         .map_err(|error| Error::usage(error.to_string()))?;
     Ok((
         Action::RenamePane {
@@ -3270,7 +3283,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v44::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v45::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -4294,7 +4307,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v44::{
+        use eon_workspace_protocol::v45::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4318,6 +4331,7 @@ mod tests {
             name: name.into(),
         };
         let base_snapshot = || Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -4550,11 +4564,12 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v44::{
+        use eon_workspace_protocol::v45::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
         let mut snap = Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),

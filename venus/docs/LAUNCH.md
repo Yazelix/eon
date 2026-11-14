@@ -325,16 +325,17 @@ creation. Eon passes its `[terminal] detect_local_hosts`.
 
 In Eon's supervised mode, `EON_VENUS_PRESENTATION_CONTROL` names one of two
 private modes, and stdin and stdout share one private bounded presentation
-stream. The `stdin-ready-focus-v1` mode consumes one current canonical EONW
+stream. The `stdin-ready-focus-v2` mode consumes one current canonical EONW
 startup snapshot for workspace launches, then reports `ready-v1` on stdout
 after admitting fonts and the actual window's initial native geometry, before
 terminal attachment. Eon bounds that exchange and starts new commands only
-after readiness. The `stdin-focus-v1` mode has no startup exchange. Any other
+after readiness. The `stdin-focus-v2` mode has no startup exchange. Any other
 value leaves Venus unsupervised. In both modes stdout is reserved for this
 stream: anything else Venus writes there would corrupt it.
 
-In a supervised workspace, Venus then reports its native window focus on
-stdout (VEN-C14), from a worker thread that keeps only the latest focus not
+In a supervised workspace, Venus then reports native window focus and an
+optional keyboard-focused Orbit terminal identity on stdout (VEN-C14),
+from a worker thread that keeps only the latest focus not
 yet sent and never writes the same focus twice in a row. A failed write
 closes only that direction and logs `Cannot report Venus window focus:
 ERROR`. eonbase and standalone Venus report no focus.
@@ -342,8 +343,12 @@ ERROR`. eonbase and standalone Venus report no focus.
 | Phase | Bytes | Meaning |
 | --- | --- | --- |
 | Admission only, first | `ready-v1` | Startup readiness |
-| After admission, or at once without it | `focus:0\n` | Natively unfocused |
-| Same | `focus:1\n` | Natively focused |
+| After admission, or at once without it | Canonical EONW v45 focus-report frame | Native focus and optional terminal identity |
+
+The canonical frame is bounded by `MAX_FOCUS_REPORT_BYTES`. Chrome, dialogs
+and unavailable attachments report no terminal. Runtime validates topology
+and owns unknown channel state; Venus never echoes a received Snapshot's
+focus as its own report.
 
 Each complete Present command keeps the same Venus process and terminal
 attachment and asks the native window system to present its existing window.

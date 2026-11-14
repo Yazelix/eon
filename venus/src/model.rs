@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
 use orbit_protocol::FrameReducer;
@@ -1084,7 +1084,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v44::{
+    use eon_workspace_protocol::v45::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, PopupKey,
         Shortcut, Tab,
     };
@@ -1092,6 +1092,7 @@ mod tests {
     #[test]
     fn pane_label_updates_keep_notices_and_attachment_identity() {
         let mut snapshot = Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -1257,15 +1258,40 @@ mod tests {
         assert!(!model.unavailable());
     }
 
+    #[test]
+    fn focus_echo_changes_no_local_selection_or_presentation() {
+        let mut snapshot = quota_snapshot();
+        let mut model = WorkspaceModel::default();
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        let attachment = model
+            .active_attachment()
+            .map(|(endpoint, live)| (endpoint.to_vec(), live));
+        snapshot.focus = Some(eon_workspace_protocol::v45::Focus {
+            window_focused: Some(true),
+            target: None,
+        });
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(snapshot)),
+            (false, false)
+        );
+        assert_eq!(
+            model
+                .active_attachment()
+                .map(|(endpoint, live)| (endpoint.to_vec(), live)),
+            attachment
+        );
+    }
+
     /// A workspace of two tabs whose snapshot carries both quotas.
     fn quota_snapshot() -> Snapshot {
         Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v44::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v45::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -1283,7 +1309,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v44::Column {
+                    columns: vec![eon_workspace_protocol::v45::Column {
                         panes: vec![Pane {
                             label: "pane-1".into(),
                             pinned_name: None,
@@ -1305,7 +1331,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v44::Column {
+                    columns: vec![eon_workspace_protocol::v45::Column {
                         panes: vec![Pane {
                             label: "pane-2".into(),
                             pinned_name: None,
@@ -1321,7 +1347,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v44::PopupGeometry {
+            geometry: eon_workspace_protocol::v45::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1787,12 +1813,13 @@ mod tests {
             attention_rollup: None,
         };
         let mut snapshot = Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v44::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v45::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -1833,7 +1860,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v44::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v45::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let wire =
@@ -1879,12 +1906,13 @@ mod tests {
             expanded: expanded.into(),
         };
         let mut snapshot = Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v44::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v45::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -1921,7 +1949,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v44::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v45::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let mut model = WorkspaceModel::default();
@@ -1955,7 +1983,7 @@ mod tests {
 mod google_quota_tests {
     use super::*;
     use crate::scene::tests::bar::google_snapshot;
-    use eon_workspace_protocol::v44 as workspace;
+    use eon_workspace_protocol::v45 as workspace;
 
     #[test]
     fn google_only_refresh_preserves_workspace_structure_and_notice() {

@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -7756,7 +7756,7 @@ cat >/dev/null
     assert_eq!(
         venus_log
             .matches(
-                "|stdin-ready-focus-v1|--no-decorations --application-id eonova --background-opacity "
+                "|stdin-ready-focus-v2|--no-decorations --application-id eonova --background-opacity "
             )
             .count(),
         2
@@ -8213,7 +8213,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -8223,7 +8223,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -8234,7 +8234,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -8249,7 +8249,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -8267,14 +8267,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -8296,7 +8296,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -10834,7 +10834,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v44::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -13228,7 +13228,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v44::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v45::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -15002,7 +15002,7 @@ fn previous_runtime(id: &str) -> Runtime {
     Runtime {
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
-        terminal_inventory: vec![eon_workspace_protocol::v44::TerminalInventory {
+        terminal_inventory: vec![eon_workspace_protocol::v45::TerminalInventory {
             terminal: "terminal-1".into(),
             run: "fixture-run".into(),
             origin_build: None,
@@ -16032,7 +16032,7 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     stream.read_to_end(&mut reply).unwrap();
     assert_eq!(
         decode_response(&reply),
-        Err(eon_workspace_protocol::v44::Error::UnsupportedVersion {
+        Err(eon_workspace_protocol::v45::Error::UnsupportedVersion {
             version: VERSION - 1
         })
     );
@@ -16851,7 +16851,18 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
-    executable(&venus, "#!/bin/sh\nexit 0\n");
+    // A supplied FIFO lets focus tests drive the supervised native return channel.
+    if root.join("focus-reports").exists() {
+        executable(
+            &venus,
+            format!(
+                "#!/bin/sh\ncase \"$EON_VENUS_PRESENTATION_CONTROL\" in stdin-ready-focus-v2) printf ready-v1;; esac\ncat >/dev/null &\ncat '{}'\nwait\n",
+                root.join("focus-reports").display()
+            ),
+        );
+    } else {
+        executable(&venus, "#!/bin/sh\nexit 0\n");
+    }
     // The fake Orbits never run it.
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
@@ -17051,7 +17062,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             &control,
             id,
             ProtocolAction::SendTerminal {
-                target: pane.id.clone(),
+                target: eon_workspace_protocol::v45::SendTarget::Id(pane.id.clone()),
                 force: false,
                 input,
             },
@@ -19324,6 +19335,206 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
 }
 
 #[test]
+fn focused_send_reports_the_persons_terminal_and_guards_enter() {
+    use eon_workspace_protocol::v45::{FocusReport, encode_focus_report};
+    let root = temporary_directory();
+    let fifo = root.join("focus-reports");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mut reports = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&fifo)
+        .unwrap();
+    let (mut supervisor, _, control) =
+        terminal_access_workspace(&root, "\n[agents]\nsend_enter_delay_ms = 5000\n");
+    let eon = || {
+        let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+        command
+            .env("EON_RUNTIME_DIR", root.join("runtime"))
+            .env("EON_CONFIG_HOME", root.join("config"));
+        command
+    };
+    let run = |args: &[&str]| eon().args(args).output().unwrap();
+    let inspect = || {
+        let output = run(&["session", "--json"]);
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let sent = || fs::read_to_string(root.join("input.log")).unwrap_or_default();
+    assert!(inspect()["focus"]["window_focused"].is_null());
+    let report = |reports: &mut fs::File, focused, terminal: Option<&str>| {
+        reports
+            .write_all(
+                &encode_focus_report(&FocusReport {
+                    window_focused: focused,
+                    terminal: terminal.map(Into::into),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let view = inspect();
+            if view["focus"]["window_focused"] == focused
+                && view["focus"]["target"]["terminal"].as_str() == terminal
+            {
+                return view;
+            }
+            assert!(Instant::now() < deadline, "report not observed: {view}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let refused = |args: &[&str], code: &str| {
+        let before = sent();
+        let output = run(args);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["error"]["code"], code);
+        assert_eq!(sent(), before, "a refused focus send reached Orbit");
+    };
+    refused(
+        &["pane", "send", "focused", "--enter", "--json"],
+        "window-unfocused",
+    );
+    report(&mut reports, true, Some("terminal-1"));
+    let before_send = stable_workspace_json(&run(&["session", "--json"]));
+    let entered = run(&["pane", "send", "focused", "--enter", "--json"]);
+    assert!(entered.status.success(), "{entered:?}");
+    assert_eq!(sent(), "terminal-1 Enter\n");
+    assert_eq!(
+        stable_workspace_json(&run(&["session", "--json"])),
+        before_send
+    );
+
+    // A shown popup receives focus; a stale pane report must not target it instead.
+    let Response::Snapshot(opened) = protocol_action(
+        &control,
+        "focus-popup",
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "sessions".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    ) else {
+        panic!("popup did not open")
+    };
+    let popup = opened.tabs[0].popups.last().unwrap().clone();
+    assert!(inspect()["focus"]["target"].is_null());
+    refused(
+        &["pane", "send", "focused", "--enter", "--json"],
+        "terminal-unfocused",
+    );
+    let view = report(&mut reports, true, Some(&popup.session));
+    assert_eq!(view["tabs"][0]["selected_popup"], popup.id);
+    assert_eq!(view["focus"]["target"]["popup"], popup.id);
+    let before = sent();
+    assert!(
+        matches!(protocol_action(&control, "guarded-old-pane", ProtocolAction::SendTerminal {
+        target: eon_workspace_protocol::v45::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
+        force: true, input: TerminalInput::Enter,
+    }), Response::Failure(failure) if failure.code == "focus-changed")
+    );
+    assert_eq!(sent(), before, "guarded Enter cannot change terminals");
+    let entered = run(&["pane", "send", "focused", "--enter", "--json"]);
+    assert!(entered.status.success(), "{entered:?}");
+    assert!(sent().ends_with(&format!("{} Enter\n", popup.session)));
+    report(&mut reports, true, None);
+    refused(
+        &["pane", "send", "focused", "--force", "--enter", "--json"],
+        "terminal-unfocused",
+    );
+    report(&mut reports, false, None);
+    refused(
+        &["pane", "send", "focused", "--force", "--enter", "--json"],
+        "window-unfocused",
+    );
+
+    // Explicit IDs keep reaching terminals even while native focus is elsewhere.
+    assert!(run(&["pane", "send", "p1", "--enter"]).status.success());
+    report(&mut reports, true, Some(&popup.session));
+    let before = sent();
+    let child = eon()
+        .args([
+            "pane",
+            "send",
+            "focused",
+            "--enter",
+            "--json",
+            "--",
+            "focus-race",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !sent().contains("Paste(\"focus-race\")") {
+        assert!(Instant::now() < deadline, "paste did not reach Orbit");
+        thread::sleep(Duration::from_millis(10));
+    }
+    // The delay is 5 s; the report is observed before the Enter dispatch.
+    report(&mut reports, false, None);
+    let result = child.wait_with_output().unwrap();
+    assert_eq!(result.status.code(), Some(1), "{result:?}");
+    let result: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(result["enter"], false);
+    assert_eq!(result["error"]["code"], "window-unfocused");
+    assert_eq!(
+        sent(),
+        format!("{before}{} Paste(\"focus-race\")\n", popup.session)
+    );
+
+    // Keep native focus, but change terminals after the CLI has pasted.
+    report(&mut reports, true, Some(&popup.session));
+    let before = sent();
+    let child = eon()
+        .args([
+            "pane",
+            "send",
+            "focused",
+            "--enter",
+            "--json",
+            "--",
+            "target-race",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !sent().contains("Paste(\"target-race\")") {
+        assert!(Instant::now() < deadline, "paste did not reach Orbit");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let hidden = run(&["popup", "hide", &popup.id, "--json"]);
+    assert!(hidden.status.success(), "{hidden:?}");
+    let pane = report(&mut reports, true, Some("terminal-1"));
+    assert!(pane["tabs"][0]["selected_popup"].is_null());
+    assert_eq!(pane["focus"]["target"]["pane"], "p1");
+    let result = child.wait_with_output().unwrap();
+    assert_eq!(result.status.code(), Some(1), "{result:?}");
+    let result: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(result["enter"], false);
+    assert_eq!(result["error"]["code"], "focus-changed");
+    assert_eq!(
+        sent(),
+        format!("{before}{} Paste(\"target-race\")\n", popup.session),
+        "neither terminal may receive Enter"
+    );
+    drop(reports);
+    fs::write(&supervisor.stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     let root = temporary_directory();
     let (mut supervisor, generation, _) =
@@ -20956,7 +21167,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
                         created_build: "g1-00000000000000000000000000000001".into(),
                         active_build: "g1-00000000000000000000000000000001".into(),
-                        terminal_inventory: vec![eon_workspace_protocol::v44::TerminalInventory {
+                        terminal_inventory: vec![eon_workspace_protocol::v45::TerminalInventory {
                             terminal: "terminal-1".into(),
                             run: "fixture-run".into(),
                             origin_build: None,
@@ -21775,7 +21986,7 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
     );
     assert_eq!(
         failure.reason,
-        eon_workspace_protocol::v44::QuotaFailureReason::Start
+        eon_workspace_protocol::v45::QuotaFailureReason::Start
     );
     drop(supervisor);
 }

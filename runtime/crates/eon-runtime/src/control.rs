@@ -5,7 +5,7 @@ use super::{
     workspace,
 };
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -1252,16 +1252,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v44::TerminalHistory {
-                target: eon_workspace_protocol::v44::TerminalTarget {
+            super::Response::History(eon_workspace_protocol::v45::TerminalHistory {
+                target: eon_workspace_protocol::v45::TerminalTarget {
                     workspace: "s1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v44::TargetId::Pane("p1".into()),
+                    id: eon_workspace_protocol::v45::TargetId::Pane("p1".into()),
                     terminal: "terminal-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v44::Screen::Primary,
+                screen: eon_workspace_protocol::v45::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),

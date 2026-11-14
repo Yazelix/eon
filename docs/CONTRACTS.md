@@ -923,7 +923,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v44 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v45 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1415,6 +1415,34 @@ names its socket. CLI JSON names a session `session` and a terminal
   retired shell evidence does not cover the current managed shells.
 
 ## EON-C10 — Typed workspace control
+
+- **Amendment (2026-11-14):** `eon-81emk`, approved by eon-overseer under
+  Lucca's delegation (INBOX 08:26:11Z):
+
+  Session inspection JSON adds `focus`, describing keyboard focus in the
+  selected Eon window independently of the session being inspected. It is
+  null when no window is associated, otherwise `{window_focused, target}`.
+  `window_focused` is true or false for reported native focus, or null when
+  unknown. `target` is null or an EON-C35 terminal target (`session`, `tab`,
+  `pane`, `popup`, `terminal`), with exactly one of `pane` or `popup`
+  non-null. A terminal is reported only when Venus reports terminal keyboard
+  focus and that exact live terminal matches Runtime's shown session, active
+  tab and shown popup or selected pane. Unknown or unfocused native focus,
+  chrome/dialog input ownership, unavailable attachment or stale selection
+  produce a null target. These are reported focus facts, not a synchronous
+  compositor query.
+
+  Each tab's existing `selected_popup` is its shown popup, null when hidden;
+  for an inactive tab it is the retained display selection. Active/selected
+  fields and popup `chosen` keep their meaning and do not independently
+  establish keyboard focus.
+
+  EONW v45 carries ordinary Snapshot focus, bounded native focus-report
+  frames and a focused target on EON-C36's existing send action. Canonical
+  Runtime/Venus consumers switch together. Older version bytes are rejected
+  rather than reinterpreted, without stopping older live windows. Reserved
+  Stop and the six-byte EONW prefix are unchanged. Inspection gains no
+  terminal contents or additional input authority.
 
 - **Amendment (2026-11-14):** `eon-pj2ed`, approved by eon-overseer under
   Lucca's delegation: caller-free default-namespace control and explicit
@@ -2080,7 +2108,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v44 and accepted Orbit management operations.
+- **Consumes:** Current EONW v45 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -2092,7 +2120,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v44 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v45 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
   The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
   failure records to Snapshot: fresh/stale state, observation and windows,
@@ -3582,7 +3610,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v44 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v45 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -5815,6 +5843,31 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
 
 ## EON-C36 — Sending input to a terminal from the CLI
 
+- **Amendment (2026-11-14):** `eon-81emk`, approved by eon-overseer under
+  Lucca's delegation (INBOX 08:26:11Z):
+
+  TARGET additionally accepts the literal `focused`, an explicit opt-in to
+  the person's keyboard-focused terminal in the selected Eon window. Runtime
+  validates focus and resolves the target at dispatch. It refuses unusable
+  focus, never falls back or redirects to a selected pane, caller or another
+  window, and moves no focus or selection. Explicit pane/popup ID sends
+  retain their behavior.
+
+  With text and `focused --enter`, paste resolves once. After the existing
+  delay, Enter is sent only when the window has reported native focus and
+  the same exact terminal is verified as focused at Enter dispatch. Enter
+  alone resolves at its own dispatch. An Enter refusal after paste preserves
+  the text and uses the existing exit-1 partial-success reply with
+  `enter:false`.
+
+  Focus refusals send no input for that operation and exit 1:
+  `window-unfocused` for unknown or unfocused native focus;
+  `terminal-unfocused` for no verified terminal focus; `focus-changed` for a
+  guarded follow-up whose verified focused terminal differs. Existing
+  authorization and person-typing checks apply; `--force` bypasses only
+  typing protection. Help and usage plainly state that `focused` targets the
+  person's focused terminal.
+
 - **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-30
   in the merged text of `eon-agent-parity-a9g0.14`; its `terminal-unavailable`
   and exit 4 failures amended by Lucca on 2026-10-31 ("agreed", then "ok" for
@@ -6406,7 +6459,7 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   filters, subscriber bounds and CLI projection. Its canonical EONW package
   owns the v44 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v44; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v45; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

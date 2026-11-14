@@ -1638,7 +1638,7 @@ mod tests {
     fn images_draw_in_panes_and_popups_and_refusals_keep_the_renderer() {
         use super::super::{FontSettings, FontSetup, PaddingColor, PresentOutcome, Renderer};
         use crate::{WorkspaceFocus, WorkspaceScene};
-        use eon_workspace_protocol::v44::{
+        use eon_workspace_protocol::v45::{
             ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Sidebar,
             Snapshot, Tab, WorkspaceInfo,
         };
@@ -1677,6 +1677,7 @@ mod tests {
 
         fn snapshot(popup: bool) -> Snapshot {
             Snapshot {
+                focus: None,
                 generation: "g1-00000000000000000000000000000001".into(),
                 created_build: "g1-00000000000000000000000000000001".into(),
                 active_build: "g1-00000000000000000000000000000001".into(),

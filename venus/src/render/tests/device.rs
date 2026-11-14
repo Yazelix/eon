@@ -31,7 +31,7 @@ fn blink_test_scene() -> Scene {
 }
 
 fn blink_test_workspace(metrics: CellMetrics) -> WorkspaceScene {
-    use eon_workspace_protocol::v44::{Column, Pane};
+    use eon_workspace_protocol::v45::{Column, Pane};
     let mut snapshot = super::outlines::popup_title_snapshot("", 4.0);
     let tab = &mut snapshot.tabs[0];
     tab.selected_popup = None;

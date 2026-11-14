@@ -1116,7 +1116,7 @@ fn client(dir: &Path) -> Result {
 /// Stand-in for Venus only for the terminal-mode supervisor start row.
 /// The parent measures the supervisor, never this diagnostic process.
 pub fn presentation() -> Result {
-    if std::env::var("EON_VENUS_PRESENTATION_CONTROL").as_deref() == Ok("stdin-ready-focus-v1") {
+    if std::env::var("EON_VENUS_PRESENTATION_CONTROL").as_deref() == Ok("stdin-ready-focus-v2") {
         std::io::stdout().write_all(b"ready-v1").map_err(error)?;
         std::io::stdout().flush().map_err(error)?;
     }

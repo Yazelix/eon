@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v44 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v45 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -33,7 +33,7 @@ automated proof. Later proof records retain their own exact scope.
   installed configured typography and geometry remain pending.
   Amended on 2026-11-06
   (approved by eon-overseer, MINOR D2 on `eon-2kvr`) by `eon-2kvr`: the
-  admission mode is named `stdin-ready-focus-v1`; the old name is gone.
+  admission mode is `stdin-ready-focus-v2`.
 - **Consumer:** One direct or caller-launched Venus surface.
 - **Trigger:** Optional `--font-family`, repeatable `--font-fallback`,
   `--font-size`, `--line-height`, `--columns`, and `--rows` startup options.
@@ -73,7 +73,7 @@ automated proof. Later proof records retain their own exact scope.
 - **Consumes:** ORBF v2 / ORBS v13, canonical EONW, and the selected glyphon
   0.12.0 / cosmic-text 0.19.0 APIs with exact unicode-script 0.5.8.
 - **Supervised startup admission:**
-  `EON_VENUS_PRESENTATION_CONTROL=stdin-ready-focus-v1` uses private stdin/stdout.
+  `EON_VENUS_PRESENTATION_CONTROL=stdin-ready-focus-v2` uses private stdin/stdout.
   Workspace mode first reads one bounded canonical EONW Snapshot from stdin;
   standalone mode has no snapshot prefix. After font/renderer initialization
   and real-window initial native-scale admission, Venus writes exactly
@@ -1310,6 +1310,19 @@ re-proved when that platform or feature is next touched.
   separate.
 
 ## VEN-C14 — Supervised native presentation lifecycle
+
+- **Amendment (2026-11-14):** `eon-81emk`, approved by eon-overseer under
+  Lucca's delegation (INBOX 08:26:11Z):
+
+  In supervised workspace mode, Venus reports native window focus together
+  with its locally keyboard-focused terminal, or no terminal while
+  chrome/dialogs hold focus or its active attachment is unavailable. Reports
+  use the canonical bounded EONW focus value on the existing private return
+  stream after readiness. The latest-only worker never waits for the
+  supervisor on the native event loop. Reporting failure makes focus unknown
+  at Runtime and does not activate a window, send terminal input or stop
+  Orbit. A replacement Venus inherits no focus report. Standalone Venus and
+  eonbase send none.
 
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-06 (approved by eon-overseer, MINOR

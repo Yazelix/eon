@@ -17,7 +17,7 @@ use super::{
     },
     workspace::{failure_json, json_escape, terminal_text, validate_initial_directory},
 };
-use eon_workspace_protocol::v44::Failure;
+use eon_workspace_protocol::v45::Failure;
 use std::{
     collections::hash_map::RandomState,
     env,
@@ -813,7 +813,7 @@ pub(super) fn reload_window(
     arguments: &[OsString],
 ) -> Result<i32, Error> {
     use super::control::{CONTROL_TIMEOUT, ControlResponse, EndpointFailureKind, send_action};
-    use eon_workspace_protocol::v44::{Action, LifecycleResponse, WorkspaceAction};
+    use eon_workspace_protocol::v45::{Action, LifecycleResponse, WorkspaceAction};
     let argument = window_id_argument(argument)?;
     let (window, shown) = match select_routed_window(inputs, argument) {
         Ok(selected) => selected,

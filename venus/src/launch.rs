@@ -540,13 +540,13 @@ pub(super) fn launch_arguments(
     }
 
     let startup_admission =
-        presentation_control.as_deref() == Some("stdin-ready-focus-v1".as_ref());
+        presentation_control.as_deref() == Some("stdin-ready-focus-v2".as_ref());
     Ok(LaunchArguments {
         application_id: application_id.unwrap_or_else(|| "eon".into()),
         orbit_socket,
         workspace_socket,
         supervised: startup_admission
-            || presentation_control.as_deref() == Some("stdin-focus-v1".as_ref()),
+            || presentation_control.as_deref() == Some("stdin-focus-v2".as_ref()),
         startup_admission,
         decorations,
         pane_frames: pane_frames.unwrap_or(true),
@@ -609,7 +609,7 @@ fn parse_bar_item(name: &str) -> Option<BarItem> {
         _ => {
             let (scope, period) = name.strip_prefix("google_quota:")?.rsplit_once(':')?;
             if scope.is_empty()
-                || scope.len() > eon_workspace_protocol::v44::MAX_QUOTA_SCOPE_BYTES
+                || scope.len() > eon_workspace_protocol::v45::MAX_QUOTA_SCOPE_BYTES
                 || scope.chars().any(char::is_control)
             {
                 return None;
@@ -1549,7 +1549,7 @@ mod tests {
     fn startup_admission_keeps_presentation_control_enabled() {
         let arguments = launch_arguments(
             [OsString::from("orbit.sock")],
-            Some("stdin-ready-focus-v1".into()),
+            Some("stdin-ready-focus-v2".into()),
         )
         .unwrap();
         assert!(arguments.supervised);
@@ -1565,8 +1565,8 @@ mod tests {
             .unwrap();
             (arguments.supervised, arguments.startup_admission)
         };
-        assert_eq!(mode("stdin-ready-focus-v1"), (true, true));
-        assert_eq!(mode("stdin-focus-v1"), (true, false));
+        assert_eq!(mode("stdin-ready-focus-v2"), (true, true));
+        assert_eq!(mode("stdin-focus-v2"), (true, false));
         for unrecognized in ["stdin-ready-v1", "stdin", "STDIN-FOCUS-V1"] {
             assert_eq!(mode(unrecognized), (false, false), "{unrecognized}");
         }

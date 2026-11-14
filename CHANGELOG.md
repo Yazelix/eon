@@ -5,6 +5,16 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon 0.1.26 uses EONW v45. Windows started before this version need a
+  restart; their EONW v44 supervisors reject the updated CLI's incompatible
+  requests cleanly (`eon-81emk`).
+
+- `eon session --json` reports native window focus and the keyboard-focused
+  pane or popup. `eon pane send focused` explicitly targets the person's
+  focused terminal, refusing unknown/unfocused state; delayed Enter requires
+  the same focused terminal. EONW v45 carries the focus and target values
+  (`eon-81emk`).
+
 - Background attention badges use gently pulsing round dots; Idle rings and
   Unavailable dots have smooth anti-aliased edges. The attention animation-off
   switch keeps both Working and Background still (`eon-sidebar-app-icons-y99b7.10`).

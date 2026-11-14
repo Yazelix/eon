@@ -1,8 +1,8 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
-use eon_workspace_protocol::v44::{
-    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, PopupEntry, Sidebar, Snapshot,
-    WorkspaceAction as CommonAction,
+use eon_workspace_protocol::v45::{
+    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, FocusReport, PopupEntry,
+    Sidebar, Snapshot, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
     PlacementState,
@@ -74,7 +74,7 @@ use shortcuts::{
 };
 
 #[cfg(test)]
-use eon_workspace_protocol::v44::Direction as WorkspaceDirection;
+use eon_workspace_protocol::v45::Direction as WorkspaceDirection;
 #[cfg(test)]
 use shortcuts::{copy_paste_modifiers, native_key_shortcut_for};
 
@@ -584,8 +584,8 @@ struct AttentionInboxState {
 impl AttentionInboxState {
     fn entries<'a>(
         &self,
-        snapshot: &'a eon_workspace_protocol::v44::Snapshot,
-    ) -> impl Iterator<Item = &'a eon_workspace_protocol::v44::QueueEntry> {
+        snapshot: &'a eon_workspace_protocol::v45::Snapshot,
+    ) -> impl Iterator<Item = &'a eon_workspace_protocol::v45::QueueEntry> {
         let filter = self.filter;
         snapshot
             .attention_queue
@@ -593,13 +593,13 @@ impl AttentionInboxState {
             .filter(move |entry| filter.matches(entry.attention.state))
     }
 
-    fn index(&self, snapshot: &eon_workspace_protocol::v44::Snapshot) -> Option<usize> {
+    fn index(&self, snapshot: &eon_workspace_protocol::v45::Snapshot) -> Option<usize> {
         let (tab, target) = self.highlighted.as_ref()?;
         self.entries(snapshot)
             .position(|entry| entry.tab == *tab && entry.target == *target)
     }
 
-    fn select(&mut self, snapshot: &eon_workspace_protocol::v44::Snapshot, index: usize) {
+    fn select(&mut self, snapshot: &eon_workspace_protocol::v45::Snapshot, index: usize) {
         let entries: Vec<_> = self.entries(snapshot).collect();
         self.highlighted = entries
             .get(index.min(entries.len().saturating_sub(1)))
@@ -608,7 +608,7 @@ impl AttentionInboxState {
 
     fn set_filter(
         &mut self,
-        snapshot: &eon_workspace_protocol::v44::Snapshot,
+        snapshot: &eon_workspace_protocol::v45::Snapshot,
         filter: AttentionFilter,
     ) {
         self.filter = filter;
@@ -618,7 +618,7 @@ impl AttentionInboxState {
 
     fn move_highlight(
         &mut self,
-        snapshot: &eon_workspace_protocol::v44::Snapshot,
+        snapshot: &eon_workspace_protocol::v45::Snapshot,
         backwards: bool,
     ) {
         let index = self.index(snapshot).unwrap_or(0);
@@ -634,7 +634,7 @@ impl AttentionInboxState {
 
     fn reconcile(
         &mut self,
-        snapshot: &eon_workspace_protocol::v44::Snapshot,
+        snapshot: &eon_workspace_protocol::v45::Snapshot,
         previous_index: usize,
     ) {
         if self.index(snapshot).is_none() {
@@ -644,7 +644,7 @@ impl AttentionInboxState {
 
     fn refresh(
         &mut self,
-        snapshot: &eon_workspace_protocol::v44::Snapshot,
+        snapshot: &eon_workspace_protocol::v45::Snapshot,
         previous_index: usize,
         presentation: &mut PresentationState,
     ) -> bool {
@@ -696,7 +696,7 @@ impl PendingPaneAction {
     /// None waits for this request's answer; false retires a failed or displaced target.
     fn update(
         &mut self,
-        snapshot: Option<&eon_workspace_protocol::v44::Snapshot>,
+        snapshot: Option<&eon_workspace_protocol::v45::Snapshot>,
         answer: Option<(u64, bool)>,
     ) -> Option<bool> {
         if let Some((_, accepted)) = answer.filter(|(ticket, _)| *ticket == self.ticket) {
@@ -741,7 +741,7 @@ impl PendingClose {
     fn on_workspace(slot: &mut Option<Self>, event: &WorkspaceEvent) -> Option<(CloseScope, bool)> {
         let pending = slot.as_mut()?;
         match event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v44::Response::Confirm(scope)) => {
+            WorkspaceEvent::Response(eon_workspace_protocol::v45::Response::Confirm(scope)) => {
                 pending.answer = (scope.pane == pending.pane).then(|| scope.clone());
             }
             WorkspaceEvent::Answered { ticket, .. } if *ticket == pending.ticket => {
@@ -875,7 +875,7 @@ impl ClosePrompt {
 
     /// Whether the snapshot still holds what the prompt names: the tab and pane of a close, or
     /// the running window of a quit.
-    fn names_live_target(&self, snapshot: &eon_workspace_protocol::v44::Snapshot) -> bool {
+    fn names_live_target(&self, snapshot: &eon_workspace_protocol::v45::Snapshot) -> bool {
         match &self.target {
             PromptTarget::CloseTab { tab, action } => snapshot
                 .tabs
@@ -927,7 +927,7 @@ fn has_quota(snapshot: &Snapshot) -> bool {
 }
 
 /// Whether `pane` is a pane of some tab of the snapshot.
-fn snapshot_has_pane(snapshot: &eon_workspace_protocol::v44::Snapshot, pane: &str) -> bool {
+fn snapshot_has_pane(snapshot: &eon_workspace_protocol::v45::Snapshot, pane: &str) -> bool {
     snapshot
         .tabs
         .iter()
@@ -935,7 +935,7 @@ fn snapshot_has_pane(snapshot: &eon_workspace_protocol::v44::Snapshot, pane: &st
 }
 
 /// The one-based number of the Stack holding `pane`, unless its tab has one column.
-fn stack_number(snapshot: &eon_workspace_protocol::v44::Snapshot, pane: &str) -> Option<usize> {
+fn stack_number(snapshot: &eon_workspace_protocol::v45::Snapshot, pane: &str) -> Option<usize> {
     snapshot.tabs.iter().find_map(|tab| {
         let index = tab
             .columns
@@ -947,7 +947,7 @@ fn stack_number(snapshot: &eon_workspace_protocol::v44::Snapshot, pane: &str) ->
 
 /// The Stop `eon quit` sends for the snapshot's window; None without a running-windows
 /// summary (eonbase).
-fn quit_action(snapshot: &eon_workspace_protocol::v44::Snapshot) -> Option<Outgoing> {
+fn quit_action(snapshot: &eon_workspace_protocol::v45::Snapshot) -> Option<Outgoing> {
     let running = snapshot.running.as_ref()?;
     Some(Outgoing::Stop {
         generation: running.this.generation.clone(),
@@ -956,7 +956,7 @@ fn quit_action(snapshot: &eon_workspace_protocol::v44::Snapshot) -> Option<Outgo
 
 /// Whether quitting asks first. An absent busy list reads as every terminal busy; an empty one
 /// quits without asking, as `eon quit` does (EON-C11).
-fn quit_asks(snapshot: &eon_workspace_protocol::v44::Snapshot) -> bool {
+fn quit_asks(snapshot: &eon_workspace_protocol::v45::Snapshot) -> bool {
     snapshot
         .busy
         .as_ref()
@@ -976,7 +976,7 @@ enum CloseRequest {
 /// quit does, and one without a running-windows summary (eonbase), without a snapshot yet, or
 /// while the workspace is unavailable, detaches.
 fn close_request(
-    snapshot: Option<&eon_workspace_protocol::v44::Snapshot>,
+    snapshot: Option<&eon_workspace_protocol::v45::Snapshot>,
     unavailable: bool,
 ) -> CloseRequest {
     if !unavailable && snapshot.is_some_and(|snapshot| snapshot.running.is_some()) {
@@ -988,10 +988,10 @@ fn close_request(
 
 /// Whether an open quit prompt words `next` differently from `current`.
 fn quit_prompt_changed(
-    current: &eon_workspace_protocol::v44::Snapshot,
-    next: &eon_workspace_protocol::v44::Snapshot,
+    current: &eon_workspace_protocol::v45::Snapshot,
+    next: &eon_workspace_protocol::v45::Snapshot,
 ) -> bool {
-    let inputs = |snapshot: &eon_workspace_protocol::v44::Snapshot| {
+    let inputs = |snapshot: &eon_workspace_protocol::v45::Snapshot| {
         (
             snapshot
                 .running
@@ -1054,7 +1054,7 @@ impl QuitProgress {
     /// already under way.
     fn begin(
         &mut self,
-        snapshot: Option<&eon_workspace_protocol::v44::Snapshot>,
+        snapshot: Option<&eon_workspace_protocol::v45::Snapshot>,
     ) -> Option<QuitStep> {
         let snapshot = snapshot.filter(|snapshot| snapshot.running.is_some())?;
         if *self != Self::Idle {
@@ -1072,11 +1072,11 @@ impl QuitProgress {
     /// model holds and `quit_prompt` whether the quit prompt is open.
     fn on_workspace(
         &mut self,
-        current: Option<&eon_workspace_protocol::v44::Snapshot>,
+        current: Option<&eon_workspace_protocol::v45::Snapshot>,
         quit_prompt: bool,
         event: &WorkspaceEvent,
     ) -> QuitEffects {
-        use eon_workspace_protocol::v44::Response;
+        use eon_workspace_protocol::v45::Response;
         let (decides_on, refresh) = match event {
             WorkspaceEvent::Response(Response::Snapshot(snapshot)) => (
                 Some(snapshot),
@@ -3630,7 +3630,7 @@ impl Application {
             // generation; exit as on control loss.
             if matches!(
                 event,
-                WorkspaceEvent::Response(eon_workspace_protocol::v44::Response::Ended(_))
+                WorkspaceEvent::Response(eon_workspace_protocol::v45::Response::Ended(_))
             ) {
                 event_loop.exit();
                 return;
@@ -3698,7 +3698,7 @@ impl Application {
             labels_only,
             sidebar_toggled,
         ) = match &event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v44::Response::Snapshot(snapshot)) => {
+            WorkspaceEvent::Response(eon_workspace_protocol::v45::Response::Snapshot(snapshot)) => {
                 let current = self.workspace_model.snapshot();
                 let attention_only =
                     current.is_some_and(|current| attention_only_change(current, snapshot));
@@ -3724,7 +3724,7 @@ impl Application {
             .flatten();
         let quota_expired = unavailable && self.workspace_model.snapshot().is_some_and(has_quota);
         let (mut view_changed, workspace_changed) = match event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v44::Response::Failure(failure))
+            WorkspaceEvent::Response(eon_workspace_protocol::v45::Response::Failure(failure))
                 if failure.code == "stop-incomplete" =>
             {
                 let notice = stop_incomplete_notice(
@@ -4924,6 +4924,15 @@ impl Application {
     }
 
     fn refresh_client_view(&mut self) {
+        if let Some(reporter) = &self.focus_reporter {
+            reporter.report(keyboard_focus_report(
+                self.window_focused,
+                self.workspace_focus,
+                self.dialog_open(),
+                &self.workspace_model,
+                &self.terminal,
+            ));
+        }
         self.measure_dialog_texts();
         if !self.link_surface_available(self.links.unshifted) {
             self.links.pressed = None;
@@ -5844,9 +5853,6 @@ impl ApplicationHandler<UserEvent> for Application {
             }
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
-                if let Some(reporter) = &self.focus_reporter {
-                    reporter.report(focused);
-                }
                 self.next_animation = None;
                 self.terminal
                     .terminal_scroll
@@ -6860,7 +6866,7 @@ struct ZoomTarget {
     columns: Vec<(String, Vec<String>)>,
 }
 
-fn zoom_target(snapshot: &eon_workspace_protocol::v44::Snapshot) -> Option<ZoomTarget> {
+fn zoom_target(snapshot: &eon_workspace_protocol::v45::Snapshot) -> Option<ZoomTarget> {
     let tab = snapshot
         .tabs
         .iter()
@@ -7184,7 +7190,7 @@ fn step_sidebar_row<'a>(
 /// target's tab is selected; otherwise nowhere yet.
 fn jump_focus(
     jump: &AttentionJump,
-    snapshot: &eon_workspace_protocol::v44::Snapshot,
+    snapshot: &eon_workspace_protocol::v45::Snapshot,
     answer: bool,
 ) -> Option<WorkspaceFocus> {
     if focused_terminal(snapshot) == Some(jump.target.as_str()) {
@@ -7194,6 +7200,43 @@ fn jump_focus(
         Some(WorkspaceFocus::Tabs)
     } else {
         None
+    }
+}
+
+fn keyboard_focus_report(
+    window_focused: bool,
+    workspace_focus: WorkspaceFocus,
+    dialog_open: bool,
+    workspace: &WorkspaceModel,
+    view: &TerminalView,
+) -> FocusReport {
+    let terminal = (|| {
+        if !terminal_focused(window_focused, workspace_focus)
+            || dialog_open
+            || workspace.unavailable()
+            || !view.model.is_attached()
+        {
+            return None;
+        }
+        let (endpoint, live) = workspace.active_attachment()?;
+        if !live || view.active_endpoint.as_deref() != Some(endpoint) {
+            return None;
+        }
+        let snapshot = workspace.snapshot()?;
+        if let Some(popup) = active_popup(snapshot) {
+            return Some(popup.session.clone());
+        }
+        let tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == snapshot.active_tab)?;
+        tab.panes()
+            .find(|pane| Some(&pane.id) == tab.selected_pane.as_ref())
+            .map(|pane| pane.session.clone())
+    })();
+    FocusReport {
+        window_focused,
+        terminal,
     }
 }
 
@@ -7227,12 +7270,12 @@ fn accessibility_workspace_focus(
 /// What a heading's button sends: the popup's dismissal that `eon popup hide` sends, the
 /// sidebar's closing while the sidebar is open, or a Stack's first, unconsented close.
 fn heading_request(
-    snapshot: &eon_workspace_protocol::v44::Snapshot,
+    snapshot: &eon_workspace_protocol::v45::Snapshot,
     action: HeadingAction,
 ) -> Option<WorkspaceAction> {
     match action {
         HeadingAction::HidePopup => active_popup(snapshot).map(|popup| {
-            WorkspaceAction::DismissPopup(eon_workspace_protocol::v44::PopupTarget {
+            WorkspaceAction::DismissPopup(eon_workspace_protocol::v45::PopupTarget {
                 tab: snapshot.active_tab.clone(),
                 instance: popup.id.clone(),
             })
@@ -7246,7 +7289,7 @@ fn heading_request(
 /// What a Stack's Close button sends: a column close naming that column's expanded pane, with
 /// no consent, which stops nothing (EON-C8). Every Stack asks this way, one pane or many.
 fn stack_close_request(
-    snapshot: &eon_workspace_protocol::v44::Snapshot,
+    snapshot: &eon_workspace_protocol::v45::Snapshot,
     index: usize,
 ) -> Option<WorkspaceAction> {
     if active_popup(snapshot).is_some() {
@@ -7287,7 +7330,7 @@ fn focus_after_stack_close(focus: WorkspaceFocus) -> WorkspaceFocus {
 /// What releasing a held heading button sends: what it sent when `pressed`, while the heading
 /// still sends that. A popup shown in place of the pressed one is not dismissed for it.
 fn held_heading_request(
-    snapshot: &eon_workspace_protocol::v44::Snapshot,
+    snapshot: &eon_workspace_protocol::v45::Snapshot,
     action: HeadingAction,
     pressed: &WorkspaceAction,
 ) -> Option<WorkspaceAction> {
@@ -7298,7 +7341,7 @@ fn held_heading_request(
 /// last pane. That close ends the window, or with other workspaces removes just this one
 /// (EON-C33). Runtime refuses a pane close under a popup, so that close is not asked about.
 fn final_close_tab(
-    snapshot: &eon_workspace_protocol::v44::Snapshot,
+    snapshot: &eon_workspace_protocol::v45::Snapshot,
     action: &WorkspaceAction,
 ) -> Option<String> {
     let [tab] = snapshot.tabs.as_slice() else {
@@ -7319,7 +7362,7 @@ fn final_close_tab(
 
 /// The shown workspace's name or `sN`, which a final close removes while other workspaces
 /// remain; `None` while that close ends the window.
-fn close_prompt_workspace(snapshot: &eon_workspace_protocol::v44::Snapshot) -> Option<String> {
+fn close_prompt_workspace(snapshot: &eon_workspace_protocol::v45::Snapshot) -> Option<String> {
     shown_workspace(snapshot)
         .filter(|&(_, _, count)| count >= 2)
         .map(|(name, _, _)| name.to_owned())
@@ -7497,9 +7540,9 @@ fn next_window_action(
 }
 
 fn peer_window<'a>(
-    snapshot: &'a eon_workspace_protocol::v44::Snapshot,
+    snapshot: &'a eon_workspace_protocol::v45::Snapshot,
     action: &WindowMenuAction,
-) -> Option<&'a eon_workspace_protocol::v44::WindowEntry> {
+) -> Option<&'a eon_workspace_protocol::v45::WindowEntry> {
     snapshot
         .running
         .as_ref()?
@@ -7510,7 +7553,7 @@ fn peer_window<'a>(
 }
 
 fn peer_quit_id<'a>(
-    snapshot: &eon_workspace_protocol::v44::Snapshot,
+    snapshot: &eon_workspace_protocol::v45::Snapshot,
     action: &'a WindowMenuAction,
 ) -> std::result::Result<&'a str, String> {
     let Some(peer) = peer_window(snapshot, action) else {
@@ -7549,7 +7592,7 @@ fn peer_quit_id<'a>(
 
 fn stop_other_window(
     executable: &Path,
-    snapshot: &eon_workspace_protocol::v44::Snapshot,
+    snapshot: &eon_workspace_protocol::v45::Snapshot,
     action: &WindowMenuAction,
 ) -> std::result::Result<(), String> {
     let id = peer_quit_id(snapshot, action)?;
@@ -7799,7 +7842,7 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     let mut application = Application::new(arguments, event_loop.create_proxy());
     if application.startup_admission && application.workspace_socket.is_some() {
         let response = yazelix_venus::read_workspace_response(&mut io::stdin().lock())?;
-        if !matches!(response, eon_workspace_protocol::v44::Response::Snapshot(_)) {
+        if !matches!(response, eon_workspace_protocol::v45::Response::Snapshot(_)) {
             return Err("Venus startup admission requires an Eon workspace snapshot".into());
         }
         application.workspace_model.apply(response);
@@ -7866,7 +7909,10 @@ fn admit_presentation(
         .inspect_err(|error| eprintln!("Cannot report Venus window focus: {error}"))
         .ok();
     if let Some(reporter) = &reporter {
-        reporter.report(focused);
+        reporter.report(FocusReport {
+            window_focused: focused,
+            terminal: None,
+        });
     }
     Ok(reporter)
 }
@@ -7886,7 +7932,8 @@ struct FocusMailbox {
 
 #[derive(Default)]
 struct PendingFocus {
-    focused: Option<bool>,
+    focused: Option<FocusReport>,
+    last: Option<FocusReport>,
     closed: bool,
 }
 
@@ -7900,8 +7947,13 @@ impl FocusReporter {
         Ok(Self { mailbox })
     }
 
-    fn report(&self, focused: bool) {
-        self.mailbox.lock().focused = Some(focused);
+    fn report(&self, focused: FocusReport) {
+        let mut pending = self.mailbox.lock();
+        if pending.last.as_ref() == Some(&focused) {
+            return;
+        }
+        pending.last = Some(focused.clone());
+        pending.focused = Some(focused);
         self.mailbox.changed.notify_one();
     }
 }
@@ -7919,7 +7971,7 @@ impl FocusMailbox {
     }
 
     /// Waits for the next focus to send; none once the reporter is gone.
-    fn take(&self) -> Option<bool> {
+    fn take(&self) -> Option<FocusReport> {
         let mut pending = self.lock();
         loop {
             if pending.closed {
@@ -7950,8 +8002,10 @@ fn report_focus(mailbox: &FocusMailbox, output: UnixStream) {
 fn send_focus(mailbox: &FocusMailbox, mut output: impl Write) -> io::Result<()> {
     let mut sent = None;
     while let Some(focused) = mailbox.take() {
-        if sent != Some(focused) {
-            output.write_all(if focused { b"focus:1\n" } else { b"focus:0\n" })?;
+        if sent.as_ref() != Some(&focused) {
+            let bytes = eon_workspace_protocol::v45::encode_focus_report(&focused)
+                .map_err(io::Error::other)?;
+            output.write_all(&bytes)?;
             sent = Some(focused);
         }
     }

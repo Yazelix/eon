@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C14: report native window focus and the keyboard-focused terminal using
+  canonical EONW v45 frames; chrome, dialogs and unavailable attachments report
+  no terminal. Private supervision modes use v2 (`eon-81emk`).
+
 - VEN-C21/VEN-C30: Background attention uses a calm round-dot pulse on the shared
   tick; Idle rings and Unavailable dots use anti-aliased round coverage. The
   existing animation-off/CPU guards keep both animated states still

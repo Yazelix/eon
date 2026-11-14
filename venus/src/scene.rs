@@ -4,8 +4,8 @@ use crate::{
     render::CellMetrics,
 };
 #[cfg(test)]
-use eon_workspace_protocol::v44::{ALT, SHIFT};
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{ALT, SHIFT};
+use eon_workspace_protocol::v45::{
     Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
     CloseScope, CodexQuotaState, GoogleQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, Sidebar,
     Snapshot, Tab, TargetId,
@@ -983,7 +983,7 @@ pub enum WindowMenuAction {
 
 impl WindowMenuAction {
     #[must_use]
-    pub fn peer(window: &eon_workspace_protocol::v44::WindowEntry) -> Self {
+    pub fn peer(window: &eon_workspace_protocol::v45::WindowEntry) -> Self {
         Self::QuitOther {
             // The full generation hex names a default-namespace peer across upgrades.
             id: window.window.clone().unwrap_or_else(|| {
@@ -999,8 +999,8 @@ impl WindowMenuAction {
 }
 
 #[must_use]
-pub fn window_summary(window: &eon_workspace_protocol::v44::WindowEntry) -> String {
-    use eon_workspace_protocol::v44::WindowState;
+pub fn window_summary(window: &eon_workspace_protocol::v45::WindowEntry) -> String {
+    use eon_workspace_protocol::v45::WindowState;
     let id = window
         .window
         .as_deref()
@@ -1708,7 +1708,7 @@ pub struct DialogScene {
 impl DialogScene {
     #[must_use]
     pub fn quit_other_window(
-        window: &eon_workspace_protocol::v44::WindowEntry,
+        window: &eon_workspace_protocol::v45::WindowEntry,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
@@ -1741,7 +1741,7 @@ impl DialogScene {
     }
     #[must_use]
     pub fn window_menu(
-        running: &eon_workspace_protocol::v44::RunningWindows,
+        running: &eon_workspace_protocol::v45::RunningWindows,
         entries: &[PopupEntry],
         highlighted: Option<&WindowMenuAction>,
         size: PhysicalSize<u32>,

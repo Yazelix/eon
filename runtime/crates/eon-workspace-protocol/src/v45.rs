@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v44 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v45 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -25,7 +25,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 44;
+pub const VERSION: u16 = 45;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -119,6 +119,36 @@ const SENT: u8 = 135;
 const HISTORY: u8 = 141;
 const EDITING: u8 = 142;
 const CONFIRM: u8 = 143;
+const FOCUS_REPORT: u8 = 144;
+/// Maximum native focus frame, checked before allocating its payload.
+pub const MAX_FOCUS_REPORT_BYTES: usize = HEADER_BYTES + 1 + 1 + 2 + MAX_ID_BYTES;
+
+/// The native client's keyboard focus, on its supervised return stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FocusReport {
+    pub window_focused: bool,
+    pub terminal: Option<String>,
+}
+
+/// Window-scoped focus for ordinary session inspection (EON-C10).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Focus {
+    pub window_focused: Option<bool>,
+    pub target: Option<TerminalTarget>,
+}
+
+/// An explicit terminal or the person's focused terminal (EON-C36).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SendTarget {
+    Id(String),
+    Focused { expected_terminal: Option<String> },
+}
+
+impl From<&str> for SendTarget {
+    fn from(id: &str) -> Self {
+        Self::Id(id.into())
+    }
+}
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
@@ -311,7 +341,7 @@ pub enum Action {
     /// Send `input` to the pane or popup `target`, in any workspace of the
     /// window (EON-C36).
     SendTerminal {
-        target: String,
+        target: SendTarget,
         input: TerminalInput,
         force: bool,
     },
@@ -698,6 +728,7 @@ pub struct BusyTerminals {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
+    pub focus: Option<Focus>,
     pub generation: String,
     pub created_build: String,
     pub active_build: String,
@@ -1161,9 +1192,18 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             input,
             force,
         } => {
-            identity("terminal target", target)?;
+            validate_send_target(target)?;
             payload.byte(SEND_TERMINAL);
-            payload.string(target);
+            match target {
+                SendTarget::Id(id) => {
+                    payload.byte(0);
+                    payload.string(id);
+                }
+                SendTarget::Focused { expected_terminal } => {
+                    payload.byte(1);
+                    encode_optional(&mut payload, expected_terminal);
+                }
+            }
             payload.byte(u8::from(*force));
             match input {
                 TerminalInput::Paste(text) => {
@@ -1384,7 +1424,18 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             target: decoder.string("terminal target", MAX_ID_BYTES)?,
         }),
         SEND_TERMINAL => Some(Action::SendTerminal {
-            target: decoder.string("terminal target", MAX_ID_BYTES)?,
+            target: match decoder.byte()? {
+                0 => SendTarget::Id(decoder.string("terminal target", MAX_ID_BYTES)?),
+                1 => SendTarget::Focused {
+                    expected_terminal: decode_optional(&mut decoder, "expected terminal")?,
+                },
+                value => {
+                    return Err(Error::InvalidTag {
+                        field: "send target",
+                        value,
+                    });
+                }
+            },
             force: decode_bool(&mut decoder, "force")?,
             input: match decoder.byte()? {
                 0 => TerminalInput::Paste(decoder.long_string("paste", MAX_PASTE_BYTES)?),
@@ -1436,7 +1487,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             | Action::ReadTerminalHistory { target }
             | Action::EditTerminalHistory { target } => identity("terminal target", target)?,
             Action::SendTerminal { target, input, .. } => {
-                identity("terminal target", target)?;
+                validate_send_target(target)?;
                 if let TerminalInput::Paste(text) = input {
                     validate_paste(text)?;
                 }
@@ -1816,6 +1867,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
             let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
             validate_snapshot_identity(snapshot)?;
+            validate_focus(snapshot.focus.as_ref())?;
             let google = snapshot.google_quota.as_ref().map(google_as_codex);
             validate_workspace(snapshot, &tabs)?;
             validate_running(snapshot.running.as_ref())?;
@@ -1845,6 +1897,15 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             payload.string(&snapshot.generation);
             payload.string(&snapshot.created_build);
             payload.string(&snapshot.active_build);
+            payload.byte(u8::from(snapshot.focus.is_some()));
+            if let Some(focus) = &snapshot.focus {
+                payload.byte(match focus.window_focused {
+                    None => 0,
+                    Some(false) => 1,
+                    Some(true) => 2,
+                });
+                encode_caller(&mut payload, focus.target.as_ref());
+            }
             SNAPSHOT
         }
         Response::Failure(failure) => {
@@ -2325,6 +2386,25 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     snapshot.generation = decoder.string("generation", 35)?;
     snapshot.created_build = decoder.string("created build", 35)?;
     snapshot.active_build = decoder.string("active build", 35)?;
+    snapshot.focus = if decode_bool(&mut decoder, "window focus")? {
+        Some(Focus {
+            window_focused: match decoder.byte()? {
+                0 => None,
+                1 => Some(false),
+                2 => Some(true),
+                value => {
+                    return Err(Error::InvalidTag {
+                        field: "native focus",
+                        value,
+                    });
+                }
+            },
+            target: decode_caller(&mut decoder)?,
+        })
+    } else {
+        None
+    };
+    validate_focus(snapshot.focus.as_ref())?;
     validate_snapshot_identity(&snapshot)?;
     validate_busy(snapshot.busy.as_ref())?;
     validate_workspace(&snapshot, &wire_tabs)?;
@@ -2540,6 +2620,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         tabs.push(decode_wire_tab(decoder, &mut sessions)?);
     }
     let snapshot = Snapshot {
+        focus: None,
         generation: String::new(),
         created_build: String::new(),
         active_build: String::new(),
@@ -3997,6 +4078,91 @@ pub fn declared_message_len(header: &[u8]) -> Result<usize> {
     declared_len(header, MAX_MESSAGE_BYTES)
 }
 
+fn validate_send_target(target: &SendTarget) -> Result<()> {
+    match target {
+        SendTarget::Id(id) => identity("terminal target", id),
+        SendTarget::Focused {
+            expected_terminal: Some(id),
+        } => identity("expected terminal", id),
+        SendTarget::Focused {
+            expected_terminal: None,
+        } => Ok(()),
+    }
+}
+
+fn validate_focus(focus: Option<&Focus>) -> Result<()> {
+    if let Some(focus) = focus
+        && let Some(target) = &focus.target
+    {
+        if focus.window_focused != Some(true) {
+            return Err(Error::InvalidValue {
+                field: "focus target",
+            });
+        }
+        validate_target(target)?;
+    }
+    Ok(())
+}
+
+/// Length of a native focus frame, bounded before reading its payload.
+pub fn declared_focus_report_len(header: &[u8]) -> Result<usize> {
+    let size = declared_len(header, MAX_FOCUS_REPORT_BYTES)?;
+    if &header[..4] != MAGIC {
+        return Err(Error::InvalidMagic);
+    }
+    let version = u16::from_le_bytes([header[4], header[5]]);
+    if version != VERSION {
+        return Err(Error::UnsupportedVersion { version });
+    }
+    if header[6] != FOCUS_REPORT {
+        return Err(Error::InvalidTag {
+            field: "focus report",
+            value: header[6],
+        });
+    }
+    if header[7] != 0 {
+        return Err(Error::InvalidFlags { value: header[7] });
+    }
+    Ok(size)
+}
+
+/// Encode Venus's native focus without a second private schema.
+pub fn encode_focus_report(report: &FocusReport) -> Result<Vec<u8>> {
+    if let Some(terminal) = &report.terminal {
+        identity("focused terminal", terminal)?;
+        if !report.window_focused {
+            return Err(Error::InvalidValue {
+                field: "focused terminal",
+            });
+        }
+    }
+    let mut payload = Encoder::default();
+    payload.byte(u8::from(report.window_focused));
+    encode_optional(&mut payload, &report.terminal);
+    frame(FOCUS_REPORT, payload.bytes)
+}
+
+/// Decode one complete native focus report.
+pub fn decode_focus_report(bytes: &[u8]) -> Result<FocusReport> {
+    declared_focus_report_len(bytes)?;
+    let (_, payload) = unframe(bytes)?;
+    let mut decoder = Decoder::new(payload);
+    let report = FocusReport {
+        window_focused: decode_bool(&mut decoder, "native focus")?,
+        terminal: decode_optional(&mut decoder, "focused terminal")?,
+    };
+    decoder.finish()?;
+    if let Some(terminal) = &report.terminal {
+        identity("focused terminal", terminal)?;
+        if !report.window_focused {
+            return Err(Error::InvalidValue {
+                field: "focused terminal",
+            });
+        }
+    }
+    Ok(report)
+}
+
 /// Returns the bounded length declared by a complete EONW response header.
 /// Unlike [`declared_message_len`], it admits a `History` response up to its
 /// own bound; only the CLI's reply reader uses it.
@@ -4026,7 +4192,9 @@ fn declared_len(header: &[u8], maximum: usize) -> Result<usize> {
 
 /// The longest message of `kind`: 2 MiB for all but a `History` response.
 fn message_bound(kind: u8) -> usize {
-    if kind == HISTORY {
+    if kind == FOCUS_REPORT {
+        MAX_FOCUS_REPORT_BYTES
+    } else if kind == HISTORY {
         MAX_HISTORY_MESSAGE_BYTES
     } else {
         MAX_MESSAGE_BYTES
@@ -4252,18 +4420,18 @@ mod tests {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e572c0001000700000002007231002d00",
+                "454f4e572d0001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e572c0001000700000002007231002d01",
+                "454f4e572d0001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e572c0001000b00000002007231002c0200703200",
+                "454f4e572d0001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -4299,14 +4467,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572c0001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e572d0001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572c008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e572d008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -4791,6 +4959,7 @@ mod tests {
             record: None,
         });
         Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -4889,6 +5058,7 @@ mod tests {
         payload.string(&snapshot.generation);
         payload.string(&snapshot.created_build);
         payload.string(&snapshot.active_build);
+        payload.byte(0); // no window focus in this forged snapshot
         frame(SNAPSHOT, payload.bytes).unwrap()
     }
 
@@ -5453,6 +5623,95 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_focus_frames_and_guarded_sends_round_trip() {
+        for report in [
+            FocusReport {
+                window_focused: false,
+                terminal: None,
+            },
+            FocusReport {
+                window_focused: true,
+                terminal: None,
+            },
+            FocusReport {
+                window_focused: true,
+                terminal: Some("terminal-7".into()),
+            },
+        ] {
+            let bytes = encode_focus_report(&report).unwrap();
+            assert_eq!(declared_focus_report_len(&bytes), Ok(bytes.len()));
+            assert_eq!(decode_focus_report(&bytes), Ok(report));
+            for end in 0..bytes.len() {
+                assert!(decode_focus_report(&bytes[..end]).is_err());
+            }
+            let mut invalid = bytes.clone();
+            invalid[4] = 44;
+            assert!(matches!(
+                decode_focus_report(&invalid),
+                Err(Error::UnsupportedVersion { version: 44 })
+            ));
+            let mut invalid = bytes.clone();
+            invalid.push(0);
+            assert!(decode_focus_report(&invalid).is_err());
+            let mut invalid = bytes.clone();
+            invalid[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+            assert!(declared_focus_report_len(&invalid).is_err());
+        }
+        for terminal in ["", "a\n", &"x".repeat(MAX_ID_BYTES + 1)] {
+            assert!(
+                encode_focus_report(&FocusReport {
+                    window_focused: true,
+                    terminal: Some(terminal.into())
+                })
+                .is_err()
+            );
+        }
+        let mut invalid = encode_focus_report(&FocusReport {
+            window_focused: true,
+            terminal: Some("terminal-7".into()),
+        })
+        .unwrap();
+        invalid[HEADER_BYTES] = 0;
+        assert!(decode_focus_report(&invalid).is_err());
+        for expected_terminal in [None, Some("terminal-7".into())] {
+            let request = Request {
+                id: "focused-send".into(),
+                caller: None,
+                action: Action::SendTerminal {
+                    target: SendTarget::Focused { expected_terminal },
+                    force: false,
+                    input: TerminalInput::Enter,
+                },
+            };
+            assert_eq!(
+                decode_request(&encode_request(&request).unwrap()),
+                Ok(request)
+            );
+        }
+        for window_focused in [None, Some(false), Some(true)] {
+            let mut state = snapshot();
+            state.focus = Some(Focus {
+                window_focused,
+                target: None,
+            });
+            assert_eq!(
+                decode_response(&encode_response(&Response::Snapshot(state.clone())).unwrap()),
+                Ok(Response::Snapshot(state.clone()))
+            );
+            state.focus.as_mut().unwrap().target = Some(TerminalTarget {
+                workspace: "w1".into(),
+                tab: "t1".into(),
+                id: TargetId::Pane("p1".into()),
+                terminal: "terminal-7".into(),
+            });
+            assert_eq!(
+                encode_response(&Response::Snapshot(state)).is_ok(),
+                window_focused == Some(true)
+            );
+        }
+    }
+
+    #[test]
     fn terminal_requests_bound_their_paste_on_both_sides() {
         let request = |input| Request {
             id: "r1".into(),
@@ -5468,6 +5727,7 @@ mod tests {
             payload.string("r1");
             payload.byte(0);
             payload.byte(SEND_TERMINAL);
+            payload.byte(0); // explicit ID
             payload.string("p1");
             payload.byte(0); // force
             payload.byte(0);
@@ -5741,14 +6001,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e572c0001000a00000002007231001202007431",
+                "454f4e572d0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e572c0001001000000002007231000c0200743104002f746d70",
+                "454f4e572d0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -5757,29 +6017,29 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e572c00010015000000020072310013020074310300676974010200753101",
+                "454f4e572d00010015000000020072310013020074310300676974010200753101",
             ),
-            (Action::CreateColumn, "454f4e572c00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e572d00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e572c0001000a00000002007231001702007032",
+                "454f4e572d0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e572c00010006000000020072310019",
+                "454f4e572d00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e572c0001000e00000002007231001a06002f746d702f61",
+                "454f4e572d0001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e572c0001001000000002007231001b00020002006878010061",
+                "454f4e572d0001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::LaunchTab {
@@ -5787,7 +6047,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e572c0001000f00000002007231002504002f746d70000001",
+                "454f4e572d0001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -5795,44 +6055,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e572c0001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e572d0001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e572c0001000600000002007231001c",
+                "454f4e572d0001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e572c0001000e00000002007231001d0200743102007032",
+                "454f4e572d0001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e572c0001000600000002007231001e",
+                "454f4e572d0001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e572c0001000600000002007231001f",
+                "454f4e572d0001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e572c0001000a00000002007231002602007032",
+                "454f4e572d0001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e572c0001000a00000002007231002902007032",
+                "454f4e572d0001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e572c0001000a00000002007231002a02007032",
+                "454f4e572d0001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -5841,7 +6101,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e572c00010012000000020072310027020070320000020000006869",
+                "454f4e572d0001001300000002007231002700020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -5849,7 +6109,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e572c0001000c000000020072310027020075310101",
+                "454f4e572d0001000d00000002007231002700020075310101",
             ),
         ] {
             let request = Request {
@@ -5869,7 +6129,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e572c0001001700000002007231010e007465726d696e616c2d322e392d310201",
+            "454f4e572d0001001700000002007231010e007465726d696e616c2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -5881,6 +6141,7 @@ mod tests {
         }
 
         let snapshot = Response::Snapshot(Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -5991,24 +6252,21 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e572c008100c40100000100020002000100010000000200743100000041",
-                    "00008040010003006769740300476974000404004b6579470100020074310400",
-                    "2f746d700001020070330102007531030002007031030073703103002f703101",
-                    "0200703100000002007032030073703203002f70320102007032000000020070",
-                    "33030073703303002f7033010200703300000102ff0500636f6465780600656f",
-                    "6e2d396101007401006d01000000000000000002000100020075310300676974",
-                    "030073753103002f753100010100640000000000000001002c0100002a01f401",
-                    "0000000000000001015a00000000000000020060270000070000602700003c00",
-                    "0105004661626c6500015f000000000000000100000102007331020073310100",
-                    "0200733101300030313233343536373839616263646566303132333435363738",
-                    "3961626364656630303030303030303030303030303031000001000100000000",
-                    "00230067312d3030303030303030303030303030303030303030303030303030",
-                    "303030303031230067312d303030303030303030303030303030303030303030",
-                    "3030303030303030303031230067312d30303030303030303030303030303030",
-                    "30303030303030303030303030303031",
+                    "454f4e572d008100c501000001000200020001000100000002007431000000410000804001000300",
+                    "6769740300476974000404004b65794701000200743104002f746d70000102007033010200753103",
+                    "0002007031030073703103002f7031010200703100000002007032030073703203002f7032010200",
+                    "703200000002007033030073703303002f7033010200703300000102ff0500636f6465780600656f",
+                    "6e2d396101007401006d01000000000000000002000100020075310300676974030073753103002f",
+                    "753100010100640000000000000001002c0100002a01f4010000000000000001015a000000000000",
+                    "00020060270000070000602700003c000105004661626c6500015f00000000000000010000010200",
+                    "73310200733101000200733101300030313233343536373839616263646566303132333435363738",
+                    "396162636465663030303030303030303030303030303100000100010000000000230067312d3030",
+                    "303030303030303030303030303030303030303030303030303030303031230067312d3030303030",
+                    "303030303030303030303030303030303030303030303030303031230067312d3030303030303030",
+                    "30303030303030303030303030303030303030303030303100",
                 ),
             ),
-            (failure, "454f4e572c0082000a00000004006275737902006e6f"),
+            (failure, "454f4e572d0082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -6023,7 +6281,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572c00860038000000",
+                    "454f4e572d00860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -6046,7 +6304,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e572c008d003c000000",
+                    "454f4e572d008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -6062,10 +6320,8 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e572c00870036000000",
-                    "020073310200743100020070320a007465726d696e616c2d32",
-                    "01020073310200743101020075310a007465726d696e616c2d33",
-                    "012c01",
+                    "454f4e572d00870036000000020073310200743100020070320a007465726d696e616c2d32010200",
+                    "73310200743101020075310a007465726d696e616c2d33012c01",
                 ),
             ),
             (
@@ -6075,7 +6331,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e572c008e0033000000",
+                    "454f4e572d008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -6086,7 +6342,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e572c0085000400000002006731",
+                "454f4e572d0085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -6126,13 +6382,11 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e572c008300b6000000230067312d303030303030303030303030303030",
-                "30303030303030303030303030303030310500302e392e302c0002006f6b0100",
-                "0200733101050072656164790004006275737900000000000000000000002300",
-                "67312d3030303030303030303030303030303030303030303030303030303030",
-                "303031230067312d303030303030303030303030303030303030303030303030",
-                "30303030303030310100020073310b00666978747572652d72756e0008000100",
-                "0000",
+                "454f4e572d008300b6000000230067312d3030303030303030303030303030303030303030303030",
+                "3030303030303030310500302e392e302d0002006f6b010002007331010500726561647900040062",
+                "7573790000000000000000000000230067312d303030303030303030303030303030303030303030",
+                "3030303030303030303031230067312d303030303030303030303030303030303030303030303030",
+                "30303030303030310100020073310b00666978747572652d72756e00080001000000",
             ),
         );
         let bytes = encode_lifecycle_response(&response).unwrap();
@@ -6167,6 +6421,7 @@ mod tests {
             }),
         };
         Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -6228,16 +6483,14 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572c008100300100000100010001000000010074000000000000000000",
-                "00010001007401002f00010100700001000100700200737002002f7001010070",
-                "0000010128000000000000000001000000000000000000000000010000000000",
-                "0002020073310200733101000200733101300030313233343536373839616263",
-                "6465663031323334353637383961626364656630303030303030303030303030",
-                "3030310000010001000100020073310100740100700101280000000000000000",
-                "01000000000000000000000000230067312d3030303030303030303030303030",
-                "303030303030303030303030303030303031230067312d303030303030303030",
-                "3030303030303030303030303030303030303030303031230067312d30303030",
-                "30303030303030303030303030303030303030303030303030303031",
+                "454f4e572d0081003101000001000100010000000100740000000000000000000001000100740100",
+                "2f00010100700001000100700200737002002f700101007000000101280000000000000000010000",
+                "00000000000000000000010000000000000202007331020073310100020073310130003031323334",
+                "35363738396162636465663031323334353637383961626364656630303030303030303030303030",
+                "30303100000100010001000200733101007401007001012800000000000000000100000000000000",
+                "0000000000230067312d303030303030303030303030303030303030303030303030303030303030",
+                "3031230067312d303030303030303030303030303030303030303030303030303030303030303123",
+                "0067312d303030303030303030303030303030303030303030303030303030303030303100",
             ),
         );
         assert_eq!(decode_response(&bytes).unwrap(), snapshot);
@@ -6274,22 +6527,19 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572c008100ef0100000100010001000000010074000000000000000000",
-                "00010001007401002f00010100700001000100700200737002002f7001010070",
-                "0000010128000000000000000001000000000000000000000000010000000000",
-                "0002020073310200733101000200733101300030313233343536373839616263",
-                "6465663031323334353637383961626364656630303030303030303030303030",
-                "3030310000010001000100020073310100740100700101280000000000000000",
-                "0100000000000000000000010108003132333461626364230067312d30303030",
-                "3030303030303030303030303030303030303030303030303030303101040068",
-                "657265012a000000000000000103000001230067312d30303030303030303030",
-                "30303030303030303030303030303030303030303031230067312d3030303030",
-                "3030303030303030303030303030303030303030303030303030310101000023",
-                "0067312d30303030303030303030303030303030303030303030303030303030",
-                "303030320000000100070000230067312d303030303030303030303030303030",
-                "3030303030303030303030303030303031230067312d30303030303030303030",
-                "30303030303030303030303030303030303030303031230067312d3030303030",
-                "303030303030303030303030303030303030303030303030303031",
+                "454f4e572d008100f001000001000100010000000100740000000000000000000001000100740100",
+                "2f00010100700001000100700200737002002f700101007000000101280000000000000000010000",
+                "00000000000000000000010000000000000202007331020073310100020073310130003031323334",
+                "35363738396162636465663031323334353637383961626364656630303030303030303030303030",
+                "30303100000100010001000200733101007401007001012800000000000000000100000000000000",
+                "000000010108003132333461626364230067312d3030303030303030303030303030303030303030",
+                "30303030303030303030303101040068657265012a000000000000000103000001230067312d3030",
+                "303030303030303030303030303030303030303030303030303030303031230067312d3030303030",
+                "30303030303030303030303030303030303030303030303030303101010000230067312d30303030",
+                "30303030303030303030303030303030303030303030303030303032000000010007000023006731",
+                "2d3030303030303030303030303030303030303030303030303030303030303031230067312d3030",
+                "303030303030303030303030303030303030303030303030303030303031230067312d3030303030",
+                "30303030303030303030303030303030303030303030303030303100",
             )
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
@@ -6325,7 +6575,7 @@ mod tests {
         snapshot.busy = None;
         let without = hex(&encode_response(&Response::Snapshot(snapshot)).unwrap());
         // The identity block follows the busy list.
-        let identity_at = without.len() - 2 * 111;
+        let identity_at = without.len() - 2 * (111 + 1);
         assert_eq!(
             &hex(&bytes)[24..],
             format!(
@@ -6362,9 +6612,9 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e572c008300d1000000230067312d303030303030303030303030303030",
-                "30303030303030303030303030303030310500302e392e302c0002006f6b0000",
-                "01050072656164790105007265616479000000000000000000",
+                "454f4e572d008300d1000000230067312d3030303030303030303030303030303030303030303030",
+                "3030303030303030310500302e392e302d0002006f6b000001050072656164790105007265616479",
+                "000000000000000000",
             )
             .to_owned()
                 + busy_bytes
@@ -7478,7 +7728,7 @@ mod tests {
             + 2
             + MAX_BUSY_TERMINALS * (4 * id + 1 + 2 + MAX_PANE_LABEL_BYTES)
             + 2;
-        let upper_bound = upper_bound + 111;
+        let upper_bound = upper_bound + 111 + 3 + MAX_TARGET_BYTES;
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
         let name = |prefix: &str, n: usize, length: usize| {

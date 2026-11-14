@@ -24,11 +24,12 @@ use super::{
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     Action, Availability, BusyTerminals, CloseConsent, CloseEnd, CloseScope, CloseTerminal,
-    Editing, Ended, FILES_ENTRY, Failure, InvokeIntent, LifecycleResponse, Request, Response,
-    Runtime, Screen, Sent, Snapshot, TargetId, TerminalHistory, TerminalInput, TerminalText,
-    UntrackedRun, VERSION, WindowEntry, WindowState, WorkspaceAction, WorkspaceTarget,
+    Editing, Ended, FILES_ENTRY, Failure, Focus, InvokeIntent, LifecycleResponse, Request,
+    Response, Runtime, Screen, SendTarget, Sent, Snapshot, TargetId, TerminalHistory,
+    TerminalInput, TerminalText, UntrackedRun, VERSION, WindowEntry, WindowState, WorkspaceAction,
+    WorkspaceTarget,
 };
 use orbit_protocol::management::{LeaseInput, ProcessOutcome, Screen as OrbitScreen};
 use std::{
@@ -611,23 +612,20 @@ fn venus_process_command(venus: &Path, config: &Path, mode: LaunchMode) -> Comma
     command
 }
 
-/// The bytes of one native focus report from Venus (VEN-C14).
-const FOCUS_REPORT: usize = 8;
-/// The most report bytes one loop turn reads; the rest waits for the next
-/// turn, so a burst of reports cannot hold up the loop.
+/// Bound focus draining so a producer cannot hold up control requests.
 const FOCUS_READ_BUDGET: usize = 512;
 
-/// The native window focus its Venus last reported on the presentation
-/// control stream (EON-C31). It is unknown before the first report and once
-/// reports fail.
+/// This presentation's last native focus, usable only after complete draining.
 #[derive(Default)]
 struct NativeFocus {
     focused: Option<bool>,
-    report: [u8; FOCUS_REPORT],
-    used: usize,
+    terminal: Option<String>,
+    report: Vec<u8>,
+    usable: bool,
     ended: bool,
 }
 
+#[derive(Debug)]
 enum FocusFailure {
     Invalid,
     Ended,
@@ -635,21 +633,27 @@ enum FocusFailure {
 }
 
 impl NativeFocus {
-    /// True only after draining complete reports. A failure leaves focus unknown
-    /// and ends reports from this Venus; exhausting the budget leaves freshness uncertain.
     fn poll(&mut self, stream: &UnixStream) -> Result<bool, FocusFailure> {
+        self.usable = false;
         if self.ended {
             return Ok(false);
         }
         let result = self.read(stream);
-        if result.is_err() {
-            self.ended = true;
-            self.focused = None;
+        match &result {
+            Ok(drained) => self.usable = *drained && self.focused.is_some(),
+            Err(_) => {
+                self.ended = true;
+                self.focused = None;
+                self.terminal = None;
+            }
         }
         result
     }
 
     fn read(&mut self, stream: &UnixStream) -> Result<bool, FocusFailure> {
+        use eon_workspace_protocol::v45::{
+            HEADER_BYTES, declared_focus_report_len, decode_focus_report,
+        };
         let mut buffer = [0; 64];
         let mut budget = FOCUS_READ_BUDGET;
         while budget > 0 {
@@ -658,22 +662,24 @@ impl NativeFocus {
                 Ok(0) => return Err(FocusFailure::Ended),
                 Ok(count) => count,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    return Ok(self.used == 0);
+                    return Ok(self.report.is_empty());
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => return Err(FocusFailure::Io(error)),
             };
             budget -= count;
             for &byte in &buffer[..count] {
-                self.report[self.used] = byte;
-                self.used += 1;
-                if self.used == FOCUS_REPORT {
-                    self.used = 0;
-                    self.focused = Some(match &self.report {
-                        b"focus:0\n" => false,
-                        b"focus:1\n" => true,
-                        _ => return Err(FocusFailure::Invalid),
-                    });
+                self.report.push(byte);
+                if self.report.len() >= HEADER_BYTES {
+                    let size = declared_focus_report_len(&self.report)
+                        .map_err(|_| FocusFailure::Invalid)?;
+                    if self.report.len() == size {
+                        let report =
+                            decode_focus_report(&self.report).map_err(|_| FocusFailure::Invalid)?;
+                        self.focused = Some(report.window_focused);
+                        self.terminal = report.terminal;
+                        self.report.clear();
+                    }
                 }
             }
         }
@@ -718,9 +724,9 @@ impl PresentationProcess {
             .env(
                 "EON_VENUS_PRESENTATION_CONTROL",
                 if admission {
-                    "stdin-ready-focus-v1"
+                    "stdin-ready-focus-v2"
                 } else {
-                    "stdin-focus-v1"
+                    "stdin-focus-v2"
                 },
             )
             .stdin(Stdio::from(OwnedFd::from(input)))
@@ -771,7 +777,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v44::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v45::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -884,7 +890,7 @@ impl PresentationProcess {
 
     /// Whether this Venus last reported that its native window has focus.
     fn viewing(&self) -> bool {
-        self.focus.focused == Some(true)
+        self.focus.usable && self.focus.focused == Some(true)
     }
 
     fn present(&self) -> Result<(), String> {
@@ -1765,6 +1771,32 @@ impl SupervisorState {
             .map(|this| notification::NoticeWindow::new(&this))
     }
 
+    /// Native focus is Venus-owned; topology and liveness remain Runtime-owned.
+    fn keyboard_focus(&self) -> Focus {
+        let native = self
+            .venus
+            .as_ref()
+            .filter(|venus| venus.focus.usable)
+            .map(|venus| &venus.focus);
+        let window_focused = native.and_then(|focus| focus.focused);
+        let target = if window_focused == Some(true) {
+            native
+                .and_then(|focus| focus.terminal.as_deref())
+                .and_then(|terminal| self.workspaces.as_ref()?.focused_target(terminal))
+                .filter(|target| {
+                    self.sessions
+                        .iter()
+                        .any(|session| session.id == target.terminal && !session.is_finished())
+                })
+        } else {
+            None
+        };
+        Focus {
+            window_focused,
+            target,
+        }
+    }
+
     /// The shown workspace with its quotas and attention.
     fn workspace_snapshot(&mut self) -> Option<Snapshot> {
         self.workspaces.as_ref()?;
@@ -1805,6 +1837,7 @@ impl SupervisorState {
         snapshot.created_build = self.created_build.clone();
         snapshot.active_build = self.active_build.clone();
         snapshot.busy = self.busy(None);
+        snapshot.focus = Some(self.keyboard_focus());
         Ok(snapshot)
     }
 
@@ -1882,9 +1915,7 @@ impl SupervisorState {
     fn tend(&mut self, now: Instant) {
         self.failed_starts.reap(&self.log);
         // Read first, so attention this turn sees the latest native focus.
-        if self.attention.is_some()
-            && let Some(venus) = &mut self.venus
-        {
+        if let Some(venus) = &mut self.venus {
             venus.read_native_focus();
         }
         self.retain_popup_files(now);
@@ -3830,7 +3861,7 @@ fn dispatch_registered_request(
             ) && state
                 .attention
                 .as_ref()
-                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v44::Sidebar::Off)
+                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v45::Sidebar::Off)
             {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
@@ -4337,6 +4368,17 @@ fn terminal_access(
         ));
     }
     let caller = caller_session(state, inputs, config, &request)?;
+    if matches!(
+        &request.action,
+        Action::SendTerminal {
+            target: SendTarget::Focused { .. },
+            ..
+        }
+    ) && let Some(venus) = &mut state.venus
+    {
+        venus.read_native_focus();
+    }
+    let focus = state.keyboard_focus();
     let Some(workspaces) = &mut state.workspaces else {
         unreachable!("reconciliation keeps the workspace owner");
     };
@@ -4348,7 +4390,38 @@ fn terminal_access(
             target,
             input,
             force,
-        } => (target, Operation::Send(input, force)),
+        } => {
+            let id = match target {
+                SendTarget::Id(id) => id,
+                SendTarget::Focused { expected_terminal } => {
+                    if focus.window_focused != Some(true) {
+                        return Err(failure(
+                            "window-unfocused",
+                            "focused targets the person's terminal, but the Eon window is unfocused or its focus is unknown",
+                        ));
+                    }
+                    let target = focus.target.ok_or_else(|| {
+                        failure(
+                            "terminal-unfocused",
+                            "the Eon window has no verified keyboard-focused terminal",
+                        )
+                    })?;
+                    if expected_terminal
+                        .as_ref()
+                        .is_some_and(|expected| expected != &target.terminal)
+                    {
+                        return Err(failure(
+                            "focus-changed",
+                            "keyboard focus changed after the paste; Enter was not sent",
+                        ));
+                    }
+                    match target.id {
+                        TargetId::Pane(id) | TargetId::Popup(id) => id,
+                    }
+                }
+            };
+            (id, Operation::Send(input, force))
+        }
         _ => unreachable!("dispatch routes only terminal reads and sends here"),
     };
     let target =
@@ -4500,6 +4573,16 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    fn focus_frame(window_focused: bool) -> Vec<u8> {
+        eon_workspace_protocol::v45::encode_focus_report(
+            &eon_workspace_protocol::v45::FocusReport {
+                window_focused,
+                terminal: None,
+            },
+        )
+        .unwrap()
+    }
+
     use super::WorkspaceAction;
     #[cfg(target_os = "linux")]
     use super::apply_session_operation;
@@ -4736,13 +4819,13 @@ mod tests {
         let inspected = crate::control::send_action_from_until(
             &socket,
             None,
-            Action::Workspace(eon_workspace_protocol::v44::WorkspaceAction::InspectRuntime),
+            Action::Workspace(eon_workspace_protocol::v45::WorkspaceAction::InspectRuntime),
             deadline,
         )
         .unwrap();
         assert!(
             matches!(inspected, crate::control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v44::LifecycleResponse::Runtime(runtime)
+            eon_workspace_protocol::v45::LifecycleResponse::Runtime(runtime)
         ) if !runtime.attach.available && runtime.attach.reason.contains("cleanup is incomplete"))
         );
         assert!(
@@ -4855,7 +4938,7 @@ mod tests {
 
     #[test]
     fn a_consent_matches_on_generation_runs_and_end_only() {
-        use eon_workspace_protocol::v44::{
+        use eon_workspace_protocol::v45::{
             CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
         };
         let mut scope = CloseScope {
@@ -4919,7 +5002,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_column_close_never_runs_without_a_consent_that_names_its_runs() {
-        use eon_workspace_protocol::v44::{CloseEnd, Side};
+        use eon_workspace_protocol::v45::{CloseEnd, Side};
         let root = temporary_directory();
         let (mut state, _) = finishing_window(&root);
         // A one-pane final column always asks, even once the default shell is idle.
@@ -5359,7 +5442,7 @@ mod tests {
             assert_eq!(error.code, "column-close-failed", "{context}: {error:?}");
             assert!(error.detail.contains("terminal-9"), "{context}: {error:?}");
             assert!(
-                eon_workspace_protocol::v44::encode_response(&super::Response::Failure(
+                eon_workspace_protocol::v45::encode_response(&super::Response::Failure(
                     error.clone()
                 ))
                 .is_ok(),
@@ -5553,7 +5636,7 @@ mod tests {
                 (
                     None,
                     crate::control::ControlResponse::Workspace(super::Response::Snapshot(snapshot)),
-                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v44::Sidebar::Off),
+                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v45::Sidebar::Off),
                 _ => panic!("unexpected sidebar result"),
             }
         }
@@ -5996,7 +6079,7 @@ mod tests {
     #[test]
     fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
         use crate::session_registry::{Operation, Registry, Worker};
-        use eon_workspace_protocol::v44::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v45::{Change, SubscriptionMessage, WorkspaceChange};
         let (root, inputs, mut state, old_peer) = subscribed_window();
         drop(old_peer);
         let registry_root = root.join("registry");
@@ -6108,7 +6191,7 @@ mod tests {
         let socket = root.join("eon.sock");
         let listener = control::ControlListener::bind(&socket).unwrap();
         let generation = "g1-00000000000000000000000000000001";
-        let starting = eon_workspace_protocol::v44::Runtime {
+        let starting = eon_workspace_protocol::v45::Runtime {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             terminal_inventory: Vec::new(),
@@ -6117,14 +6200,14 @@ mod tests {
             name: None,
             started_at: 1,
             eon_version: inputs.version.into(),
-            workspace_protocol: eon_workspace_protocol::v44::VERSION,
+            workspace_protocol: eon_workspace_protocol::v45::VERSION,
             component_report: inputs.component_report().unwrap().into(),
             sessions: Vec::new(),
-            attach: eon_workspace_protocol::v44::Availability {
+            attach: eon_workspace_protocol::v45::Availability {
                 available: false,
                 reason: "registering".into(),
             },
-            stop: eon_workspace_protocol::v44::Availability {
+            stop: eon_workspace_protocol::v45::Availability {
                 available: true,
                 reason: "starting".into(),
             },
@@ -6139,7 +6222,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v44::LifecycleResponse::Runtime(status),
+            eon_workspace_protocol::v45::LifecycleResponse::Runtime(status),
         ) = control::send_action(&socket, Action::Workspace(WorkspaceAction::InspectRuntime))
             .unwrap()
         else {
@@ -6177,7 +6260,7 @@ mod tests {
             control,
             session_registry::{Fault, Registry, Worker},
         };
-        use eon_workspace_protocol::v44::{Request, encode_request};
+        use eon_workspace_protocol::v45::{Request, encode_request};
         use std::io::Write;
         let (root, inputs, mut state, peer) = subscribed_window();
         let registry_root = root.join("registry");
@@ -6408,16 +6491,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v44::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v45::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v44::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v45::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v44::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v45::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v44::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v44::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v45::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v45::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -6433,7 +6516,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v44::Filter {
+        let missing = eon_workspace_protocol::v45::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -6548,7 +6631,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v44::SubscriptionMessage;
+        use eon_workspace_protocol::v45::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -6628,9 +6711,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v44::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v45::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v44::{
+        use eon_workspace_protocol::v45::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -6699,9 +6782,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v44::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v45::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v44::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v45::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -6720,8 +6803,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v44::SubscriptionMessage> {
-        use eon_workspace_protocol::v44::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v45::SubscriptionMessage> {
+        use eon_workspace_protocol::v45::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -6749,7 +6832,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v44::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v45::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -6805,8 +6888,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v44::Filter {
-                        kinds: vec![eon_workspace_protocol::v44::EventKind::Attention],
+                    filter: eon_workspace_protocol::v45::Filter {
+                        kinds: vec![eon_workspace_protocol::v45::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -7013,7 +7096,7 @@ mod tests {
         let path = root.join(name);
         fs::write(
             &path,
-            "#!/bin/sh\nprintf 'ready-v1focus:1\\n'\nexec cat >/dev/null\n",
+            "#!/bin/sh\nprintf 'ready-v1\\105\\117\\116\\127\\055\\000\\220\\000\\002\\000\\000\\000\\001\\000'\nexec cat >/dev/null\n",
         )
         .unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -7033,7 +7116,7 @@ mod tests {
                 "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$0.$$.args\"\n\
                  if [ -e \"$0.reject-connected\" ]; then\n\
                    for arg; do [ \"$arg\" != connected ] || exit 9; done\n\
-                 fi\nprintf 'ready-v1focus:1\\n'\nexec cat >/dev/null\n",
+                 fi\nprintf 'ready-v1\\105\\117\\116\\127\\055\\000\\220\\000\\002\\000\\000\\000\\001\\000'\nexec cat >/dev/null\n",
             )
             .unwrap();
             fs::set_permissions(&inputs.venus, fs::Permissions::from_mode(0o700)).unwrap();
@@ -7215,7 +7298,7 @@ mod tests {
         let newer = reload_venus(&root, "venus-b");
         let (mut focus, control) = attach_reporting_venus(&mut fixture.state);
         fixture.state.venus.as_mut().unwrap().executable = inputs.venus.clone();
-        focus.write_all(b"focus:1\n").unwrap();
+        focus.write_all(&focus_frame(true)).unwrap();
         let before = fixture.state.workspaces.as_ref().unwrap().snapshot();
         let run = fixture.state.sessions[0].run_id().to_owned();
         let host_pid = orbit_pid(&fixture.state.sessions[0]);
@@ -7250,7 +7333,7 @@ mod tests {
         );
         assert!(!ended);
         assert!(
-            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v44::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
+            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v45::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
         );
         let failed = super::reload_presentation(
             &mut fixture.state,
@@ -7309,9 +7392,9 @@ mod tests {
         let before = state.workspaces.as_ref().unwrap().snapshot();
         assert!(before.tabs[0].pending);
         let original = state.venus.as_ref().unwrap().child.id();
-        for report in [None, Some(b"focus:0\n")] {
+        for report in [None, Some(focus_frame(false))] {
             if let Some(report) = report {
-                focus.write_all(report).unwrap();
+                focus.write_all(&report).unwrap();
             }
             assert_eq!(
                 super::reload_presentation(&mut state, &inputs, &root, &root, &target)
@@ -7321,13 +7404,13 @@ mod tests {
             );
             assert_eq!(state.venus.as_ref().unwrap().child.id(), original);
         }
-        focus.write_all(b"focus:1\n").unwrap();
+        focus.write_all(&focus_frame(true)).unwrap();
         super::reload_presentation(&mut state, &inputs, &root, &root, &target).unwrap();
         drop(control);
         assert_eq!(state.workspaces.as_ref().unwrap().snapshot(), before);
         assert_eq!(
             state.attention.as_ref().unwrap().sidebar(),
-            eon_workspace_protocol::v44::Sidebar::Closed
+            eon_workspace_protocol::v45::Sidebar::Closed
         );
         assert!(shown().is_none());
         drop(state);
@@ -7337,7 +7420,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn reload_crash_or_failed_reattach_returns_to_the_own_build() {
-        use eon_workspace_protocol::v44::LifecycleResponse;
+        use eon_workspace_protocol::v45::LifecycleResponse;
         use std::{io::Write, os::unix::fs::OpenOptionsExt, thread};
         for outcome in [9, 0] {
             let root = temporary_directory();
@@ -7380,7 +7463,7 @@ mod tests {
             );
             let failed = root.join("fail-admission");
             let newer = root.join("newer-venus");
-            fs::write(&newer, format!("#!/bin/sh\n[ ! -e '{}' ] || exit 7\nprintf 'ready-v1focus:1\\n'\nread -r _ <'{}'\nexit {outcome}\n", failed.display(), gate.display())).unwrap();
+            fs::write(&newer, format!("#!/bin/sh\n[ ! -e '{}' ] || exit 7\nprintf 'ready-v1\\105\\117\\116\\127\\055\\000\\220\\000\\002\\000\\000\\000\\001\\000'\nread -r _ <'{}'\nexit {outcome}\n", failed.display(), gate.display())).unwrap();
             fs::set_permissions(&newer, fs::Permissions::from_mode(0o700)).unwrap();
             let layout = fixture.state.workspaces.as_ref().unwrap().snapshot();
             let run = fixture.state.sessions[0].run_id().to_owned();
@@ -7477,16 +7560,16 @@ mod tests {
             return;
         };
         let result = std::env::var_os("EON_RELOAD_ATTACH_RESULT").unwrap();
-        let mut startup = vec![0; eon_workspace_protocol::v44::HEADER_BYTES];
+        let mut startup = vec![0; eon_workspace_protocol::v45::HEADER_BYTES];
         std::io::stdin().read_exact(&mut startup).unwrap();
-        let length = eon_workspace_protocol::v44::declared_message_len(&startup).unwrap();
+        let length = eon_workspace_protocol::v45::declared_message_len(&startup).unwrap();
         startup.resize(length, 0);
         std::io::stdin()
-            .read_exact(&mut startup[eon_workspace_protocol::v44::HEADER_BYTES..])
+            .read_exact(&mut startup[eon_workspace_protocol::v45::HEADER_BYTES..])
             .unwrap();
         assert!(matches!(
-            eon_workspace_protocol::v44::decode_response(&startup).unwrap(),
-            eon_workspace_protocol::v44::Response::Snapshot(_)
+            eon_workspace_protocol::v45::decode_response(&startup).unwrap(),
+            eon_workspace_protocol::v45::Response::Snapshot(_)
         ));
         let read = |stream: &mut UnixStream| {
             let mut bytes = vec![0; orbs::HEADER_BYTES];
@@ -7555,7 +7638,7 @@ mod tests {
         let executable = std::env::current_exe().unwrap();
         inputs.venus = root.join("attaching-venus");
         fs::write(&inputs.venus, format!(
-            "#!/bin/sh\nprintf 'ready-v1focus:1\\n'\nEON_RELOAD_ATTACH_ENDPOINT='{}' EON_RELOAD_ATTACH_RESULT='{}' exec '{}' --exact supervisor::tests::reload_attachment_process --nocapture >/dev/null\n",
+            "#!/bin/sh\nprintf 'ready-v1\\105\\117\\116\\127\\055\\000\\220\\000\\002\\000\\000\\000\\001\\000'\nEON_RELOAD_ATTACH_ENDPOINT='{}' EON_RELOAD_ATTACH_RESULT='{}' exec '{}' --exact supervisor::tests::reload_attachment_process --nocapture >/dev/null\n",
             fixture.state.sessions[0].endpoint.display(), attached.display(), executable.display()
         )).unwrap();
         fs::set_permissions(&inputs.venus, fs::Permissions::from_mode(0o700)).unwrap();
@@ -7688,8 +7771,10 @@ mod tests {
         let original = state.venus.as_ref().unwrap().child.id();
         let before = state.workspaces.as_ref().unwrap().snapshot();
         // Both old checks would stop on focus:1, leaving the final loss unread.
-        focus.write_all(&b"focus:0\nfocus:1\n".repeat(100)).unwrap();
-        focus.write_all(b"focus:0\n").unwrap();
+        focus
+            .write_all(&[focus_frame(false), focus_frame(true)].concat().repeat(100))
+            .unwrap();
+        focus.write_all(&focus_frame(false)).unwrap();
         for _ in 0..3 {
             assert_eq!(
                 super::reload_presentation(&mut state, &inputs, &root, &root, &target)
@@ -7699,7 +7784,9 @@ mod tests {
             );
             assert_eq!(state.venus.as_ref().unwrap().child.id(), original);
         }
-        focus.write_all(b"focus:1\nfocus:").unwrap();
+        focus
+            .write_all(&[focus_frame(true), b"EON".to_vec()].concat())
+            .unwrap();
         assert_eq!(
             super::reload_presentation(&mut state, &inputs, &root, &root, &target)
                 .unwrap_err()
@@ -7717,6 +7804,13 @@ mod tests {
     fn reload_validates_each_protocol_and_the_immutable_target_before_retirement() {
         let inputs = crate::fixtures::inputs();
         let versions = *inputs.presentation_protocols.as_ref().unwrap();
+        let mut previous = versions;
+        previous[0] = 44;
+        assert!(
+            super::validate_reload(&inputs, Path::new("/absent"), previous)
+                .unwrap_err()
+                .contains("EONW 44")
+        );
         for index in 0..3 {
             let mut wrong = versions;
             wrong[index] += 1;
@@ -7753,8 +7847,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v44::Attention>,
-        Vec<eon_workspace_protocol::v44::QueueEntry>,
+        Option<eon_workspace_protocol::v45::Attention>,
+        Vec<eon_workspace_protocol::v45::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -7773,10 +7867,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v44::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v45::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v44::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v45::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -7796,10 +7890,10 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v44::AttentionState {
-        use eon_workspace_protocol::v44::AttentionState;
+    ) -> eon_workspace_protocol::v45::AttentionState {
+        use eon_workspace_protocol::v45::AttentionState;
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
-        let changed = |attention: &Option<eon_workspace_protocol::v44::Attention>| {
+        let changed = |attention: &Option<eon_workspace_protocol::v45::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -7859,7 +7953,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v44::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v45::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -7897,10 +7991,10 @@ mod tests {
         assert_eq!(queued(&mut state), (Some(Finished), 1), "focused by CLI");
 
         // Native focus sees it; losing focus leaves the next finish queued.
-        peer.write_all(b"focus:1\n").unwrap();
+        peer.write_all(&focus_frame(true)).unwrap();
         state.tend(Instant::now());
         assert_eq!(queued(&mut state), (Some(Idle), 0));
-        peer.write_all(b"focus:0\n").unwrap();
+        peer.write_all(&focus_frame(false)).unwrap();
         state.tend(Instant::now());
         assert_eq!(raise_finish(&mut state, &gate), Finished);
         assert_eq!(queued(&mut state), (Some(Finished), 1));
@@ -7912,65 +8006,44 @@ mod tests {
 
     #[test]
     fn native_focus_frames_are_partial_bounded_and_fail_closed() {
-        use super::{FocusFailure, NativeFocus};
-        use std::{io::Write, net::Shutdown, os::fd::OwnedFd};
-        let focused = || {
-            let (stream, mut peer) = UnixStream::pair().unwrap();
-            let mut focus = NativeFocus::default();
-            peer.write_all(b"focus:1").unwrap();
-            assert!(focus.poll(&stream).is_ok());
-            assert_eq!(focus.focused, None, "a partial report counted");
-            peer.write_all(b"\n").unwrap();
-            assert!(focus.poll(&stream).is_ok());
-            assert_eq!(focus.focused, Some(true));
-            (focus, stream, peer)
-        };
-
-        // The last complete report wins; repeats and silence keep it.
-        let (mut focus, stream, mut peer) = focused();
-        for (bytes, expected) in [
-            (&b"focus:0\nfocus:1\nfocus:0\n"[..], false),
-            (b"focus:0\n", false),
-            (b"", false),
-            (&b"focus:1\n".repeat(64)[..], true),
-        ] {
-            peer.write_all(bytes).unwrap();
-            assert!(focus.poll(&stream).is_ok());
-            assert_eq!(focus.focused, Some(expected));
-        }
-        // A turn reads at most 512 bytes; the rest waits for the next turn.
-        peer.write_all(&b"focus:0\n".repeat(64)).unwrap();
-        peer.write_all(b"focus:1\n").unwrap();
-        assert!(focus.poll(&stream).is_ok());
-        assert_eq!(focus.focused, Some(false), "read past one turn's bound");
-        assert!(focus.poll(&stream).is_ok());
-        assert_eq!(focus.focused, Some(true), "a burst ended reports");
-
-        // Each failure leaves focus unknown, for good.
-        let malformed = |bytes: &[u8]| {
-            let (mut focus, stream, mut peer) = focused();
-            peer.write_all(bytes).unwrap();
-            let failure = focus.poll(&stream);
-            peer.write_all(b"focus:1\n").unwrap();
-            assert!(focus.poll(&stream).is_ok());
-            assert_eq!(focus.focused, None);
-            failure
-        };
-        assert!(matches!(
-            malformed(b"focus:2\nfocus:1\n"),
-            Err(FocusFailure::Invalid)
-        ));
-        let (mut focus, stream, peer) = focused();
-        (&peer).write_all(b"focus").unwrap();
+        use super::{FOCUS_READ_BUDGET, FocusFailure, NativeFocus};
+        use std::{io::Write, net::Shutdown};
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let mut focus = NativeFocus::default();
+        let gained = focus_frame(true);
+        peer.write_all(&gained[..gained.len() - 1]).unwrap();
+        assert!(!focus.poll(&stream).unwrap());
+        assert!(!focus.usable);
+        peer.write_all(&gained[gained.len() - 1..]).unwrap();
+        assert!(focus.poll(&stream).unwrap());
+        assert_eq!(focus.focused, Some(true));
+        assert!(focus.usable);
+        peer.write_all(&[focus_frame(false), gained.clone(), focus_frame(false)].concat())
+            .unwrap();
+        assert!(focus.poll(&stream).unwrap());
+        assert_eq!(focus.focused, Some(false));
+        let lost = focus_frame(false);
+        peer.write_all(&lost.repeat(FOCUS_READ_BUDGET / lost.len() + 1))
+            .unwrap();
+        peer.write_all(&gained).unwrap();
+        assert!(!focus.poll(&stream).unwrap());
+        assert!(!focus.usable, "a backlog must not authorize focused sends");
+        assert!(focus.poll(&stream).unwrap());
+        assert_eq!(focus.focused, Some(true));
+        let mut invalid = gained.clone();
+        invalid[6] = 255;
+        peer.write_all(&invalid).unwrap();
+        assert!(matches!(focus.poll(&stream), Err(FocusFailure::Invalid)));
+        assert_eq!(focus.focused, None);
+        peer.write_all(&gained).unwrap();
+        assert!(!focus.poll(&stream).unwrap());
+        assert!(!focus.usable, "a corrupt channel cannot recover silently");
+        let (stream, peer) = UnixStream::pair().unwrap();
+        let mut focus = NativeFocus::default();
+        (&peer).write_all(&gained).unwrap();
+        focus.poll(&stream).unwrap();
         peer.shutdown(Shutdown::Write).unwrap();
         assert!(matches!(focus.poll(&stream), Err(FocusFailure::Ended)));
-        assert_eq!(focus.focused, None);
-        let mut focus = NativeFocus {
-            focused: Some(true),
-            ..NativeFocus::default()
-        };
-        let unreadable = UnixStream::from(OwnedFd::from(fs::File::open("/dev/null").unwrap()));
-        assert!(matches!(focus.poll(&unreadable), Err(FocusFailure::Io(_))));
         assert_eq!(focus.focused, None);
     }
 
@@ -7979,13 +8052,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v44::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v45::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
         let run = state.sessions[0].run_id().to_owned();
         let (mut first, original) = attach_reporting_venus(&mut state);
-        first.write_all(b"focus:1\n").unwrap();
+        first.write_all(&focus_frame(true)).unwrap();
         state.tend(Instant::now());
         assert_eq!(raise_finish(&mut state, &gate), Idle, "seen while focused");
 
@@ -7993,7 +8066,7 @@ mod tests {
         state.venus = None;
         let (mut second, original) = attach_reporting_venus(&mut state);
         assert_eq!(raise_finish(&mut state, &gate), Finished, "inherited focus");
-        second.write_all(b"focus:1\n").unwrap();
+        second.write_all(&focus_frame(true)).unwrap();
         state.tend(Instant::now());
         assert_eq!(
             inspected(&mut state).0.map(|attention| attention.state),
@@ -8972,19 +9045,20 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v44::{
+        use eon_workspace_protocol::v45::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
 
         let root = temporary_directory();
         let snapshot = Snapshot {
+            focus: None,
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v44::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v45::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -9031,7 +9105,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v44::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v45::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

@@ -8,7 +8,7 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES,
     MAX_TERMINAL_TEXT_BYTES,
 };
@@ -1727,8 +1727,8 @@ fn naming_failed(
 }
 
 impl RunningSession {
-    pub(super) fn inventory(&self) -> eon_workspace_protocol::v44::TerminalInventory {
-        eon_workspace_protocol::v44::TerminalInventory {
+    pub(super) fn inventory(&self) -> eon_workspace_protocol::v45::TerminalInventory {
+        eon_workspace_protocol::v45::TerminalInventory {
             terminal: self.id.clone(),
             run: self.identity.run_id.clone(),
             origin_build: self.origin_build.clone(),
@@ -4384,7 +4384,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v44::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v45::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(

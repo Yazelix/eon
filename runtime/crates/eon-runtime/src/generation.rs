@@ -15,7 +15,7 @@ use super::windows::{
 };
 use super::workspace::{json_escape, terminal_text};
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v44::{
+use eon_workspace_protocol::v45::{
     Action, Availability, BusyTerminals, Failure, MAX_RUNNING_WINDOWS, Response, WindowEntry,
     WindowState, WorkspaceAction,
 };
@@ -54,7 +54,7 @@ fn generation_id(input: &[u8]) -> String {
 }
 
 pub(super) fn valid_generation(value: &str) -> bool {
-    eon_workspace_protocol::v44::valid_generation(value)
+    eon_workspace_protocol::v45::valid_generation(value)
 }
 
 pub(super) fn generation_directory(root: &Path, generation: &str) -> PathBuf {
@@ -667,7 +667,7 @@ pub(super) struct GenerationRecord {
     pub(super) id: String,
     created_build: Option<String>,
     active_build: Option<String>,
-    terminal_inventory: Vec<eon_workspace_protocol::v44::TerminalInventory>,
+    terminal_inventory: Vec<eon_workspace_protocol::v45::TerminalInventory>,
     kind: &'static str,
     pub(super) state: &'static str,
     runtime: PathBuf,
@@ -1975,7 +1975,7 @@ mod tests {
 
     #[test]
     fn read_only_discovery_excludes_terminal_only_supervisors() {
-        use eon_workspace_protocol::v44::{
+        use eon_workspace_protocol::v45::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -2005,7 +2005,7 @@ mod tests {
             let response = LifecycleResponse::Runtime(Runtime {
                 created_build: "g1-00000000000000000000000000000001".into(),
                 active_build: "g1-00000000000000000000000000000001".into(),
-                terminal_inventory: vec![eon_workspace_protocol::v44::TerminalInventory {
+                terminal_inventory: vec![eon_workspace_protocol::v45::TerminalInventory {
                     terminal: "terminal-1".into(),
                     run: "fixture-run".into(),
                     origin_build: None,
@@ -2019,7 +2019,7 @@ mod tests {
                 name: None,
                 started_at: 123,
                 eon_version: "fixture".into(),
-                workspace_protocol: eon_workspace_protocol::v44::VERSION,
+                workspace_protocol: eon_workspace_protocol::v45::VERSION,
                 component_report: "fixture".into(),
                 sessions: vec!["terminal-1".into()],
                 attach: available.clone(),
@@ -2132,7 +2132,7 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v44::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v45::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         let sessions = ["terminal-1".to_owned(), "terminal-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {
@@ -2195,7 +2195,7 @@ mod tests {
 
     #[test]
     fn window_json_leaves_out_labels_only_when_asked() {
-        use eon_workspace_protocol::v44::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v45::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         record.name = Some("client-acme-window".into());
         record.busy = Some(BusyTerminals {

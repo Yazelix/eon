@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v44::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v45::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -127,6 +127,10 @@ fn cli_path(action: &Action) -> CliPath {
             input,
             force,
         } => {
+            let target = match target {
+                eon_workspace_protocol::v45::SendTarget::Id(id) => id.as_str(),
+                eon_workspace_protocol::v45::SendTarget::Focused { .. } => "focused",
+            };
             let mut arguments = words(&["pane", "send", target]);
             if *force {
                 arguments.push("--force".into());
@@ -223,7 +227,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::Present { workspace: true },
         WorkspaceAction::ReloadPresentation {
             venus: "/nix/store/fixture/bin/venus".into(),
-            eonw: eon_workspace_protocol::v44::VERSION,
+            eonw: eon_workspace_protocol::v45::VERSION,
             orbs: 14,
             orbf: 3,
         },
@@ -339,19 +343,26 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::ReadTerminalHistory { target: text("u1") },
         Action::EditTerminalHistory { target: text("p1") },
         Action::SendTerminal {
-            target: text("u1"),
+            target: eon_workspace_protocol::v45::SendTarget::Id(text("u1")),
             force: false,
             input: TerminalInput::Paste(text("echo hi")),
         },
         Action::SendTerminal {
-            target: text("p1"),
+            target: eon_workspace_protocol::v45::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Enter,
         },
         Action::SendTerminal {
-            target: text("p1"),
+            target: eon_workspace_protocol::v45::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Paste(text("hi")),
+        },
+        Action::SendTerminal {
+            target: eon_workspace_protocol::v45::SendTarget::Focused {
+                expected_terminal: None,
+            },
+            force: false,
+            input: TerminalInput::Enter,
         },
         Action::Subscribe {
             filter: Filter::default(),
@@ -399,7 +410,13 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                 assert!(!send.json, "{arguments:?}");
                 assert_eq!(
                     Action::SendTerminal {
-                        target: send.target,
+                        target: if send.target == "focused" {
+                            eon_workspace_protocol::v45::SendTarget::Focused {
+                                expected_terminal: None,
+                            }
+                        } else {
+                            eon_workspace_protocol::v45::SendTarget::Id(send.target)
+                        },
                         force: send.force,
                         input
                     },

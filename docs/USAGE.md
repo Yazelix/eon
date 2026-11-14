@@ -1082,6 +1082,20 @@ In JSON, `session` names a session (`sN`) and `terminal` a terminal
 string when the path is valid UTF-8, and otherwise as an array of the path's
 byte values.
 
+Session inspection also carries `focus: {window_focused, target}` for the
+selected window, even when the inspected session is hidden. `window_focused`
+is true/false for reported native focus, or null when unknown (including a
+detached presentation). `target` is null or `{session, tab, pane, popup,
+terminal}`, with exactly one of pane/popup set. It is null when Eon is
+unfocused, chrome or a dialog holds the keyboard, the attachment is unavailable,
+or the reported terminal no longer matches the shown session's active tab.
+A session without an associated window has `focus:null`.
+
+Each tab's `selected_popup` names its shown popup, null when hidden; for an
+inactive tab it is the retained popup selection. `selected_pane` and popup
+`chosen` retain selection state and do not establish actual keyboard focus.
+These are reported facts, not a synchronous compositor query.
+
 In session JSON and action replies, each pane and popup has `attention`: null
 without attention, otherwise an object with `state`, `app`, `name`, `kind`,
 `progress`, `title`, `message`, `changed_at`, `stale` and `others`. Empty text
@@ -1296,6 +1310,22 @@ Enter, after
 without TEXT, or with empty TEXT, presses Enter alone. A line break in TEXT
 never submits it. Sending changes no selection, shown session or popup,
 scroll position or focus; a hidden popup receives the text and stays hidden.
+
+The literal target `focused` is an explicit opt-in: **it targets the person's
+keyboard-focused terminal**, including a shown popup. For example,
+`eon pane send focused --enter -- 'hello'` pastes and submits there. Runtime
+resolves it at dispatch in the selected window's shown session; it never guesses
+from the caller's session or falls back to another terminal/window. Unknown or
+unfocused windows refuse with `window-unfocused`; chrome, dialogs, unavailable
+attachments or stale focus refuse with `terminal-unfocused` (exit 1, nothing
+sent). `--force` cannot bypass these checks. Explicit pane/popup IDs keep their
+existing behavior, including reaching hidden or unfocused terminals.
+
+For `focused --enter` with text, Enter after the delay requires native focus
+and the same exact focused terminal. A different focused terminal refuses with
+`focus-changed`. If Enter fails after paste, the reply has `enter:false` and
+exit 1; the text remains pasted. Inspect it before retrying Enter alone, and
+do not resend the paste. Enter without text resolves focus once at dispatch.
 
 Keep each send short and point the program at a file for long material. Some
 agents treat long pastes as outside material: Claude Code marks pastes over
