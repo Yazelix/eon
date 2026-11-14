@@ -9,7 +9,9 @@ use super::{
     diagnostics::DiagnosticLog,
     editor::{self, Sockets},
     events::Projection,
-    generation::{current_generation, generation_directory, record_launcher, remove_launcher},
+    generation::{
+        Identity, cleanup_metadata, current_generation, generation_directory, record_launcher,
+    },
     managed_environment::{self, PopupCommand, TerminalAccess, nonempty_environment_path},
     notification, pair, platform, quota,
     running::Running,
@@ -293,11 +295,6 @@ pub(super) fn launch_current(
             .flatten()
             .filter(|_| !options.no_anima && options.directory.is_none());
         prepare_generation_runtime(&root, &generation)?;
-        if mode == LaunchMode::Workspace
-            && let Err(error) = record_launcher(inputs, &runtime)
-        {
-            log.record(&error);
-        }
         prepare_configuration(&config)?;
         supervise(
             inputs,
@@ -995,6 +992,19 @@ fn recovered_workspace_sessions(
         .collect()
 }
 
+struct GenerationCleanup<'a> {
+    runtime: &'a Path,
+    log: &'a DiagnosticLog,
+}
+
+impl Drop for GenerationCleanup<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = cleanup_metadata(self.runtime) {
+            self.log.note(&error);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn supervise(
     inputs: &Inputs,
@@ -1014,6 +1024,16 @@ fn supervise(
     log: &Arc<DiagnosticLog>,
     start_timeout: Duration,
 ) -> Result<i32, String> {
+    let build = current_generation(inputs)?;
+    let retained_identity = if mode == LaunchMode::Workspace {
+        let identity = Identity::read(runtime)?;
+        if let Some(identity) = &identity {
+            identity.require_build(&build)?;
+        }
+        identity
+    } else {
+        None
+    };
     let started_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("cannot record supervisor start: {error}"))?
@@ -1090,6 +1110,20 @@ fn supervise(
         log.orbit_directory().ok(),
         Instant::now() + SESSION_CLEANUP_TIMEOUT,
     )?;
+    let persisted =
+        mode == LaunchMode::Workspace && (retained_identity.is_some() || sessions.is_empty());
+    let identity = match retained_identity {
+        Some(identity) => identity,
+        None if mode == LaunchMode::Workspace && sessions.is_empty() => {
+            record_launcher(inputs, runtime)?
+        }
+        None => Identity::initial(&build, None),
+    };
+    if persisted && let Err(error) = identity.project_launcher(runtime) {
+        log.note(&error);
+    }
+    // Declared after the lifecycle lock and before the listener: teardown stays locked.
+    let _metadata_cleanup = GenerationCleanup { runtime, log };
     if let Some(attention) = &mut attention {
         for session in &sessions {
             attention.recover(session.run_id());
@@ -1140,8 +1174,8 @@ fn supervise(
         let starting = Runtime {
             venus: None,
             generation: generation.into(),
-            created_build: current_generation(inputs)?,
-            active_build: current_generation(inputs)?,
+            created_build: identity.created_build.clone(),
+            active_build: identity.active_build.clone(),
             terminal_inventory: Vec::new(),
             name: None,
             started_at,
@@ -1167,7 +1201,7 @@ fn supervise(
             &starting,
         )?
         else {
-            remove_launcher(runtime);
+            drop(control_listener);
             return Ok(0);
         };
         Some(registration)
@@ -1229,16 +1263,16 @@ fn supervise(
             };
             let mut snapshot = workspaces.snapshot();
             snapshot.generation = generation.into();
-            snapshot.created_build = current_generation(inputs)?;
-            snapshot.active_build = current_generation(inputs)?;
+            snapshot.created_build = identity.created_build.clone();
+            snapshot.active_build = identity.active_build.clone();
             if let Some(running) = &running {
                 running.apply(
                     &mut snapshot,
                     WindowEntry {
                         window: window.clone(),
                         generation: generation.into(),
-                        created_build: Some(current_generation(inputs)?),
-                        active_build: Some(current_generation(inputs)?),
+                        created_build: Some(identity.created_build.clone()),
+                        active_build: Some(identity.active_build.clone()),
                         name: Some(workspaces.window_name()),
                         started_at: Some(started_at),
                         live_terminals: Some(
@@ -1395,8 +1429,8 @@ fn supervise(
         window,
         running,
         component_generation: generation.to_owned(),
-        created_build: current_generation(inputs)?,
-        active_build: current_generation(inputs)?,
+        created_build: identity.created_build,
+        active_build: identity.active_build,
         application_id: application_id.into(),
         decorations,
         workspaces,
@@ -1456,7 +1490,6 @@ fn supervise(
             state.retain_popup_files(Instant::now());
             state.scrollback.remove_empty_root();
             state.failed_starts.reap(log);
-            let cleanup_succeeded = session_cleanup.is_ok();
             let mut errors = vec![error];
             if let Err(cleanup) = session_cleanup {
                 errors.push(format!("cannot roll back terminals: {cleanup}"));
@@ -1464,10 +1497,6 @@ fn supervise(
             let error = startup_error(errors.join("; "));
             if state.failed_starts.is_empty() {
                 drop(control_listener);
-                if cleanup_succeeded {
-                    remove_launcher(runtime);
-                    let _ = fs::remove_dir(runtime);
-                }
                 return Err(error);
             }
             log.note(&error);
@@ -1558,8 +1587,6 @@ fn supervise(
     state.notices.close_and_wait(NOTICE_CLOSE_TIMEOUT);
     state.retain_popup_files(Instant::now());
     state.scrollback.remove_empty_root();
-    remove_launcher(runtime);
-    let _ = fs::remove_dir(runtime);
     status
 }
 
@@ -4609,10 +4636,10 @@ mod tests {
     use super::apply_session_operation;
     use super::{
         Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SESSION_CLEANUP_TIMEOUT,
-        StopReason, SupervisorState, WorkspaceSet, effective_uid, mark_before_start, pair_command,
-        prepare_configuration, prepare_runtime, reap_finished_sessions, settle_snapshot,
-        stop_generation_sessions, stop_owned_session, stop_owned_sessions, temporary_directory,
-        venus_command, window_bar, xdg_path,
+        StopReason, SupervisorState, WorkspaceSet, current_generation, effective_uid,
+        mark_before_start, pair_command, prepare_configuration, prepare_runtime,
+        reap_finished_sessions, settle_snapshot, stop_generation_sessions, stop_owned_session,
+        stop_owned_sessions, temporary_directory, venus_command, window_bar, xdg_path,
     };
     use crate::editor::Sockets;
     use crate::scrollback::{Snapshots, tests::history};
@@ -5792,7 +5819,7 @@ mod tests {
             inputs.venus = root.join("venus");
         }
         let generation = std::env::var("EON_C38_GENERATION")
-            .unwrap_or_else(|_| "g1-00000000000000000000000000000001".into());
+            .unwrap_or_else(|_| current_generation(&inputs).unwrap());
         let log = DiagnosticLog::open_in(
             Ok(root.join("logs")),
             "g1-00000000000000000000000000000001",
@@ -5812,7 +5839,7 @@ mod tests {
             Some(inputs.defaults.popups.clone()),
             None,
             lock,
-            &root.join("a/b"),
+            &root.join("a").join(&generation),
             &[],
             None,
             &generation,
@@ -5839,8 +5866,10 @@ mod tests {
         for case in ["config", "launch", "base", "busy"] {
             let root = temporary_directory();
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-            let runtime = root.join("a/b");
-            fs::create_dir_all(&runtime).unwrap();
+            let runtime = root
+                .join("a")
+                .join(current_generation(&crate::fixtures::inputs()).unwrap());
+            prepare_runtime(&runtime).unwrap();
             let registry = Registry::in_test_directory(root.join("state/eon/sessions"));
             let release = if case == "busy" {
                 registry.create(None).unwrap();
@@ -5900,7 +5929,10 @@ mod tests {
                     assert_eq!(records.len(), if case == "busy" { 2 } else { 1 });
                     assert!(error.contains(&records.last().unwrap().id), "{error}");
                 }
-                "base" => assert!(registry.list().unwrap().is_empty()),
+                "base" => {
+                    assert!(registry.list().unwrap().is_empty());
+                    assert!(!runtime.join("identity").exists());
+                }
                 _ => unreachable!(),
             }
             fs::remove_dir_all(root).unwrap();
@@ -5910,12 +5942,14 @@ mod tests {
     #[test]
     fn c38_restart_keeps_live_terminals_reachable_when_registry_is_unavailable() {
         use crate::{control, session_registry::Registry};
-        const GENERATION: &str = "g1-00000000000000000000000000000001";
+        let generation = current_generation(&crate::fixtures::inputs()).unwrap();
         for case in ["corrupt", "permissions", "held", "state-root", "worker"] {
             let root = temporary_directory();
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-            let runtime = root.join("a/b");
-            fs::create_dir_all(&runtime).unwrap();
+            let runtime = root
+                .join("a")
+                .join(current_generation(&crate::fixtures::inputs()).unwrap());
+            prepare_runtime(&runtime).unwrap();
             fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
             let registry_root = root.join("state/eon/sessions");
             let registry = Registry::in_test_directory(registry_root.clone());
@@ -5936,13 +5970,13 @@ mod tests {
             script(&root.join("venus"), "#!/bin/sh\nexec sleep 60\n");
             let mut inputs = crate::fixtures::inputs();
             inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
-            let log = DiagnosticLog::open_in(Ok(root.join("orbit-logs")), GENERATION, "eon");
+            let log = DiagnosticLog::open_in(Ok(root.join("orbit-logs")), &generation, "eon");
             let live = super::start_orbit(
                 &inputs,
                 &root,
                 &runtime.join("orbit.sock"),
                 "terminal-1",
-                GENERATION,
+                &generation,
                 &root,
                 &[
                     "sh".into(),
@@ -5966,7 +6000,7 @@ mod tests {
                 ])
                 .env("EON_C38_STARTUP_ROOT", &root)
                 .env("HOME", &root)
-                .env("EON_C38_GENERATION", GENERATION)
+                .env("EON_C38_GENERATION", &generation)
                 .env("XDG_STATE_HOME", root.join("state"))
                 .env("EON_RUNTIME_DIR", root.join("runtime"))
                 .current_dir(&root)
@@ -6060,7 +6094,7 @@ mod tests {
                 control::ControlResponse::Workspace(super::Response::Failure(_))
             ));
             let stopped =
-                control::send_stop_on(UnixStream::connect(&socket).unwrap(), GENERATION).unwrap();
+                control::send_stop_on(UnixStream::connect(&socket).unwrap(), &generation).unwrap();
             assert!(matches!(
                 stopped,
                 control::StopAnswer::Reply(eon_workspace_protocol::stop::Reply::Stopped { .. })

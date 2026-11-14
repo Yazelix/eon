@@ -13,6 +13,10 @@ installation, and proven contract changes.
   input. Both paths preserve covering transients; Scrollback obeys agent
   terminal-access policy. The CLI show/focus forms remain pending in
   `eon-agent-parity-a9g0.1.2`.
+- Full-Eon windows retain a private atomic build/launcher record through
+  supervisor loss. Routing uses that record, and cleanup preserves it while
+  terminal or other runtime residue remains (`eon-t3fyd.14`). In-place Update
+  remains planned; EONW is unchanged.
 
 - Eon 0.1.26 uses EONW v45. Windows started before this version need a
   restart; their EONW v44 supervisors reject the updated CLI's incompatible

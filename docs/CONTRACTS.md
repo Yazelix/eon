@@ -2695,6 +2695,12 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C11 — Runtime generations and presentation
 
+- **Amendment (2026-11-14):** `eon-t3fyd.14`, implementing the private
+  identity/active-launch format approved 2026-11-13 under Lucca's delegation
+  (layout SHA-256 `e6fa46de1b6a072216271c19387247e9ffb067783105642cb9048e1cb20f3612`).
+  Automated proof belongs to this bead; installed proof remains scoped to the
+  overseer's accepted artifact and observation.
+
 - **Amendment (2026-11-14):** `eon-pj2ed`, approved by eon-overseer under
   Lucca's delegation: default namespace selection follows EON-C23; bare launch
   retains exact-current behavior. Proof pending in `eon-pj2ed`.
@@ -2798,6 +2804,52 @@ names its socket. CLI JSON names a session `session` and a terminal
     this record as Delegation describes; commands use the same record and build
     lookup as Routing describes. Reading or using the record does not require
     an EONW change, a package-manager query or a second component graph.
+    Full Eon stores `generation`, `created_build`, `active_build` and optional
+    `active_launcher` together in an owned mode-0600 regular `identity` file
+    in its owned mode-0700 generation directory. Format 1 is `EONI`, u16
+    little-endian 1, three raw 35-byte canonical identities in that order,
+    then presence 0 or 1. None ends at byte 112. Some adds a u16 little-endian
+    length N in 1..4096 and N raw Unix path bytes: absolute, no NUL, preserving
+    non-UTF-8. Total size is 114+N, at most 4210 bytes. Reads use
+    NOFOLLOW/NONBLOCK/CLOEXEC, take at most 4211 bytes, and reject overflow,
+    wrong magic/version/length/identity/presence/path, trailing bytes,
+    directory-generation mismatch and unsafe type/owner/mode. No environment,
+    host map or component graph is stored; the launcher is not a build digest.
+
+    Under the lifecycle lock, fresh publication creates a private new temp,
+    writes the complete record, syncs the file, renames it and syncs its
+    directory before starting hosts. It precedes control-listener binding and
+    session registration. The `eon` symlink is a projection of the committed
+    record. Projection failure does not undo that record; missing/stale links
+    can be repaired from it only under the lifecycle lock. Record-aware reads
+    use its stored path even without the link; corruption or launcher None
+    never falls through to the link. Only an absent record uses existing
+    symlink Routing. Build and path are never combined from different sources.
+
+    Recovery retains a valid record's creation and active-launch facts and
+    requires its active build to equal the invoked build in this build-derived
+    baseline. Conflict refuses without rewriting identity or choosing another
+    lifetime. Missing record with surviving exact hosts continues EON-C15
+    recovery only under directory-generation==invoked-build, reports three
+    equal roles, and neither backfills identity nor guesses host launch facts.
+    Missing record with no surviving hosts may publish before fresh startup.
+    eonbase writes no identity. Independent lifetime selection belongs to
+    `eon-t3fyd.3`; in-place Update remains planned.
+
+    All four dead-discovery/teardown sites share one lifecycle-locked metadata
+    cleanup rule. Keep exact dead-socket cleanup; before removing identity or
+    launcher, enumerate only until the first name other than `eon.sock`, `eon`
+    or `identity`. Any residue or enumeration/validation error retains both
+    metadata objects with a diagnostic. This includes terminal/management
+    sockets and records, pending markers, unsettled temps and even an empty
+    Scrollback `snapshots/` directory. An absent supervisor socket does not
+    establish host absence. Validate owned metadata types, revalidate exact
+    objects before unlinking, then remove hostless metadata and the directory
+    without recursion. Identity without a link is valid residue and follows
+    the same retention/removal rule. Session cleanup and failed-start owners
+    settle hosts and children; metadata cleanup sends no management action or
+    signal. Read-only discovery cleans and repairs nothing. Reserved Stop
+    remains independent of missing or corrupt private metadata.
   - **Routing.** When a session command (EON-C10), `eon events` (EON-C39),
     `eon quit`, or `eon window reload ID [--json]` selects a live generation
     whose supervisor speaks another EONW version, `eon` executes that

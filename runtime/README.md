@@ -112,8 +112,11 @@ window focus is nullable; stale or nonterminal focus refuses a focused send.
 Since EONW v44, `generation`, `created_build` and `active_build` are separate in public
 snapshots and lifecycle inspection, adds per-run launch inventory to Runtime,
 and defines the `updating` subscription End value. Generation allocation is
-still build-derived; private active-launch records and independent lifetimes
-are later slices. Reserved Stop stays byte-identical.
+still build-derived. Full-Eon windows retain a private format-1 `identity`
+record binding lifetime, creation build, active build and optional launcher.
+It commits before fresh hosts start; recordless surviving hosts retain exact-run
+recovery without backfilling the record. Independent lifetimes and Update
+remain planned. Reserved Stop stays byte-identical.
 
 Google quota has independent optional Snapshot fact and failure slots.
 Its fresh/stale reading carries at most six windows, all scoped by the exact

@@ -1063,6 +1063,15 @@ values initially match. `eon versions` names the invoked build, not a lifetime.
 `orbs` and `orbf`. Launch facts that are unknown after recovery are null; they
 are not replaced with the current assembly's values. Full in-place Update and
 independent lifetime allocation remain planned.
+Full-Eon windows keep those build facts and their optional active launcher
+together in a private atomic `identity` record. Routing uses its launcher;
+the `eon` symlink is a repairable projection. A corrupt record or an explicit
+missing launcher never authorizes using the link instead. Windows without a
+record retain their existing link-based routing and exact-run recovery;
+recovering surviving terminals does not backfill the file. The record survives
+supervisor loss while terminal or other residue remains, including a leftover
+Scrollback `snapshots/` directory. Hostless metadata is removed under the
+lifecycle lock. Reserved Stop does not depend on this record.
 A missing supervisor is not started implicitly.
 
 Session commands accept `--window ID` before any `--` operand separator, for

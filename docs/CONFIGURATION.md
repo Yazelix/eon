@@ -107,7 +107,7 @@ Other output and record formats are unchanged.
 
 `generation`, `created_build`, `active_build` and known `origin_build` use the
 fixed `g1-` plus 32 lowercase hexadecimal spelling. They describe lifetime and
-build roles, not configurable names. This baseline uses EONW v44; the ordinary
+build roles, not configurable names. This baseline uses EONW v45; the ordinary
 frame ceiling remains 2 MiB. Lifecycle `terminal_inventory` follows the existing
 terminal-ID list and has at most 256 entries, with terminal/run IDs bounded by
 128 bytes and at most 78,850 encoded inventory bytes. Unknown recovered launch
@@ -115,6 +115,17 @@ facts are null. These fixed format/resource bounds and machine field names
 keep producers and consumers in agreement; no preference changes them.
 `updating` is a fixed protocol End reason (exit 1), not a configurable timeout
 or an ended lifetime. In-place Update remains planned.
+
+Full Eon's private generation-directory `identity` file uses format 1: `EONI`,
+little-endian u16 version 1, three raw 35-byte identities in generation,
+creation-build and active-build order, then a 0/1 launcher-presence byte.
+Presence 0 ends at 112 bytes. Presence 1 adds a little-endian u16 length and
+1..4096 raw Unix bytes for an absolute path without NUL (114+N bytes,
+4210 maximum; reads are bounded to 4211). Non-UTF-8 paths are preserved.
+The directory is owned mode 0700 and the regular non-symlink file is owned
+mode 0600. Publication writes and syncs a private temporary file, renames it,
+then syncs the directory under the lifecycle lock. These fixed trust/format
+rules are not preferences. eonbase creates no identity record.
 
 ## Built-in defaults
 

@@ -12,6 +12,7 @@ mod notification;
 mod pair;
 mod pane_labels;
 mod platform;
+mod private_file;
 mod quota;
 mod report;
 mod running;

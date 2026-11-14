@@ -26,7 +26,7 @@ use std::{
     io::IsTerminal,
     os::unix::{
         ffi::OsStrExt,
-        fs::{FileTypeExt, MetadataExt, symlink},
+        fs::{FileTypeExt, MetadataExt},
         net::UnixStream,
         process::CommandExt,
     },
@@ -35,6 +35,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+mod identity;
+pub(super) use identity::Identity;
 
 /// This build's exact digest, `g1-…`; it is not a lifetime lookup.
 pub fn current_generation(inputs: &Inputs) -> Result<String, String> {
@@ -61,8 +64,7 @@ pub(super) fn generation_directory(root: &Path, generation: &str) -> PathBuf {
     root.join("generations").join(generation)
 }
 
-/// The link in a generation's directory to the `eon` of the build that started
-/// it, which a later build runs to present a generation it cannot present.
+/// Projection of the active launcher; recordless generations use the link directly.
 const LAUNCHER: &str = "eon";
 /// Set on a delegated attach to the generation it presents, and removed from
 /// everything Eon starts.
@@ -209,27 +211,92 @@ pub(super) fn route(root: &Path, generation: &str, command: &[OsString]) -> Opti
 
 /// Records this build's `eon`, from its session bin, in the workspace
 /// generation directory `runtime`.
-pub(super) fn record_launcher(inputs: &Inputs, runtime: &Path) -> Result<(), String> {
-    let Some(eon) = inputs.managed.shell_bin.as_ref().map(|bin| bin.join("eon")) else {
-        return Ok(());
-    };
-    if !eon.is_absolute() || !eon.is_file() {
-        return Ok(());
+pub(super) fn record_launcher(inputs: &Inputs, runtime: &Path) -> Result<Identity, String> {
+    let build = current_generation(inputs)?;
+    if let Some(identity) = Identity::read(runtime)? {
+        identity.require_build(&build)?;
+        return Ok(identity);
     }
-    remove_launcher(runtime);
-    let link = runtime.join(LAUNCHER);
-    symlink(&eon, &link).map_err(|error| format!("cannot record {}: {error}", link.display()))
+    let launcher = inputs
+        .managed
+        .shell_bin
+        .as_ref()
+        .map(|bin| bin.join("eon"))
+        .filter(|path| path.is_absolute() && path.is_file());
+    let identity = Identity::initial(&build, launcher);
+    identity.publish(runtime)?;
+    Ok(identity)
 }
 
-/// Removes a generation's launcher record so its directory can be removed.
-pub(super) fn remove_launcher(runtime: &Path) {
-    let link = runtime.join(LAUNCHER);
-    if fs::symlink_metadata(&link).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        let _ = fs::remove_file(link);
+/// Under the lifecycle lock, remove metadata only after every host owner settled.
+pub(super) fn cleanup_metadata(runtime: &Path) -> Result<(), String> {
+    validate_private_directory(runtime)?;
+    let parent = crate::private_file::object(runtime)?;
+    remove_dead_socket(&runtime.join("eon.sock"));
+    let mut metadata = Vec::with_capacity(3);
+    for entry in fs::read_dir(runtime)
+        .map_err(|error| format!("cannot list {}: {error}", runtime.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("cannot inspect {}: {error}", runtime.display()))?;
+        let name = entry.file_name();
+        if !matches!(name.to_str(), Some("eon.sock" | "eon" | "identity")) {
+            return Err(format!(
+                "retaining metadata in {}: residue {}",
+                runtime.display(),
+                name.to_string_lossy()
+            ));
+        }
+        let path = entry.path();
+        let object = fs::symlink_metadata(&path)
+            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+        let safe = object.uid() == effective_uid()
+            && match name.to_str() {
+                Some("eon") => object.file_type().is_symlink(),
+                Some("identity") => object.is_file() && object.mode() & 0o7777 == 0o600,
+                // A remaining endpoint was not safely removed as dead above.
+                Some("eon.sock") => false,
+                _ => unreachable!(),
+            };
+        if !safe {
+            return Err(format!(
+                "retaining metadata: unsafe or active object {}",
+                path.display()
+            ));
+        }
+        metadata.push((path, socket_identity_from(&object)));
     }
+    validate_private_directory(runtime)?;
+    if crate::private_file::object(runtime)?.map(|id| (id.0, id.1)) != parent.map(|id| (id.0, id.1))
+    {
+        return Err(format!(
+            "generation directory {} changed before cleanup",
+            runtime.display()
+        ));
+    }
+    for (path, identity) in &metadata {
+        crate::private_file::revalidate(path, Some(*identity))?;
+    }
+    for (path, identity) in metadata {
+        crate::private_file::revalidate(&path, Some(identity))?;
+        fs::remove_file(&path)
+            .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
+    }
+    fs::remove_dir(runtime).map_err(|error| format!("cannot remove {}: {error}", runtime.display()))
 }
 
 fn recorded_launcher(runtime: &Path) -> Option<PathBuf> {
+    match Identity::read(runtime) {
+        Ok(Some(identity)) => return identity.active_launcher,
+        Err(error) => {
+            eprintln!(
+                "cannot read private identity in {}: {error}",
+                runtime.display()
+            );
+            return None;
+        }
+        Ok(None) => {}
+    }
     let link = runtime.join(LAUNCHER);
     let metadata = fs::symlink_metadata(&link).ok()?;
     if !metadata.file_type().is_symlink() || metadata.uid() != effective_uid() {
@@ -243,6 +310,9 @@ fn is_default_namespace(root: &Path) -> bool {
 }
 
 const MAX_GENERATIONS: usize = 256;
+
+#[cfg(test)]
+mod identity_tests;
 
 #[derive(Clone, Default)]
 pub(super) struct WorkspaceTarget {
@@ -1024,10 +1094,9 @@ fn inspect_generation(
             if remove_dead
                 && dead
                 && let Ok(Some(_lifecycle_lock)) = try_lock_supervisor_lifecycle(lifecycle_lock)
+                && let Err(error) = cleanup_metadata(&runtime)
             {
-                remove_dead_socket(&socket);
-                remove_launcher(&runtime);
-                let _ = fs::remove_dir(&runtime);
+                eprintln!("{error}");
             }
             record
         }

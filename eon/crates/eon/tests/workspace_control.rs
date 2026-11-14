@@ -11448,6 +11448,123 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
 }
 
 #[test]
+fn identity_record_retains_launch_facts_and_recordless_recovery() {
+    let window = PairWindow::new();
+    symlink(&window.binary, window.root.join("session-bin/eon")).unwrap();
+    fs::rename(window.root.join("orbit"), window.root.join("orbit-real")).unwrap();
+    executable(
+        &window.root.join("orbit"),
+        format!(
+            "#!/bin/sh\ntest -f \"${{2%/*}}/identity\" || exit 91\nexec '{}' \"$@\"\n",
+            window.root.join("orbit-real").display()
+        ),
+    );
+    executable(
+        &window.root.join("venus"),
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nexec 3<&0\n(cat <&3 >/dev/null; touch \"$EON_TEST_VENUS_PID.eof.$$\") &\nwhile test ! -e \"$EON_TEST_VENUS_PID.detach\" && test ! -e \"$EON_TEST_VENUS_PID.eof.$$\"; do sleep 0.01; done\n",
+    );
+    let launch = || {
+        let mut command = window.command(&[]);
+        command.arg("--dir").arg(&window.launch);
+        window.start(command)
+    };
+    let mut first = launch();
+    wait_for_ready(&window.control());
+    let runtime = window.generation();
+    let identity = runtime.join("identity");
+    let original = fs::read(&identity).expect("fresh full Eon must publish identity");
+    let generation = runtime.file_name().unwrap().as_bytes();
+    assert_eq!(&original[..6], b"EONI\x01\x00");
+    for offset in [6, 41, 76] {
+        assert_eq!(&original[offset..offset + 35], generation);
+    }
+    assert_eq!(original[111], 1);
+    let launcher = window.root.join("session-bin/eon");
+    assert_eq!(
+        u16::from_le_bytes(original[112..114].try_into().unwrap()) as usize,
+        launcher.as_os_str().as_bytes().len()
+    );
+    assert_eq!(&original[114..], launcher.as_os_str().as_bytes());
+    let host = live_identity(&runtime.join("orbit.sock"));
+    let venus: u32 = fs::read_to_string(&window.venus_pid)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let detach = window.venus_pid.with_extension("pid.detach");
+    fs::write(&detach, b"detach").unwrap();
+    wait_for_process_removal(venus, "Venus did not detach");
+    assert_eq!(fs::read(&identity).unwrap(), original);
+    assert_eq!(live_identity(&runtime.join("orbit.sock")), host);
+    fs::remove_file(detach).unwrap();
+    window.crash(&mut first);
+    let _ = fs::remove_file(window.control());
+    let mut retained = original.clone();
+    let creation = b"g1-abcdefabcdefabcdefabcdefabcdefab";
+    retained[41..76].copy_from_slice(creation);
+    let refused = |bytes: &[u8]| {
+        fs::write(&identity, bytes).unwrap();
+        let mut command = window.command(&[]);
+        command
+            .arg("--dir")
+            .arg(&window.launch)
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                let _ = child.wait();
+                panic!("invalid identity did not refuse startup");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert_eq!(
+            fs::read(&identity).unwrap(),
+            bytes,
+            "refusal overwrote identity"
+        );
+        assert!(
+            !window.control().exists(),
+            "refusal bound a supervisor socket"
+        );
+        assert_eq!(live_identity(&runtime.join("orbit.sock")), host);
+    };
+    refused(b"corrupt");
+    let mut wrong_active = retained.clone();
+    wrong_active[79] = if wrong_active[79] == b'0' { b'1' } else { b'0' };
+    refused(&wrong_active);
+    fs::write(&identity, &retained).unwrap();
+    fs::remove_file(runtime.join("eon")).unwrap();
+    let mut recovered = launch();
+    wait_for_ready(&window.control());
+    let snapshot = window.inspect("retained-identity");
+    assert_eq!(snapshot.created_build.as_bytes(), creation);
+    assert_eq!(snapshot.active_build.as_bytes(), generation);
+    assert_eq!(fs::read(&identity).unwrap(), retained);
+    assert_eq!(fs::read_link(runtime.join("eon")).unwrap(), launcher);
+    assert_eq!(live_identity(&runtime.join("orbit.sock")), host);
+    window.crash(&mut recovered);
+    fs::remove_file(&identity).unwrap();
+    let mut recordless = launch();
+    wait_for_ready(&window.control());
+    let snapshot = window.inspect("recordless-identity");
+    assert_eq!(snapshot.created_build.as_bytes(), generation);
+    assert_eq!(snapshot.active_build.as_bytes(), generation);
+    assert!(
+        !identity.exists(),
+        "surviving recordless lifetime was backfilled"
+    );
+    assert_eq!(live_identity(&runtime.join("orbit.sock")), host);
+    // Reserved Stop remains independent of a damaged private identity.
+    fs::write(&identity, b"corrupt").unwrap();
+    fs::set_permissions(&identity, fs::Permissions::from_mode(0o600)).unwrap();
+    window.stop_generation(&mut recordless);
+    assert!(!runtime.exists(), "hostless shutdown leaked identity");
+}
+
+#[test]
 fn desktop_launch_failure_stops_the_ready_session_through_management() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -11524,15 +11641,10 @@ fn rejected_ready_identity_stops_the_spawned_session_through_management() {
             .parse()
             .unwrap();
         assert!(!process::exists(orbit_pid));
-        let generation = fs::read_dir(runtime.join("generations"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect::<Vec<_>>();
-        assert_eq!(generation.len(), 1);
-        assert!(
-            fs::read_dir(&generation[0]).unwrap().next().is_none(),
-            "rejected Ready left residue in {}",
-            generation[0].display()
+        assert_eq!(
+            fs::read_dir(runtime.join("generations")).unwrap().count(),
+            0,
+            "rejected Ready left a hostless generation directory"
         );
 
         let retry = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
