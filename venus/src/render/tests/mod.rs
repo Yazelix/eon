@@ -10,6 +10,59 @@ mod shaping;
 mod text_clip;
 
 #[test]
+fn frame_timings_v2_owns_adapter_capture_and_final_presentation_count() {
+    let root = std::env::temp_dir().join(format!("venus-frame-v2-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("frames.jsonl");
+    let captures = std::cell::Cell::new(0);
+    {
+        let mut log = FrameTimings::new(Some(&path));
+        for present_ns in [100, 200] {
+            log.record(
+                PresentOutcome::Presented(Some(RenderTimings {
+                    present_ns,
+                    ..RenderTimings::default()
+                })),
+                Some(7),
+                Some(50),
+                0,
+                || {
+                    captures.set(captures.get() + 1);
+                    "software=true AdapterInfo { backend: Vulkan }".to_owned()
+                },
+            );
+        }
+    }
+    let rows = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(captures.get(), 1);
+    assert_eq!(rows[0]["v"], 2);
+    assert_eq!(rows[0]["kind"], "start");
+    assert_eq!(rows[0]["pid"], std::process::id());
+    assert_eq!(
+        rows[0]["adapter"],
+        "software=true AdapterInfo { backend: Vulkan }"
+    );
+    assert_eq!(
+        rows.last().unwrap(),
+        &serde_json::json!({"v":2,"kind":"end","presentations":2,"dropped":0})
+    );
+    let mut off = FrameTimings::new(None);
+    off.record(
+        PresentOutcome::Presented(Some(RenderTimings::default())),
+        None,
+        None,
+        0,
+        || panic!("disabled adapter capture"),
+    );
+    assert!(off.sender.is_none() && off.writer.is_none());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn unset_frame_timings_skip_the_real_clock_and_writer_paths() {
     use crate::transport::{FRAME_CLOCK_READS, frame_elapsed, frame_time, frame_timings_path};
     assert!(
@@ -23,7 +76,9 @@ fn unset_frame_timings_skip_the_real_clock_and_writer_paths() {
     let outcome =
         PresentOutcome::Presented(frame_time().map(|_| panic!("disabled timing row built")));
     let mut log = FrameTimings::from_environment();
-    log.record(outcome, Some(1), None, 0);
+    log.record(outcome, Some(1), None, 0, || {
+        panic!("disabled adapter capture")
+    });
     assert!(
         log.sender.is_none() && log.writer.is_none(),
         "no writer means no row encoding, allocation or file I/O"
@@ -58,9 +113,11 @@ fn frame_timings_append_successful_presents_and_flush_on_drop() {
             PresentOutcome::Recovered,
             PresentOutcome::Presented(None),
         ] {
-            log.record(outcome, Some(7), Some(50), 3);
+            log.record(outcome, Some(7), Some(50), 3, || {
+                panic!("non-presentation adapter capture")
+            });
         }
-        log.record(rendered, Some(7), Some(50), 3);
+        log.record(rendered, Some(7), Some(50), 3, || "adapter".into());
         log.record(
             PresentOutcome::Presented(Some(RenderTimings {
                 full_rebuild: false,
@@ -69,6 +126,7 @@ fn frame_timings_append_successful_presents_and_flush_on_drop() {
             Some(7),
             Some(50),
             0,
+            || panic!("adapter already captured"),
         );
     }
     let text = std::fs::read_to_string(&path).unwrap();
@@ -77,18 +135,18 @@ fn frame_timings_append_successful_presents_and_flush_on_drop() {
     let rows: Vec<serde_json::Value> = lines
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 4);
     assert_eq!(
-        rows[0],
+        rows[1],
         serde_json::json!({
-            "v": 1, "revision": 7, "receive_ns": 50, "present_ns": 100,
+            "v": 2, "kind": "frame", "revision": 7, "receive_ns": 50, "present_ns": 100,
             "scene_ns": 3, "render_ns": 20, "rebuild_ns": 10, "prepare_ns": 5,
             "acquire_ns": 30, "submit_ns": 2, "full_rebuild": true, "dropped": 0,
         })
     );
-    assert_eq!(rows[1]["revision"], 7);
-    assert_eq!(rows[1]["scene_ns"], 0);
-    assert_eq!(rows[1]["full_rebuild"], false);
+    assert_eq!(rows[2]["revision"], 7);
+    assert_eq!(rows[2]["scene_ns"], 0);
+    assert_eq!(rows[2]["full_rebuild"], false);
     let (_, receiver) = mpsc::sync_channel(1);
     assert!(write_frame_rows(&root, receiver).is_err());
     drop(FrameTimings::new(Some(&root)));
@@ -101,19 +159,64 @@ fn frame_timings_drop_full_queue_rows_without_waiting_and_report_loss() {
     let mut log = FrameTimings {
         sender: Some(sender),
         writer: None,
-        dropped: 0,
+        ..FrameTimings::default()
     };
     let outcome = PresentOutcome::Presented(Some(RenderTimings::default()));
-    log.record(outcome, None, None, 0);
-    log.record(outcome, Some(1), Some(10), 0);
-    assert_eq!(receiver.recv().unwrap().dropped, 0);
-    log.record(outcome, Some(2), Some(20), 0);
-    let row = receiver.recv().unwrap();
+    log.record(outcome, None, None, 0, || "adapter".into());
+    log.record(outcome, Some(1), Some(10), 0, || "adapter".into());
+    let FrameTimingRecord::Present(first) = receiver.recv().unwrap() else {
+        panic!("expected frame")
+    };
+    assert_eq!(first.dropped, 0);
+    log.record(outcome, Some(2), Some(20), 0, || "adapter".into());
+    let FrameTimingRecord::Present(row) = receiver.recv().unwrap() else {
+        panic!("expected frame")
+    };
     assert_eq!(row.revision, Some(2));
     assert_eq!(row.dropped, 1);
     drop(receiver);
-    log.record(outcome, None, None, 0);
+    log.record(outcome, None, None, 0, || "adapter".into());
     assert!(log.sender.is_none());
+}
+
+#[test]
+fn frame_timings_footer_exposes_a_dropped_final_presentation() {
+    let root = std::env::temp_dir().join(format!("venus-frame-tail-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("frames.jsonl");
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let (release, gate) = mpsc::channel();
+    let output = path.clone();
+    let writer = thread::spawn(move || {
+        gate.recv().unwrap();
+        write_frame_rows(&output, receiver).unwrap();
+    });
+    let mut log = FrameTimings {
+        sender: Some(sender),
+        writer: Some(writer),
+        ..FrameTimings::default()
+    };
+    let outcome = PresentOutcome::Presented(Some(RenderTimings::default()));
+    log.record(outcome, Some(1), None, 0, || "adapter".into());
+    // The reader is gated: the second record must return with a full queue.
+    log.record(outcome, Some(2), None, 0, || {
+        panic!("adapter already captured")
+    });
+    assert_eq!(log.dropped, 1);
+    release.send(()).unwrap();
+    drop(log);
+    let rows = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[1]["dropped"], 0);
+    assert_eq!(
+        rows[2],
+        serde_json::json!({"v":2,"kind":"end","presentations":2,"dropped":1})
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_ {

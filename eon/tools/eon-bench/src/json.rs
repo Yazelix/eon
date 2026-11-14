@@ -1,6 +1,6 @@
 //! A small JSON value with a writer and a parser, enough for eon-bench's own
-//! files. Numbers are f64, written in Rust's shortest form that parses back to
-//! the same value; objects keep their key order.
+//! files. Large unsigned integers retain every digit; other numbers use f64.
+//! Objects keep their key order.
 
 use std::fmt::Write;
 
@@ -9,6 +9,7 @@ pub enum Value {
     Null,
     Bool(bool),
     Number(f64),
+    Unsigned(u64),
     String(String),
     Array(Vec<Value>),
     Object(Vec<(String, Value)>),
@@ -34,7 +35,11 @@ impl From<f64> for Value {
 
 impl From<u64> for Value {
     fn from(number: u64) -> Self {
-        Value::Number(number as f64)
+        if number > MAX_EXACT as u64 {
+            Value::Unsigned(number)
+        } else {
+            Value::Number(number as f64)
+        }
     }
 }
 
@@ -64,12 +69,16 @@ impl Value {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::Number(number) => Some(*number),
+            Value::Unsigned(number) => Some(*number as f64),
             _ => None,
         }
     }
 
     /// A number that is a whole value a u64 holds exactly.
     pub fn as_u64(&self) -> Option<u64> {
+        if let Value::Unsigned(number) = self {
+            return Some(*number);
+        }
         self.as_f64()
             .filter(|n| n.fract() == 0.0 && (0.0..=MAX_EXACT).contains(n))
             .map(|n| n as u64)
@@ -118,6 +127,7 @@ impl Value {
             Value::Bool(flag) => write!(out, "{flag}").unwrap(),
             Value::Number(number) if number.is_finite() => write!(out, "{number}").unwrap(),
             Value::Number(_) => out.push_str("null"),
+            Value::Unsigned(number) => write!(out, "{number}").unwrap(),
             Value::String(text) => write_string(out, text),
             Value::Array(items) if items.is_empty() => out.push_str("[]"),
             Value::Object(entries) if entries.is_empty() => out.push_str("{}"),
@@ -290,11 +300,49 @@ impl Parser<'_> {
             self.at += 1;
         }
         let text = std::str::from_utf8(&self.bytes[start..self.at]).unwrap();
-        // Rust also accepts forms JSON does not, such as `1.` and `.5`; eon-bench
-        // only reads files it wrote, so it does not reject them.
-        text.parse()
+        let mut digits = text.as_bytes();
+        if digits.first() == Some(&b'-') {
+            digits = &digits[1..];
+        }
+        if digits.first() == Some(&b'0') {
+            digits = &digits[1..];
+        } else {
+            let n = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+            if n == 0 {
+                return Err(self.error("bad number"));
+            }
+            digits = &digits[n..];
+        }
+        if digits.first() == Some(&b'.') {
+            digits = &digits[1..];
+            let n = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+            if n == 0 {
+                return Err(self.error("bad fraction"));
+            }
+            digits = &digits[n..];
+        }
+        if digits.first().is_some_and(|b| matches!(b, b'e' | b'E')) {
+            digits = &digits[1..];
+            if digits.first().is_some_and(|b| matches!(b, b'-' | b'+')) {
+                digits = &digits[1..];
+            }
+            let n = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+            if n == 0 {
+                return Err(self.error("bad exponent"));
+            }
+            digits = &digits[n..];
+        }
+        if !digits.is_empty() {
+            return Err(self.error("bad number"));
+        }
+        if let Ok(number) = text.parse::<u64>() {
+            return Ok(number.into());
+        }
+        text.parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite())
+            .ok_or_else(|| self.error("bad number"))
             .map(Value::Number)
-            .map_err(|_| self.error("bad number"))
     }
 
     fn string(&mut self) -> Result<String, String> {
@@ -379,6 +427,29 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::Value;
+
+    #[test]
+    fn nanosecond_timestamps_keep_adjacent_integers_after_104_days() {
+        let start = 9_007_199_254_740_993u64;
+        let end = start + 1;
+        let value = Value::parse(&format!("[{start},{end}]")).unwrap();
+        let values = value.as_array().unwrap();
+        assert_eq!(values[0].as_u64(), Some(start));
+        assert_eq!(values[1].as_u64(), Some(end));
+        assert_eq!(Value::from(start).to_pretty(), format!("{start}\n"));
+        assert_eq!(Value::from(42u64).to_pretty(), "42\n");
+    }
+
+    #[test]
+    fn malformed_numbers_are_not_accepted_as_frame_durations() {
+        for text in ["01", "1.", "1e", "1e+", "1+2", "1e999"] {
+            assert!(Value::parse(text).is_err(), "{text}");
+        }
+        assert_eq!(
+            Value::parse("18446744073709551615").unwrap().as_u64(),
+            Some(u64::MAX)
+        );
+    }
 
     /// Values survive writing and parsing, including escapes, non-ASCII text,
     /// exact large integers and fractions that need every digit; parsing reads

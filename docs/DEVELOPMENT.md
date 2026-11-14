@@ -944,6 +944,95 @@ needs no root, IO controller, sysctl, swap or scheduler change, and does not
 use `ionice`, which has no effect under kyber. Pressure runs share the
 machine: schedule them through the coordinator's quiet window or a VM.
 
+### Venus frames and idle CPU
+
+`eon-bench frames` runs on the shared private Sway launcher. Obtain an explicit
+GC-rooted Eon candidate and release bench package from the coordinator before
+the run. The candidate must provide logger v2 (`EON_VENUS_FRAME_TIMINGS`),
+`[session] animate_working_badge`, `[bar] widgets`, and the pane read/history
+and session JSON used by the fixture. Missing capabilities fail with evidence;
+there is no compatibility mode. An older candidate needs an explicitly recorded
+diagnostic build.
+
+```sh
+BENCH/bin/eon-bench frames --eon edge=CANDIDATE/bin/eon \
+  --revision edge=CANDIDATE_COMMIT --candidate-tree edge=CANDIDATE_TREE \
+  --source-tree BENCH_TREE --out /absolute/fresh/frames-check \
+  --mode check --quick --columns 1 --size 1280x720
+```
+
+Correctness checks and captures use the coordinator's heavy wrapper. Frames
+refuses excessive load immediately and never waits while holding that slot;
+measurement/control samples must pass the gate at both recorded load boundaries.
+The shared `--load-wait` flag does not apply here. A timed
+run requires its booked quiet slot and the same wrapper with the granted
+`HEAVY_QUIET_EXEMPT=1`; never benchmark on a busy machine. After the untimed
+check, use `--mode measure`, omit `--quick`, and keep the recorded conditions.
+`--eon`, `--revision` and `--candidate-tree` accept a second matching label to
+interleave two candidates within each cell and round in the same booking.
+The bench tree is independent of both candidate trees. Preserve all artifacts
+and diagnostic patches needed to repeat a comparison.
+
+The full matrix uses cat64 and all five pinned kitten workloads with `--render`
+at a verified 80x24 grid, and dense numbered colored CJK/Nerd text for wheel,
+pixel and idle workloads. Scroll/idle use one and four columns at 1280x720 and
+2560x1440. The primary font is DejaVu Sans Mono at 16 pixels and line height
+1.2; a separate pinned bench font configuration provides CJK and Nerd glyphs,
+with coverage and exact file hashes recorded. It does not change other suites'
+font conditions or the product closure. The working badge and animated bar
+widgets are disabled; there are no working agents. Cursor escape sequences
+choose blinking or steady block cursors.
+
+Defaults are ten measured samples after two warmups, five seconds of scroll
+input at 30 Hz (one wheel step or four native pixels per event), a separately
+reported two-second kinetic tail after a pixel stop, and thirty seconds idle.
+The input fixture checks retained history against an upper bound on all input
+and momentum, refusing a run that could reach the top. Before/after terminal
+body captures verify movement outside timing. Correctness mode observes native
+Wayland discrete versus pixel/stop delivery. Shared sample/load/CPU flags and
+`--only`, `--columns`, `--size`, `--scroll-seconds`, `--idle-seconds` and
+`--kitten-repetitions` reproduce a selected cell; `frames --help` gives bounds.
+Fixtures and conditions are versioned measurement inputs, not product settings.
+
+Frame host work is `scene_ns + render_ns + submit_ns`; rebuild and prepare are
+already inside render and are reported separately. Acquisition is separate
+because it may wait. Frame statistics are per-frame p50/p95/p99/min/max with n;
+p99 is null below 100 frames. Submit gaps exclude boundaries between separate
+runs. Repeated terminal revisions represent real redraws. These host elapsed
+intervals are not process CPU accounting, GPU completion or scanout latency.
+Venus CPU uses process utime+stime ticks over the monotonic measurement window,
+including all its threads; 100% means one core. Raw ticks and CLK_TCK preserve
+quantization (at 100 Hz, thirty seconds resolves about 0.033 percentage points).
+A healthy steady-cursor interval can contain zero frames, with null frame
+distributions and a valid CPU sample.
+
+Finite throughput samples retain the final terminal completion revision and
+require its presentation inside the measured interval. A late or missing
+completion presentation fails the sample instead of omitting its frame cost.
+Logger-off controls compare process CPU and writer completion only; they
+provide no frame baseline or presentation-completion proof.
+
+Measurement enables the bounded frame logger. Its start record identifies the
+private Venus PID and actual selected adapter; its clean-shutdown footer counts
+all successful presentations, including dropped final rows. The last presentation
+before measurement must include the fixture's selected revision. Compare matched
+`--mode control` CPU/completion observations with the logger disabled in the same
+quiet booking to quantify its overhead; control supplies no frame statistics.
+Stage tracing is disabled in both modes. A clean exit, zero reported loss, one
+start/footer, and one frame row per successful presentation are required. Logger
+errors, malformed/truncated rows, missing tail rows or an incomplete cell withhold
+its aggregate statistics and fail the run.
+
+`result.json` uses the `eon-bench-frames` schema 1, with per-cell pooled frame
+statistics and process CPU distributions; its run entries link hashed
+`sample.json` files containing each run's distributions, actual grids, adapter
+and clock boundaries. Raw JSONL records remain files, streamed during
+analysis, with a 500,000-frame cap per sample and pooled cell, at most 1,000
+runs, and a numeric working set below 128 MiB. `SHA256SUMS` covers the result
+and retained regular evidence files, excluding itself. Store raw evidence in the
+coordinator's evidence store and record identities/hashes in the owning bead;
+add no benchmark tables or charts to the repository.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

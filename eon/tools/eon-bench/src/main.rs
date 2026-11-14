@@ -3,7 +3,8 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use eon_bench::{
-    child, corpus, floor, gate, headless, memory, orbit, pressure, response, terminals, writer,
+    child, corpus, floor, frames, gate, headless, memory, orbit, pressure, response, terminals,
+    writer,
 };
 
 const USAGE: &str = "\
@@ -14,6 +15,7 @@ usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench memory --out DIR [OPTIONS]
        eon-bench headless --eon PATH --out DIR [OPTIONS]
        eon-bench terminals --eon PATH --source-tree HASH --out DIR [OPTIONS]
+       eon-bench frames --eon LABEL=PATH --revision LABEL=COMMIT --candidate-tree LABEL=TREE --source-tree HASH --out DIR [OPTIONS]
        eon-bench response --eon PATH --out DIR [OPTIONS]
        eon-bench write FILE --report REPORT
        eon-bench COMMAND --help";
@@ -45,6 +47,8 @@ enum Command {
     Headless(headless::Options, bool),
     Terminals(terminals::Options, bool),
     TerminalWorkload(Vec<String>),
+    Frames(frames::Options, bool),
+    FrameWorkload(Vec<String>),
 }
 
 fn corpus_help() -> String {
@@ -118,6 +122,9 @@ fn main() -> ExitCode {
         Some("terminals" | "terminals-inner") => terminals::options(rest)
             .map(|options| Command::Terminals(options, arguments[0] == "terminals-inner")),
         Some("terminal-workload") => Ok(Command::TerminalWorkload(rest.to_vec())),
+        Some("frames" | "frames-inner") => frames::options(rest)
+            .map(|options| Command::Frames(options, arguments[0] == "frames-inner")),
+        Some("frames-workload") => Ok(Command::FrameWorkload(rest.to_vec())),
         Some("response-fixture") if rest.len() == 4 => Ok(Command::Fixture(rest.to_vec())),
         Some("pressure-worker") if rest.len() == 5 => Ok(Command::PressureWorker(rest.to_vec())),
         Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
@@ -156,6 +163,9 @@ fn main() -> ExitCode {
         Command::Terminals(options, false) => terminals::run(rest, &options),
         Command::Terminals(options, true) => terminals::run_inner(&options),
         Command::TerminalWorkload(arguments) => terminals::workload(&arguments),
+        Command::Frames(options, false) => frames::run(rest, &options),
+        Command::Frames(options, true) => frames::run_inner(&options),
+        Command::FrameWorkload(arguments) => frames::workload(&arguments),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

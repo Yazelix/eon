@@ -1,12 +1,13 @@
 //! The statistics every suite reports over its samples.
 
-/// The count, median, 95th percentile, minimum and maximum of a set of
+/// The count, median, 95th/99th percentiles, minimum and maximum of a set of
 /// samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Summary {
     pub n: usize,
     pub median: f64,
     pub p95: f64,
+    pub p99: f64,
     pub min: f64,
     pub max: f64,
 }
@@ -15,7 +16,8 @@ impl Summary {
     /// The median is the mean of the two middle samples when their count is
     /// even. The 95th percentile is nearest-rank, the `ceil(0.95 n)`-th
     /// smallest, so it is always an observed sample, and below 20 samples it
-    /// is the maximum. `None` for no samples.
+    /// is the maximum. p99 uses the same nearest-rank rule at 99%.
+    /// `None` for no samples.
     pub fn of(samples: &[f64]) -> Option<Self> {
         let mut sorted = samples.to_vec();
         sorted.sort_by(f64::total_cmp);
@@ -31,6 +33,7 @@ impl Summary {
             n,
             median,
             p95,
+            p99: sorted[(n * 99).div_ceil(100) - 1],
             min,
             max,
         })
@@ -40,6 +43,14 @@ impl Summary {
 #[cfg(test)]
 mod tests {
     use super::Summary;
+
+    #[test]
+    fn p99_uses_nearest_rank_including_odd_sample_counts() {
+        let hundred = (1..=100).map(f64::from).collect::<Vec<_>>();
+        assert_eq!(Summary::of(&hundred).unwrap().p99, 99.0);
+        let hundred_one = (1..=101).map(f64::from).collect::<Vec<_>>();
+        assert_eq!(Summary::of(&hundred_one).unwrap().p99, 100.0);
+    }
 
     fn summary(samples: &[f64]) -> (f64, f64, f64, f64) {
         let summary = Summary::of(samples).unwrap();

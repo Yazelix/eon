@@ -260,11 +260,7 @@ fn wrapper_path(text: &str, key: &str) -> Result<PathBuf> {
 }
 
 pub(crate) fn check_candidate_fontconfig(eon: &Path, expected: &Path) -> Result {
-    let venus = wrapper_path(&fs::read_to_string(eon).map_err(error)?, "EON_VENUS")?;
-    let actual = wrapper_path(
-        &fs::read_to_string(venus).map_err(error)?,
-        "FONTCONFIG_FILE",
-    )?;
+    let actual = candidate_fontconfig(eon)?;
     if fs::canonicalize(&actual).map_err(error)? != fs::canonicalize(expected).map_err(error)? {
         return Err(format!(
             "candidate Venus wrapper FONTCONFIG_FILE={} differs from EON_BENCH_PRODUCT_FONTCONFIG={}; build candidate and bench from the same tree",
@@ -273,6 +269,15 @@ pub(crate) fn check_candidate_fontconfig(eon: &Path, expected: &Path) -> Result 
         ));
     }
     Ok(())
+}
+
+pub(crate) fn candidate_fontconfig(eon: &Path) -> Result<PathBuf> {
+    let venus = wrapper_path(&fs::read_to_string(eon).map_err(error)?, "EON_VENUS")?;
+    let actual = wrapper_path(
+        &fs::read_to_string(venus).map_err(error)?,
+        "FONTCONFIG_FILE",
+    )?;
+    crate::launcher::candidate(&actual)
 }
 
 // Shared with gate preflight so fixed timing conditions have one owner.
@@ -812,13 +817,18 @@ pub fn run_inner(options: &Options) -> Result {
     }
 }
 
-fn remaining(deadline: Instant) -> Result<Duration> {
+pub(crate) fn remaining(deadline: Instant) -> Result<Duration> {
     deadline
         .checked_duration_since(Instant::now())
         .filter(|d| !d.is_zero())
         .ok_or("sample deadline elapsed".into())
 }
-fn call(launch: &Headless, deadline: Instant, program: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn call(
+    launch: &Headless,
+    deadline: Instant,
+    program: &Path,
+    args: &[&str],
+) -> Result<String> {
     let output = launch
         .command("timeout")
         .arg(format!("{}s", remaining(deadline)?.as_secs_f64()))
@@ -837,10 +847,10 @@ fn call(launch: &Headless, deadline: Instant, program: &Path, args: &[&str]) -> 
     }
     String::from_utf8(output.stdout).map_err(error)
 }
-fn sway(launch: &Headless, deadline: Instant, args: &[&str]) -> Result<Value> {
+pub(crate) fn sway(launch: &Headless, deadline: Instant, args: &[&str]) -> Result<Value> {
     Value::parse(&call(launch, deadline, Path::new("swaymsg"), args)?)
 }
-fn window(tree: &Value) -> Option<(u64, i64, i64)> {
+pub(crate) fn window(tree: &Value) -> Option<(u64, i64, i64)> {
     if tree.get("app_id").and_then(Value::as_str).is_some() {
         let rect = tree.get("rect")?;
         return Some((
@@ -858,7 +868,7 @@ fn window(tree: &Value) -> Option<(u64, i64, i64)> {
     }
     None
 }
-fn grid(text: &str) -> Result<(i64, i64)> {
+pub(crate) fn grid(text: &str) -> Result<(i64, i64)> {
     let text = text
         .trim()
         .strip_prefix("Some((")

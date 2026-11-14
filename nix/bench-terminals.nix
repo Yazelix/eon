@@ -10,6 +10,14 @@ let
       <match target="pattern"><edit name="dpi" mode="assign"><double>96</double></edit></match>
     </fontconfig>
   '';
+  framesFontsConf = pkgs.writeText "eon-bench-frames-fonts.conf" ''
+    <?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+    <fontconfig>
+      ${lib.concatMapStringsSep "\n" (font: "<dir>${font}</dir>") (venusFonts ++ [ pkgs.noto-fonts-cjk-sans ])}
+      <cachedir prefix="xdg">fontconfig</cachedir>
+      <match target="pattern"><edit name="dpi" mode="assign"><double>96</double></edit></match>
+    </fontconfig>
+  '';
   herdr = pkgs.stdenv.mkDerivation {
     pname = "herdr-app-bench";
     version = "0.1.14";
@@ -46,6 +54,7 @@ in
   inherit herdr;
   environment = {
     EON_BENCH_FONTCONFIG = "${fontsConf}";
+    EON_BENCH_FRAMES_FONTCONFIG = "${framesFontsConf}";
     EON_BENCH_PRODUCT_FONTCONFIG = "${venusFontsConf}";
     EON_BENCH_FOOT = "${pkgs.foot}/bin/foot";
     EON_BENCH_ALACRITTY = "${pkgs.alacritty}/bin/alacritty";

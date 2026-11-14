@@ -5507,6 +5507,7 @@ impl Application {
                         revision,
                         receive_ns,
                         scene_ns + take_scene_build_ns(&mut self.terminal, &mut self.column_views),
+                        || state.renderer.frame_adapter(),
                     );
                 }
                 // `dialog` is the scene this call built and drew, so its list is now on screen.

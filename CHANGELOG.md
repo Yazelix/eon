@@ -27,6 +27,9 @@ installation, and proven contract changes.
   1x/2x), with secondary 16/32px status glyphs, still centred across each row.
   Idle is a small muted filled dot; Unavailable is a hollow ring. Clawd's
   column pitch is aligned to whole pixels (`eon-sidebar-app-icons-y99b7.11`).
+- `eon-bench frames` measures Venus host frame work and idle/scroll process
+  CPU on isolated Sway, with interleaved candidate builds, dense Unicode
+  scrolling and complete diagnostic accounting (`eon-benchmarks-xl2bp.10`).
 
 - Eon 0.1.26 uses EONW v45. Windows started before this version need a
   restart; their EONW v44 supervisors reject the updated CLI's incompatible

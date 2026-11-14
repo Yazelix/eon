@@ -11,3 +11,8 @@ publish = false
 libc = "=0.2.189"
 # The `orbit` suite's client speaks Orbit's canonical wire format.
 orbit-protocol = { path = "../../../orbit/crates/protocol" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Benchmark-only virtual pointer; generated bindings own wheel/pixel/stop encoding.
+wayland-client = "=0.31.15"
+wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }

@@ -175,7 +175,7 @@ pub fn run(options: &Options) -> Result<u8, String> {
 }
 
 /// The rows and columns stdin's terminal reports.
-fn grid() -> Option<(u16, u16)> {
+pub(crate) fn grid() -> Option<(u16, u16)> {
     // SAFETY: winsize is plain data that TIOCGWINSZ fills.
     let mut size = unsafe { std::mem::zeroed::<libc::winsize>() };
     // SAFETY: stdin is open for the process's life and size is a valid winsize.

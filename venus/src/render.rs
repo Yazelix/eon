@@ -229,6 +229,7 @@ pub struct RenderTimings {
 }
 
 struct FrameTimingRow {
+    adapter: Option<String>,
     revision: Option<u64>,
     receive_ns: Option<u64>,
     scene_ns: u64,
@@ -236,12 +237,19 @@ struct FrameTimingRow {
     dropped: u64,
 }
 
+enum FrameTimingRecord {
+    Present(FrameTimingRow),
+    End { presentations: u64, dropped: u64 },
+}
+
 /// A bounded diagnostic writer; the event loop never waits for disk I/O.
 #[doc(hidden)]
 #[derive(Default)]
 pub struct FrameTimings {
-    sender: Option<SyncSender<FrameTimingRow>>,
+    sender: Option<SyncSender<FrameTimingRecord>>,
     writer: Option<JoinHandle<()>>,
+    presentations: u64,
+    started: bool,
     dropped: u64,
 }
 
@@ -266,7 +274,7 @@ impl FrameTimings {
             Ok(writer) => Self {
                 sender: Some(sender),
                 writer: Some(writer),
-                dropped: 0,
+                ..Self::default()
             },
             Err(error) => {
                 eprintln!("Venus frame timings disabled: {error}");
@@ -281,20 +289,23 @@ impl FrameTimings {
         revision: Option<u64>,
         receive_ns: Option<u64>,
         scene_ns: u64,
+        adapter: impl FnOnce() -> String,
     ) {
         let (Some(sender), PresentOutcome::Presented(Some(render))) = (&self.sender, outcome)
         else {
             return;
         };
+        self.presentations = self.presentations.saturating_add(1);
         let row = FrameTimingRow {
+            adapter: (!self.started).then(adapter),
             revision,
             receive_ns,
             scene_ns,
             render,
             dropped: self.dropped,
         };
-        match sender.try_send(row) {
-            Ok(()) => {}
+        match sender.try_send(FrameTimingRecord::Present(row)) {
+            Ok(()) => self.started = true,
             Err(mpsc::TrySendError::Full(_)) => self.dropped = self.dropped.saturating_add(1),
             Err(mpsc::TrySendError::Disconnected(_)) => self.sender = None,
         }
@@ -303,7 +314,13 @@ impl FrameTimings {
 
 impl Drop for FrameTimings {
     fn drop(&mut self) {
-        self.sender.take();
+        if let Some(sender) = self.sender.take() {
+            // Shutdown already joins the draining writer; only this boundary may wait.
+            let _ = sender.send(FrameTimingRecord::End {
+                presentations: self.presentations,
+                dropped: self.dropped,
+            });
+        }
         if let Some(writer) = self.writer.take()
             && writer.join().is_err()
         {
@@ -312,7 +329,7 @@ impl Drop for FrameTimings {
     }
 }
 
-fn write_frame_rows(path: &Path, receiver: mpsc::Receiver<FrameTimingRow>) -> io::Result<()> {
+fn write_frame_rows(path: &Path, receiver: mpsc::Receiver<FrameTimingRecord>) -> io::Result<()> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -323,12 +340,38 @@ fn write_frame_rows(path: &Path, receiver: mpsc::Receiver<FrameTimingRow>) -> io
         return Err(io::Error::other("frame timings require a regular file"));
     }
     let mut writer = BufWriter::new(file);
-    for row in receiver {
+    for record in receiver {
+        let row = match record {
+            FrameTimingRecord::End {
+                presentations,
+                dropped,
+            } => {
+                serde_json::to_writer(
+                    &mut writer,
+                    &serde_json::json!({
+                        "v": 2, "kind": "end", "presentations": presentations, "dropped": dropped,
+                    }),
+                )?;
+                writer.write_all(b"\n")?;
+                break;
+            }
+            FrameTimingRecord::Present(row) => row,
+        };
+        if let Some(adapter) = &row.adapter {
+            serde_json::to_writer(
+                &mut writer,
+                &serde_json::json!({
+                    "v": 2, "kind": "start", "pid": std::process::id(), "adapter": adapter,
+                }),
+            )?;
+            writer.write_all(b"\n")?;
+        }
         let render = row.render;
         serde_json::to_writer(
             &mut writer,
             &serde_json::json!({
-                "v": 1,
+                "v": 2,
+                "kind": "frame",
                 "revision": row.revision,
                 "receive_ns": row.receive_ns,
                 "present_ns": render.present_ns,
@@ -1549,6 +1592,14 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    pub fn frame_adapter(&self) -> String {
+        let info = self.device.adapter_info();
+        format!(
+            "software={} {info:?}",
+            info.device_type == wgpu::DeviceType::Cpu
+        )
+    }
+
     fn card_stroke_width(&self) -> f32 {
         physical_outline_width(
             self.focus_border_width.max(self.border_width),

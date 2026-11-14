@@ -20,12 +20,15 @@ cargo clippy --locked --all-targets -- -D warnings
 ## Frame timing diagnostic
 
 Set `EON_VENUS_FRAME_TIMINGS=/absolute/path/frames.jsonl` in Venus's launch
-environment to append one JSON line per successful presentation. It is off by
+environment to append a version 2 JSONL stream. It is off by
 default, reads the environment once, and adds no product configuration or mode.
 Use a separate regular file for each Venus process. No terminal text is recorded.
 This is a development diagnostic, not a stable product file format.
 
-Version 1 (`v: 1`) records:
+A `kind: "start"` record precedes the first successful presentation and records
+the process `pid` and the selected device's `adapter` identity (including
+software status, backend, vendor, device and driver). Each `kind: "frame"`
+record contains:
 
 | Field | Meaning |
 | --- | --- |
@@ -40,6 +43,12 @@ Version 1 (`v: 1`) records:
 | `full_rebuild` | Whether this presentation attempt rebuilt the cached window draw inputs. |
 | `dropped` | Cumulative rows dropped because the bounded writer queue was full. |
 
+Every record has `v: 2`. Clean shutdown appends `kind: "end"` with the producer's
+total successful `presentations` and final cumulative `dropped` count, including
+a dropped final frame. Consumers must require one start, one footer, zero drops
+and exactly `presentations` frame records. A missing footer invalidates the log.
+There is no version 1 compatibility path.
+
 All timestamps share `EON_BENCH_TRACE`'s rustix monotonic clock domain; durations
 are nanoseconds. These are elapsed host intervals, not CPU accounting, GPU
 completion, compositor display time or panel latency. Frame reduction, canonical
@@ -47,9 +56,10 @@ scene construction, rendering and presentation retain their normal behavior.
 No row is emitted for a deferred, occluded, recovered or failed presentation.
 
 A bounded queue sends rows to a buffered writer without waiting for disk on the
-render thread. Clean shutdown drains and flushes it; crashes can lose buffered
+render thread. Adapter identity is captured once, only on the enabled path.
+Clean shutdown queues the footer, drains and flushes it; crashes can lose buffered
 rows. Open/write errors report once on stderr and stop logging. Check for errors,
-nonzero `dropped`, and missing rows before using a log for measurements. The
+nonzero `dropped`, and missing start/footer/rows before using a log for measurements. The
 diagnostic itself has overhead; compare enabled and disabled runs in a quiet slot.
 Relative paths resolve against Venus's working directory; an absolute path avoids
 ambiguity. Draining the writer on clean exit can delay shutdown if its filesystem
