@@ -1,6 +1,12 @@
 #![cfg(target_os = "linux")]
 
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::{Child, Command},
+    thread,
+    time::{Duration, Instant},
+};
 
 fn tool(name: &str) -> PathBuf {
     // Renamed fixtures need standalone tools; multicall aliases depend on argv[0].
@@ -8,6 +14,65 @@ fn tool(name: &str) -> PathBuf {
         .filter_map(|directory| fs::canonicalize(directory.join(name)).ok())
         .find(|path| path.is_file() && path.file_name() == Some(std::ffi::OsStr::new(name)))
         .unwrap_or_else(|| panic!("{name} missing from test PATH"))
+}
+
+/// The file `Command::new(name)` runs, as /proc reports it.
+fn on_path(name: &str) -> PathBuf {
+    env::split_paths(&env::var_os("PATH").unwrap())
+        .filter_map(|directory| fs::canonicalize(directory.join(name)).ok())
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| panic!("{name} missing from test PATH"))
+}
+
+/// Waits until `child` runs `executable` with its arguments and environment
+/// in place. `spawn` returns as soon as the kernel releases the parent during
+/// exec, before the new image's argv and environment are set up; until then
+/// /proc shows an empty cmdline and environ, so a cap scan cannot match it.
+fn wait_for_exec(child: &mut Child, executable: &Path) {
+    let process = PathBuf::from(format!("/proc/{}", child.id()));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let exe = fs::read_link(process.join("exe")).ok();
+        let cmdline = fs::read(process.join("cmdline")).unwrap_or_default();
+        let environ = fs::read(process.join("environ")).unwrap_or_default();
+        if exec_finished(exe.as_deref(), executable, &cmdline, &environ) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "child {} did not finish exec into {} within 10s: exe {exe:?}, cmdline {:?}, environ {} bytes",
+                child.id(),
+                executable.display(),
+                String::from_utf8_lossy(&cmdline),
+                environ.len(),
+            );
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// The kernel publishes argv and the environment separately, so exec is finished only once
+/// both are visible. Every caller's child has an environment, so an empty one means not yet.
+fn exec_finished(exe: Option<&Path>, executable: &Path, cmdline: &[u8], environ: &[u8]) -> bool {
+    exe == Some(executable) && !cmdline.is_empty() && !environ.is_empty()
+}
+
+#[test]
+fn exec_wait_needs_the_executable_argv_and_environment() {
+    let sleep = Path::new("/bin/sleep");
+    assert!(exec_finished(Some(sleep), sleep, b"sleep\0", b"A=1\0"));
+    // Mid-exec states: argv published but not yet the environment, and the reverse.
+    assert!(!exec_finished(Some(sleep), sleep, b"sleep\0", b""));
+    assert!(!exec_finished(Some(sleep), sleep, b"", b"A=1\0"));
+    assert!(!exec_finished(
+        Some(Path::new("/bin/sh")),
+        sleep,
+        b"sleep\0",
+        b"A=1\0"
+    ));
+    assert!(!exec_finished(None, sleep, b"sleep\0", b"A=1\0"));
 }
 
 #[test]
@@ -123,6 +188,7 @@ fn process_cap_follows_account_directory_and_executable_symlinks() {
         .env("ROTA_TEST_ACCOUNT", "alias")
         .spawn()
         .unwrap();
+    wait_for_exec(&mut child, &tool("sleep"));
     let count = running(&cap);
     let mut config = rota::config::Config::parse(include_str!("../config.example.toml")).unwrap();
     config.backends[0].cap = Some(cap);
@@ -137,13 +203,10 @@ fn process_cap_follows_account_directory_and_executable_symlinks() {
 
 #[test]
 fn refresh_rechecks_cap_after_a_slow_failed_probe() {
-    use std::{
-        thread,
-        time::{Duration, Instant},
-    };
     let dir = tempfile::tempdir().unwrap();
     let dir = fs::canonicalize(dir.path()).unwrap();
     let started = dir.join("probe-started");
+    let child_ready = dir.join("child-ready");
     let refreshed = dir.join("refreshed");
     let mut config = rota::config::Config::parse(include_str!("../config.example.toml")).unwrap();
     let mut backend = config.backends.remove(1);
@@ -164,9 +227,11 @@ fn refresh_rechecks_cap_after_a_slow_failed_probe() {
     reader.command = vec![
         "sh".into(),
         "-c".into(),
-        r#"touch "$1"; sleep 0.5; printf failed"#.into(),
+        // The slow probe ends only once the capped child is running, bounded at 10s.
+        r#"touch "$1"; i=0; while [ ! -e "$2" ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; printf failed"#.into(),
         "probe".into(),
         started.to_str().unwrap().into(),
+        child_ready.to_str().unwrap().into(),
     ];
     reader.refresh = Some(vec!["touch".into(), refreshed.to_str().unwrap().into()]);
     let probe =
@@ -181,6 +246,8 @@ fn refresh_rechecks_cap_after_a_slow_failed_probe() {
         .env("ROTA_TEST_REFRESH", &dir)
         .spawn()
         .unwrap();
+    wait_for_exec(&mut child, &on_path("sleep"));
+    fs::write(&child_ready, "").unwrap();
     let reading = probe.join();
     child.kill().unwrap();
     child.wait().unwrap();
@@ -212,29 +279,36 @@ fn wrapped_alias_uses_configured_runtime_identity() {
     use std::{
         collections::BTreeMap,
         os::unix::fs::{PermissionsExt, symlink},
-        thread,
-        time::{Duration, Instant},
     };
     let dir = tempfile::tempdir().unwrap();
     let dir = fs::canonicalize(dir.path()).unwrap();
+    // A child process writes both executables. A write descriptor opened here
+    // can leak into a child another test thread is forking, and exec of the
+    // file then fails with "Text file busy" until that child execs.
+    let copy = |from: &Path, to: &Path| {
+        let status = Command::new("cp").arg(from).arg(to).status().unwrap();
+        assert!(status.success(), "cp {} {}", from.display(), to.display());
+    };
     let native = dir.join(".worker-wrapped");
-    fs::copy(tool("sleep"), &native).unwrap();
+    copy(&tool("sleep"), &native);
     let wrapper = dir.join("worker");
+    let source = dir.join("worker.source");
     fs::write(
-        &wrapper,
+        &source,
         format!(
             "#!{}\nexec -a \"$0\" \"${{0%/*}}/.worker-wrapped\" \"$@\"\n",
             tool("bash").display()
         ),
     )
     .unwrap();
+    copy(&source, &wrapper);
     fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
     let alias = dir.join("different-alias");
     symlink(&wrapper, &alias).unwrap();
     let cap = Cap {
         max: 1,
         executable: "worker".into(),
-        runtime_executables: vec![native],
+        runtime_executables: vec![native.clone()],
         script: None,
         env: BTreeMap::from([("ROTA_TEST_WRAPPED".into(), dir.to_str().unwrap().into())]),
         exclude_args: vec![],
@@ -244,12 +318,9 @@ fn wrapped_alias_uses_configured_runtime_identity() {
         .env("ROTA_TEST_WRAPPED", &dir)
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let mut count = running(&cap);
-    while matches!(count, Ok(0)) && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-        count = running(&cap);
-    }
+    // The wrapper execs its native runtime, so wait for that second exec.
+    wait_for_exec(&mut child, &native);
+    let count = running(&cap);
     child.kill().unwrap();
     child.wait().unwrap();
     assert_eq!(count.unwrap(), 1);
@@ -284,6 +355,8 @@ fn interpreted_cli_cap_distinguishes_other_scripts() {
     };
     let mut cli = spawn("cli.sh");
     let mut unrelated = spawn("other.sh");
+    wait_for_exec(&mut cli, &on_path("sh"));
+    wait_for_exec(&mut unrelated, &on_path("sh"));
     let count = running(&cap);
     cli.kill().unwrap();
     cli.wait().unwrap();
