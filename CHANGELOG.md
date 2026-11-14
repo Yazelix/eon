@@ -17,6 +17,12 @@ installation, and proven contract changes.
   supervisor loss. Routing uses that record, and cleanup preserves it while
   terminal or other runtime residue remains (`eon-t3fyd.14`). In-place Update
   remains planned; EONW is unchanged.
+- `eon popup show ENTRY [--tab TAB]` creates a catalog popup in any addressed
+  tab in the background; an existing instance refuses and names its `uN`.
+  `eon focus uN` selects that exact popup without relaunching, retargeting
+  or sending input. Both paths preserve covering transients and desktop
+  focus; Scrollback obeys agent terminal-access policy
+  (`eon-agent-parity-a9g0.1.3`, `eon-agent-parity-a9g0.1.2`).
 
 - Eon 0.1.26 uses EONW v45. Windows started before this version need a
   restart; their EONW v44 supervisors reject the updated CLI's incompatible

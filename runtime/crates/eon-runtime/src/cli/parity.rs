@@ -22,12 +22,15 @@ enum CliPath {
     /// These arguments parse to a `popup hide` of this action's popup; the
     /// command reads its owning tab from the session.
     Hide(Vec<OsString>),
+    /// A key invocation has explicit create, focus and hide CLI alternatives.
+    /// The CLI never replays a key's toggle, retarget or picker confirmation.
+    Popup(Vec<Vec<OsString>>),
     /// These arguments parse to the `sidebar toggle` that sends this action.
     Sidebar(Vec<OsString>),
 }
 
 fn cli_path(action: &Action) -> CliPath {
-    use CliPath::{Command, Exception, Hide, Lifecycle, Send, Sidebar};
+    use CliPath::{Command, Exception, Hide, Lifecycle, Popup, Send, Sidebar};
     let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
     let flag = |set: bool, flag: &str| if set { words(&[flag]) } else { Vec::new() };
     let direction = |direction: &Direction| match direction {
@@ -104,8 +107,22 @@ fn cli_path(action: &Action) -> CliPath {
             ]
             .concat(),
         },
-        Action::InvokePopup { .. } => {
-            return Exception("eon-agent-parity-a9g0.1 adds popup commands");
+        Action::InvokePopup {
+            tab,
+            entry,
+            expected_instance,
+            intent,
+        } => {
+            return Popup(match expected_instance {
+                None => vec![words(&["popup", "show", entry, "--tab", tab])],
+                Some(id) => {
+                    let mut commands = vec![words(&["focus", id])];
+                    if *intent == InvokeIntent::Toggle {
+                        commands.push(words(&["popup", "hide", id]));
+                    }
+                    commands
+                }
+            });
         }
         Action::DismissPopup(target) => return Hide(words(&["popup", "hide", &target.instance])),
         Action::ToggleSidebar => return Sidebar(words(&["sidebar", "toggle"])),
@@ -257,6 +274,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::CreatePane { focus: true },
         WorkspaceAction::CreatePane { focus: false },
         WorkspaceAction::FocusId(text("p2")),
+        WorkspaceAction::FocusId(text("u2")),
         WorkspaceAction::FocusId(text("t2")),
         WorkspaceAction::CloseTab { tab: text("t2") },
         WorkspaceAction::SetTabDirectory {
@@ -369,9 +387,33 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
             after: None,
         },
     ]);
+    for intent in [
+        InvokeIntent::Show,
+        InvokeIntent::Focus,
+        InvokeIntent::Toggle,
+    ] {
+        for expected_instance in [None, Some(text("u2"))] {
+            if intent == InvokeIntent::Show && expected_instance.is_some() {
+                continue;
+            }
+            samples.push(Action::InvokePopup {
+                tab: text("t2"),
+                entry: text("files"),
+                expected_instance,
+                intent,
+            });
+        }
+    }
     let help = help_text("0", false);
     for action in samples {
-        match cli_path(&action) {
+        let path = cli_path(&action);
+        if matches!(action, Action::InvokePopup { .. }) {
+            assert!(
+                matches!(&path, CliPath::Popup(_)),
+                "{action:?} lost its popup CLI path"
+            );
+        }
+        match path {
             // The parse `execute` runs: its first-word gate, target flags, then the action.
             CliPath::Command(arguments) => {
                 assert!(control_command(&arguments[0]), "{arguments:?}");
@@ -436,6 +478,57 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                     panic!("{action:?}");
                 };
                 assert_eq!(popup, target.instance, "{arguments:?}");
+            }
+            CliPath::Popup(commands) => {
+                let Action::InvokePopup {
+                    tab,
+                    entry,
+                    expected_instance,
+                    intent,
+                } = &action
+                else {
+                    panic!("{action:?}");
+                };
+                assert_eq!(
+                    commands.len(),
+                    if expected_instance.is_some() && *intent == InvokeIntent::Toggle {
+                        2
+                    } else {
+                        1
+                    }
+                );
+                for (index, arguments) in commands.into_iter().enumerate() {
+                    assert!(control_command(&arguments[0]), "{arguments:?}");
+                    let (arguments, _) = parse_workspace_target_arguments(&arguments).unwrap();
+                    if let Some(id) = expected_instance {
+                        if index == 0 {
+                            assert_eq!(
+                                parse_control_arguments(&arguments).unwrap(),
+                                (
+                                    Action::Workspace(WorkspaceAction::FocusId(id.clone())),
+                                    false
+                                )
+                            );
+                        } else {
+                            assert_eq!(
+                                parse_popup_hide_arguments(&arguments).unwrap(),
+                                Some((id.clone(), false))
+                            );
+                        }
+                    } else {
+                        let show = parse_popup_show_arguments(&arguments).unwrap().unwrap();
+                        assert!(!show.json);
+                        assert_eq!(
+                            show.action("t1"),
+                            Action::InvokePopup {
+                                tab: tab.clone(),
+                                entry: entry.clone(),
+                                expected_instance: None,
+                                intent: InvokeIntent::Show,
+                            }
+                        );
+                    }
+                }
             }
             CliPath::Sidebar(arguments) => {
                 assert!(control_command(&arguments[0]), "{arguments:?}");

@@ -25,10 +25,10 @@ use super::{
     },
 };
 use eon_workspace_protocol::v46::{
-    Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure,
+    Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure, InvokeIntent,
     MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
     TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
-    WorkspaceTarget as SessionTarget, valid_caller, validate_paste,
+    WorkspaceTarget as SessionTarget, entry_popup, valid_caller, validate_paste,
 };
 use std::{
     env,
@@ -850,6 +850,9 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             if let Some(send) = parse_pane_send_arguments(&arguments)? {
                 return send_terminal(inputs, send, target);
             }
+            if let Some(show) = parse_popup_show_arguments(&arguments)? {
+                return Ok(show_popup(inputs, show, target)?);
+            }
             if let Some((popup, json)) = parse_popup_hide_arguments(&arguments)? {
                 return Ok(hide_popup(inputs, popup, json, target)?);
             }
@@ -1222,6 +1225,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "TEXT up to 64 KiB, or Enter alone",
             ),
             (
+                "popup show ENTRY [--tab TAB] [--json]",
+                "Start a popup in a tab",
+            ),
+            (
                 "popup hide POPUP [--json]",
                 "Hide a popup as its window would",
             ),
@@ -1230,8 +1237,8 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Show or hide the agent sidebar",
             ),
             (
-                "focus PANE|left|right|up|down [--json]",
-                "Focus a pane or navigate",
+                "focus ID|left|right|up|down [--json]",
+                "Focus a pane, popup or navigate",
             ),
         ],
     ),
@@ -1363,9 +1370,24 @@ fn command_help_text(words: &[OsString], color: bool) -> Option<String> {
             help += &format!("{heading}{title}{reset}\n{rows}\n");
         }
     }
-    (!help.is_empty())
-        .then(|| help + "Run `eon --help` for the window flag, notes and exit status.\n")
+    (!help.is_empty()).then(|| {
+        if words
+            .first()
+            .is_some_and(|word| word == "popup" || word == "focus")
+        {
+            help += POPUP_HELP;
+        }
+        help + "Run `eon --help` for the window flag, notes and exit status.\n"
+    })
 }
+
+const POPUP_HELP: &str = "popup show starts an entry only when its tab has no instance of it.
+Use focus uN for an existing popup and popup hide uN to dismiss it.
+--tab keeps the active tab and shown session; omission uses the active tab.
+Popup focus selects its tab; neither command moves desktop focus.
+Neither command replaces a transient popup; hide it explicitly when asked.
+Scrollback show/focus obeys [agents] terminal_access, even without a caller.
+";
 
 fn help_text(version: &str, color: bool) -> String {
     let (heading, command, reset) = help_colors(color);
@@ -1418,6 +1440,7 @@ edit uses the packaged Helix Editor popup by default; set [editor]
 open_in = \"pane\" for a new pane.
 pane history --edit opens the history in a Scrollback editor popup,
 only in the shown session's active tab.
+{POPUP_HELP}\
 pane send focused explicitly targets the person's keyboard-focused terminal.
 It refuses unknown or unfocused windows and missing terminal focus.
 --force cannot bypass these focus checks.
@@ -2404,6 +2427,46 @@ fn final_close_prompt(
     (question, cancelled)
 }
 
+fn show_popup(inputs: &Inputs, show: PopupShow, target: WorkspaceTarget) -> Result<i32, String> {
+    let caller = match calling_terminal() {
+        Ok(caller) => caller,
+        Err(error) => return report_failure(&error, show.json),
+    };
+    let snapshot = match resolve_workspace(inputs, target.clone(), caller.as_deref())
+        .and_then(|resolved| inspect(&resolved.socket, caller.as_deref(), &resolved.label))
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => return report_failure(&error, show.json),
+    };
+    let tab = show.tab.as_deref().unwrap_or(&snapshot.active_tab);
+    if snapshot.entries.iter().any(|item| item.id == show.entry)
+        && let Some(popup) = snapshot
+            .tabs
+            .iter()
+            .find(|item| item.id == tab)
+            .and_then(|tab| entry_popup(tab, &show.entry))
+    {
+        return report_failure(
+            &failure(
+                "unavailable",
+                format!(
+                    "popup entry {} is already live as {1}; use eon focus {1}",
+                    show.entry, popup.id,
+                ),
+            ),
+            show.json,
+        );
+    }
+    control(
+        inputs,
+        show.action(&snapshot.active_tab),
+        show.json,
+        false,
+        target,
+        false,
+    )
+}
+
 /// `eon popup hide` (EON-C10): dismisses popup `uN` as its owning window would,
 /// reading the owning tab from the workspace first.
 fn hide_popup(
@@ -2906,7 +2969,7 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         ["focus", "down"] => Action::Workspace(WorkspaceAction::Focus(Direction::Down)),
         ["focus", tab] if tab_number(tab).is_some() => {
             return Err(Error::usage(format!(
-                "eon focus takes a pane; switch to tab {tab} with `eon tab switch {tab}`"
+                "eon focus takes a pane or popup; switch to tab {tab} with `eon tab switch {tab}`"
             )));
         }
         ["focus", id] => Action::Workspace(WorkspaceAction::FocusId((*id).into())),
@@ -3085,6 +3148,60 @@ fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Actio
         }),
         json,
     )))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PopupShow {
+    entry: String,
+    tab: Option<String>,
+    json: bool,
+}
+
+impl PopupShow {
+    fn action(&self, active_tab: &str) -> Action {
+        Action::InvokePopup {
+            tab: self.tab.as_deref().unwrap_or(active_tab).into(),
+            entry: self.entry.clone(),
+            expected_instance: None,
+            intent: InvokeIntent::Show,
+        }
+    }
+}
+
+fn parse_popup_show_arguments(arguments: &[OsString]) -> Result<Option<PopupShow>, Error> {
+    let [command, operation, rest @ ..] = arguments else {
+        return Ok(None);
+    };
+    if command != "popup" || operation != "show" {
+        return Ok(None);
+    }
+    let (mut entry, mut tab, mut json) = (None, None, false);
+    let mut words = rest.iter();
+    while let Some(word) = words.next() {
+        let word = word
+            .to_str()
+            .ok_or_else(|| Error::usage("Eon popup arguments must be UTF-8"))?;
+        match word {
+            "--json" if !json => json = true,
+            "--tab" if tab.is_none() => {
+                let value = words
+                    .next()
+                    .and_then(|word| word.to_str())
+                    .filter(|value| tab_number(value).is_some())
+                    .ok_or_else(|| Error::usage(EON_USAGE))?;
+                tab = Some(value.into());
+            }
+            _ if !word.starts_with('-') && entry.is_none() => entry = Some(word.into()),
+            _ => return Err(Error::usage(EON_USAGE)),
+        }
+    }
+    let show = PopupShow {
+        entry: entry.ok_or_else(|| Error::usage(EON_USAGE))?,
+        tab,
+        json,
+    };
+    validate_action(None, show.action("t1")).map_err(|error| Error::usage(error.detail))?;
+    Ok(Some(show))
 }
 
 /// `popup hide POPUP [--json]`.
@@ -3764,6 +3881,75 @@ mod tests {
     }
 
     #[test]
+    fn popup_show_parser_accepts_only_create_arguments() {
+        let parse = |args: &[&str]| {
+            parse_popup_show_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        let show = parse(&["popup", "show", "files"]).unwrap().unwrap();
+        assert_eq!(
+            show.action("t3"),
+            Action::InvokePopup {
+                tab: "t3".into(),
+                entry: "files".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            }
+        );
+        for args in [
+            vec!["popup", "show", "files", "--tab", "t2", "--json"],
+            vec!["popup", "show", "--json", "--tab", "t2", "files"],
+        ] {
+            let show = parse(&args).unwrap().unwrap();
+            assert!(show.json);
+            assert_eq!(
+                show.action("t1"),
+                Action::InvokePopup {
+                    tab: "t2".into(),
+                    entry: "files".into(),
+                    expected_instance: None,
+                    intent: InvokeIntent::Show,
+                }
+            );
+        }
+        for args in [
+            vec!["popup", "show"],
+            vec!["popup", "show", "--json"],
+            vec!["popup", "show", ""],
+            vec!["popup", "show", "two words"],
+            vec!["popup", "show", "files", "extra"],
+            vec!["popup", "show", "files", "--tab"],
+            vec!["popup", "show", "files", "--tab", "t0"],
+            vec!["popup", "show", "files", "--tab", "t02"],
+            vec!["popup", "show", "files", "--tab", "p2"],
+            vec!["popup", "show", "files", "--tab", "t2", "--tab", "t3"],
+            vec!["popup", "show", "files", "--json", "--json"],
+            vec!["popup", "show", "files", "--no-focus"],
+        ] {
+            assert_eq!(parse(&args).unwrap_err().status, 2, "{args:?}");
+        }
+        assert_eq!(
+            parse(&["popup", "show", &"x".repeat(65)])
+                .unwrap_err()
+                .status,
+            2
+        );
+        let invalid = [
+            OsString::from("popup"),
+            OsString::from("show"),
+            OsString::from_vec(vec![0xff]),
+        ];
+        assert_eq!(parse_popup_show_arguments(&invalid).unwrap_err().status, 2);
+        assert_eq!(parse(&["popup", "hide", "u2"]).unwrap(), None);
+        assert_eq!(parse(&["session"]).unwrap(), None);
+        for words in [vec!["popup"], vec!["popup", "show"], vec!["focus"]] {
+            let args = words.iter().map(OsString::from).collect::<Vec<_>>();
+            let help = command_help_text(&args, false).unwrap();
+            assert!(help.contains(POPUP_HELP), "{help}");
+        }
+        assert!(help_text("0", false).contains(POPUP_HELP));
+    }
+
+    #[test]
     fn popup_hide_parser_takes_one_popup_and_json_once() {
         let parse = |args: &[&str]| {
             parse_popup_hide_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
@@ -4192,6 +4378,10 @@ mod tests {
             (focus("t12"), true)
         );
         assert_eq!(parse(&["focus", "p2"]).unwrap(), (focus("p2"), false));
+        assert_eq!(
+            parse(&["focus", "u2", "--json"]).unwrap(),
+            (focus("u2"), true)
+        );
         for args in [
             &["tab", "switch"][..],
             &["tab", "switch", "p2"],

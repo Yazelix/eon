@@ -101,8 +101,10 @@ tab or shown session. Exact popup-ID focus selects the existing terminal without
 launching, retargeting, switching the Files pair or sending picker input. A
 covering transient refuses both paths; Scrollback Show and exact focus obey
 `agents.terminal_access` even without a calling terminal. The previous v45
-requests are rejected, never migrated. The CLI creation/focus forms and installed
-CLI proof remain in `eon-agent-parity-a9g0.1.2`.
+requests are rejected, never migrated. `eon popup show ENTRY [--tab TAB]`
+creates only when absent, and `eon focus uN` selects an exact instance.
+CLI and isolated installed proof are recorded by `eon-agent-parity-a9g0.1.2`,
+including background Show, exact popup focus and covering-transient refusal.
 
 EONW v45 carries ordinary session keyboard focus and canonical native focus
 reports. The existing send action distinguishes explicit terminal IDs from the

@@ -28,7 +28,7 @@ rather than guessing IDs.
 Leave the person's active tab, selection, shown popup and desktop focus alone
 unless asked to move them. Pass `--no-focus` to `pane create`, `session new`
 and directory-based `tab create`.
-Never run `eon focus PANE`, `eon tab switch TAB`, `eon session switch SESSION`,
+Never run `eon focus PANE|POPUP`, `eon tab switch TAB`, `eon session switch SESSION`,
 `eon tab close TAB`, `eon pane close PANE` or `eon column close PANE` on things you did not
 open unless the person asks. When the person asks to see a tab, run
 `eon tab switch tN --json`: it selects that tab as a click does and leaves
@@ -110,6 +110,20 @@ A pending tab, one still showing quick search before its first pane, takes
 `eon tab directory tN --json -- DIRECTORY` as a pick: it starts the tab's
 first pane at DIRECTORY and hides quick search, as Enter there would. Pick
 for a pending tab only when the person asks.
+Create an enabled catalog popup with `eon popup show ENTRY --tab TAB --json`
+only when asked. Use your `caller.tab` for TAB; omission uses your session's
+active tab, which may differ from yours. Creation selects the popup there
+without changing the active tab or shown session. Read its `uN` from the
+returned tab's `selected_popup`/`popups`; Project names the Files pair.
+An existing instance refuses with `unavailable` and names `eon focus uN`.
+Do not retry as a toggle or recreate it. When asked to show that existing
+popup, `eon focus uN --json` selects its tab and exact terminal without
+restarting, retargeting, changing its screen or sending input. A hidden
+session stays hidden and desktop focus stays alone. A different transient
+popup refuses show/focus; don't dismiss it without permission. Scrollback
+creation/focus obeys `terminal_access`, even without a caller; `none` gives
+`terminal-access-off`. An ended popup gives `unknown-id`; inspect again.
+
 Hide popup `uN` with `eon popup hide uN --json` only when asked: a keep-alive
 popup keeps running, a transient one stops, and a pending tab's Files starts
 the tab's first pane at its starting directory.

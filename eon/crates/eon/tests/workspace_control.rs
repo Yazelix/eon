@@ -12315,6 +12315,239 @@ fn quit_from_default_and_commands_popup_callers_stops_only_their_windows() {
 }
 
 #[test]
+fn popup_show_cli_creates_in_background_and_focuses_the_exact_instance() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "\n[popups.anima]\nenabled = false\n");
+    let caller =
+        process::environ(live_identity(&window.generation().join("orbit.sock")).process_id)
+            .split(|b| *b == 0)
+            .find_map(|v| v.strip_prefix(b"EON_TERMINAL="))
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap();
+    let run = |args: &[&str]| {
+        eon_command(&window.binary)
+            .env("EON_RUNTIME_DIR", &window.runtime)
+            .env("EON_CONFIG_HOME", &window.config)
+            .env("EON_TERMINAL", &caller)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let json =
+        |output: &Output| -> serde_json::Value { serde_json::from_slice(&output.stdout).unwrap() };
+    let created = window.eon(&[
+        "tab",
+        "create",
+        "--no-focus",
+        "--dir",
+        window.home.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(created.status.success(), "{created:?}");
+    let before = window.inspect("popup-cli-before");
+    let shown = run(&["popup", "show", "files", "--tab", "t2", "--json"]);
+    assert!(shown.status.success(), "{shown:?}");
+    assert_eq!(json(&shown)["active_tab"], before.active_tab);
+    assert_eq!(json(&run(&["session", "--json"]))["caller"]["tab"], "t1");
+    assert_eq!(json(&shown)["tabs"][1]["popups"][0]["entry"], "files");
+    let after = window.inspect("popup-cli-after");
+    let popup = after.tabs[1].popups[0].clone();
+    let mut expected = stable_tabs(&before.tabs);
+    expected[1].popups = after.tabs[1].popups.clone();
+    expected[1].selected_popup = Some(popup.id.clone());
+    assert_eq!(stable_tabs(&after.tabs), expected);
+    assert_eq!(after.active_tab, before.active_tab);
+    assert_eq!(after.active_workspace, before.active_workspace);
+
+    for entry in ["files", "project"] {
+        let refused = run(&["popup", "show", entry, "--tab", "t2", "--json"]);
+        assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+        assert_eq!(
+            json(&refused),
+            serde_json::json!({"error": {
+                "code": "unavailable",
+                "detail": format!("popup entry {entry} is already live as {0}; use eon focus {0}", popup.id),
+            }})
+        );
+        assert!(refused.stderr.is_empty());
+    }
+    let human = run(&["popup", "show", "files", "--tab", "t2"]);
+    assert_eq!(human.status.code(), Some(1));
+    assert!(human.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&human.stderr).contains(&format!("use eon focus {}", popup.id))
+    );
+    assert_eq!(
+        stable_tabs(&window.inspect("after-refusal").tabs),
+        stable_tabs(&after.tabs)
+    );
+    assert!(
+        run(&["popup", "hide", &popup.id, "--json"])
+            .status
+            .success()
+    );
+    let focus = run(&["focus", &popup.id, "--json"]);
+    assert!(focus.status.success(), "{focus:?}");
+    assert_eq!(json(&focus)["active_tab"], "t2");
+    let focused = window.inspect("popup-cli-focus");
+    assert_eq!(focused.tabs[1].popups, vec![popup.clone()]);
+    assert_eq!(focused.tabs[1].selected_popup.as_ref(), Some(&popup.id));
+    assert!(run(&["focus", &popup.id, "--json"]).status.success());
+    assert_eq!(
+        stable_tabs(&window.inspect("popup-cli-noop").tabs),
+        stable_tabs(&focused.tabs)
+    );
+
+    // The caller stays on t1; omission must choose the addressed session's active t2.
+    let shown = run(&["popup", "show", "scrollback", "--json"]);
+    assert!(shown.status.success(), "{shown:?}");
+    assert_eq!(json(&shown)["active_tab"], "t2");
+    assert_eq!(json(&run(&["session", "--json"]))["caller"]["tab"], "t1");
+    let covered = window.inspect("popup-cli-transient");
+    let transient = covered.tabs[1].popups.last().unwrap().clone();
+    assert_eq!(transient.entry, "scrollback");
+    let input = log_lines(&window.root.join("input.log"));
+    let history = log_lines(&window.root.join("history.log"));
+    for (case, args) in [
+        vec!["popup", "show", "agent", "--json"],
+        vec!["focus", &popup.id, "--json"],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let refused = run(&args);
+        assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+        assert_eq!(json(&refused)["error"]["code"], "unavailable");
+        assert_eq!(
+            stable_tabs(&window.inspect(&format!("transient-refusal-{case}")).tabs),
+            stable_tabs(&covered.tabs)
+        );
+    }
+    assert_eq!(log_lines(&window.root.join("input.log")), input);
+    assert_eq!(log_lines(&window.root.join("history.log")), history);
+    assert!(
+        run(&["popup", "hide", &transient.id, "--json"])
+            .status
+            .success()
+    );
+    let stale = run(&["focus", &transient.id, "--json"]);
+    assert_eq!(stale.status.code(), Some(3), "{stale:?}");
+    assert_eq!(json(&stale)["error"]["code"], "unknown-id");
+
+    for (entry, tab, code) in [
+        ("missing", "t2", "unknown-popup"),
+        ("anima", "t2", "unknown-popup"),
+        ("files", "t999", "unknown-tab"),
+    ] {
+        let refused = run(&["popup", "show", entry, "--tab", tab, "--json"]);
+        assert_eq!(refused.status.code(), Some(3), "{refused:?}");
+        assert_eq!(json(&refused)["error"]["code"], code);
+    }
+    assert!(window.eon(&["tab", "create", "--json"]).status.success());
+    let pending = run(&["popup", "show", "agent", "--json"]);
+    assert_eq!(pending.status.code(), Some(1), "{pending:?}");
+    assert_eq!(json(&pending)["error"]["code"], "choose-directory-first");
+    assert!(run(&["tab", "switch", "t1", "--json"]).status.success());
+
+    // A caller from s1 may mutate s1 while s2 remains shown.
+    assert!(window.eon(&["session", "new", "--json"]).status.success());
+    let visible = window.inspect("popup-cli-other-session");
+    let hidden = run(&["popup", "show", "scrollback", "--tab", "t1", "--json"]);
+    assert!(hidden.status.success(), "{hidden:?}");
+    assert_eq!(json(&hidden)["session"], "s1");
+    let hidden_id = json(&hidden)["tabs"][0]["selected_popup"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(run(&["focus", &hidden_id, "--json"]).status.success());
+    let foreign = window.eon(&["focus", &hidden_id, "--json"]);
+    assert_eq!(foreign.status.code(), Some(3));
+    assert_eq!(json(&foreign)["error"]["code"], "unknown-id");
+    assert_eq!(
+        stable_tabs(&window.inspect("popup-cli-still-shown").tabs),
+        stable_tabs(&visible.tabs)
+    );
+    assert!(
+        run(&["popup", "hide", &hidden_id, "--json"])
+            .status
+            .success()
+    );
+    assert!(
+        window
+            .eon(&["window", "stop", "default", "--json"])
+            .status
+            .success()
+    );
+    wait_for_successful_exit(&mut supervisor.child);
+}
+
+#[test]
+fn popup_show_cli_scrollback_access_off_and_focus_refuse_with_or_without_caller() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "\n[agents]\nterminal_access = \"none\"\n");
+    let caller =
+        process::environ(live_identity(&window.generation().join("orbit.sock")).process_id)
+            .split(|b| *b == 0)
+            .find_map(|v| v.strip_prefix(b"EON_TERMINAL="))
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap();
+    let run = |args: &[&str], caller: Option<&str>| {
+        let mut command = eon_command(&window.binary);
+        command
+            .env("EON_RUNTIME_DIR", &window.runtime)
+            .env("EON_CONFIG_HOME", &window.config)
+            .args(args);
+        if let Some(caller) = caller {
+            command.env("EON_TERMINAL", caller);
+        }
+        command.output().unwrap()
+    };
+    for caller in [None, Some(caller.as_str())] {
+        let refused = run(&["popup", "show", "scrollback", "--json"], caller);
+        assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&refused.stdout).unwrap()["error"]["code"],
+            "terminal-access-off"
+        );
+    }
+    assert!(window.snapshot_directories().is_empty());
+    assert!(log_lines(&window.root.join("history.log")).is_empty());
+    // The person's key remains allowed so focus of a live Scrollback can be tested.
+    let (popup, _) = window.open_scrollback("popup-cli-access-key");
+    let before = window.inspect("popup-cli-access-before");
+    let history = log_lines(&window.root.join("history.log"));
+    for (case, caller) in [None, Some(caller.as_str())].into_iter().enumerate() {
+        let refused = run(&["focus", &popup.id, "--json"], caller);
+        assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&refused.stdout).unwrap()["error"]["code"],
+            "terminal-access-off"
+        );
+        assert_eq!(
+            stable_tabs(
+                &window
+                    .inspect(&format!("popup-cli-access-after-{case}"))
+                    .tabs
+            ),
+            stable_tabs(&before.tabs)
+        );
+    }
+    assert_eq!(log_lines(&window.root.join("history.log")), history);
+    assert!(
+        run(&["popup", "hide", &popup.id, "--json"], None)
+            .status
+            .success()
+    );
+    assert!(
+        window
+            .eon(&["window", "stop", "default", "--json"])
+            .status
+            .success()
+    );
+    wait_for_successful_exit(&mut supervisor.child);
+}
+
+#[test]
 fn popup_hide_hides_a_popup_and_refuses_unknown_ones() {
     let (root, mut default) = quit_workspace();
     let runtime = root.join("r");

@@ -998,9 +998,10 @@ line points agents to `eon --skill`.
 | `eon pane history TARGET [--json]` | Print pane or popup TARGET's retained history followed by its visible text, in any session of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane history TARGET --edit [--json]` | Open that text in the configured editor in a Scrollback popup over TARGET's tab, as Alt+Shift+E does, when the tab is the shown session's active tab; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any session of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
+| `eon popup show ENTRY [--tab TAB] [--json]` | Start an enabled catalog entry only when its tab has no instance; --tab may name a background tab, and omission uses the addressed session's active tab; active tab and shown session stay as they are |
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon sidebar show\|hide\|toggle [--json]` | Show, hide or toggle the window's agent sidebar, as Alt+Shift+H and the sidebar's Hide button do, and print the session, whose `sidebar` reads `open`, `closed` or `off`. `show` and `hide` set the state directly in Runtime, so repeating either changes nothing; the command or keypress that ran last determines visibility. With `[sidebar] enabled = false`, `hide` succeeds and `show` and `toggle` fail `unavailable` (exit 1) |
-| `eon focus PANE\|left\|right\|up\|down [--json]` | Focus pane PANE, switching to its tab, or traverse the session; switch tabs with `eon tab switch` |
+| `eon focus PANE\|POPUP\|left\|right\|up\|down [--json]` | Focus a pane or exact existing popup `uN`, selecting its tab, or traverse the session; switch tabs with `eon tab switch` |
 | `eon keys [--json]` | List effective keyboard and link shortcuts for this window: JSON emits `generation`, `window`, `platform`, `sidebar`, `number_keys` (read from `config.toml` on disk; edits there take effect in `eon keys` immediately while `Alt+/` keeps the window's launch/reloaded value until reload), `number_keys_source` (`"config"`), `running`, `groups` matching the `Alt+/` dialog, `bindings` with active chords and popup overrides, enabled `popups` (including unbound and overridden ones), and `reserved` (`strict` and `focus`); human output prints the header, `Alt+/` groups, unbound popups, and reserved sets |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon report` | Print a Markdown bug report for this window, with paths under your home as `~` and long environment values (8 bytes or more) removed, to read and then paste into the bug form; see [Troubleshooting and reporting](#troubleshooting-and-reporting) |
@@ -1099,6 +1100,30 @@ terminal}`, with exactly one of pane/popup set. It is null when Eon is
 unfocused, chrome or a dialog holds the keyboard, the attachment is unavailable,
 or the reported terminal no longer matches the shown session's active tab.
 A session without an associated window has `focus:null`.
+
+`eon popup show ENTRY --tab tN --json` creates by enabled catalog ID, not a
+label or popup ID. Omit `--tab` to use the addressed session's active tab;
+pass your `caller.tab` to target your own tab. Creation selects the popup in
+that tab, preserving its pane/column selection and the session's active tab.
+Project and Files share one instance. If it already exists, `unavailable`
+(exit 1) names its `uN` and `eon focus uN`; inspect the response and use that
+exact ID rather than retrying creation as a toggle. An instance appearing
+after inspection yields `stale-popup` (exit 3), without effects.
+
+`eon focus uN --json` selects the popup's tab and that exact terminal. It
+never restarts or retargets it, changes the Files screen, or sends input to
+a Sessions picker. Repeating focus is a no-op. A missing/ended popup or one
+in another session gives `unknown-id` (exit 3). Neither show nor focus changes
+the shown session or desktop focus; a caller in a hidden session stays there.
+Both refuse to displace a different transient popup (`unavailable`, exit 1);
+hide it explicitly only when asked. Scrollback creation and exact focus obey
+`[agents] terminal_access`, even outside an Eon terminal: `none` refuses with
+`terminal-access-off` (exit 1), while explicit hide stays available.
+Unknown/disabled entries give `unknown-popup`, and tabs outside the addressed
+session give `unknown-tab` (exit 3). Pending tabs accept only Project/Files;
+other entries give `choose-directory-first` (exit 1). Successful show, hide
+and focus return the complete session Snapshot through the normal human or
+JSON output; JSON failures use the existing `error` object.
 
 Each tab's `selected_popup` names its shown popup, null when hidden; for an
 inactive tab it is the retained popup selection. `selected_pane` and popup

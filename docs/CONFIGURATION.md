@@ -761,7 +761,9 @@ See [Agent sidebar](USAGE.md#agent-sidebar).
   pane or popup of the window, in any session, shown or hidden.
 - `"none"` refuses all three with `terminal-access-off` and reveals no
   terminal content. It also refuses a terminal's request to open Scrollback;
-  the window's Scrollback key keeps working.
+  the window's Scrollback key keeps working. `eon popup show scrollback` and
+  `eon focus uN` for an existing Scrollback also refuse under `none`, even
+  outside an Eon terminal; explicit `eon popup hide uN` stays available.
 
 The window reads the setting when it starts. It is a preference and a kill
 switch, not a security boundary: Eon's socket is private to your user, whose
@@ -987,10 +989,12 @@ A `keybinding` you configure, on a custom popup or a built-in one, takes its
 key first. A built-in popup's default key applies only while no configured
 popup holds it; otherwise the built-in popup stays without a key, and Alt+/
 lists it under its default key as overridden by the popup that holds it.
-`keybinding = ""` leaves any popup, Project included, without a key. Until the
-CLI path `eon-agent-parity-a9g0.1` lands, a popup without a key cannot be
-opened from the window, except that a new tab still opens on quick search and
-the Eon Bar's session label still opens Sessions.
+`keybinding = ""` leaves any popup, Project included, without a key.
+`eon popup show ENTRY [--tab TAB]` starts an enabled entry without requiring
+a keybinding, using the same configured command and lifetime. Existing
+instances use `eon focus uN`; Project and Files share one instance. The
+window still opens a new tab on quick search, and the Eon Bar's session
+label opens Sessions.
 Two configured popups on one key fail at load, except on a key reserved for
 moving focus, where both load without a key. A popup shortcut on the key of a
 built-in Eon shortcut takes that key, and Alt+/ lists the built-in one as

@@ -1478,8 +1478,25 @@ names its socket. CLI JSON names a session `session` and a terminal
   approved by eon-overseer under Lucca's delegation in the parent's
   2026-11-06 Decisions comment (P1–P5, D6–D7). Runtime popup creation and
   exact popup-ID focus are implemented with automated candidate proof;
-  installed delivery remains unproved. The CLI forms below remain planned
-  in `eon-agent-parity-a9g0.1.2`. Each child's proof records its scope.
+  CLI creation and popup-ID focus are implemented by
+  `eon-agent-parity-a9g0.1.2`, with automated candidate proof in
+  `popup_show_cli_creates_in_background_and_focuses_the_exact_instance`,
+  `popup_show_cli_scrollback_access_off_and_focus_refuse_with_or_without_caller`,
+  the popup-show parser and exhaustive CLI parity tests on x86_64 Linux.
+  Installed delivery of this popup amendment was observed on 2026-11-14
+  by `.1.2`, also carrying `.1.1`/`.1.3`'s batched Runtime observation:
+  candidate `64f5021c`, code tree
+  `1e041a19b4eb2413d4bb6cfd5d1d2306eb705021`, artifact
+  `/nix/store/6plh09fr2migzsi45yljhih2piymkksq-eon-0.1.27`, on
+  x86_64 Linux with isolated headless native Wayland. From a real t1
+  terminal, Files and configured Agent entries were created in hidden
+  tabs without switching t1; session inspection listed them. Exact focus
+  retained Files' instance and Git's process, terminal and original
+  directory after its tab changed directory. Covering transient refusals,
+  restoration, hidden-session targeting and unchanged private compositor
+  focus passed. Agent used a harmless configured command, not a provider
+  admission test. `.1.2` records commands, component revisions, snapshots,
+  captures and exact process identities; this does not prove all of C10.
 
   Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-ciwn.1`: EON-C39's event subscription is the
@@ -1913,11 +1930,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     focus or shows another session. Switching to the active tab returns the
     unchanged snapshot. A TAB that is not a `tN` identity is a usage error
     (exit 2), and a `tN` that is not a live tab of the addressed session fails
-    as `unknown-tab` (exit 3); both change nothing. `eon focus ID` currently
-    takes a pane ID (the popup form below remains planned); a tab ID there
+    as `unknown-tab` (exit 3); both change nothing. `eon focus ID`
+    takes a pane or popup ID; a tab ID there
     is a usage error (exit 2) that names `eon tab switch`.
-  - **Planned CLI:** The following popup creation and popup-ID forms are
-    planned in `.1.2`; their Runtime behavior is owned by `.1.1` plus `.1.3`.
   - `eon popup show ENTRY [--tab TAB] [--json]` starts an enabled catalog
     entry in the addressed session. ENTRY is its catalog ID, not its
     label or a popup ID. Without `--tab`, TAB is that session's active
@@ -6759,11 +6774,12 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
     is an exact generic popup command outside managed selection; it is not a
     cap bypass hidden behind `auto`. No default backend command bypasses
     provider permissions.
-    The CLI path for showing or creating the managed Agent popup is owned by
-    `eon-agent-parity-a9g0.1.2`, with Runtime/protocol work in
-    `eon-agent-parity-a9g0.1.1` and `eon-agent-parity-a9g0.1.3`;
-    it is not supplied by `agent launch --pane`. Until that path is delivered,
-    the popup-show parity gap remains explicitly open.
+    `eon popup show agent [--tab TAB]` creates the managed Agent popup;
+    an existing instance uses `eon focus uN` (EON-C10). This path is supplied
+    by `eon-agent-parity-a9g0.1.2`, with Runtime/protocol work in `.1.1` and
+    `.1.3`; `agent launch --pane` creates a pane instead. EON-C10 records
+    `.1.2`'s installed CLI observation with a harmless configured Agent
+    command; that observation does not test managed provider admission.
   - **Headless execution.** `run` chooses only entries with the requested
     run command and supported effort/add-dir shape. It defaults to implement
     and current cwd; brief, name and timeout are required. It has no
