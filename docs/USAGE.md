@@ -506,10 +506,13 @@ in `eon session --json` while Google collection is enabled.
 Each Codex or Claude window shows its remaining percentage; hover lists when
 it resets, in local time, the pace, and whether the reading is old. Missing
 resets stay unknown.
-Chip text stays neutral. A capsule outline warns when the projected quota
+Chip text stays neutral. A small dot at the right warns when projected quota
 shortfall reaches 5% of its window: yellow, through orange at 10%, to red at
-25%. An exhausted fresh window with a reset keeps at least yellow. Healthy,
-old, reset-less, blocked and unknown readings have no tint; there is no progress meter.
+25%. The neutral capsule outline turns red only at 25% or above. An exhausted
+fresh window with a reset keeps at least a yellow dot. Healthy judged readings
+have a neutral dot; old, reset-less, blocked, unknown and under-1%-used readings
+have none. Hover and accessibility explain the grade in words. There is no
+progress meter.
 Readings say `old` once they are more than an hour old and disappear after 24
 hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.
@@ -521,8 +524,8 @@ holding your home directory is, refreshed every 30 seconds; hover them for
 their names and details, such as the disk's size, mount point and free space.
 Each hover is a short list, one fact per line, that leaves out what the chip
 already shows; screen readers read one sentence with every fact.
-Their capsule outlines turn yellow from 60%,
-orange from 75% and red from 90% use by default, at
+Their right-aligned dots turn yellow from 60%, orange from 75% and red from
+90% use by default, with a red outline only at Critical, at
 the levels [`[bar]`](CONFIGURATION.md#configuration-behavior) sets, which also
 chooses the path the disk chip measures.
 Add `gpu` to `[bar] widgets` to show the expansion-card chip with the busiest

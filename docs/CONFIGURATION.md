@@ -325,38 +325,46 @@ change which whole chips fit. In the shortcut hints the version hides first
 and then the clock once the keycaps no longer fit beside them. The version
 belongs to its running supervisor; updating the installation does not change it.
 
-Header widgets and the session label use the unselected tab's filled capsule,
-without resting outlines. CPU, RAM, disk and GPU percentages share the interface
-font with tab labels and quota chips; each reserves its widest value through
-99%. Only 100% widens a chip by the extra digit and reflows it and the chips
-to its left. Falling below 100% shrinks that chip and reverses the reflow.
-Each icon keeps its left inset inside its chip. Its percentage aligns to the
-right inset, leaving at least 2 logical pixels between icon and percentage.
-The Shortcuts button is a plain `?` with the other bar controls' hover and
-mint keyboard-focus treatment.
-These fills and glyphs follow the fixed chrome palette and typography policy;
-there is no separate widget style setting. Clock and version keep their
-bottom-corner monospace text and cyan colour.
-Status outlines use the existing palette and a fixed 1 logical pixel width,
-rounded to whole physical pixels with a minimum of 1. One shared recipe keeps
-bar readings coherent and bounds supported style variants; chip text stays neutral.
-Quota outlines start at yellow when the projected shortfall reaches 5% of the
-window, then blend through orange at 10% and red at 25%. An exhausted fresh
-window with a known reset keeps at least yellow. Healthy, stale, reset-less,
-blocked and unknown quota has no tint. Mint remains the keyboard-focus colour;
-reading chips cannot take focus. There are no progress meters.
+Header widgets use the unselected tab's filled capsule with a neutral outline
+and a small status dot at the right. The session label uses the same fill without
+a resting outline. CPU, RAM, disk and GPU percentages share the interface font
+with tab labels and quota chips; each reserves its widest value through 99%.
+Only 100% widens a chip by the extra digit and reflows it and the chips to its
+left. Each icon keeps its left inset. The percentage aligns before the dot's
+reserved space, with at least 2 logical pixels between icon and percentage.
+The Shortcuts button is a plain `?` with the other bar controls' hover and mint
+keyboard-focus treatment. Clock and version keep their bottom-corner monospace
+text and cyan colour.
 
-The CPU, RAM and disk capsule outlines use the same three grades by default: yellow
-from 60% use, orange from 75% and red from 90%, otherwise untinted. For each
-chip, `<chip>_notice_percent`, `<chip>_warning_percent` and
-`<chip>_critical_percent` set those levels (`cpu`, `ram` or `disk`). CPU
-compares the 2-second use it shows, so bursts show. On Linux with a supported
-CPU sensor, its outline also turns orange from `cpu_temperature_warning_celsius`
-(85 °C) and red from `cpu_temperature_critical_celsius` (95 °C); the stronger
-colour wins. Both temperature levels accept whole degrees from 30 through
-120, with critical not below warning; equal levels skip orange. macOS has no
-CPU temperature reading. Hover and accessibility say in words why a chip is
-coloured, and also give CPU's average over the last `cpu_average_seconds`.
+The fixed chrome recipe uses a dot diameter of half the text padding and a gap
+of one third: 6 and 4 logical pixels at default typography. Both round to whole
+physical pixels; the dot's origin snaps to pixels and centres on the text ink.
+Every chip reserves that space even when unjudged quota has no dot. The outline
+is 1 logical pixel, rounded to whole physical pixels with a minimum of 1.
+These sizes are fixed tokens: one shared recipe keeps supported chip layouts
+bounded and the bar calm, without a separate style setting.
+Chip text stays neutral; mint remains keyboard focus, which reading chips cannot
+take. There are no progress meters.
+
+Normal readings have a neutral dot. Quota dots start at yellow when projected
+shortfall reaches 5% of the window, then blend through orange at 10% and red
+at 25%; only at 25% or above does the outline also turn red. An exhausted fresh
+window with a reset keeps at least a yellow dot. Stale, reset-less, blocked,
+unknown and under-1%-used quota has no dot. Healthy judged quota keeps a neutral
+dot and outline. Hover and accessibility describe pace in words; the numeric
+label reports remaining amount, not the pace grade.
+
+CPU, RAM and disk dots turn yellow from 60% use, orange from 75% and red from
+90% by default; the outline turns red only at Critical. For each chip,
+`<chip>_notice_percent`, `<chip>_warning_percent` and `<chip>_critical_percent`
+set those levels (`cpu`, `ram` or `disk`). CPU compares the 2-second use it
+shows. On Linux with a supported CPU sensor, its dot also turns orange from
+`cpu_temperature_warning_celsius` (85 °C) and red from
+`cpu_temperature_critical_celsius` (95 °C); the stronger grade wins, including
+the critical outline. Both temperature levels accept whole degrees from 30
+through 120, with critical not below warning; equal levels skip orange. macOS
+has no CPU temperature reading. Hover and accessibility say in words why a
+chip is graded, and give CPU's average over the last `cpu_average_seconds`.
 Use levels compare the whole percentage the chip shows; temperature levels
 compare the whole degrees in its hover. Percentages accept whole numbers from
 1 through 100, with notice not above warning and warning not above critical
@@ -465,7 +473,7 @@ eonbase has no pane outline.
 
 `border_width` sizes neutral pane-card, agent-sidebar-card, popup and native dialog outlines,
 including their title edges and the popup marker in Agents and the attention inbox.
-Eon Bar widgets are filled capsules without neutral outlines; `border_width`
+Eon Bar widgets use their fixed status-outline recipe; `border_width`
 does not affect them. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
 are omitted, leaving Venus's built-in widths in use. With the example's widths,
@@ -804,7 +812,7 @@ reset availability, local read time and freshness. Disabled windows have no
 chip; weekly-only groups get no invented five-hour chip. Hide Argon by leaving
 out `google_quota:Gemini 4 Argon:7d`; all its active facts remain in
 `eon session --json` while any Google selector is enabled. Google text uses the
-existing chip typography, padding and status outlines without a provider bitmap.
+existing chip typography, padding and status dots without a provider bitmap.
 The fixed Google label identifies the subscription owner; source group names
 keep independent allowances distinct.
 

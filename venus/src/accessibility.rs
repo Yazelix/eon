@@ -2342,12 +2342,13 @@ mod tests {
                 for (_, label) in &labels {
                     assert_eq!(label.rect.left, left);
                     left = label.rect.right();
-                    // Ordinary readings reserve three interface characters, through 99%.
+                    // Through 99%, readings reserve three characters plus the status dot.
                     assert_eq!(
                         label.rect.width,
                         crate::scene::tokens::reading_icon_reserve(metrics)
                             + 30.0 * metrics.scale
                             + metrics.padding * 2.0
+                            + crate::scene::tokens::chip_dot_reserve(metrics)
                     );
                 }
                 assert_eq!(left, scene.controls[1].rect.left);

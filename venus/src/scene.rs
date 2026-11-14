@@ -3860,6 +3860,7 @@ impl WorkspaceScene {
             .map(|(item, provider, window, text)| {
                 let (label, width) = header_text(HeaderText::Fact, &text.label);
                 let quota_padding = metrics.padding * 2.0
+                    + tokens::chip_dot_reserve(metrics)
                     + if provider == QuotaProvider::Google {
                         0.0
                     } else {
@@ -4119,7 +4120,8 @@ impl WorkspaceScene {
                             } else {
                                 value_width
                             }
-                            + metrics.padding * 2.0,
+                            + metrics.padding * 2.0
+                            + tokens::chip_dot_reserve(metrics),
                         height: tab_height,
                         ..SceneRect::default()
                     },

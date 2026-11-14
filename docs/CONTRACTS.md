@@ -5273,6 +5273,15 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   overseer decision makes GPU opt-in pending power proof (`eon-9wewk`). The 04:26 UTC
   INBOX relay adds `gpu_interval_seconds` for NVIDIA's driver-specific idle
   timer. **GPU amendment proof pending; existing proof does not cover it.**
+  Amended on 2026-11-14 by `eon-wuau8.9`: Lucca via eon-desk: "A is too noisy",
+  then "C" (2026-11-14); amendment text approved by eon-overseer under Lucca's
+  standing delegation. Grades colour a right-aligned dot; the neutral capsule
+  outline turns red only at critical. Proved with the isolated installed
+  x86_64 Linux Wayland candidate at 1x and 2x on 2026-11-14, from render source
+  `a967a13555383e110b3a1fc7c78ae3a6065d63b1` (`eon-wuau8.9` installed proof).
+  The same source completed four balanced parent/candidate render-completion
+  pairs. Variable ordinary-time load limits timing conclusions; the historical
+  r1 absolute gate was waived by eon-overseer (`eon-4porr`), not passed here.
 - **Consumer:** Full-Eon session users.
 - **Trigger:** A full-Eon window opens, reopens, or accepts an EON-C11 reload.
 - **Result:** `[bar] widgets` is an ordered list of unique names from
@@ -5310,7 +5319,8 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   each widget. Narrow windows keep the fixed hiding priority it gives, whatever
   the order. For each of `cpu`, `ram` and `disk`, `<chip>_notice_percent`,
   `<chip>_warning_percent` and `<chip>_critical_percent` set the whole displayed
-  use percentage from which its capsule outline turns yellow, orange and red, respectively
+  use percentage from which its right-aligned level dot turns yellow, orange and red, respectively; the otherwise
+  neutral capsule outline also turns red at the critical level
   (defaults 60, 75 and 90 for all three). Percentages are whole numbers from 1
   through 100, with notice not above warning and warning not above critical;
   equal levels skip the lower colour. Omitted levels start at their defaults
@@ -5322,11 +5332,11 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   last 2 seconds. `cpu_average_seconds` sets the window of the average CPU use
   that hover and accessibility also give (default 30; 2 through 600 seconds).
   `cpu_temperature_warning_celsius` and `cpu_temperature_critical_celsius` set
-  the CPU temperature from which the CPU chip's capsule outline turns orange and red (defaults
-  85 and 95 °C). Both are whole degrees Celsius from 30 through 120, and the
+  the CPU temperature from which the CPU chip's level dot turns orange and red,
+  with a red capsule outline at critical (defaults 85 and 95 °C). Both are whole degrees Celsius from 30 through 120, and the
   critical level is not below the warning level. Temperature is available only
-  on Linux with a supported CPU sensor; unavailable temperature does not colour
-  the outline. The stronger utilization or temperature colour wins. `disk_path`
+  on Linux with a supported CPU sensor; unavailable temperature does not
+  contribute a grade. The stronger utilization or temperature colour wins. `disk_path`
   (default `~`) names the path whose filesystem `disk` measures: `~` or a path
   starting with `~/` under HOME, or an absolute path. These settings apply when
   a window opens or reopens, like the list.

@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon Bar quota and system widgets use a small right-aligned level dot with a
+  neutral capsule outline; only Critical turns the outline red. Normal readings
+  keep a neutral dot, and unjudged quota has no dot. Chip text stays neutral
+  (`eon-wuau8.9`).
+
 - Eon 0.1.27 uses EONW v46. Windows started before this version need a
   restart to use its Runtime popup support; v45 requests are refused cleanly,
   never migrated. Existing live windows keep running (`eon-agent-parity-a9g0.1.3`).

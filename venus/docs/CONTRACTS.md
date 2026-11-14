@@ -1872,6 +1872,14 @@ re-proved when that platform or feature is next touched.
   Lucca's delegation on 2026-11-14: Background's round-dot pulse shares the
   attention-motion guard and update budget; colour adaptation precedes pulse
   opacity and stale dimming.
+  Amended on 2026-11-14 by `eon-wuau8.9`: neutral outlines and right-aligned
+  level dots, with a red outline only at Critical; icons stay left-aligned and
+  values align before the reserved dot space. Both sentence replacements
+  approved by eon-overseer under Lucca's standing delegation (2026-11-13:
+  "auto-decide. i only decide major stuff"), following Lucca's option C choice
+  relayed by eon-desk on 2026-11-14. Proved with the isolated installed 1x/2x
+  x86_64 Linux Wayland candidate from render source
+  `a967a13555383e110b3a1fc7c78ae3a6065d63b1` (`eon-wuau8.9`).
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the session header;
@@ -1882,9 +1890,12 @@ re-proved when that platform or feature is next touched.
   one height and centre line, starting half the card title height below the window's top edge; the
   allocated card areas start below them so that the tops of the card title tabs (VEN-C18) sit one
   card gap (VEN-C8) below the pills. The widgets draw filled capsules in the
-  unselected-tab fill, without resting outlines. CPU, RAM and disk percentages
+  unselected-tab fill, with a neutral outline and a right-aligned level dot
+  for judged readings. Only Critical turns the outline red; unjudged quota has
+  no dot but keeps its reserved space. CPU, RAM and disk percentages
   use the interface font in fixed slots sized for the widest percentage; icons
-  and values stay left-aligned as the readings change. The clock and the
+  stay left-aligned and values align before the reserved dot space as
+  the readings change. The clock and the
   version label remain plain text in one colour. Keyboard shortcuts is a bare
   `?`, with the same hover and pressed treatment as New tab and Close.
   New tab, Keyboard shortcuts and Close centre on the same line. The Eon icon, when Eon supplies one,

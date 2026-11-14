@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C21: bar widgets use neutral outlines with right-aligned level dots;
+  only Critical turns the outline red. Icons stay left-aligned and values align
+  before the dot's reserved space (`eon-wuau8.9`, delegated approval 2026-11-14).
+
 - Consume canonical EONW v46 for Runtime's creation-only popup Show intent;
   retain keyboard focus reports and the existing Snapshot presentation path.
 

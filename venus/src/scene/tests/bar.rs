@@ -2306,8 +2306,8 @@ fn disk_chip_shows_filesystem_use_and_colours_only_when_filling_up() {
         shown.tooltip,
         "Disk \u{b7} /\n50.0 GiB free of 1000.0 GiB\nNearly full"
     );
-    // Default icon 16 + gap 2 + injected two-digit percentage 30 + padding 24.
-    assert_eq!(shown.rect.width, 72.0);
+    // Icon 16 + gap 2 + injected value 30 + padding 24 + dot/gap 10.
+    assert_eq!(shown.rect.width, 82.0);
     assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
     assert_eq!(
         scene.hit_test(
@@ -2568,7 +2568,7 @@ fn reading_slots_only_grow_and_reflow_at_one_hundred_percent() {
                 let slots: [_; 3] = std::array::from_fn(|index| {
                     labels[index].as_ref().map(|label| {
                         if scale == 1.0 {
-                            let width = if readings[index] == 100 { 106.5 } else { 95.5 };
+                            let width = if readings[index] == 100 { 116.5 } else { 105.5 };
                             assert_eq!(label.rect.width, width);
                         }
                         label.rect
@@ -3997,7 +3997,9 @@ fn google_chips_follow_exact_selectors_and_source_windows() {
         );
         assert_eq!(
             q.rect.width,
-            q.label.chars().count() as f32 * 10.0 + 2.0 * CellMetrics::for_scale(1.0).padding
+            q.label.chars().count() as f32 * 10.0
+                + 2.0 * CellMetrics::for_scale(1.0).padding
+                + 10.0
         );
     }
     assert!(

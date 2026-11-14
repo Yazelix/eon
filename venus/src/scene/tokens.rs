@@ -9,6 +9,19 @@ use crate::render::CellMetrics;
 /// Bar reading status outlines use one logical pixel, rounded to whole physical pixels.
 pub(crate) const CHIP_OUTLINE_WIDTH: u8 = 1;
 
+/// One shared reading recipe: a half-padding dot with a third-padding text gap.
+pub(crate) fn chip_dot_size(metrics: CellMetrics) -> f32 {
+    (metrics.padding / 2.0).round().max(1.0)
+}
+
+pub(crate) fn chip_dot_gap(metrics: CellMetrics) -> f32 {
+    (metrics.padding / 3.0).round()
+}
+
+pub(crate) fn chip_dot_reserve(metrics: CellMetrics) -> f32 {
+    chip_dot_size(metrics) + chip_dot_gap(metrics)
+}
+
 /// Background's three-second pulse on the existing 100ms badge clock.
 pub(crate) const BACKGROUND_PULSE_FRAMES: usize = 30;
 pub(crate) const BACKGROUND_PULSE_MIN_ALPHA: f32 = 0.65;
