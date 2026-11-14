@@ -4,7 +4,7 @@ use super::session_registry::{Completion, Operation, Registration, Registry};
 use eon_workspace_protocol::shortcuts::{
     EffectiveBinding, EffectiveKeymap, EffectivePopup, ReservedChord,
 };
-use eon_workspace_protocol::v45::{
+use eon_workspace_protocol::v46::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
     GoogleQuotaState, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS,
@@ -330,7 +330,7 @@ impl WorkspaceSet {
     }
 
     fn pending_allowance(&self) -> Result<usize, Failure> {
-        if self.workspaces.len() >= eon_workspace_protocol::v45::MAX_WORKSPACES {
+        if self.workspaces.len() >= eon_workspace_protocol::v46::MAX_WORKSPACES {
             return Err(action_error(
                 "session-limit",
                 "a window holds at most 32 sessions",
@@ -445,7 +445,7 @@ impl WorkspaceSet {
         match action {
             Action::Workspace(WorkspaceAction::NewWorkspace { name, .. }) => {
                 if let Some(name) = name {
-                    eon_workspace_protocol::v45::validate_workspace_name(name)
+                    eon_workspace_protocol::v46::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -460,7 +460,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v45::validate_workspace_name(name)
+                    eon_workspace_protocol::v46::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -601,7 +601,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v45::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v46::WorkspaceInfo {
                 id: workspace.id.clone(),
                 persistent_id: workspace.persistent_id.clone(),
                 registration_error: workspace.registration_error.clone(),
@@ -727,6 +727,11 @@ impl WorkspaceSet {
             })
     }
 
+    pub(crate) fn shown_terminal(&self) -> Option<(String, String)> {
+        let workspace = &self.workspaces[self.shown];
+        workspace.shown_terminal(workspace.active)
+    }
+
     /// The reported terminal must still be this window's shown keyboard target.
     pub(crate) fn focused_target(&self, terminal: &str) -> Option<TerminalTarget> {
         let workspace = &self.workspaces[self.shown];
@@ -764,13 +769,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v45::pane_label_character(character) {
+                if eon_workspace_protocol::v46::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v45::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v46::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -1011,7 +1016,7 @@ impl WorkspaceSet {
             Action::RenamePane { pane, name, tag } => {
                 let name = name.as_deref().map(str::trim);
                 let tag = tag.as_deref().map(str::trim);
-                eon_workspace_protocol::v45::validate_pane_rename(name, tag)
+                eon_workspace_protocol::v46::validate_pane_rename(name, tag)
                     .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 let target = self.workspaces[index]
                     .tabs
@@ -1029,7 +1034,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v45::validate_workspace_name(name)
+                    eon_workspace_protocol::v46::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -1084,7 +1089,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v45::validate_workspace_name(&name)
+                    eon_workspace_protocol::v46::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -1291,15 +1296,46 @@ impl WorkspaceSet {
         })
     }
 
+    /// A Show check neither accepts the request nor prepares any command or I/O.
+    pub(crate) fn preflight_popup_show(
+        &self,
+        request_id: &str,
+        caller: Option<&str>,
+        action: &Action,
+    ) -> Result<(), Failure> {
+        if matches!(
+            action,
+            Action::InvokePopup {
+                intent: InvokeIntent::Show,
+                ..
+            }
+        ) {
+            self.reject_duplicate(request_id)?;
+            self.workspaces[self.caller_workspace(caller)?].check_popup_show(action)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn is_scrollback_popup(&self, caller: Option<&str>, id: &str) -> bool {
+        self.caller_workspace(caller).is_ok_and(|index| {
+            self.workspaces[index]
+                .tabs
+                .iter()
+                .flat_map(|tab| &tab.popups)
+                .any(|popup| popup.id == id && self.is_scrollback(caller, &popup.entry))
+        })
+    }
+
     /// The terminal invoking `entry` in `tab` of the caller's workspace
     /// would snapshot, as its pane or popup ID and its terminal: set only when
     /// `entry` is Scrollback and the invocation would open a new one in the
-    /// active tab (EON-C10).
+    /// active tab, or any addressed tab for Show (EON-C10).
     pub(crate) fn scrollback_source(
         &self,
         caller: Option<&str>,
         tab: &str,
         entry: &str,
+        intent: InvokeIntent,
     ) -> Option<(String, String)> {
         if !self.is_scrollback(caller, entry) {
             return None;
@@ -1307,7 +1343,7 @@ impl WorkspaceSet {
         let workspace = &self.workspaces[self.caller_workspace(caller).ok()?];
         let index = workspace.tabs.iter().position(|item| item.id == tab)?;
         let tab = &workspace.tabs[index];
-        if index != workspace.active
+        if (index != workspace.active && intent != InvokeIntent::Show)
             || tab.pending
             || tab.popups.iter().any(|popup| popup.entry == entry)
         {
@@ -1355,18 +1391,7 @@ impl WorkspaceSet {
                 format!("tab {} already shows a Scrollback popup", tab.id),
             ));
         }
-        // An agent's edit never stops a transient popup the person has open.
-        if let Some(shown) = tab.selected_popup.as_deref()
-            && let Some(popup) = tab.popups.iter().find(|popup| popup.id == shown)
-            && workspace
-                .definition(&popup.entry)
-                .is_ok_and(|definition| !definition.keep_alive)
-        {
-            return Err(action_error(
-                "unavailable",
-                format!("tab {} shows the transient popup {shown}", tab.id),
-            ));
-        }
+        workspace.check_popup_displacement(workspace.active)?;
         Ok((target, entry.id.clone()))
     }
 
@@ -1517,7 +1542,7 @@ impl Workspace {
             active_build: String::new(),
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v45::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v46::WorkspaceInfo {
                 id: self.id.clone(),
                 persistent_id: self.persistent_id.clone(),
                 registration_error: self.registration_error.clone(),
@@ -1618,8 +1643,14 @@ impl Workspace {
         mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        check_popup_action(&self.snapshot(), &action)
-            .map_err(|error| action_error("stale-popup", error.to_string()))?;
+        match &action {
+            Action::InvokePopup {
+                intent: InvokeIntent::Show,
+                ..
+            } => self.check_popup_show(&action)?,
+            _ => check_popup_action(&self.snapshot(), &action)
+                .map_err(|error| action_error("stale-popup", error.to_string()))?,
+        }
         if matches!(
             action,
             Action::CreateColumn
@@ -2004,6 +2035,47 @@ impl Workspace {
         Ok(())
     }
 
+    fn check_popup_show(&self, action: &Action) -> Result<(), Failure> {
+        let Action::InvokePopup {
+            tab,
+            entry,
+            intent: InvokeIntent::Show,
+            ..
+        } = action
+        else {
+            return Ok(());
+        };
+        let tab_index = self
+            .tabs
+            .iter()
+            .position(|item| item.id == *tab)
+            .ok_or_else(|| action_error("unknown-tab", format!("tab {tab} is not live")))?;
+        self.definition(entry)?;
+        if self.tabs[tab_index].pending && !matches!(entry.as_str(), PROJECT_ENTRY | FILES_ENTRY) {
+            return Err(action_error(
+                "choose-directory-first",
+                "choose the pending tab directory before opening a tool",
+            ));
+        }
+        check_popup_action(&self.snapshot(), action)
+            .map_err(|error| action_error("stale-popup", error.to_string()))?;
+        self.check_popup_displacement(tab_index)
+    }
+
+    fn check_popup_displacement(&self, tab_index: usize) -> Result<(), Failure> {
+        if let Some(index) = self.displaced_transient(tab_index, None)? {
+            let tab = &self.tabs[tab_index];
+            return Err(action_error(
+                "unavailable",
+                format!(
+                    "tab {} shows the transient popup {}",
+                    tab.id, tab.popups[index].id
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn invoke_popup(
         &mut self,
@@ -2020,7 +2092,7 @@ impl Workspace {
             .iter()
             .position(|item| item.id == tab)
             .ok_or_else(|| action_error("unknown-tab", format!("tab {tab} is not live")))?;
-        if tab_index != self.active {
+        if tab_index != self.active && intent != InvokeIntent::Show {
             return Err(action_error(
                 "not-active",
                 "popup target is not the active tab",
@@ -2724,13 +2796,24 @@ impl Workspace {
                 tab.columns[column_index].expanded = pane_index;
                 return Ok(());
             }
+            if self.tabs[tab_index]
+                .popups
+                .iter()
+                .any(|popup| popup.id == id)
+            {
+                if self.tabs[tab_index].selected_popup.as_deref() != Some(id) {
+                    self.check_popup_displacement(tab_index)?;
+                }
+                self.select_popup(tab_index, id);
+                return Ok(());
+            }
         }
         if tab_number(id).is_some() {
             return Err(action_error("unknown-tab", format!("tab {id} is not live")));
         }
         Err(action_error(
             "unknown-id",
-            format!("{id} is not a live tab or pane identity"),
+            format!("{id} is not a live tab, pane or popup identity"),
         ))
     }
 
@@ -2757,19 +2840,25 @@ impl Workspace {
         if covered {
             return Ok(());
         }
+        if let Some((column, pane)) = pane {
+            let tab = &mut self.tabs[tab_index];
+            tab.covered_popup = None;
+            tab.selected_popup = None;
+            tab.selected_column = Some(column);
+            tab.columns[column].expanded = pane;
+        } else {
+            self.select_popup(tab_index, target);
+        }
+        Ok(())
+    }
+
+    fn select_popup(&mut self, tab_index: usize, target: &str) {
+        self.active = tab_index;
         let tab = &mut self.tabs[tab_index];
         if tab.selected_popup.as_deref() != Some(target) {
             tab.covered_popup = None;
         }
-        match pane {
-            Some((column, pane)) => {
-                tab.selected_popup = None;
-                tab.selected_column = Some(column);
-                tab.columns[column].expanded = pane;
-            }
-            None => tab.selected_popup = Some(target.into()),
-        }
-        Ok(())
+        tab.selected_popup = Some(target.into());
     }
 
     fn focus_direction(
@@ -3595,7 +3684,7 @@ pub(crate) fn json_tab(output: &mut String, tab: &SnapshotTab) {
     output.push_str("]}");
 }
 
-pub(crate) fn json_inventory(hosts: &[eon_workspace_protocol::v45::TerminalInventory]) -> String {
+pub(crate) fn json_inventory(hosts: &[eon_workspace_protocol::v46::TerminalInventory]) -> String {
     serde_json::Value::Array(hosts.iter().map(|host| serde_json::json!({
         "terminal": host.terminal, "run": host.run, "origin_build": host.origin_build,
         "management_version": host.management_version, "record_generation": host.record_generation,
@@ -3738,8 +3827,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v45::WindowState) -> &'static str {
-    use eon_workspace_protocol::v45::WindowState;
+fn window_state(state: eon_workspace_protocol::v46::WindowState) -> &'static str {
+    use eon_workspace_protocol::v46::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -3749,7 +3838,7 @@ fn window_state(state: eon_workspace_protocol::v45::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v45::WindowEntry,
+    entry: &eon_workspace_protocol::v46::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -3886,7 +3975,7 @@ pub(crate) fn list_human(snapshot: &Snapshot) -> String {
 /// One session object, shared by inspection and event output.
 pub(crate) fn json_workspace(
     output: &mut String,
-    workspace: &eon_workspace_protocol::v45::WorkspaceInfo,
+    workspace: &eon_workspace_protocol::v46::WorkspaceInfo,
     shown: bool,
 ) {
     output.push_str(&format!(
@@ -3903,7 +3992,7 @@ pub(crate) fn json_workspace(
     output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
 }
 
-pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v45::WorkspaceInfo) -> String {
+pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v46::WorkspaceInfo) -> String {
     let mut output = String::from("\"persistent_id\":");
     json_option(&mut output, workspace.persistent_id.as_deref());
     output.push_str(",\"registration_error\":");
@@ -4034,7 +4123,7 @@ pub(crate) fn resolve_target<'a>(
 ) -> Result<usize, Failure> {
     match target {
         WorkspaceTarget::Selector(selector) => {
-            eon_workspace_protocol::v45::validate_workspace_name(selector)
+            eon_workspace_protocol::v46::validate_workspace_name(selector)
                 .map_err(|error| action_error("malformed-action", error.to_string()))?;
             resolve_selector(workspaces.map(|(id, name, _)| (id, name)), selector)
         }
@@ -4099,7 +4188,7 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v45::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v46::Shortcut) -> String {
     eon_workspace_protocol::shortcuts::config_chord(shortcut.modifiers, &shortcut.key)
 }
 
@@ -4316,7 +4405,7 @@ mod tests {
         snapshot
     }
     use super::*;
-    use eon_workspace_protocol::v45::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v46::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn c38_set(root: &Path) -> (Registry, WorkspaceSet) {
         let registry = Registry::in_test_directory(root.join("sessions"));
@@ -5121,8 +5210,8 @@ mod tests {
             ("s1", "s3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v45::encode_response(
-            &eon_workspace_protocol::v45::Response::Snapshot(wire_snapshot(caller_view)),
+        eon_workspace_protocol::v46::encode_response(
+            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(caller_view)),
         )
         .unwrap();
 
@@ -5132,7 +5221,7 @@ mod tests {
                 "ambiguous",
                 None,
                 Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector(
+                    workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector(
                         "work".into(),
                     ),
                 }),
@@ -5147,7 +5236,7 @@ mod tests {
             "same",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s3".into()),
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s3".into()),
             }),
             prepared,
             |_| panic!("a switch starts nothing"),
@@ -5220,7 +5309,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v45::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v46::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -5276,8 +5365,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v45::encode_response(
-            &eon_workspace_protocol::v45::Response::Snapshot(wire_snapshot(snapshot.clone())),
+        eon_workspace_protocol::v46::encode_response(
+            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(snapshot.clone())),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -5349,8 +5438,8 @@ mod tests {
         assert_eq!(error.code, "terminal-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v45::encode_response(
-            &eon_workspace_protocol::v45::Response::Snapshot(wire_snapshot(snapshot.clone())),
+        eon_workspace_protocol::v46::encode_response(
+            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(snapshot.clone())),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "s1");
@@ -5364,7 +5453,7 @@ mod tests {
             "name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v45::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v46::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s2".into(),
@@ -5377,7 +5466,7 @@ mod tests {
             "live-id",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5388,7 +5477,7 @@ mod tests {
             "absent-id-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v45::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v46::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s99".into(),
@@ -5401,7 +5490,7 @@ mod tests {
             "switch-name",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s99".into()),
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s99".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5412,7 +5501,7 @@ mod tests {
             "rename-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v45::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v46::WorkspaceTarget::Selector(
                     "s99".into(),
                 )),
                 name: "s100".into(),
@@ -5459,7 +5548,7 @@ mod tests {
         );
         for (request, workspace) in [("third", "s3"), ("second", "s2")] {
             let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector(workspace.into()),
             });
             set.dispatch(request, None, switch, prepared, |_| Ok(()))
                 .unwrap();
@@ -5640,7 +5729,7 @@ mod tests {
             "switch",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -5660,7 +5749,7 @@ mod tests {
             "show-second",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -6060,7 +6149,7 @@ mod tests {
             focus: false,
         });
         let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
         });
         set.dispatch("create", None, create.clone(), prepared, |_| Ok(()))
             .unwrap();
@@ -6353,7 +6442,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v45::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v46::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6426,7 +6515,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v45::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v46::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6487,7 +6576,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v45::{
+        use eon_workspace_protocol::v46::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, GoogleQuota, QuotaWindow,
         };
@@ -6614,7 +6703,7 @@ mod tests {
             reason: QuotaFailureReason::Start,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v45::QueueEntry {
+            eon_workspace_protocol::v46::QueueEntry {
                 workspace: "s1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -6623,7 +6712,7 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v45::QueueEntry {
+            eon_workspace_protocol::v46::QueueEntry {
                 workspace: "s2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -6865,7 +6954,12 @@ mod tests {
             set.dispatch("last-identity", None, action.clone(), prepared, |_| Ok(()))
                 .unwrap();
             if kind == 2 {
-                action = invoke("t1", "agent");
+                action = Action::InvokePopup {
+                    tab: "t1".into(),
+                    entry: "agent".into(),
+                    expected_instance: None,
+                    intent: InvokeIntent::Show,
+                };
             }
             let before = set.snapshot();
             let error = set
@@ -6960,6 +7054,446 @@ mod tests {
                 set.snapshot()
             );
         }
+    }
+
+    #[test]
+    fn popup_show_preflight_allows_hidden_targets_without_mutation() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        set.dispatch(
+            "pending",
+            None,
+            Action::Workspace(WorkspaceAction::CreateTab),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        // Keep t1 hidden behind an established tab, rather than its pending picker.
+        let pair = set.snapshot().tabs.last().unwrap().popups[0]
+            .session
+            .clone();
+        set.session_ended(&pair, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        let caller = set.workspaces[1].tabs[0]
+            .panes()
+            .next()
+            .unwrap()
+            .session
+            .id
+            .clone();
+        for (caller, tab) in [(None, "t1"), (Some(caller.as_str()), "t2")] {
+            let before = set.clone();
+            let index = set.caller_workspace(caller).unwrap();
+            for entry in ["git", PROJECT_ENTRY, FILES_ENTRY] {
+                let mut action = invoke(tab, entry);
+                let Action::InvokePopup { intent, .. } = &mut action else {
+                    unreachable!()
+                };
+                *intent = InvokeIntent::Show;
+                assert_eq!(set.workspaces[index].check_popup_show(&action), Ok(()));
+            }
+            assert_eq!(set, before);
+        }
+    }
+
+    #[test]
+    fn popup_show_preflight_refuses_stale_pending_and_transient_targets() {
+        let show = |tab: &str, entry: &str| Action::InvokePopup {
+            tab: tab.into(),
+            entry: entry.into(),
+            expected_instance: None,
+            intent: InvokeIntent::Show,
+        };
+        let check = |set: &mut WorkspaceSet, action: Action, code: &'static str, detail: &str| {
+            let before = set.clone();
+            let expected = action_error(code, detail);
+            assert_eq!(
+                set.workspaces[0].check_popup_show(&action),
+                Err(expected.clone())
+            );
+            assert_eq!(
+                set.dispatch(
+                    "refused",
+                    None,
+                    action,
+                    |_, _| panic!("refused Show must not prepare a command"),
+                    |_| panic!("refused Show must not operate on a terminal")
+                ),
+                Err(expected)
+            );
+            assert_eq!(*set, before);
+        };
+        let mut set = two_workspace_set(|_| Ok(()));
+        set.workspaces[0]
+            .catalog
+            .entries
+            .retain(|entry| entry.id != "agent");
+        set.dispatch(
+            "pending",
+            None,
+            Action::Workspace(WorkspaceAction::CreateTab),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let pending = set.snapshot().active_tab;
+        set.dispatch(
+            "back",
+            None,
+            Action::Workspace(WorkspaceAction::FocusId("t1".into())),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        for (action, code, detail) in [
+            (
+                show("t1", "missing"),
+                "unknown-popup",
+                "popup entry missing is disabled",
+            ),
+            (
+                show("t1", "agent"),
+                "unknown-popup",
+                "popup entry agent is disabled",
+            ),
+            (show("t99", "git"), "unknown-tab", "tab t99 is not live"),
+            (show("t2", "git"), "unknown-tab", "tab t2 is not live"),
+            (
+                show(&pending, "git"),
+                "choose-directory-first",
+                "choose the pending tab directory before opening a tool",
+            ),
+            (
+                show(&pending, PROJECT_ENTRY),
+                "stale-popup",
+                "invalid EONW popup target",
+            ),
+            (
+                show(&pending, FILES_ENTRY),
+                "stale-popup",
+                "invalid EONW popup target",
+            ),
+        ] {
+            check(&mut set, action, code, detail);
+        }
+        set.dispatch("git", None, invoke("t1", "git"), prepared, |_| Ok(()))
+            .unwrap();
+        check(
+            &mut set,
+            show("t1", "git"),
+            "stale-popup",
+            "invalid EONW popup target",
+        );
+        for entry in ["commands", "scrollback"] {
+            let mut transient = two_workspace_set(|_| Ok(()));
+            transient
+                .dispatch("transient", None, invoke("t1", entry), prepared, |_| Ok(()))
+                .unwrap();
+            let selected = transient.snapshot().tabs[0].selected_popup.clone().unwrap();
+            let detail = format!("tab t1 shows the transient popup {selected}");
+            check(&mut transient, show("t1", "git"), "unavailable", &detail);
+            if entry == "commands" {
+                let before = transient.clone();
+                let pane = transient.snapshot().tabs[0].selected_pane.clone().unwrap();
+                assert_eq!(
+                    transient
+                        .scrollback_target("history-edit", &pane)
+                        .unwrap_err(),
+                    action_error("unavailable", &detail)
+                );
+                assert_eq!(transient, before);
+            }
+        }
+    }
+
+    #[test]
+    fn popup_show_targets_hidden_tabs_and_keeps_session_selection() {
+        for hidden_session in [false, true] {
+            let mut set = two_workspace_set(|_| Ok(()));
+            let owner = usize::from(hidden_session);
+            let caller = set.workspaces[owner].tabs[0]
+                .panes()
+                .next()
+                .unwrap()
+                .session
+                .id
+                .clone();
+            let caller = hidden_session.then_some(caller.as_str());
+            set.dispatch(
+                "tab",
+                caller,
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: false,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+            let target = set.workspaces[owner].tabs.last().unwrap().id.clone();
+            let before = set.clone();
+            let mut operations = Vec::new();
+            let show = Action::InvokePopup {
+                tab: target.clone(),
+                entry: "git".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            };
+            set.dispatch("show", caller, show.clone(), prepared, |op| {
+                operations.push(op);
+                Ok(())
+            })
+            .unwrap();
+            assert!(
+                matches!(operations.as_slice(), [SessionOperation::Start { tab: Some(tab), .. }] if tab == &target)
+            );
+            assert_eq!(set.shown, before.shown);
+            for index in 0..set.workspaces.len() {
+                assert_eq!(
+                    set.workspaces[index].active,
+                    before.workspaces[index].active
+                );
+                for (old, new) in before.workspaces[index]
+                    .tabs
+                    .iter()
+                    .zip(&set.workspaces[index].tabs)
+                {
+                    if old.id != target {
+                        assert_eq!(new, old);
+                        continue;
+                    }
+                    assert_eq!(new.columns, old.columns);
+                    assert_eq!(new.selected_column, old.selected_column);
+                    assert_eq!(new.directory, old.directory);
+                    assert_eq!(new.popups.len(), old.popups.len() + 1);
+                    assert_eq!(
+                        new.selected_popup.as_ref(),
+                        Some(&new.popups.last().unwrap().id)
+                    );
+                }
+            }
+            let accepted = set.clone();
+            assert_eq!(
+                set.dispatch("show", caller, show, prepared, |_| panic!(
+                    "duplicate start"
+                ))
+                .unwrap_err()
+                .code,
+                "duplicate-request"
+            );
+            assert_eq!(set, accepted);
+            let popup = set.workspaces[owner]
+                .tabs
+                .last()
+                .unwrap()
+                .popups
+                .last()
+                .unwrap()
+                .id
+                .clone();
+            set.dispatch(
+                "hidden-focus",
+                caller,
+                Action::Workspace(WorkspaceAction::FocusId(popup)),
+                prepared,
+                |_| panic!("hidden focus operates"),
+            )
+            .unwrap();
+            assert_eq!(set.shown, before.shown);
+            assert_eq!(
+                set.workspaces[owner].tabs[set.workspaces[owner].active].id,
+                target
+            );
+        }
+    }
+
+    #[test]
+    fn popup_focus_selects_hidden_git_without_changing_columns() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        set.dispatch("git", None, invoke("t1", "git"), prepared, |_| Ok(()))
+            .unwrap();
+        let git = set.workspaces[0].tabs[0].popups.last().unwrap().clone();
+        set.dispatch("cover-git", None, invoke("t1", "agent"), prepared, |_| {
+            Ok(())
+        })
+        .unwrap();
+        assert_ne!(
+            set.workspaces[0].tabs[0].selected_popup.as_ref(),
+            Some(&git.id)
+        );
+        set.dispatch(
+            "other-tab",
+            None,
+            Action::LaunchTab {
+                directory: b"/".to_vec(),
+                argv: Vec::new(),
+                focus: true,
+            },
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let before = set.workspaces[0].tabs[0].clone();
+        set.dispatch(
+            "focus-git",
+            None,
+            Action::Workspace(WorkspaceAction::FocusId(git.id.clone())),
+            |_, _| panic!("focus prepares"),
+            |_| panic!("focus operates"),
+        )
+        .unwrap();
+        let tab = &set.workspaces[0].tabs[0];
+        assert_eq!(set.workspaces[0].active, 0);
+        assert_eq!(tab.selected_popup.as_ref(), Some(&git.id));
+        assert_eq!(tab.covered_popup, None);
+        assert_eq!(tab.columns, before.columns);
+        assert_eq!(tab.selected_column, before.selected_column);
+        assert_eq!(tab.popups, before.popups);
+    }
+
+    #[test]
+    fn popup_focus_is_exact_and_never_runs_lifecycle_or_input() {
+        for entry in ["git", FILES_ENTRY, "commands", "scrollback"] {
+            let mut set = two_workspace_set(|_| Ok(()));
+            set.dispatch("cover", None, invoke("t1", "agent"), prepared, |_| Ok(()))
+                .unwrap();
+            set.dispatch("popup", None, invoke("t1", entry), prepared, |_| Ok(()))
+                .unwrap();
+            let popup = set.workspaces[0].tabs[0].popups.last().unwrap().clone();
+            if entry == "git" {
+                set.workspaces[0].tabs[0].directory = "/tmp".into();
+            }
+            set.dispatch(
+                "tab",
+                None,
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: true,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+            let before = set.clone();
+            let focus = Action::Workspace(WorkspaceAction::FocusId(popup.id.clone()));
+            set.dispatch(
+                "focus",
+                None,
+                focus.clone(),
+                |_, _| panic!("focus prepares"),
+                |_| panic!("focus operates"),
+            )
+            .unwrap();
+            let mut expected = before.workspaces.clone();
+            expected[0].active = 0;
+            assert_eq!(set.workspaces, expected, "{entry}");
+            assert_eq!(set.shown, before.shown);
+            let selected = set.workspaces.clone();
+            set.dispatch(
+                "same",
+                None,
+                focus,
+                |_, _| panic!("same focus prepares"),
+                |_| panic!("same focus operates"),
+            )
+            .unwrap();
+            assert_eq!(
+                set.workspaces, selected,
+                "same-selected {entry} preserves covered link"
+            );
+            assert_eq!(set.workspaces[0].tabs[0].popups.last(), Some(&popup));
+        }
+    }
+
+    #[test]
+    fn popup_focus_refuses_foreign_ended_and_transient_targets_before_selection() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        let foreign_caller = set.workspaces[1].tabs[0]
+            .panes()
+            .next()
+            .unwrap()
+            .session
+            .id
+            .clone();
+        set.dispatch("git", None, invoke("t1", "git"), prepared, |_| Ok(()))
+            .unwrap();
+        let popup = set.workspaces[0].tabs[0].popups.last().unwrap().clone();
+        let focus = Action::Workspace(WorkspaceAction::FocusId(popup.id.clone()));
+        for (case, caller, action) in [
+            ("foreign", Some(foreign_caller.as_str()), focus.clone()),
+            (
+                "missing",
+                None,
+                Action::Workspace(WorkspaceAction::FocusId("u999".into())),
+            ),
+        ] {
+            let before = set.clone();
+            let failure = set
+                .dispatch(case, caller, action, prepared, |_| {
+                    panic!("missing focus operates")
+                })
+                .unwrap_err();
+            assert_eq!(failure.code, "unknown-id", "{case}");
+            assert!(failure.detail.contains("tab, pane or popup identity"));
+            assert_eq!(set, before);
+        }
+        set.dispatch(
+            "transient",
+            None,
+            invoke("t1", "commands"),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        set.dispatch(
+            "tab",
+            None,
+            Action::LaunchTab {
+                directory: b"/".to_vec(),
+                argv: Vec::new(),
+                focus: true,
+            },
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let before = set.clone();
+        assert_eq!(
+            set.dispatch("covered", None, focus.clone(), prepared, |_| panic!(
+                "covered focus operates"
+            ))
+            .unwrap_err()
+            .code,
+            "unavailable"
+        );
+        assert_eq!(set, before);
+        // Attention still selects the tab while leaving its transient shown.
+        set.dispatch(
+            "attention",
+            None,
+            Action::FocusAttention {
+                tab: "t1".into(),
+                target: popup.id.clone(),
+            },
+            prepared,
+            |_| panic!("attention operates"),
+        )
+        .unwrap();
+        assert_eq!(set.workspaces[0].active, 0);
+        assert_eq!(set.workspaces[0].tabs[0], before.workspaces[0].tabs[0]);
+        set.session_ended(&popup.session.id, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        let before = set.clone();
+        assert_eq!(
+            set.dispatch("ended", None, focus, prepared, |_| panic!(
+                "ended focus operates"
+            ))
+            .unwrap_err()
+            .code,
+            "unknown-id"
+        );
+        assert_eq!(set, before);
     }
 
     fn catalog() -> PopupCatalog {
@@ -7069,17 +7603,20 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(
-            set.scrollback_source(None, "t1", "scrollback"),
+            set.scrollback_source(None, "t1", "scrollback", InvokeIntent::Toggle),
             Some((pane.clone(), session(&set, &pane)))
         );
-        assert_eq!(set.scrollback_source(None, "t1", "commands"), None);
+        assert_eq!(
+            set.scrollback_source(None, "t1", "commands", InvokeIntent::Toggle),
+            None
+        );
 
         // Over Git, it snapshots Git and shows Git again when it ends.
         let git = request(&mut set, "git", invoke("t1", "git")).popups[0]
             .id
             .clone();
         assert_eq!(
-            set.scrollback_source(None, "t1", "scrollback"),
+            set.scrollback_source(None, "t1", "scrollback", InvokeIntent::Toggle),
             Some((git.clone(), session(&set, &git)))
         );
         let tab = request(&mut set, "scrollback", invoke("t1", "scrollback"));
@@ -7089,7 +7626,10 @@ mod tests {
             ("scrollback", Some(&scrollback.id))
         );
         // A live Scrollback is no source: its key again hides it.
-        assert_eq!(set.scrollback_source(None, "t1", "scrollback"), None);
+        assert_eq!(
+            set.scrollback_source(None, "t1", "scrollback", InvokeIntent::Toggle),
+            None
+        );
         let toggle = |entry: &str, instance: &str| Action::InvokePopup {
             tab: "t1".into(),
             entry: entry.into(),
@@ -7117,9 +7657,17 @@ mod tests {
         );
         let snapshot = set.snapshot();
         assert_ne!(snapshot.active_tab, "t1");
-        assert_eq!(set.scrollback_source(None, "t1", "scrollback"), None);
         assert_eq!(
-            set.scrollback_source(None, &snapshot.active_tab, "scrollback"),
+            set.scrollback_source(None, "t1", "scrollback", InvokeIntent::Toggle),
+            None
+        );
+        assert_eq!(
+            set.scrollback_source(
+                None,
+                &snapshot.active_tab,
+                "scrollback",
+                InvokeIntent::Toggle
+            ),
             None
         );
     }
@@ -7185,8 +7733,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v45::encode_response(
-            &eon_workspace_protocol::v45::Response::Snapshot(wire_snapshot(after)),
+        eon_workspace_protocol::v46::encode_response(
+            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(after)),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -8809,7 +9357,7 @@ mod tests {
         };
         let switch = |workspace: &str| {
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector(workspace.into()),
             })
         };
         // Opens the picker over the shown terminal and returns its terminal.
@@ -9651,8 +10199,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "terminal-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v45::encode_response(
-            &eon_workspace_protocol::v45::Response::Snapshot(wire_snapshot(workspace.snapshot())),
+        eon_workspace_protocol::v46::encode_response(
+            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(workspace.snapshot())),
         )
         .unwrap();
 
@@ -9715,8 +10263,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v45::encode_response(
-                &eon_workspace_protocol::v45::Response::Snapshot(wire_snapshot(state)),
+            eon_workspace_protocol::v46::encode_response(
+                &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(state)),
             )
             .unwrap();
         }
@@ -10790,7 +11338,7 @@ mod tests {
                 label: "Agent".into(),
                 shortcut: PopupKey::Overridden {
                     default: Shortcut {
-                        modifiers: ALT | eon_workspace_protocol::v45::SHIFT,
+                        modifiers: ALT | eon_workspace_protocol::v46::SHIFT,
                         key: "KeyL".into(),
                     },
                     by: "pane-maker".into(),

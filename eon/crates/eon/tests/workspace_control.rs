@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v45::{
+use eon_workspace_protocol::v46::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -2532,6 +2532,18 @@ fn managed_orbit_helper() {
                             // 2 MiB, and `cut-history` with a newest line
                             // the bound cut.
                             ManagementClientMessage::ReadHistory if *leased => {
+                                if let Some(log) = std::env::var_os("EON_TEST_HISTORY_LOG") {
+                                    writeln!(
+                                        fs::OpenOptions::new()
+                                            .create(true)
+                                            .append(true)
+                                            .open(log)
+                                            .unwrap(),
+                                        "{}",
+                                        identity.session_id
+                                    )
+                                    .unwrap();
+                                }
                                 // `slow-history` answers after the supervisor's
                                 // 2 s terminal deadline.
                                 if reply.trim() == "slow-history" {
@@ -8213,7 +8225,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -8223,7 +8235,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -8234,7 +8246,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -8249,7 +8261,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -8267,14 +8279,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -8296,7 +8308,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -9984,24 +9996,26 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert_eq!(stdout(&human).matches("\nbusy ").count(), 3);
     assert_eq!(stdout(&human).matches(" terminal=terminal-").count(), 6);
 
-    let mut incompatible = encode_request(&Request {
-        id: "incompatible-1".into(),
-        caller: None,
-        action: ProtocolAction::Workspace(Action::Inspect),
-    })
-    .unwrap();
-    incompatible[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
-    let mut client = UnixStream::connect(&control).unwrap();
-    client.write_all(&incompatible).unwrap();
-    let mut response = vec![0; HEADER_BYTES];
-    client.read_exact(&mut response).unwrap();
-    let length = declared_message_len(&response).unwrap();
-    response.resize(length, 0);
-    client.read_exact(&mut response[HEADER_BYTES..]).unwrap();
-    assert!(matches!(
-        decode_response(&response).unwrap(),
-        Response::Failure(failure) if failure.code == "unsupported-version"
-    ));
+    for version in [VERSION - 1, VERSION + 1] {
+        let mut incompatible = encode_request(&Request {
+            id: "incompatible-1".into(),
+            caller: None,
+            action: ProtocolAction::Workspace(Action::Inspect),
+        })
+        .unwrap();
+        incompatible[4..6].copy_from_slice(&version.to_le_bytes());
+        let mut client = UnixStream::connect(&control).unwrap();
+        client.write_all(&incompatible).unwrap();
+        let mut response = vec![0; HEADER_BYTES];
+        client.read_exact(&mut response).unwrap();
+        let length = declared_message_len(&response).unwrap();
+        response.resize(length, 0);
+        client.read_exact(&mut response[HEADER_BYTES..]).unwrap();
+        assert!(matches!(
+            decode_response(&response).unwrap(),
+            Response::Failure(failure) if failure.code == "unsupported-version"
+        ));
+    }
 
     let snapshot = invoke(&binary, &runtime, &config, &["session", "--json"]);
     assert!(snapshot.status.success());
@@ -10834,7 +10848,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v45::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -13228,7 +13242,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v45::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v46::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -15002,7 +15016,7 @@ fn previous_runtime(id: &str) -> Runtime {
     Runtime {
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
-        terminal_inventory: vec![eon_workspace_protocol::v45::TerminalInventory {
+        terminal_inventory: vec![eon_workspace_protocol::v46::TerminalInventory {
             terminal: "terminal-1".into(),
             run: "fixture-run".into(),
             origin_build: None,
@@ -16032,7 +16046,7 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     stream.read_to_end(&mut reply).unwrap();
     assert_eq!(
         decode_response(&reply),
-        Err(eon_workspace_protocol::v45::Error::UnsupportedVersion {
+        Err(eon_workspace_protocol::v46::Error::UnsupportedVersion {
             version: VERSION - 1
         })
     );
@@ -17062,7 +17076,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             &control,
             id,
             ProtocolAction::SendTerminal {
-                target: eon_workspace_protocol::v45::SendTarget::Id(pane.id.clone()),
+                target: eon_workspace_protocol::v46::SendTarget::Id(pane.id.clone()),
                 force: false,
                 input,
             },
@@ -17156,6 +17170,8 @@ impl PairWindow {
             .env("EON_TEST_EDITOR_LOG", self.root.join("editor.log"))
             .env("EON_TEST_EDITOR_RELEASE", self.root.join("editor-release"))
             .env("EON_TEST_SNAPSHOT_LOG", self.root.join("snapshot.log"))
+            .env("EON_TEST_HISTORY_LOG", self.root.join("history.log"))
+            .env("EON_TEST_INPUT_LOG", self.root.join("input.log"))
             .env(
                 "EON_TEST_EDITOR_READY_DELAY",
                 self.root.join("editor-ready-delay"),
@@ -18476,9 +18492,10 @@ fn scrollback_opens_a_private_snapshot_and_removes_it_when_its_popup_ends() {
         ),
         ("slow", "slow-history", None, "popup-start"),
     ] {
-        fs::write(window.root.join("orbit-reply"), reply).unwrap();
-        if let Some(editor) = &editor {
-            fs::write(
+        for intent in [InvokeIntent::Toggle, InvokeIntent::Show] {
+            fs::write(window.root.join("orbit-reply"), reply).unwrap();
+            if let Some(editor) = &editor {
+                fs::write(
                 window.config.join("config.toml"),
                 format!(
                     "[terminal]\nfont_fallbacks = []\n\n[anima]\nenabled = false\n\n[editor]\ncommand = [\"{}\"]\n",
@@ -18486,16 +18503,21 @@ fn scrollback_opens_a_private_snapshot_and_removes_it_when_its_popup_ends() {
                 ),
             )
             .unwrap();
+            }
+            assert!(
+                matches!(
+                    protocol_action(&window.control(), &format!("{id}-{intent:?}"), ProtocolAction::InvokePopup { tab: tab.id.clone(), entry: "scrollback".into(), expected_instance: None, intent }),
+                    Response::Failure(failure) if failure.code == code
+                ),
+                "{id}"
+            );
+            assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new(), "{id}");
+            assert_eq!(
+                window.inspect(&format!("{id}-{intent:?}-after")).tabs[0],
+                tab,
+                "{id}"
+            );
         }
-        assert!(
-            matches!(
-                window.invoke_popup(id, "scrollback", None),
-                Response::Failure(failure) if failure.code == code
-            ),
-            "{id}"
-        );
-        assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new(), "{id}");
-        assert_eq!(window.inspect(&format!("{id}-after")).tabs[0], tab, "{id}");
     }
     window.stop_generation(&mut supervisor);
     assert!(!snapshots.exists());
@@ -18617,6 +18639,442 @@ fn scrollback_refuses_callers_without_terminal_access_and_ends_with_its_window()
     window.stop_generation(&mut supervisor);
     assert!(!file.parent().unwrap().exists());
     assert!(!snapshots.exists());
+}
+
+#[test]
+fn popup_show_scrollback_access_precedes_stale_and_replay_checks() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "\n[agents]\nterminal_access = \"none\"\n");
+    let caller =
+        process::environ(live_identity(&window.generation().join("orbit.sock")).process_id)
+            .split(|b| *b == 0)
+            .find_map(|v| v.strip_prefix(b"EON_TERMINAL="))
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap();
+    // The old caller-free window key remains allowed, including under none.
+    let (popup, file) = window.open_scrollback("accepted-key");
+    let before = window.inspect("before-access");
+    let history = log_lines(&window.root.join("history.log"));
+    let input = log_lines(&window.root.join("input.log"));
+    for (case, caller, request_id, action) in [
+        (
+            "caller-free-live",
+            None,
+            "outside",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "scrollback".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            },
+        ),
+        (
+            "caller-live",
+            Some(caller.as_str()),
+            "inside",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "scrollback".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            },
+        ),
+        (
+            "denied-before-duplicate",
+            None,
+            "accepted-key",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "scrollback".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            },
+        ),
+        (
+            "caller-free-focus",
+            None,
+            "focus-out",
+            ProtocolAction::Workspace(Action::FocusId(popup.id.clone())),
+        ),
+        (
+            "caller-focus",
+            Some(caller.as_str()),
+            "focus-in",
+            ProtocolAction::Workspace(Action::FocusId(popup.id.clone())),
+        ),
+    ] {
+        let response = protocol_action_from(&window.control(), request_id, caller, action);
+        assert!(
+            matches!(response, Response::Failure(ref f) if f.code == "terminal-access-off"),
+            "{case}: {response:?}"
+        );
+        assert_eq!(
+            stable_tabs(&window.inspect(case).tabs),
+            stable_tabs(&before.tabs),
+            "{case}"
+        );
+        assert_eq!(
+            log_lines(&window.root.join("history.log")),
+            history,
+            "{case}"
+        );
+        assert_eq!(log_lines(&window.root.join("input.log")), input, "{case}");
+    }
+    let response = protocol_action_from(
+        &window.control(),
+        "bad-caller",
+        Some("terminal-999.invalid"),
+        ProtocolAction::Workspace(Action::FocusId(popup.id.clone())),
+    );
+    assert!(
+        matches!(response, Response::Failure(ref f) if f.code == "unknown-caller"),
+        "{response:?}"
+    );
+    assert!(matches!(
+        protocol_action(
+            &window.control(),
+            "hide",
+            ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+                tab: "t1".into(),
+                instance: popup.id
+            })
+        ),
+        Response::Snapshot(_)
+    ));
+    wait_for_removal(file.parent().unwrap());
+    for (case, caller) in [
+        ("absent-outside", None),
+        ("absent-inside", Some(caller.as_str())),
+    ] {
+        let response = protocol_action_from(
+            &window.control(),
+            case,
+            caller,
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "scrollback".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            },
+        );
+        assert!(
+            matches!(response, Response::Failure(ref f) if f.code == "terminal-access-off"),
+            "{case}: {response:?}"
+        );
+    }
+    assert_eq!(log_lines(&window.root.join("history.log")), history);
+    assert!(window.snapshot_directories().is_empty());
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn popup_show_refusals_precede_history_pair_and_input_effects() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(
+        &window,
+        "\n[popups.agent]\nenabled = false\n[popups.git]\ncommand = [\"eon-nu\"]\n[popups.commands]\ncommand = [\"eon-nu\"]\n",
+    );
+    let before = window.inspect("start");
+    let files = before.tabs[0]
+        .popups
+        .iter()
+        .find(|p| p.entry == "files")
+        .unwrap()
+        .clone();
+    assert!(matches!(workspace_action(
+        &window.control(), "show-pair", Action::FocusId(files.id.clone()),
+    ), Response::Snapshot(snapshot) if snapshot.tabs[0].selected_popup.as_ref() == Some(&files.id)));
+    let pending = match workspace_action(&window.control(), "pending", Action::CreateTab) {
+        Response::Snapshot(s) => s.active_tab,
+        r => panic!("{r:?}"),
+    };
+    workspace_action(&window.control(), "back", Action::FocusId("t1".into()));
+    let snapshot = window.inspect("before-refusals");
+    let reads = log_lines(&window.root.join("history.log"));
+    let input = log_lines(&window.root.join("input.log"));
+    let ya = log_lines(&window.ya_log);
+    for (case, tab, entry, code) in [
+        ("unknown-entry", "t1", "missing", "unknown-popup"),
+        ("disabled-entry", "t1", "agent", "unknown-popup"),
+        ("unknown-tab", "t99", "scrollback", "unknown-tab"),
+        (
+            "pending-scrollback",
+            pending.as_str(),
+            "scrollback",
+            "choose-directory-first",
+        ),
+        ("stale-files", "t1", "files", "stale-popup"),
+        ("stale-project", "t1", "project", "stale-popup"),
+    ] {
+        let response = protocol_action(
+            &window.control(),
+            case,
+            ProtocolAction::InvokePopup {
+                tab: tab.into(),
+                entry: entry.into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            },
+        );
+        assert!(
+            matches!(response, Response::Failure(ref f) if f.code == code),
+            "{case}: {response:?}"
+        );
+        assert_eq!(
+            stable_tabs(&window.inspect(case).tabs),
+            stable_tabs(&snapshot.tabs),
+            "{case}"
+        );
+        assert_eq!(log_lines(&window.root.join("history.log")), reads, "{case}");
+        assert_eq!(log_lines(&window.root.join("input.log")), input, "{case}");
+        assert_eq!(log_lines(&window.ya_log), ya, "{case}");
+        assert!(window.snapshot_directories().is_empty());
+    }
+    let (popup, file) = window.open_scrollback("transient");
+    let covered = window.inspect("covered");
+    let reads = log_lines(&window.root.join("history.log"));
+    for (case, action) in [
+        (
+            "transient-show",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "files".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            },
+        ),
+        (
+            "transient-focus",
+            ProtocolAction::Workspace(Action::FocusId(files.id)),
+        ),
+    ] {
+        let response = protocol_action(&window.control(), case, action);
+        let expected = if case == "transient-show" {
+            "stale-popup"
+        } else {
+            "unavailable"
+        };
+        assert!(
+            matches!(response, Response::Failure(ref f) if f.code == expected),
+            "{case}: {response:?}"
+        );
+        assert_eq!(
+            stable_tabs(&window.inspect(case).tabs),
+            stable_tabs(&covered.tabs)
+        );
+        assert_eq!(log_lines(&window.root.join("history.log")), reads);
+        assert_eq!(log_lines(&window.root.join("input.log")), input);
+    }
+    assert!(file.exists());
+    assert!(
+        window.inspect("still-live").tabs[0]
+            .popups
+            .iter()
+            .any(|p| p.id == popup.id)
+    );
+    protocol_action(
+        &window.control(),
+        "hide-scrollback",
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+            tab: "t1".into(),
+            instance: popup.id,
+        }),
+    );
+    wait_for_removal(file.parent().unwrap());
+    assert!(matches!(
+        window.invoke_popup("commands", "commands", None),
+        Response::Snapshot(_)
+    ));
+    let covered = window.inspect("commands-shown");
+    for (case, entry) in [
+        ("transient-before-export", "scrollback"),
+        ("transient-before-start", "git"),
+    ] {
+        let response = protocol_action(
+            &window.control(),
+            case,
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: entry.into(),
+                expected_instance: None,
+                intent: InvokeIntent::Show,
+            },
+        );
+        assert!(
+            matches!(response, Response::Failure(ref f) if f.code == "unavailable"),
+            "{case}: {response:?}"
+        );
+        assert_eq!(
+            stable_tabs(&window.inspect(case).tabs),
+            stable_tabs(&covered.tabs)
+        );
+        assert_eq!(log_lines(&window.root.join("history.log")), reads);
+        assert_eq!(log_lines(&window.root.join("input.log")), input);
+        assert!(window.snapshot_directories().is_empty());
+    }
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "");
+    let before = window.inspect("initial");
+    let Response::Snapshot(launched) = protocol_action(
+        &window.control(),
+        "background-tab",
+        ProtocolAction::LaunchTab {
+            directory: window.home.as_os_str().as_bytes().to_vec(),
+            argv: Vec::new(),
+            focus: false,
+        },
+    ) else {
+        panic!("tab did not launch")
+    };
+    let target = launched.tabs.last().unwrap().clone();
+    let terminal = target.panes().next().unwrap().session.clone();
+    let show = ProtocolAction::InvokePopup {
+        tab: target.id.clone(),
+        entry: "scrollback".into(),
+        expected_instance: None,
+        intent: InvokeIntent::Show,
+    };
+    let Response::Snapshot(shown) =
+        protocol_action(&window.control(), "show-background", show.clone())
+    else {
+        panic!("background Scrollback did not open")
+    };
+    assert_eq!(shown.active_tab, before.active_tab);
+    assert_eq!(shown.active_workspace, before.active_workspace);
+    assert_eq!(stable_tabs(&shown.tabs[..1]), stable_tabs(&before.tabs));
+    let tab = shown.tabs.iter().find(|t| t.id == target.id).unwrap();
+    assert_eq!(tab.columns, target.columns);
+    assert_eq!(tab.selected_pane, target.selected_pane);
+    let popup = tab.popups.last().unwrap().clone();
+    let file = PathBuf::from(&wait_for_lines(&window.root.join("editor.log"), 1)[0]);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains(&format!("history of {terminal}"))
+    );
+    assert_eq!(
+        fs::symlink_metadata(file.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o700
+    );
+    assert_eq!(
+        fs::symlink_metadata(&file).unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+    assert!(
+        log_lines(&window.root.join("snapshot.log")).contains(&format!("{0}|{0}", popup.session))
+    );
+    let reads = log_lines(&window.root.join("history.log"));
+    assert!(
+        matches!(protocol_action(&window.control(), "show-background", show), Response::Failure(f) if f.code == "duplicate-request")
+    );
+    assert_eq!(log_lines(&window.root.join("history.log")), reads);
+    let Response::Snapshot(focused) = workspace_action(
+        &window.control(),
+        "focus-background",
+        Action::FocusId(popup.id.clone()),
+    ) else {
+        panic!("popup focus failed")
+    };
+    assert_eq!(focused.active_tab, target.id);
+    assert_eq!(focused.tabs.last().unwrap().popups.last(), Some(&popup));
+    assert!(log_lines(&window.root.join("input.log")).is_empty());
+    let caller =
+        process::environ(live_identity(&window.generation().join("orbit.sock")).process_id)
+            .split(|b| *b == 0)
+            .find_map(|v| v.strip_prefix(b"EON_TERMINAL="))
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap();
+    protocol_action(
+        &window.control(),
+        "hide-background",
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+            tab: target.id.clone(),
+            instance: popup.id.clone(),
+        }),
+    );
+    wait_for_removal(file.parent().unwrap());
+    assert!(
+        window
+            .eon(&["session", "new", "--name", "other", "--json"])
+            .status
+            .success()
+    );
+    let shown_session = window.inspect("other-session");
+    let Response::Snapshot(hidden) = protocol_action_from(
+        &window.control(),
+        "show-hidden-session",
+        Some(&caller),
+        ProtocolAction::InvokePopup {
+            tab: target.id.clone(),
+            entry: "scrollback".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Show,
+        },
+    ) else {
+        panic!("hidden-session Show failed")
+    };
+    assert_eq!(hidden.workspace, before.workspace);
+    assert_eq!(hidden.active_workspace, shown_session.workspace);
+    assert_eq!(hidden.active_tab, target.id);
+    assert_eq!(
+        stable_tabs(&window.inspect("shown-still").tabs),
+        stable_tabs(&shown_session.tabs)
+    );
+    let hidden_popup = hidden.tabs.last().unwrap().popups.last().unwrap().clone();
+    let hidden_file = PathBuf::from(&wait_for_lines(&window.root.join("editor.log"), 2)[1]);
+    assert!(
+        fs::read_to_string(&hidden_file)
+            .unwrap()
+            .contains(&format!("history of {terminal}"))
+    );
+    for (case, id) in [
+        ("foreign-popup", hidden_popup.id.as_str()),
+        ("missing-popup", "u999"),
+    ] {
+        let response = workspace_action(&window.control(), case, Action::FocusId(id.into()));
+        assert!(
+            matches!(response, Response::Failure(ref f) if f.code == "unknown-id"),
+            "{case}: {response:?}"
+        );
+        assert_eq!(
+            stable_tabs(&window.inspect(case).tabs),
+            stable_tabs(&shown_session.tabs)
+        );
+    }
+    let Response::Snapshot(hidden_focus) = protocol_action_from(
+        &window.control(),
+        "focus-hidden",
+        Some(&caller),
+        ProtocolAction::Workspace(Action::FocusId(hidden_popup.id.clone())),
+    ) else {
+        panic!("hidden focus failed")
+    };
+    assert_eq!(hidden_focus.active_workspace, shown_session.workspace);
+    assert_eq!(hidden_focus.active_tab, target.id);
+    protocol_action_from(
+        &window.control(),
+        "hide-hidden",
+        Some(&caller),
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+            tab: target.id.clone(),
+            instance: hidden_popup.id.clone(),
+        }),
+    );
+    wait_for_removal(hidden_file.parent().unwrap());
+    assert!(
+        matches!(protocol_action_from(&window.control(), "ended-popup", Some(&caller), ProtocolAction::Workspace(Action::FocusId(hidden_popup.id))), Response::Failure(f) if f.code == "unknown-id")
+    );
+    window.stop_generation(&mut supervisor);
+    assert!(!file.exists());
 }
 
 /// `eon pane history TARGET --edit` opens TARGET's snapshot in a Scrollback
@@ -18884,11 +19342,11 @@ fn edit_error(output: &Output) -> (Option<i32>, String) {
 /// Fails a Scrollback press whose editor's Orbit publishes Ready after its
 /// start and rollback deadlines, and returns the running editor's terminal
 /// and its snapshot, which stays.
-fn unconfirmed_scrollback(window: &PairWindow) -> (String, PathBuf) {
+fn unconfirmed_scrollback(window: &PairWindow, intent: InvokeIntent) -> (String, PathBuf) {
     let delay = window.root.join("editor-ready-delay");
     fs::write(&delay, AFTER_START_ROLLBACK_MS.to_string()).unwrap();
     assert!(matches!(
-        window.invoke_popup("late", "scrollback", None),
+        protocol_action(&window.control(), "late", ProtocolAction::InvokePopup { tab: window.inspect("late-tab").active_tab, entry: "scrollback".into(), expected_instance: None, intent }),
         Response::Failure(failure) if failure.code == "popup-start"
     ));
     fs::remove_file(&delay).unwrap();
@@ -18914,32 +19372,36 @@ fn unconfirmed_scrollback(window: &PairWindow) -> (String, PathBuf) {
 /// removes it when the editor ends (EON-C10).
 #[test]
 fn a_scrollback_start_whose_rollback_is_unconfirmed_keeps_its_snapshot() {
-    let window = PairWindow::new();
-    let mut supervisor = scrollback_window(&window, "");
-    let snapshots = window.generation().join("snapshots");
-    let (_, file) = unconfirmed_scrollback(&window);
-    window.stop_generation(&mut supervisor);
-    assert!(!file.parent().unwrap().exists());
-    assert!(!snapshots.exists());
+    for intent in [InvokeIntent::Toggle, InvokeIntent::Show] {
+        let window = PairWindow::new();
+        let mut supervisor = scrollback_window(&window, "");
+        let snapshots = window.generation().join("snapshots");
+        let (_, file) = unconfirmed_scrollback(&window, intent);
+        window.stop_generation(&mut supervisor);
+        assert!(!file.parent().unwrap().exists());
+        assert!(!snapshots.exists());
+    }
 }
 
 #[test]
 fn a_recovery_adopts_the_snapshot_of_an_unconfirmed_scrollback_start() {
-    let window = PairWindow::new();
-    let mut first = scrollback_window(&window, "");
-    let (session, file) = unconfirmed_scrollback(&window);
+    for intent in [InvokeIntent::Toggle, InvokeIntent::Show] {
+        let window = PairWindow::new();
+        let mut first = scrollback_window(&window, "");
+        let (session, file) = unconfirmed_scrollback(&window, intent);
 
-    window.crash(&mut first);
-    let mut replacement = window.spawn_scrollback();
-    assert!(
-        window.inspect("recovered").tabs[0]
-            .panes()
-            .any(|pane| pane.session == session)
-    );
-    assert!(file.exists());
-    fs::write(window.root.join("editor-release"), "").unwrap();
-    wait_for_removal(file.parent().unwrap());
-    window.stop_generation(&mut replacement);
+        window.crash(&mut first);
+        let mut replacement = window.spawn_scrollback();
+        assert!(
+            window.inspect("recovered").tabs[0]
+                .panes()
+                .any(|pane| pane.session == session)
+        );
+        assert!(file.exists());
+        fs::write(window.root.join("editor-release"), "").unwrap();
+        wait_for_removal(file.parent().unwrap());
+        window.stop_generation(&mut replacement);
+    }
 }
 
 #[test]
@@ -19336,7 +19798,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
 
 #[test]
 fn focused_send_reports_the_persons_terminal_and_guards_enter() {
-    use eon_workspace_protocol::v45::{FocusReport, encode_focus_report};
+    use eon_workspace_protocol::v46::{FocusReport, encode_focus_report};
     let root = temporary_directory();
     let fifo = root.join("focus-reports");
     assert!(
@@ -19412,6 +19874,108 @@ fn focused_send_reports_the_persons_terminal_and_guards_enter() {
         before_send
     );
 
+    // Background Show preserves a valid report; exact focus invalidates the old target.
+    let Response::Snapshot(background) = protocol_action(
+        &control,
+        "focus-background-tab",
+        ProtocolAction::LaunchTab {
+            directory: root.as_os_str().as_bytes().to_vec(),
+            argv: Vec::new(),
+            focus: false,
+        },
+    ) else {
+        panic!("background tab failed")
+    };
+    let tab = background.tabs.last().unwrap().id.clone();
+    let Response::Snapshot(shown) = protocol_action(
+        &control,
+        "focus-background-show",
+        ProtocolAction::InvokePopup {
+            tab: tab.clone(),
+            entry: "sessions".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Show,
+        },
+    ) else {
+        panic!("background Show failed")
+    };
+    let background_popup = shown.tabs.last().unwrap().popups.last().unwrap().clone();
+    assert_eq!(
+        shown
+            .focus
+            .as_ref()
+            .unwrap()
+            .target
+            .as_ref()
+            .unwrap()
+            .terminal,
+        "terminal-1"
+    );
+    assert_eq!(inspect()["focus"]["target"]["terminal"], "terminal-1");
+    let before_focus = sent();
+    let Response::Snapshot(focused) = workspace_action(
+        &control,
+        "focus-exact-popup",
+        Action::FocusId(background_popup.id.clone()),
+    ) else {
+        panic!("exact popup focus failed")
+    };
+    assert_eq!(focused.active_tab, tab);
+    assert!(focused.focus.as_ref().unwrap().target.is_none());
+    refused(
+        &["pane", "send", "focused", "--enter", "--json"],
+        "terminal-unfocused",
+    );
+    assert_eq!(
+        sent(),
+        before_focus,
+        "exact focus neither sends input nor confirms Sessions"
+    );
+    let view = report(&mut reports, true, Some(&background_popup.session));
+    assert_eq!(view["focus"]["target"]["popup"], background_popup.id);
+    // A -> B -> A cannot revive A's old terminal report.
+    workspace_action(
+        &control,
+        "focus-away-no-report",
+        Action::FocusId("t1".into()),
+    );
+    let Response::Snapshot(returned) = workspace_action(
+        &control,
+        "focus-return-no-report",
+        Action::FocusId(background_popup.id.clone()),
+    ) else {
+        panic!("return focus failed")
+    };
+    assert!(
+        returned.focus.as_ref().unwrap().target.is_none(),
+        "round trip revived a stale report"
+    );
+    refused(
+        &["pane", "send", "focused", "--enter", "--json"],
+        "terminal-unfocused",
+    );
+    let view = report(&mut reports, true, Some(&background_popup.session));
+    assert_eq!(view["focus"]["target"]["popup"], background_popup.id);
+    let Response::Snapshot(same) = workspace_action(
+        &control,
+        "focus-same-report",
+        Action::FocusId(background_popup.id.clone()),
+    ) else {
+        panic!("same focus failed")
+    };
+    assert_eq!(
+        same.focus
+            .as_ref()
+            .unwrap()
+            .target
+            .as_ref()
+            .unwrap()
+            .terminal,
+        background_popup.session
+    );
+    workspace_action(&control, "focus-back", Action::FocusId("t1".into()));
+    report(&mut reports, true, Some("terminal-1"));
+
     // A shown popup receives focus; a stale pane report must not target it instead.
     let Response::Snapshot(opened) = protocol_action(
         &control,
@@ -19437,7 +20001,7 @@ fn focused_send_reports_the_persons_terminal_and_guards_enter() {
     let before = sent();
     assert!(
         matches!(protocol_action(&control, "guarded-old-pane", ProtocolAction::SendTerminal {
-        target: eon_workspace_protocol::v45::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
+        target: eon_workspace_protocol::v46::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
         force: true, input: TerminalInput::Enter,
     }), Response::Failure(failure) if failure.code == "focus-changed")
     );
@@ -21167,7 +21731,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
                         created_build: "g1-00000000000000000000000000000001".into(),
                         active_build: "g1-00000000000000000000000000000001".into(),
-                        terminal_inventory: vec![eon_workspace_protocol::v45::TerminalInventory {
+                        terminal_inventory: vec![eon_workspace_protocol::v46::TerminalInventory {
                             terminal: "terminal-1".into(),
                             run: "fixture-run".into(),
                             origin_build: None,
@@ -21986,7 +22550,7 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
     );
     assert_eq!(
         failure.reason,
-        eon_workspace_protocol::v45::QuotaFailureReason::Start
+        eon_workspace_protocol::v46::QuotaFailureReason::Start
     );
     drop(supervisor);
 }

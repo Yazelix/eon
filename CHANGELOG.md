@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon 0.1.27 uses EONW v46. Windows started before this version need a
+  restart to use its Runtime popup support; v45 requests are refused cleanly,
+  never migrated. Existing live windows keep running (`eon-agent-parity-a9g0.1.3`).
+- Runtime can create a catalog popup in any addressed tab in the background
+  and select an exact existing popup by ID without relaunching it or sending
+  input. Both paths preserve covering transients; Scrollback obeys agent
+  terminal-access policy. The CLI show/focus forms remain pending in
+  `eon-agent-parity-a9g0.1.2`.
+
 - Eon 0.1.26 uses EONW v45. Windows started before this version need a
   restart; their EONW v44 supervisors reject the updated CLI's incompatible
   requests cleanly (`eon-81emk`).

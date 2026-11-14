@@ -671,6 +671,13 @@ names its socket. CLI JSON names a session `session` and a terminal
     selected pane. Tab navigation by identity also remains available. Users can
     create panes in another tab and create additional pending tabs, each with
     its own picker under EONW v7.
+  - Popup focus by `uN` selects its owning tab and that existing popup in
+    the addressed session, preserving pane and column selection and the
+    popup's terminal, launch directory and current screen. It changes no
+    shown session or desktop focus and starts, stops and sends nothing.
+    A different transient popup covering the target tab refuses the action
+    before any selection change. EON-C10 owns its CLI, target and Scrollback
+    access rules.
   - Creating a column adds a column immediately right of the selected column,
     holding one new pane in the tab's launch directory, and selects it; in a
     tab without columns it acts exactly as creating a pane. Venus maps
@@ -923,7 +930,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v45 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v46 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1467,6 +1474,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   Proof is pending this bead's exact-tree checks and isolated observation.
 
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
+  Amended on 2026-11-14 by `eon-agent-parity-a9g0.1.1` plus `.1.3`,
+  approved by eon-overseer under Lucca's delegation in the parent's
+  2026-11-06 Decisions comment (P1–P5, D6–D7). Runtime popup creation and
+  exact popup-ID focus are implemented with automated candidate proof;
+  installed delivery remains unproved. The CLI forms below remain planned
+  in `eon-agent-parity-a9g0.1.2`. Each child's proof records its scope.
+
   Amended on 2026-11-03 (approved by Lucca, relayed by
   eon-overseer) by `eon-ciwn.1`: EON-C39's event subscription is the
   one connection that carries more than one response. Amended on 2026-11-03
@@ -1899,8 +1913,47 @@ names its socket. CLI JSON names a session `session` and a terminal
     focus or shows another session. Switching to the active tab returns the
     unchanged snapshot. A TAB that is not a `tN` identity is a usage error
     (exit 2), and a `tN` that is not a live tab of the addressed session fails
-    as `unknown-tab` (exit 3); both change nothing. `eon focus ID` takes a pane
-    ID; a tab ID there is a usage error (exit 2) that names `eon tab switch`.
+    as `unknown-tab` (exit 3); both change nothing. `eon focus ID` currently
+    takes a pane ID (the popup form below remains planned); a tab ID there
+    is a usage error (exit 2) that names `eon tab switch`.
+  - **Planned CLI:** The following popup creation and popup-ID forms are
+    planned in `.1.2`; their Runtime behavior is owned by `.1.1` plus `.1.3`.
+  - `eon popup show ENTRY [--tab TAB] [--json]` starts an enabled catalog
+    entry in the addressed session. ENTRY is its catalog ID, not its
+    label or a popup ID. Without `--tab`, TAB is that session's active
+    tab. With `--tab`, TAB may be any tab of that session, including a
+    hidden tab. A calling terminal may address its own hidden session;
+    the command never changes the window's shown session or the
+    session's active tab. It selects the new popup in TAB and preserves
+    that tab's selected pane and column. A keep-alive popup it covers keeps
+    running. A pending tab accepts only Project or Files (EON-C18).
+    Project names the tab's Files pair, not a separate instance.
+  - Creation is available only while TAB has no instance for ENTRY. The CLI
+    inspects the session first; if an instance exists, it refuses with
+    `unavailable`, exit 1, naming its `uN` and `eon focus uN`. This includes
+    Project when the Files pair exists. The request asserts absence using
+    `InvokePopup` with `Show` intent and no expected instance. If an
+    instance appears before Runtime applies it, `stale-popup`, exit 3,
+    changes nothing. An unknown or disabled ENTRY fails with `unknown-popup`,
+    exit 3; a TAB outside the addressed session fails with `unknown-tab`,
+    exit 3. The CLI never retries a refused creation as a focus or toggle.
+  - `eon focus POPUP [--json]` accepts a live popup `uN` in any tab of the
+    addressed session. It selects that tab and that exact existing popup,
+    preserving the tab's selected pane and column. It changes no shown
+    session or desktop focus. Focusing the already-selected popup is a
+    successful no-op. It starts and stops nothing, preserves the popup's
+    terminal, launch directory and current screen, and sends no input; it
+    neither retargets a tool nor confirms a Sessions picker. A popup outside
+    the addressed session, or one that has ended, fails with `unknown-id`,
+    exit 3. Popup identities are never substituted by entry.
+  - Creation and popup-ID focus refuse with `unavailable`, exit 1, before
+    reading history, writing a snapshot, switching a pair's screen, starting
+    or stopping a terminal, or changing selection, if the target tab shows
+    a different transient popup. They never implicitly stop that popup.
+    `eon popup hide POPUP` retains its explicit dismissal and stop semantics.
+    Successful creation, hide and focus return the complete post-action
+    session Snapshot; `--json` uses the existing session JSON shape and
+    failures use the existing `error` object and exit-status mapping.
   - `eon popup hide POPUP [--json]` hides popup `uN` of the addressed
     session, as its owning window's dismissal would:
 
@@ -2108,7 +2161,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v45 and accepted Orbit management operations.
+- **Consumes:** Current EONW v46 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -2120,7 +2173,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v45 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v46 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
   The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
   failure records to Snapshot: fresh/stale state, observation and windows,
@@ -2230,6 +2283,21 @@ names its socket. CLI JSON names a session `session` and a terminal
   govern it; its CLI path, `eon pane history --edit`, is governed (EON-C35),
   and a Scrollback request a terminal sends is an agent's read, which
   `terminal_access = "none"` refuses with `terminal-access-off`.
+  A `Show` invocation of Scrollback is an agent read even without a calling
+  terminal. It snapshots the terminal its target tab shows: the selected
+  popup, otherwise the selected pane, in that tab's session. The private
+  file, editor command, notices and cleanup follow the window's Scrollback
+  path. A tab showing no terminal changes nothing. With `[agents]
+  terminal_access = "none"`, every `Show` invocation of Scrollback and
+  every popup-ID focus of an existing Scrollback refuse with
+  `terminal-access-off`, exit 1, before any read, write or selection change,
+  with or without `EON_TERMINAL`. Explicit hide remains available. The
+  person's window key remains unaffected, and EON-C35's `history --edit`
+  keeps its own target restriction and failures. An export failure uses
+  `popup-start`; a missing editor uses `popup-command`. Failed starts retain
+  the existing Scrollback rule: remove the private snapshot when rollback
+  is confirmed, or keep it while an editor may still run and remove it
+  through the existing terminal-end, stop or recovery path.
   Commands defaults to Alt+Shift+M and runs a transient fzf list of existing
   `eon` commands: tab, pane and window creation, closing or moving the popup's
   own tab, quitting this window, switching, creating, renaming or closing a
@@ -2324,12 +2392,17 @@ names its socket. CLI JSON names a session `session` and a terminal
   retains its recorded kind. open_in = "pane" always selects the pane route.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
-  distinct. Dismissal requires the exact live instance;
-  a replaced instance cannot inherit an old request. Instance identities must
-  not be reused after supervisor recovery. The runtime owner validates targets
-  against its current Snapshot before applying lifecycle policy; decoding checks
-  syntax, not staleness. `SetTabDirectory` is a pick on a pending tab and
-  explicit retargeting on an established one.
+  distinct. `Show` is creation-only: its expected instance must be absent,
+  and it never toggles, retargets or confirms a live popup. Dismissal
+  requires the exact live instance; a replaced instance cannot inherit an
+  old request. Popup-ID focus selects only the exact live instance and
+  performs no lifecycle operation. Instance identities must not be reused
+  after supervisor recovery. The runtime owner validates targets against
+  its current Snapshot before applying lifecycle policy. For `Show`, it
+  also validates before preparing a Scrollback snapshot; decoding checks
+  syntax, not staleness.
+  `SetTabDirectory` is a pick on a pending tab and explicit retargeting on
+  an established one.
 - **Bounds/failures:** Preserve the 2 MiB envelope, 64 tabs, raw Unix directory
   and endpoint bytes. At most 32 enabled entries and 256 combined pane/popup
   terminals are represented. Reject malformed framing, invalid or aliased
@@ -3610,7 +3683,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v45 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v46 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -6459,7 +6532,7 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   filters, subscriber bounds and CLI projection. Its canonical EONW package
   owns the v44 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v45; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v46; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

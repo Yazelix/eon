@@ -1,6 +1,6 @@
 //! Eon's shared shortcut descriptors. This is Rust data, not an EONW codec.
 
-use crate::v45::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
+use crate::v46::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
 
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
@@ -369,7 +369,7 @@ pub fn popup_entry_for_chord<'a>(
     })
 }
 
-/// Config spelling for `(modifiers, key)` when `v45::Shortcut` accepts it, else `None`.
+/// Config spelling for `(modifiers, key)` when `v46::Shortcut` accepts it, else `None`.
 pub fn config_chord_if_valid(modifiers: u8, key: &str) -> Option<String> {
     ProtocolShortcut {
         modifiers,
@@ -1114,10 +1114,10 @@ mod tests {
         assert_eq!(
             [SHIFT, CTRL, ALT, SUPER],
             [
-                crate::v45::SHIFT,
-                crate::v45::CTRL,
-                crate::v45::ALT,
-                crate::v45::SUPER
+                crate::v46::SHIFT,
+                crate::v46::CTRL,
+                crate::v46::ALT,
+                crate::v46::SUPER
             ]
         );
     }

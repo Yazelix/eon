@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume canonical EONW v46 for Runtime's creation-only popup Show intent;
+  retain keyboard focus reports and the existing Snapshot presentation path.
+
 - VEN-C14: report native window focus and the keyboard-focused terminal using
   canonical EONW v45 frames; chrome, dialogs and unavailable attachments report
   no terminal. Private supervision modes use v2 (`eon-81emk`).

@@ -609,7 +609,7 @@ fn parse_bar_item(name: &str) -> Option<BarItem> {
         _ => {
             let (scope, period) = name.strip_prefix("google_quota:")?.rsplit_once(':')?;
             if scope.is_empty()
-                || scope.len() > eon_workspace_protocol::v45::MAX_QUOTA_SCOPE_BYTES
+                || scope.len() > eon_workspace_protocol::v46::MAX_QUOTA_SCOPE_BYTES
                 || scope.chars().any(char::is_control)
             {
                 return None;
