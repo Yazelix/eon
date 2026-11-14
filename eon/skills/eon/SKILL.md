@@ -227,7 +227,12 @@ be null; Codex in Eon needs `codex --no-daemon`.
 ## Windows
 
 `eon window ls --json` lists every running Eon window. `id` is the full
-window ID, and `default` is the window bare `eon` opens. In
+window ID. `default` selects this build's running default-namespace window,
+otherwise the only running generation there, including after a profile
+refresh. Several older generations require an explicit hex ID; `default`
+names the candidates and refuses. Full generation hex IDs stay exact even
+when a different generation becomes `default`. Bare `eon` launches this build.
+In
 `eon window attach`, `eon window stop` and any command's `--window ID`, an
 ID or any unique prefix of at least 4 characters selects a window.
 `eon window stop previous --json` stops every window that another Eon build

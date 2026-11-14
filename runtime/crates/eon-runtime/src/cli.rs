@@ -1391,9 +1391,11 @@ fn help_text(version: &str, color: bool) -> String {
 Alt+Shift+D detaches a window; closing it or eon quit ends it.
 Inside Eon, session commands use the calling terminal's supervisor/session.
 Pane creation and moves, and tab moves, retain their calling-tab rules.
-Window IDs, as eon window ls shows them: default, another build's or an
-independent window's ID, or any unique prefix of 4+ characters.
+Window IDs, as eon window ls shows them: default, a generation's hex ID,
+an independent window's ID, or any unique prefix of 4+ characters.
 Window flag: --window ID, before any --.
+default uses this build's running window, otherwise the only running window
+in the default namespace; if several older windows run, choose an ID.
 Explicit targets still validate EON_TERMINAL; independent windows use
 attach's rule.
 To address another window, clear EON_TERMINAL and EON_TAB or run outside Eon.
@@ -2208,7 +2210,13 @@ fn unreachable_supervisor(error: EndpointFailure, window: &str) -> Failure {
         } else {
             "supervisor-unavailable"
         };
-        return failure(code, format!("{}; run `eon` first", error.detail));
+        return failure(
+            code,
+            format!(
+                "Eon window {window}: {}; run `eon window ls` to inspect running windows",
+                error.detail
+            ),
+        );
     }
     failure(
         "supervisor-unavailable",
@@ -3241,6 +3249,24 @@ mod parity;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_endpoint_suggests_discovery_instead_of_another_launch() {
+        for kind in [EndpointFailureKind::Dead, EndpointFailureKind::Unreachable] {
+            let error = unreachable_supervisor(EndpointFailure::new(kind, "test endpoint"), "8644");
+            assert!(error.detail.contains("Eon window 8644"), "{}", error.detail);
+            assert!(error.detail.contains("eon window ls"), "{}", error.detail);
+            assert!(!error.detail.contains("run `eon`"), "{}", error.detail);
+            assert_eq!(
+                error.code,
+                if kind == EndpointFailureKind::Dead {
+                    "missing-supervisor"
+                } else {
+                    "supervisor-unavailable"
+                }
+            );
+        }
+    }
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {

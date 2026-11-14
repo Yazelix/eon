@@ -11,8 +11,7 @@ use super::supervisor::{
     supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::windows::{
-    DEFAULT_NOT_RUNNING, DEFAULT_WINDOW, WINDOW_RUNTIME, Window, default_namespace_id,
-    runtime_window,
+    DEFAULT_WINDOW, WINDOW_RUNTIME, Window, default_namespace_id, missing_default, runtime_window,
 };
 use super::workspace::{json_escape, terminal_text};
 use eon_workspace_protocol::stop;
@@ -134,6 +133,42 @@ pub(super) fn delegated_elsewhere(shown: &str) -> Error {
 /// removed from everything Eon starts (EON-C11, Routing).
 pub(super) const ROUTE_MARKER: &str = "EON_ROUTED";
 
+/// A routing hop narrows its namespace to the generation already selected.
+pub(super) fn routed_generation(
+    root: &Path,
+    selected: Option<&str>,
+) -> Result<Option<String>, Failure> {
+    let Some(routed) = env::var_os(ROUTE_MARKER) else {
+        return Ok(None);
+    };
+    let unavailable = |detail: String| {
+        failure(
+            "supervisor-unavailable",
+            format!(
+                "{ROUTE_MARKER} is {:?}: {detail}; no action sent",
+                routed.to_string_lossy()
+            ),
+        )
+    };
+    let generation = routed
+        .to_str()
+        .filter(|generation| valid_generation(generation))
+        .ok_or_else(|| unavailable("not a valid generation".into()))?;
+    if let Some(selected) = selected
+        && selected != generation
+    {
+        return Err(unavailable(format!(
+            "cannot retarget generation {generation} to {selected}"
+        )));
+    }
+    if !workspace_runtime_exists(root, generation).map_err(unavailable)? {
+        return Err(unavailable(format!(
+            "generation {generation} is not running; inspect targets with `eon window ls`"
+        )));
+    }
+    Ok(Some(generation.into()))
+}
+
 /// Runs `command` as the build that started generation `generation` of
 /// namespace `root`, through its recorded `eon`, in place of this `eon`
 /// (EON-C11, Routing). It returns only when it does not run it: with nothing
@@ -228,17 +263,23 @@ pub(super) struct ResolvedWorkspace {
 
 pub(super) fn resolve_workspace(
     inputs: &Inputs,
-    target: WorkspaceTarget,
+    mut target: WorkspaceTarget,
     caller: Option<&str>,
 ) -> Result<ResolvedWorkspace, Failure> {
     let current =
         current_generation(inputs).map_err(|detail| failure("supervisor-unavailable", detail))?;
+    if target.window.is_none()
+        && caller.is_none()
+        && is_default_namespace(&runtime_directory("eon"))
+    {
+        target.window = Some(DEFAULT_WINDOW.into());
+    }
     // A default-namespace window names its exact generation; an independent
     // window names its namespace, where the window-only rule selects.
     let (root, exact, shown) = match &target.window {
-        Some(id) => match super::windows::select_window(inputs, id)? {
-            (Window::Default, shown) => {
-                (base_runtime_directory("eon"), Some(current.clone()), shown)
+        Some(id) => match super::windows::select_routed_window(inputs, id)? {
+            (Window::Default(generation), shown) => {
+                (base_runtime_directory("eon"), Some(generation), shown)
             }
             (Window::Other(generation), shown) => {
                 (base_runtime_directory("eon"), Some(generation), shown)
@@ -251,10 +292,14 @@ pub(super) fn resolve_workspace(
             (root, None, shown)
         }
     };
+    let exact = routed_generation(&root, exact.as_deref())?.or(exact);
     let window = super::windows::runtime_window(&root);
     let window_only =
         exact.is_none() && (target.window.is_some() || (caller.is_none() && window.is_some()));
     let label = |generation: &str| {
+        if shown == DEFAULT_WINDOW && exact.as_deref() == Some(generation) {
+            return DEFAULT_WINDOW.to_owned();
+        }
         window
             .clone()
             .unwrap_or_else(|| default_namespace_id(generation, &current))
@@ -292,28 +337,17 @@ pub(super) fn resolve_workspace(
     let probe = |id: &str| {
         probe_workspace_generation(&root, id, deadline).map_err(|error| (error.kind, error.detail))
     };
-    // A plain outside-Eon command keeps its current-generation default and existing failures.
-    if caller.is_none() && target.window.is_none() && !window_only {
-        if !workspace_runtime_exists(&root, &current)
-            .map_err(|detail| unavailable(&current, detail))?
-        {
-            return Err(failure(
-                "missing-supervisor",
-                match &window {
-                    Some(id) => format!("Eon window {id} is not running; see `eon window ls`"),
-                    None => DEFAULT_NOT_RUNNING.into(),
-                },
+    let generation = if let Some(id) = exact.as_ref() {
+        let present =
+            workspace_runtime_exists(&root, id).map_err(|detail| unavailable(id, detail))?;
+        if !present && env::var_os(ROUTE_MARKER).is_some() {
+            return Err(unavailable(
+                id,
+                format!("{ROUTE_MARKER} target generation {id} ended; no action sent"),
             ));
         }
-        probe(&current).map_err(|error| unavailable(&current, error.1))?;
-        return Ok(selected(current.clone()));
-    }
-
-    let generation = if let Some(id) = exact {
-        let present =
-            workspace_runtime_exists(&root, &id).map_err(|detail| unavailable(&id, detail))?;
-        if !present && id == current {
-            return Err(failure("missing-supervisor", DEFAULT_NOT_RUNNING));
+        if !present && *id == current {
+            return Err(missing_default(inputs));
         }
         if !present {
             return Err(failure(
@@ -321,8 +355,8 @@ pub(super) fn resolve_workspace(
                 format!("Eon window {shown} was not found"),
             ));
         }
-        probe(&id).map_err(|error| refused(&id, error))?;
-        id
+        probe(id).map_err(|error| refused(id, error))?;
+        id.clone()
     } else {
         let candidates = generation_candidates(&root)
             .map_err(|detail| failure("supervisor-unavailable", detail))?;
@@ -399,7 +433,14 @@ pub(super) fn resolve_workspace(
             }
             // A validated complete identity is authoritative; another generation's failure is not its owner.
             if let Some(owner) = owner {
-                return Ok(selected(owner));
+                let mut resolved = selected(owner);
+                if window.is_none() {
+                    resolved.label = default_namespace_id(
+                        &resolved.generation,
+                        preferred_window_generation(&current, &live).unwrap_or(""),
+                    );
+                }
+                return Ok(resolved);
             }
             // The caller's Orbit log, when it remains, names the one
             // generation that can own it.
@@ -1466,7 +1507,10 @@ pub(super) fn window_generation(inputs: &Inputs, id: &str, root: &Path) -> Resul
     }
 }
 
-fn preferred_window_generation<'a>(current: &str, live: &'a [String]) -> Option<&'a str> {
+pub(super) fn preferred_window_generation<'a>(
+    current: &str,
+    live: &'a [String],
+) -> Option<&'a str> {
     live.iter()
         .find(|id| *id == current)
         .or_else(|| (live.len() == 1).then(|| &live[0]))

@@ -1010,9 +1010,12 @@ A timeout or lost reply leaves an unknown open outcome: do not resend the
 request. Neovim timeout advice names the configured Editor key so you can
 reveal a possible prompt and answer it; Eon does not move focus to reveal it.
 
-Window IDs: `default` is the window bare `eon` opens. One that another Eon build
-opened that way, such as the old build's window after an upgrade, has the 32 hex
-digits of its generation as its ID, and an independent window has the ID
+Window IDs: `default` selects this build's running window in the default
+namespace, otherwise the only running window there. After a profile refresh,
+the sole older window stays `default`. If several older generations run there
+and none is this build's, `default` refuses and names the candidates; select
+one by its hex ID. Other default-namespace windows have the 32 hex digits
+of their generations as their IDs, and an independent window has the ID
 `eon window new` printed. `eon window attach` and `eon window stop` take a full
 ID or any prefix of at least 4 characters, which must start exactly one running
 window's ID. One that starts several, even when it is one window's whole ID,
@@ -1020,8 +1023,8 @@ exits 3 and lists them, and one that starts none exits 3 too. Text output shows
 each ID as its shortest unique prefix; scripts should keep the full `id` from
 `eon window ls --json`, since a short prefix can become ambiguous later.
 `default` also answers to the hex digits of its generation, which the detach
-notice and the log line after Eon Desktop exits print, since after an upgrade
-`default` names the new build's window: `eon window stop 1a2b3c4d` stops that
+notice and the log line after Eon Desktop exits print, so it stays addressable
+when another running generation becomes `default`: `eon window stop 1a2b3c4d` stops that
 window from its own build or a newer one.
 
 A window holds one or more sessions and shows one at a time; hidden
@@ -1032,8 +1035,10 @@ nothing and exits 1 (`ambiguous-session`), naming their IDs.
 
 Session commands inside Eon target the supervisor and session that own the
 exact `EON_TERMINAL` caller, even when the invoked CLI is from another compatible
-build. Outside Eon, they default to the invoked build's current generation in
-the inherited runtime namespace. Human and `--json` output identify `generation`,
+build. Outside Eon, they select the inherited runtime namespace's current
+running generation, otherwise its sole running generation, refusing ambiguity.
+Bare `eon` launches this build's generation. Human and `--json` output identify
+`generation`,
 `created_build`, `active_build`, `window` (null in JSON for the default
 namespace), and the projected `session`. `generation` names the runtime lifetime;
 creation build is fixed and active build identifies its controlling Runtime.
@@ -1050,7 +1055,7 @@ Session commands accept `--window ID` before any `--` operand separator, for
 example `eon session --window default --json` or
 `eon pane create --window 3f9a --no-focus`. ID is a window ID as
 `eon window ls` shows it, or any unique prefix of at least 4 characters:
-`default`, the 32 hex digits of another build's default-namespace window, or
+`default`, the 32 hex digits of a default-namespace generation, or
 an independent window's eight hex digits. In an independent window, Eon
 selects its current generation if live, otherwise its sole live generation, as
 `window attach` does. The flag constrains a calling terminal: it never waives
@@ -1095,8 +1100,9 @@ for source support, scheduling, process bounds and retention.
 
 Commands run inside an independent window target that window; commands outside
 one target the default session. `eon window stop previous` covers every
-running window that another Eon build started, and `eon window stop all` and
-`eon quit --all` every running window. Each visits the caller's window last;
+running window that another Eon build started, including `default` when it
+selects an older build's window. `eon window stop all` and `eon quit --all`
+stop every running window. Each visits the caller's window last;
 outside Eon, `default` is visited last. Inside Eon, when no window can be
 identified as the caller's, they stop nothing and exit 3 (`unknown-caller`). A
 window that cannot be inspected is reported as `stop-failed` and the others

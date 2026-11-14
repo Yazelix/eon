@@ -689,8 +689,8 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
             assert!(!help.contains(removed), "help still names {removed:?}");
         }
         for note in [
-            "Window IDs, as eon window ls shows them: default, another build's or an\n\
-             independent window's ID, or any unique prefix of 4+ characters.\n",
+            "Window IDs, as eon window ls shows them: default, a generation's hex ID,\n\
+             an independent window's ID, or any unique prefix of 4+ characters.\n",
             "Window flag: --window ID, before any --.\n",
         ] {
             assert!(help.contains(note), "missing {note:?}");
@@ -9183,10 +9183,7 @@ fn workspace_target_failures_are_explicit_and_bounded() {
         assert_eq!(output.status.code(), Some(4), "{}", stdout(&output));
         let failure: serde_json::Value = serde_json::from_str(stdout(&output)).unwrap();
         let detail = failure["error"]["detail"].as_str().unwrap();
-        assert!(
-            detail.starts_with(&format!("Eon window {}: ", &id[3..])),
-            "{detail}"
-        );
+        assert!(detail.starts_with("Eon window default: "), "{detail}");
         assert!(detail.contains("EONW"), "{detail}");
         assert!(detail.contains("open a new Eon window"), "{detail}");
         assert!(!detail.contains("the terminal's own `eon`"), "{detail}");
@@ -14035,8 +14032,8 @@ fn window_id_prefixes_select_one_window_and_refuse_ambiguous_unknown_or_short_on
         b.as_str()
     );
     let windows = listed();
-    assert_eq!(field(&windows, "id"), [&a[3..], "abcd3000"]);
-    assert_eq!(field(&windows, "short_id"), ["abcd1", "abcd3"]);
+    assert_eq!(field(&windows, "id"), ["default", "abcd3000"]);
+    assert_eq!(field(&windows, "short_id"), ["default", "abcd3"]);
     let stopped = run(&["window", "stop", &a[3..], "--json"]);
     assert_eq!(stopped.status.code(), Some(0), "{stopped:?}");
     let stopped: serde_json::Value = serde_json::from_slice(&stopped.stdout).unwrap();
@@ -14567,10 +14564,7 @@ fn an_id_that_two_builds_windows_share_selects_neither() {
         );
         assert!(text.contains("ambiguous-window-id"), "{args:?}: {text}");
         assert!(text.contains("1a2b3c4d ("), "{args:?}: {text}");
-        assert!(
-            text.contains(&format!("{} (", &older[3..12])),
-            "{args:?}: {text}"
-        );
+        assert!(text.contains("default ("), "{args:?}: {text}");
         assert!(stops.lock().unwrap().is_empty(), "{args:?}");
     }
     // Each still answers to an ID only it starts.
@@ -14834,7 +14828,11 @@ fn window_reload_reports_acceptance_with_unconfirmed_effects_or_refusal() {
         let (owner, prefix, full_id) = if independent {
             (windows.join("abcd3000"), "abcd", "abcd3000".to_owned())
         } else {
-            (runtime.clone(), "0000", id[3..].to_owned())
+            (
+                runtime.clone(),
+                if json { "default" } else { "0000" },
+                "default".to_owned(),
+            )
         };
         let listener = generation_listener(&owner, &id);
         let target = root.join("new-venus");
@@ -14895,19 +14893,6 @@ fn window_reload_reports_acceptance_with_unconfirmed_effects_or_refusal() {
                 .env("EON_VENUS", &target);
             command
         };
-        if !independent {
-            let missing = command()
-                .args(["window", "reload", "default", "--json"])
-                .output()
-                .unwrap();
-            assert_eq!(
-                missing.status.code(),
-                Some(3),
-                "default must not substitute an older build: {missing:?}"
-            );
-            let missing: serde_json::Value = serde_json::from_slice(&missing.stdout).unwrap();
-            assert_eq!(missing["error"]["code"], "stale-target");
-        }
         let listed = command().args(["window", "ls", "--json"]).output().unwrap();
         assert!(listed.status.success(), "{listed:?}");
         let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
@@ -15079,6 +15064,444 @@ fn previous_supervisor(runtime: &Path, id: &str) -> thread::JoinHandle<()> {
     })
 }
 
+// A compatible older namespace, without changing the CLI binary or using the user's runtime.
+fn default_alias_fixture(
+    current: bool,
+    older: usize,
+    check: impl FnOnce(&Path, &[String], &Mutex<Vec<String>>),
+) {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let versions = quit_command(&root).arg("versions").output().unwrap();
+    assert!(versions.status.success(), "{versions:?}");
+    let current_id = stdout(&versions).split_whitespace().nth(2).unwrap();
+    let mut ids: Vec<String> = (0..older)
+        .map(|index| format!("g1-8644{index:028x}"))
+        .collect();
+    if current {
+        ids.push(current_id.into());
+    }
+    let snapshot = inspected_snapshot();
+    let components =
+        eon_manifest::version_reports(include_str!("../../../../components/eon-v5.json"), &[])
+            .unwrap()
+            .0;
+    let presented = Arc::new(Mutex::new(Vec::new()));
+    let requests = root.join("requests");
+    let servers: Vec<_> = ids
+        .iter()
+        .map(|id| {
+            let listener = generation_listener(&runtime, id);
+            let mut record = previous_runtime(id);
+            record.created_build = id.clone();
+            record.active_build = id.clone();
+            record.component_report = components.clone();
+            let mut snapshot = snapshot.clone();
+            snapshot.generation = id.clone();
+            snapshot.created_build = id.clone();
+            snapshot.active_build = id.clone();
+            snapshot.running = None;
+            let presented = Arc::clone(&presented);
+            let requests = requests.clone();
+            thread::spawn(move || {
+                loop {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let bytes = read_request(&mut stream);
+                    fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&requests)
+                        .unwrap()
+                        .write_all(format!("{}\n", record.generation).as_bytes())
+                        .unwrap();
+                    if stop::is_reserved(&bytes) {
+                        assert_eq!(stop::decode_request(&bytes).unwrap(), record.generation);
+                        stream
+                            .write_all(
+                                &stop::encode_reply(&stop::Reply::Stopped {
+                                    generation: record.generation.clone(),
+                                    terminals: record.sessions.clone(),
+                                })
+                                .unwrap(),
+                            )
+                            .unwrap();
+                        break;
+                    }
+                    let request = decode_request(&bytes).unwrap();
+                    let response = match request.action {
+                        ProtocolAction::Workspace(
+                            Action::InspectRuntime | Action::InspectPresentation,
+                        ) => encode_lifecycle_response(&LifecycleResponse::Runtime(record.clone())),
+                        ProtocolAction::Workspace(Action::Inspect) => {
+                            encode_response(&Response::Snapshot(snapshot.clone()))
+                        }
+                        ProtocolAction::Workspace(Action::Present { .. }) => {
+                            presented.lock().unwrap().push(record.generation.clone());
+                            encode_lifecycle_response(&LifecycleResponse::Runtime(record.clone()))
+                        }
+                        ProtocolAction::Workspace(Action::ReloadPresentation { .. }) => {
+                            encode_lifecycle_response(&LifecycleResponse::Runtime(record.clone()))
+                        }
+                        action => panic!("unexpected default-alias action {action:?}"),
+                    };
+                    stream.write_all(&response.unwrap()).unwrap();
+                }
+            })
+        })
+        .collect();
+    check(&root, &ids, &presented);
+    let stopped = quit_command(&root)
+        .args(["window", "stop", "all", "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    for server in servers {
+        server.join().unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn default_alias_lists_the_sole_older_generation() {
+    default_alias_fixture(false, 1, |root, ids, _| {
+        let listed = quit_command(root)
+            .args(["window", "ls", "--json"])
+            .output()
+            .unwrap();
+        let windows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        let window = &windows["windows"][0];
+        assert_eq!(window["generation"], ids[0], "{windows}");
+        assert_eq!(window["compatible"], true, "{windows}");
+        assert_eq!(window["current"], false, "{windows}");
+        assert_eq!(window["id"], "default", "{windows}");
+        assert_eq!(window["short_id"], "default", "{windows}");
+        let listed = quit_command(root).args(["window", "ls"]).output().unwrap();
+        assert_eq!(window_rows(&listed)[0][0], "default");
+    });
+}
+
+#[test]
+fn default_alias_controls_the_sole_older_generation() {
+    default_alias_fixture(false, 1, |root, ids, _| {
+        for args in [
+            vec!["--window", "default", "session", "--json"],
+            vec!["session", "--json"],
+            vec!["--window", &ids[0][3..], "session", "--json"],
+            vec!["--window", &ids[0][3..11], "session", "--json"],
+        ] {
+            let output = quit_command(root).args(&args).output().unwrap();
+            assert!(output.status.success(), "{args:?}: {output:?}");
+            let session: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(session["generation"], ids[0], "{session}");
+            assert!(session["window"].is_null(), "{session}");
+        }
+        assert_eq!(fs::read_dir(root.join("r/generations")).unwrap().count(), 1);
+    });
+}
+
+#[test]
+fn default_alias_attaches_the_sole_older_generation() {
+    default_alias_fixture(false, 1, |root, ids, presented| {
+        for args in [
+            vec!["window", "attach"],
+            vec!["window", "attach", "default"],
+        ] {
+            let output = quit_command(root).args(&args).output().unwrap();
+            assert!(output.status.success(), "{args:?}: {output:?}");
+        }
+        assert_eq!(*presented.lock().unwrap(), [ids[0].clone(), ids[0].clone()]);
+    });
+}
+
+#[test]
+fn default_alias_refuses_multiple_older_generations() {
+    default_alias_fixture(false, 2, |root, ids, presented| {
+        for args in [
+            vec!["--window", "default", "session", "--json"],
+            vec!["session", "--json"],
+            vec!["window", "attach", "default"],
+            vec!["window", "attach"],
+        ] {
+            let output = quit_command(root).args(&args).output().unwrap();
+            let text = format!(
+                "{}{}",
+                stdout(&output),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(output.status.code(), Some(1), "{args:?}: {text}");
+            assert!(text.contains("ambiguous-window"), "{text}");
+            for id in ids {
+                assert!(text.contains(&id[3..]), "{text}");
+            }
+            assert!(!text.contains("run `eon`"), "{text}");
+        }
+        assert!(presented.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn default_alias_prefers_current_over_an_older_generation() {
+    default_alias_fixture(true, 1, |root, ids, _| {
+        let output = quit_command(root)
+            .args(["--window", "default", "session", "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let session: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(session["generation"], ids[1], "{session}");
+        let listed = quit_command(root)
+            .args(["window", "ls", "--json"])
+            .output()
+            .unwrap();
+        let windows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(windows["windows"][0]["id"], "default", "{windows}");
+        assert_eq!(windows["windows"][0]["generation"], ids[1], "{windows}");
+        assert_eq!(windows["windows"][1]["id"], &ids[0][3..], "{windows}");
+    });
+}
+
+#[test]
+fn default_alias_stop_keeps_the_selected_older_generation() {
+    default_alias_fixture(false, 1, |root, ids, _| {
+        let output = quit_command(root)
+            .args(["window", "stop", "default", "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stopped: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(stopped[0]["window"], "default", "{stopped}");
+        assert_eq!(
+            stopped[0]["results"][0]["stopped"]["generation"], ids[0],
+            "{stopped}"
+        );
+    });
+}
+
+#[test]
+fn default_alias_missing_beside_an_independent_window_never_suggests_launch() {
+    default_alias_fixture(false, 1, |root, _, _| {
+        // Rehome the synthetic namespace before the first request to model an independent window.
+        let independent = root.join("r/w/abcd1000");
+        fs::create_dir_all(&independent).unwrap();
+        for directory in [independent.parent().unwrap(), independent.as_path()] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::rename(root.join("r/generations"), independent.join("generations")).unwrap();
+        let listed = quit_command(root)
+            .args(["window", "ls", "--json"])
+            .output()
+            .unwrap();
+        let windows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(windows["windows"][0]["compatible"], true, "{windows}");
+        let output = quit_command(root)
+            .args(["session", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        let failure: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let detail = failure["error"]["detail"].as_str().unwrap();
+        assert!(detail.contains("abcd1000"), "{detail}");
+        assert!(!detail.contains("run `eon`"), "{detail}");
+    });
+}
+
+#[test]
+fn default_alias_missing_reports_other_independent_windows() {
+    default_alias_fixture(false, 2, |root, ids, _| {
+        for (id, window) in ids.iter().zip(["abcd1000", "abcd2000"]) {
+            let independent = root.join("r/w").join(window).join("generations");
+            fs::create_dir_all(&independent).unwrap();
+            for directory in [
+                root.join("r/w"),
+                independent.parent().unwrap().to_owned(),
+                independent.clone(),
+            ] {
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            fs::rename(root.join("r/generations").join(id), independent.join(id)).unwrap();
+        }
+        let output = quit_command(root)
+            .args(["session", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        let failure: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let detail = failure["error"]["detail"].as_str().unwrap();
+        assert!(detail.contains("window abcd1000"), "{detail}");
+        assert!(detail.contains("other running windows: 1"), "{detail}");
+        assert!(!detail.contains("run `eon`"), "{detail}");
+    });
+}
+
+#[test]
+fn default_alias_fallback_requires_an_inspectable_listing() {
+    default_alias_fixture(false, 1, |root, _, presented| {
+        let unsafe_window = root.join("r/w/abcd1000");
+        fs::create_dir_all(&unsafe_window).unwrap();
+        fs::set_permissions(
+            unsafe_window.parent().unwrap(),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        fs::set_permissions(&unsafe_window, fs::Permissions::from_mode(0o755)).unwrap();
+        let listed = quit_command(root)
+            .args(["window", "ls", "--json"])
+            .output()
+            .unwrap();
+        assert!(!listed.status.success(), "{listed:?}");
+        let output = quit_command(root)
+            .args(["--window", "default", "session", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        let failure: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            failure["error"]["code"], "supervisor-unavailable",
+            "{failure}"
+        );
+        assert!(
+            failure["error"]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("abcd1000"),
+            "{failure}"
+        );
+        assert!(presented.lock().unwrap().is_empty());
+        fs::set_permissions(&unsafe_window, fs::Permissions::from_mode(0o700)).unwrap();
+    });
+}
+
+#[test]
+fn default_alias_older_window_is_previous_and_stops_last_outside_eon() {
+    default_alias_fixture(false, 2, |root, ids, _| {
+        let independent = root.join("r/w/abcd1000/generations");
+        fs::create_dir_all(&independent).unwrap();
+        for directory in [
+            root.join("r/w"),
+            root.join("r/w/abcd1000"),
+            independent.clone(),
+        ] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::rename(
+            root.join("r/generations").join(&ids[1]),
+            independent.join(&ids[1]),
+        )
+        .unwrap();
+        let output = quit_command(root)
+            .args(["window", "stop", "previous", "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stopped: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(stopped[0]["window"], "abcd1000", "{stopped}");
+        assert_eq!(stopped[1]["window"], "default", "{stopped}");
+        assert_eq!(
+            stopped[1]["results"][0]["stopped"]["generation"], ids[0],
+            "{stopped}"
+        );
+    });
+}
+
+#[test]
+fn routed_default_control_refuses_an_ended_generation_without_contacting_another() {
+    default_alias_fixture(false, 1, |root, _, _| {
+        let listed = quit_command(root)
+            .args(["window", "ls", "--json"])
+            .output()
+            .unwrap();
+        let windows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(windows["windows"][0]["compatible"], true, "{windows}");
+        fs::remove_file(root.join("requests")).unwrap();
+        let ended = "g1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for args in [
+            vec!["session", "--json"],
+            vec!["--window", "default", "session", "--json"],
+            vec!["events", "--json"],
+            vec!["quit", "--json"],
+        ] {
+            let output = quit_command(root)
+                .env("EON_ROUTED", ended)
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(4), "{args:?}: {output:?}");
+            let failure: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                failure["error"]["code"], "supervisor-unavailable",
+                "{failure}"
+            );
+            let detail = failure["error"]["detail"].as_str().unwrap();
+            assert!(
+                detail.contains("EON_ROUTED") && detail.contains(ended),
+                "{detail}"
+            );
+        }
+        assert!(
+            !root.join("requests").exists(),
+            "a routed request contacted the other generation"
+        );
+    });
+}
+
+#[test]
+fn routed_default_reload_refuses_an_ended_generation_without_contacting_another() {
+    default_alias_fixture(false, 1, |root, _, _| {
+        let listed = quit_command(root)
+            .args(["window", "ls", "--json"])
+            .output()
+            .unwrap();
+        let windows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(windows["windows"][0]["compatible"], true, "{windows}");
+        fs::remove_file(root.join("requests")).unwrap();
+        let ended = "g1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let output = quit_command(root)
+            .env("EON_ROUTED", ended)
+            .args(["window", "reload", "default", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(4), "{output:?}");
+        let failure: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            failure["error"]["code"], "supervisor-unavailable",
+            "{failure}"
+        );
+        assert!(
+            failure["error"]["detail"].as_str().unwrap().contains(ended),
+            "{failure}"
+        );
+        assert!(
+            !root.join("requests").exists(),
+            "routed Reload contacted the other generation"
+        );
+    });
+}
+
+#[test]
+fn routed_default_keeps_its_live_generation_when_current_is_different() {
+    default_alias_fixture(true, 1, |root, ids, _| {
+        for args in [
+            vec!["session", "--json"],
+            vec!["window", "reload", "default", "--json"],
+        ] {
+            let output = quit_command(root)
+                .env("EON_ROUTED", &ids[0])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{args:?}: {output:?}");
+            let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(reply["generation"], ids[0], "{reply}");
+        }
+        let requests = fs::read_to_string(root.join("requests")).unwrap();
+        assert!(!requests.is_empty());
+        assert!(
+            requests.lines().all(|generation| generation == ids[0]),
+            "{requests}"
+        );
+    });
+}
+
 #[test]
 fn generations_that_predate_the_reserved_stop_say_how_to_quit_them() {
     let root = temporary_directory();
@@ -15168,12 +15591,12 @@ fn generations_that_predate_the_reserved_stop_say_how_to_quit_them() {
     );
     assert_eq!(stopped.status.code(), Some(1), "{}", stdout(&stopped));
     let stopped: serde_json::Value = serde_json::from_str(stdout(&stopped)).unwrap();
-    assert_eq!(stopped[0]["window"], &id[3..], "{stopped}");
+    assert_eq!(stopped[0]["window"], "default", "{stopped}");
     let error = &stopped[0]["results"][0]["error"];
     assert_eq!(error["code"], "stop-unavailable", "{stopped}");
     assert_eq!(
         error["detail"],
-        format!("window {}: {predates}", &id[3..]),
+        format!("window default: {predates}"),
         "{stopped}"
     );
     configure_mock_desktop(&config);
@@ -15713,7 +16136,11 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
         let failure: serde_json::Value = serde_json::from_str(stdout(output)).unwrap();
         assert_eq!(failure["error"]["code"], "supervisor-unavailable");
         let detail = failure["error"]["detail"].as_str().unwrap();
-        assert!(detail.contains("EONW"), "{detail}");
+        if marker == id.as_str() {
+            assert!(detail.contains("EONW"), "{detail}");
+        } else {
+            assert!(detail.contains("not a valid generation"), "{detail}");
+        }
         assert!(
             detail.contains(&format!("EON_ROUTED is \"{marker}\"")),
             "{detail}"
@@ -16260,7 +16687,7 @@ fn previous_and_all_stop_older_generations_when_current_is_unstarted() {
 
     let result = window("previous");
     assert_eq!(result.as_array().unwrap().len(), 1);
-    assert_eq!(result[0]["window"], &first_id[3..]);
+    assert_eq!(result[0]["window"], "default");
     assert_eq!(result[0]["results"][0]["stopped"]["generation"], first_id);
     first.join().unwrap();
 

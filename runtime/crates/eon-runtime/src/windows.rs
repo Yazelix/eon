@@ -4,8 +4,9 @@ use super::{
     generation::{
         Ask, DELEGATION_MARKER, GenerationRecord, ROUTE_MARKER, WorkspaceTarget, attach_generation,
         caller_generation, current_generation, damaged_generations, delegated_elsewhere,
-        delegated_generation, generation_directory, generation_running, private_directory_exists,
-        probe_workspace_generation, resolve_workspace, route, running_generations, stop_generation,
+        delegated_generation, generation_directory, generation_running,
+        preferred_window_generation, private_directory_exists, probe_workspace_generation,
+        resolve_workspace, route, routed_generation, running_generations, stop_generation,
         stop_generations, valid_generation, window_cells, window_generation, window_json,
     },
     platform::socket_path_fits,
@@ -35,7 +36,7 @@ use std::{
 
 pub(super) const WINDOW_RUNTIME: &str = "EON_WINDOW_RUNTIME_DIR";
 
-/// The ID of this build's window in the default namespace (EON-C23).
+/// The preferred window in the default namespace (EON-C23).
 pub(super) const DEFAULT_WINDOW: &str = "default";
 /// Why a command that needs the default window cannot reach it.
 pub(super) const DEFAULT_NOT_RUNNING: &str =
@@ -102,9 +103,9 @@ fn window_root(id: &str) -> Result<Option<PathBuf>, String> {
 
 /// A window that an EON-C23 window ID selects.
 pub(super) enum Window {
-    /// This build's window in the default namespace.
-    Default,
-    /// Another build's window in the default namespace, by its generation.
+    /// The preferred default-namespace generation, resolved once for this command.
+    Default(String),
+    /// Another window in the default namespace, by its exact generation.
     Other(String),
     Independent {
         id: String,
@@ -129,9 +130,9 @@ struct Uninspectable {
 }
 
 /// The full ID of default-namespace `generation` (EON-C23): `default` for
-/// this build's, else its 32 hex digits; a damaged entry keeps its raw name.
-pub(super) fn default_namespace_id(generation: &str, current: &str) -> String {
-    if generation == current {
+/// the preferred generation, else its 32 hex digits; damaged entries keep their names.
+pub(super) fn default_namespace_id(generation: &str, preferred: &str) -> String {
+    if generation == preferred {
         DEFAULT_WINDOW.into()
     } else if valid_generation(generation) {
         generation[3..].to_owned()
@@ -150,14 +151,26 @@ fn window_listing(
     let base = base_runtime_directory("eon");
     let current = current_generation(inputs)?;
     let mut windows = Vec::new();
+    let mut preferred = None;
     match running_generations(inputs, &base, remove_dead) {
-        Ok(records) => windows.extend(records.into_iter().map(|record| {
-            (
-                default_namespace_id(&record.id, &current),
-                base.clone(),
-                Ok(record),
+        Ok(records) => {
+            preferred = preferred_window_generation(
+                &current,
+                &records
+                    .iter()
+                    .map(|record| record.id.clone())
+                    .collect::<Vec<_>>(),
             )
-        })),
+            .filter(|id| valid_generation(id))
+            .map(str::to_owned);
+            windows.extend(records.into_iter().map(|record| {
+                (
+                    default_namespace_id(&record.id, preferred.as_deref().unwrap_or("")),
+                    base.clone(),
+                    Ok(record),
+                )
+            }));
+        }
         Err(error) => windows.push((
             DEFAULT_WINDOW.into(),
             base.clone(),
@@ -188,7 +201,7 @@ fn window_listing(
             .iter()
             .map(|(id, ..)| id.as_str())
             .collect::<Vec<_>>(),
-        current.get(3..),
+        preferred.as_deref().and_then(|id| id.get(3..)),
     )
     .into_iter();
     Ok(windows
@@ -327,7 +340,10 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<(Window, 
         return Err(damaged_window(argument, argument));
     }
     if argument == DEFAULT_WINDOW {
-        return Ok((Window::Default, DEFAULT_WINDOW.into()));
+        return Ok((
+            Window::Default(default_generation(inputs)?),
+            DEFAULT_WINDOW.into(),
+        ));
     }
     // Every other argument is matched against every running window, so one
     // that two windows answer to is refused, never picked.
@@ -356,7 +372,7 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<(Window, 
                     root: window.root.clone(),
                 }
             } else if window.id == DEFAULT_WINDOW {
-                Window::Default
+                Window::Default(window.record.id.clone())
             } else {
                 Window::Other(window.record.id.clone())
             };
@@ -389,6 +405,86 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<(Window, 
             }
         }
         Match::None => Err(unknown_window(argument)),
+    }
+}
+
+/// Routed commands keep the exact generation chosen before the hop.
+pub(super) fn select_routed_window(
+    inputs: &Inputs,
+    argument: &str,
+) -> Result<(Window, String), Failure> {
+    if argument == DEFAULT_WINDOW
+        && let Some(generation) = routed_generation(&base_runtime_directory("eon"), None)?
+    {
+        return Ok((Window::Default(generation), DEFAULT_WINDOW.into()));
+    }
+    select_window(inputs, argument)
+}
+
+/// The same current-or-sole-running choice as an independent namespace.
+fn default_generation(inputs: &Inputs) -> Result<String, Failure> {
+    let unavailable = |detail| {
+        failure(
+            "supervisor-unavailable",
+            format!("Eon window default: {detail}"),
+        )
+    };
+    let current = current_generation(inputs).map_err(unavailable)?;
+    let base = base_runtime_directory("eon");
+    // An exact live current target need not enumerate unrelated generation entries.
+    if generation_running(inputs, &base, &current).map_err(unavailable)? {
+        return Ok(current);
+    }
+    let windows: Vec<_> = running_windows(inputs)
+        .map_err(unavailable)?
+        .into_iter()
+        .filter(|window| window.root == base)
+        .collect();
+    if let Some(damaged) = windows
+        .iter()
+        .find(|window| !valid_generation(&window.record.id))
+    {
+        return Err(damaged_window(DEFAULT_WINDOW, &damaged.record.id));
+    }
+    if let Some(window) = windows.iter().find(|window| window.id == DEFAULT_WINDOW) {
+        return Ok(window.record.id.clone());
+    }
+    if windows.is_empty() {
+        return Ok(current);
+    }
+    Err(cli_failure(
+        "ambiguous-window",
+        format!(
+            "default runs generations of {} Eon builds and none is this build's: {}; select one with `--window ID` or `eon window attach ID`",
+            windows.len(),
+            windows
+                .iter()
+                .map(|window| format!("{} ({})", window.id, window.record.label()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ))
+}
+
+/// Launch advice is valid only when no other window remains live.
+pub(super) fn missing_default(inputs: &Inputs) -> Failure {
+    match running_windows(inputs) {
+        Ok(windows) => match windows.first() {
+            None => failure("missing-supervisor", DEFAULT_NOT_RUNNING),
+            Some(window) => failure(
+                "missing-supervisor",
+                format!(
+                    "the default Eon window is not running; window {} remains; other running windows: {}; select it with `--window {}` or run `eon window ls`",
+                    window.id,
+                    windows.len() - 1,
+                    window.id
+                ),
+            ),
+        },
+        Err(detail) => failure(
+            "supervisor-unavailable",
+            format!("cannot inspect running Eon windows: {detail}; run `eon window ls`"),
+        ),
     }
 }
 
@@ -470,8 +566,8 @@ fn damaged_entry(record: &GenerationRecord) -> Option<Failure> {
 /// The ID that durable text, such as a notice or a log, names window
 /// `window` (an independent window's ID) or, in the default namespace,
 /// `generation` by: the first 8 hex digits of its generation, which every
-/// build's `eon window` commands select, where `default` would name a newer
-/// build's window after an upgrade (EON-C8).
+/// build's `eon window` commands select even if another generation becomes
+/// `default` (EON-C8).
 pub(super) fn durable_window_id(window: Option<&str>, generation: &str) -> String {
     window.map_or_else(
         || generation.get(3..11).unwrap_or(generation).to_owned(),
@@ -486,12 +582,12 @@ pub(super) fn quit(inputs: &Inputs, json: bool, arguments: &[OsString]) -> Resul
         Ok(caller) => caller,
         Err(error) => return Ok(report_failure(&error, json)?),
     };
-    if let Some(caller) = caller {
+    if caller.is_some() || env::var_os(ROUTE_MARKER).is_some() {
         let target = WorkspaceTarget {
             command: arguments.to_vec(),
             ..WorkspaceTarget::default()
         };
-        let resolved = match resolve_workspace(inputs, target, Some(&caller)) {
+        let resolved = match resolve_workspace(inputs, target, caller.as_deref()) {
             Ok(resolved) => resolved,
             Err(error) => return Ok(report_failure(&error, json)?),
         };
@@ -512,14 +608,15 @@ pub(super) fn quit(inputs: &Inputs, json: bool, arguments: &[OsString]) -> Resul
                     .find(|window| window.root == root && window.record.id == resolved.generation)
             })
             .map_or(id, |window| window.short_id);
+        let this_window = caller.is_some();
         return Ok(stop_generation(
             inputs,
             &root,
             &resolved.generation,
             json,
             &Ask::Quit {
-                caller: Some(caller),
-                this_window: true,
+                caller,
+                this_window,
                 window: &window,
             },
         )?);
@@ -679,28 +776,24 @@ pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32
 pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result<i32, Error> {
     let argument = argument.map(window_id_argument).transpose()?;
     let delegated = delegated_generation(inputs)?;
-    let (window, shown) = match argument {
-        None => (Window::Default, DEFAULT_WINDOW.to_owned()),
-        Some(argument) => match select_window(inputs, argument) {
-            Ok(selected) => selected,
-            Err(failure) => return Ok(report_failure(&failure, false)?),
-        },
+    let (window, shown) = match select_window(inputs, argument.unwrap_or(DEFAULT_WINDOW)) {
+        Ok(selected) => selected,
+        Err(failure) => return Ok(report_failure(&failure, false)?),
     };
     let base = base_runtime_directory("eon");
     match (window, delegated) {
-        (Window::Default, Some(generation)) => {
+        (Window::Default(selected), Some(generation)) if selected == generation => {
             attach_generation(inputs, &base, Some(&generation), Some(&shown))
         }
         (Window::Independent { root, .. }, Some(generation)) if runs(&root, &generation) => {
             attach_generation(inputs, &root, Some(&generation), Some(&shown))
         }
         (_, Some(_)) => Err(delegated_elsewhere(&shown)),
-        (Window::Default, None) => {
-            let current = current_generation(inputs)?;
-            if !generation_running(inputs, &base, &current)? {
-                return Err(Error::unreachable(DEFAULT_NOT_RUNNING));
+        (Window::Default(generation), None) => {
+            if !generation_running(inputs, &base, &generation)? {
+                return Ok(report_failure(&missing_default(inputs), false)?);
             }
-            attach_generation(inputs, &base, Some(&current), Some(&shown))
+            attach_generation(inputs, &base, Some(&generation), Some(&shown))
         }
         (Window::Other(generation), None) => {
             attach_generation(inputs, &base, Some(&generation), Some(&shown))
@@ -722,34 +815,41 @@ pub(super) fn reload_window(
     use super::control::{CONTROL_TIMEOUT, ControlResponse, EndpointFailureKind, send_action};
     use eon_workspace_protocol::v44::{Action, LifecycleResponse, WorkspaceAction};
     let argument = window_id_argument(argument)?;
-    let (window, shown) = match select_window(inputs, argument) {
+    let (window, shown) = match select_routed_window(inputs, argument) {
         Ok(selected) => selected,
         Err(error) => return Ok(report_failure(&error, json)?),
     };
     let base = base_runtime_directory("eon");
     let (root, generation, full_id) = match window {
-        Window::Default => (base, current_generation(inputs)?, DEFAULT_WINDOW.to_owned()),
+        Window::Default(generation) => (base, generation, DEFAULT_WINDOW.to_owned()),
         Window::Other(generation) => {
             let full_id = generation[3..].to_owned();
             (base, generation, full_id)
         }
         Window::Independent { root, id } => {
-            let generation = match window_generation(inputs, &id, &root) {
-                Ok(generation) => generation,
-                Err(error) => {
-                    let code = if running_generations(inputs, &root, false)
-                        .is_ok_and(|records| records.is_empty())
-                    {
-                        "stale-target"
-                    } else {
-                        "supervisor-unavailable"
-                    };
-                    return Ok(report_failure(&failure(code, error.message), json)?);
-                }
+            let generation = match routed_generation(&root, None) {
+                Ok(Some(generation)) => generation,
+                Ok(None) => match window_generation(inputs, &id, &root) {
+                    Ok(generation) => generation,
+                    Err(error) => {
+                        let code = if running_generations(inputs, &root, false)
+                            .is_ok_and(|records| records.is_empty())
+                        {
+                            "stale-target"
+                        } else {
+                            "supervisor-unavailable"
+                        };
+                        return Ok(report_failure(&failure(code, error.message), json)?);
+                    }
+                },
+                Err(error) => return Ok(report_failure(&error, json)?),
             };
             (root, generation, id)
         }
     };
+    if let Err(error) = routed_generation(&root, Some(&generation)) {
+        return Ok(report_failure(&error, json)?);
+    }
     if let Err(error) =
         probe_workspace_generation(&root, &generation, Instant::now() + CONTROL_TIMEOUT)
     {
@@ -846,17 +946,24 @@ pub(super) fn stop_window(inputs: &Inputs, argument: &OsStr, json: bool) -> Resu
     let argument = window_id_argument(argument)?;
     let (window, shown) = match select_window(inputs, argument) {
         Ok(selected) => selected,
+        Err(error) if argument == DEFAULT_WINDOW && error.code == "supervisor-unavailable" => {
+            let error = failure("stop-failed", error.detail);
+            if json {
+                write_stdout(format!(
+                    "[{{\"window\":\"default\",\"results\":[{}]}}]\n",
+                    failure_json(&error).trim_end()
+                ))?;
+                return Ok(1);
+            }
+            return Ok(report_failure(&error, false)?);
+        }
         Err(failure) => return Ok(report_failure(&failure, json)?),
     };
     let base = base_runtime_directory("eon");
     // `default` and another build's window each name one generation, which
     // is stopped without listing its namespace.
     let (id, root, exact) = match window {
-        Window::Default => (
-            DEFAULT_WINDOW.to_owned(),
-            base,
-            Some(current_generation(inputs)?),
-        ),
+        Window::Default(generation) => (DEFAULT_WINDOW.to_owned(), base, Some(generation)),
         Window::Other(generation) => (generation[3..].to_owned(), base, Some(generation)),
         Window::Independent { id, root } => (id, root, None),
     };
@@ -923,7 +1030,7 @@ pub(super) enum Bulk {
 /// validates the calling terminal, whichever build started it. Outside Eon it
 /// is `default`. A caller whose window cannot be identified is refused: a
 /// guess could stop it before the windows after it.
-fn own_window(inputs: &Inputs) -> Result<(PathBuf, String), Failure> {
+fn own_window(inputs: &Inputs) -> Result<(PathBuf, Option<String>), Failure> {
     let refused = |detail: String| {
         cli_failure(
             "unknown-caller",
@@ -933,15 +1040,12 @@ fn own_window(inputs: &Inputs) -> Result<(PathBuf, String), Failure> {
         )
     };
     match calling_terminal() {
-        Ok(None) => Ok((
-            base_runtime_directory("eon"),
-            current_generation(inputs).map_err(refused)?,
-        )),
+        Ok(None) => Ok((base_runtime_directory("eon"), None)),
         Ok(Some(caller)) => {
             let root = runtime_directory("eon");
             let current = current_generation(inputs).map_err(refused)?;
             let generation = caller_generation(&root, &current, &caller).map_err(refused)?;
-            Ok((root, generation))
+            Ok((root, Some(generation)))
         }
         Err(error) => Err(error),
     }
@@ -1036,10 +1140,13 @@ pub(super) fn stop_windows(inputs: &Inputs, bulk: Bulk, json: bool) -> Result<i3
     // The caller's own window last.
     windows.sort_by_key(|window| {
         window.root == own_root
-            && window
-                .records
-                .as_ref()
-                .is_ok_and(|records| records.iter().any(|record| record.id == own_generation))
+            && window.records.as_ref().is_ok_and(|records| {
+                own_generation
+                    .as_ref()
+                    .map_or(window.id == DEFAULT_WINDOW, |own_generation| {
+                        records.iter().any(|record| record.id == *own_generation)
+                    })
+            })
     });
     if json {
         write_stdout("[")?;

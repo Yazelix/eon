@@ -7,6 +7,10 @@ installation, and proven contract changes.
 
 - Agents sidebar and attention inbox status glyphs and app marks are larger
   and vertically centred across the full row (`eon-sidebar-app-icons-y99b7.9`).
+- `default` keeps addressing the sole running default-namespace window after
+  a profile refresh. Window listing, session control, attach, reload and Stop
+  prefer this build's running window, otherwise the only running generation;
+  several older generations require an explicit hex ID (`eon-pj2ed`).
 
 - Codex rows in the Agents sidebar and attention inbox show the colour Codex
   symbol with a transparent terminal prompt and no app tile. Quota chips keep

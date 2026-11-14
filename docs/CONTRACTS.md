@@ -557,6 +557,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C8 — Durable tab and pane workspace
 
+- **Amendment (2026-11-14):** `eon-pj2ed`, approved by eon-overseer under
+  Lucca's delegation: the durable notice keeps its exact generation-hex target
+  when the preferred `default` generation changes (EON-C23).
+
 - **Amendment 2026-11-12:** `eon-agent-parity-a9g0.1.4`, approved by
   eon-overseer under Lucca's standing rule: tab and pane identities cannot
   retarget after supervisor recovery; EON-C15 owns their allocation ranges.
@@ -767,8 +771,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     to stop it.", ID being the window's full ID in an independent window and,
     in the default namespace, the first 8 hex digits of its generation, which
     `eon window` commands of its own build and of any newer one select
-    (EON-C23), where `default` would name a newer build's window after an
-    upgrade. A failed Stop's notification names the same command.
+    (EON-C23), since `default` can select another generation when that build's
+    window is also running. A failed Stop's notification names the same
+    command.
     A notification that offers actions carries the `resident` hint.
     Quit shows a confirmation titled "Quit NAME?" that says how many
     terminals stop and offers Quit and Keep running. The confirmation
@@ -1411,6 +1416,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment (2026-11-14):** `eon-pj2ed`, approved by eon-overseer under
+  Lucca's delegation: caller-free default-namespace control and explicit
+  `default` use EON-C23's current-or-sole-running selection. Proof pending in
+  `eon-pj2ed`; existing evidence below retains its original scope.
+
 - **Neovim amendment (`eon-xodrj.6.2`):** EON-C10 amendments A-C were
   approved by eon-overseer under Lucca's delegation on 2026-11-12, recorded
   on eon-xodrj.6.1. S1 owns listener launch/metadata; S2 owns file routing,
@@ -1648,23 +1658,25 @@ names its socket. CLI JSON names a session `session` and a terminal
     resolve in any tab of that session by the close rules below. Other
     session-scoped commands use the caller's session and retain their
     existing per-tab rules. Without a calling terminal or explicit target,
-    session control uses the
-    invoked build's current generation in the default namespace. When
-    `EON_WINDOW_RUNTIME_DIR` selects an independent window, it uses that
-    namespace's current live generation, otherwise its sole live generation,
-    and refuses an ambiguous selection. It uses the selected window's shown
-    session. An EONW mismatch follows EON-C11's Routing without changing caller
+    session control uses the inherited runtime namespace's current live
+    generation, otherwise its sole live generation, and refuses an ambiguous
+    selection. In the default namespace this is EON-C23's `default` selection;
+    `EON_WINDOW_RUNTIME_DIR` continues to select an independent window's
+    namespace. It uses the selected window's shown session. An EONW mismatch
+    follows EON-C11's Routing without changing caller
     validation or the command's target and authorization rules. Launch,
     lifecycle and local information commands retain their existing targeting.
     Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
   - Session commands accept `--window ID` before any `--` operand separator,
-    ID being an EON-C23 window ID or prefix. `--window default`, or the ID of
-    another build's default-namespace window, selects that window's exact
-    generation in the default namespace. An independent window's ID selects its
-    runtime namespace, where selection follows `window attach`'s
-    current-or-sole-live-generation rule. Without `--window`, the existing
+    ID being an EON-C23 window ID or prefix. `--window default` selects the
+    default namespace's generation under EON-C23. A default-namespace
+    generation's hex ID or unique prefix selects that exact generation. An
+    independent window's ID selects its runtime namespace, where selection
+    follows `window attach`'s current-or-sole-live-generation rule. After
+    selection the command acts on that exact generation and never substitutes
+    another after failure. Without `--window`, the existing
     runtime namespace applies. If `EON_TERMINAL` is set, the selected supervisor
     must validate that caller; explicit targeting does not waive caller
     validation. Session CLI results name the described `generation` and
@@ -2582,6 +2594,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C11 — Runtime generations and presentation
 
+- **Amendment (2026-11-14):** `eon-pj2ed`, approved by eon-overseer under
+  Lucca's delegation: default namespace selection follows EON-C23; bare launch
+  retains exact-current behavior. Proof pending in `eon-pj2ed`.
+
 - **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer, in
   `eon-g3vdz` / `eon-l4e7s`: separate terminal start and cleanup budgets,
   retain failed-start cleanup owners, and extend client waits through initial
@@ -2640,8 +2656,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   present a compatible existing surface, stop one window, stop a selected set of
   windows, or quit one window or every window.
 - **Result:**
-  - Eon and eonbase use separate runtime namespaces. Launch and lifecycle defaults use their exact
-    current generation; Eon session control follows EON-C10's caller and explicit-target rules.
+  - Eon and eonbase use separate runtime namespaces. Bare launch and eonbase
+    lifecycle defaults use their exact current generation. Full-Eon window
+    commands selecting `default`, including `eon window attach` without an ID,
+    use EON-C23's namespace selection. Eon session control follows EON-C10's
+    caller and explicit-target rules.
   - Generation identity is Runtime's `g1-` hash of Eon's source-tree digest,
     which covers runtime/EONW source and build inputs and Eon
     assembly/default/validator/graph/Cargo/Nix-generated inputs; each
@@ -2811,11 +2830,13 @@ names its socket. CLI JSON names a session `session` and a terminal
     (a pane's label, a popup's entry label), and how many more are busy; a
     lifecycle inspection whose request names a live terminal of the window
     leaves that terminal out. eonbase carries none.
-  - Implicit attach selects only a live supervisor reporting the exact current
-    identity; otherwise Eon starts current without stopping older work. Explicit
-    attach never substitutes another generation, and discovery distinguishes
-    current, previous, dead, incompatible, and corrupt candidates. A live full-Eon
-    candidate also reports its window name and the Unix millisecond time its
+  - Bare launch's implicit attach selects only a live supervisor reporting the
+    exact current identity; otherwise Eon starts current without stopping older
+    work. `eon window attach` resolves its namespace or ID under EON-C23, then
+    presents only that selected generation; failure never substitutes another.
+    Discovery distinguishes current, previous, dead, incompatible, and corrupt
+    candidates. A live full-Eon candidate also reports its window name and the
+    Unix millisecond time its
     supervisor started (EON-C23); `eon window ls --json` prints them as `name`
     and `started_at`, and its busy terminals as `busy`, null for any other
     window.
@@ -3888,6 +3909,11 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C23 — Independent Eon windows
 
+- **Amendment (2026-11-14):** `eon-pj2ed`, approved by eon-overseer under
+  Lucca's delegation: `default` selects this build's running generation,
+  otherwise the sole running generation in the default namespace; listing
+  agrees and multiple older candidates refuse. Proof pending in `eon-pj2ed`.
+
 - **Status:** Partially proved; the pre-Bend baseline is candidate evidence.
   Amended on 2026-11-06 (approved by Lucca, relayed by
   eon-overseer) by `eon-7cf0y.22` (S1): window IDs, prefixes and `eon window
@@ -3920,10 +3946,17 @@ names its socket. CLI JSON names a session `session` and a terminal
   record exists, it exits 1 and names the window, the versions it
   reports, and that the build that started it can attach it; any Eon build
   of EONW 37 or later stops a window of EONW 37 or later.
-  **Window IDs.** Every running full-Eon window has one ID. An independent
-  window's ID is its eight-hex-digit ID. In the default namespace, the window
-  of the running `eon`'s own build is `default`. A window that another build
-  started there has as its ID the 32 hex digits of its generation. Wherever
+  **Window IDs.** Every running full-Eon window has one ID as seen by the
+  invoked CLI. An independent window's ID is its eight-hex-digit ID. In the
+  default namespace,
+  `default` selects this build's running generation, otherwise the namespace's
+  only running generation. The selected window is listed as `default`, even
+  when another build started it. Other windows there have the 32 hex digits
+  of their generations as their IDs. If several generations run there and
+  none is this build's, selecting `default` fails with `ambiguous-window`
+  (exit 1), names each candidate's listed ID, and sends no action; no row is
+  `default`. Compatibility does not change this preference; EON-C11's
+  admission, Routing and Delegation apply to the selected generation. Wherever
   `eon` takes a window ID (`eon window attach`, `eon window stop` and
   `--window`), the exact ID or any prefix of at least 4 characters selects a
   window. It must begin the ID of exactly one running window: an independent
@@ -3935,15 +3968,19 @@ names its socket. CLI JSON names a session `session` and a terminal
   hex nor a prefix of `default`, is invalid syntax (exit 2).
   `default` also answers to the hex digits of its generation, exactly or by
   a prefix of at least 4: the form that the detach notice (EON-C8) and the
-  log line after Eon Desktop exits print, since after an upgrade `default`
-  names the newer build's window. An argument that begins both those digits
-  and another window's ID fails with `ambiguous-window-id`. Short IDs never
+  log line after Eon Desktop exits print, so that exact window remains
+  addressable when another running generation becomes `default`. An argument
+  that begins both those digits and another window's ID fails with
+  `ambiguous-window-id`. Short IDs never
   begin them, and `eon window ls` still shows `default`.
   Matching only selects among existing windows, and the command then acts on
-  the full ID. `default`, and an independent window's exact ID that no
-  running window answers to, select that window even when it is not running:
-  attaching it then exits 4, and stopping it stops nothing. Questions and
-  results name the selected window as `eon window ls` shows it, even when the
+  the full ID and selected generation. With no running generation in the
+  default namespace, `default` selects its absent current generation:
+  attaching it then exits 4, and stopping it stops nothing. An independent
+  window's exact ID that no running window answers to also selects that
+  window when it is not running, with the same attach and Stop behavior.
+  Questions and results name the selected window as `eon window ls` shows it,
+  even when the
   whole ID was typed.
   `eon window ls [--json]` lists every running window, a window with no live
   supervisor left out. It lists the default namespace first, this build's
@@ -4012,6 +4049,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   private log for inspection instead of killing possible live terminals. A
   window whose Stop yields no result array is reported with a `stop-failed`
   failure in its `results`; the remaining windows are still stopped.
+  Failed default selection and workspace-endpoint diagnostics do not advise
+  launching `eon` while a compatible window remains live. Ambiguous default
+  selection names its candidates and how to target one explicitly. Failed
+  discovery reports its limitation rather than claiming no windows run.
+  Launch advice is retained when discovery finds no running windows. No
+  selection failure starts a window or substitutes another after an operation
+  fails.
 - **Owner:** Eon Runtime owns window identity, namespace and launch/lifecycle
   enforcement; Eon supplies product composition. Venus invokes the exact Eon
   executable supplied by its supervisor and presents one window per process;
