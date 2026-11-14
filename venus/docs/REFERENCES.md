@@ -9,6 +9,35 @@ source reuse. Before code, the implementing Bead records exact releases or
 commits, useful mechanisms, rejected surrounding scope, license compatibility,
 and consequences for ownership, code shape, and the first check.
 
+## Generated chrome palettes
+
+`eon-eon-themes-or3q.2` inspects Ramps at
+[`d563a982e304f0a4c48a3d83867e321bd317f1ab`](https://github.com/imryanreid/ramp-generator/tree/d563a982e304f0a4c48a3d83867e321bd317f1ab),
+`src/lib/color.ts` and `src/lib/semantics.ts:309–483`. Adopt perceptual OKLCH
+families, semantic light/dark placement, sRGB gamut reduction and contrast-aware
+resolution. Reject its generic fixed ramp placements for Eon's calibrated dark
+look and its best-available under-target fallback. The MIT implementation is
+read-only reference; no source, web application, Culori dependency, file format
+or export stack is incorporated.
+
+Venus owns the scalar math and immutable generated colors; Runtime owns future
+mode selection, and Orbit owns terminal colors. Exact authored OKLCH stops
+round-trip existing dark RGB8 values before required contrast corrections; shared
+families provide light placements. The neutral outline's below-target chip-fill
+pair is corrected during generation; other dark tokens retain their values.
+Raw alias groups solve all declared background constraints together. Existing
+badge adapters are measured after adaptation rather than globally changing their
+source colors. Pace interpolation is certified across its RGB8 rounding
+transitions during construction; nothing repairs pace colors at draw time.
+
+[CSS Color 4, 2026-11-12](https://www.w3.org/TR/2026/CRD-css-color-4-20261112/#ok-lab)
+supplies the OKLab/OKLCH and sRGB conversion reference;
+[WCAG 2.2, 2024-12-12](https://www.w3.org/TR/2024/REC-WCAG22-20241212/#dfn-relative-luminance)
+supplies relative luminance. Standard-library f64 math and the existing RGB Color
+type suffice; there is no second renderer, new crate or configuration parser.
+Palette/negative tests prove construction; isolated native dark comparison proves
+delivery separately. Installed light selection remains unproved here.
+
 ## Rounded adaptive workspace tabs
 
 `ven-rounded-adaptive-tabs-vdf` inspects Qt qtbase 6.8.3

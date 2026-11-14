@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Neutral chrome outlines meet 3:1 contrast against bar-widget fills. Dark chrome
+  retains its colors apart from that outline correction; built-in dark and light
+  chrome colors come from contrast-enforced OKLCH ramps (`eon-eon-themes-or3q.2`).
+
 - Eon Bar quota and system widgets use a small right-aligned level dot with a
   neutral capsule outline; only Critical turns the outline red. Normal readings
   keep a neutral dot, and unjudged quota has no dot. Chip text stays neutral

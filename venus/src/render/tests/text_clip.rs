@@ -17,7 +17,7 @@ fn bounded_preview_rows_cover_multi_row_fractional_offsets() {
         title: String::new(),
         working_directory: String::new(),
         graphics: SceneGraphics::default(),
-        background: palette::TERMINAL_FALLBACK,
+        background: palette::DARK.terminal_fallback,
         foreground: SceneColor::default(),
         cursor: None,
         content: Vec::new(),

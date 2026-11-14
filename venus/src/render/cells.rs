@@ -1,6 +1,7 @@
 //! Terminal cell drawing: cell fonts and text runs, and the cell, preview and cursor
 //! rectangles drawn from a scene.
 
+use super::palette::{blend_to_contrast, linear_channel};
 use super::{
     CellMetrics, RectangleBatch, SceneColor, images::BandItem, preview_row_top, preview_rows,
     row_intersects_clip, shaping, valid_rect, vertex_count,
@@ -618,15 +619,6 @@ pub(super) fn push_cursor(
     }
 }
 
-fn linear_channel(channel: u8) -> f64 {
-    let channel = f64::from(channel) / 255.0;
-    if channel <= 0.04045 {
-        channel / 12.92
-    } else {
-        ((channel + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 /// Match the premultiplied attachment before the compositor adds the encoded desktop.
 pub(super) fn card_surfaces(card: SceneColor, opacity: f32, srgb_target: bool) -> [SceneColor; 2] {
     let opacity = f64::from(opacity);
@@ -654,132 +646,14 @@ pub(super) fn card_surfaces(card: SceneColor, opacity: f32, srgb_target: bool) -
     })
 }
 
-fn relative_luminance(color: SceneColor) -> f64 {
-    0.2126 * linear_channel(color.r)
-        + 0.7152 * linear_channel(color.g)
-        + 0.0722 * linear_channel(color.b)
-}
-
-pub(super) fn contrast_ratio(left: SceneColor, right: SceneColor) -> f64 {
-    let left = relative_luminance(left);
-    let right = relative_luminance(right);
-    (left.max(right) + 0.05) / (left.min(right) + 0.05)
-}
-
 pub(super) fn cursor_outline(fill: SceneColor) -> SceneColor {
     blend_to_contrast(fill, fill, 3.0)
-}
-
-/// `color` blended toward black or white, whichever contrasts more with `against`, by the least
-/// that reaches `ratio` against it; black or white itself when no blend does.
-pub(super) fn blend_to_contrast(color: SceneColor, against: SceneColor, ratio: f64) -> SceneColor {
-    let black = SceneColor { r: 0, g: 0, b: 0 };
-    let white = SceneColor {
-        r: 255,
-        g: 255,
-        b: 255,
-    };
-    let target = if contrast_ratio(against, black) >= contrast_ratio(against, white) {
-        black
-    } else {
-        white
-    };
-    (0..=255)
-        .map(|amount| {
-            let blend = |source: u8, target: u8| {
-                ((u16::from(source) * (255 - amount) + u16::from(target) * amount + 127) / 255)
-                    as u8
-            };
-            SceneColor {
-                r: blend(color.r, target.r),
-                g: blend(color.g, target.g),
-                b: blend(color.b, target.b),
-            }
-        })
-        .find(|blended| contrast_ratio(against, *blended) >= ratio)
-        .unwrap_or(target)
-}
-
-/// Prefer the nearest tint/shade that contrasts with both surfaces. A middle tone can work
-/// even when neither black nor white does; return None only when no integer RGB colour works.
-pub(super) fn blend_to_contrast_pair(
-    color: SceneColor,
-    surfaces: [SceneColor; 2],
-    ratio: f64,
-) -> Option<SceneColor> {
-    let valid = |color| {
-        surfaces
-            .into_iter()
-            .all(|surface| contrast_ratio(color, surface) >= ratio)
-    };
-    if valid(color) {
-        return Some(color);
-    }
-    let [a, b] = surfaces.map(relative_luminance);
-    let (low, high) = (a.min(b), a.max(b));
-    let intervals = [
-        (0.0, (low + 0.05) / ratio - 0.05),
-        (ratio * (low + 0.05) - 0.05, (high + 0.05) / ratio - 0.05),
-        (ratio * (high + 0.05) - 0.05, 1.0),
-    ]
-    .into_iter()
-    .filter(|(low, high)| low <= high)
-    .collect::<Vec<_>>();
-    if intervals.is_empty() {
-        return None;
-    }
-    for amount in 1..=255u16 {
-        for target in [0, 255] {
-            let blend =
-                |source| ((u16::from(source) * (255 - amount) + target * amount + 127) / 255) as u8;
-            let candidate = SceneColor {
-                r: blend(color.r),
-                g: blend(color.g),
-                b: blend(color.b),
-            };
-            if valid(candidate) {
-                return Some(candidate);
-            }
-        }
-    }
-    for channel in 0..=255 {
-        let grey = SceneColor {
-            r: channel,
-            g: channel,
-            b: channel,
-        };
-        if valid(grey) {
-            return Some(grey);
-        }
-    }
-    // Very narrow feasible intervals may contain a coloured RGB value but no grey or tint.
-    let levels: [f64; 256] = std::array::from_fn(|channel| linear_channel(channel as u8));
-    for (low, high) in intervals {
-        for (r, red) in levels.iter().enumerate() {
-            for (g, green) in levels.iter().enumerate() {
-                let partial = 0.2126 * red + 0.7152 * green;
-                let first = levels.partition_point(|blue| partial + 0.0722 * blue < low);
-                for (b, blue) in levels.iter().enumerate().skip(first).take(2) {
-                    if partial + 0.0722 * blue <= high {
-                        let candidate = SceneColor {
-                            r: r as u8,
-                            g: g as u8,
-                            b: b as u8,
-                        };
-                        if valid(candidate) {
-                            return Some(candidate);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]
 pub(super) mod tests {
     use super::super::cursor_trail::inset_cursor_quad;
+    use super::super::palette::{blend_to_contrast_pair, contrast_ratio, relative_luminance};
     use super::super::*;
     use super::*;
     use crate::{DrawCell, SceneGraphics};
@@ -945,7 +819,7 @@ pub(super) mod tests {
     pub(in crate::render) fn plain_style() -> DrawStyle {
         DrawStyle {
             foreground: SceneColor::default(),
-            background: palette::TERMINAL_FALLBACK,
+            background: palette::DARK.terminal_fallback,
             underline_color: SceneColor::default(),
             bold: false,
             italic: false,
@@ -1013,7 +887,7 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            background: palette::TERMINAL_FALLBACK,
+            background: palette::DARK.terminal_fallback,
             foreground: SceneColor::default(),
             cursor: None,
             content: vec![DrawRow {
@@ -1070,7 +944,7 @@ pub(super) mod tests {
                 title: String::new(),
                 working_directory: String::new(),
                 graphics: SceneGraphics::default(),
-                background: palette::TERMINAL_FALLBACK,
+                background: palette::DARK.terminal_fallback,
                 foreground: SceneColor::default(),
                 cursor: None,
                 content: colors
@@ -1162,7 +1036,7 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            background: palette::TERMINAL_FALLBACK,
+            background: palette::DARK.terminal_fallback,
             foreground,
             cursor: None,
             content: vec![row.clone()],
@@ -1269,7 +1143,7 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            background: palette::TERMINAL_FALLBACK,
+            background: palette::DARK.terminal_fallback,
             foreground: SceneColor::default(),
             cursor: None,
             content: vec![DrawRow {
@@ -1491,7 +1365,7 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            background: palette::TERMINAL_FALLBACK,
+            background: palette::DARK.terminal_fallback,
             foreground: SceneColor::default(),
             cursor: None,
             content: vec![DrawRow {
@@ -1526,7 +1400,7 @@ pub(super) mod tests {
             metrics.padding,
             metrics.width * 3.0,
             metrics.height,
-            palette::TERMINAL_FALLBACK,
+            palette::DARK.terminal_fallback,
             1.0,
         );
 

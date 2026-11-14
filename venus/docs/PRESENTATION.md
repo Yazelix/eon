@@ -6,6 +6,35 @@ Venus presents one native Wayland window on Linux. It can show one local Orbit
 terminal or an Eon window. In workspace mode Eon supplies the tabs, pane
 order, selection, and popups; Venus draws the visible scene.
 
+### Chrome palette
+
+Venus generates its built-in dark and light chrome palettes from calibrated OKLCH
+stops. The dark palette preserves the previous RGB values except for the minimum
+neutral-outline correction needed for 3:1 contrast on bar-widget fills. Shared neutral hue and
+chroma, the mint accent, and semantic color families supply both appearances;
+light uses its own lightness placements along those families. Colors are gamut
+mapped into sRGB before contrast is resolved on the actual RGB8 values.
+
+The generator enforces the pair table in `src/render/palette.rs`: text is at least
+4.5:1, non-text marks and outlines at least 3:1. Quota/load colors retain their
+stricter 4.5:1 floor on the chip fill, including every reachable interpolated
+color. Alias roles share the union of their constraints. Unsatisfiable recipes
+fail rather than return a palette below target.
+
+`Palette::builtin` exposes shared named colors for each appearance;
+`Palette::contrasts` reports the declared pairs, targets and computed ratios.
+The public `contrast_ratio(Color, Color)` measures arbitrary drawn colors.
+Attention pair measurements include the existing adaptation to opaque backing
+colors. Arbitrary terminal fills, configured focus colors and translucent cards
+retain their existing draw-time adaptation and contour rules. Badge contrast is
+resolved before stale dimming and animation opacity; the palette table does not
+certify every faded or antialiased pixel, image color or wallpaper.
+
+The renderer currently uses dark. Configuration, selection/live switching,
+per-mode default focus color, terminal defaults and installed light-surface proof
+remain the theme follow-up beads' scope; a generated light palette does not prove
+those integrations.
+
 ### Eon Bar
 
 - Tabs show their one-based position and the directory leaf or `/` from Eon's tab

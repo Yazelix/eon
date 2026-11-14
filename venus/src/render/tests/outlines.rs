@@ -126,6 +126,12 @@ fn panel_heading_samples(
 #[test]
 fn panel_heading_notch_draw_inputs_are_stable() {
     let mut fonts = panel_heading_fonts();
+    // Keep the contour golden independent of palette generation.
+    let outline = SceneColor {
+        r: 86,
+        g: 106,
+        b: 126,
+    };
     // Recorded from the unchanged 4763d29 contour with the exact packaged font.
     for (scale, expected) in [
         (1.0_f32, 0xccc7c855e33caf7c_u64),
@@ -153,12 +159,12 @@ fn panel_heading_notch_draw_inputs_are_stable() {
                             height: 3200.0,
                             ..SceneRect::default()
                         },
-                        &[(Some(card), palette::TERMINAL_FALLBACK)],
+                        &[(Some(card), palette::DARK.terminal_fallback)],
                         0.8,
                         std::slice::from_ref(&tab),
                     );
                     if let Some(tab) = tab {
-                        batch.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                        batch.push_title_tab_outline(card, &tab, stroke, outline);
                         for byte in tab.title.label.bytes().chain(tab.title.width.to_le_bytes()) {
                             digest = (digest ^ u64::from(byte)).wrapping_mul(0x100000001b3);
                         }
@@ -256,7 +262,12 @@ fn panel_heading_connected_uses_full_radius_and_clears_title_ink_and_buttons() {
                     );
                     if cut + stroke * 2.0 < card.bounds.bottom() - card.radius {
                         let mut batch = RectangleBatch::new(6400, 3200);
-                        batch.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                        batch.push_title_tab_outline(
+                            card,
+                            &tab,
+                            stroke,
+                            palette::DARK.card_outline,
+                        );
                         let lower = PaneOutline {
                             bounds: card.bounds,
                             clip: SceneRect {
@@ -274,21 +285,24 @@ fn panel_heading_connected_uses_full_radius_and_clears_title_ink_and_buttons() {
                             &[(lower, [SceneRect::default(); 2])],
                             &[],
                             None,
-                            Some(palette::ACCENT),
+                            Some(palette::DARK.accent),
                             stroke,
                             stroke * 2.0,
                         );
                         let x = card.bounds.left + 0.5;
                         assert_eq!(
                             padding_pixel(&batch, x, cut - 0.5),
-                            Some(palette::CARD_OUTLINE)
+                            Some(palette::DARK.card_outline)
                         );
-                        assert_eq!(padding_pixel(&batch, x, cut + 0.5), Some(palette::ACCENT));
+                        assert_eq!(
+                            padding_pixel(&batch, x, cut + 0.5),
+                            Some(palette::DARK.accent)
+                        );
                         let wider = card.bounds.left + stroke + 0.5;
                         assert_eq!(padding_pixel(&batch, wider, cut - 0.5), None);
                         assert_eq!(
                             padding_pixel(&batch, wider, cut + 0.5),
-                            Some(palette::ACCENT)
+                            Some(palette::DARK.accent)
                         );
                     }
                     checked += 1;
@@ -325,7 +339,7 @@ fn popup_tab_joins_the_left_border_and_returns_into_the_top_edge() {
     };
     for width in [1.0, 2.0, 3.0] {
         let mut batch = RectangleBatch::new(400, 300);
-        batch.push_title_tab_outline(card, &tab, width, palette::CARD_OUTLINE);
+        batch.push_title_tab_outline(card, &tab, width, palette::DARK.card_outline);
         let ink = painted_rects(&batch).collect::<Vec<_>>();
         for y in [39.5, 40.5, 41.5, 47.5] {
             assert!(ink.iter().any(|r| r.contains(10.5, y)), "left seam at {y}");
@@ -404,7 +418,7 @@ fn title_return_arcs_keep_normal_stroke_width_at_their_tangent_join() {
         assert!(checked >= 10);
     }
     let mut batch = RectangleBatch::new(400, 300);
-    batch.push_title_tab_outline(card, &tab, 3.0, palette::CARD_OUTLINE);
+    batch.push_title_tab_outline(card, &tab, 3.0, palette::DARK.card_outline);
     let ink = painted_rects(&batch).collect::<Vec<_>>();
     assert!(
         ink.iter().any(|rect| rect.contains(10.5, 40.5)),
@@ -753,7 +767,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                                 width: width as f32,
                                 height: 1800.0 - workspace.header.bottom(),
                             },
-                            &[(Some(card), palette::TERMINAL_FALLBACK)],
+                            &[(Some(card), palette::DARK.terminal_fallback)],
                             0.8,
                             &[Some(tab.clone())],
                         );
@@ -812,7 +826,12 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                         }
                         let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
                         let mut outline = RectangleBatch::new(width, 1800);
-                        outline.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                        outline.push_title_tab_outline(
+                            card,
+                            &tab,
+                            stroke,
+                            palette::DARK.card_outline,
+                        );
                         outline.clip = Some(SceneRect {
                             top: cut,
                             height: workspace.chrome.bottom() - cut,
@@ -823,7 +842,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                             card.radius,
                             &[],
                             stroke,
-                            palette::CARD_OUTLINE,
+                            palette::DARK.card_outline,
                         );
                         let ink = painted_rects(&outline).collect::<Vec<_>>();
                         for x in [card.bounds.left + 0.5, card.bounds.right() - 0.5] {
@@ -904,7 +923,7 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
                 width: 2400.0,
                 height: 1800.0 - bar_bottom,
             },
-            &[(Some(card), palette::TERMINAL_FALLBACK)],
+            &[(Some(card), palette::DARK.terminal_fallback)],
             0.8,
             &[Some(tab.clone())],
         );
@@ -984,7 +1003,7 @@ fn popup_title_ink_can_overhang_its_advance_without_touching_the_stroke() {
             });
             let card = workspace.card_fill(workspace.chrome, metrics, stroke);
             let mut outline = RectangleBatch::new(2400, 1800);
-            outline.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+            outline.push_title_tab_outline(card, &tab, stroke, palette::DARK.card_outline);
             let stroke_pixels = painted_rects(&outline).collect::<Vec<_>>();
             let mut overhang = 0;
             for run in buffer.layout_runs() {
@@ -1077,7 +1096,7 @@ fn popup_fallback_keeps_rtl_ink_inside_its_measured_border_gap() {
             card.radius,
             &[gap],
             stroke,
-            palette::CARD_OUTLINE,
+            palette::DARK.card_outline,
         );
         let stroke_pixels = painted_rects(&outline).collect::<Vec<_>>();
         let mut pixels = 0;
@@ -1192,7 +1211,7 @@ fn tail_cursor_outlines_one_color_and_resets_when_hidden_or_blinking_off() {
         title: String::new(),
         working_directory: String::new(),
         graphics: SceneGraphics::default(),
-        background: palette::TERMINAL_FALLBACK,
+        background: palette::DARK.terminal_fallback,
         foreground: SceneColor::default(),
         cursor: Some(DrawCursor {
             visible: true,
@@ -1517,11 +1536,7 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
         g: 7,
         b: 251,
     };
-    let neutral = SceneColor {
-        r: 86,
-        g: 106,
-        b: 126,
-    };
+    let neutral = palette::DARK.card_outline;
     for ((border, focus_border), scale, [border_width, focus_width]) in [
         ((1, 1), 1.0, [1.0_f32, 1.0]),
         ((1, 1), 1.3, [1.0_f32, 1.0]),
@@ -2217,8 +2232,8 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                 title: String::new(),
                 working_directory: String::new(),
                 graphics: SceneGraphics::default(),
-                background: palette::TERMINAL_FALLBACK,
-                foreground: palette::CARD_OUTLINE,
+                background: palette::DARK.terminal_fallback,
+                foreground: palette::DARK.card_outline,
                 cursor: None,
                 content: vec![],
             };
@@ -2290,7 +2305,7 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                 &rules,
                 &[],
                 None,
-                Some(palette::CARD_OUTLINE),
+                Some(palette::DARK.card_outline),
                 1.0,
                 1.0,
             );
@@ -2347,8 +2362,8 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            background: palette::TERMINAL_FALLBACK,
-            foreground: palette::CARD_OUTLINE,
+            background: palette::DARK.terminal_fallback,
+            foreground: palette::DARK.card_outline,
             cursor: None,
             content: vec![],
         };
@@ -2758,7 +2773,7 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                             &rules,
                             &[],
                             None,
-                            Some(palette::CARD_OUTLINE),
+                            Some(palette::DARK.card_outline),
                             neutral,
                             stroke,
                         );
@@ -2782,7 +2797,7 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                 &rules,
                                 &[],
                                 None,
-                                Some(palette::CARD_OUTLINE),
+                                Some(palette::DARK.card_outline),
                                 neutral,
                                 neutral,
                             );
@@ -2838,8 +2853,8 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                         title: String::new(),
                                         working_directory: String::new(),
                                         graphics: SceneGraphics::default(),
-                                        background: palette::TERMINAL_FALLBACK,
-                                        foreground: palette::CARD_OUTLINE,
+                                        background: palette::DARK.terminal_fallback,
+                                        foreground: palette::DARK.card_outline,
                                         cursor: None,
                                         content: vec![],
                                     })
@@ -2924,7 +2939,7 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                 &rules,
                                 &[],
                                 None,
-                                Some(palette::CARD_OUTLINE),
+                                Some(palette::DARK.card_outline),
                                 neutral,
                                 if current { stroke } else { neutral },
                             );
@@ -3212,8 +3227,8 @@ fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
         title: String::new(),
         working_directory: String::new(),
         graphics: SceneGraphics::default(),
-        background: palette::TERMINAL_FALLBACK,
-        foreground: palette::CARD_OUTLINE,
+        background: palette::DARK.terminal_fallback,
+        foreground: palette::DARK.card_outline,
         cursor: Some(DrawCursor {
             visible: true,
             blinking: false,
@@ -3222,7 +3237,7 @@ fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
             column: 0,
             row: 0,
             at_wide_tail: false,
-            color: palette::CARD_OUTLINE,
+            color: palette::DARK.card_outline,
             explicit_color: false,
         }),
         content: vec![DrawRow {
@@ -3323,8 +3338,8 @@ fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
             true,
             metrics,
             source.terminal,
-            palette::CARD_OUTLINE,
-            palette::TERMINAL_FALLBACK,
+            palette::DARK.card_outline,
+            palette::DARK.terminal_fallback,
             1.0,
             0.0,
         );
@@ -3349,8 +3364,8 @@ fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
                 true,
                 metrics,
                 destination.terminal,
-                palette::CARD_OUTLINE,
-                palette::TERMINAL_FALLBACK,
+                palette::DARK.card_outline,
+                palette::DARK.terminal_fallback,
                 1.0,
                 1.0 / 240.0,
             );
@@ -3415,8 +3430,8 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
         title: String::new(),
         working_directory: String::new(),
         graphics: SceneGraphics::default(),
-        background: palette::TERMINAL_FALLBACK,
-        foreground: palette::CARD_OUTLINE,
+        background: palette::DARK.terminal_fallback,
+        foreground: palette::DARK.card_outline,
         cursor: None,
         content: vec![DrawRow {
             wrapped: false,
@@ -3426,9 +3441,9 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                 text: " ".into(),
                 hyperlink: String::new(),
                 style: DrawStyle {
-                    foreground: palette::CARD_OUTLINE,
-                    background: palette::CARD_OUTLINE,
-                    underline_color: palette::CARD_OUTLINE,
+                    foreground: palette::DARK.card_outline,
+                    background: palette::DARK.card_outline,
+                    underline_color: palette::DARK.card_outline,
                     bold: false,
                     italic: false,
                     faint: false,
@@ -4398,7 +4413,7 @@ fn fallback_dialog_frame_uses_configured_stroke_at_fractional_scale() {
         .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
         .filter_map(|(rect, quad)| {
             let channel = |offset| f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap());
-            let color = palette::CARD_OUTLINE;
+            let color = palette::DARK.card_outline;
             (channel(8) == f32::from(color.r) / 255.0
                 && channel(12) == f32::from(color.g) / 255.0
                 && channel(16) == f32::from(color.b) / 255.0)
@@ -4683,7 +4698,7 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                     &rules,
                     &tabs,
                     Some(selected),
-                    Some(palette::PRIMARY_TEXT),
+                    Some(palette::DARK.primary_text),
                     border,
                     focus,
                 );
@@ -4731,8 +4746,12 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                         .all(|rect| rect.bottom() <= fill.bounds.bottom() + 0.001),
                     "pane stroke enters the footer"
                 );
-                let accent_color = [palette::ACCENT.r, palette::ACCENT.g, palette::ACCENT.b]
-                    .map(|value| f32::from(value) / 255.0);
+                let accent_color = [
+                    palette::DARK.accent.r,
+                    palette::DARK.accent.g,
+                    palette::DARK.accent.b,
+                ]
+                .map(|value| f32::from(value) / 255.0);
                 let title_focus = painted_rects(&batch)
                     .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
                     .filter(|(_, bytes)| {
@@ -4851,7 +4870,7 @@ fn first_pane_bands_keep_stack_clearance_in_selected_and_unselected_columns() {
                     &rules,
                     &tabs,
                     focused.then_some(0),
-                    Some(palette::PRIMARY_TEXT),
+                    Some(palette::DARK.primary_text),
                     border,
                     stroke,
                 );

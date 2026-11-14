@@ -246,8 +246,8 @@ fn padding_scene() -> Scene {
         title: String::new(),
         working_directory: String::new(),
         graphics: SceneGraphics::default(),
-        background: palette::TERMINAL_FALLBACK,
-        foreground: palette::CARD_OUTLINE,
+        background: palette::DARK.terminal_fallback,
+        foreground: palette::DARK.card_outline,
         cursor: None,
         content: (0..2)
             .map(|row| DrawRow {
@@ -391,8 +391,8 @@ fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRe
         title: String::new(),
         working_directory: String::new(),
         graphics: SceneGraphics::default(),
-        background: palette::TERMINAL_FALLBACK,
-        foreground: palette::CARD_OUTLINE,
+        background: palette::DARK.terminal_fallback,
+        foreground: palette::DARK.card_outline,
         cursor: None,
         content: vec![],
     };

@@ -49,6 +49,7 @@ mod cursor_trail;
 mod fonts;
 mod images;
 mod palette;
+pub use palette::{Palette, PaletteContrast, PaletteMode, contrast_ratio};
 
 use cells::{
     BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_scene_cursor, build_scene_rectangles,
@@ -931,7 +932,7 @@ fn card_backdrops(
     .map(|(card, shown, scene)| {
         (
             shown.then_some(card),
-            scene.map_or(palette::TERMINAL_FALLBACK, |scene| scene.background),
+            scene.map_or(palette::DARK.terminal_fallback, |scene| scene.background),
         )
     })
     .collect::<Vec<_>>();
@@ -942,7 +943,9 @@ fn card_backdrops(
             .iter()
             .filter_map(|(card, background)| card.map(|card| (card, background)))
             .min_by(|left, right| left.0.bounds.left.total_cmp(&right.0.bounds.left))
-            .map_or(palette::TERMINAL_FALLBACK, |(_, background)| *background);
+            .map_or(palette::DARK.terminal_fallback, |(_, background)| {
+                *background
+            });
         cards.push((
             Some(CardFill {
                 bounds: workspace.card_rect(
@@ -976,7 +979,7 @@ fn push_card_backdrop(
             rect.top,
             rect.width,
             rect.height,
-            palette::BAR_BACKGROUND,
+            palette::DARK.bar_background,
             1.0,
         );
     }
@@ -997,8 +1000,13 @@ fn push_card_backdrop(
         // Partition each corner row: an opaque underpaint would apply alpha twice.
         for (top, inset) in corner_rows(card, radius) {
             for (left, width, color, alpha) in [
-                (card.left, inset, palette::BAR_BACKGROUND, 1.0),
-                (card.right() - inset, inset, palette::BAR_BACKGROUND, 1.0),
+                (card.left, inset, palette::DARK.bar_background, 1.0),
+                (
+                    card.right() - inset,
+                    inset,
+                    palette::DARK.bar_background,
+                    1.0,
+                ),
             ] {
                 rectangles.push(left, top, width, 1.0, color, alpha);
             }
@@ -1249,7 +1257,7 @@ fn push_title_tab_backdrop(
             rect.top,
             rect.width,
             rect.height,
-            palette::BAR_BACKGROUND,
+            palette::DARK.bar_background,
             1.0,
         );
     }
@@ -1989,7 +1997,11 @@ impl Renderer {
             eon_icon,
             cursor_tail: cursor_tail
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),
-            clear: clear_color(palette::TERMINAL_FALLBACK, background_opacity, srgb_target),
+            clear: clear_color(
+                palette::DARK.terminal_fallback,
+                background_opacity,
+                srgb_target,
+            ),
             background_opacity,
             padding_color,
             pane_frames,
@@ -2577,7 +2589,7 @@ impl Renderer {
                         workspace.tab_viewport.bottom(),
                         right - left,
                         self.config.height as f32 - workspace.tab_viewport.bottom(),
-                        scene.map_or(palette::TERMINAL_FALLBACK, |scene| scene.background),
+                        scene.map_or(palette::DARK.terminal_fallback, |scene| scene.background),
                         self.background_opacity,
                     );
                 }
@@ -2753,7 +2765,7 @@ impl Renderer {
             }
         } else {
             self.clear = clear_color(
-                palette::TERMINAL_FALLBACK,
+                palette::DARK.terminal_fallback,
                 self.background_opacity,
                 self.config.format.is_srgb(),
             );
@@ -2763,7 +2775,7 @@ impl Renderer {
                 self.config.height as f32 * 0.42,
                 self.config.width as f32 - self.metrics.padding * 4.0,
                 self.metrics.height * 1.5,
-                palette::SPLASH_TITLE,
+                palette::DARK.splash_title,
                 DrawStyleKind::Heading,
             );
             self.push_text(
@@ -2772,7 +2784,7 @@ impl Renderer {
                 self.config.height as f32 * 0.50,
                 self.config.width as f32 - self.metrics.padding * 4.0,
                 self.metrics.height * 3.0,
-                palette::SPLASH_TEXT,
+                palette::DARK.splash_text,
                 DrawStyleKind::Status(Wrap::WordOrGlyph),
             );
         }
@@ -2978,7 +2990,7 @@ impl Renderer {
             width - padding * 2.0,
             width - padding * 2.0,
             self.metrics.height,
-            palette::SCROLLBACK_TEXT,
+            palette::DARK.scrollback_text,
             DrawStyleKind::Status(Wrap::None),
             clip,
         );
@@ -2986,9 +2998,9 @@ impl Renderer {
             rect,
             tokens::capsule_radius(height),
             if in_header {
-                palette::SCROLLBACK_PILL_HEADER
+                palette::DARK.scrollback_pill_header
             } else {
-                palette::SCROLLBACK_PILL_OVERLAY
+                palette::DARK.scrollback_pill_overlay
             },
         );
         if !in_header {
@@ -3016,7 +3028,7 @@ impl Renderer {
                 rect.width,
                 rect.height,
                 1.0,
-                palette::HYPERLINK_OUTLINE,
+                palette::DARK.hyperlink_outline,
             );
         }
     }
@@ -3042,7 +3054,7 @@ impl Renderer {
                 } else {
                     tokens::WRAPPED_LINE_ROWS * MAX_NOTICE_LINES as f32
                 },
-            palette::NOTICE_TEXT,
+            palette::DARK.notice_text,
             if hyperlink {
                 DrawStyleKind::Monospace
             } else {
@@ -3083,7 +3095,7 @@ impl Renderer {
             rect.top,
             rect.width,
             rect.height,
-            palette::NOTICE_BACKGROUND,
+            palette::DARK.notice_background,
             0.96,
         );
     }
@@ -3821,9 +3833,9 @@ impl RectangleBatch {
         let mut painted = Vec::new();
         neutral.sort_by(|a, b| b.1.total_cmp(&a.1));
         for (pieces, color) in [
-            (accent, palette::ACCENT),
+            (accent, palette::DARK.accent),
             (focus, focus_color),
-            (neutral, palette::CARD_OUTLINE),
+            (neutral, palette::DARK.card_outline),
         ] {
             for (rect, alpha) in pieces {
                 let pieces = uncovered(rect, &painted);

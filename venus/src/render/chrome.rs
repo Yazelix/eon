@@ -4,8 +4,9 @@
 use super::{
     CellFont, CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PaneTitleTab,
     PlacedText, RectangleBatch, Renderer, SceneColor,
-    cells::{blend_to_contrast, blend_to_contrast_pair, card_surfaces, contrast_ratio},
-    palette, physical_outline_width, shape_styled_text, shaping,
+    cells::card_surfaces,
+    palette::{self, blend_to_contrast, blend_to_contrast_pair, contrast_ratio},
+    physical_outline_width, shape_styled_text, shaping,
 };
 use crate::{
     DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
@@ -230,22 +231,6 @@ fn scroll_thumb(track: SceneRect, viewport: f32, scroll: f32, max_scroll: f32) -
     }
 }
 
-fn contrast(a: SceneColor, b: SceneColor) -> f32 {
-    let luminance = |color: SceneColor| {
-        let channel = |value: u8| {
-            let value = f32::from(value) / 255.0;
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
-    };
-    let (a, b) = (luminance(a), luminance(b));
-    (a.max(b) + 0.05) / (a.min(b) + 0.05)
-}
-
 /// `fill` at `opacity` over a white desktop: a translucent card's lightest case, the one that
 /// bounds light text on it.
 fn over_bright_desktop(fill: SceneColor, opacity: f32) -> SceneColor {
@@ -263,7 +248,7 @@ fn over_bright_desktop(fill: SceneColor, opacity: f32) -> SceneColor {
 /// what shows through depends on the desktop, and assuming a bright one would darken labels on a
 /// dark terminal over a dark desktop.
 fn stack_label_color(fill: SceneColor) -> SceneColor {
-    super::cells::blend_to_contrast(palette::PRIMARY_TEXT, fill, 4.5)
+    blend_to_contrast(palette::DARK.primary_text, fill, 4.5)
 }
 
 fn pane_id_color(
@@ -277,13 +262,15 @@ fn pane_id_color(
         return name;
     }
     let dim = if selected {
-        palette::SECONDARY_TEXT
+        palette::DARK.secondary_text
     } else {
-        palette::PANE_ID
+        palette::DARK.pane_id
     };
     // A bright desktop bounds the translucent fill; frame and hover remain opaque.
     let resolved = over_bright_desktop(fill, opacity);
-    if contrast(dim, resolved) >= 4.5 && contrast(dim, palette::BAR_BACKGROUND) >= 4.5 {
+    if contrast_ratio(dim, resolved) >= 4.5
+        && contrast_ratio(dim, palette::DARK.bar_background) >= 4.5
+    {
         dim
     } else {
         name
@@ -317,15 +304,15 @@ fn color_label_identity(buffer: &mut Buffer, fonts: &mut FontSystem, id: &str, c
 
 fn load_color(load: Load) -> SceneColor {
     match load {
-        Load::Normal => palette::SECONDARY_TEXT,
-        Load::Notice => palette::LOAD_NOTICE,
-        Load::High => palette::LOAD_HIGH,
-        Load::Critical => palette::LOAD_CRITICAL,
+        Load::Normal => palette::DARK.secondary_text,
+        Load::Notice => palette::DARK.load_notice,
+        Load::High => palette::DARK.load_high,
+        Load::Critical => palette::DARK.load_critical,
     }
 }
 
 fn quota_pace_color(shortfall: f32) -> SceneColor {
-    let gradient = palette::QUOTA_PACE;
+    let gradient = palette::DARK.quota_pace();
     if shortfall <= gradient[0].0 {
         return gradient[0].1;
     }
@@ -335,14 +322,7 @@ fn quota_pace_color(shortfall: f32) -> SceneColor {
         .map_or(gradient[gradient.len() - 1].1, |pair| {
             let ((from, start), (to, end)) = (pair[0], pair[1]);
             let share = (shortfall - from) / (to - from);
-            let mix = |start: u8, end: u8| {
-                (f32::from(start) + (f32::from(end) - f32::from(start)) * share).round() as u8
-            };
-            SceneColor {
-                r: mix(start.r, end.r),
-                g: mix(start.g, end.g),
-                b: mix(start.b, end.b),
-            }
+            palette::interpolate(start, end, share)
         })
 }
 
@@ -910,16 +890,16 @@ impl Spinners {
         }
         let row = !matches!(backing, Backing::BarPill(_));
         let base = match badge.state {
-            AttentionState::NeedsInput => palette::ATTENTION_NEEDS_INPUT,
-            AttentionState::Error => palette::ATTENTION_ERROR,
-            AttentionState::Finished => palette::ATTENTION_FINISHED,
+            AttentionState::NeedsInput => palette::DARK.attention_needs_input,
+            AttentionState::Error => palette::DARK.attention_error,
+            AttentionState::Finished => palette::DARK.attention_finished,
             AttentionState::Working | AttentionState::Background => self.focus,
-            AttentionState::Idle | AttentionState::Unavailable => palette::ATTENTION_IDLE,
+            AttentionState::Idle | AttentionState::Unavailable => palette::DARK.attention_idle,
         };
         let (color, outline) = match backing {
             Backing::BarPill(color) => (
                 blend_to_contrast(
-                    blend_to_contrast(base, palette::BAR_BACKGROUND, 3.0),
+                    blend_to_contrast(base, palette::DARK.bar_background, 3.0),
                     color,
                     3.0,
                 ),
@@ -985,10 +965,10 @@ impl Spinners {
             })
             .map(|(_, fill)| fill)
             .max_by(|left, right| {
-                contrast_ratio(*left, palette::BAR_BACKGROUND)
-                    .total_cmp(&contrast_ratio(*right, palette::BAR_BACKGROUND))
+                contrast_ratio(*left, palette::DARK.bar_background)
+                    .total_cmp(&contrast_ratio(*right, palette::DARK.bar_background))
             })
-            .unwrap_or(palette::BAR_BACKGROUND);
+            .unwrap_or(palette::DARK.bar_background);
         self.push_badge(badge, Backing::BarPill(fill), rectangles);
     }
 }
@@ -1057,7 +1037,7 @@ fn push_attention_row_surface(
     rectangles: &mut RectangleBatch,
 ) -> (SceneColor, SceneColor) {
     let fill = if row.focused || hovered {
-        let hover = palette::CHROME_HIGHLIGHT;
+        let hover = palette::DARK.chrome_highlight;
         Some(if contrast_ratio(hover, background) >= 1.5 {
             hover
         } else {
@@ -1087,17 +1067,17 @@ fn push_attention_row_surface(
         outline_radius = (outline_radius - 1.0).max(0.0);
     }
     if row.focused {
-        let focus = blend_to_contrast(palette::ACCENT, fill.unwrap_or(background), 3.0);
+        let focus = blend_to_contrast(palette::DARK.accent, fill.unwrap_or(background), 3.0);
         rectangles.push_rounded_outline(outline, outline_radius, focus);
     }
     let backing = fill.map_or(surface, Backing::Surface);
     spinners.push_badge(row.glyph, backing, rectangles);
     let (title, detail) = if row.current {
-        (palette::PRIMARY_TEXT, palette::PRIMARY_TEXT)
+        (palette::DARK.primary_text, palette::DARK.primary_text)
     } else if row.glyph.dimmed {
-        (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
+        (palette::DARK.secondary_text, palette::DARK.tertiary_text)
     } else {
-        (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
+        (palette::DARK.primary_text, palette::DARK.secondary_text)
     };
     // Like Stack labels, resting rows follow the terminal color rather than guessing wallpaper.
     let background = fill.unwrap_or(background);
@@ -2122,7 +2102,7 @@ fn push_bar_widget(rectangles: &mut RectangleBatch, visual: SceneRect) {
     rectangles.push_rounded(
         visual,
         tokens::capsule_radius(visual.height),
-        palette::TAB_IDLE,
+        palette::DARK.tab_idle,
     );
 }
 
@@ -2149,19 +2129,19 @@ fn push_chip_outline(
 
 fn quota_dot_color(remaining: Option<u8>, pace: Option<f32>) -> Option<SceneColor> {
     pace.map(|pace| {
-        if pace >= palette::QUOTA_PACE[0].0 || remaining == Some(0) {
+        if pace >= palette::DARK.quota_pace()[0].0 || remaining == Some(0) {
             quota_pace_color(pace)
         } else {
-            palette::SECONDARY_TEXT
+            palette::DARK.secondary_text
         }
     })
 }
 
 fn chip_outline_color(critical: bool) -> SceneColor {
     if critical {
-        palette::LOAD_CRITICAL
+        palette::DARK.load_critical
     } else {
-        palette::CARD_OUTLINE
+        palette::DARK.card_outline
     }
 }
 
@@ -2173,27 +2153,27 @@ fn push_session_label_surface(
     let radius = tokens::capsule_radius(visual.height);
     rectangles.push_rounded(visual, radius, session_label_fill(state));
     if state.enabled && state.focused {
-        rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+        rectangles.push_rounded_outline(visual, radius, palette::DARK.accent);
     }
 }
 
 fn session_label_fill(state: HeaderButtonState) -> SceneColor {
     if state.enabled && state.pressed {
-        palette::SESSION_PRESSED
+        palette::DARK.session_pressed
     } else if state.enabled && state.hovered {
-        palette::TAB_HOVER
+        palette::DARK.tab_hover
     } else {
-        palette::TAB_IDLE
+        palette::DARK.tab_idle
     }
 }
 
 fn tab_fill(selected: bool, hovered: bool) -> SceneColor {
     if selected {
-        palette::TAB_SELECTED
+        palette::DARK.tab_selected
     } else if hovered {
-        palette::TAB_HOVER
+        palette::DARK.tab_hover
     } else {
-        palette::TAB_IDLE
+        palette::DARK.tab_idle
     }
 }
 
@@ -2203,16 +2183,16 @@ fn push_bar_control_surface(
     state: HeaderButtonState,
 ) {
     let fill = if state.pressed {
-        palette::CHROME_HIGHLIGHT
+        palette::DARK.chrome_highlight
     } else if state.hovered {
-        palette::CONTROL_HOVER
+        palette::DARK.control_hover
     } else {
-        palette::BAR_BACKGROUND
+        palette::DARK.bar_background
     };
     let radius = tokens::capsule_radius(visual.height);
     rectangles.push_rounded(visual, radius, fill);
     if state.focused {
-        rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+        rectangles.push_rounded_outline(visual, radius, palette::DARK.accent);
     }
 }
 
@@ -2738,7 +2718,7 @@ impl Renderer {
             padding,
             width - padding * 2.0,
             height - padding * 2.0,
-            palette::PRIMARY_TEXT,
+            palette::DARK.primary_text,
             DrawStyleKind::Status(Wrap::WordOrGlyph),
         );
         let Some(text) = self.text.get(first) else {
@@ -2822,7 +2802,7 @@ impl Renderer {
                             top,
                             column.width.max(1.0),
                             line,
-                            palette::HINT_POPUP_TEXT,
+                            palette::DARK.hint_popup_text,
                             DrawStyleKind::PopupLabel,
                         );
                     }
@@ -2833,7 +2813,7 @@ impl Renderer {
                             top,
                             column.keys.max(1.0),
                             line,
-                            palette::HINT_POPUP_TEXT,
+                            palette::DARK.hint_popup_text,
                             DrawStyleKind::Status(Wrap::None),
                         );
                         self.push_text(
@@ -2842,7 +2822,7 @@ impl Renderer {
                             top,
                             (column.width - column.keys - padding).max(1.0),
                             line,
-                            palette::PRIMARY_TEXT,
+                            palette::DARK.primary_text,
                             DrawStyleKind::Status(Wrap::None),
                         );
                         if let Some(row) = row {
@@ -2902,7 +2882,7 @@ impl Renderer {
             padding,
             inner,
             text_height.ceil().max(1.0),
-            palette::PRIMARY_TEXT,
+            palette::DARK.primary_text,
             DrawStyleKind::Status(Wrap::Word),
         );
         self.place_box(detail, rect, rectangles);
@@ -2969,7 +2949,7 @@ impl Renderer {
         rectangles.push_rounded(
             rect,
             tokens::inner_radius(self.metrics),
-            palette::TOOLTIP_BACKGROUND,
+            palette::DARK.tooltip_background,
         );
     }
 
@@ -2988,7 +2968,7 @@ impl Renderer {
                 &tab.title,
                 tab.row,
                 viewer.bounds,
-                palette::PRIMARY_TEXT,
+                palette::DARK.primary_text,
                 stroke,
             );
         } else {
@@ -3001,7 +2981,7 @@ impl Renderer {
                 },
                 viewer.bounds,
                 (viewer.bounds.width - self.metrics.padding * 2.0).max(0.0),
-                palette::PRIMARY_TEXT,
+                palette::DARK.primary_text,
             );
         }
         self.push_text_clipped(
@@ -3011,7 +2991,7 @@ impl Renderer {
             viewer.subtitle.width,
             viewer.subtitle.width,
             viewer.subtitle.height,
-            palette::SECONDARY_TEXT,
+            palette::DARK.secondary_text,
             DrawStyleKind::PopupLabel,
             viewer.bounds,
         );
@@ -3020,8 +3000,8 @@ impl Renderer {
         for chip in &viewer.filters {
             if chip.selected {
                 let radius = tokens::dialog_radius(padding);
-                rectangles.push_rounded(chip.rect, radius, palette::CHROME_HIGHLIGHT);
-                rectangles.push_rounded_outline(chip.rect, radius, palette::ACCENT);
+                rectangles.push_rounded(chip.rect, radius, palette::DARK.chrome_highlight);
+                rectangles.push_rounded_outline(chip.rect, radius, palette::DARK.accent);
             }
             self.push_text_clipped(
                 &format!("{} {}", chip.filter.label(), chip.count),
@@ -3031,9 +3011,9 @@ impl Renderer {
                 chip.rect.width,
                 chrome_title_metrics(self.metrics).text_height,
                 if chip.selected {
-                    palette::PRIMARY_TEXT
+                    palette::DARK.primary_text
                 } else {
-                    palette::SECONDARY_TEXT
+                    palette::DARK.secondary_text
                 },
                 DrawStyleKind::Status(Wrap::None),
                 chip.rect,
@@ -3048,7 +3028,7 @@ impl Renderer {
                 viewer.content.width,
                 viewer.content.width,
                 viewer.content.height,
-                palette::SECONDARY_TEXT,
+                palette::DARK.secondary_text,
                 DrawStyleKind::Status(Wrap::WordOrGlyph),
                 viewer.content,
             );
@@ -3058,8 +3038,8 @@ impl Renderer {
                 row,
                 viewer.content,
                 false,
-                Backing::Surface(palette::DIALOG_BACKGROUND),
-                palette::DIALOG_BACKGROUND,
+                Backing::Surface(palette::DARK.dialog_background),
+                palette::DARK.dialog_background,
                 rectangles,
             );
         }
@@ -3082,7 +3062,7 @@ impl Renderer {
                     heading.width,
                     heading.width,
                     heading.height,
-                    palette::SECONDARY_TEXT,
+                    palette::DARK.secondary_text,
                     DrawStyleKind::PopupLabel,
                     viewer.content,
                 );
@@ -3094,7 +3074,7 @@ impl Renderer {
                     rectangles.push_rounded(
                         row.rect,
                         tokens::dialog_row_radius(self.metrics),
-                        palette::CONTROL_HOVER,
+                        palette::DARK.control_hover,
                     );
                 }
                 self.push_text_clipped(
@@ -3104,7 +3084,7 @@ impl Renderer {
                     row.label_width,
                     row.label_width,
                     row.rect.height,
-                    palette::SHORTCUT_KEY_TEXT,
+                    palette::DARK.shortcut_key_text,
                     DrawStyleKind::Status(Wrap::WordOrGlyph),
                     viewer.content,
                 );
@@ -3116,7 +3096,7 @@ impl Renderer {
                     (row.rect.right() - action_left).max(1.0),
                     (row.rect.right() - action_left).max(1.0),
                     row.rect.height,
-                    palette::SHORTCUT_ACTION_TEXT,
+                    palette::DARK.shortcut_action_text,
                     DrawStyleKind::Status(Wrap::WordOrGlyph),
                     viewer.content,
                 );
@@ -3132,7 +3112,7 @@ impl Renderer {
             rectangles.push_rounded(
                 track,
                 tokens::capsule_radius(track.width),
-                palette::SCROLLBAR_TRACK,
+                palette::DARK.scrollbar_track,
             );
             rectangles.push_rounded(
                 scroll_thumb(
@@ -3142,7 +3122,7 @@ impl Renderer {
                     viewer.max_scroll,
                 ),
                 tokens::capsule_radius(track.width),
-                palette::DIALOG_SCROLL_THUMB,
+                palette::DARK.dialog_scroll_thumb,
             );
         }
         rectangles.clip = None;
@@ -3154,7 +3134,7 @@ impl Renderer {
                 viewer.content.width,
                 viewer.content.width,
                 self.metrics.height,
-                palette::SECONDARY_TEXT,
+                palette::DARK.secondary_text,
                 DrawStyleKind::PopupLabel,
                 viewer.bounds,
             );
@@ -3176,7 +3156,7 @@ impl Renderer {
             workspace.header.top,
             workspace.header.width,
             workspace.header.height,
-            palette::BAR_BACKGROUND,
+            palette::DARK.bar_background,
             1.0,
         );
         if let Some(sidebar) = workspace.sidebar() {
@@ -3193,13 +3173,13 @@ impl Renderer {
             let tab = title_tabs.last().and_then(Option::as_ref);
             let hide = workspace.heading_action(crate::HeadingAction::HideSidebar);
             let gap = if let Some(tab) = tab {
-                self.build_frame_title(&tab.title, row, area, palette::PRIMARY_TEXT, stroke)
+                self.build_frame_title(&tab.title, row, area, palette::DARK.primary_text, stroke)
             } else {
                 // A compact title stops before the button.
                 let width = hide.map_or(width, |hide| {
                     (hide.left - row.left - padding * 2.0).max(0.0)
                 });
-                self.build_border_title(SIDEBAR_TITLE, row, area, width, palette::PRIMARY_TEXT)
+                self.build_border_title(SIDEBAR_TITLE, row, area, width, palette::DARK.primary_text)
             };
             // Without its notch the button sits in a gap in the top edge.
             let button_gap = hide
@@ -3212,7 +3192,12 @@ impl Renderer {
                 };
                 let mut clip = area;
                 if let Some(tab) = tab {
-                    rectangles.push_title_tab_outline(card, tab, stroke, palette::CARD_OUTLINE);
+                    rectangles.push_title_tab_outline(
+                        card,
+                        tab,
+                        stroke,
+                        palette::DARK.card_outline,
+                    );
                     clip.top = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
                     clip.height = (area.bottom() - clip.top).max(0.0);
                 }
@@ -3225,7 +3210,7 @@ impl Renderer {
                         .flatten()
                         .collect::<Vec<_>>(),
                     stroke,
-                    palette::CARD_OUTLINE,
+                    palette::DARK.card_outline,
                 );
                 rectangles.clip = None;
             }
@@ -3235,12 +3220,12 @@ impl Renderer {
                 rectangles,
                 crate::HeadingAction::HideSidebar,
                 "–",
-                palette::PRIMARY_TEXT,
+                palette::DARK.primary_text,
                 area,
                 backgrounds
                     .last()
                     .copied()
-                    .unwrap_or(palette::TERMINAL_FALLBACK),
+                    .unwrap_or(palette::DARK.terminal_fallback),
             );
             let list = workspace.sidebar_list;
             if workspace.sidebar_empty() {
@@ -3251,7 +3236,7 @@ impl Renderer {
                     width,
                     width,
                     list.height,
-                    palette::SECONDARY_TEXT,
+                    palette::DARK.secondary_text,
                     DrawStyleKind::Status(Wrap::WordOrGlyph),
                     sidebar,
                 );
@@ -3260,9 +3245,9 @@ impl Renderer {
             let background = backgrounds
                 .last()
                 .copied()
-                .unwrap_or(palette::TERMINAL_FALLBACK);
-            let heading_name = blend_to_contrast(palette::PRIMARY_TEXT, background, 4.5);
-            let heading_number = blend_to_contrast(palette::PANE_ID, background, 4.5);
+                .unwrap_or(palette::DARK.terminal_fallback);
+            let heading_name = blend_to_contrast(palette::DARK.primary_text, background, 4.5);
+            let heading_number = blend_to_contrast(palette::DARK.pane_id, background, 4.5);
             for heading in &workspace.sidebar_headings {
                 let first = self.text.len();
                 self.push_sidebar_line(
@@ -3303,7 +3288,7 @@ impl Renderer {
                         workspace.sidebar_max_scroll(),
                     ),
                     tokens::capsule_radius(track.width),
-                    blend_to_contrast(palette::DIALOG_SCROLL_THUMB, background, 3.0),
+                    blend_to_contrast(palette::DARK.dialog_scroll_thumb, background, 3.0),
                 );
             }
         }
@@ -3315,9 +3300,9 @@ impl Renderer {
                     group.rect,
                     tokens::inner_radius(self.metrics),
                     if self.header.hint_group_hovered == Some(index) {
-                        palette::CHROME_HIGHLIGHT
+                        palette::DARK.chrome_highlight
                     } else {
-                        palette::HINT_KEYCAP
+                        palette::DARK.hint_keycap
                     },
                 );
                 let width = (group.rect.width - padding).max(0.0);
@@ -3328,7 +3313,7 @@ impl Renderer {
                     width,
                     width,
                     group.rect.height,
-                    palette::HINT_MODIFIER_TEXT,
+                    palette::DARK.hint_modifier_text,
                     DrawStyleKind::Status(Wrap::None),
                     group.rect,
                 );
@@ -3339,13 +3324,13 @@ impl Renderer {
                         hint.key.as_str(),
                         hint.rect.left,
                         hint.label_offset,
-                        palette::TAB_TEXT,
+                        palette::DARK.tab_text,
                     ),
                     (
                         hint.label.as_str(),
                         hint.rect.left + hint.label_offset,
                         hint.rect.width - hint.label_offset,
-                        palette::SECONDARY_TEXT,
+                        palette::DARK.secondary_text,
                     ),
                 ] {
                     let label = hint_label_box(hints, hint.rect, left, width, self.metrics);
@@ -3371,7 +3356,7 @@ impl Renderer {
                     label.rect.width,
                     label.rect.width,
                     label.rect.height,
-                    palette::VERSION_TEXT,
+                    palette::DARK.version_text,
                     DrawStyleKind::Monospace,
                     SceneRect {
                         left: label.rect.left,
@@ -3395,16 +3380,16 @@ impl Renderer {
             );
             rectangles.push_rounded(visual, radius, fill);
             if tab.selected && focus == WorkspaceFocus::Tabs {
-                rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+                rectangles.push_rounded_outline(visual, radius, palette::DARK.accent);
             }
             let first = self.text.len();
             self.push_chip_label(
                 tab.label(),
                 chip_label_box(workspace, tab.rect, self.metrics),
                 if tab.selected {
-                    palette::PRIMARY_TEXT
+                    palette::DARK.primary_text
                 } else {
-                    palette::TAB_TEXT
+                    palette::DARK.tab_text
                 },
                 workspace.tab_label_clip,
             );
@@ -3415,7 +3400,7 @@ impl Renderer {
                     text.buffer.mutable(),
                     &mut self.fonts.font_system,
                     &(index + 1).to_string(),
-                    blend_to_contrast(palette::PANE_ID, fill, 4.5),
+                    blend_to_contrast(palette::DARK.pane_id, fill, 4.5),
                 );
             }
             if let Some(badge) = tab.badge {
@@ -3442,16 +3427,20 @@ impl Renderer {
                 let visual = workspace.bar_pill_rect(icon, self.metrics);
                 let radius = tokens::capsule_radius(visual.height);
                 if self.header.pressed_header == Some(control) {
-                    rectangles.push_rounded(visual, radius, palette::CHROME_HIGHLIGHT);
+                    rectangles.push_rounded(visual, radius, palette::DARK.chrome_highlight);
                 } else if self.header.hovers(WorkspaceFocus::Header(control), "") {
-                    rectangles.push_rounded(visual, radius, palette::CONTROL_HOVER);
+                    rectangles.push_rounded(visual, radius, palette::DARK.control_hover);
                 }
                 if focus == WorkspaceFocus::Header(control) {
-                    rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+                    rectangles.push_rounded_outline(visual, radius, palette::DARK.accent);
                 }
             }
-            self.text
-                .extend(bar_icon(EON_ICON_ID, palette::VERSION_TEXT, icon, None));
+            self.text.extend(bar_icon(
+                EON_ICON_ID,
+                palette::DARK.version_text,
+                icon,
+                None,
+            ));
         }
         // The session label shares the tab fills for hover and press, with the header controls'
         // keyboard focus and Tab order while it opens the picker.
@@ -3468,7 +3457,7 @@ impl Renderer {
             self.push_chip_label(
                 &label.label,
                 chip_label_box(workspace, label.rect, self.metrics),
-                palette::PRIMARY_TEXT,
+                palette::DARK.primary_text,
                 SceneRect {
                     top: workspace.header.top,
                     height: workspace.header.height,
@@ -3494,7 +3483,7 @@ impl Renderer {
                 chip_outline_color(
                     quota
                         .pace
-                        .is_some_and(|pace| pace >= palette::QUOTA_PACE[2].0),
+                        .is_some_and(|pace| pace >= palette::DARK.quota_pace()[2].0),
                 ),
                 self.metrics,
             );
@@ -3517,7 +3506,7 @@ impl Renderer {
                     width: label_width,
                     ..visual
                 },
-                palette::SECONDARY_TEXT,
+                palette::DARK.secondary_text,
                 quota.rect,
             );
             self.push_chip_dot(
@@ -3558,7 +3547,7 @@ impl Renderer {
                 width,
                 width,
                 self.metrics.height.min(label.rect.height),
-                palette::SECONDARY_TEXT,
+                palette::DARK.secondary_text,
                 DrawStyleKind::Monospace,
                 label.rect,
             );
@@ -3573,7 +3562,7 @@ impl Renderer {
                     width: (value_right - value_left).max(0.0),
                     ..visual
                 },
-                palette::SECONDARY_TEXT,
+                palette::DARK.secondary_text,
                 label.rect,
             );
             if let Some(text) = self.text.get_mut(first_text)
@@ -3627,9 +3616,9 @@ impl Renderer {
             if let Some((buffer, left, top)) = placed {
                 let bounds = super::text_clip_bounds(control.rect);
                 let color = if pressed || focused {
-                    palette::PRIMARY_TEXT
+                    palette::DARK.primary_text
                 } else {
-                    palette::SECONDARY_TEXT
+                    palette::DARK.secondary_text
                 };
                 self.text.push(PlacedText {
                     buffer: buffer.into(),
@@ -3653,9 +3642,9 @@ impl Renderer {
                 glyph_width,
                 self.metrics.height.min(control.rect.height),
                 if pressed || focused {
-                    palette::PRIMARY_TEXT
+                    palette::DARK.primary_text
                 } else {
-                    palette::SECONDARY_TEXT
+                    palette::DARK.secondary_text
                 },
                 DrawStyleKind::Status(Wrap::None),
                 control.rect,
@@ -3679,7 +3668,12 @@ impl Renderer {
                 )
                 .map(|tab| tab.with_heading(self.panel_heading))
                 {
-                    rectangles.push_title_tab_outline(card, &tab, stroke, palette::CARD_OUTLINE);
+                    rectangles.push_title_tab_outline(
+                        card,
+                        &tab,
+                        stroke,
+                        palette::DARK.card_outline,
+                    );
                     let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
                     clip.top = cut;
                     clip.height = (workspace.chrome.bottom() - cut).max(0.0);
@@ -3702,7 +3696,7 @@ impl Renderer {
                     &title,
                     row,
                     workspace.chrome,
-                    palette::PRIMARY_TEXT,
+                    palette::DARK.primary_text,
                     stroke,
                 );
                 self.push_heading_button(
@@ -3711,12 +3705,12 @@ impl Renderer {
                     rectangles,
                     crate::HeadingAction::HidePopup,
                     "–",
-                    palette::PRIMARY_TEXT,
+                    palette::DARK.primary_text,
                     workspace.chrome,
                     backgrounds
                         .first()
                         .copied()
-                        .unwrap_or(palette::TERMINAL_FALLBACK),
+                        .unwrap_or(palette::DARK.terminal_fallback),
                 );
             }
             rectangles.clip = Some(clip);
@@ -3725,7 +3719,7 @@ impl Renderer {
                 card.radius,
                 &gaps,
                 stroke,
-                palette::CARD_OUTLINE,
+                palette::DARK.card_outline,
             );
             rectangles.clip = None;
         }
@@ -3786,11 +3780,11 @@ impl Renderer {
                     .max(0.0)
                     .floor();
                 let color = if current {
-                    palette::PRIMARY_TEXT
+                    palette::DARK.primary_text
                 } else if !pane.live {
-                    palette::DEAD_PANE_TEXT
+                    palette::DARK.dead_pane_text
                 } else {
-                    palette::SECONDARY_TEXT
+                    palette::DARK.secondary_text
                 };
                 let row = if self.pane_frames && index + 1 == panes.len() && !pane.selected {
                     bottom_title_row(
@@ -3831,7 +3825,7 @@ impl Renderer {
                     backgrounds
                         .get(column_index)
                         .copied()
-                        .unwrap_or(palette::TERMINAL_FALLBACK),
+                        .unwrap_or(palette::DARK.terminal_fallback),
                     self.background_opacity,
                 );
                 if id_color != color
@@ -3860,14 +3854,14 @@ impl Renderer {
                         rectangles.push_rounded(
                             pill,
                             tokens::inner_radius(self.metrics),
-                            palette::CHROME_HIGHLIGHT,
+                            palette::DARK.chrome_highlight,
                         );
                     }
                     if notch.is_none() && current && focus == WorkspaceFocus::Panes {
                         rectangles.push_rounded_outline(
                             pill,
                             tokens::inner_radius(self.metrics),
-                            palette::ACCENT,
+                            palette::DARK.accent,
                         );
                     }
                 }
@@ -3910,7 +3904,7 @@ impl Renderer {
                             backgrounds
                                 .get(column_index)
                                 .copied()
-                                .unwrap_or(palette::TERMINAL_FALLBACK),
+                                .unwrap_or(palette::DARK.terminal_fallback),
                         );
                     }
                 }
@@ -3927,7 +3921,7 @@ impl Renderer {
                     backgrounds
                         .get(column_index)
                         .copied()
-                        .unwrap_or(palette::TERMINAL_FALLBACK),
+                        .unwrap_or(palette::DARK.terminal_fallback),
                 );
                 let row = SceneRect {
                     height: chrome_title_metrics(self.metrics).text_height,
@@ -3937,7 +3931,12 @@ impl Renderer {
                 let target = workspace.heading_action(close);
                 let tab = title_tabs.get(column_index).and_then(Option::as_ref);
                 let gap = if let Some(tab) = tab {
-                    rectangles.push_title_tab_outline(fill, tab, stroke, palette::CARD_OUTLINE);
+                    rectangles.push_title_tab_outline(
+                        fill,
+                        tab,
+                        stroke,
+                        palette::DARK.card_outline,
+                    );
                     let cut = fill.bounds.top + super::rounded_radius(fill.bounds, fill.radius);
                     let bottom = stack.clip.bottom();
                     stack.clip.top = cut;
@@ -3968,7 +3967,7 @@ impl Renderer {
                 self.pane_frames.then_some(if selected_column {
                     self.focus_color
                 } else {
-                    palette::CARD_OUTLINE
+                    palette::DARK.card_outline
                 }),
                 physical_outline_width(self.border_width, self.metrics.scale),
                 physical_outline_width(
@@ -3993,7 +3992,7 @@ impl Renderer {
                     backgrounds
                         .get(column_index)
                         .copied()
-                        .unwrap_or(palette::TERMINAL_FALLBACK),
+                        .unwrap_or(palette::DARK.terminal_fallback),
                 );
             }
         }
@@ -4014,16 +4013,16 @@ impl Renderer {
         background: SceneColor,
     ) {
         let pill = if state.pressed {
-            palette::ACCENT
+            palette::DARK.accent
         } else {
-            palette::CHROME_HIGHLIGHT
+            palette::DARK.chrome_highlight
         };
         let radius = tokens::inner_radius(self.metrics);
         if state.hovered {
             rectangles.push_rounded(target, radius, pill);
         }
         if state.focused {
-            rectangles.push_rounded_outline(target, radius, palette::ACCENT);
+            rectangles.push_rounded_outline(target, radius, palette::DARK.accent);
         }
         let (buffer, left, top) = ink_centred_glyph(
             &mut self.fonts.font_system,
@@ -4036,7 +4035,7 @@ impl Renderer {
             if state.enabled {
                 color
             } else {
-                palette::DEAD_PANE_TEXT
+                palette::DARK.dead_pane_text
             },
             if state.hovered { pill } else { background },
             if state.enabled { 4.5 } else { 3.0 },
@@ -4136,8 +4135,8 @@ impl Renderer {
         clip: Option<SceneRect>,
     ) {
         let (id, color) = match provider {
-            QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, palette::QUOTA_ICON_CODEX),
-            QuotaProvider::Claude => (CLAUDE_SPLAT_ID, palette::QUOTA_ICON_CLAUDE),
+            QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, palette::DARK.quota_icon_codex),
+            QuotaProvider::Claude => (CLAUDE_SPLAT_ID, palette::DARK.quota_icon_claude),
             QuotaProvider::Google => return,
         };
         self.text.extend(bar_icon(id, color, rect, clip));
@@ -4209,24 +4208,30 @@ impl RectangleBatch {
                     band.top,
                     band.width,
                     band.height,
-                    palette::DIALOG_BACKGROUND,
+                    palette::DARK.dialog_background,
                     1.0,
                 );
             }
-            self.push_title_tab_outline(*card, tab, stroke, palette::CARD_OUTLINE);
+            self.push_title_tab_outline(*card, tab, stroke, palette::DARK.card_outline);
             let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
             self.clip = Some(SceneRect {
                 top: cut,
                 height: (bounds.bottom() - cut).max(0.0),
                 ..bounds
             });
-            self.push_card_outline(card.bounds, card.radius, &[], stroke, palette::CARD_OUTLINE);
+            self.push_card_outline(
+                card.bounds,
+                card.radius,
+                &[],
+                stroke,
+                palette::DARK.card_outline,
+            );
             self.clip = None;
             fill.into_iter().map(super::text_clip_bounds).collect()
         } else {
             let radius = tokens::dialog_radius(padding);
-            self.push_rounded(bounds, radius, palette::DIALOG_BACKGROUND);
-            self.push_rounded_outline_width(bounds, radius, stroke, palette::CARD_OUTLINE);
+            self.push_rounded(bounds, radius, palette::DARK.dialog_background);
+            self.push_rounded_outline_width(bounds, radius, stroke, palette::DARK.card_outline);
             vec![text_bounds(bounds)]
         }
     }
@@ -4235,7 +4240,6 @@ impl RectangleBatch {
 #[cfg(test)]
 mod tests {
     use super::super::cells::NERD_FONT_FAMILY;
-    use super::super::cells::contrast_ratio;
     use super::super::*;
     use super::*;
     use glyphon::{cosmic_text::SubpixelBin, fontdb};
@@ -4277,19 +4281,21 @@ mod tests {
         b: 0xfb,
     };
 
-    const FOCUS_COLORS: [SceneColor; 7] = [
-        DEFAULT_FOCUS,
-        palette::ACCENT,
-        SceneColor { r: 0, g: 0, b: 0 },
-        SceneColor {
-            r: 255,
-            g: 255,
-            b: 255,
-        },
-        SceneColor { r: 255, g: 0, b: 0 },
-        SceneColor { r: 0, g: 255, b: 0 },
-        SceneColor { r: 0, g: 0, b: 255 },
-    ];
+    fn focus_colors() -> [SceneColor; 7] {
+        [
+            DEFAULT_FOCUS,
+            palette::DARK.accent,
+            SceneColor { r: 0, g: 0, b: 0 },
+            SceneColor {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+            SceneColor { r: 255, g: 0, b: 0 },
+            SceneColor { r: 0, g: 255, b: 0 },
+            SceneColor { r: 0, g: 0, b: 255 },
+        ]
+    }
 
     fn vertex_color(vertex: &[u8]) -> SceneColor {
         let rgb = [2, 3, 4].map(|i| {
@@ -4325,15 +4331,15 @@ mod tests {
         expected.push_rounded(
             visual,
             tokens::capsule_radius(visual.height),
-            palette::TAB_IDLE,
+            palette::DARK.tab_idle,
         );
         push_chip_outline(
             &mut expected,
             visual,
             if critical {
-                palette::LOAD_CRITICAL
+                palette::DARK.load_critical
             } else {
-                palette::CARD_OUTLINE
+                palette::DARK.card_outline
             },
             metrics,
         );
@@ -4906,31 +4912,37 @@ mod tests {
 
     #[test]
     fn quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows() {
-        assert_eq!(load_color(Load::Notice), palette::LOAD_NOTICE);
+        assert_eq!(load_color(Load::Notice), palette::DARK.load_notice);
         for load in [Load::Normal, Load::Notice, Load::High, Load::Critical] {
-            assert!(contrast(load_color(load), palette::TAB_IDLE) >= 4.5);
+            assert!(contrast_ratio(load_color(load), palette::DARK.tab_idle) >= 4.5);
         }
-        assert!(contrast(palette::PRIMARY_TEXT, palette::TAB_IDLE) >= 4.5);
-        assert!(contrast(palette::SECONDARY_TEXT, palette::TAB_IDLE) >= 4.5);
-        for (shortfall, color) in palette::QUOTA_PACE {
+        assert!(contrast_ratio(palette::DARK.primary_text, palette::DARK.tab_idle) >= 4.5);
+        assert!(contrast_ratio(palette::DARK.secondary_text, palette::DARK.tab_idle) >= 4.5);
+        for (shortfall, color) in palette::DARK.quota_pace() {
             assert_eq!(quota_pace_color(shortfall), color);
-            assert!(contrast(color, palette::TAB_IDLE) >= 4.5, "{shortfall}");
+            assert!(
+                contrast_ratio(color, palette::DARK.tab_idle) >= 4.5,
+                "{shortfall}"
+            );
         }
         // Exhausted quotas near reset stay yellow; a quarter early is full red.
-        assert_eq!(quota_pace_color(-1.0), palette::LOAD_NOTICE);
-        assert_eq!(quota_pace_color(1.0), palette::LOAD_CRITICAL);
+        assert_eq!(quota_pace_color(-1.0), palette::DARK.load_notice);
+        assert_eq!(quota_pace_color(1.0), palette::DARK.load_critical);
         let rgb = |r, g, b| SceneColor { r, g, b };
-        assert_eq!(quota_pace_color(0.0), palette::LOAD_NOTICE);
+        assert_eq!(quota_pace_color(0.0), palette::DARK.load_notice);
         assert_eq!(quota_pace_color(0.05), rgb(255, 196, 87));
         assert_eq!(quota_pace_color(0.10), rgb(255, 150, 70));
         assert_eq!(quota_pace_color(0.25), rgb(255, 75, 75));
-        assert_eq!(palette::LOAD_CRITICAL, rgb(255, 75, 75));
+        assert_eq!(palette::DARK.load_critical, rgb(255, 75, 75));
         // More shortfall is never greener, and every shade stays readable on the chip fill.
         let mut previous = quota_pace_color(-1.0);
         for step in -2500..=2500 {
             let color = quota_pace_color(step as f32 / 10000.0);
             assert!(color.r >= previous.r && color.g <= previous.g, "{step}");
-            assert!(contrast(color, palette::TAB_IDLE) >= 4.5, "{step}");
+            assert!(
+                contrast_ratio(color, palette::DARK.tab_idle) >= 4.5,
+                "{step}"
+            );
             previous = color;
         }
     }
@@ -4941,7 +4953,7 @@ mod tests {
             for pace in [None, Some(-0.25), Some(0.0), Some(0.049)] {
                 assert_eq!(
                     quota_dot_color(remaining, pace),
-                    pace.map(|_| palette::SECONDARY_TEXT)
+                    pace.map(|_| palette::DARK.secondary_text)
                 );
             }
         }
@@ -4949,7 +4961,7 @@ mod tests {
         for pace in [0.0, 0.01, 0.049] {
             assert_eq!(
                 quota_dot_color(Some(0), Some(pace)),
-                Some(palette::LOAD_NOTICE)
+                Some(palette::DARK.load_notice)
             );
         }
         for pace in [0.05, 0.075, 0.10, 0.175, 0.25, 1.0] {
@@ -4982,7 +4994,7 @@ mod tests {
                     load_color(Load::Critical),
                     quota_pace_color(0.075),
                 ] {
-                    assert_ne!(color, palette::ACCENT);
+                    assert_ne!(color, palette::DARK.accent);
                     let mut actual = RectangleBatch::new(1600, 900);
                     push_chip_outline(&mut actual, visual, color, metrics);
                     let mut expected = RectangleBatch::new(1600, 900);
@@ -5083,20 +5095,25 @@ mod tests {
                     Load::Normal,
                     Some(1_009_000),
                     false,
-                    Some(palette::SECONDARY_TEXT),
+                    Some(palette::DARK.secondary_text),
                 ),
                 (
                     Load::Notice,
                     Some(1_009_450),
                     false,
-                    Some(palette::LOAD_NOTICE),
+                    Some(palette::DARK.load_notice),
                 ),
-                (Load::High, Some(1_009_900), false, Some(palette::LOAD_HIGH)),
+                (
+                    Load::High,
+                    Some(1_009_900),
+                    false,
+                    Some(palette::DARK.load_high),
+                ),
                 (
                     Load::Critical,
                     Some(1_011_250),
                     false,
-                    Some(palette::LOAD_CRITICAL),
+                    Some(palette::DARK.load_critical),
                 ),
                 (Load::Normal, Some(1_011_250), true, None),
                 (Load::Normal, None, false, None),
@@ -5193,7 +5210,7 @@ mod tests {
                     assert!(top >= visual.top && top + diameter <= visual.bottom());
                     assert_eq!(
                         paint_at(&rectangles, center),
-                        color.or(Some(palette::TAB_IDLE))
+                        color.or(Some(palette::DARK.tab_idle))
                     );
                     if let Some(color) = color {
                         for point in [
@@ -5206,7 +5223,7 @@ mod tests {
                         }
                     }
                     for point in [(left - 0.5, center.1), (left + diameter + 0.5, center.1)] {
-                        assert_eq!(paint_at(&rectangles, point), Some(palette::TAB_IDLE));
+                        assert_eq!(paint_at(&rectangles, point), Some(palette::DARK.tab_idle));
                     }
                     let dot = color.map(|color| {
                         (
@@ -5234,7 +5251,7 @@ mod tests {
                                 visual.top + visual.height * 0.75,
                                 visual.width - 16.0 * scale as f32,
                                 scale as f32,
-                                color.unwrap_or(palette::SECONDARY_TEXT),
+                                color.unwrap_or(palette::DARK.secondary_text),
                                 1.0,
                             ),
                             1 => push_chip_outline(
@@ -5261,9 +5278,9 @@ mod tests {
                             )
                         ),
                         Some(if critical {
-                            palette::LOAD_CRITICAL
+                            palette::DARK.load_critical
                         } else {
-                            palette::CARD_OUTLINE
+                            palette::DARK.card_outline
                         })
                     );
                 }
@@ -5281,13 +5298,13 @@ mod tests {
         // Dark terminals keep primary text at any `background_opacity`: the label is judged
         // against the terminal's own colour, so a black terminal at 0.5, or the default at 0.3,
         // over a dark desktop never darkens it.
-        for fill in [palette::TERMINAL_FALLBACK, gray(0), gray(40)] {
-            assert_eq!(stack_label_color(fill), palette::PRIMARY_TEXT);
+        for fill in [palette::DARK.terminal_fallback, gray(0), gray(40)] {
+            assert_eq!(stack_label_color(fill), palette::DARK.primary_text);
         }
         // Light ones darken the label just enough to read at 4.5:1.
         for fill in [gray(255), gray(244), gray(170)] {
             let color = stack_label_color(fill);
-            assert_ne!(color, palette::PRIMARY_TEXT);
+            assert_ne!(color, palette::DARK.primary_text);
             assert!(contrast_ratio(color, fill) >= 4.5, "{fill:?}");
             assert!(
                 contrast_ratio(color, fill) < 4.7,
@@ -5307,7 +5324,7 @@ mod tests {
         let dim = pane_id_color(name, true, true, black, 0.8);
         assert_ne!(dim, name);
         assert!(
-            contrast(
+            contrast_ratio(
                 dim,
                 SceneColor {
                     r: 51,
@@ -5375,25 +5392,42 @@ mod tests {
             b: 230,
         };
         for color in [
-            palette::HINT_MODIFIER_TEXT,
-            palette::HINT_POPUP_TEXT,
-            palette::SHORTCUT_KEY_TEXT,
-            palette::SECONDARY_TEXT,
-            palette::PRIMARY_TEXT,
-            palette::PANE_ID,
-            palette::DIALOG_SCROLL_THUMB,
+            palette::DARK.hint_modifier_text,
+            palette::DARK.hint_popup_text,
+            palette::DARK.shortcut_key_text,
+            palette::DARK.secondary_text,
+            palette::DARK.primary_text,
+            palette::DARK.pane_id,
+            palette::DARK.dialog_scroll_thumb,
         ] {
-            assert_ne!(color, palette::ACCENT);
+            assert_ne!(color, palette::DARK.accent);
             assert_ne!(color, light_blue);
         }
-        assert!(contrast_ratio(palette::DIALOG_SCROLL_THUMB, palette::SCROLLBAR_TRACK) >= 3.0);
+        assert!(
+            contrast_ratio(
+                palette::DARK.dialog_scroll_thumb,
+                palette::DARK.scrollbar_track
+            ) >= 3.0
+        );
         for (text, background) in [
-            (palette::HINT_POPUP_TEXT, palette::TOOLTIP_BACKGROUND),
-            (palette::HINT_MODIFIER_TEXT, palette::HINT_KEYCAP),
-            (palette::HINT_MODIFIER_TEXT, palette::CHROME_HIGHLIGHT),
-            (palette::SHORTCUT_KEY_TEXT, palette::DIALOG_BACKGROUND),
-            (palette::SHORTCUT_KEY_TEXT, palette::CONTROL_HOVER),
-            (palette::SECONDARY_TEXT, palette::DIALOG_BACKGROUND),
+            (
+                palette::DARK.hint_popup_text,
+                palette::DARK.tooltip_background,
+            ),
+            (palette::DARK.hint_modifier_text, palette::DARK.hint_keycap),
+            (
+                palette::DARK.hint_modifier_text,
+                palette::DARK.chrome_highlight,
+            ),
+            (
+                palette::DARK.shortcut_key_text,
+                palette::DARK.dialog_background,
+            ),
+            (palette::DARK.shortcut_key_text, palette::DARK.control_hover),
+            (
+                palette::DARK.secondary_text,
+                palette::DARK.dialog_background,
+            ),
         ] {
             assert!(
                 contrast_ratio(text, background) >= 4.5,
@@ -5402,14 +5436,15 @@ mod tests {
         }
         let black = SceneColor { r: 0, g: 0, b: 0 };
         assert!(
-            contrast_ratio(palette::TAB_IDLE, black) < contrast_ratio(palette::TAB_HOVER, black)
+            contrast_ratio(palette::DARK.tab_idle, black)
+                < contrast_ratio(palette::DARK.tab_hover, black)
         );
         assert!(
-            contrast_ratio(palette::TAB_HOVER, black)
-                < contrast_ratio(palette::TAB_SELECTED, black)
+            contrast_ratio(palette::DARK.tab_hover, black)
+                < contrast_ratio(palette::DARK.tab_selected, black)
         );
-        assert!(contrast_ratio(palette::TAB_SELECTED, palette::BAR_BACKGROUND) >= 3.0);
-        assert!(contrast_ratio(palette::PRIMARY_TEXT, palette::TAB_SELECTED) >= 4.5);
+        assert!(contrast_ratio(palette::DARK.tab_selected, palette::DARK.bar_background) >= 3.0);
+        assert!(contrast_ratio(palette::DARK.primary_text, palette::DARK.tab_selected) >= 4.5);
         let metrics = CellMetrics::for_scale(1.0);
         let mut fonts = test_sans();
         for (label, id) in [
@@ -5429,8 +5464,8 @@ mod tests {
             buffer.shape_until_scroll(&mut fonts, false);
             let width = buffer.layout_runs().next().unwrap().line_w;
             for background in [
-                palette::TAB_IDLE,
-                palette::TAB_HOVER,
+                palette::DARK.tab_idle,
+                palette::DARK.tab_hover,
                 SceneColor {
                     r: 40,
                     g: 42,
@@ -5442,8 +5477,8 @@ mod tests {
                     b: 255,
                 },
             ] {
-                let identity = blend_to_contrast(palette::PANE_ID, background, 4.5);
-                let name = blend_to_contrast(palette::PRIMARY_TEXT, background, 4.5);
+                let identity = blend_to_contrast(palette::DARK.pane_id, background, 4.5);
+                let name = blend_to_contrast(palette::DARK.primary_text, background, 4.5);
                 assert!(contrast_ratio(identity, background) >= 4.5);
                 assert!(contrast_ratio(name, background) >= 4.5);
                 color_label_identity(&mut buffer, &mut fonts, id, identity);
@@ -5460,7 +5495,7 @@ mod tests {
                 }
             }
             let before = buffer.lines[0].attrs_list().clone();
-            color_label_identity(&mut buffer, &mut fonts, "absent", palette::ACCENT);
+            color_label_identity(&mut buffer, &mut fonts, "absent", palette::DARK.accent);
             assert_eq!(buffer.lines[0].attrs_list(), &before);
         }
     }
@@ -5480,7 +5515,7 @@ mod tests {
             tab.push_rounded(
                 visual,
                 tokens::capsule_radius(visual.height),
-                palette::TAB_IDLE,
+                palette::DARK.tab_idle,
             );
             assert_eq!(widget.bytes, tab.bytes, "scale {scale}");
             // A filled capsule includes an opaque interior, unlike the old outline.
@@ -5503,7 +5538,7 @@ mod tests {
 
     #[test]
     fn bar_surfaces_keep_distinct_session_hover_press_and_mint_focus() {
-        assert_ne!(palette::TAB_IDLE, palette::TAB_HOVER);
+        assert_ne!(palette::DARK.tab_idle, palette::DARK.tab_hover);
         type Surface = fn(&mut RectangleBatch, SceneRect, HeaderButtonState);
         for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
             let visual = SceneRect {
@@ -5544,17 +5579,17 @@ mod tests {
                 (
                     push_session_label_surface as Surface,
                     [
-                        palette::TAB_IDLE,
-                        palette::TAB_HOVER,
-                        palette::SESSION_PRESSED,
+                        palette::DARK.tab_idle,
+                        palette::DARK.tab_hover,
+                        palette::DARK.session_pressed,
                     ],
                 ),
                 (
                     push_bar_control_surface as Surface,
                     [
-                        palette::BAR_BACKGROUND,
-                        palette::CONTROL_HOVER,
-                        palette::CHROME_HIGHLIGHT,
+                        palette::DARK.bar_background,
+                        palette::DARK.control_hover,
+                        palette::DARK.chrome_highlight,
                     ],
                 ),
             ] {
@@ -5597,7 +5632,7 @@ mod tests {
                     outline.push_rounded_outline(
                         visual,
                         tokens::capsule_radius(visual.height),
-                        palette::ACCENT,
+                        palette::DARK.accent,
                     );
                     assert!(focused.starts_with(&surface));
                     assert!(focused.ends_with(&outline.bytes));
@@ -5848,7 +5883,11 @@ mod tests {
         for turning in [false, true] {
             let mut spinners = Spinners::new(turning, DEFAULT_FOCUS);
             let mut batch = RectangleBatch::new(800, 600);
-            spinners.push_badge(badge, Backing::Surface(palette::BAR_BACKGROUND), &mut batch);
+            spinners.push_badge(
+                badge,
+                Backing::Surface(palette::DARK.bar_background),
+                &mut batch,
+            );
             assert_eq!(spinners.slots.len(), usize::from(turning));
         }
         let draw = |phase| {
@@ -5894,7 +5933,7 @@ mod tests {
                 AttentionState::Idle,
                 AttentionState::Unavailable,
             ] {
-                for outline in [None, Some(palette::PRIMARY_TEXT)] {
+                for outline in [None, Some(palette::DARK.primary_text)] {
                     for dimmed in [false, true] {
                         let badge = TabBadge {
                             state,
@@ -5965,8 +6004,8 @@ mod tests {
     fn animated_badge_ranges_keep_neighbor_bytes_and_soft_edges_in_every_backing() {
         for size in [12.0, 16.0, 20.0, 24.0, 32.0] {
             for backing in [
-                Backing::BarPill(palette::TAB_SELECTED),
-                Backing::Surface(palette::BAR_BACKGROUND),
+                Backing::BarPill(palette::DARK.tab_selected),
+                Backing::Surface(palette::DARK.bar_background),
                 Backing::card(
                     SceneColor {
                         r: 10,
@@ -5983,7 +6022,7 @@ mod tests {
                     .into_iter()
                     .enumerate()
                 {
-                    batch.push(0.0, index as f32, 1.0, 1.0, palette::PRIMARY_TEXT, 1.0);
+                    batch.push(0.0, index as f32, 1.0, 1.0, palette::DARK.primary_text, 1.0);
                     let badge = TabBadge {
                         state,
                         dimmed: true,
@@ -5996,7 +6035,7 @@ mod tests {
                     };
                     spinners.push_badge(badge, backing, &mut batch);
                 }
-                batch.push(0.0, 2.0, 1.0, 1.0, palette::PRIMARY_TEXT, 1.0);
+                batch.push(0.0, 2.0, 1.0, 1.0, palette::DARK.primary_text, 1.0);
                 assert_eq!(spinners.slots.len(), 2);
                 for phase in 0..tokens::BACKGROUND_PULSE_FRAMES {
                     let mut rewritten = batch.bytes.clone();
@@ -6061,7 +6100,7 @@ mod tests {
                 AttentionState::Unavailable,
                 AttentionState::Background,
             ] {
-                for outline in [None, Some(palette::PRIMARY_TEXT)] {
+                for outline in [None, Some(palette::DARK.primary_text)] {
                     let badge = TabBadge {
                         state,
                         dimmed: false,
@@ -6145,7 +6184,11 @@ mod tests {
             };
             let mut spinners = Spinners::new(false, DEFAULT_FOCUS);
             let mut batch = RectangleBatch::new(800, 600);
-            spinners.push_badge(badge, Backing::Surface(palette::BAR_BACKGROUND), &mut batch);
+            spinners.push_badge(
+                badge,
+                Backing::Surface(palette::DARK.bar_background),
+                &mut batch,
+            );
             assert!(
                 spinners.slots.is_empty(),
                 "motion-off/CPU schedules no tick"
@@ -6155,7 +6198,7 @@ mod tests {
                 &mut expected,
                 badge,
                 None,
-                blend_to_contrast(DEFAULT_FOCUS, palette::BAR_BACKGROUND, 3.0),
+                blend_to_contrast(DEFAULT_FOCUS, palette::DARK.bar_background, 3.0),
                 None,
                 true,
             );
@@ -6266,7 +6309,7 @@ mod tests {
         assert_eq!(scene.sidebar_rows().len(), 2);
         let mut row = scene.sidebar_rows()[0].clone();
         assert!(row.popup_marker.is_some());
-        for focus in FOCUS_COLORS {
+        for focus in focus_colors() {
             for (focused, current, hovered, dimmed) in
                 (0..16).map(|bits| (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0))
             {
@@ -6280,13 +6323,13 @@ mod tests {
                 };
                 for (surface, background) in [
                     (
-                        Backing::card(palette::TERMINAL_FALLBACK, 0.8, true),
-                        palette::TERMINAL_FALLBACK,
+                        Backing::card(palette::DARK.terminal_fallback, 0.8, true),
+                        palette::DARK.terminal_fallback,
                     ),
                     (Backing::card(white, 0.8, true), white),
                     (
-                        Backing::Surface(palette::TERMINAL_FALLBACK),
-                        palette::TERMINAL_FALLBACK,
+                        Backing::Surface(palette::DARK.terminal_fallback),
+                        palette::DARK.terminal_fallback,
                     ),
                     (Backing::Surface(white), white),
                 ] {
@@ -6325,7 +6368,7 @@ mod tests {
                         assert!(contrast_ratio(text, fill) >= 4.5);
                     }
                     if current {
-                        let primary = blend_to_contrast(palette::PRIMARY_TEXT, fill, 4.5);
+                        let primary = blend_to_contrast(palette::DARK.primary_text, fill, 4.5);
                         assert_eq!(popup.0, (primary, primary));
                     }
                 }
@@ -6346,7 +6389,7 @@ mod tests {
             |_, text| (text.into(), text.len() as f32 * metrics.width),
         );
         let mut row = scene.sidebar_rows()[0].clone();
-        for background in [palette::BAR_BACKGROUND, palette::CHROME_HIGHLIGHT]
+        for background in [palette::DARK.bar_background, palette::DARK.chrome_highlight]
             .into_iter()
             .chain((0..=255).map(|value| SceneColor {
                 r: value,
@@ -6379,11 +6422,12 @@ mod tests {
                         b: rgb[2],
                     };
                     assert!(contrast_ratio(fill, background) >= 1.5);
-                    let expected = if contrast_ratio(palette::CHROME_HIGHLIGHT, background) >= 1.5 {
-                        palette::CHROME_HIGHLIGHT
-                    } else {
-                        blend_to_contrast(background, background, 1.5)
-                    };
+                    let expected =
+                        if contrast_ratio(palette::DARK.chrome_highlight, background) >= 1.5 {
+                            palette::DARK.chrome_highlight
+                        } else {
+                            blend_to_contrast(background, background, 1.5)
+                        };
                     assert_eq!(fill, expected, "{background:?}, current={current}");
                 }
             }
@@ -6395,8 +6439,8 @@ mod tests {
         let snapshot = popup_sidebar_snapshot();
 
         // The approved outline stays the same on hover; 3:1 is against the sidebar background.
-        assert!(contrast_ratio(DEFAULT_FOCUS, palette::CHROME_HIGHLIGHT) < 3.0);
-        assert_ne!(DEFAULT_FOCUS, palette::CHROME_HIGHLIGHT);
+        assert!(contrast_ratio(DEFAULT_FOCUS, palette::DARK.chrome_highlight) < 3.0);
+        assert_ne!(DEFAULT_FOCUS, palette::DARK.chrome_highlight);
         for scale in [1.0, 1.125, 2.0] {
             let metrics = CellMetrics::for_scale(scale);
             let size = PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32);
@@ -6422,8 +6466,8 @@ mod tests {
                 height: outer.height - 2.0,
             };
             for background in [
-                palette::BAR_BACKGROUND,
-                palette::CHROME_HIGHLIGHT,
+                palette::DARK.bar_background,
+                palette::DARK.chrome_highlight,
                 SceneColor { r: 4, g: 5, b: 7 },
                 SceneColor {
                     r: 80,
@@ -6446,7 +6490,7 @@ mod tests {
                     b: 255,
                 },
             ] {
-                for focus in FOCUS_COLORS {
+                for focus in focus_colors() {
                     let current_color = blend_to_contrast(focus, background, 3.0);
                     assert!(contrast_ratio(current_color, background) >= 3.0);
                     for opacity in [0.8, 1.0] {
@@ -6457,8 +6501,9 @@ mod tests {
                             row.current = current;
                             row.focused = focused;
                             let fill = (focused || hovered).then(|| {
-                                if contrast_ratio(palette::CHROME_HIGHLIGHT, background) >= 1.5 {
-                                    palette::CHROME_HIGHLIGHT
+                                if contrast_ratio(palette::DARK.chrome_highlight, background) >= 1.5
+                                {
+                                    palette::DARK.chrome_highlight
                                 } else {
                                     blend_to_contrast(background, background, 1.5)
                                 }
@@ -6504,7 +6549,7 @@ mod tests {
                                     );
                                 }
                                 if focused {
-                                    let mint = blend_to_contrast(palette::ACCENT, under, 3.0);
+                                    let mint = blend_to_contrast(palette::DARK.accent, under, 3.0);
                                     assert!(contrast_ratio(mint, under) >= 3.0);
                                     expected.push_rounded_outline(
                                         if current { inner } else { outer },
@@ -6578,7 +6623,7 @@ mod tests {
         let attention = snapshot.tabs[0].popups[0].attention.as_mut().unwrap();
         attention.state = AttentionState::NeedsInput;
         attention.record.as_mut().unwrap().message = "A question".into();
-        let color = palette::SECONDARY_TEXT;
+        let color = palette::DARK.secondary_text;
         let mut fractional_top = false;
         for (scale, font_size, height, padding) in [
             (1.0_f32, 16.0_f32, 19.0, 12.0),
@@ -6746,15 +6791,18 @@ mod tests {
     #[test]
     fn attention_badges_use_bare_surfaces_and_only_outline_impossible_pairs() {
         for (state, source) in [
-            (AttentionState::NeedsInput, palette::ATTENTION_NEEDS_INPUT),
-            (AttentionState::Error, palette::ATTENTION_ERROR),
-            (AttentionState::Finished, palette::ATTENTION_FINISHED),
+            (
+                AttentionState::NeedsInput,
+                palette::DARK.attention_needs_input,
+            ),
+            (AttentionState::Error, palette::DARK.attention_error),
+            (AttentionState::Finished, palette::DARK.attention_finished),
             (AttentionState::Working, DEFAULT_FOCUS),
             (AttentionState::Background, DEFAULT_FOCUS),
-            (AttentionState::Idle, palette::ATTENTION_IDLE),
-            (AttentionState::Unavailable, palette::ATTENTION_IDLE),
+            (AttentionState::Idle, palette::DARK.attention_idle),
+            (AttentionState::Unavailable, palette::DARK.attention_idle),
         ] {
-            for focus in FOCUS_COLORS {
+            for focus in focus_colors() {
                 let source =
                     if matches!(state, AttentionState::Working | AttentionState::Background) {
                         focus
@@ -6762,13 +6810,13 @@ mod tests {
                         source
                     };
                 for background in [
-                    palette::TERMINAL_FALLBACK,
-                    palette::DIALOG_BACKGROUND,
-                    palette::BAR_BACKGROUND,
-                    palette::TAB_IDLE,
-                    palette::TAB_HOVER,
-                    palette::SESSION_PRESSED,
-                    palette::TAB_SELECTED,
+                    palette::DARK.terminal_fallback,
+                    palette::DARK.dialog_background,
+                    palette::DARK.bar_background,
+                    palette::DARK.tab_idle,
+                    palette::DARK.tab_hover,
+                    palette::DARK.session_pressed,
+                    palette::DARK.tab_selected,
                     SceneColor {
                         r: 119,
                         g: 119,
@@ -6922,22 +6970,22 @@ mod tests {
             }
         );
         assert_eq!(
-            card_surfaces(palette::TERMINAL_FALLBACK, 1.0, true),
-            [palette::TERMINAL_FALLBACK; 2]
+            card_surfaces(palette::DARK.terminal_fallback, 1.0, true),
+            [palette::DARK.terminal_fallback; 2]
         );
     }
 
     #[test]
     fn row_spinner_dots_grow_while_bar_dots_keep_their_size() {
         for (size, surface, expected) in [
-            (16.0, Backing::Surface(palette::BAR_BACKGROUND), 4.0),
-            (12.0, Backing::Surface(palette::BAR_BACKGROUND), 3.0),
-            (20.0, Backing::Surface(palette::BAR_BACKGROUND), 5.0),
-            (24.0, Backing::Surface(palette::BAR_BACKGROUND), 6.0),
-            (27.0, Backing::Surface(palette::BAR_BACKGROUND), 7.0),
-            (32.0, Backing::Surface(palette::BAR_BACKGROUND), 8.0),
-            (54.0, Backing::Surface(palette::BAR_BACKGROUND), 14.0),
-            (12.0, Backing::BarPill(palette::TAB_SELECTED), 2.0),
+            (16.0, Backing::Surface(palette::DARK.bar_background), 4.0),
+            (12.0, Backing::Surface(palette::DARK.bar_background), 3.0),
+            (20.0, Backing::Surface(palette::DARK.bar_background), 5.0),
+            (24.0, Backing::Surface(palette::DARK.bar_background), 6.0),
+            (27.0, Backing::Surface(palette::DARK.bar_background), 7.0),
+            (32.0, Backing::Surface(palette::DARK.bar_background), 8.0),
+            (54.0, Backing::Surface(palette::DARK.bar_background), 14.0),
+            (12.0, Backing::BarPill(palette::DARK.tab_selected), 2.0),
         ] {
             let badge = TabBadge {
                 state: AttentionState::Working,
@@ -7272,17 +7320,21 @@ mod tests {
                 "only intersecting pill fills may adapt the glyph"
             );
         };
-        for fill in [palette::TAB_IDLE, palette::TAB_HOVER, palette::TAB_SELECTED] {
+        for fill in [
+            palette::DARK.tab_idle,
+            palette::DARK.tab_hover,
+            palette::DARK.tab_selected,
+        ] {
             check(
                 badge,
-                [(pill, fill), (far, palette::TAB_SELECTED)],
-                blend_to_contrast(palette::ATTENTION_ERROR, fill, 3.0),
+                [(pill, fill), (far, palette::DARK.tab_selected)],
+                blend_to_contrast(palette::DARK.attention_error, fill, 3.0),
             );
         }
         check(
             badge,
-            [(far, palette::TAB_SELECTED); 2],
-            palette::ATTENTION_ERROR,
+            [(far, palette::DARK.tab_selected); 2],
+            palette::DARK.attention_error,
         );
         // A rounded pill's empty corner is bar, even where its bounding box intersects.
         check(
@@ -7300,22 +7352,22 @@ mod tests {
                         height: 48.0,
                         ..pill
                     },
-                    palette::TAB_SELECTED,
+                    palette::DARK.tab_selected,
                 ),
-                (far, palette::TAB_SELECTED),
+                (far, palette::DARK.tab_selected),
             ],
-            palette::ATTENTION_ERROR,
+            palette::DARK.attention_error,
         );
     }
 
     #[test]
     fn bar_badges_contrast_with_both_the_pill_and_the_bar() {
-        for focus in FOCUS_COLORS {
+        for focus in focus_colors() {
             for fill in [
-                palette::TAB_IDLE,
-                palette::TAB_HOVER,
-                palette::TAB_SELECTED,
-                palette::SESSION_PRESSED,
+                palette::DARK.tab_idle,
+                palette::DARK.tab_hover,
+                palette::DARK.tab_selected,
+                palette::DARK.session_pressed,
             ] {
                 for state in [
                     AttentionState::NeedsInput,
@@ -7341,14 +7393,14 @@ mod tests {
                     );
                     for vertex in rectangles.bytes.chunks_exact(24) {
                         let color = vertex_color(vertex);
-                        for surface in [fill, palette::BAR_BACKGROUND] {
+                        for surface in [fill, palette::DARK.bar_background] {
                             assert!(
                                 contrast_ratio(color, surface) >= 3.0,
                                 "{state:?}, focus={focus:?}, {color:?} on {surface:?}"
                             );
                         }
-                        if fill == palette::TAB_SELECTED {
-                            for surface in [palette::TAB_IDLE, palette::TAB_HOVER] {
+                        if fill == palette::DARK.tab_selected {
+                            for surface in [palette::DARK.tab_idle, palette::DARK.tab_hover] {
                                 assert!(contrast_ratio(color, surface) >= 3.0);
                             }
                         }
@@ -7374,9 +7426,9 @@ mod tests {
                 for b in steps.clone() {
                     let focus = SceneColor { r, g, b };
                     for surface in [
-                        palette::BAR_BACKGROUND,
-                        palette::CHROME_HIGHLIGHT,
-                        palette::DIALOG_BACKGROUND,
+                        palette::DARK.bar_background,
+                        palette::DARK.chrome_highlight,
+                        palette::DARK.dialog_background,
                         gray(25),
                         gray(119),
                         gray(255),
@@ -7921,12 +7973,12 @@ mod tests {
             (
                 QuotaProvider::Claude,
                 CLAUDE_SPLAT_ID,
-                palette::QUOTA_ICON_CLAUDE,
+                palette::DARK.quota_icon_claude,
             ),
             (
                 QuotaProvider::Codex,
                 OPENAI_BLOSSOM_ID,
-                palette::QUOTA_ICON_CODEX,
+                palette::DARK.quota_icon_codex,
             ),
         ] {
             renderer.text.clear();
@@ -8408,13 +8460,13 @@ mod tests {
                     rectangles,
                     visual,
                     dot,
-                    color == Some(palette::LOAD_CRITICAL),
+                    color == Some(palette::DARK.load_critical),
                     metrics
                 ));
             }
 
             fn assert_neutral(text: &PlacedText) {
-                let neutral = palette::SECONDARY_TEXT;
+                let neutral = palette::DARK.secondary_text;
                 let expected = Color::rgb(neutral.r, neutral.g, neutral.b);
                 assert_eq!(text.color, expected);
                 for run in text.buffer.layout_runs() {
@@ -8517,7 +8569,7 @@ mod tests {
                         &rectangles,
                         quota.rect,
                         visual,
-                        Some(palette::SECONDARY_TEXT),
+                        Some(palette::DARK.secondary_text),
                     );
                     assert_neutral(
                         renderer
@@ -8692,12 +8744,22 @@ mod tests {
                 renderer.resize(size, scale);
                 let metrics = renderer.metrics();
                 for (remaining, reset, stale, expected) in [
-                    (50, Some(1_009_000), false, Some(palette::SECONDARY_TEXT)), // On pace.
-                    (50, Some(1_008_000), false, Some(palette::SECONDARY_TEXT)), // Comfortably under pace.
+                    (
+                        50,
+                        Some(1_009_000),
+                        false,
+                        Some(palette::DARK.secondary_text),
+                    ), // On pace.
+                    (
+                        50,
+                        Some(1_008_000),
+                        false,
+                        Some(palette::DARK.secondary_text),
+                    ), // Comfortably under pace.
                     (50, Some(1_009_450), false, Some(quota_pace_color(0.05))),
                     (50, Some(1_009_900), false, Some(quota_pace_color(0.10))),
                     (50, Some(1_011_250), false, Some(quota_pace_color(0.25))),
-                    (0, Some(1_000_001), false, Some(palette::LOAD_NOTICE)),
+                    (0, Some(1_000_001), false, Some(palette::DARK.load_notice)),
                     (0, Some(1_011_250), false, Some(quota_pace_color(0.625))),
                     (50, Some(1_011_250), true, None),
                     (50, None, false, None),
@@ -8868,7 +8930,12 @@ mod tests {
                             .layout_runs()
                             .flat_map(|run| run.glyphs.iter().filter_map(|glyph| glyph.color_opt)),
                     ) {
-                        assert_ne!(ink, color(palette::ACCENT), "mint text: {}", source(text));
+                        assert_ne!(
+                            ink,
+                            color(palette::DARK.accent),
+                            "mint text: {}",
+                            source(text)
+                        );
                         assert_ne!(
                             ink,
                             Color::rgb(162, 204, 230),
@@ -8958,14 +9025,14 @@ mod tests {
                         text,
                         &(index + 1).to_string(),
                         if tab.selected {
-                            palette::PRIMARY_TEXT
+                            palette::DARK.primary_text
                         } else {
-                            palette::PANE_ID
+                            palette::DARK.pane_id
                         },
                         if tab.selected {
-                            palette::PRIMARY_TEXT
+                            palette::DARK.primary_text
                         } else {
-                            palette::TAB_TEXT
+                            palette::DARK.tab_text
                         },
                     );
                 }
@@ -8980,16 +9047,16 @@ mod tests {
                     identity(
                         text,
                         &(index + 1).to_string(),
-                        blend_to_contrast(palette::PANE_ID, background, 4.5),
-                        blend_to_contrast(palette::PRIMARY_TEXT, background, 4.5),
+                        blend_to_contrast(palette::DARK.pane_id, background, 4.5),
+                        blend_to_contrast(palette::DARK.primary_text, background, 4.5),
                     );
                 }
                 let hints = workspace.hints.as_ref().unwrap();
                 assert!(!hints.pieces.is_empty());
                 for hint in &hints.pieces {
                     for (label, expected) in [
-                        (&hint.key, palette::TAB_TEXT),
-                        (&hint.label, palette::SECONDARY_TEXT),
+                        (&hint.key, palette::DARK.tab_text),
+                        (&hint.label, palette::DARK.secondary_text),
                     ] {
                         let text = renderer
                             .text
@@ -9007,7 +9074,7 @@ mod tests {
                         .iter()
                         .find(|text| source(text) == group.legend)
                         .expect("painted keycap legend");
-                    assert_eq!(text.color, color(palette::HINT_MODIFIER_TEXT));
+                    assert_eq!(text.color, color(palette::DARK.hint_modifier_text));
                 }
                 grey_text(&renderer.text);
             }
@@ -9024,13 +9091,11 @@ mod tests {
             let painted = &renderer.text[first..];
             for section in HintSection::ALL {
                 assert!(painted.iter().any(|text| source(text) == section.title()
-                    && text.color == color(palette::HINT_POPUP_TEXT)));
+                    && text.color == color(palette::DARK.hint_popup_text)));
             }
             for row in &group.rows {
-                assert!(
-                    painted.iter().any(|text| source(text) == row.key
-                        && text.color == color(palette::HINT_POPUP_TEXT))
-                );
+                assert!(painted.iter().any(|text| source(text) == row.key
+                    && text.color == color(palette::DARK.hint_popup_text)));
             }
             grey_text(painted);
             let dialog = DialogScene::new(
@@ -9051,9 +9116,9 @@ mod tests {
             let mut batch = RectangleBatch::new(1600, 900);
             renderer.build_dialog(&dialog, &mut batch);
             for (label, expected) in [
-                ("Chrome group", palette::SECONDARY_TEXT),
-                ("Ctrl+Q", palette::SHORTCUT_KEY_TEXT),
-                ("Chrome action", palette::SHORTCUT_ACTION_TEXT),
+                ("Chrome group", palette::DARK.secondary_text),
+                ("Ctrl+Q", palette::DARK.shortcut_key_text),
+                ("Chrome action", palette::DARK.shortcut_action_text),
             ] {
                 assert!(
                     renderer
@@ -9072,14 +9137,18 @@ mod tests {
                 });
                 assert_ne!(
                     rgb,
-                    [palette::ACCENT.r, palette::ACCENT.g, palette::ACCENT.b],
+                    [
+                        palette::DARK.accent.r,
+                        palette::DARK.accent.g,
+                        palette::DARK.accent.b
+                    ],
                     "dialog thumb is not focus"
                 );
                 neutral_thumb |= rgb
                     == [
-                        palette::DIALOG_SCROLL_THUMB.r,
-                        palette::DIALOG_SCROLL_THUMB.g,
-                        palette::DIALOG_SCROLL_THUMB.b,
+                        palette::DARK.dialog_scroll_thumb.r,
+                        palette::DARK.dialog_scroll_thumb.g,
+                        palette::DARK.dialog_scroll_thumb.b,
                     ];
             }
             assert!(neutral_thumb, "painted neutral scroll thumb");
@@ -9764,8 +9833,8 @@ mod tests {
                         &row,
                         workspace.sidebar_list,
                         false,
-                        Backing::card(palette::TERMINAL_FALLBACK, 0.8, true),
-                        palette::TERMINAL_FALLBACK,
+                        Backing::card(palette::DARK.terminal_fallback, 0.8, true),
+                        palette::DARK.terminal_fallback,
                         &mut RectangleBatch::new(1600, 900),
                     );
                     let lines: Vec<_> = renderer

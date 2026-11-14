@@ -404,7 +404,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         &rules,
                         &[],
                         None,
-                        Some(palette::CARD_OUTLINE),
+                        Some(palette::DARK.card_outline),
                         stroke,
                         stroke,
                     );
@@ -415,7 +415,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         &rules,
                         &[],
                         None,
-                        Some(palette::CARD_OUTLINE),
+                        Some(palette::DARK.card_outline),
                         stroke,
                         stroke,
                     );
@@ -435,7 +435,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                             workspace.terminal.right() - metrics.padding,
                             title_top + 0.5
                         ),
-                        Some(palette::CARD_OUTLINE)
+                        Some(palette::DARK.card_outline)
                     );
                     let zoomed = WorkspaceScene::from_snapshot_with_zoom(
                         &snapshot,
