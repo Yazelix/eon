@@ -595,23 +595,33 @@ outline follows the glyph's own shape, about one physical pixel wide, reduced on
 fit small glyphs without closing their gaps. Stale glyphs and outlines apply the
 intentional 0.45 dimming multiplier after pulse opacity; either multiplier may reduce
 instantaneous contrast below 3:1. No square or other backing shape is drawn.
-Sidebar/inbox status glyphs and app marks share a square spanning three quarters
-of the two-line text block (27 physical pixels at default 1x metrics, 54 at 2x),
-capped at twice the font size and 256 physical pixels. Both centre vertically
-within the complete row, including a needs-input message's third line, with their
-shared top floored to a whole pixel. Row heights and text line positions stay
-fixed. Half a cell separates symbols and text; the larger boxes move text 22px
-right compared with the former 16px symbols at default metrics, so long titles
-truncate earlier. Both marks have direct 27/54px rasters; other sizes use the
-larger source without upscaling. Tab,
-session-label and edge badges retain their 0.75× font size and padding cap.
-Working's plain spinner dots are 7 physical pixels across in default sidebar/inbox rows
-and retain their 2-pixel size on the bar. Row dots and gaps scale with the box;
-the contour stays about one physical pixel, with clear gaps in the fitted grid.
+Sidebar/inbox app-mark boxes target 0.6 of the two-line text block (1.19 line
+heights), capped at 1.6 times the font size before snapping to the nearest
+multiple of Clawd's eleven columns, bounded to 11–253 physical pixels. Default
+1x/1.25x/1.5x/2x boxes are 22/22/33/44px. Status glyphs are secondary to app
+identity: rounded font-sized boxes, bounded to 1–256px (16/20/24/32px by default).
+Each box centres independently across the complete row, including a needs-input
+message's third line, with its top floored to a whole physical pixel, including
+after scrolling. Row heights and text line positions stay fixed. Half a cell
+separates symbols and text. Both marks have exact 22/33/44px rasters, with no
+draw-time scaling; other sizes use the 256px source at glyph-cache time and
+can be softer. Clawd is proportionally pitch-scaled with whole-pixel column
+starts and art top, plus an approved sub-pixel right-edge trim; the supplied
+SVG's vertical pitch and overlapping cell edges retain fractional coverage.
+Codex's complete vector is rasterized directly at each box size. Quota marks
+are unchanged. Tab, session-label and edge badges retain their independent
+0.75× font size and padding cap. Working's square spinner dots are 4px across
+in default 1x sidebar/inbox rows and retain their 2px size on the bar. Row dots
+and gaps scale with the status box; the contour stays about one physical
+pixel, with clear gaps in the fitted grid.
 Background uses three anti-aliased round dots with a gentle staggered pulse,
 0.65–1.0 opacity over a three-second cycle, on the existing attention tick. The
-same round coverage primitive draws Idle's hollow ring and Unavailable's dot,
-including their optional glyph contour. Working retains its square braille dots.
+same round coverage primitive draws Idle's small muted filled dot (diameter
+0.35 of its status box, 5.6px at default 1x) and Unavailable's hollow ring,
+including their optional glyph contour. These states remain visually distinct.
+Idle's appearance stays fixed by Lucca's 2026-11-14 choice: “i dont want an
+extra seting”. Existing font configuration scales the geometry; no additional
+size, gap or dot controls multiply the supported layout/readability variants. Working retains its square braille dots.
 The animation-off switch and CPU adapter guard keep Background's dots fully lit
 and still. Compact Background dots use about 3px discs with clear gaps at 1x.
 The popup marker keeps its independent 1.25× font-size box and hollow windows.

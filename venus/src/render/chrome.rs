@@ -350,16 +350,20 @@ const OPENAI_BLOSSOM_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/openai-blossom-104.alpha");
 const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/claude-splat-104.alpha");
-const CLAUDE_CODE_RGBA_27: &[u8; 27 * 27 * 4] =
-    include_bytes!("../../assets/claude-code-clawd-27.rgba");
-const CLAUDE_CODE_RGBA_54: &[u8; 54 * 54 * 4] =
-    include_bytes!("../../assets/claude-code-clawd-54.rgba");
+const CLAUDE_CODE_RGBA_22: &[u8; 22 * 22 * 4] =
+    include_bytes!("../../assets/claude-code-clawd-22.rgba");
+const CLAUDE_CODE_RGBA_33: &[u8; 33 * 33 * 4] =
+    include_bytes!("../../assets/claude-code-clawd-33.rgba");
+const CLAUDE_CODE_RGBA_44: &[u8; 44 * 44 * 4] =
+    include_bytes!("../../assets/claude-code-clawd-44.rgba");
 const CLAUDE_CODE_RGBA_256: &[u8; 256 * 256 * 4] =
     include_bytes!("../../assets/claude-code-clawd-256.rgba");
-const CODEX_SYMBOL_RGBA_27: &[u8; 27 * 27 * 4] =
-    include_bytes!("../../assets/codex-symbol-27.rgba");
-const CODEX_SYMBOL_RGBA_54: &[u8; 54 * 54 * 4] =
-    include_bytes!("../../assets/codex-symbol-54.rgba");
+const CODEX_SYMBOL_RGBA_22: &[u8; 22 * 22 * 4] =
+    include_bytes!("../../assets/codex-symbol-22.rgba");
+const CODEX_SYMBOL_RGBA_33: &[u8; 33 * 33 * 4] =
+    include_bytes!("../../assets/codex-symbol-33.rgba");
+const CODEX_SYMBOL_RGBA_44: &[u8; 44 * 44 * 4] =
+    include_bytes!("../../assets/codex-symbol-44.rgba");
 const CODEX_SYMBOL_RGBA_256: &[u8; 256 * 256 * 4] =
     include_bytes!("../../assets/codex-symbol-256.rgba");
 
@@ -760,8 +764,9 @@ pub(super) fn rasterize_bar_icon(
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
         CLAUDE_CODE_ID => (
             match (request.width, request.height) {
-                (27, 27) => CLAUDE_CODE_RGBA_27,
-                (54, 54) => CLAUDE_CODE_RGBA_54,
+                (22, 22) => CLAUDE_CODE_RGBA_22,
+                (33, 33) => CLAUDE_CODE_RGBA_33,
+                (44, 44) => CLAUDE_CODE_RGBA_44,
                 _ => CLAUDE_CODE_RGBA_256,
             },
             4,
@@ -770,8 +775,9 @@ pub(super) fn rasterize_bar_icon(
         CODEX_SYMBOL_ID => (
             // Rasterized directly at row size so the transparent prompt stays crisp.
             match (request.width, request.height) {
-                (27, 27) => CODEX_SYMBOL_RGBA_27,
-                (54, 54) => CODEX_SYMBOL_RGBA_54,
+                (22, 22) => CODEX_SYMBOL_RGBA_22,
+                (33, 33) => CODEX_SYMBOL_RGBA_33,
+                (44, 44) => CODEX_SYMBOL_RGBA_44,
                 _ => CODEX_SYMBOL_RGBA_256,
             },
             4,
@@ -1218,11 +1224,11 @@ fn push_badge_glyph(
         }
         AttentionState::Idle | AttentionState::Unavailable => {
             let center = at(0.5, 0.5);
-            let (outer, inner) = if badge.state == AttentionState::Idle {
+            let (outer, inner) = if badge.state == AttentionState::Unavailable {
                 let outer = glyph.width / 2.0;
                 (outer, (outer - stroke / 2.0).max(0.0))
             } else {
-                (glyph.width * 0.15, 0.0)
+                (badge.rect.width * 0.175, 0.0)
             };
             let contour = if outline.is_some() {
                 (badge.rect.width / 12.0).min(1.0)
@@ -5508,7 +5514,7 @@ mod tests {
     #[test]
     fn round_attention_glyphs_have_soft_edges_and_bounded_axis_aligned_vertices() {
         let mut maximum = (0.0_f32, String::new());
-        for size in [6.0, 12.0, 15.0, 27.0, 35.0, 41.0, 54.0, 256.0] {
+        for size in [6.0, 12.0, 15.0, 16.0, 20.0, 24.0, 32.0, 256.0] {
             for state in [
                 AttentionState::Background,
                 AttentionState::Idle,
@@ -5583,7 +5589,7 @@ mod tests {
 
     #[test]
     fn animated_badge_ranges_keep_neighbor_bytes_and_soft_edges_in_every_backing() {
-        for size in [12.0, 27.0, 35.0, 54.0] {
+        for size in [12.0, 16.0, 20.0, 24.0, 32.0] {
             for backing in [
                 Backing::BarPill(palette::TAB_SELECTED),
                 Backing::Surface(palette::BAR_BACKGROUND),
@@ -5675,7 +5681,7 @@ mod tests {
 
     #[test]
     fn round_glyph_coverage_is_symmetric_hollow_and_leaves_compact_dot_gaps() {
-        for size in [12.0, 27.0, 54.0] {
+        for size in [12.0, 16.0, 20.0, 24.0, 32.0] {
             for state in [
                 AttentionState::Idle,
                 AttentionState::Unavailable,
@@ -5725,11 +5731,24 @@ mod tests {
                                 );
                             }
                         }
-                        if state == AttentionState::Idle {
+                        if state == AttentionState::Unavailable {
                             assert_eq!(
                                 coverage[size as usize / 2][size as usize / 2],
                                 0.0,
-                                "ring centre remains transparent"
+                                "Unavailable ring centre remains transparent"
+                            );
+                        } else {
+                            assert_eq!(
+                                coverage[size as usize / 2][size as usize / 2],
+                                1.0,
+                                "Idle dot centre is filled"
+                            );
+                            let area: f32 = coverage.iter().flatten().sum();
+                            let radius = size * 0.175;
+                            assert!(
+                                outline.is_some()
+                                    || (area - std::f32::consts::PI * radius * radius).abs() < size,
+                                "Idle dot diameter scales from 5.6px at 1x"
                             );
                         }
                     }
@@ -6785,7 +6804,7 @@ mod tests {
                                 .any(|(r, _, a)| *a > 0.0 && r.contains(20.01, 20.01)),
                             "no filled backing at the badge corner"
                         );
-                        if state == AttentionState::Idle {
+                        if state == AttentionState::Unavailable {
                             assert!(
                                 !rects.iter().any(|(r, _, a)| *a > 0.0
                                     && r.contains(20.0 + size / 2.0, 20.0 + size / 2.0)),
@@ -7022,7 +7041,7 @@ mod tests {
     fn product_marks_keep_their_own_colours_and_alpha_at_row_scales() {
         for (id, size) in [CLAUDE_CODE_ID, CODEX_SYMBOL_ID]
             .into_iter()
-            .flat_map(|id| [27, 35, 41, 48, 54, 256].map(|size| (id, size)))
+            .flat_map(|id| [11, 22, 33, 44, 253, 256].map(|size| (id, size)))
         {
             let image = rasterize_bar_icon(
                 RasterizeCustomGlyphRequest {
@@ -7047,10 +7066,12 @@ mod tests {
                 "the product's colour survives instead of a tinted silhouette"
             );
             let source = match (id, size) {
-                (CLAUDE_CODE_ID, 27) => Some(CLAUDE_CODE_RGBA_27.as_slice()),
-                (CLAUDE_CODE_ID, 54) => Some(CLAUDE_CODE_RGBA_54.as_slice()),
-                (CODEX_SYMBOL_ID, 27) => Some(CODEX_SYMBOL_RGBA_27.as_slice()),
-                (CODEX_SYMBOL_ID, 54) => Some(CODEX_SYMBOL_RGBA_54.as_slice()),
+                (CLAUDE_CODE_ID, 22) => Some(CLAUDE_CODE_RGBA_22.as_slice()),
+                (CLAUDE_CODE_ID, 33) => Some(CLAUDE_CODE_RGBA_33.as_slice()),
+                (CLAUDE_CODE_ID, 44) => Some(CLAUDE_CODE_RGBA_44.as_slice()),
+                (CODEX_SYMBOL_ID, 22) => Some(CODEX_SYMBOL_RGBA_22.as_slice()),
+                (CODEX_SYMBOL_ID, 33) => Some(CODEX_SYMBOL_RGBA_33.as_slice()),
+                (CODEX_SYMBOL_ID, 44) => Some(CODEX_SYMBOL_RGBA_44.as_slice()),
                 _ => None,
             };
             if let Some(source) = source {
@@ -7065,8 +7086,20 @@ mod tests {
                 );
                 if id == CODEX_SYMBOL_ID {
                     let alpha = |x, y| image.data[(y * side + x) * 4 + 3];
-                    assert_eq!(alpha(side * 2 / 3, side * 13 / 20), 0, "prompt is a cutout");
+                    assert!(
+                        alpha(side * 2 / 3, side * 13 / 20) < 64,
+                        "prompt stays a cutout, with edge coverage at 22px"
+                    );
                     assert_eq!(alpha(side / 2, side / 2), 255, "cloud surrounds the prompt");
+                } else {
+                    let cell = side / 11;
+                    let alpha = |x, y| image.data[(y * side + x) * 4 + 3];
+                    assert_eq!(alpha(3 * cell, side / 3), 255, "column starts on the grid");
+                    assert_eq!(alpha(2 * cell + 1, side / 3), 0, "Clawd eye stays clear");
+                    assert!(
+                        alpha(2 * cell, side / 3) < 64,
+                        "only the SVG's overlapping cell fringe softens this edge"
+                    );
                 }
             }
         }
@@ -7144,14 +7177,24 @@ mod tests {
                             assert_eq!(row.icon.unwrap().0, mark);
                             assert_eq!(row.glyph.dimmed, stale);
                             let symbol = row.icon.unwrap().1;
-                            assert_eq!(symbol.top, row.glyph.rect.top);
+                            let status = row.glyph.rect;
+                            assert_eq!(status.width, metrics.font_size.round());
+                            assert_eq!(status.top.fract(), 0.0);
+                            let centre = row.rect.top + row.rect.height / 2.0;
+                            assert!((status.top + status.height / 2.0 - centre).abs() <= 0.5);
                             assert_eq!(symbol.top.fract(), 0.0);
                             let centre = row.rect.top + row.rect.height / 2.0;
                             assert!((symbol.top + symbol.height / 2.0 - centre).abs() <= 0.5);
                             assert!(row.text_right - row.text_left >= row.rect.width / 2.0);
-                            if scale == 1.0 || scale == 2.0 {
-                                assert_eq!(symbol.width, 27.0 * scale as f32);
-                            }
+                            assert_eq!(
+                                symbol.width,
+                                match scale {
+                                    0.75 | 1.0 | 1.25 => 22.0,
+                                    1.5 | 1.75 => 33.0,
+                                    2.0 => 44.0,
+                                    _ => unreachable!(),
+                                }
+                            );
                             let icon = attention_row_icon(row, clip).unwrap();
                             let glyph = icon.custom_glyph.as_ref().unwrap();
                             assert_eq!(glyph.id, id);

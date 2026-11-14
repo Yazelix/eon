@@ -23,6 +23,10 @@ installation, and proven contract changes.
   or sending input. Both paths preserve covering transients and desktop
   focus; Scrollback obeys agent terminal-access policy
   (`eon-agent-parity-a9g0.1.3`, `eon-agent-parity-a9g0.1.2`).
+- Agents sidebar and attention inbox app marks are smaller (22/44px at default
+  1x/2x), with secondary 16/32px status glyphs, still centred across each row.
+  Idle is a small muted filled dot; Unavailable is a hollow ring. Clawd's
+  column pitch is aligned to whole pixels (`eon-sidebar-app-icons-y99b7.11`).
 
 - Eon 0.1.26 uses EONW v45. Windows started before this version need a
   restart; their EONW v44 supervisors reject the updated CLI's incompatible
@@ -34,8 +38,8 @@ installation, and proven contract changes.
   the same focused terminal. EONW v45 carries the focus and target values
   (`eon-81emk`).
 
-- Background attention badges use gently pulsing round dots; Idle rings and
-  Unavailable dots have smooth anti-aliased edges. The attention animation-off
+- Background attention badges use gently pulsing round dots; Idle and
+  Unavailable glyphs have smooth anti-aliased edges. The attention animation-off
   switch keeps both Working and Background still (`eon-sidebar-app-icons-y99b7.10`).
 
 - The Eon Bar offers an opt-in Linux NVIDIA `gpu` chip: busiest utilization, every

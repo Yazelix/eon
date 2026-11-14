@@ -67,7 +67,7 @@ pub(super) const ACCENT: SceneColor = rgb(126, 231, 185);
 pub(super) const ATTENTION_NEEDS_INPUT: SceneColor = rgb(255, 196, 87);
 pub(super) const ATTENTION_ERROR: SceneColor = rgb(255, 107, 107);
 pub(super) const ATTENTION_FINISHED: SceneColor = rgb(96, 196, 96);
-/// The idle ring and the unavailable dot.
+/// The quiet Idle dot and the Unavailable ring.
 pub(super) const ATTENTION_IDLE: SceneColor = rgb(162, 174, 190);
 
 // Terminal overlays.

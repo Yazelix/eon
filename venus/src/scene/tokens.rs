@@ -109,13 +109,19 @@ pub(crate) const fn attention_row_gap(metrics: CellMetrics) -> f32 {
     (metrics.padding / 2.0).round()
 }
 
-/// Both row symbols span three quarters of the two-line text block. The font cap keeps
-/// tall line pitches from crowding text; 256 is the largest bundled mark raster.
-pub(crate) const fn attention_symbol_size(metrics: CellMetrics) -> f32 {
-    (metrics.height * 1.5)
-        .min(metrics.font_size * 2.0)
+/// App marks span about 0.6 of the two-line block, snapped to Clawd's eleven columns.
+/// 1.19 keeps rounded 1.25x line metrics below the next grid step.
+/// The font cap protects text space; 253 is the last grid step below the 256px source.
+pub(crate) const fn attention_app_size(metrics: CellMetrics) -> f32 {
+    ((metrics.height * 1.19).min(metrics.font_size * 1.6) / 11.0)
         .round()
-        .clamp(1.0, 256.0)
+        .clamp(1.0, 23.0)
+        * 11.0
+}
+
+/// Status is secondary to app identity, in a rounded font-sized physical box.
+pub(crate) const fn attention_status_size(metrics: CellMetrics) -> f32 {
+    metrics.font_size.round().clamp(1.0, 256.0)
 }
 
 /// The space between row symbols and before their text, in whole physical pixels.

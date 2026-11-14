@@ -1072,10 +1072,16 @@ fn agent_sidebar_ages_count_whole_minutes_hours_and_days() {
 fn row_symbols_cap_tall_line_pitches_and_never_upscale_mark_rasters() {
     let mut metrics = CellMetrics::for_scale(1.0);
     metrics.height = 100.0;
-    assert_eq!(attention_symbol_size(metrics), 32.0);
+    assert_eq!(attention_app_size(metrics), 22.0);
+    assert_eq!(attention_status_size(metrics), 16.0);
     metrics.font_size = 500.0;
     metrics.height = 600.0;
-    assert_eq!(attention_symbol_size(metrics), 256.0);
+    assert_eq!(attention_app_size(metrics), 253.0);
+    assert_eq!(attention_status_size(metrics), 256.0);
+    metrics.font_size = 0.1;
+    metrics.height = 0.1;
+    assert_eq!(attention_app_size(metrics), 11.0);
+    assert_eq!(attention_status_size(metrics), 1.0);
 }
 
 #[test]
@@ -1121,7 +1127,7 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                     },
                 );
                 let glyph = row.glyph.rect;
-                assert_eq!(glyph.width, (metrics.height * 1.5).round());
+                assert_eq!(glyph.width, metrics.font_size.round());
                 assert_eq!(glyph.height, glyph.width);
                 let lines = if message.is_empty() { 2.0 } else { 3.0 };
                 assert_eq!(
@@ -1131,11 +1137,20 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                 assert!(glyph.top >= row.rect.top);
                 assert!(glyph.bottom() <= row.rect.bottom());
                 let icon = row.icon.unwrap().1;
-                assert_eq!(icon.top, glyph.top);
-                assert_eq!(icon.width, glyph.width);
+                assert_eq!(icon.width % 11.0, 0.0);
+                let expected_app = match scale {
+                    0.75 | 1.0 | 1.25 => 22.0,
+                    1.5 | 1.75 => 33.0,
+                    2.0 => 44.0,
+                    _ => unreachable!(),
+                };
+                assert_eq!(icon.width, expected_app);
+                assert_eq!(icon.height, icon.width);
+                assert_eq!(icon.top.fract(), 0.0);
                 assert_eq!(glyph.top.fract(), 0.0);
                 let centre = row.rect.top + row.rect.height / 2.0;
                 assert!((glyph.top + glyph.height / 2.0 - centre).abs() <= 0.5);
+                assert!((icon.top + icon.height / 2.0 - centre).abs() <= 0.5);
                 let marker = row.popup_marker.unwrap();
                 assert_eq!(
                     marker.width,
@@ -1167,7 +1182,12 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                 assert_eq!(row.popup_marker.unwrap().top, marker.top - 13.0);
                 row.shift(-0.25);
                 assert_eq!(row.glyph.rect.top.fract(), 0.0);
-                assert_eq!(row.icon.unwrap().1.top, row.glyph.rect.top);
+                let icon = row.icon.unwrap().1;
+                assert_eq!(icon.top.fract(), 0.0);
+                assert!(
+                    (icon.top + icon.height / 2.0 - (row.rect.top + row.rect.height / 2.0)).abs()
+                        < 1.0
+                );
                 let centre = row.rect.top + row.rect.height / 2.0;
                 assert!((row.glyph.rect.top + glyph.height / 2.0 - centre).abs() < 1.0);
             }

@@ -446,14 +446,17 @@ the card colour composited at that opacity over both black and white. Only
 where no single colour reaches 3:1 against both does it retain its source
 colour and take a black or white outline, whichever contrasts more with the
 glyph. This contour follows the glyph itself, about one physical pixel wide,
-reduced only to preserve gaps in small glyphs. Sidebar/inbox status glyphs and
-app marks share square boxes of 1.5 line heights, capped at twice the font size
-and 256 physical pixels (27px at default 1x metrics, 54px at 2x). They centre
-across the full row and keep a half-cell gap between symbols and text. Tab and
+reduced only to preserve gaps in small glyphs. Sidebar/inbox app marks use
+1.19 line heights, capped at 1.6 times the font size
+before snapping to the nearest multiple of Clawd's eleven columns (11–253
+physical pixels). Default boxes are 22px at 1x and 1.25x, 33px at 1.5x and
+44px at 2x. Status glyphs use rounded font-sized boxes (16/20/24/32px at those
+scales), capped at 256px. Each centres independently across the full row;
+a half-cell gap separates symbols and text. Tab and
 bar badge sizes and the popup marker retain their own
 metrics. These sizes and the automatic contrast/outline recipe stay fixed to
 bound layout and readability variants; font size and opacity remain
-configurable (`eon-0ntg1`, `eon-sidebar-app-icons-y99b7.9`). `focus_color` accepts
+configurable (`eon-0ntg1`, `eon-sidebar-app-icons-y99b7.11`). `focus_color` accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
 invalid. The setting is omitted by default, leaving Venus's built-in focus
 colour in use. The example selects `custom:#b207fb`. F6 keyboard focus colours a framed pane title's edge span mint;
@@ -732,7 +735,9 @@ from approving it.
 on tabs, bar corners, sidebar and inbox rows. Working steps through the braille
 dots ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ten times a second. Background uses three round dots with a
 slower staggered pulse, repeating every three seconds between 0.65 and 1.0
-opacity. Idle keeps a hollow round ring; Unavailable keeps a round dot. Their
+opacity. Idle uses a small muted filled dot (5.6px across in its default 16px
+box); Unavailable uses a hollow round ring. Idle's appearance is fixed by
+Lucca's explicit choice (2026-11-14: “i dont want an extra seting”). Their
 edges use one-physical-pixel anti-aliased coverage.
 
 `false` keeps Working at ⠋ and Background's round dots steadily lit, for people

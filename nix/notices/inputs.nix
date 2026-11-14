@@ -439,20 +439,28 @@ import ./default.nix {
           hash = "9ca6ebb33e268ff95ded9b927ceb53f22deecf4f1de9988f088437621c85154c";
         }
         {
-          file = ../../venus/assets/claude-code-clawd-27.png;
-          hash = "1ee2ed0c8060dc40aa342f6411a4fa44ec075dcc2c84741f64ed910647554116";
+          file = ../../venus/assets/claude-code-clawd-22.png;
+          hash = "40412285c4931e7df5193473cd301f146aa23cd373e0bbfd2ea3e26e068d35e2";
         }
         {
-          file = ../../venus/assets/claude-code-clawd-27.rgba;
-          hash = "a6b1a0ce1277de56209f05a9681b57fb6ed7096f4c754cd22210c85e0769f980";
+          file = ../../venus/assets/claude-code-clawd-22.rgba;
+          hash = "862167f874de6e3a2348dd2cea1cdb7add3afe10187816b748aa092e39972d64";
         }
         {
-          file = ../../venus/assets/claude-code-clawd-54.png;
-          hash = "2cc8ff31dd258113e697eff0c4357da19cf0c24daf553ce9c5dbbfe7acd37966";
+          file = ../../venus/assets/claude-code-clawd-33.png;
+          hash = "8ec85689732f93a5cec80fe8d637db7f697832425a0b6f9cada289e3fbcccf41";
         }
         {
-          file = ../../venus/assets/claude-code-clawd-54.rgba;
-          hash = "7797047bc4befe0634326775ec19e54afe7f4403dee93f5529d549e00b05802d";
+          file = ../../venus/assets/claude-code-clawd-33.rgba;
+          hash = "c3d8c916c4efb305d305d2319e14c06f15e275f9f7ff1a4b47958bc72c993d51";
+        }
+        {
+          file = ../../venus/assets/claude-code-clawd-44.png;
+          hash = "2a118cb1a7e2ec3560dd4752cd4302ad17bc17b725118bd6c99db6292d09bc7c";
+        }
+        {
+          file = ../../venus/assets/claude-code-clawd-44.rgba;
+          hash = "0355088c462c27ec5fe81cdfa91b4771739e37cea08d9e617726fe9581e8cbf4";
         }
         {
           file = ../../venus/assets/claude-code-clawd-256.rgba;
@@ -472,20 +480,28 @@ import ./default.nix {
           hash = "983fc436a025a9920ec2661d790e956f766f273a2240801e64c3d3d26feb7ad2";
         }
         {
-          file = ../../venus/assets/codex-symbol-27.png;
-          hash = "90b3eb958d0a7299d92289913411d97ded923382a4a282c27a4326069060cc73";
+          file = ../../venus/assets/codex-symbol-22.png;
+          hash = "2184ee35861e8592e6fb2fb552f9b0ea5f851629d5dbaee02eec19f59d950ec5";
         }
         {
-          file = ../../venus/assets/codex-symbol-27.rgba;
-          hash = "a0d99ed69ef19322844c453016f8f0583b0d941da2ae2179f607904a50acf4a6";
+          file = ../../venus/assets/codex-symbol-22.rgba;
+          hash = "d16e931ac2f7194bc1dedb3a0b8a8dd46f87a725b20bc2f5d1582188386afa48";
         }
         {
-          file = ../../venus/assets/codex-symbol-54.png;
-          hash = "ebb4684136304faad4ae14ec9c8fe114d95ff24264549c56bce052fa999c5f1b";
+          file = ../../venus/assets/codex-symbol-33.png;
+          hash = "6351a75207b254491927dc3ec5d6d5fb9c9a7ba10b3d883edaecca12a8c1c5cf";
         }
         {
-          file = ../../venus/assets/codex-symbol-54.rgba;
-          hash = "71b2f6c6873009affcfbe09089644eca3531c62c63dd6c8e39a976dfb23fd927";
+          file = ../../venus/assets/codex-symbol-33.rgba;
+          hash = "a7d821a4272dd9500a05a098b883e5d62d93d952e589c457acde0d397ed36a1c";
+        }
+        {
+          file = ../../venus/assets/codex-symbol-44.png;
+          hash = "9089fbeb8f91931754cd3fbe6d64dd5860ff4adf86e75dd45a9e6b9519008b5d";
+        }
+        {
+          file = ../../venus/assets/codex-symbol-44.rgba;
+          hash = "7be74d8cf5b1c39500867ce3e352f52d8707641e941dabd0dabeb3724606f9ea";
         }
         {
           file = ../../venus/assets/codex-symbol-256.rgba;

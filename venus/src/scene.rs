@@ -27,10 +27,10 @@ use winit::dpi::PhysicalSize;
 pub(crate) mod tokens;
 
 use tokens::{
-    WRAPPED_LINE_ROWS, attention_row_gap, attention_symbol_gap, attention_symbol_size, badge_size,
-    card_gap, chrome_title_metrics, dialog_padding, hint_hover_reach, icon_gap, inner_inset,
-    pill_gap, popup_label_font_size, popup_title_gutter, sidebar_heading_gap, stack_inset,
-    title_tab_return, title_tab_rise,
+    WRAPPED_LINE_ROWS, attention_app_size, attention_row_gap, attention_status_size,
+    attention_symbol_gap, badge_size, card_gap, chrome_title_metrics, dialog_padding,
+    hint_hover_reach, icon_gap, inner_inset, pill_gap, popup_label_font_size, popup_title_gutter,
+    sidebar_heading_gap, stack_inset, title_tab_return, title_tab_rise,
 };
 
 /// Physical rectangle shared by workspace drawing, hit testing, and accessibility.
@@ -387,14 +387,13 @@ pub struct SidebarRow {
 impl SidebarRow {
     fn shift(&mut self, delta: f32) {
         self.rect.top += delta;
-        let symbol_top =
+        self.glyph.rect.top =
             (self.rect.top + (self.rect.height - self.glyph.rect.height) / 2.0).floor();
-        self.glyph.rect.top = symbol_top;
         if let Some(rect) = &mut self.popup_marker {
             rect.top += delta;
         }
         if let Some((_, rect)) = &mut self.icon {
-            rect.top = symbol_top;
+            rect.top = (self.rect.top + (self.rect.height - rect.height) / 2.0).floor();
         }
     }
 }
@@ -2772,7 +2771,8 @@ fn attention_row(
 ) -> SidebarRow {
     let line = metrics.height;
     let row_gap = attention_row_gap(metrics);
-    let symbol_size = attention_symbol_size(metrics);
+    let status_size = attention_status_size(metrics);
+    let app_size = attention_app_size(metrics);
     let spacing = attention_symbol_gap(metrics);
     let content_left = rect.left + inner_inset(metrics);
     let top = rect.top;
@@ -2876,21 +2876,20 @@ fn attention_row(
         height: line * lines + row_gap,
         ..rect
     };
-    let symbol_top = (top + (rect.height - symbol_size) / 2.0).floor();
     let glyph = SceneRect {
         left: content_left,
-        top: symbol_top,
-        width: symbol_size,
-        height: symbol_size,
+        top: (top + (rect.height - status_size) / 2.0).floor(),
+        width: status_size,
+        height: status_size,
     };
     let icon = icon.map(|provider| {
         (
             provider,
             SceneRect {
                 left: glyph.right() + spacing,
-                top: symbol_top,
-                width: symbol_size,
-                height: symbol_size,
+                top: (top + (rect.height - app_size) / 2.0).floor(),
+                width: app_size,
+                height: app_size,
             },
         )
     });
