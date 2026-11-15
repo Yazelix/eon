@@ -4,10 +4,11 @@ use super::{
     generation::{
         Ask, DELEGATION_MARKER, GenerationRecord, ROUTE_MARKER, WorkspaceTarget, attach_generation,
         caller_generation, current_generation, damaged_generations, delegated_elsewhere,
-        delegated_generation, generation_directory, generation_running,
+        delegated_generation, generation_directory, generation_running, generation_running_until,
         preferred_window_generation, private_directory_exists, probe_workspace_generation,
-        resolve_workspace, route, routed_generation, running_generations, stop_generation,
-        stop_generations, valid_generation, window_cells, window_generation, window_json,
+        resolve_workspace, route, routed_generation, running_generations,
+        running_generations_until, stop_generation, stop_generations, valid_generation,
+        window_cells, window_generation, window_json,
     },
     platform::socket_path_fits,
     supervisor::{
@@ -147,12 +148,13 @@ pub(super) fn default_namespace_id(generation: &str, preferred: &str) -> String 
 fn window_listing(
     inputs: &Inputs,
     remove_dead: bool,
+    deadline: Option<Instant>,
 ) -> Result<Vec<Result<Listed, Uninspectable>>, String> {
     let base = base_runtime_directory("eon");
     let current = current_generation(inputs)?;
     let mut windows = Vec::new();
     let mut preferred = None;
-    match running_generations(inputs, &base, remove_dead) {
+    match running_generations_until(inputs, &base, remove_dead, deadline) {
         Ok(records) => {
             preferred = preferred_window_generation(
                 &current,
@@ -182,7 +184,8 @@ fn window_listing(
     for (id, root) in window_entries()? {
         let records = root
             .and_then(|root| {
-                running_generations(inputs, &root, remove_dead).map(|records| (root, records))
+                running_generations_until(inputs, &root, remove_dead, deadline)
+                    .map(|records| (root, records))
             })
             .map_err(|error| format!("cannot inspect Eon window {id}: {error}"));
         match records {
@@ -229,7 +232,14 @@ fn window_listing(
 /// Every running window: the default namespace's, this build's first, then
 /// each independent window's by ID (EON-C23).
 pub(super) fn running_windows(inputs: &Inputs) -> Result<Vec<Listed>, String> {
-    window_listing(inputs, true)?
+    running_windows_until(inputs, None)
+}
+
+fn running_windows_until(
+    inputs: &Inputs,
+    deadline: Option<Instant>,
+) -> Result<Vec<Listed>, String> {
+    window_listing(inputs, true, deadline)?
         .into_iter()
         .map(|found| found.map_err(|window| window.error))
         .collect()
@@ -312,6 +322,14 @@ fn match_id(argument: &str, ids: &[&str], aliases: &[Option<&str>]) -> Match {
 /// `default` also answers to its generation's hex digits, the form that
 /// durable text names it by.
 pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<(Window, String), Failure> {
+    select_window_until(inputs, argument, None)
+}
+
+fn select_window_until(
+    inputs: &Inputs,
+    argument: &str,
+    deadline: Option<Instant>,
+) -> Result<(Window, String), Failure> {
     let base = base_runtime_directory("eon");
     // A default-namespace directory that names no generation keeps its raw
     // name as its ID; an argument that names or reaches one selects nothing,
@@ -341,13 +359,13 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<(Window, 
     }
     if argument == DEFAULT_WINDOW {
         return Ok((
-            Window::Default(default_generation(inputs)?),
+            Window::Default(default_generation(inputs, deadline)?),
             DEFAULT_WINDOW.into(),
         ));
     }
     // Every other argument is matched against every running window, so one
     // that two windows answer to is refused, never picked.
-    let listed = running_windows(inputs)
+    let listed = running_windows_until(inputs, deadline)
         .map_err(|error| unavailable(format!("cannot list Eon windows: {error}")))?;
     let damaged = |window: &Listed| window.root == base && !valid_generation(&window.record.id);
     let ids: Vec<&str> = listed.iter().map(|window| window.id.as_str()).collect();
@@ -412,17 +430,18 @@ pub(super) fn select_window(inputs: &Inputs, argument: &str) -> Result<(Window, 
 pub(super) fn select_routed_window(
     inputs: &Inputs,
     argument: &str,
+    deadline: Option<Instant>,
 ) -> Result<(Window, String), Failure> {
     if argument == DEFAULT_WINDOW
         && let Some(generation) = routed_generation(&base_runtime_directory("eon"), None)?
     {
         return Ok((Window::Default(generation), DEFAULT_WINDOW.into()));
     }
-    select_window(inputs, argument)
+    select_window_until(inputs, argument, deadline)
 }
 
 /// The same current-or-sole-running choice as an independent namespace.
-fn default_generation(inputs: &Inputs) -> Result<String, Failure> {
+fn default_generation(inputs: &Inputs, deadline: Option<Instant>) -> Result<String, Failure> {
     let unavailable = |detail| {
         failure(
             "supervisor-unavailable",
@@ -432,10 +451,10 @@ fn default_generation(inputs: &Inputs) -> Result<String, Failure> {
     let current = current_generation(inputs).map_err(unavailable)?;
     let base = base_runtime_directory("eon");
     // An exact live current target need not enumerate unrelated generation entries.
-    if generation_running(inputs, &base, &current).map_err(unavailable)? {
+    if generation_running_until(inputs, &base, &current, deadline).map_err(unavailable)? {
         return Ok(current);
     }
-    let windows: Vec<_> = running_windows(inputs)
+    let windows: Vec<_> = running_windows_until(inputs, deadline)
         .map_err(unavailable)?
         .into_iter()
         .filter(|window| window.root == base)
@@ -467,8 +486,8 @@ fn default_generation(inputs: &Inputs) -> Result<String, Failure> {
 }
 
 /// Launch advice is valid only when no other window remains live.
-pub(super) fn missing_default(inputs: &Inputs) -> Failure {
-    match running_windows(inputs) {
+pub(super) fn missing_default(inputs: &Inputs, deadline: Option<Instant>) -> Failure {
+    match running_windows_until(inputs, deadline) {
         Ok(windows) => match windows.first() {
             None => failure("missing-supervisor", DEFAULT_NOT_RUNNING),
             Some(window) => failure(
@@ -599,7 +618,7 @@ pub(super) fn quit(inputs: &Inputs, json: bool, arguments: &[OsString]) -> Resul
             )
         });
         // As `eon window ls` shows it, else in full.
-        let window = window_listing(inputs, true)
+        let window = window_listing(inputs, true, None)
             .ok()
             .and_then(|windows| {
                 windows
@@ -791,7 +810,7 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
         (_, Some(_)) => Err(delegated_elsewhere(&shown)),
         (Window::Default(generation), None) => {
             if !generation_running(inputs, &base, &generation)? {
-                return Ok(report_failure(&missing_default(inputs), false)?);
+                return Ok(report_failure(&missing_default(inputs, None), false)?);
             }
             attach_generation(inputs, &base, Some(&generation), Some(&shown))
         }
@@ -815,7 +834,7 @@ pub(super) fn reload_window(
     use super::control::{CONTROL_TIMEOUT, ControlResponse, EndpointFailureKind, send_action};
     use eon_workspace_protocol::v46::{Action, LifecycleResponse, WorkspaceAction};
     let argument = window_id_argument(argument)?;
-    let (window, shown) = match select_routed_window(inputs, argument) {
+    let (window, shown) = match select_routed_window(inputs, argument, None) {
         Ok(selected) => selected,
         Err(error) => return Ok(report_failure(&error, json)?),
     };
@@ -1062,7 +1081,7 @@ pub(super) fn listed_window_json(
     root: &Path,
     generation: &str,
 ) -> Result<Option<String>, String> {
-    let windows = window_listing(inputs, false)?
+    let windows = window_listing(inputs, false, None)?
         .into_iter()
         .map(|found| found.map_err(|window| window.error))
         .collect::<Result<Vec<_>, _>>()?;
@@ -1104,7 +1123,7 @@ pub(super) fn stop_windows(inputs: &Inputs, bulk: Bulk, json: bool) -> Result<i3
         records: Result<Vec<GenerationRecord>, String>,
     }
     let mut windows: Vec<Target> = Vec::new();
-    for found in window_listing(inputs, true)? {
+    for found in window_listing(inputs, true, None)? {
         match found {
             Ok(window) => {
                 if bulk == Bulk::Previous && window.record.current() {

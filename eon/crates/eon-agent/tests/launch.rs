@@ -224,7 +224,7 @@ fn refresh_rechecks_cap_after_a_slow_failed_probe() {
         exclude_args: vec![],
     });
     let reader = backend.quota.as_mut().unwrap();
-    reader.command = vec![
+    reader.command = Some(vec![
         "sh".into(),
         "-c".into(),
         // The slow probe ends only once the capped child is running, bounded at 10s.
@@ -232,10 +232,13 @@ fn refresh_rechecks_cap_after_a_slow_failed_probe() {
         "probe".into(),
         started.to_str().unwrap().into(),
         child_ready.to_str().unwrap().into(),
-    ];
+    ]);
     reader.refresh = Some(vec!["touch".into(), refreshed.to_str().unwrap().into()]);
-    let probe =
-        thread::spawn(move || rota::readings::read(&backend, std::path::Path::new("."), true));
+    let probe = thread::spawn(move || {
+        rota::readings::read(&backend, std::path::Path::new("."), true, &|_| {
+            panic!("custom reader called Runtime")
+        })
+    });
     let deadline = Instant::now() + Duration::from_secs(3);
     while !started.exists() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));

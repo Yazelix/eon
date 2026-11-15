@@ -51,6 +51,7 @@ fn load_config(primary: Option<&Path>) -> Result<(Config, PathBuf), String> {
 fn run(
     arguments: impl Iterator<Item = std::ffi::OsString>,
     primary: Result<Option<PathBuf>, String>,
+    session: &readings::SessionReader<'_>,
 ) -> Result<u8, (u8, String)> {
     let eon = !matches!(&primary, Ok(None));
     let usage = if eon {
@@ -90,7 +91,7 @@ fn run(
         let options = launch::parse(&args[1..])?;
         let result = load()
             .map_err(|error| (2, error))
-            .and_then(|(config, _)| launch::run(&config, &options))
+            .and_then(|(config, _)| launch::run(&config, &options, session))
             .map(|()| 0);
         if options.popup
             && !options.dry_run
@@ -109,7 +110,7 @@ fn run(
     if args.first().is_some_and(|s| s == "run") {
         let options = headless::parse(&args[1..])?;
         let (config, _) = load().map_err(|e| (2, e))?;
-        return headless::run(&config, &options).map(|()| 0);
+        return headless::run(&config, &options, session).map(|()| 0);
     }
     if args.first().is_some_and(|s| s == "ps") {
         let options = ps::parse(&args[1..])?;
@@ -127,7 +128,7 @@ fn run(
     let (config, config_path) = load().map_err(|e| (2, e))?;
     let cwd = env::current_dir().map_err(|e| (1, e.to_string()))?;
     let indices: Vec<_> = (0..config.backends.len()).collect();
-    let readings = readings::collect(&config, &indices, &cwd, false);
+    let readings = readings::collect(&config, &indices, &cwd, false, session);
     if args.len() == 2 {
         let status: Vec<_> = config.backends.iter().zip(&readings).map(|(b,r)| {
             let mut value = serde_json::json!({ "backend": b.name, "enabled": b.enabled, "reading": r,
@@ -189,8 +190,9 @@ fn status_for(
 pub fn main(
     arguments: impl Iterator<Item = std::ffi::OsString>,
     primary: Result<Option<PathBuf>, String>,
+    session: &readings::SessionReader<'_>,
 ) -> ExitCode {
-    match run(arguments, primary) {
+    match run(arguments, primary, session) {
         Ok(code) => ExitCode::from(code),
         Err((code, message)) => {
             print_error(&message);

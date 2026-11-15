@@ -249,7 +249,11 @@ pub fn print_readings(
     }
 }
 
-pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
+pub fn run(
+    config: &Config,
+    options: &Options,
+    session: &readings::SessionReader<'_>,
+) -> Result<(), Failure> {
     let brief = if options.popup {
         None
     } else {
@@ -305,7 +309,7 @@ pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
         .copied()
         .filter(|index| !options.popup || config.backends[*index].popup_command().is_some())
         .collect::<Vec<_>>();
-    let mut readings = readings::collect(config, &checked, &cwd, !options.dry_run);
+    let mut readings = readings::collect(config, &checked, &cwd, !options.dry_run, session);
     if options.popup {
         for index in &indices {
             if config.backends[*index].popup_command().is_none() {

@@ -113,7 +113,6 @@ CODEX_HOME = "/PATH/TO/codex"
 medium = ["codex", "-m", "MODEL", "-c", "model_reasoning_effort=high", "--dangerously-bypass-approvals-and-sandbox", "-C", "{cwd}", "{prompt}"]
 high = ["codex", "-m", "MODEL", "-c", "model_reasoning_effort=xhigh", "--dangerously-bypass-approvals-and-sandbox", "-C", "{cwd}", "{prompt}"]
 [backends.quota]
-command = ["eon", "workspace", "--json"]
 parser = "eon_codex"
 [backends.limits.implement]
 strictly_above_min = true

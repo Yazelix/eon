@@ -165,17 +165,26 @@ expanded. Keep personal state and logs outside the repository.
 - `guard` must exit successfully. Configure it to verify the command guard is
   installed **and hooked into that backend**. `required_files`, `account_check`
   and `excluded_roots` support credential/account checks.
-- `quota.command` returns data for `quota.parser`: `agy` (tab-separated usage),
+- Custom `quota.command` returns data for `quota.parser`: `agy` (tab-separated usage),
   `claude_text` (five-hour/seven-day used percentages, with `None` for missing),
-  `claude_json` (usage endpoint JSON), `eon_codex` / `eon_claude` (workspace JSON),
-  or `remaining_json` (object mapping window names to remaining percentages).
+  `claude_json` (usage endpoint JSON), or `remaining_json` (object mapping
+  window names to remaining percentages).
   `agy` reads the rows of one model group: `agy_group` names it and defaults to
   `Claude and GPT models`. The group needs a weekly row; its five-hour row is
   optional. A limit that names `five_hour` still refuses a group without that
   row unless `allow_missing` is set. A `disabled` value reads as 0% remaining,
   and each row's RFC 3339 reset time is kept when present.
-  Reader commands have a configurable timeout covering output collection, and a
-  1 MiB output limit. Optional `refresh` runs only after a failed real-launch probe,
+  `eon_codex` / `eon_claude` read the invoking Eon caller's Runtime facts in
+  process, using the same projection as `eon session --json`. Their optional
+  `command` is ignored by Eon and remains readable by rota in shared config.
+  `timeout_seconds` (default 30) covers the whole native read, including
+  discovery and inspection. An incompatible supervisor generation is unavailable;
+  native readers never invoke its recorded launcher.
+  They require the `eon agent` entry point; the standalone test driver has no
+  native source. Backend credential environment overrides do not change the
+  supervisor's quota facts.
+  Custom reader commands have a configurable timeout covering output collection,
+  and a 1 MiB output limit. Optional `refresh` runs only after a failed real-launch read,
   below the backend's cap, then retries once.
 - `limits.implement` / `limits.review` compare `min_remaining` inclusively and
   `max_used` exclusively. `strictly_above_min` makes the minimum exclusive;

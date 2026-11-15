@@ -23210,3 +23210,282 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
     );
     drop(supervisor);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon() {
+    use rota::{config::Parser, decision::Reading};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    for (case, age, failed, available) in [
+        ("fresh", Some(10), false, true),
+        ("old", Some(7200), false, false),
+        ("missing", None, false, false),
+        ("failed retained", Some(10), true, true),
+        ("failed missing", None, true, false),
+        ("expired", Some(86401), false, false),
+    ] {
+        let window = PairWindow::new();
+        let configuration = window.config.join("config.toml");
+        fs::write(
+            &configuration,
+            fs::read_to_string(&configuration).unwrap().replace(
+                "widgets = []",
+                "widgets = ['codex_quota_5h', 'claude_quota_5h']",
+            ),
+        )
+        .unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let store = window.root.join("state/eon/quota");
+        fs::create_dir_all(&store).unwrap();
+        if let Some(age) = age {
+            for provider in ["codex", "claude"] {
+                fs::write(
+                    store.join(format!("{provider}.json")),
+                    serde_json::json!({
+                        "version":1,"observed_at":now - age,
+                        "windows":[{"duration_minutes":300,"remaining_percent":80,"resets_at":null}]
+                    })
+                    .to_string(),
+                )
+                .unwrap();
+            }
+        }
+        let collector = window.root.join("collector");
+        executable(
+            &collector,
+            if failed {
+                "#!/bin/sh\nexit 1\n"
+            } else {
+                "#!/bin/sh\nsleep 30\n"
+            },
+        );
+        let mut command = window.command(&[]);
+        command.env("EON_CODEXBAR", &collector);
+        let supervisor = window.start(command);
+        wait_for_ready(&window.control());
+        if failed {
+            wait_for_snapshot(&window.control(), "quota-failure", |snapshot| {
+                snapshot.codex_quota_failure.is_some() && snapshot.claude_quota_failure.is_some()
+            });
+        }
+        let text = format!(
+            "state_file = '{}'\nlog_file = '{}'\n",
+            window.root.join("agent-state").display(),
+            window.root.join("agent-log").display()
+        );
+        let text = ["eon_codex", "eon_claude"]
+            .iter()
+            .fold(text, |text, parser| {
+                format!(
+                    "{text}\n[[backends]]\nname = '{parser}'\nroles = ['implement','review']\n\
+                guard = ['true']\ncommands = {{medium = ['never-start', '{{prompt}}'], high = ['never-start', '{{prompt}}']}}\n\
+                [backends.quota]\nparser = '{parser}'\ncommand = ['eon', 'session', '--json']\ntimeout_seconds = 30\n\
+                [backends.limits.implement.min_remaining]\n'*' = 20\n"
+                )
+            });
+        fs::write(window.config.join("agent.toml"), &text).unwrap();
+        let marker = window.root.join("spawned-session-command");
+        let bin = window.root.join("session-bin");
+        executable(
+            &bin.join("eon"),
+            format!("#!/bin/sh\ntouch '{}'\nexit 77\n", marker.display()),
+        );
+        let path = std::env::join_paths(
+            std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        let output = eon_command(&window.binary)
+            .args(["agent", "status", "--json"])
+            .env("EON_RUNTIME_DIR", &window.runtime)
+            .env("EON_CONFIG_HOME", &window.config)
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{case}: {output:?}");
+        let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let session = window.eon(&["session", "--json"]);
+        assert!(session.status.success(), "{case}: {session:?}");
+        let config = rota::config::Config::parse(&text).unwrap();
+        for (index, parser) in [Parser::EonCodex, Parser::EonClaude]
+            .into_iter()
+            .enumerate()
+        {
+            let old = match rota::quota::parse(parser, None, stdout(&session)) {
+                Ok(quota) => Reading {
+                    remaining: Some(quota.remaining),
+                    resets: quota.resets,
+                    ..Reading::default()
+                },
+                Err(error) => Reading {
+                    problem: Some(format!("quota unreadable: {error}")),
+                    ..Reading::default()
+                },
+            };
+            for (role, key) in [
+                (rota::config::Role::Implement, "implement"),
+                (rota::config::Role::Review, "review"),
+            ] {
+                let old = rota::decision::availability(&config.backends[index], &old, role);
+                assert_eq!(old.is_ok(), available, "{case}/{parser:?}/{key}");
+                assert_eq!(
+                    actual[index][key],
+                    old.err().unwrap_or_else(|| "available".into()),
+                    "{case}/{parser:?}/{key}"
+                );
+            }
+        }
+        assert!(!marker.exists(), "{case}: spawned PATH eon");
+        drop(supervisor);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn write_native_quota_config(root: &Path) {
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/agent.toml"), format!(
+        "state_file = '{}'\nlog_file = '{}'\n\
+         [[backends]]\nname = 'native'\nroles = ['implement','review']\nguard = ['true']\n\
+         commands = {{medium = ['never-start', '{{prompt}}'], high = ['never-start', '{{prompt}}']}}\n\
+         [backends.quota]\nparser = 'eon_codex'\ncommand = ['eon', 'session', '--json']\ntimeout_seconds = 1\n",
+        root.join("agent-state").display(), root.join("agent-log").display()
+    )).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_quota_deadline_bounds_discovery_and_inspection_like_the_old_probe() {
+    use std::sync::atomic::AtomicBool;
+
+    for (runtime_delay, inspect_delay) in [(1500, 0), (0, 1500), (400, 400)] {
+        let root = temporary_directory();
+        let runtime = root.join("r");
+        let id = format!("g1-{:032x}", 151);
+        let listener = generation_listener(&runtime, &id);
+        listener.set_nonblocking(true).unwrap();
+        write_native_quota_config(&root);
+        let mut snapshot = inspected_snapshot();
+        snapshot.generation = id.clone();
+        snapshot.created_build = id.clone();
+        snapshot.active_build = id.clone();
+        snapshot.running = None;
+        snapshot.codex_quota = Some(eon_workspace_protocol::v46::CodexQuota {
+            state: eon_workspace_protocol::v46::CodexQuotaState::Fresh,
+            observed_at: 1,
+            windows: vec![eon_workspace_protocol::v46::QuotaWindow {
+                duration_minutes: 300,
+                remaining_percent: 80,
+                resets_at: None,
+                scope: None,
+            }],
+        });
+        let done = Arc::new(AtomicBool::new(false));
+        let stop = done.clone();
+        let server = thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(peer) => peer,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let request = decode_request(&read_request(&mut stream)).unwrap();
+                let response = match request.action {
+                    ProtocolAction::Workspace(
+                        Action::InspectRuntime | Action::InspectPresentation,
+                    ) => {
+                        thread::sleep(Duration::from_millis(runtime_delay));
+                        encode_lifecycle_response(&LifecycleResponse::Runtime(previous_runtime(
+                            &id,
+                        )))
+                        .unwrap()
+                    }
+                    ProtocolAction::Workspace(Action::Inspect) => {
+                        thread::sleep(Duration::from_millis(inspect_delay));
+                        encode_response(&Response::Snapshot(snapshot.clone())).unwrap()
+                    }
+                    other => panic!("{other:?}"),
+                };
+                let _ = stream.write_all(&response);
+            }
+        });
+        let started = Instant::now();
+        let output = routed_eon(
+            &runtime,
+            &root.join("state"),
+            &["agent", "status", "--json"],
+            None,
+            None,
+            b"",
+        );
+        let elapsed = started.elapsed();
+        done.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "native read took {elapsed:?}"
+        );
+        let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let config = rota::config::Config::parse(
+            &fs::read_to_string(root.join("config/agent.toml")).unwrap(),
+        )
+        .unwrap();
+        let old = rota::readings::probe(
+            &config.backends[0],
+            &["sleep".into(), "1.5".into()],
+            1,
+            &root,
+        )
+        .unwrap_err();
+        assert_eq!(old, "check timed out");
+        assert_eq!(actual[0]["implement"], format!("quota unreadable: {old}"));
+        assert_eq!(actual[0]["review"], actual[0]["implement"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_quota_refuses_another_eonw_without_running_its_recorded_launcher() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let done = root.join("done");
+    let id = format!("g1-{:032x}", 152);
+    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION - 1);
+    let launcher = root.join("recorded-eon");
+    let marker = root.join("recorded-eon-ran");
+    recording_eon(&launcher, &marker);
+    symlink(&launcher, runtime.join("generations").join(&id).join("eon")).unwrap();
+    write_native_quota_config(&root);
+    let output = routed_eon(
+        &runtime,
+        &root.join("state"),
+        &["agent", "status", "--json"],
+        None,
+        None,
+        b"",
+    );
+    assert!(output.status.success(), "{output:?}");
+    let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let problem = actual[0]["implement"].as_str().unwrap();
+    assert!(problem.starts_with("quota unreadable:"), "{problem}");
+    assert!(problem.contains("EONW"), "{problem}");
+    assert!(problem.contains(&(VERSION - 1).to_string()), "{problem}");
+    assert_eq!(actual[0]["review"], problem);
+    assert!(!marker.exists());
+    end_older_supervisors(
+        &done,
+        &[runtime.join("generations").join(&id).join("eon.sock")],
+        vec![server],
+    );
+    fs::remove_dir_all(root).unwrap();
+}

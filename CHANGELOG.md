@@ -9,6 +9,13 @@ installation, and proven contract changes.
   independent underline colours (`Setulc`) for editors' coloured undercurls.
   macOS retains its existing legacy terminfo entry; its extensions are
   tracked by `eon-nbjco` (`eon-khndw`, ORB-C10).
+- `eon agent` reads native Codex and Claude quota through Runtime in process,
+  with the same admission, freshness and configured read deadlines. Native
+  readers ignore `command`, which remains readable by rota in shared config.
+  Incompatible supervisor generations report unavailable quota without running
+  another build. Quota remains readable through `eon session --json`
+  (`eon-eon-agent-lr8sx.29`).
+
 - On Linux with agent configuration, Agent `auto` shares admission and rotation
   with `eon agent launch --popup`, preserving resume commands and its own
   directory/terminal context. Managed refusal never falls back to an unmanaged

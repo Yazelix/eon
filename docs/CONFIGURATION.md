@@ -98,6 +98,17 @@ and classes, cleanup min_idle `2h` and no store prefixes. Guard/exec behavior,
 run timeout/cleanup bounds, diagnostics and ROTA_* controls remain as in rota;
 this move adds no new preference or default backend.
 
+Native quota readers use `parser = "eon_codex"` or `"eon_claude"` and read
+Runtime's session facts in process. Native readers ignore optional `command`;
+rota still reads that field when both tools share a configuration. Custom
+parsers require `command`. All readers use `timeout_seconds` (default 30): a
+native read shares one deadline across discovery, connection and inspection.
+An incompatible supervisor generation reports unavailable quota; the native
+reader never invokes its recorded launcher. Native readers
+keep the same fresh-only admission, role thresholds and optional refresh retry;
+collection and `eon session --json` quota output are unchanged. Backend provider
+credentials do not change the supervisor's selected quota account.
+
 `eon agent status` prints `config: PATH` before backend rows.
 `eon agent status --json` keeps rota's backend array and adds `config_file`
 to every backend object (a string, or a byte array for a non-UTF-8 path).

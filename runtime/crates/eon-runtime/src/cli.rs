@@ -462,6 +462,28 @@ fn workspace_pick_arguments(output: &str) -> Option<Vec<&str>> {
     }
 }
 
+/// The caller's session facts, using the same JSON projection as `eon session --json`.
+pub fn session_json(inputs: &Inputs, deadline: Instant) -> Result<String, String> {
+    let caller = calling_terminal().map_err(|error| error.detail)?;
+    let target = WorkspaceTarget {
+        deadline: Some(deadline),
+        ..WorkspaceTarget::default()
+    };
+    let resolved =
+        resolve_workspace(inputs, target, caller.as_deref()).map_err(|error| error.detail)?;
+    match send_action_from_until(
+        &resolved.socket,
+        caller,
+        Action::Workspace(WorkspaceAction::Inspect),
+        deadline.min(Instant::now() + super::control::CONTROL_TIMEOUT),
+    ) {
+        Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => Ok(json_output(&snapshot)),
+        Ok(ControlResponse::Workspace(Response::Failure(error))) => Err(error.detail),
+        Ok(_) => Err("Eon returned the wrong result for session inspection".into()),
+        Err(error) => Err(unreachable_supervisor(error, &resolved.label).detail),
+    }
+}
+
 /// The popup caller's own session, as `eon session` reports it.
 fn caller_snapshot(inputs: &Inputs) -> Result<Snapshot, String> {
     let caller = calling_terminal().map_err(|error| error.detail)?;

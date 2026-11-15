@@ -232,11 +232,10 @@ pub struct Backend {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Reader {
-    pub command: Vec<String>,
+    pub command: Option<Vec<String>>,
     pub parser: Parser,
     pub agy_group: Option<String>,
-    #[serde(default = "timeout")]
-    pub timeout_seconds: u64,
+    pub timeout_seconds: Option<u64>,
     pub refresh: Option<Vec<String>>,
     #[serde(default = "refresh_timeout")]
     pub refresh_timeout_seconds: u64,
@@ -251,6 +250,18 @@ pub enum Parser {
     EonCodex,
     EonClaude,
     RemainingJson,
+}
+
+impl Parser {
+    pub fn native(self) -> bool {
+        matches!(self, Self::EonCodex | Self::EonClaude)
+    }
+}
+
+impl Reader {
+    pub fn timeout_seconds(&self) -> u64 {
+        self.timeout_seconds.unwrap_or_else(timeout)
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -390,8 +401,8 @@ impl Config {
             if b.account_check.as_ref().is_some_and(|c| !command_valid(c))
                 || b.prepare.iter().any(|c| !command_valid(c))
                 || b.quota.as_ref().is_some_and(|q| {
-                    !command_valid(&q.command)
-                        || q.timeout_seconds == 0
+                    (!q.parser.native() && q.command.as_ref().is_none_or(|c| !command_valid(c)))
+                        || q.timeout_seconds == Some(0)
                         || q.refresh_timeout_seconds == 0
                         || q.refresh.as_ref().is_some_and(|c| !command_valid(c))
                 })
@@ -507,6 +518,49 @@ mod tests {
     #[test]
     fn example_is_valid() {
         Config::parse(EXAMPLE).unwrap();
+    }
+
+    #[test]
+    fn native_readers_accept_shared_commands_and_custom_readers_require_commands() {
+        for parser in ["eon_codex", "eon_claude"] {
+            let native = EXAMPLE.replace("parser = \"eon_codex\"", &format!("parser = '{parser}'"));
+            Config::parse(&native).unwrap();
+            for field in [
+                "command = ['eon', 'session', '--json']",
+                "command = []",
+                "timeout_seconds = 10",
+            ] {
+                Config::parse(&native.replace(
+                    &format!("parser = '{parser}'"),
+                    &format!("parser = '{parser}'\n{field}"),
+                ))
+                .unwrap();
+            }
+        }
+        for field in [
+            "",
+            "command = []",
+            "command = ['printf', '{}']\ntimeout_seconds = 0",
+        ] {
+            let text = EXAMPLE.replace(
+                "parser = \"eon_codex\"",
+                &format!("parser = 'remaining_json'\n{field}"),
+            );
+            assert!(Config::parse(&text).is_err(), "{field}");
+        }
+        let custom = EXAMPLE.replace(
+            "parser = \"eon_codex\"",
+            "parser = 'remaining_json'\ncommand = ['printf', '{}']",
+        );
+        let config = Config::parse(&custom).unwrap();
+        assert_eq!(
+            config.backends[2].quota.as_ref().unwrap().timeout_seconds(),
+            30
+        );
+        assert_eq!(
+            config.backends[0].quota.as_ref().unwrap().timeout_seconds(),
+            60
+        );
     }
 
     #[test]

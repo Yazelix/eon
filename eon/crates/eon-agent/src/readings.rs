@@ -247,7 +247,15 @@ fn running_in(proc: &Path, uid: u32, cap: &Cap) -> Result<usize, String> {
     Ok(count)
 }
 
-pub fn read(backend: &Backend, cwd: &Path, allow_refresh: bool) -> Reading {
+/// Runtime's session facts; supplied by the product that owns the invocation inputs.
+pub type SessionReader<'a> = dyn Fn(Instant) -> Result<String, String> + 'a;
+
+pub fn read(
+    backend: &Backend,
+    cwd: &Path,
+    allow_refresh: bool,
+    session: &SessionReader<'_>,
+) -> Reading {
     let mut reading = Reading::default();
     let result = (|| -> Result<(), String> {
         if !backend.enabled {
@@ -271,8 +279,24 @@ pub fn read(backend: &Backend, cwd: &Path, allow_refresh: bool) -> Reading {
         }
         if let Some(reader) = &backend.quota {
             let get = || {
-                probe(backend, &reader.command, reader.timeout_seconds, cwd)
-                    .and_then(|s| quota::parse(reader.parser, reader.agy_group.as_deref(), &s))
+                let text = if reader.parser.native() {
+                    let deadline = Instant::now()
+                        .checked_add(Duration::from_secs(reader.timeout_seconds()))
+                        .ok_or("check timeout too large")?;
+                    let result = session(deadline);
+                    if Instant::now() >= deadline {
+                        Err("check timed out".into())
+                    } else {
+                        result
+                    }
+                } else {
+                    reader
+                        .command
+                        .as_ref()
+                        .ok_or_else(|| "reader command missing".into())
+                        .and_then(|command| probe(backend, command, reader.timeout_seconds(), cwd))
+                };
+                text.and_then(|s| quota::parse(reader.parser, reader.agy_group.as_deref(), &s))
             };
             let mut quota = get();
             if quota.is_err() && allow_refresh {
@@ -317,6 +341,7 @@ pub fn collect(
     indices: &[usize],
     cwd: &Path,
     allow_refresh: bool,
+    session: &SessionReader<'_>,
 ) -> Vec<Reading> {
     let mut readings: Vec<_> = config
         .backends
@@ -324,7 +349,7 @@ pub fn collect(
         .enumerate()
         .map(|(i, b)| {
             if indices.contains(&i) {
-                read(b, cwd, allow_refresh)
+                read(b, cwd, allow_refresh, session)
             } else {
                 Reading {
                     problem: Some("not checked".into()),
@@ -348,6 +373,183 @@ pub fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_quota_matches_session_reader_admission_table() {
+        use crate::{config::Role, decision};
+        use serde_json::json;
+
+        for (parser, key) in [("eon_codex", "codex_quota"), ("eon_claude", "claude_quota")] {
+            let backend: Backend = toml::from_str(&format!(
+                "name = 'native'\nroles = ['implement', 'review']\nguard = ['true']\ncommands = {{}}\n\
+                 allow_unknown_quota = true\n[quota]\nparser = '{parser}'\n\
+                 [limits.implement]\nstrictly_above_min = true\n\
+                 [limits.implement.min_remaining]\n'*' = 20\n"
+            ))
+            .unwrap();
+            let reader = backend.quota.as_ref().unwrap();
+            for (name, snapshot, failure, implement, review) in [
+                (
+                    "fresh",
+                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":21}]}),
+                    false,
+                    None,
+                    None,
+                ),
+                (
+                    "threshold",
+                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":20}]}),
+                    false,
+                    Some("quota limit: 300m/0_left=20%"),
+                    None,
+                ),
+                (
+                    "empty quota",
+                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":0}]}),
+                    false,
+                    Some("quota limit: 300m/0_left=0%"),
+                    None,
+                ),
+                (
+                    "retained after failure",
+                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":21}]}),
+                    true,
+                    None,
+                    None,
+                ),
+                (
+                    "scoped",
+                    json!({"state":"fresh","windows":[{"duration_minutes":10080,"remaining_percent":80},{"duration_minutes":10080,"remaining_percent":19,"scope":"Fable"}]}),
+                    false,
+                    Some("quota limit: 10080m/1_left=19%"),
+                    None,
+                ),
+                (
+                    "old",
+                    json!({"state":"stale","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
+                    false,
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                ),
+                (
+                    "missing",
+                    json!(null),
+                    false,
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                ),
+                (
+                    "failed without retained facts",
+                    json!(null),
+                    true,
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                ),
+                (
+                    "blocked",
+                    json!({"state":"blocked","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
+                    false,
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                ),
+                (
+                    "unknown",
+                    json!({"state":"unknown","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
+                    false,
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable: quota snapshot is not fresh"),
+                ),
+                (
+                    "empty windows",
+                    json!({"state":"fresh","windows":[]}),
+                    false,
+                    Some("quota unreadable: quota windows unavailable"),
+                    Some("quota unreadable: quota windows unavailable"),
+                ),
+                (
+                    "invalid percent",
+                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":101}]}),
+                    false,
+                    Some("quota unreadable: invalid percentage"),
+                    Some("quota unreadable: invalid percentage"),
+                ),
+            ] {
+                let mut facts = json!({key: snapshot});
+                if failure {
+                    facts[format!("{key}_failure")] =
+                        json!({"at":123000,"reason":"provider_error"});
+                }
+                let text = facts.to_string();
+                // The old reader ran a command and parsed its stdout.
+                let old = probe(
+                    &backend,
+                    &["printf".into(), "%s".into(), text.clone()],
+                    5,
+                    Path::new("."),
+                )
+                .and_then(|text| quota::parse(reader.parser, None, &text));
+                let old = match old {
+                    Ok(quota) => Reading {
+                        remaining: Some(quota.remaining),
+                        resets: quota.resets,
+                        ..Reading::default()
+                    },
+                    Err(error) => Reading {
+                        problem: Some(format!("quota unreadable: {error}")),
+                        ..Reading::default()
+                    },
+                };
+                let new = read(&backend, Path::new("."), false, &|_| Ok(text.clone()));
+                assert_eq!(new.remaining, old.remaining, "{parser}/{name}");
+                assert_eq!(new.resets, old.resets, "{parser}/{name}");
+                for (role, expected) in [(Role::Implement, implement), (Role::Review, review)] {
+                    let result = decision::availability(&backend, &new, role);
+                    assert_eq!(
+                        result,
+                        decision::availability(&backend, &old, role),
+                        "{parser}/{name}/{role:?}"
+                    );
+                    assert_eq!(
+                        result.err().as_deref(),
+                        expected,
+                        "{parser}/{name}/{role:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_retry_reads_facts_again_and_status_never_refreshes() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("refresh");
+        let backend: Backend = toml::from_str(&format!(
+            "name = 'native'\nroles = []\nguard = ['true']\ncommands = {{}}\n\
+             [quota]\nparser = 'eon_codex'\nrefresh = ['touch', '{}']\n",
+            marker.display()
+        ))
+        .unwrap();
+        let calls = std::cell::Cell::new(0);
+        let source = |_| {
+            calls.set(calls.get() + 1);
+            if marker.exists() {
+                Ok(r#"{"codex_quota":{"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":80}]}}"#.into())
+            } else {
+                Err("supervisor unavailable".into())
+            }
+        };
+        let status = read(&backend, root.path(), false, &source);
+        assert_eq!(
+            status.problem.as_deref(),
+            Some("quota unreadable: supervisor unavailable")
+        );
+        assert_eq!(calls.get(), 1);
+        assert!(!marker.exists());
+        let launch = read(&backend, root.path(), true, &source);
+        assert_eq!(launch.problem, None);
+        assert_eq!(launch.remaining.unwrap()["300m/0"], 80.0);
+        assert_eq!(calls.get(), 3);
+    }
     #[test]
     fn a_check_that_outlives_sigkill_is_given_up_on() {
         // A kill that does nothing stands in for a check stuck in uninterruptible I/O.
@@ -407,9 +609,11 @@ mod tests {
     fn disabled_backend_never_runs_checks() {
         let config = Config::parse(include_str!("../config.example.toml")).unwrap();
         assert_eq!(
-            read(&config.backends[3], Path::new("."), false)
-                .problem
-                .as_deref(),
+            read(&config.backends[3], Path::new("."), false, &|_| panic!(
+                "disabled backend read quota"
+            ))
+            .problem
+            .as_deref(),
             Some("disabled")
         );
     }

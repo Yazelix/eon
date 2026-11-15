@@ -17,7 +17,9 @@ fn main() -> ExitCode {
     {
         let primary =
             eon_runtime::configuration_directory().map(|root| Some(root.join("agent.toml")));
-        return rota::cli::main(arguments.into_iter().skip(2), primary);
+        return rota::cli::main(arguments.into_iter().skip(2), primary, &|deadline| {
+            eon_runtime::session_json(&inputs, deadline)
+        });
     }
     let invoked = || update::Build {
         version: Some(inputs.version.into()),

@@ -247,6 +247,7 @@ fn identity_record_cleanup_preserves_every_residue() {
                 "test",
                 true,
                 true,
+                None,
             );
             if !runtime.join("identity").is_file()
                 || (link && fs::read_link(runtime.join("eon")).is_err())
@@ -282,6 +283,7 @@ fn identity_record_cleanup_removes_hostless_identity_with_or_without_link() {
                 "test",
                 true,
                 true,
+                None,
             );
             if runtime.exists() {
                 leaks.push((identity, link));
@@ -340,6 +342,7 @@ fn identity_record_cleanup_trust_lock_and_read_only_guards() {
             "test",
             case != "read-only",
             case != "read-only",
+            None,
         );
         if fs::symlink_metadata(runtime.join("identity")).is_err()
             || fs::symlink_metadata(runtime.join("eon")).is_err()

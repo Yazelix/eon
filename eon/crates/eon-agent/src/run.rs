@@ -551,7 +551,11 @@ fn utf8(path: &Path) -> Result<&str, Failure> {
         .ok_or_else(|| (2, "paths must be UTF-8".into()))
 }
 
-pub fn run(config: &Config, options: &RunOptions) -> Result<(), Failure> {
+pub fn run(
+    config: &Config,
+    options: &RunOptions,
+    session: &readings::SessionReader<'_>,
+) -> Result<(), Failure> {
     let input = |what: &str, e: std::io::Error| (2, format!("cannot use {what}: {e}"));
     let brief = fs::canonicalize(&options.brief).map_err(|e| input("brief file", e))?;
     if !brief.is_file() {
@@ -605,7 +609,7 @@ pub fn run(config: &Config, options: &RunOptions) -> Result<(), Failure> {
         Err(e) => return Err(io_failure(e)),
     };
     let last = last.as_deref().map(str::trim);
-    let mut readings = readings::collect(config, &indices, &cwd, true);
+    let mut readings = readings::collect(config, &indices, &cwd, true, session);
     let pick = decision::rotate(config, &indices, &readings, options.role, last).map(|index| {
         decision::Pick {
             index,

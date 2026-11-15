@@ -321,6 +321,8 @@ pub(super) struct WorkspaceTarget {
     /// The arguments the build of a generation that speaks another EONW runs
     /// in this `eon`'s place, else empty: never routed (EON-C11, Routing).
     pub(super) command: Vec<OsString>,
+    /// One budget for native quota discovery and inspection.
+    pub(super) deadline: Option<Instant>,
 }
 
 pub(super) struct ResolvedWorkspace {
@@ -347,7 +349,7 @@ pub(super) fn resolve_workspace(
     // A default-namespace window names its exact generation; an independent
     // window names its namespace, where the window-only rule selects.
     let (root, exact, shown) = match &target.window {
-        Some(id) => match super::windows::select_routed_window(inputs, id)? {
+        Some(id) => match super::windows::select_routed_window(inputs, id, target.deadline)? {
             (Window::Default(generation), shown) => {
                 (base_runtime_directory("eon"), Some(generation), shown)
             }
@@ -404,6 +406,9 @@ pub(super) fn resolve_workspace(
         }
     };
     let deadline = Instant::now() + CONTROL_TIMEOUT;
+    let deadline = target
+        .deadline
+        .map_or(deadline, |limit| limit.min(deadline));
     let probe = |id: &str| {
         probe_workspace_generation(&root, id, deadline).map_err(|error| (error.kind, error.detail))
     };
@@ -417,7 +422,7 @@ pub(super) fn resolve_workspace(
             ));
         }
         if !present && *id == current {
-            return Err(missing_default(inputs));
+            return Err(missing_default(inputs, target.deadline));
         }
         if !present {
             return Err(failure(
@@ -788,6 +793,16 @@ fn discover_generations(
     current: &str,
     remove_dead: bool,
 ) -> Result<Vec<GenerationRecord>, String> {
+    discover_generations_until(inputs, root, current, remove_dead, None)
+}
+
+fn discover_generations_until(
+    inputs: &Inputs,
+    root: &Path,
+    current: &str,
+    remove_dead: bool,
+    deadline: Option<Instant>,
+) -> Result<Vec<GenerationRecord>, String> {
     let component_report = inputs.component_report()?;
     if !private_directory_exists(root, "runtime directory")? {
         return Ok(vec![unstarted_current_generation(root, current)]);
@@ -804,6 +819,7 @@ fn discover_generations(
         component_report,
         true,
         remove_dead,
+        deadline,
     )];
     for (id, path) in candidates {
         let id = id.to_string_lossy();
@@ -816,6 +832,7 @@ fn discover_generations(
                 component_report,
                 true,
                 remove_dead,
+                deadline,
             ));
         }
     }
@@ -902,7 +919,9 @@ pub(super) fn live_supervisors(
                     let id = entry.generation.clone();
                     let probe = thread::Builder::new()
                         .spawn_scoped(scope, move || {
-                            inspect_generation(&id, "previous", runtime, &lock, "", false, false)
+                            inspect_generation(
+                                &id, "previous", runtime, &lock, "", false, false, None,
+                            )
                         })
                         .map_err(|error| {
                             format!("cannot start running Eon window inspection: {error}")
@@ -946,6 +965,16 @@ fn inspect_selected_generation(
     current: &str,
     target: &str,
 ) -> Result<Option<GenerationRecord>, String> {
+    inspect_selected_generation_until(inputs, root, current, target, None)
+}
+
+fn inspect_selected_generation_until(
+    inputs: &Inputs,
+    root: &Path,
+    current: &str,
+    target: &str,
+    deadline: Option<Instant>,
+) -> Result<Option<GenerationRecord>, String> {
     let missing_current =
         || (target == current).then(|| unstarted_current_generation(root, current));
     if !private_directory_exists(root, "runtime directory")? {
@@ -977,9 +1006,11 @@ fn inspect_selected_generation(
         component_report,
         true,
         true,
+        deadline,
     )))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn inspect_generation(
     id: &str,
     kind: &'static str,
@@ -988,6 +1019,7 @@ fn inspect_generation(
     current_components: &str,
     cleanup: bool,
     remove_dead: bool,
+    deadline: Option<Instant>,
 ) -> GenerationRecord {
     if !valid_generation(id) {
         return failed_generation(
@@ -1017,7 +1049,9 @@ fn inspect_generation(
     }
 
     let socket = runtime.join("eon.sock");
-    let probe = if cleanup {
+    let probe = if let Some(deadline) = deadline {
+        probe_generation_runtime_until(&socket, deadline.min(Instant::now() + CONTROL_TIMEOUT))
+    } else if cleanup {
         probe_generation_runtime(&socket)
     } else {
         probe_generation_runtime_until(&socket, Instant::now() + RUNNING_PROBE_TIMEOUT)
@@ -1521,10 +1555,23 @@ pub(super) fn generation_running(
     root: &Path,
     target: &str,
 ) -> Result<bool, String> {
-    Ok(
-        inspect_selected_generation(inputs, root, &current_generation(inputs)?, target)?
-            .is_some_and(|record| record.state != "dead"),
-    )
+    generation_running_until(inputs, root, target, None)
+}
+
+pub(super) fn generation_running_until(
+    inputs: &Inputs,
+    root: &Path,
+    target: &str,
+    deadline: Option<Instant>,
+) -> Result<bool, String> {
+    Ok(inspect_selected_generation_until(
+        inputs,
+        root,
+        &current_generation(inputs)?,
+        target,
+        deadline,
+    )?
+    .is_some_and(|record| record.state != "dead"))
 }
 
 /// The generations of the window at `root` whose supervisor has not ended,
@@ -1534,8 +1581,22 @@ pub(super) fn running_generations(
     root: &Path,
     remove_dead: bool,
 ) -> Result<Vec<GenerationRecord>, String> {
-    let mut records =
-        discover_generations(inputs, root, &current_generation(inputs)?, remove_dead)?;
+    running_generations_until(inputs, root, remove_dead, None)
+}
+
+pub(super) fn running_generations_until(
+    inputs: &Inputs,
+    root: &Path,
+    remove_dead: bool,
+    deadline: Option<Instant>,
+) -> Result<Vec<GenerationRecord>, String> {
+    let mut records = discover_generations_until(
+        inputs,
+        root,
+        &current_generation(inputs)?,
+        remove_dead,
+        deadline,
+    )?;
     records.retain(|record| record.state != "dead");
     Ok(records)
 }
@@ -2142,6 +2203,7 @@ mod tests {
             "test",
             false,
             false,
+            None,
         );
         assert_eq!(record.state, "dead");
         assert!(
