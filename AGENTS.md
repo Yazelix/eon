@@ -136,6 +136,14 @@ Eon composes these and keeps their ownership intact.
     `CHANGELOG_DECISIONS.md` indexes product and design decisions as
     `EON-D<number>`; add an entry only when the user explicitly asks to save a
     decision there, and otherwise keep decisions in their beads and contracts.
+11. **Small screens.** Every visible surface (window chrome, bar, sidebars,
+    popups, dialogs, pickers, the Shortcuts viewer, `eon tutor` lessons) must
+    work at 1280×800 logical pixels (a 13-inch laptop) with Eon's default font
+    size and a display scale of 1: no clipping, overlap or scrolling that a
+    larger screen avoids. 1728×1117 (a 16-inch laptop) is the comfortable
+    size: layouts may use the extra room but must not depend on it. Visual
+    proofs include a 1280×800 capture, from the eon-bench headless harness
+    (`eon/tools/eon-bench`) or an isolated display at that size.
 
 ## Detail
 
