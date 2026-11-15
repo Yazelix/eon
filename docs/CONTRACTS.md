@@ -7593,6 +7593,20 @@ reference to existing pane creation, not by the unapproved targeting beads.
   guarded run/list/reconcile precedes watch, priority and full quiet commands;
   unimplemented surfaces/defaults remain explicitly Planned, never advertised
   as available. Existing quiet protection is preserved at live cutover.
+  Amendment approved by eon-desk under Lucca's standing delegation on
+  2026-11-14, relayed by eon-overseer in INBOX 2026-11-14T17:37:51Z
+  (recorded approval time approximately 17:45Z): “auto-decide. i only decide
+  major stuff” (2026-11-13), for the bead Lucca approved with “4core is fine”
+  and “go ahead” (2026-11-14).
+
+  Amendment for eon-eon-agent-lr8sx.30: opt-in Boat build execution is
+  first delivered through the moved `eon agent slot run` and `eon agent slot ls`
+  commands and their `agent.toml` slot configuration. This does not deliver the
+  planned `eon slot` commands, canonical host-policy configuration, host guard,
+  recovery or quiet-reservation interfaces described below. The remote clauses
+  apply to that delivered route; its existing local admission and quiet policy
+  remain in force. Each route's availability and proof are recorded in its own
+  Proof/Open proof entries.
 - **Consumer:** A person or cooperating local agent running a heavy foreground
   command, in any project or terminal, under the same operating-system user.
 - **Trigger:**
@@ -7632,7 +7646,7 @@ reference to existing pane creation, not by the unapproved targeting beads.
     admission. Policy changes are reread while queued. Invalid policy holds
     new grants with a visible error. Reducing capacity never kills a holder.
     A quiet exemption or priority class never bypasses the host guard.
-  - **Execution and lifetime.** Run executes exact argv without shell parsing,
+  - **Execution and lifetime.** Local run executes exact argv without shell parsing,
     with cwd and standard streams preserved, configured nice value and child
     environment limits. Caller argv remains the caller's responsibility;
     Eon does not rewrite arbitrary Cargo, Nix or test-runner syntax. One
@@ -7647,6 +7661,40 @@ reference to existing pane creation, not by the unapproved targeting beads.
     process-group containment. Nested acquisition by an existing holder's
     command fails before queueing; an environment marker alone proves no
     ownership and cannot authorize bypass.
+  - **Opt-in remote builds.** A configured list of supported command shapes may
+    select Boat for builds and isolated tests; absent policy selects local
+    execution. Remote execution preserves the permitted argv, the repository-relative
+    working directory and live standard output and error, within a verified export
+    of the captured Git tree, including tracked uncommitted changes and all tracked
+    files such as issue data. Outside that repository tree, it never transfers
+    the caller's Git history, credentials, arbitrary environment or absolute host
+    paths. Desktop/GPU proofs,
+    visual checks, timing/frame benchmarks, profile installs and Update stay local.
+    Before each VM start or resume, admission verifies Boat reachability, a
+    builds-only environment with credential passing disabled, included compute
+    and start allowances, the configured reserve and bounded run lifetime; it
+    never enables paid overage. A remote run holds a separate remote lease, not
+    local heavy capacity. Policy refusal or pre-execution unavailability
+    falls back through the local queue with a reason. A remote command failure
+    passes through; lost contact after execution may have begun never triggers
+    an automatic duplicate local run. Every owned VM ID and command identity is
+    recorded before execution, and shutdown is confirmed after the run. Unknown
+    remote cleanup remains visible and prevents another remote start until
+    reconciled. Queue/grant/exit records and listing identify local or Boat
+    execution and retain the proven tree, duration, usage cost and result or
+    uncertainty. Complete output is retained in a separate private caller run log;
+    public inspection/history do not include it.
+    Provider identity: no caller credentials reach the VM; Boat's own
+    sandbox-scoped identity (ASCII_TOKEN, BOAT_ID), which acts only on that
+    sandbox, is present on the VM and absent from the build. See
+    [Boat access rules](https://docs.boat.dev/environments/access) and
+    [reserved environment names](https://docs.boat.dev/environments/secrets).
+    The raw VM may contain `/home/user/.config/ascii/boat/config.json` only as
+    a regular JSON file whose object contains exactly the string fields
+    `api_url` and `channel`. Its schema is checked before every source upload;
+    unknown fields, malformed JSON or any other schema refuse remote execution.
+    No file values are logged or returned. Caller credential files remain
+    forbidden.
   - **Recovery by CLI.** `reconcile ID` takes the same admission lock and
     reports recorded identities, current lock/process observations and its
     result. It releases a stale capacity reservation only after proving the
@@ -7722,6 +7770,10 @@ reference to existing pane creation, not by the unapproved targeting beads.
   defaults and distribution. Starcompass/the user's coordinator selects which
   work is heavy, when to reserve quiet time and which work deserves priority;
   project tooling supplies command-specific parallelism limits.
+  During the moved-command phase, eon-agent owns the Boat adapter and its
+  configuration under the existing slot owner; it does not implement a second
+  host admission policy. The coordinator owns deployment of any private heavy
+  front end that delegates to that queue.
 - **Boundary:** Full Eon CLI, initially implemented/proved on x86_64 Linux;
   unsupported platforms fail explicitly until their own proof. EON-C7's
   existing platform status is unchanged. The queue mechanism is independent
@@ -7729,7 +7781,8 @@ reference to existing pane creation, not by the unapproved targeting beads.
   Linux Nix-free archive); generic command examples require neither Nix nor
   Cargo. No new architecture/distribution claim is made without its proof.
   Per-user, across projects on this
-  machine; no cross-user/global administrator service, remote workers,
+  machine, with the opt-in Boat build route above; no cross-user/global
+  administrator service, remote agent sessions or remote Eon workspaces,
   service-manager requirement, preemption, automatic detection/adoption of
   arbitrary processes, thermal controller, hard CPU/RAM quota or all-descendant
   kill guarantee. Cooperation by every launcher is required. This is host
@@ -7750,6 +7803,13 @@ reference to existing pane creation, not by the unapproved targeting beads.
   drain, exclusion, expiration and overrun; full applicable Rust/Nix delivery
   surfaces and one isolated installed observation using an overseer-provided
   candidate. Model-language choice and model checking remain pending.
+  Boat route: policy-negative/local fallback, exact dirty-tree transfer,
+  credential absence, included-budget and trial-cap refusal, full result/log
+  return, remote listing, cancellation/contact-loss cleanup, warm lock refresh,
+  and one real remote landing gate with laptop-load observations. Named warm
+  snapshot proof waits for provider eligibility without an early paid upgrade.
+  Cold bootstrap within the configured lifetime; flake inputs fetchable without
+  credentials.
 
 ## EON-C44 — Configuration schema and named-key editing
 

@@ -13,6 +13,14 @@ installation, and proven contract changes.
   neutral capsule outline; only Critical turns the outline red. Normal readings
   keep a neutral dot, and unjudged quota has no dot. Chip text stays neutral
   (`eon-wuau8.9`).
+- `eon agent slot run` supports opt-in headless Nix gates, Cargo builds and
+  Eon test suites on a Boat VM with no caller credentials, with exact
+  tracked-tree transfer, a separate remote lease, included
+  budget checks, live output and private complete logs/receipts. Local fallback
+  retains the shared slot queue and private noninteractive output evidence;
+  desktop, GPU and timing work stays local.
+  Configure the optional route under `[slots.boat]` in `agent.toml`
+  (`eon-eon-agent-lr8sx.30`).
 
 - Eon 0.1.27 uses EONW v46. Windows started before this version need a
   restart to use its Runtime popup support; v45 requests are refused cleanly,

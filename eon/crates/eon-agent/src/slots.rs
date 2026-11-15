@@ -1,3 +1,4 @@
+mod boat;
 mod legacy;
 
 use crate::config::{Config, SlotConfig};
@@ -288,6 +289,10 @@ struct Ticket {
     front: bool,
     #[serde(default)]
     quiet_exempt: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    remote: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallback_reason: Option<String>,
     #[serde(skip_deserializing, skip_serializing_if = "is_false")]
     legacy: bool,
     #[serde(skip_deserializing, skip_serializing_if = "is_false")]
@@ -384,24 +389,30 @@ fn rank<'a>(
             } else {
                 1
             };
-            let mut slots = if quiet && !(ticket.quiet_exempt || ticket.malformed) {
-                Vec::new()
-            } else if narrowed {
-                vec![1]
-            } else if ticket.front || ticket.malformed {
-                (1..=config.count).collect()
-            } else if let Some(class) = config
-                .classes
-                .iter()
-                .find(|class| class.name == ticket.class)
+            let mut slots =
+                if ticket.remote || (quiet && !(ticket.quiet_exempt || ticket.malformed)) {
+                    Vec::new()
+                } else if narrowed {
+                    vec![1]
+                } else if ticket.front || ticket.malformed {
+                    (1..=config.count).collect()
+                } else if let Some(class) = config
+                    .classes
+                    .iter()
+                    .find(|class| class.name == ticket.class)
+                {
+                    class.slots.clone()
+                } else if ticket.class == "nix" {
+                    vec![2.min(config.count)]
+                } else {
+                    (1..=config.count).collect()
+                };
+            if !narrowed
+                && extra
+                && !slots.is_empty()
+                && (config.lock_files.is_empty()
+                    || config.lock_files.len() > usize::from(config.count))
             {
-                class.slots.clone()
-            } else if ticket.class == "nix" {
-                vec![2.min(config.count)]
-            } else {
-                (1..=config.count).collect()
-            };
-            if !narrowed && extra && !slots.is_empty() {
                 slots.push(config.count + 1);
             }
             Ranked {
@@ -581,6 +592,8 @@ impl Slots<'_> {
                             argv: Vec::new(),
                             front: false,
                             quiet_exempt: false,
+                            remote: false,
+                            fallback_reason: None,
                             legacy: false,
                             malformed: true,
                         });
@@ -667,6 +680,8 @@ impl Slots<'_> {
             "command": ticket.argv.join(" ").chars().take(80).collect::<String>(),
             "front": ticket.front,
             "quiet_exempt": ticket.quiet_exempt,
+            "where": if ticket.remote { "boat" } else { "local" },
+            "fallback_reason": ticket.fallback_reason,
         });
         if let Some(slot) = slot {
             entry["slot"] = slot.into();
@@ -724,7 +739,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
         .map_err(io_failure)?
         .ok_or_else(|| io_failure("cannot read rota process identity"))?;
     let nesting_token = random()?;
-    let (ticket, pending) = {
+    let (mut ticket, pending) = {
         let _queue = slots.queue_lock(true).map_err(|e| slots.refuse_queue(e))?;
         let ticket = Ticket {
             queued_ns: now_ns(),
@@ -734,6 +749,10 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             argv: options.argv.to_vec(),
             front: options.front,
             quiet_exempt: options.quiet_exempt,
+            remote: boat::allowed(&slots.config.boat, options.argv),
+            fallback_reason: (!slots.config.boat.allow_shapes.is_empty()
+                && !boat::allowed(&slots.config.boat, options.argv))
+            .then(|| "policy-local".into()),
             legacy: false,
             malformed: false,
         };
@@ -760,6 +779,51 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 .iter()
                 .find(|item| std::ptr::eq(item.ticket, &ticket))
                 .expect("rank includes the in-memory ticket");
+            if ticket.remote {
+                let remote_head = ranked.iter().find(|item| {
+                    item.ticket.remote
+                        && (now / SECOND >= policy.quiet_until || item.ticket.quiet_exempt)
+                });
+                let quiet = now / SECOND < policy.quiet_until && !ticket.quiet_exempt;
+                if !quiet && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket)) {
+                    if let Some(lease) = boat::Lease::claim(&slots.root).map_err(io_failure)? {
+                        drop(ranked);
+                        drop(_queue);
+                        slots.log("grant", &ticket, None, None);
+                        match boat::run(lease, &slots.config.boat, options.argv) {
+                            Ok(boat::Outcome::Local(reason)) => {
+                                let _queue = slots.queue_lock(true).map_err(io_failure)?;
+                                ticket.remote = false;
+                                ticket.fallback_reason = Some(reason.clone());
+                                // Keep the same ticket inode, lock and FIFO age on fallback.
+                                fs::write(
+                                    &pending.path,
+                                    serde_json::to_vec(&ticket).map_err(io_failure)?,
+                                )
+                                .map_err(io_failure)?;
+                                slots.log("fallback", &ticket, None, None);
+                                let _ = writeln!(
+                                    io::stderr(),
+                                    "eon agent slot: where=local reason={reason}"
+                                );
+                            }
+                            result => {
+                                let code = match &result {
+                                    Ok(boat::Outcome::Complete(code)) => *code,
+                                    _ => 125,
+                                };
+                                slots.log("exit", &ticket, None, Some(code));
+                                return match result {
+                                    Ok(boat::Outcome::Complete(code)) => Ok(code),
+                                    Err(reason) => Err((125, reason)),
+                                    _ => unreachable!(),
+                                };
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
             let mut grant = None;
             for &slot in &own.slots {
                 if !first_for_slot(&ranked, slot)
@@ -806,14 +870,22 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
     };
     let slot = holder.slot;
     let _ = writeln!(io::stderr(), "rota slot: slot {slot}, pid {pid}");
-    let status = command(slots.config, options, slot, &nesting_token)
-        .status()
-        .map(|status| {
-            status
-                .code()
-                .unwrap_or_else(|| 128 + status.signal().unwrap_or_default()) as u8
-        })
-        .map_err(|e| io_failure(format!("cannot start {}: {e}", options.argv[0])));
+    let mut child = command(slots.config, options, slot, &nesting_token);
+    let status = match holder
+        .ticket
+        .fallback_reason
+        .as_deref()
+        .filter(|reason| *reason != "policy-local")
+    {
+        Some(reason) => boat::local::run(&slots.root, &mut child, reason),
+        None => child.status(),
+    }
+    .map(|status| {
+        status
+            .code()
+            .unwrap_or_else(|| 128 + status.signal().unwrap_or_default()) as u8
+    })
+    .map_err(|e| io_failure(format!("cannot start {}: {e}", options.argv[0])));
     let cleanup = (|| {
         let _queue = slots.queue_lock(true)?;
         slots.log(
@@ -848,6 +920,10 @@ fn list(
     let policy = legacy::policy(slots.config);
     let tickets = slots.tickets(Some(&locks));
     let ranked = rank(&tickets, &policy, now);
+    let (remote, boat_error) = match boat::listing(&slots.root) {
+        Ok(remote) => (remote, None),
+        Err(reason) => (None, Some(reason)),
+    };
     let mut holders = Vec::new();
     for slot in 1..=slots.config.count + 1 {
         if let Some(owner) = slots
@@ -869,7 +945,7 @@ fn list(
     }
     drop(queue);
     if json {
-        let holders: Vec<_> = holders
+        let mut holders: Vec<_> = holders
             .into_iter()
             .map(|(slot, holder)| {
                 holder.map_or_else(
@@ -879,22 +955,52 @@ fn list(
             })
             .collect::<Result<_, _>>()
             .map_err(io_failure)?;
+        for holder in &mut holders {
+            if holder.get("pid").is_some() {
+                holder["where"] = "local".into();
+            }
+        }
+        if let Some(remote) = remote.as_ref().filter(|record| record.phase != "stopped") {
+            holders.push(serde_json::to_value(remote).map_err(io_failure)?);
+        }
         let waiters: Vec<_> = ranked
             .iter()
+            .filter(|item| {
+                !remote.as_ref().is_some_and(|record| {
+                    record.phase != "stopped" && record.pid == item.ticket.pid
+                })
+            })
             .map(|item| {
                 let mut entry = serde_json::to_value(item.ticket)?;
+                entry["where"] = if item.ticket.remote { "boat" } else { "local" }.into();
                 entry["slots"] = serde_json::to_value(&item.slots)?;
                 Ok(entry)
             })
             .collect::<Result<_, serde_json::Error>>()
             .map_err(io_failure)?;
-        writeln!(
-            out,
-            "{}",
-            serde_json::json!({"holders": holders, "waiters": waiters})
-        )
-        .map_err(io_failure)?;
+        let mut output = serde_json::json!({"holders": holders, "waiters": waiters});
+        if let Some(remote) = remote {
+            output["boat"] = serde_json::to_value(remote).map_err(io_failure)?;
+        }
+        if let Some(reason) = boat_error {
+            output["boat_error"] = reason.into();
+        }
+        writeln!(out, "{output}").map_err(io_failure)?;
     } else {
+        if let Some(reason) = boat_error {
+            writeln!(out, "boat record unavailable: {reason}").map_err(io_failure)?;
+        }
+        if let Some(remote) = remote.as_ref().filter(|record| record.phase != "stopped") {
+            writeln!(
+                out,
+                "boat held pid={} vm={} phase={} run={}",
+                remote.pid,
+                remote.vm_id.as_deref().unwrap_or("unknown"),
+                remote.phase,
+                remote.run_id
+            )
+            .map_err(io_failure)?;
+        }
         for (slot, holder) in holders {
             match holder {
                 Some(holder) => writeln!(
@@ -1007,6 +1113,8 @@ mod tests {
             argv: Vec::new(),
             front: false,
             quiet_exempt: false,
+            remote: false,
+            fallback_reason: None,
             legacy: false,
             malformed: false,
         }

@@ -97,6 +97,8 @@ pub(super) fn tickets(dir: Option<&Path>) -> Vec<Ticket> {
             argv: Vec::new(),
             front: false,
             quiet_exempt: false,
+            remote: false,
+            fallback_reason: None,
             legacy: true,
             malformed: false,
         });

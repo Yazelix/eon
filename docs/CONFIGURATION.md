@@ -103,6 +103,127 @@ this move adds no new preference or default backend.
 to every backend object (a string, or a byte array for a non-UTF-8 path).
 Other output and record formats are unchanged.
 
+### Remote heavy builds
+
+`eon agent slot run` can send an explicitly permitted build to Boat. Local
+execution is the default; the Boat CLI must already be installed and signed in
+on the calling machine. Its account credentials stay there.
+
+```toml
+[slots.boat]
+allow_shapes = []
+environment = "eon-builds"
+reserve_hours = 2
+timeout_seconds = 3600
+jobs = 4
+snapshot = "eon-warm"
+```
+
+`allow_shapes = ["nix-gate"]` permits Eon's repository-local `nix build`
+gate targets `.#checks.x86_64-linux.eon-tests`, `.#default`, `.#no-helix` and
+`.#bench`. The last target builds benchmark tools; running them stays local.
+Accepted flags are `-L`, `--print-build-logs`, `--keep-going`, `--no-link`,
+`--max-jobs 1|2` and `--cores 1..6`. Unknown arguments, shell commands, profile
+operations, Update and desktop/GPU/benchmark commands run through the local
+queue instead. A configured class does not make an unsafe command remote.
+
+The other supported `allow_shapes` values are `cargo-build` and `eon-test`.
+They permit `nix develop -c cargo build` (workspace/locked/offline/release/
+all-targets and `-p NAME`) and the pinned `nix develop -c eon-test` harness
+(ordinary subsets, `-p NAME`, doctests and 1–4 test threads). Ignored, live,
+visual and benchmark selectors stay local; direct Cargo test/nextest commands
+do not bypass Eon's test sandbox.
+
+`environment` must be a named builds-only environment other than `base`.
+Create it with `boat env new eon-builds`, then set all passing controls off
+before starting a VM:
+
+```sh
+boat env set eon-builds --safe-for-third-parties true --github false \
+  --secrets false --boat-credentials false --agents-credentials false \
+  --proxy-ai-credentials false
+```
+
+The environment must contain no repositories, variables or secret files.
+Each VM explicitly selects it with credential passing disabled, and an actual
+VM probe checks for credential variables, login files and Git helpers before
+uploading source. No agent sessions run in these VMs.
+No caller credentials reach the VM. Boat's own sandbox-scoped identity
+(`ASCII_TOKEN`, `BOAT_ID`) is present on the raw VM and acts only on that
+sandbox; only those exact names are allowed by the raw probe, without reading
+or logging their values. Both names must be absent from the actual build,
+which uses `env -i` and `bash --noprofile --norc`. A private result records
+`build_identity_absent`; missing or false proof refuses success. See
+[Boat access rules](https://docs.boat.dev/environments/access) and
+[reserved names](https://docs.boat.dev/environments/secrets).
+The raw VM may contain `/home/user/.config/ascii/boat/config.json` only as a
+regular JSON object with exactly the string fields `api_url` and `channel`.
+The probe checks this fixed security schema before every upload, without
+returning or logging file values. Missing Python, malformed JSON, duplicate
+or unknown fields, wrong types and nonregular files refuse the remote route;
+all other caller credential files remain forbidden.
+Requested commands clear inherited/ambient process capabilities and still use
+the ordinary `eon-test` isolation harness.
+
+`reserve_hours` is a finite nonnegative amount of included compute kept in
+reserve. Admission uses the smaller of included plan time and any trial cap;
+wallet credit never authorizes a paid start. Keep-going must be off. The
+whole run's lifetime must fit above the reserve and before the trial/billing
+boundary. `timeout_seconds` accepts 120–7200 and includes setup and cleanup;
+use 7200 for a first cold gate. `jobs` accepts 1–4 for the default 4-vCPU/8-GB
+VM; explicit permitted command flags retain their own values.
+
+Only tracked source, including tracked uncommitted edits and staged new
+files, is exported. Non-ignored untracked files require staging before remote
+proof. The verified Git tree includes tracked issue data; Git history, local
+configuration, credentials and absolute host cwd are not uploaded. Remote cwd
+is the same repository-relative directory.
+Export writes raw Git blobs and verifies their bytes and modes locally before
+upload; local checkout/smudge filters cannot inject data into the upload.
+The captured repository must contain both `Cargo.lock` and `flake.lock`;
+their contents identify reusable build dependencies.
+
+Remote runs hold one separate Boat lease, leaving local heavy capacity free.
+Quiet policy still applies. Before remote execution, policy/connectivity or
+budget refusal falls back through the local slot queue and reports a reason.
+After execution might have started, lost contact reports uncertainty and
+cleans up the owned VM without automatically running a local duplicate.
+Unresolved prior work blocks new remote starts while a new invocation can use
+the local queue. An unconfirmed create expires only after its recorded bounded
+lifetime and a provider inventory proves no VM with that name exists.
+Policy-eligible noninteractive local fallbacks retain private `runs/<id>/`
+output and a local receipt with the reason, status and `output_complete` flag.
+Terminal callers keep their inherited streams. Default-local and
+policy-negative commands keep direct streams without this recording.
+
+The route reuses only its own stopped, credential-free VM after confirmed
+completion and checks credentials
+again after resume. `snapshot` names one warm image (default `eon-warm`);
+named images are created only when the paid plan permits them and their count
+fits the included allowance. The trial uses the stopped pool without an early
+payment. Cargo.lock/flake.lock fingerprints select a matching named image;
+after a successful Nix gate, changed locks refresh that single image. Unknown
+images are not adopted. A pending save keeps its source identity until ready.
+Uncertain work, including wrapper crash or lost result, retires the VM by
+confirmed deletion; merely stopping it cannot authorize warm reuse.
+
+`eon agent slot ls --json` identifies remote holders with `where: "boat"` and
+shows the last Boat receipt. Queue/grant/exit records include `where` and local
+fallback reasons. Complete remote logs and schema-1 receipts live under
+`slots/runs/<id>/` beside the configured `state_file`; they are private and
+not printed by listing. A cleanup failure leaves a visible record that must
+be reconciled before another remote VM starts.
+An unreadable or incompatible Boat journal appears as `boat_error` in JSON
+listing and a reason in text; local holders and waiters remain visible.
+Usage dollars are Boat's metered list cost consumed from the included allowance,
+not authorization to spend beyond it.
+
+For a shared local fleet, `slots.lock_files` supplies one lock per configured
+slot and optionally the timed extra slot; `legacy_dir` reads the existing
+queue/quiet policy. Omit the extra lock to disable extra-slot grants in this
+caller. Every fallback must use the fleet's same lock files. Do not acquire
+an outer heavy lock around a remote slot invocation.
+
 ## Runtime identity and protocol bounds
 
 `generation`, `created_build`, `active_build` and known `origin_build` use the

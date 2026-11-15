@@ -207,8 +207,8 @@ expanded. Keep personal state and logs outside the repository.
   final class omits `match_argv` and is the default. `--class` selects a class
   explicitly. `--front` jumps ordinary waiters and can use any active slot.
 - During a cutover, `slots.lock_files` lists the existing absolute flock paths
-  in slot order. Setting `slots.legacy_dir` requires this list, with the extra
-  lock path last.
+  in slot order. Setting `slots.legacy_dir` requires this list. The extra
+  lock path is optional and comes last; without it no extra slot is granted.
   Swap the old wrapper to a shim before starting native runs. The native
   scheduler honors outstanding legacy tickets, and both versions share the
   locks while the old wrappers drain. The shim translates the old overrides
@@ -238,8 +238,14 @@ Select the profile with `codex --permission-profile rota` and verify it before
 cutover by running `rota slot run -- true` in the sandbox. See
 [Codex permission profiles](https://learn.chatgpt.com/docs/permissions#define-and-select-a-profile).
 
-Configuration and reader fixtures are tested with `cargo test`. Before committing,
-run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`.
+The optional `[slots.boat]` route runs permitted headless builds with no caller credentials on a
+Boat VM using a separate lease; see Eon's [configuration reference](../../../docs/CONFIGURATION.md#remote-heavy-builds)
+for policy, budget, exact-tree transfer, results and failure behavior. The default
+allowlist is empty. Boat is a local prerequisite, not an injected VM credential.
+
+Run this crate's tests through `nix develop -c eon-test -p eon-agent`.
+Run `cargo fmt --check` and `cargo clippy --locked -p eon-agent --all-targets -- -D warnings`
+inside the pinned development shell before review.
 The slot namespace test requires Bubblewrap with working PID namespaces and fails
 if its probe cannot run. On hosts that cannot run this probe,
 `ROTA_TEST_ALLOW_NO_BWRAP=1 cargo test` permits an explicit skip with a diagnostic.

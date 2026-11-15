@@ -42,6 +42,7 @@ pub struct SlotConfig {
     pub classes: Vec<SlotClass>,
     pub lock_files: Vec<PathBuf>,
     pub legacy_dir: Option<PathBuf>,
+    pub boat: BoatConfig,
 }
 
 impl Default for SlotConfig {
@@ -53,6 +54,31 @@ impl Default for SlotConfig {
             classes: Vec::new(),
             lock_files: Vec::new(),
             legacy_dir: None,
+            boat: BoatConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BoatConfig {
+    pub allow_shapes: Vec<String>,
+    pub environment: String,
+    pub reserve_hours: f64,
+    pub timeout_seconds: u64,
+    pub jobs: u16,
+    pub snapshot: String,
+}
+
+impl Default for BoatConfig {
+    fn default() -> Self {
+        Self {
+            allow_shapes: Vec::new(),
+            environment: "eon-builds".into(),
+            reserve_hours: 2.0,
+            timeout_seconds: 3600,
+            jobs: 4,
+            snapshot: "eon-warm".into(),
         }
     }
 }
@@ -68,17 +94,44 @@ pub struct SlotClass {
 
 impl SlotConfig {
     fn validate(&self) -> Result<(), String> {
+        let boat = &self.boat;
+        if boat
+            .allow_shapes
+            .iter()
+            .any(|shape| !matches!(shape.as_str(), "nix-gate" | "cargo-build" | "eon-test"))
+            || boat.allow_shapes.iter().collect::<BTreeSet<_>>().len() != boat.allow_shapes.len()
+            || boat.environment.is_empty()
+            || boat.environment == "base"
+            || boat.environment.len() > 63
+            || !boat
+                .environment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+            || !boat.reserve_hours.is_finite()
+            || boat.reserve_hours < 0.0
+            || !(120..=7200).contains(&boat.timeout_seconds)
+            || !(1..=4).contains(&boat.jobs)
+            || boat.snapshot.is_empty()
+            || boat.snapshot.len() > 63
+            || boat.snapshot.starts_with('-')
+            || !boat
+                .snapshot
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return Err("invalid slots.boat policy: use supported build shapes, a non-base environment, finite reserve, timeout 120..7200 and jobs 1..4".into());
+        }
         if self.count == 0 || self.count == u16::MAX || !(0..=19).contains(&self.nice) {
             return Err("slots need a positive count below 65535 and nice from 0 to 19".into());
         }
         let paths = self.lock_files.iter().collect::<BTreeSet<_>>();
-        if (self.legacy_dir.is_some() && paths.len() != usize::from(self.count) + 1)
+        if (self.legacy_dir.is_some() && paths.is_empty())
             || (!paths.is_empty()
                 && (paths.len() != self.lock_files.len()
                     || !(self.count as usize..=self.count as usize + 1).contains(&paths.len())
                     || paths.iter().any(|p| !p.is_absolute())))
         {
-            return Err("slots.lock_files needs one unique absolute path per slot, including the extra slot with legacy_dir".into());
+            return Err("slots.lock_files needs one unique absolute path per slot, with an optional extra slot".into());
         }
         if self.legacy_dir.as_ref().is_some_and(|p| !p.is_absolute()) {
             return Err("slots.legacy_dir must be absolute".into());
