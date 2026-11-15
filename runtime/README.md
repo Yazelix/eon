@@ -47,11 +47,12 @@ component report, opaque executable paths, and immutable assembly contribution. 
 runtime has no dependency on Eon, its component graph, validator, product
 defaults, assets or Nix expressions.
 
-Runtime hashes the supplied assembly contribution into one `g1-` generation,
-which Orbit terminal records carry as their component generation. The
+Runtime hashes the supplied assembly contribution into a `g1-` build identity.
+Full-Eon lifetimes have independently allocated `g1-` IDs, which Orbit terminal
+records carry as their component generation. eonbase stays build-derived. The
 contribution must cover the runtime and EONW source, as Eon's source-tree
 digest does. Mutable configuration, live state and store/profile paths do not
-become generation identity. Orbit remains the terminal owner; Venus remains the
+become build identity. Orbit remains the terminal owner; Venus remains the
 native presentation owner.
 
 When an acquired Orbit dies without a final result, Runtime validates the dead
@@ -111,14 +112,17 @@ reports. The existing send action distinguishes explicit terminal IDs from the
 opt-in focused target, with an expected terminal for delayed Enter. Unknown
 window focus is nullable; stale or nonterminal focus refuses a focused send.
 
-Since EONW v44, `generation`, `created_build` and `active_build` are separate in public
-snapshots and lifecycle inspection, adds per-run launch inventory to Runtime,
-and defines the `updating` subscription End value. Generation allocation is
-still build-derived. Full-Eon windows retain a private format-1 `identity`
+Since EONW v44, `generation`, `created_build` and `active_build` are separate in
+public snapshots and lifecycle inspection, with per-run launch inventory and
+the `updating` subscription End value. Full-Eon windows retain a private format-1 `identity`
 record binding lifetime, creation build, active build and optional launcher.
 It commits before fresh hosts start; recordless surviving hosts retain exact-run
-recovery without backfilling the record. Independent lifetimes and Update
-remain planned. Reserved Stop stays byte-identical.
+recovery without backfilling the record. Bare launch selects the invoked active
+build under namespace arbitration, reuses its sole validated live/recoverable
+lifetime or allocates a fresh ID, and refuses ambiguity. Caller-free control
+prefers the sole active-build match, otherwise the sole live lifetime. Explicit
+attach recovers a retained exact lifetime through its active launcher. In-place
+Update remains planned. Reserved Stop stays byte-identical.
 
 Google quota has independent optional Snapshot fact and failure slots.
 Its fresh/stale reading carries at most six windows, all scoped by the exact

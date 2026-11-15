@@ -3,12 +3,11 @@ use super::{
     control::{Error, failure, report_failure, write_stdout},
     generation::{
         Ask, DELEGATION_MARKER, GenerationRecord, ROUTE_MARKER, WorkspaceTarget, attach_generation,
-        caller_generation, current_generation, damaged_generations, delegated_elsewhere,
-        delegated_generation, generation_directory, generation_running, generation_running_until,
-        preferred_window_generation, private_directory_exists, probe_workspace_generation,
-        resolve_workspace, route, routed_generation, running_generations,
-        running_generations_until, stop_generation, stop_generations, valid_generation,
-        window_cells, window_generation, window_json,
+        caller_generation, current_generation, delegated_elsewhere, delegated_generation,
+        generation_directory, generation_running, preferred_window_generation,
+        private_directory_exists, probe_workspace_generation, resolve_workspace, route,
+        routed_generation, running_generations, running_generations_until, stop_generation,
+        stop_generations, valid_generation, window_cells, window_generation, window_json,
     },
     platform::socket_path_fits,
     supervisor::{
@@ -157,12 +156,14 @@ fn window_listing(
     match running_generations_until(inputs, &base, remove_dead, deadline) {
         Ok(records) => {
             preferred = preferred_window_generation(
+                &base,
                 &current,
                 &records
                     .iter()
                     .map(|record| record.id.clone())
                     .collect::<Vec<_>>(),
             )
+            .unwrap_or(None)
             .filter(|id| valid_generation(id))
             .map(str::to_owned);
             windows.extend(records.into_iter().map(|record| {
@@ -336,6 +337,50 @@ fn select_window_until(
     // and never another window. Only an entry named `default` could be
     // `default`, so it needs no listing.
     let unavailable = |error| failure("supervisor-unavailable", error);
+    if argument.len() == 32 {
+        let generation = format!("g1-{argument}");
+        let parent = base.join("generations");
+        for (path, description) in [
+            (&base, "runtime directory"),
+            (&parent, "generation directory"),
+        ] {
+            if !private_directory_exists(path, description).map_err(unavailable)? {
+                return Err(unknown_window(argument));
+            }
+        }
+        match fs::symlink_metadata(parent.join(argument)) {
+            Ok(_) => return Err(damaged_window(argument, argument)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(unavailable(error.to_string())),
+        }
+        if !private_directory_exists(
+            &generation_directory(&base, &generation),
+            "generation runtime directory",
+        )
+        .map_err(unavailable)?
+        {
+            return Err(unknown_window(argument));
+        }
+        // Selection is complete; failed discovery only changes its displayed label.
+        let listed = window_listing(inputs, false, deadline)
+            .ok()
+            .and_then(|entries| entries.into_iter().collect::<Result<Vec<_>, _>>().ok())
+            .and_then(|windows| {
+                windows
+                    .into_iter()
+                    .find(|window| window.root == base && window.record.id == generation)
+            });
+        let selected = if listed
+            .as_ref()
+            .is_some_and(|window| window.id == DEFAULT_WINDOW)
+        {
+            Window::Default(generation)
+        } else {
+            Window::Other(generation)
+        };
+        let shown = listed.map_or_else(|| argument.to_owned(), |window| window.short_id);
+        return Ok((selected, shown));
+    }
     let damaged = if argument == DEFAULT_WINDOW {
         let entry = generation_directory(&base, DEFAULT_WINDOW);
         match fs::symlink_metadata(&entry) {
@@ -349,10 +394,16 @@ fn select_window_until(
             }
         }
     } else {
-        damaged_generations(&base)
+        let inventory =
+            super::generation::generation_inventory_until(&base, deadline).map_err(unavailable)?;
+        inventory
+            .bounded(&base)
             .map_err(unavailable)?
             .iter()
-            .any(|name| name == argument)
+            .any(|(name, _)| {
+                name.to_str()
+                    .is_some_and(|name| !valid_generation(name) && name == argument)
+            })
     };
     if damaged {
         return Err(damaged_window(argument, argument));
@@ -450,10 +501,6 @@ fn default_generation(inputs: &Inputs, deadline: Option<Instant>) -> Result<Stri
     };
     let current = current_generation(inputs).map_err(unavailable)?;
     let base = base_runtime_directory("eon");
-    // An exact live current target need not enumerate unrelated generation entries.
-    if generation_running_until(inputs, &base, &current, deadline).map_err(unavailable)? {
-        return Ok(current);
-    }
     let windows: Vec<_> = running_windows_until(inputs, deadline)
         .map_err(unavailable)?
         .into_iter()
@@ -464,6 +511,12 @@ fn default_generation(inputs: &Inputs, deadline: Option<Instant>) -> Result<Stri
         .find(|window| !valid_generation(&window.record.id))
     {
         return Err(damaged_window(DEFAULT_WINDOW, &damaged.record.id));
+    }
+    if let Some(window) = windows
+        .iter()
+        .find(|window| window.record.state == "corrupt")
+    {
+        return Err(unavailable(window.record.detail.clone()));
     }
     if let Some(window) = windows.iter().find(|window| window.id == DEFAULT_WINDOW) {
         return Ok(window.record.id.clone());
@@ -611,12 +664,7 @@ pub(super) fn quit(inputs: &Inputs, json: bool, arguments: &[OsString]) -> Resul
             Err(error) => return Ok(report_failure(&error, json)?),
         };
         let root = runtime_directory("eon");
-        let id = runtime_window(&root).unwrap_or_else(|| {
-            current_generation(inputs).map_or_else(
-                |_| resolved.generation.clone(),
-                |current| default_namespace_id(&resolved.generation, &current),
-            )
-        });
+        let id = runtime_window(&root).unwrap_or_else(|| resolved.generation[3..].to_owned());
         // As `eon window ls` shows it, else in full.
         let window = window_listing(inputs, true, None)
             .ok()
@@ -762,10 +810,22 @@ pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32
     let mut child = command
         .spawn()
         .map_err(|error| format!("cannot start Eon window {id}: {error}"))?;
-    let socket = generation_directory(&root, &generation).join("eon.sock");
     let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT.saturating_mul(4);
     loop {
-        if let Ok((LaunchMode::Workspace, _)) = probe_supervisor(inputs, &socket, &generation) {
+        let ready = running_generations(inputs, &root, false)
+            .ok()
+            .and_then(|records| records.into_iter().find(|record| record.current()))
+            .is_some_and(|record| {
+                matches!(
+                    probe_supervisor(
+                        inputs,
+                        &generation_directory(&root, &record.id).join("eon.sock"),
+                        &record.id
+                    ),
+                    Ok((LaunchMode::Workspace, _))
+                )
+            });
+        if ready {
             write_stdout(format!("{id}\n"))?;
             return Ok(0);
         }
@@ -801,7 +861,9 @@ pub(super) fn attach_window(inputs: &Inputs, argument: Option<&OsStr>) -> Result
     };
     let base = base_runtime_directory("eon");
     match (window, delegated) {
-        (Window::Default(selected), Some(generation)) if selected == generation => {
+        (Window::Default(selected) | Window::Other(selected), Some(generation))
+            if selected == generation =>
+        {
             attach_generation(inputs, &base, Some(&generation), Some(&shown))
         }
         (Window::Independent { root, .. }, Some(generation)) if runs(&root, &generation) => {
@@ -1076,11 +1138,11 @@ fn own_window(inputs: &Inputs) -> Result<(PathBuf, Option<String>), Failure> {
 /// asks supervisors only what `eon window ls` does, without a caller, and
 /// removes nothing a dead generation left: `eon report` changes no runtime
 /// state (EON-C1).
-pub(super) fn listed_window_json(
+pub(super) fn listed_window(
     inputs: &Inputs,
     root: &Path,
-    generation: &str,
-) -> Result<Option<String>, String> {
+    generation: Option<&str>,
+) -> Result<Option<(String, String)>, String> {
     let windows = window_listing(inputs, false, None)?
         .into_iter()
         .map(|found| found.map_err(|window| window.error))
@@ -1089,14 +1151,27 @@ pub(super) fn listed_window_json(
         .iter()
         .filter(|window| window.root == root)
         .collect();
+    let ids = windows
+        .iter()
+        .map(|window| window.record.id.clone())
+        .collect::<Vec<_>>();
+    let selected = match generation {
+        Some(id) => Some(id),
+        None => preferred_window_generation(root, &current_generation(inputs)?, &ids)?,
+    };
     let window = windows
         .iter()
-        .find(|window| window.record.id == generation)
-        .or(match windows.as_slice() {
-            [only] => Some(only),
+        .find(|window| Some(window.record.id.as_str()) == selected)
+        .or(match (generation, windows.as_slice()) {
+            (None, [only]) => Some(only),
             _ => None,
         });
-    Ok(window.map(|window| window_json(&window.record, &window.id, &window.short_id, false)))
+    Ok(window.map(|window| {
+        (
+            window.record.id.clone(),
+            window_json(&window.record, &window.id, &window.short_id, false),
+        )
+    }))
 }
 
 /// `eon window stop previous|all` and `eon quit --all`: the validated Stop of
@@ -1313,6 +1388,53 @@ mod tests {
         Match, ambiguous_window, durable_window_id, match_id, short_ids, window_id_argument,
     };
     use std::ffi::OsStr;
+
+    #[test]
+    fn full_lifetime_selection_survives_an_expired_inventory_deadline() {
+        use std::{fs, os::unix::fs::PermissionsExt, process::Command, time::Instant};
+        const G: &str = "g1-11111111111111111111111111111111";
+        if std::env::var_os("EON_TEST_EXACT_SELECTION").is_some() {
+            let inputs = crate::fixtures::inputs();
+            let select = |id| super::select_window_until(&inputs, id, Some(Instant::now()));
+            let (window, shown) = select(&G[3..]).unwrap();
+            assert!(matches!(window, super::Window::Other(id) if id == G));
+            assert_eq!(shown, &G[3..]);
+            assert!(select(&G[3..11]).is_err());
+            let base = crate::supervisor::base_runtime_directory("eon");
+            let generations = base.join("generations");
+            let target = generations.join(G);
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(select(&G[3..]).is_err());
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::create_dir(generations.join(&G[3..])).unwrap();
+            assert_eq!(select(&G[3..]).err().unwrap().code, "unknown-window");
+            fs::remove_dir(generations.join(&G[3..])).unwrap();
+            fs::set_permissions(&generations, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(select(&G[3..]).is_err());
+            return;
+        }
+        let root = crate::supervisor::temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        for path in [
+            root.clone(),
+            root.join("generations"),
+            root.join("generations").join(G),
+        ] {
+            crate::supervisor::prepare_runtime(&path).unwrap();
+        }
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "windows::tests::full_lifetime_selection_survives_an_expired_inventory_deadline",
+                "--nocapture",
+            ])
+            .env("EON_RUNTIME_DIR", &root)
+            .env("EON_TEST_EXACT_SELECTION", "1")
+            .output()
+            .unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
 
     #[test]
     fn short_ids_are_the_shortest_unique_prefixes_of_at_least_four() {

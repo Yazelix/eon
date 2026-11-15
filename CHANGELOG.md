@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Full-Eon windows have lifetime IDs independent of their creation and active
+  builds. Bare launch selects by active build; default control keeps the sole
+  older window reachable after a profile refresh. Exact attach can recover a
+  retained lifetime and its hosts through its active launcher. Overfull runtime
+  inventories safely sweep dead metadata and retain full-ID Stop recovery.
+  In-place Update remains planned (`eon-t3fyd.3`).
+
 - On Linux, Eon's terminfo advertises styled underlines (`Smulx`) and
   independent underline colours (`Setulc`) for editors' coloured undercurls.
   macOS retains its existing legacy terminfo entry; its extensions are

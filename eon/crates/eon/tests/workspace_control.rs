@@ -1288,13 +1288,8 @@ fn report_prints_a_redacted_bug_report_without_preparing_anything() {
     assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
     assert!(!root.join("nix-calls").exists());
 
-    // The report reads the newest log of its window's generation, not a newer one of another.
-    let generation = report
-        .lines()
-        .find(|line| line.starts_with("eon "))
-        .and_then(|line| line.split(' ').nth(2))
-        .unwrap()
-        .to_owned();
+    // Without a running window, the newest retained lifetime log is independent of this build.
+    let generation = "g1-11111111111111111111111111111111";
     let logs = state.join("eon/logs");
     fs::create_dir_all(&logs).unwrap();
     let log = logs.join(format!("{generation}-1000-1.log"));
@@ -1308,7 +1303,7 @@ fn report_prints_a_redacted_bug_report_without_preparing_anything() {
         .collect();
     fs::write(&log, lines).unwrap();
     fs::write(
-        logs.join("g1-ffffffffffffffffffffffffffffffff-2000-1.log"),
+        logs.join("g1-ffffffffffffffffffffffffffffffff-500-1.log"),
         "other generation\n",
     )
     .unwrap();
@@ -1525,6 +1520,33 @@ fn report_inside_eon_never_asks_a_supervisor_about_its_caller() {
         );
     }
     drop(requests);
+    // An orphaned caller's retained log must not become the sole live peer's log.
+    let caller_generation = "g1-11111111111111111111111111111111";
+    assert_ne!(caller_generation, current);
+    let logs = home.join(".local/state/eon/logs");
+    fs::create_dir_all(logs.join("orbit")).unwrap();
+    fs::write(
+        logs.join("orbit")
+            .join(format!("{caller_generation}-terminal-1-run-1.log")),
+        "",
+    )
+    .unwrap();
+    fs::write(
+        logs.join(format!("{caller_generation}-1000-1.log")),
+        "orphaned caller log\n",
+    )
+    .unwrap();
+    fs::write(
+        logs.join(format!("{current}-2000-1.log")),
+        "unrelated live peer log\n",
+    )
+    .unwrap();
+    let output = eon(&["report"]);
+    assert!(output.status.success(), "{output:?}");
+    let report = stdout(&output);
+    assert!(report.contains("orphaned caller log"), "{report}");
+    assert!(!report.contains("unrelated live peer log"), "{report}");
+    assert!(report.contains("### Window\nnone running\n"), "{report}");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2890,9 +2912,34 @@ fn generation_runtime(root: &Path) -> PathBuf {
     }
 }
 
+fn generation_runtime_for_build(root: &Path, build: &str) -> PathBuf {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(entries) = fs::read_dir(root.join("generations")) {
+            for entry in entries {
+                let path = entry.unwrap().path();
+                if fs::read(path.join("identity")).is_ok_and(|bytes| {
+                    bytes.get(..6) == Some(b"EONI\x01\x00".as_slice())
+                        && bytes.get(76..111) == Some(build.as_bytes())
+                }) {
+                    return path;
+                }
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no lifetime for active build {build}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn overfill_generation_directory(root: &Path) {
     for index in 0..256 {
-        fs::create_dir(root.join("generations").join(format!("g1-{index:032x}"))).unwrap();
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(root.join("generations").join(format!("g1-{index:032x}")))
+            .unwrap();
     }
 }
 
@@ -3213,11 +3260,16 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     }
 
     fn command(&self, child: &[&str]) -> Command {
-        let mut command = eon_command(&self.binary);
-        command.arg("run");
+        let mut command = self.command_with_arguments(&["run"]);
         if !child.is_empty() {
             command.arg("--").args(child);
         }
+        command
+    }
+
+    fn command_with_arguments(&self, arguments: &[&str]) -> Command {
+        let mut command = eon_command(&self.binary);
+        command.args(arguments);
         command
             .current_dir(&self.launch)
             .env("HOME", &self.home)
@@ -4262,7 +4314,7 @@ fn recovery_refuses_saved_popup_pane_tab_and_session_ids() {
 }
 
 #[test]
-fn an_empty_same_generation_restart_does_not_reclaim_short_ids() {
+fn a_fresh_lifetime_after_clean_stop_can_start_its_local_ids_at_one() {
     let window = PairWindow::new();
     let mut first = window.spawn(&[]);
     let old = window.inspect("first-window");
@@ -4273,9 +4325,9 @@ fn an_empty_same_generation_restart_does_not_reclaim_short_ids() {
     assert!(!generation.exists());
     let mut replacement = window.spawn(&[]);
     let new = window.inspect("empty-replacement");
-    assert_ne!(new.workspace, old.workspace);
-    assert_ne!(new.active_tab, old.active_tab);
-    assert_ne!(new.tabs[0].popups[0].id, old.tabs[0].popups[0].id);
+    assert_ne!(new.generation, old.generation);
+    assert_eq!(new.workspace, "s1");
+    assert_eq!(new.active_tab, "t1");
     window.stop_generation(&mut replacement);
 }
 
@@ -6556,8 +6608,11 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
     };
     let first: serde_json::Value = serde_json::from_str(&wait_for_lines(&log, 1)[0]).unwrap();
     assert_eq!(first["type"], "snapshot");
-    assert_eq!(first["created_build"], first["generation"]);
-    assert_eq!(first["active_build"], first["generation"]);
+    let versions = invoke(binary, &runtime, &config, &["versions"]);
+    let build = stdout(&versions).split_whitespace().nth(2).unwrap();
+    assert_eq!(first["created_build"], build);
+    assert_eq!(first["active_build"], build);
+    assert_ne!(first["generation"], build);
 
     let filtered_log = root.join("filtered");
     let mut filtered = TestProcess {
@@ -9301,10 +9356,7 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
         .nth(2)
         .unwrap()
         .to_owned();
-    let current_control = runtime
-        .join("generations")
-        .join(&current_id)
-        .join("eon.sock");
+    let current_control = generation_runtime_for_build(&runtime, &current_id).join("eon.sock");
     wait_for(&current_control);
     assert_ne!(current_control, previous_control);
     let from = |arguments: &[&str]| {
@@ -9392,8 +9444,13 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     }
     let human = from(&["session"]);
     assert!(human.status.success());
+    let previous_versions = invoke(&previous_binary, &runtime, &config, &["versions"]);
+    let previous_build = stdout(&previous_versions)
+        .split_whitespace()
+        .nth(2)
+        .unwrap();
     assert!(stdout(&human).starts_with(&format!(
-        "generation {previous_id}\ncreated_build {previous_id}\nactive_build {previous_id}\nwindow default\nsession s1\n"
+        "generation {previous_id}\ncreated_build {previous_build}\nactive_build {previous_build}\nwindow default\nsession s1\n"
     )));
     for token in [
         String::from_utf8(caller.to_vec()).unwrap() + "0",
@@ -9453,9 +9510,12 @@ fn workspace_control_follows_the_exact_caller_across_generations() {
     assert!(outside.status.success(), "{}", stdout(&outside));
     let result: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
     assert_eq!(
-        result["generation"], previous_id,
+        result["generation"],
+        window_runtime.file_name().unwrap().to_str().unwrap(),
         "window-only selects its sole previous generation"
     );
+    assert_eq!(result["active_build"], previous_build);
+    assert_ne!(result["generation"], previous_id);
     assert_eq!(result["window"], window_id);
     let constrained = from(&["session", "--window", window_id, "--json"]);
     assert_eq!(constrained.status.code(), Some(3));
@@ -10987,6 +11047,8 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     ));
     drop(lifecycle_lock);
     let first_orbit = live_identity(&generation.join("orbit.sock")).process_id;
+    // Retained metadata makes this a same-lifetime replacement, not a new window.
+    fs::write(generation.join("retained"), b"fixture residue").unwrap();
 
     // Freeze the owner so the replacement launch necessarily overlaps teardown.
     assert_eq!(
@@ -11016,7 +11078,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
         .env("EON_TEST_ORBIT_LOG", &orbit_log)
         .env("EON_TEST_STOP", root.join("second-stop"))
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(fs::File::create(root.join("second-stderr")).unwrap())
         .spawn()
         .unwrap();
     let mut second = TestProcess {
@@ -11030,6 +11092,10 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     );
     wait_for_successful_exit(&mut first.child);
 
+    fs::remove_file(generation.join("retained")).unwrap();
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    let record = artifact_path(&generation.join("orbit.sock"), ".record");
     let deadline = Instant::now() + Duration::from_secs(5);
     let second_orbit = loop {
         if let Ok(bytes) = fs::read(&record)
@@ -11040,7 +11106,8 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
         }
         assert!(
             second.child.try_wait().unwrap().is_none(),
-            "replacement launch exited instead of becoming the new supervisor"
+            "replacement launch exited instead of becoming the new supervisor: {}",
+            fs::read_to_string(root.join("second-stderr")).unwrap()
         );
         assert!(Instant::now() < deadline, "fresh Session did not start");
         thread::sleep(Duration::from_millis(10));
@@ -11231,6 +11298,11 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .spawn()
             .unwrap()
     };
+    // The eonbase refusal below addresses the pre-S2b build-derived lifetime.
+    let versions = invoke(&binary, &runtime, &config, &["versions"]);
+    let build = stdout(&versions).split_whitespace().nth(2).unwrap();
+    drop(generation_listener(&runtime, build));
+    record_window_identity(&runtime, build, build, build, None);
     let mut first = TestProcess {
         child: launch(),
         stop: fallback_stop.clone(),
@@ -11247,9 +11319,12 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     ];
     let initial_json: serde_json::Value = serde_json::from_str(stdout(&pane)).unwrap();
     let lifetime = generation.file_name().unwrap().to_str().unwrap();
-    for field in ["generation", "created_build", "active_build"] {
-        assert_eq!(initial_json[field], lifetime, "{field}");
-    }
+    let versions = invoke(&binary, &runtime, &config, &["versions"]);
+    let build = stdout(&versions).split_whitespace().nth(2).unwrap();
+    assert_eq!(initial_json["generation"], lifetime);
+    assert_eq!(initial_json["created_build"], build);
+    assert_eq!(initial_json["active_build"], build);
+    assert_eq!(lifetime, build);
     let fresh = listed_window(eon_command(&binary), &runtime, &config);
     assert_eq!(fresh["created_build"], initial_json["created_build"]);
     assert_eq!(fresh["active_build"], initial_json["active_build"]);
@@ -11448,7 +11523,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
 }
 
 #[test]
-fn identity_record_retains_launch_facts_and_recordless_recovery() {
+fn identity_record_retains_build_derived_launch_facts_and_recordless_recovery() {
     let window = PairWindow::new();
     symlink(&window.binary, window.root.join("session-bin/eon")).unwrap();
     fs::rename(window.root.join("orbit"), window.root.join("orbit-real")).unwrap();
@@ -11468,6 +11543,21 @@ fn identity_record_retains_launch_facts_and_recordless_recovery() {
         command.arg("--dir").arg(&window.launch);
         window.start(command)
     };
+    // An already running pre-S2b lifetime retains its build-derived spelling.
+    let versions = window.eon(&["versions"]);
+    let build = stdout(&versions)
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .to_owned();
+    drop(generation_listener(&window.runtime, &build));
+    record_window_identity(
+        &window.runtime,
+        &build,
+        &build,
+        &build,
+        Some(&window.root.join("session-bin/eon")),
+    );
     let mut first = launch();
     wait_for_ready(&window.control());
     let runtime = window.generation();
@@ -11533,7 +11623,7 @@ fn identity_record_retains_launch_facts_and_recordless_recovery() {
     };
     refused(b"corrupt");
     let mut wrong_active = retained.clone();
-    wrong_active[79] = if wrong_active[79] == b'0' { b'1' } else { b'0' };
+    wrong_active[79] = b'z';
     refused(&wrong_active);
     fs::write(&identity, &retained).unwrap();
     fs::remove_file(runtime.join("eon")).unwrap();
@@ -11560,8 +11650,395 @@ fn identity_record_retains_launch_facts_and_recordless_recovery() {
     // Reserved Stop remains independent of a damaged private identity.
     fs::write(&identity, b"corrupt").unwrap();
     fs::set_permissions(&identity, fs::Permissions::from_mode(0o600)).unwrap();
-    window.stop_generation(&mut recordless);
+    let lifetime = runtime.file_name().unwrap().to_str().unwrap();
+    let stopped = window.eon(&["window", "stop", &lifetime[3..], "--json"]);
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut recordless.child);
     assert!(!runtime.exists(), "hostless shutdown leaked identity");
+}
+
+#[test]
+fn active_lifetime_launch_keeps_old_eonw_windows_selectable_with_or_without_a_record() {
+    for recorded in [false, true] {
+        let window = PairWindow::new();
+        let old = "g1-86440000000000000000000000000000";
+        let done = window.root.join("old-done");
+        let old_server = other_eonw_supervisor(&window.runtime, old, &done, VERSION - 1);
+        let launcher = window.root.join("old-eon");
+        let log = window.root.join("old-launcher.log");
+        executable(
+            &launcher,
+            format!(
+                "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$*\" \"${{EON_ROUTED-unset}}\" \"${{EON_ATTACH_DELEGATED-unset}}\" >> '{}'\nprintf '%s\\n' '{{\"generation\":\"{old}\"}}'\n",
+                log.display()
+            ),
+        );
+        symlink(
+            &launcher,
+            window.runtime.join("generations").join(old).join("eon"),
+        )
+        .unwrap();
+        if recorded {
+            record_window_identity(&window.runtime, old, old, old, Some(&launcher));
+        }
+        let versions = window.eon(&["versions"]);
+        let build = stdout(&versions).split_whitespace().nth(2).unwrap();
+        let listed = window.eon(&["window", "ls", "--json"]);
+        assert!(listed.status.success(), "{listed:?}");
+        let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(listed["windows"][0]["id"], "default");
+        assert_eq!(listed["windows"][0]["generation"], old);
+        for target in ["default", &old[3..]] {
+            let session = window.eon(&["--window", target, "session", "--json"]);
+            assert!(session.status.success(), "{session:?}");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&session.stdout).unwrap()["generation"],
+                old
+            );
+            let attach = window.eon(&["window", "attach", target]);
+            assert!(attach.status.success(), "{attach:?}");
+        }
+        let mut current = window.start(window.command_with_arguments(&[]));
+        let runtime = generation_runtime_for_build(&window.runtime, build);
+        let lifetime = runtime.file_name().unwrap().to_str().unwrap();
+        wait_for_ready(&runtime.join("eon.sock"));
+        assert_ne!(lifetime, build);
+        assert_ne!(lifetime, old);
+        let listed = window.eon(&["window", "ls", "--json"]);
+        let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(listed["windows"].as_array().unwrap().len(), 2, "{listed}");
+        assert_eq!(listed["windows"][0]["id"], "default", "{listed}");
+        assert_eq!(listed["windows"][0]["generation"], lifetime);
+        assert_eq!(listed["windows"][0]["active_build"], build);
+        let session = window.eon(&["session", "--json"]);
+        assert!(session.status.success(), "{session:?}");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&session.stdout).unwrap()["generation"],
+            lifetime
+        );
+        let report = window.eon(&["report"]);
+        assert!(report.status.success(), "{report:?}");
+        assert!(
+            stdout(&report).contains(&format!("\"generation\":\"{lifetime}\"")),
+            "{report:?}"
+        );
+        overfill_generation_directory(&window.runtime);
+        if recorded {
+            let old_runtime = window.runtime.join("generations").join(old);
+            let identity = fs::read(old_runtime.join("identity")).unwrap();
+            let before = fs::read(&log).unwrap();
+            fs::write(old_runtime.join("identity"), b"corrupt").unwrap();
+            for args in [
+                vec!["--window", &old[3..], "session", "--json"],
+                vec!["window", "attach", &old[3..]],
+            ] {
+                let refused = window.eon(&args);
+                assert!(!refused.status.success(), "{refused:?}");
+                assert_eq!(
+                    fs::read(&log).unwrap(),
+                    before,
+                    "corrupt EONI ran a launcher"
+                );
+            }
+            fs::write(old_runtime.join("identity"), identity).unwrap();
+        }
+        for args in [
+            vec!["--window", &old[3..], "session", "--json"],
+            vec!["window", "attach", &old[3..]],
+        ] {
+            let result = window.eon(&args);
+            assert!(result.status.success(), "{result:?}");
+        }
+        let hops = fs::read_to_string(&log).unwrap();
+        assert!(hops.contains(&format!("|{old}|unset")), "{hops}");
+        assert!(hops.contains(&format!("|unset|{old}")), "{hops}");
+        let stopped = window.eon(&["window", "stop", &lifetime[3..], "--json"]);
+        assert!(stopped.status.success(), "{stopped:?}");
+        wait_for_successful_exit(&mut current.child);
+        let stopped = window.eon(&["window", "stop", &old[3..], "--json"]);
+        assert!(stopped.status.success(), "{stopped:?}");
+        old_server.join().unwrap();
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn pre_s2b_store_supervisors_remain_attachable_beside_fresh_lifetimes() {
+    for package in [
+        "/nix/store/pc5k0m7mwmlgcmy4qwc97lpwy80p4wp4-eon-0.1.27",
+        "/nix/store/ncsf83nbrmwv1w4p6xnn9z30hnhvl247-eon-0.1.27",
+    ] {
+        let package = Path::new(package);
+        if !package.join("libexec/eon/bin/eon").exists() {
+            eprintln!("SKIP pre-S2b input missing: {}", package.display());
+            continue;
+        }
+        // Immutable production CLI/runtime; the existing fixture supplies Orbit and Venus mocks.
+        let old_binary = package.join("bin/.eon-wrapped");
+        assert!(old_binary.is_file(), "{}", old_binary.display());
+        let mut window = PairWindow::new();
+        let candidate = std::mem::replace(&mut window.binary, old_binary.clone());
+        let versions = window
+            .command_with_arguments(&["versions"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(versions.status.success(), "{versions:?}");
+        let build = stdout(&versions)
+            .split_whitespace()
+            .nth(2)
+            .unwrap()
+            .to_owned();
+        let wire: u16 = stdout(&versions)
+            .lines()
+            .find_map(|line| line.strip_prefix("eonw "))
+            .unwrap()
+            .parse()
+            .unwrap();
+        eprintln!("pre-S2b input {}: {build}, EONW {wire}", package.display());
+        let bin = window.root.join("old-session-bin");
+        fs::create_dir(&bin).unwrap();
+        symlink(window.root.join("session-bin/eon-nu"), bin.join("eon-nu")).unwrap();
+        let launcher = bin.join("eon");
+        let hops = window.root.join("old-cli.log");
+        executable(
+            &launcher,
+            format!(
+                "#!/bin/sh\nexport EON_SESSION_BIN='{}' EON_ORBIT='{}' EON_VENUS='{}'\nprintf '%s|%s\\n' \"${{EON_ATTACH_DELEGATED-unset}}\" \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+                bin.display(),
+                window.root.join("orbit").display(),
+                window.root.join("venus").display(),
+                hops.display(),
+                old_binary.display()
+            ),
+        );
+        let startup_log = window.root.join("old-startup.log");
+        let mut command = window.command(&[]);
+        command
+            .arg("--dir")
+            .arg(&window.launch)
+            .env("EON_SESSION_BIN", &bin)
+            .stderr(fs::File::create(&startup_log).unwrap());
+        let mut old = window.start(command);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let output = window
+                .command_with_arguments(&["session", "--json"])
+                .env("EON_SESSION_BIN", &bin)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .unwrap();
+            if output.status.success() {
+                let session: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(session["generation"], build);
+                break;
+            }
+            assert!(
+                old.child.try_wait().unwrap().is_none() && Instant::now() < deadline,
+                "pre-S2b {} failed startup: {output:?}; {}",
+                package.display(),
+                fs::read_to_string(&startup_log).unwrap()
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        let old_runtime = window.runtime.join("generations").join(&build);
+        let host = live_identity(&old_runtime.join("orbit.sock"));
+        window.binary = candidate;
+        let list = window.eon(&["window", "ls", "--json"]);
+        assert!(list.status.success(), "{list:?}");
+        let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+        assert_eq!(list["windows"][0]["generation"], build);
+        assert_eq!(list["windows"][0]["id"], "default");
+        let attach = window
+            .command_with_arguments(&["window", "attach", "default"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(attach.status.success(), "{attach:?}");
+        let current_versions = window.eon(&["versions"]);
+        let current_build = stdout(&current_versions).split_whitespace().nth(2).unwrap();
+        assert_ne!(build, current_build);
+        let mut current = window.start(window.command(&[]));
+        let current_runtime = generation_runtime_for_build(&window.runtime, current_build);
+        wait_for_ready(&current_runtime.join("eon.sock"));
+        let current_id = current_runtime.file_name().unwrap().to_str().unwrap();
+        assert_ne!(current_id, current_build);
+        let list = window.eon(&["window", "ls", "--json"]);
+        let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+        assert_eq!(list["windows"].as_array().unwrap().len(), 2, "{list}");
+        assert_eq!(list["windows"][0]["generation"], current_id);
+        let attach = window
+            .command_with_arguments(&["window", "attach", &build[3..]])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(attach.status.success(), "{attach:?}");
+        if wire != VERSION {
+            assert!(fs::read_to_string(&hops).unwrap().contains(&build));
+        }
+        // Exercise the actual old marker parser even when both builds speak the same EONW.
+        let candidate = std::mem::replace(&mut window.binary, launcher);
+        let delegated = window
+            .command_with_arguments(&["window", "attach", &build[3..]])
+            .env("EON_ATTACH_DELEGATED", &build)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        window.binary = candidate;
+        assert!(delegated.status.success(), "{delegated:?}");
+        assert_eq!(live_identity(&old_runtime.join("orbit.sock")), host);
+        assert!(old.child.try_wait().unwrap().is_none());
+        for id in [&current_id[3..], &build[3..]] {
+            let stopped = window.eon(&["window", "stop", id, "--json"]);
+            assert!(stopped.status.success(), "{stopped:?}");
+        }
+        wait_for_successful_exit(&mut current.child);
+        wait_for_successful_exit(&mut old.child);
+    }
+}
+
+#[test]
+fn retained_lifetime_attach_recovers_exact_hosts_with_distinct_build_roles() {
+    let window = PairWindow::new();
+    let lifetime = "g1-11111111111111111111111111111111";
+    let creation = "g1-22222222222222222222222222222222";
+    let versions = window.eon(&["versions"]);
+    let build = stdout(&versions).split_whitespace().nth(2).unwrap();
+    let launcher = window.root.join("session-bin/eon");
+    symlink(&window.binary, &launcher).unwrap();
+    drop(generation_listener(&window.runtime, lifetime));
+    record_window_identity(&window.runtime, lifetime, creation, build, Some(&launcher));
+    let mut command = window.command(&[]);
+    command.arg("--dir").arg(&window.launch);
+    let mut first = window.start(command);
+    wait_for_ready(&window.control());
+    let host = live_identity(&window.generation().join("orbit.sock"));
+    let snapshot = window.inspect("distinct-identities");
+    let Response::Snapshot(decoded) =
+        decode_response(&encode_response(&Response::Snapshot(snapshot)).unwrap()).unwrap()
+    else {
+        panic!("snapshot roundtrip");
+    };
+    assert_eq!(decoded.generation, lifetime);
+    assert_eq!(decoded.created_build, creation);
+    assert_eq!(decoded.active_build, build);
+    for args in [vec!["session", "--json"], vec!["window", "ls", "--json"]] {
+        let output = window.eon(&args);
+        assert!(output.status.success(), "{output:?}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let value = if args[0] == "window" {
+            &value["windows"][0]
+        } else {
+            &value
+        };
+        assert_eq!(value["generation"], lifetime);
+        assert_eq!(value["created_build"], creation);
+        assert_eq!(value["active_build"], build);
+    }
+    let decoy = window.root.join("decoy-eon");
+    let executed = window.root.join("decoy-executed");
+    executable(
+        &decoy,
+        format!("#!/bin/sh\ntouch '{}'\n", executed.display()),
+    );
+    record_window_identity(&window.runtime, lifetime, creation, creation, Some(&decoy));
+    let before = window.inspect("before-conflicting-record");
+    let refused = window.eon(&["--window", &lifetime[3..], "pane", "create", "--json"]);
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        !executed.exists(),
+        "inconsistent metadata executed another build"
+    );
+    assert_eq!(
+        snapshot_sessions(&window.inspect("after-conflicting-record")),
+        snapshot_sessions(&before)
+    );
+    record_window_identity(&window.runtime, lifetime, creation, build, Some(&launcher));
+    window.crash(&mut first);
+    let _ = fs::remove_file(window.control());
+    let recovered = window
+        .command_with_arguments(&["window", "attach", &lifetime[3..]])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(recovered.status.success(), "{recovered:?}");
+    assert_eq!(window.generation().file_name().unwrap(), lifetime);
+    assert_eq!(live_identity(&window.generation().join("orbit.sock")), host);
+    let recovered = window.inspect("after-exact-attach");
+    assert_eq!(recovered.generation, lifetime);
+    assert_eq!(recovered.created_build, creation);
+    assert_eq!(recovered.active_build, build);
+    let stopped = window.eon(&["window", "stop", &lifetime[3..], "--json"]);
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_generation_removal(&window.runtime.join("generations").join(lifetime));
+}
+
+#[test]
+fn launch_sweeps_257_dead_lifetimes_and_exact_stop_survives_retained_overflow() {
+    let window = PairWindow::new();
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(window.runtime.join("generations"))
+        .unwrap();
+    overfill_generation_directory(&window.runtime);
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(
+            window
+                .runtime
+                .join("generations/g1-ffffffffffffffffffffffffffffffff"),
+        )
+        .unwrap();
+    let mut supervisor = window.spawn(&[]);
+    let runtime = window.generation();
+    let lifetime = runtime.file_name().unwrap().to_str().unwrap();
+    assert_eq!(
+        fs::read_dir(window.runtime.join("generations"))
+            .unwrap()
+            .count(),
+        1
+    );
+    overfill_generation_directory(&window.runtime);
+    for entry in fs::read_dir(window.runtime.join("generations")).unwrap() {
+        let path = entry.unwrap().path();
+        if path != runtime {
+            fs::write(path.join("orbit.sock.record"), b"retained host residue").unwrap();
+        }
+    }
+    let refused = window.eon(&["window", "stop", "default", "--json"]);
+    assert!(!refused.status.success());
+    assert!(
+        stdout(&refused).contains("256-entry inspection limit"),
+        "{refused:?}"
+    );
+    let prefix = window.eon(&["window", "stop", &lifetime[3..11], "--json"]);
+    assert!(
+        !prefix.status.success(),
+        "short IDs cannot bypass inventory"
+    );
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
+    let unsafe_target = window.eon(&["window", "stop", &lifetime[3..], "--json"]);
+    assert!(!unsafe_target.status.success());
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(runtime.join("identity"), b"corrupt").unwrap();
+    let stopped = window.eon(&["window", "stop", &lifetime[3..], "--json"]);
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!runtime.exists());
+    assert_eq!(
+        fs::read_dir(window.runtime.join("generations"))
+            .unwrap()
+            .count(),
+        256
+    );
 }
 
 #[test]
@@ -11895,6 +12372,8 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     wait_for(&control);
+    // Preserve the lifetime record so confirmation observes an endpoint replacement.
+    fs::write(generation.join("retained"), b"fixture residue").unwrap();
 
     let mut confirmation = TestProcess {
         child: eon_command(&binary)
@@ -11923,6 +12402,8 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
         child: launch(&second_stop),
         stop: second_stop.clone(),
     };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
     wait_for(&control);
     let orbit_socket = generation.join("orbit.sock");
     wait_for(&orbit_socket);
@@ -15734,6 +16215,32 @@ fn previous_supervisor(runtime: &Path, id: &str) -> thread::JoinHandle<()> {
     })
 }
 
+fn record_window_identity(
+    runtime: &Path,
+    generation: &str,
+    created_build: &str,
+    active_build: &str,
+    launcher: Option<&Path>,
+) {
+    let mut bytes = b"EONI\x01\x00".to_vec();
+    for role in [generation, created_build, active_build] {
+        assert_eq!(role.len(), 35);
+        bytes.extend_from_slice(role.as_bytes());
+    }
+    bytes.push(u8::from(launcher.is_some()));
+    if let Some(path) = launcher {
+        let path = path.as_os_str().as_bytes();
+        bytes.extend_from_slice(&(path.len() as u16).to_le_bytes());
+        bytes.extend_from_slice(path);
+    }
+    let path = runtime
+        .join("generations")
+        .join(generation)
+        .join("identity");
+    fs::write(&path, bytes).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
 // A compatible older namespace, without changing the CLI binary or using the user's runtime.
 fn default_alias_fixture(
     current: bool,
@@ -15749,7 +16256,7 @@ fn default_alias_fixture(
         .map(|index| format!("g1-8644{index:028x}"))
         .collect();
     if current {
-        ids.push(current_id.into());
+        ids.push("g1-cafe0000000000000000000000000000".into());
     }
     let snapshot = inspected_snapshot();
     let components =
@@ -15765,12 +16272,59 @@ fn default_alias_fixture(
             let mut record = previous_runtime(id);
             record.created_build = id.clone();
             record.active_build = id.clone();
+            if current && id == ids.last().unwrap() {
+                record.created_build = "g1-abcd0000000000000000000000000000".into();
+                record.active_build = current_id.into();
+                record_window_identity(
+                    &runtime,
+                    id,
+                    &record.created_build,
+                    &record.active_build,
+                    None,
+                );
+            }
             record.component_report = components.clone();
             let mut snapshot = snapshot.clone();
             snapshot.generation = id.clone();
-            snapshot.created_build = id.clone();
-            snapshot.active_build = id.clone();
+            snapshot.created_build = record.created_build.clone();
+            snapshot.active_build = record.active_build.clone();
             snapshot.running = None;
+            if current && id == ids.last().unwrap() {
+                use eon_workspace_protocol::v46::{RunningWindows, WindowEntry, WindowState};
+                snapshot.running = Some(RunningWindows {
+                    this: WindowEntry {
+                        window: None,
+                        generation: id.clone(),
+                        created_build: Some(record.created_build.clone()),
+                        active_build: Some(record.active_build.clone()),
+                        name: Some("current".into()),
+                        started_at: Some(1),
+                        live_terminals: Some(1),
+                        state: WindowState::Live,
+                    },
+                    others: Some(Vec::new()),
+                    omitted: 0,
+                });
+                let Response::Snapshot(decoded) = decode_response(
+                    &encode_response(&Response::Snapshot(snapshot.clone())).unwrap(),
+                )
+                .unwrap() else {
+                    panic!("snapshot roundtrip");
+                };
+                assert_eq!(decoded.generation, *id);
+                assert_eq!(decoded.created_build, record.created_build);
+                assert_eq!(decoded.active_build, record.active_build);
+                let this = decoded.running.unwrap().this;
+                assert_eq!(this.generation, *id);
+                assert_eq!(
+                    this.created_build.as_deref(),
+                    Some(record.created_build.as_str())
+                );
+                assert_eq!(
+                    this.active_build.as_deref(),
+                    Some(record.active_build.as_str())
+                );
+            }
             let presented = Arc::clone(&presented);
             let requests = requests.clone();
             thread::spawn(move || {
@@ -15919,6 +16473,17 @@ fn default_alias_prefers_current_over_an_older_generation() {
         assert!(output.status.success(), "{output:?}");
         let session: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(session["generation"], ids[1], "{session}");
+        assert_eq!(
+            session["created_build"],
+            "g1-abcd0000000000000000000000000000"
+        );
+        let versions = quit_command(root).arg("versions").output().unwrap();
+        let build = stdout(&versions).split_whitespace().nth(2).unwrap();
+        assert_eq!(session["active_build"], build);
+        let this = &session["running"]["this"];
+        assert_eq!(this["generation"], ids[1]);
+        assert_eq!(this["created_build"], session["created_build"]);
+        assert_eq!(this["active_build"], session["active_build"]);
         let listed = quit_command(root)
             .args(["window", "ls", "--json"])
             .output()
@@ -15926,6 +16491,14 @@ fn default_alias_prefers_current_over_an_older_generation() {
         let windows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
         assert_eq!(windows["windows"][0]["id"], "default", "{windows}");
         assert_eq!(windows["windows"][0]["generation"], ids[1], "{windows}");
+        assert_eq!(
+            windows["windows"][0]["created_build"],
+            session["created_build"]
+        );
+        assert_eq!(
+            windows["windows"][0]["active_build"],
+            session["active_build"]
+        );
         assert_eq!(windows["windows"][1]["id"], &ids[0][3..], "{windows}");
     });
 }
@@ -17437,9 +18010,14 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     assert_eq!(stopped[2]["stopped"]["generation"], second_id);
     assert!(current.child.try_wait().unwrap().is_none());
     assert!(
-        invoke(&binary, &runtime, &config, &["session", "--json"])
-            .status
-            .success()
+        invoke(
+            &binary,
+            &runtime,
+            &config,
+            &["--window", &current_id[3..], "session", "--json"]
+        )
+        .status
+        .success()
     );
     first.join().unwrap();
     second.join().unwrap();

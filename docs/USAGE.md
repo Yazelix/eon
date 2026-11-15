@@ -101,7 +101,7 @@ install `github:Yazelix/eon/edge` instead; it gets every change as it lands.
 Tags such as `github:Yazelix/eon/v0.1.16` name one exact release and never
 update. See [Update](#update).
 
-Run `eon` to start. `eon versions` shows the generation of the in-tree build and
+Run `eon` to start. `eon versions` shows the identity of the invoked build and
 each exact external component revision; Orbit, Venus and Eon Runtime
 report `workspace`, the Cargo workspace they are built in.
 
@@ -374,18 +374,20 @@ unknown. [y/N]`, because this `eon` cannot see its terminals. A window of
 Eon 0.1.20 or older predates the Reserved Stop: `eon window ls` shows its
 Stop as unavailable, and its Stop fails with `stop-unavailable` and says to
 quit it from inside its window, with Alt+Shift+Q or `eon quit` in one of its
-terminals. Each generation
-records its own build's `eon`, and `eon window ls --json` lists it as the
+terminals. Each lifetime
+records its active controlling build's `eon`, and `eon window ls --json` lists it as the
 `executable` of a window this `eon` cannot present. `eon window attach ID`
 presents such a window by running that build's `eon` as `window attach ID`,
-with `EON_ATTACH_DELEGATED` naming the generation. The marker must name the
-generation of the `eon` that reads it, in a window that runs it; any other
+with `EON_ATTACH_DELEGATED` naming the lifetime. A record-aware window in the
+default namespace uses its full lifetime hex as ID. The marker must select that
+exact lifetime and its active build must equal the executing build; without a
+record the old build-derived directory must equal that build. Any other value
 exits 2 and sends nothing, and Eon never passes the marker to what it starts.
 An Eon 0.1.18 or older `eon` takes another form, which this release rejects,
 so it cannot attach a window of this release. Generations started before Eon
 recorded it need that build's `eon` by hand.
-The runtime extraction changes the component graph and selects a new generation.
-Reattach earlier work with its retained exact Eon or eonbase executable.
+Changing the build leaves existing lifetimes running. Reattach earlier work
+through its retained active Eon executable.
 
 ## Session and quick search
 
@@ -985,7 +987,7 @@ line points agents to `eon --skill`.
 | `eon run [--dir DIR] [--no-anima] [-- COMMAND...]` | Start a fresh window on quick search, optionally for an exact first command; `--dir` and `--no-anima` as for `eon` |
 | `eon window new [--dir DIR] [--no-anima]` | Open an independent Eon window and print its window ID; `--dir` and `--no-anima` as for `eon` |
 | `eon window ls [--json]` | List every running window, the default window first: its ID (shortest unique prefix in text), name, Eon version, start time, live terminals and whether this `eon` controls it directly. Each window this `eon` cannot stop gets a line saying why. JSON adds the full `id`, `current`, `generation`, `state`, `busy`, `attach`, `stop` and `executable` |
-| `eon window attach [ID]` | Present a window after detach (no ID: `default`), through the Eon build that started it when needed |
+| `eon window attach [ID]` | Present a window after detach (no ID: `default`), through its active controlling Eon build when needed |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals; `--json` prints `[{"window": ID, "results": [...]}]` |
 | `eon window stop previous [--json]` | Attempt Stop in every running window that another Eon build started, in either namespace, the caller's window last |
 | `eon window stop all [--json]` | Attempt Stop in every running window, the default one included, the caller's window last |
@@ -1043,10 +1045,12 @@ A timeout or lost reply leaves an unknown open outcome: do not resend the
 request. Neovim timeout advice names the configured Editor key so you can
 reveal a possible prompt and answer it; Eon does not move focus to reveal it.
 
-Window IDs: `default` selects this build's running window in the default
+Window IDs: `default` selects the sole running window whose active build equals
+this build in the default
 namespace, otherwise the only running window there. After a profile refresh,
 the sole older window stays `default`. If several older generations run there
-and none is this build's, `default` refuses and names the candidates; select
+and none is controlled by this build, or several match its active build,
+`default` refuses and names the candidates; select
 one by its hex ID. Other default-namespace windows have the 32 hex digits
 of their generations as their IDs, and an independent window has the ID
 `eon window new` printed. `eon window attach` and `eon window stop` take a full
@@ -1060,6 +1064,22 @@ notice and the log line after Eon Desktop exits print, so it stays addressable
 when another running generation becomes `default`: `eon window stop 1a2b3c4d` stops that
 window from its own build or a newer one.
 
+An exact full lifetime ID can also attach a retained window after supervisor
+loss, recovering its exact surviving terminals through the recorded active
+build. Dormant records do not appear as running windows. If the generation
+inventory exceeds its bound, launch first tries safe dead-metadata cleanup.
+When residue remains over the bound, selection refuses and names the directory,
+count and recovery commands. Complete 32-digit lowercase lifetime hex IDs select
+that exact default-namespace path before any inventory, for attach and `--window`
+commands as well as Stop. Each command keeps its normal caller, identity and
+endpoint checks; a validated active launcher can run through ordinary Routing
+or Delegation. Displayed labels alone try bounded discovery: a familiar default
+or shortest-prefix label on success, otherwise the complete lifetime ID. Discovery
+never gates exact-path selection. Short prefixes, `default` and bulk selectors
+still need the bounded inventory. Use `eon window stop FULL_ID --json`, then
+`eon window ls`, to reduce and inspect an overfull inventory. Stop never guesses
+a host or kills a process by PID.
+
 A window holds one or more sessions and shows one at a time; hidden
 sessions keep their terminals running. SESSION is a session ID (`s1`, `s2`, ...),
 never reused by the window's supervisor, or a session's exact name. Names are
@@ -1068,20 +1088,22 @@ nothing and exits 1 (`ambiguous-session`), naming their IDs.
 
 Session commands inside Eon target the supervisor and session that own the
 exact `EON_TERMINAL` caller, even when the invoked CLI is from another compatible
-build. Outside Eon, they select the inherited runtime namespace's current
-running generation, otherwise its sole running generation, refusing ambiguity.
-Bare `eon` launches this build's generation. Human and `--json` output identify
+build. Outside Eon, they select the inherited runtime namespace's sole running
+lifetime whose active build equals this build, otherwise its sole running
+lifetime, refusing ambiguity. Bare `eon` reuses a live or recoverable lifetime
+for its active build, otherwise allocates a fresh one. Human and `--json` output identify
 `generation`,
 `created_build`, `active_build`, `window` (null in JSON for the default
 namespace), and the projected `session`. `generation` names the runtime lifetime;
 creation build is fixed and active build identifies its controlling Runtime.
-This baseline still allocates generation from the build digest, so the three
-values initially match. `eon versions` names the invoked build, not a lifetime.
+The lifetime ID is allocated independently; creation and active build initially
+equal the invoked build digest. eonbase remains build-derived. `eon versions`
+names the invoked build, not a lifetime.
 `eon window ls --json` and the window in `eon report` add `terminal_inventory`:
 `terminal`, `run`, `origin_build`, `management_version`, `record_generation`,
 `orbs` and `orbf`. Launch facts that are unknown after recovery are null; they
-are not replaced with the current assembly's values. Full in-place Update and
-independent lifetime allocation remain planned.
+are not replaced with the current assembly's values. Full in-place Update
+remains planned.
 Full-Eon windows keep those build facts and their optional active launcher
 together in a private atomic `identity` record. Routing uses its launcher;
 the `eon` symlink is a repairable projection. A corrupt record or an explicit
@@ -1091,7 +1113,8 @@ recovering surviving terminals does not backfill the file. The record survives
 supervisor loss while terminal or other residue remains, including a leftover
 Scrollback `snapshots/` directory. Hostless metadata is removed under the
 lifecycle lock. Reserved Stop does not depend on this record.
-A missing supervisor is not started implicitly.
+Ordinary session commands do not start a missing supervisor; exact attach has
+the recovery path above.
 
 Session commands accept `--window ID` before any `--` operand separator, for
 example `eon session --window default --json` or
@@ -1099,7 +1122,7 @@ example `eon session --window default --json` or
 `eon window ls` shows it, or any unique prefix of at least 4 characters:
 `default`, the 32 hex digits of a default-namespace generation, or
 an independent window's eight hex digits. In an independent window, Eon
-selects its current generation if live, otherwise its sole live generation, as
+selects its sole active-build match if live, otherwise its sole live lifetime, as
 `window attach` does. The flag constrains a calling terminal: it never waives
 its validation. Remove
 `EON_TERMINAL` explicitly to act without caller context.
@@ -1256,7 +1279,7 @@ An eonbase window reports no busy terminals, so every tab or pane close there
 counts as busy state unknown: a terminal asks, a pipe needs a yes, and `--json`
 needs `--yes`.
 
-An Eon terminal's PATH puts that terminal's own Eon build first as `eon`, so
+An Eon terminal's supplied PATH initially puts its creation build first as `eon`, so
 `eon` keeps acting on its own window after you install a newer profile. That
 includes `eon` and `eon window new` typed there, which open that same build;
 open the newer build from the launcher or from a shell outside Eon. A session
@@ -1264,12 +1287,15 @@ command from another compatible build still finds the caller's supervisor in
 the inherited namespace. Discovery validates private directories and endpoints,
 has a bounded candidate count and timeout, and refuses ambiguous or incomplete
 resolution. Without a caller, `EON_WINDOW_RUNTIME_DIR` selects an independent
-window's current live generation or its sole live generation; ambiguity refuses.
+window's sole live active-build match or its sole live lifetime; ambiguity refuses.
 When the selected window runs a build with another EONW version, session
 commands, `eon events` and `eon window reload` run as that window's recorded
 `eon`. Arguments, working directory, input, output and exit status pass through,
 including that build's JSON and command/configuration support. A newer profile
-therefore keeps reaching an older window. Each command routes at most once.
+therefore keeps reaching an older window. The Routing-capable baseline also
+lets its supported commands reach an active controlling build with a newer
+EONW; it does not add commands to an older parser. Planned Update leaves a
+running program's environment and executable unchanged. Each command routes at most once.
 An absent or unavailable recorded build exits 4, names the window and generation,
 and suggests opening a new window with the installed build. Routing never
 starts or restarts a supervisor. Same-version commands keep their direct path;

@@ -5,10 +5,9 @@
 use super::{
     cli::{Inputs, calling_terminal, versions},
     diagnostics::{newest_log, orbit_run_generation},
-    generation::current_generation,
     managed_environment::configuration_warnings,
     supervisor::{base_runtime_directory, runtime_directory},
-    windows::listed_window_json,
+    windows::listed_window,
 };
 use std::path::PathBuf;
 
@@ -34,33 +33,40 @@ pub struct ReportFacts {
 /// The window the report describes and its generation, chosen from local records alone: a
 /// supervisor that validates a caller first reconciles its terminals, which would change
 /// runtime state. For `caller`, an `EON_TERMINAL` value, it is the window this terminal runs in
-/// and the generation whose Orbit log names the terminal, else this build's; outside Eon, the
-/// `default` window and this build's generation.
-fn reported_window(inputs: &Inputs, caller: Option<&str>) -> Result<(PathBuf, String), String> {
-    let current = current_generation(inputs)?;
-    Ok(match caller {
-        None => (base_runtime_directory("eon"), current),
-        Some(caller) => (
-            runtime_directory("eon"),
-            orbit_run_generation(caller).unwrap_or(current),
-        ),
-    })
+/// and the lifetime whose Orbit log names the terminal; without one, normal
+/// active-build/sole-live selection applies. Outside Eon the namespace is default.
+fn reported_window(caller: Option<&str>) -> (PathBuf, Option<String>) {
+    match caller {
+        None => (base_runtime_directory("eon"), None),
+        Some(caller) => (runtime_directory("eon"), orbit_run_generation(caller)),
+    }
 }
 
 pub fn report_facts(inputs: &Inputs) -> ReportFacts {
     let own = calling_terminal()
         .map_err(|failure| failure.detail)
-        .and_then(|caller| reported_window(inputs, caller.as_deref()));
+        .map(|caller| reported_window(caller.as_deref()));
+    let window = own
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|(root, generation)| listed_window(inputs, root, generation.as_deref()));
+    let log = newest_log(
+        own.as_ref()
+            .ok()
+            .and_then(|(_, generation)| generation.as_deref())
+            .or_else(|| {
+                window
+                    .as_ref()
+                    .ok()
+                    .and_then(|window| window.as_ref())
+                    .map(|(generation, _)| generation.as_str())
+            }),
+        LOG_LINES,
+    );
     ReportFacts {
         versions: versions(inputs),
-        window: own
-            .as_ref()
-            .map_err(Clone::clone)
-            .and_then(|(root, generation)| listed_window_json(inputs, root, generation)),
+        window: window.map(|window| window.map(|(_, json)| json)),
         config_warnings: configuration_warnings(&inputs.defaults),
-        log: newest_log(
-            own.as_ref().ok().map(|(_, generation)| generation.as_str()),
-            LOG_LINES,
-        ),
+        log,
     }
 }

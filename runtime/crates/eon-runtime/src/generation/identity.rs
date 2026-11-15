@@ -25,9 +25,15 @@ pub(crate) struct Identity {
 }
 
 impl Identity {
-    pub(crate) fn initial(build: &str, active_launcher: Option<PathBuf>) -> Self {
+    pub(crate) fn matches(&self, generation: &str, created: &str, active: &str) -> bool {
+        self.generation == generation
+            && self.created_build == created
+            && self.active_build == active
+    }
+
+    pub(crate) fn initial(generation: &str, build: &str, active_launcher: Option<PathBuf>) -> Self {
         Self {
-            generation: build.into(),
+            generation: generation.into(),
             created_build: build.into(),
             active_build: build.into(),
             active_launcher,
@@ -35,7 +41,7 @@ impl Identity {
     }
 
     pub(crate) fn require_build(&self, build: &str) -> Result<(), String> {
-        if self.generation != build || self.active_build != build {
+        if self.active_build != build {
             return Err(format!(
                 "identity conflicts with invoked build {build}: generation {}, active build {}",
                 self.generation, self.active_build

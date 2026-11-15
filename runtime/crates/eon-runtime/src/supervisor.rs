@@ -104,14 +104,26 @@ pub(super) fn probe_supervisor(
         let info = probe_presentable_runtime(socket)?;
         validate_runtime(inputs, &info, generation)
             .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
+        if let Some(record) = Identity::read(socket.parent().ok_or_else(|| {
+            EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                "supervisor endpoint has no runtime directory",
+            )
+        })?)
+        .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?
+            && !record.matches(&info.generation, &info.created_build, &info.active_build)
+        {
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                "supervisor and committed identity disagree",
+            ));
+        }
         if !info.attach.available {
-            // Fresh bootstrap has no admitted member; a competing launch waits for it.
-            let kind = if info.name.is_none() && info.sessions.is_empty() {
-                EndpointFailureKind::Starting
-            } else {
-                EndpointFailureKind::Incompatible
-            };
-            return Err(EndpointFailure::new(kind, info.attach.reason));
+            // Bootstrap and teardown keep lifecycle ownership until presentation can resume.
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Starting,
+                info.attach.reason,
+            ));
         }
         probe_launch_mode(socket)
     })();
@@ -184,21 +196,63 @@ pub(super) fn launch_current(
     application_id: &str,
     options: &LaunchOptions,
 ) -> Result<i32, String> {
+    let target = if mode == LaunchMode::Workspace {
+        super::generation::delegated_generation(inputs).map_err(|error| error.message)?
+    } else {
+        None
+    };
     if let Some(directory) = &options.directory {
         workspace::validate_initial_directory(directory)?;
     }
-    let generation = current_generation(inputs)?;
+    let build = current_generation(inputs)?;
     let root = runtime_directory(if mode == LaunchMode::Terminal {
         "eonbase"
     } else {
         "eon"
     });
     prepare_runtime(&root)?;
-    let lifecycle_lock_path = supervisor_lock_path(&root, &generation);
-    let runtime = generation_directory(&root, &generation);
-    let socket = runtime.join("eon.sock");
+    let configure = |log: Option<&DiagnosticLog>| {
+        let config = configuration_directory()?;
+        let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults, log)?;
+        let bar = window_bar(mode, &config, inputs, log)?;
+        let popups = (mode == LaunchMode::Workspace)
+            .then(|| managed_environment::popup_catalog(&config, &inputs.defaults, log))
+            .transpose()?;
+        let startup_animation = (mode == LaunchMode::Workspace)
+            .then(|| managed_environment::startup_animation(&config, &inputs.defaults, log))
+            .transpose()?
+            .flatten()
+            .filter(|_| !options.no_anima && options.directory.is_none());
+        Ok::<_, String>((config, terminal, bar, popups, startup_animation))
+    };
+    let mut prepared = None;
     let mut missing_deadline = None;
-    let lifecycle_lock = loop {
+    let (generation, lifecycle_lock, namespace_lock) = loop {
+        let namespace_lock = (mode == LaunchMode::Workspace)
+            .then(|| super::generation::NamespaceLock::acquire(&root))
+            .transpose()?;
+        let generation = match (target.as_deref(), &namespace_lock) {
+            (Some(id), _) => {
+                if super::generation::active_build(&root, id)? != build {
+                    return Err(format!("lifetime {id} is not controlled by build {build}"));
+                }
+                if let Some(lock) = &namespace_lock {
+                    lock.require_available(&build, id)?;
+                }
+                id.to_owned()
+            }
+            (None, Some(lock)) => match lock.select(&build)? {
+                Some(id) => id,
+                None => {
+                    prepared = Some(configure(None)?);
+                    lock.allocate(inputs)?
+                }
+            },
+            (None, None) => build.clone(),
+        };
+        let lifecycle_lock_path = supervisor_lock_path(&root, &generation);
+        let runtime = generation_directory(&root, &generation);
+        let socket = runtime.join("eon.sock");
         let endpoint_failure = match probe_supervisor(inputs, &socket, &generation) {
             Ok((active_mode, supervisor)) => {
                 missing_deadline = None;
@@ -217,6 +271,7 @@ pub(super) fn launch_current(
                 if options.directory.is_some() {
                     return Err(RUNNING_WINDOW_DIRECTORY.into());
                 }
+                drop(namespace_lock);
                 let presentation_error =
                     match present_at(inputs, &runtime, &generation, mode, supervisor) {
                         Ok(code) => return Ok(code),
@@ -233,7 +288,7 @@ pub(super) fn launch_current(
                                 | EndpointFailureKind::Unreachable
                         ) =>
                     {
-                        error
+                        continue;
                     }
                     Err(_) => return Err(presentation_error),
                 }
@@ -264,15 +319,22 @@ pub(super) fn launch_current(
                         lifecycle_lock_path.display()
                     ));
                 }
+                drop(namespace_lock);
                 thread::sleep(Duration::from_millis(25));
                 continue;
             };
             lock
         } else {
-            lock_supervisor_lifecycle(&lifecycle_lock_path)?
+            // Never wait for a lifecycle while holding namespace arbitration.
+            drop(namespace_lock);
+            let waited = lock_supervisor_lifecycle(&lifecycle_lock_path)?;
+            drop(waited);
+            continue;
         };
         match probe_supervisor(inputs, &socket, &generation) {
-            Err(error) if error.kind == EndpointFailureKind::Dead => break lifecycle_lock,
+            Err(error) if error.kind == EndpointFailureKind::Dead => {
+                break (generation, lifecycle_lock, namespace_lock);
+            }
             Ok(_) => {
                 drop(lifecycle_lock);
                 continue;
@@ -280,20 +342,14 @@ pub(super) fn launch_current(
             Err(error) => return Err(error.detail),
         }
     };
+    let runtime = generation_directory(&root, &generation);
+    let socket = runtime.join("eon.sock");
     let log = DiagnosticLog::open(&generation, mode.name());
     let result = (|| {
-        let config = configuration_directory()?;
-        let terminal =
-            managed_environment::terminal_presentation(&config, &inputs.defaults, Some(&log))?;
-        let bar = window_bar(mode, &config, inputs, Some(&log))?;
-        let popups = (mode == LaunchMode::Workspace)
-            .then(|| managed_environment::popup_catalog(&config, &inputs.defaults, Some(&log)))
-            .transpose()?;
-        let startup_animation = (mode == LaunchMode::Workspace)
-            .then(|| managed_environment::startup_animation(&config, &inputs.defaults, Some(&log)))
-            .transpose()?
-            .flatten()
-            .filter(|_| !options.no_anima && options.directory.is_none());
+        let (config, terminal, bar, popups, startup_animation) = match prepared {
+            Some(settings) => settings,
+            None => configure(Some(&log))?,
+        };
         prepare_generation_runtime(&root, &generation)?;
         prepare_configuration(&config)?;
         supervise(
@@ -304,6 +360,7 @@ pub(super) fn launch_current(
             popups,
             startup_animation,
             lifecycle_lock,
+            namespace_lock,
             &runtime,
             child,
             options.directory.clone(),
@@ -1014,6 +1071,7 @@ fn supervise(
     popups: Option<managed_environment::PopupCatalog>,
     startup_animation: Option<managed_environment::StartupAnimation>,
     lifecycle_lock: LifecycleLock,
+    namespace_lock: Option<super::generation::NamespaceLock>,
     runtime: &Path,
     child: &[OsString],
     directory: Option<PathBuf>,
@@ -1117,7 +1175,7 @@ fn supervise(
         None if mode == LaunchMode::Workspace && sessions.is_empty() => {
             record_launcher(inputs, runtime)?
         }
-        None => Identity::initial(&build, None),
+        None => Identity::initial(generation, &build, None),
     };
     if persisted && let Err(error) = identity.project_launcher(runtime) {
         log.note(&error);
@@ -1133,6 +1191,7 @@ fn supervise(
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
     let mut editor_sockets = Sockets::recover(runtime, &sessions, log);
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
+    drop(namespace_lock);
     let recovering = mode == LaunchMode::Workspace && !sessions.is_empty();
     let (registry, mut registry_setup_error) = match (mode == LaunchMode::Workspace)
         .then(Registry::new)
@@ -4841,6 +4900,7 @@ mod tests {
                 None,
                 None,
                 lock,
+                None,
                 &worker_runtime,
                 &[],
                 Some(worker_root.clone()),
@@ -5839,6 +5899,7 @@ mod tests {
             Some(inputs.defaults.popups.clone()),
             None,
             lock,
+            None,
             &root.join("a").join(&generation),
             &[],
             None,
@@ -6236,6 +6297,7 @@ mod tests {
             session_registry::{Fault, Operation, Registry, Worker},
         };
         let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let inputs = crate::fixtures::inputs();
         let registry_root = root.join("registry");
         let mut registry = Registry::in_test_directory(registry_root.clone());

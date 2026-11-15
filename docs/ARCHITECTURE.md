@@ -257,7 +257,7 @@ Paths below are relative to the repository root.
   `eon/crates/eon/build.rs`, which digests the source tree
 - **Owns:** Product version, validated component facts, chosen shell/terminal/Anima
   and popup defaults, palette, Agent preference order, program fallbacks, opaque
-  launch inputs, and the immutable assembly contribution to generation identity
+  launch inputs, and the immutable assembly contribution to build identity
 - **Invocation:** `main.rs` passes concrete inputs to `eon_runtime::run`;
   graph failures are consumed only at required preflight in private `cli.rs`
 
@@ -299,7 +299,8 @@ Paths below are relative to the repository root.
 ### Generation lifecycle
 
 - **Owning surfaces:** `runtime/crates/eon-runtime/src/generation.rs`
-- **Owns:** One generation identity hashing the supplied assembly contribution,
+- **Owns:** Build identity hashing the supplied assembly contribution,
+  independent full-Eon lifetime allocation and namespace arbitration,
   generation-directory projection, bounded discovery
   and classification, list output, explicit attachment selection, and validated owner-routed
   stop initiation
@@ -391,10 +392,13 @@ directory; different `XDG_STATE_HOME` values select different registries.
 - **Does not own:** Runtime product semantics or a second component graph
 
 The supervisor is the composition root for runtime policy. An opaque source-
-and-graph digest selects its private generation namespace. Candidate directories
+and-graph digest identifies its build; an independent lifetime ID selects its
+private generation directory. Bare launch selects by active build under a
+namespace lock, reusing the sole validated owner or allocating a fresh lifetime.
+Candidate directories
 locate control endpoints, but only a bounded EONW response establishes live
-identity and capabilities. A bare launch never adopts or stops a different
-generation. Session and lifecycle state cross process boundaries only through
+identity and capabilities. A bare launch never adopts or stops work controlled
+by another build. Session and lifecycle state cross process boundaries only through
 EONW for Eon clients; canonical Orbit management records and leases remain the
 private child-lifecycle boundary. Nix resolves the canonical component graph and
 injects paths without becoming a runtime owner. A subsystem review includes its
@@ -463,11 +467,15 @@ Deadlines, framing limits, grammar, permissions, identity checks and native
 admission bounds remain runtime/child constraints. Supplied defaults do not
 turn those limits into product tuning options or introduce another parser.
 
-Runtime owns the generation algorithm and its `g1-` format, and hashes only
+Runtime owns the build digest and lifetime allocation, both in `g1-` format. It hashes only
 the assembly contribution Eon supplies: a digest of the source tree that covers
 runtime and EONW source, defaults, generated shell adapters and private command
-projection. Identical inputs yield stable `g1-` identity; a change to any of
-them selects a different generation.
+projection. Identical inputs yield stable build identity; a change to any of
+them selects a different build. Full-Eon lifetime IDs are independently
+allocated with exclusive directory creation. Creation build stays fixed, active
+build identifies the controlling Runtime, and namespace arbitration serializes
+launch and private active-build publication. Public Update remains planned.
+eonbase retains build-derived generation identity.
 Source relocation may change identity. Store/profile paths, mutable config,
 PIDs and live state do not enter it; normal runtime use evaluates no Nix.
 
@@ -485,7 +493,7 @@ version.
 Eon's build script digests the path and bytes of each file in the source tree
 that [EON-C3](CONTRACTS.md#eon-c3--distribution-neutral-runtime-inputs) names.
 That digest is Eon's assembly contribution, so a change in any in-tree component
-selects a new generation.
+selects a new build identity.
 Orbit terminal records carry the runtime's generation ID as their component
 generation. Mutable configuration, store and profile paths never enter the
 digest.

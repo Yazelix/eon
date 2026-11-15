@@ -40,6 +40,240 @@ fn write_identity(runtime: &Path, bytes: &[u8]) {
 }
 
 #[test]
+fn identity_record_build_validation_uses_active_identity() {
+    let (root, runtime) = runtime();
+    write_identity(&runtime, &fixture(None));
+    let identity = Identity::read(&runtime).unwrap().unwrap();
+    assert!(
+        identity.require_build(A).is_ok(),
+        "lifetime is not the active build"
+    );
+    assert!(identity.require_build(G).is_err());
+    assert!(identity.require_build(C).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn namespace_launch_recovers_only_its_active_build_and_refuses_ambiguity() {
+    let (root, runtime) = runtime();
+    write_identity(&runtime, &fixture(None));
+    let lock = NamespaceLock::acquire(&root).unwrap();
+    assert_eq!(lock.select(A).unwrap().as_deref(), Some(G));
+    assert_eq!(lock.select(C).unwrap(), None);
+    // Equal roles from the existing build-derived baseline remain valid.
+    let older = generation_directory(&root, C);
+    prepare_runtime(&older).unwrap();
+    Identity::initial(C, C, None).publish(&older).unwrap();
+    assert_eq!(lock.select(C).unwrap().as_deref(), Some(C));
+    let second = generation_directory(&root, "g1-44444444444444444444444444444444");
+    prepare_runtime(&second).unwrap();
+    let mut duplicate = Identity::read(&runtime).unwrap().unwrap();
+    duplicate.generation = second.file_name().unwrap().to_str().unwrap().into();
+    duplicate.publish(&second).unwrap();
+    assert!(lock.select(A).unwrap_err().contains("ambiguous"));
+    let mut malformed = fixture(None);
+    malformed[4] = 2;
+    write_identity(&runtime, &malformed);
+    assert!(
+        lock.select(C).is_err(),
+        "unknown metadata cannot be classified as unrelated"
+    );
+    drop(lock);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn namespace_launch_allocation_is_independent_and_exclusive() {
+    let root = temporary_directory();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    prepare_runtime(&root).unwrap();
+    let inputs = crate::fixtures::inputs();
+    let build = current_generation(&inputs).unwrap();
+    let lock = NamespaceLock::acquire(&root).unwrap();
+    let first = lock.allocate(&inputs).unwrap();
+    let second = lock.allocate(&inputs).unwrap();
+    assert!(valid_generation(&first));
+    assert!(valid_generation(&second));
+    assert_ne!(first, second);
+    assert_ne!(first, build);
+    assert_ne!(second, build);
+    let identity = record_launcher(&inputs, &generation_directory(&root, &first)).unwrap();
+    assert_eq!(identity.generation, first);
+    assert_eq!(identity.created_build, build);
+    assert_eq!(identity.active_build, build);
+    assert_eq!(
+        lock.select(&build).unwrap().as_deref(),
+        Some(first.as_str())
+    );
+    drop(lock);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn namespace_overflow_sweeps_host_free_entries_before_launch_selection() {
+    let (root, runtime) = runtime();
+    fs::remove_dir(&runtime).unwrap();
+    for index in 0..=MAX_GENERATIONS {
+        prepare_runtime(&generation_directory(&root, &format!("g1-{index:032x}"))).unwrap();
+    }
+    assert_eq!(generation_inventory(&root).unwrap().count, 257);
+    assert!(generation_candidates(&root).is_err());
+    assert_eq!(
+        fs::read_dir(root.join("generations")).unwrap().count(),
+        257,
+        "read-only discovery must not sweep"
+    );
+    let lock = NamespaceLock::acquire(&root).unwrap();
+    assert_eq!(lock.select(A).unwrap(), None);
+    assert_eq!(generation_inventory(&root).unwrap().count, 0);
+    drop(lock);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn namespace_overflow_retains_held_lifetimes_and_host_residue() {
+    let (root, runtime) = runtime();
+    fs::remove_dir(&runtime).unwrap();
+    let mut held = None;
+    for index in 0..=MAX_GENERATIONS {
+        let id = format!("g1-{index:032x}");
+        let runtime = generation_directory(&root, &id);
+        prepare_runtime(&runtime).unwrap();
+        fs::write(runtime.join("orbit.sock.record"), b"retained host record").unwrap();
+        if index == 0 {
+            held = Some(
+                crate::supervisor::lock_supervisor_lifecycle(&supervisor_lock_path(&root, &id))
+                    .unwrap(),
+            );
+        }
+    }
+    let lock = NamespaceLock::acquire(&root).unwrap();
+    let error = lock.select(A).unwrap_err();
+    for text in [
+        "257",
+        "256-entry inspection limit",
+        "eon window stop <full-id>",
+        "eon window ls",
+    ] {
+        assert!(error.contains(text), "{error}");
+    }
+    assert!(error.contains(&root.join("generations").display().to_string()));
+    assert_eq!(generation_inventory(&root).unwrap().count, 257);
+    drop(held);
+    drop(lock);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn active_publication_and_launch_serialize_in_both_orders_without_merging_lifetimes() {
+    for publish_first in [false, true] {
+        let (root, runtime) = runtime();
+        write_identity(&runtime, &fixture(None));
+        let inputs = crate::fixtures::inputs();
+        let build = current_generation(&inputs).unwrap();
+        assert_ne!(build, A);
+        let operate = |lock: NamespaceLock, publish: bool| {
+            if publish {
+                let lifecycle =
+                    crate::supervisor::lock_supervisor_lifecycle(&supervisor_lock_path(&root, G))
+                        .unwrap();
+                let expected = Identity::read(&runtime).unwrap().unwrap();
+                let mut identity = expected.clone();
+                identity.active_build = build.clone();
+                identity.active_launcher = Some("/target-build/eon".into());
+                let published = lock
+                    .publish_active(&expected, &identity, &lifecycle)
+                    .is_ok();
+                (G.to_owned(), published)
+            } else {
+                let lifetime = lock
+                    .select(&build)
+                    .unwrap()
+                    .unwrap_or_else(|| lock.allocate(&inputs).unwrap());
+                let _lifecycle = crate::supervisor::lock_supervisor_lifecycle(
+                    &supervisor_lock_path(&root, &lifetime),
+                )
+                .unwrap();
+                record_launcher(&inputs, &generation_directory(&root, &lifetime)).unwrap();
+                (lifetime, true)
+            }
+        };
+        let first = NamespaceLock::acquire(&root).unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (first_result, second_result) = std::thread::scope(|scope| {
+            let second = scope.spawn(|| {
+                started.send(()).unwrap();
+                let lock = NamespaceLock::acquire(&root).unwrap();
+                operate(lock, !publish_first)
+            });
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            let result = operate(first, publish_first);
+            (result, second.join().unwrap())
+        });
+        let (publication, launch) = if publish_first {
+            (first_result, second_result)
+        } else {
+            (second_result, first_result)
+        };
+        assert_eq!(publication.1, publish_first);
+        assert_eq!(launch.0 == G, publish_first);
+        let record = Identity::read(&runtime).unwrap().unwrap();
+        assert_eq!(record.generation, G);
+        assert_eq!(record.created_build, C);
+        assert_eq!(
+            record.active_build,
+            if publish_first {
+                build.clone()
+            } else {
+                A.into()
+            }
+        );
+        let active = generation_candidates(&root)
+            .unwrap()
+            .into_iter()
+            .filter(|(_, runtime)| Identity::read(runtime).unwrap().unwrap().active_build == build)
+            .count();
+        assert_eq!(active, 1, "two lifetimes acquired the same active build");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn active_publication_refuses_lifetime_creation_and_stale_record_changes() {
+    let (root, runtime) = runtime();
+    write_identity(&runtime, &fixture(None));
+    let namespace = NamespaceLock::acquire(&root).unwrap();
+    let lifecycle =
+        crate::supervisor::lock_supervisor_lifecycle(&supervisor_lock_path(&root, G)).unwrap();
+    let expected = Identity::read(&runtime).unwrap().unwrap();
+    let mut next = expected.clone();
+    next.active_build = C.into();
+    next.active_launcher = Some("/target-build/eon".into());
+    for field in ["lifetime", "creation", "stale"] {
+        let mut original = expected.clone();
+        let mut changed = next.clone();
+        match field {
+            "lifetime" => changed.generation = C.into(),
+            "creation" => changed.created_build = G.into(),
+            "stale" => original.active_build = G.into(),
+            _ => unreachable!(),
+        }
+        assert!(
+            namespace
+                .publish_active(&original, &changed, &lifecycle)
+                .is_err()
+        );
+        assert_eq!(Identity::read(&runtime).unwrap().unwrap(), expected);
+    }
+    namespace
+        .publish_active(&expected, &next, &lifecycle)
+        .unwrap();
+    assert_eq!(Identity::read(&runtime).unwrap().unwrap(), next);
+    drop((lifecycle, namespace));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn identity_record_is_launcher_authority() {
     let (root, runtime) = runtime();
     symlink("/decoy", runtime.join("eon")).unwrap();

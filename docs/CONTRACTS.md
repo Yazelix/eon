@@ -1423,6 +1423,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment (2026-11-15):** `eon-t3fyd.3`, approved by eon-overseer under
+  Lucca's delegation: lifetime/build separation, active-build selection and
+  controlling-build Routing under EON-C11/C23. Update execution remains planned.
+
 - **Amendment (2026-11-14):** `eon-81emk`, approved by eon-overseer under
   Lucca's delegation (INBOX 08:26:11Z):
 
@@ -1656,10 +1660,10 @@ names its socket. CLI JSON names a session `session` and a terminal
     identity/local lifetime/session persistent ID are distinct fields and cannot
     substitute for one another.
 
-    S2a provides these identity and codec fields with existing build-derived
-    generation allocation. Creation and active build initially equal the build
-    digest. Independent lifetime allocation and active-build selection are
-    planned under `eon-t3fyd.3`. This baseline does not implement Update.
+    Full-Eon lifetime allocation is independent of build identity. Creation and
+    active build initially equal the build digest; EON-C11 owns allocation,
+    retained identity and active-build selection. eonbase stays build-derived.
+    This baseline does not implement Update.
 
     `terminal_inventory` accompanies lifecycle inspection's existing terminal-ID
     list in the same order. Each entry has `terminal`, `run`, `origin_build`,
@@ -1670,8 +1674,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     management authority. Session and event snapshots carry the lifetime/build
     fields; full host inventory is obtained from lifecycle inspection.
     Exact layouts and bounds: `eon-t3fyd.2`, approved 2026-11-13 by eon-desk
-    under Lucca's delegation, after Opus 0406/0416 review. Record/retention is
-    separately planned under `eon-t3fyd.14`.
+    under Lucca's delegation, after Opus 0406/0416 review. EON-C11 owns private
+    record publication and retention (`eon-t3fyd.14`).
   - CLI JSON emits each directory and endpoint as a JSON string when its bytes
     are valid UTF-8, and otherwise as an ordered byte array, without changing
     EONW. Each connection carries one length-delimited request
@@ -1717,8 +1721,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     resolve in any tab of that session by the close rules below. Other
     session-scoped commands use the caller's session and retain their
     existing per-tab rules. Without a calling terminal or explicit target,
-    session control uses the inherited runtime namespace's current live
-    generation, otherwise its sole live generation, and refuses an ambiguous
+    session control uses the inherited namespace's sole live lifetime whose
+    active build equals the invoked build, otherwise its sole live lifetime,
+    and refuses an ambiguous
     selection. In the default namespace this is EON-C23's `default` selection;
     `EON_WINDOW_RUNTIME_DIR` continues to select an independent window's
     namespace. It uses the selected window's shown session. An EONW mismatch
@@ -1805,10 +1810,16 @@ names its socket. CLI JSON names a session `session` and a terminal
     unbound enabled popups, and the reserved sets. Closed standard output
     exits 0 without stderr; write failures exit 1. Consumers ignore additional
     object fields.
-  - Every Eon terminal's PATH names that terminal's own Eon build as `eon`,
-    ahead of any installed one, so `eon` run by name there acts on that
-    terminal's own window and generation after the installed profile changes.
-    An `eon` run by path, or put first by a shell or script, is that build's.
+  - A terminal's supplied PATH initially names its creation build's managed
+    command directory. Planned Update does not change a running program's
+    environment, executable or parser/help capabilities. Ordinary commands
+    retain C11 Routing to the active controlling build; unknown or malformed
+    callers gain no fallback authorization. An executable invoked by path,
+    or put first by a shell or script, retains that build's parser. Caller-free
+    default and independent-window control use the current-or-sole-live rule
+    above, with current measured by active build. Planned window Update uses
+    the invoked executable as target through its own boundary and stale-origin
+    guard, rather than Routing.
   - `eon edit [--json] -- FILE` opens FILE in the configured editor. A relative
     FILE resolves against the caller's working directory. With `[editor] open_in =
     "popup"` (the default) and an enabled Editor popup, the recognized packaged
@@ -2154,8 +2165,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   window takes precedence over another window's failure. When no owner can be found
   because discovery cannot inspect a supervisor, it exits 4
   (`supervisor-unavailable`). Failed or ambiguous resolution changes nothing.
-  A selected supervisor of another EONW version runs the command as the build
-  that started it (EON-C11, Routing). Otherwise an unavailable or incompatible
+  A selected supervisor of another EONW version runs the command as its active
+  controlling build (EON-C11, Routing). Otherwise an unavailable or incompatible
   selected supervisor fails explicitly without starting, presenting or
   restarting it. In
   a tab without panes, a popup caller's `pane move` refuses, and so does its
@@ -2721,6 +2732,13 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C11 — Runtime generations and presentation
 
+- **Amendment (2026-11-15):** `eon-t3fyd.3`, approved by eon-overseer under
+  Lucca's delegation (15:54 and 16:27): independent full-Eon lifetimes,
+  active-build launch/selection, retained exact attach, namespace arbitration,
+  bounded overflow cleanup and active-launcher Routing/Delegation. Preparatory
+  publication checks do not implement public Update. Proof belongs to this bead;
+  the contract's overall support/proof status is unchanged.
+
 - **Amendment (2026-11-14):** `eon-t3fyd.14`, implementing the private
   identity/active-launch format approved 2026-11-13 under Lucca's delegation
   (layout SHA-256 `e6fa46de1b6a072216271c19387247e9ffb067783105642cb9048e1cb20f3612`).
@@ -2789,19 +2807,58 @@ names its socket. CLI JSON names a session `session` and a terminal
   present a compatible existing surface, stop one window, stop a selected set of
   windows, or quit one window or every window.
 - **Result:**
-  - Eon and eonbase use separate runtime namespaces. Bare launch and eonbase
-    lifecycle defaults use their exact current generation. Full-Eon window
+  - Eon and eonbase use separate runtime namespaces. Bare full-Eon launch
+    selects by the invoked active build as below; eonbase lifecycle defaults
+    use their exact build-derived generation. Full-Eon window
     commands selecting `default`, including `eon window attach` without an ID,
     use EON-C23's namespace selection. Eon session control follows EON-C10's
     caller and explicit-target rules.
-  - Generation identity is Runtime's `g1-` hash of Eon's source-tree digest,
-    which covers runtime/EONW source and build inputs and Eon
-    assembly/default/validator/graph/Cargo/Nix-generated inputs; each
-    generation owns one private directory. Store/profile paths, mutable
-    configuration, PIDs and live state do not define identity.
+  - A full-Eon generation identifies one runtime lifetime in its private
+    namespace, including EON-C15 recovery. Its directory and Orbit component
+    generation identify that lifetime. IDs retain `g1-` plus 32 lowercase hex
+    digits, allocated independently of the build and collision-checked in the
+    namespace. Validation accepts both equal and distinct lifetime/build values.
+    Build identity remains Runtime's digest of Eon's immutable source/assembly
+    inputs, including runtime/EONW source, defaults, graph, Cargo and generated
+    composition inputs. Mutable configuration, store/profile paths, PIDs and
+    live state define neither build identity nor a replacement lifetime.
+    eonbase retains build-derived generation identity.
   - Lifecycle inspection separately reports creation and active build under
-    EON-C10's identity/inventory clause. Generation allocation remains build-derived
-    in this baseline; independent lifetimes are planned under `eon-t3fyd.3`.
+    EON-C10's identity/inventory clause. Creation build is fixed; active build
+    identifies the controlling Runtime. Planned Update preserves the lifetime,
+    local session IDs and membership; it introduces no cross-window sessions.
+  - Bare full-Eon launch selects the sole live lifetime recorded for the invoked
+    active build. With none live it considers recoverable records for that build
+    and applies EON-C15 to the sole validated candidate before allocating a
+    fresh lifetime. Multiple candidates, contradictions or uninspectable
+    possibly-live residue for that build refuse. A valid record for another
+    active build does not block launch solely because its EONW is incompatible.
+    An absent record uses the old build-derived layout for exclusion/preference:
+    lifetime, creation and active build equal its canonical directory name.
+    This classification is not execution authority. A present unreadable,
+    unsafe or malformed record refuses classification and never falls through
+    to a launcher link. Namespace-root trust checks still apply.
+
+    A namespace launch lock serializes selection, creation/publication and the
+    private active-build publication boundary. New locks are acquired namespace
+    launch then lifecycle; launch releases namespace arbitration after listener
+    publication and never waits on a lifecycle while holding it. Competing
+    launches converge. Publishing a target build already owned by another
+    lifetime in that namespace refuses; independent namespaces may use it.
+    The lifecycle lock retains listener/teardown ownership. Public Update
+    adoption remains planned.
+
+    At the existing generation-entry bound, launch and cleanup-enabled discovery
+    first attempt a bounded dead-record sweep under namespace arbitration,
+    trying lifecycle locks without waiting and skipping held locks. Existing
+    private-directory, dead-endpoint and host-free cleanup checks apply; hosts,
+    unknown residue, unsafe objects and errors are retained. No management
+    action or signal is sent. Re-list and refuse automatic selection if residue
+    still exceeds the bound. Deadline-limited inspection can refuse rather than
+    wait for cleanup. Read-only report/background discovery never sweeps. A
+    refusal names the observed count, directory and bound, with the exact
+    `eon window stop <full-id>` and subsequent `eon window ls` steps; C23's
+    complete-lifetime-ID fallback keeps exact Stop available.
   - Older live generations that speak the current EONW remain discoverable,
     presentable when compatible, and stoppable through their own supervisor;
     presentation still requires the exact current EONW and component graph. A
@@ -2825,8 +2882,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     to quit it from inside its window: Alt+Shift+Q, or `eon quit` in one of
     its terminals. A supervisor of EONW 37 or later that answers in its
     versioned framing is `stop-failed`.
-  - A generation records the `eon` executable of the build that started it, an
-    opaque launch input, so a later build can run it. `eon window attach` uses
+  - A generation records its active controlling `eon` executable as an opaque
+    launch input. `eon window attach` uses
     this record as Delegation describes; commands use the same record and build
     lookup as Routing describes. Reading or using the record does not require
     an EONW change, a package-manager query or a second component graph.
@@ -2852,15 +2909,19 @@ names its socket. CLI JSON names a session `session` and a terminal
     never falls through to the link. Only an absent record uses existing
     symlink Routing. Build and path are never combined from different sources.
 
-    Recovery retains a valid record's creation and active-launch facts and
-    requires its active build to equal the invoked build in this build-derived
-    baseline. Conflict refuses without rewriting identity or choosing another
-    lifetime. Missing record with surviving exact hosts continues EON-C15
+    Compatible live G/creation/active identities must agree with the committed
+    record; contradictions refuse automatic selection or execution, never mix
+    sources. Recovery retains creation and active-launch facts and requires
+    active build to equal the executing build. Exact-window attach can select
+    that retained lifetime without a live supervisor, delegating to its active
+    launcher when needed and applying EON-C15's exact host validation under
+    lifecycle ownership. The record is selection metadata, never host-management
+    or signaling authority. Unknown/conflicting publication refuses recovery.
+    Missing record with surviving exact hosts continues EON-C15
     recovery only under directory-generation==invoked-build, reports three
     equal roles, and neither backfills identity nor guesses host launch facts.
     Missing record with no surviving hosts may publish before fresh startup.
-    eonbase writes no identity. Independent lifetime selection belongs to
-    `eon-t3fyd.3`; in-place Update remains planned.
+    eonbase writes no identity. In-place Update remains planned.
 
     All four dead-discovery/teardown sites share one lifecycle-locked metadata
     cleanup rule. Keep exact dead-socket cleanup; before removing identity or
@@ -2909,8 +2970,12 @@ names its socket. CLI JSON names a session `session` and a terminal
     `window attach` retains Delegation's own targeting and marker. Stop and
     bulk lifecycle operations retain Reserved Stop. Window creation and listing,
     launch, registry-only and local information commands are not routed.
-    This routing guarantee covers a newer CLI controlling an older live window;
-    it adds no guarantee for an older CLI controlling a newer window.
+    The Update baseline is the first build carrying S2a's identity EONW revision.
+    A Routing-capable executable from that baseline or later routes commands it
+    already supports to the active controlling build when EONW differs. Equal-
+    EONW direct control retains existing behavior. This adds no commands to an
+    old parser or forward guarantee for pre-baseline CLIs, and makes no owner
+    Update-capable. No build decodes another EONW's workspace payloads.
   - **Reserved Stop.** Every Stop, of any window and from any build
     (`eon`, `eonbase` and Venus's Quit), is one request whose bytes no EONW
     revision changes. Every supervisor answers it before it checks the EONW
@@ -2928,15 +2993,16 @@ names its socket. CLI JSON names a session `session` and a terminal
     Failure replies, and stops nothing. The first 6 bytes of every EONW
     message, `EONW` and the `u16` version, keep this layout in every
     revision, so a reply in another framing names that supervisor's version.
-  - **Delegation.** To present a generation that another build started,
+  - **Delegation.** To present a lifetime through its active controlling build,
     `eon` runs that build's recorded `eon` as `window attach ID` in the
     generation's namespace (`EON_WINDOW_RUNTIME_DIR` set to an independent
     window's root, else unset), with `EON_ATTACH_DELEGATED` set to the
-    generation, ID being `default` in the default namespace and the
-    independent window's ID otherwise. A build is only ever delegated its own
-    generation, so the marker must name the generation of the `eon` that
-    reads it, and the named window must run that generation: `default`, or an
-    independent window that holds it. Then `eon window attach ID` presents
+    generation. For a record-aware default-namespace window ID is its full
+    lifetime hex; an absent record retains `default` for the old build-derived
+    layout. An independent window uses its window ID. The marker must name a
+    lifetime whose recorded active build equals the executing build (or whose
+    directory equals that build when the record is absent), and the named
+    window must hold that lifetime. Then `eon window attach ID` presents
     only that generation. Any other value, or a window that does not run it,
     is invalid (exit 2) and sends nothing: the marker narrows the named
     window and never selects another, so a delegated attach reaches only its
@@ -3009,9 +3075,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     (a pane's label, a popup's entry label), and how many more are busy; a
     lifecycle inspection whose request names a live terminal of the window
     leaves that terminal out. eonbase carries none.
-  - Bare launch's implicit attach selects only a live supervisor reporting the
-    exact current identity; otherwise Eon starts current without stopping older
-    work. `eon window attach` resolves its namespace or ID under EON-C23, then
+  - Bare launch's implicit attach selects by active build under the namespace
+    rule above, preserving work controlled by other builds. `eon window attach`
+    resolves its namespace or ID under EON-C23, then
     presents only that selected generation; failure never substitutes another.
     Discovery distinguishes current, previous, dead, incompatible, and corrupt
     candidates. A live full-Eon candidate also reports its window name and the
@@ -3051,7 +3117,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     not a native mapping deadline. `eon-u199d.2` measures both the normal
     replacement gap and the rollback gap.
 
-    Reload keeps the supervisor, generation, original launcher and component
+    Reload keeps the supervisor, lifetime, creation and active builds, active
+    launcher and component
     set, Orbit hosts, PTYs, terminals, complete Runtime layout, selected
     session/tab/pane/popup, pending pickers and Agents state. The supervisor
     starts the replacement itself and names its PID and process start through
@@ -3131,8 +3198,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   not a defence against same-user code that controls the supervisor or the
   named Venus.
 - **Assembly boundary:** The `eon-runtime` generation owner hashes Eon's
-  source-tree digest, which includes runtime/EONW source and generated-command
-  inputs. Exact presentation checks remain; retain the prior executable to
+  source-tree digest into build identity, including runtime/EONW source and
+  generated-command inputs. Full-Eon lifetime IDs are independent. Exact
+  presentation checks remain; retain the active executable to
   reattach incompatible old work. See
   [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation).
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
@@ -4088,6 +4156,12 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C23 — Independent Eon windows
 
+- **Amendment (2026-11-15):** `eon-t3fyd.3`, approved by eon-overseer under
+  Lucca's delegation (15:54, 16:27 and 17:57): current/default preference measures
+  active build, lifetime IDs survive build changes, retained exact attach and
+  complete-ID selection remain available under C11's inventory bound. Public
+  Update remains planned; no wire or identity-record format changes.
+
 - **Amendment (2026-11-14):** `eon-pj2ed`, approved by eon-overseer under
   Lucca's delegation: `default` selects this build's running generation,
   otherwise the sole running generation in the default namespace; listing
@@ -4118,21 +4192,21 @@ names its socket. CLI JSON names a session `session` and a terminal
   focus, and durable Orbit terminals. The original
   window and its terminals remain unchanged. `window new` reports a stable ID;
   `eon window ls` lists it and `eon window stop ID` stops only its
-  terminals. `eon window attach ID` presents the window's live generation,
-  whichever Eon build started it. When this `eon` cannot present it (another
+  terminals. `eon window attach ID` presents the window's selected lifetime,
+  through its active controlling build. When this `eon` cannot present it (another
   EONW version or component graph), the command runs the `eon` of the build
-  that started it, as that generation recorded it, to present it. When no such
+  controlling it, as that lifetime recorded it, to present it. When no such
   record exists, it exits 1 and names the window, the versions it
-  reports, and that the build that started it can attach it; any Eon build
+  reports, and that its active build can attach it; any Eon build
   of EONW 37 or later stops a window of EONW 37 or later.
   **Window IDs.** Every running full-Eon window has one ID as seen by the
   invoked CLI. An independent window's ID is its eight-hex-digit ID. In the
   default namespace,
-  `default` selects this build's running generation, otherwise the namespace's
-  only running generation. The selected window is listed as `default`, even
-  when another build started it. Other windows there have the 32 hex digits
-  of their generations as their IDs. If several generations run there and
-  none is this build's, selecting `default` fails with `ambiguous-window`
+  `default` selects the sole running lifetime whose active build equals this
+  build, otherwise the namespace's only running lifetime. The selected window
+  is listed as `default`, even when another build controls it. Other windows
+  there have the 32 hex digits of their lifetimes as their IDs. Multiple active
+  matches, or several lifetimes with no active match, make `default` fail with `ambiguous-window`
   (exit 1), names each candidate's listed ID, and sends no action; no row is
   `default`. Compatibility does not change this preference; EON-C11's
   admission, Routing and Delegation apply to the selected generation. Wherever
@@ -4157,20 +4231,35 @@ names its socket. CLI JSON names a session `session` and a terminal
   default namespace, `default` selects its absent current generation:
   attaching it then exits 4, and stopping it stops nothing. An independent
   window's exact ID that no running window answers to also selects that
-  window when it is not running, with the same attach and Stop behavior.
+  window when it is not running. A complete default-namespace lifetime ID can
+  select a retained valid record for exact recovery under EON-C11/C15; no
+  different lifetime substitutes for it. Dormant records are not running rows.
+  A complete 32-digit lowercase lifetime hex ID selects its exact default-
+  namespace generation by direct path validation before and without inventory.
+  Validate the private namespace, generations parent and exact target, retaining
+  malformed same-name protection. No shorter prefix, `default` or bulk selector
+  gets this fallback. Every window-ID consumer can select the exact lifetime
+  this way, including attach, reload and `--window` control, as well as Reserved
+  Stop. Selection bypasses only namespace enumeration: C10 caller authorization
+  and C11 identity, endpoint, Routing and Delegation checks still apply. A
+  validated active launcher may execute under those normal one-hop rules;
+  corrupt metadata never authorizes it. The fallback grants no direct Orbit
+  management or signaling authority.
   Questions and results name the selected window as `eon window ls` shows it,
-  even when the
-  whole ID was typed.
+  even when the whole ID was typed. For the complete lifetime hex form, displayed
+  labels alone try normal bounded discovery: on success show the usual default
+  or shortest-prefix label; on failure or overflow show the complete lifetime ID.
+  Discovery never gates that exact-path selection.
   `eon window ls [--json]` lists every running window, a window with no live
-  supervisor left out. It lists the default namespace first, this build's
-  window before the others, then independent windows by ID. Human output
+  supervisor left out. It lists the default namespace first, active-build
+  matches before the others, then independent windows by ID. Human output
   prints one row per window: its ID as the shortest prefix of at least 4
   characters that no other listed ID shares (`default` in full), its name, Eon
   version, local start time, live terminal count, and whether this `eon`
   presents and controls it directly (`yes`, or `no` with the reason). For
   each window this `eon` cannot stop, a line after the table says why.
   `--json` prints `{"windows":[...]}`. Each window holds `id` (the full ID),
-  `short_id`, `name`, `current` (whether this `eon`'s build started it),
+  `short_id`, `name`, `current` (whether its active build equals this `eon`'s build),
   `generation`, `state` (`live`, `incompatible`, `unreachable` or `corrupt`),
   `compatible`, `eon_version`, `workspace_protocol`, `started_at`,
   `terminals` (their `terminal-N` IDs), `busy`, `attach` and `stop` (each with
@@ -4209,7 +4298,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   (EON-C10).
   `eon window stop ID` stops one window. For an independent window, it stops
   every running generation of its namespace. `eon window stop previous` stops
-  every running window that another Eon build started, in every namespace. `eon
+  every running window whose active build differs from this build, in every namespace. `eon
   window stop all` stops every running window. Both stop the caller's own window
   last: the window whose supervisor validates the calling terminal, whichever
   build started it. Outside Eon `default` counts as the caller's. Inside Eon,

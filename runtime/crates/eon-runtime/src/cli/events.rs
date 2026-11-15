@@ -984,8 +984,8 @@ mod tests {
         };
         tabs.tabs[0].columns[0].panes[0].tag = Some("work \"🦀\"".into());
         let snapshot = wire::WindowSnapshot {
-            created_build: "g1-00000000000000000000000000000001".into(),
-            active_build: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000002".into(),
+            active_build: "g1-00000000000000000000000000000003".into(),
             workspaces: vec![entry],
             attention_queue: vec![],
             busy: Some(vec![]),
@@ -1009,6 +1009,17 @@ mod tests {
             .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
             .collect::<Vec<_>>();
         assert_eq!(lines.len(), 3);
+        assert_eq!(
+            lines[0]["generation"],
+            "g1-00000000000000000000000000000001"
+        );
+        for value in [&lines[0], &lines[1]["snapshot"]] {
+            assert_eq!(
+                value["created_build"],
+                "g1-00000000000000000000000000000002"
+            );
+            assert_eq!(value["active_build"], "g1-00000000000000000000000000000003");
+        }
         assert_eq!(lines[0]["sessions"][0]["name"], "a\"b");
         assert_eq!(
             lines[0]["sessions"][0]["persistent_id"],
