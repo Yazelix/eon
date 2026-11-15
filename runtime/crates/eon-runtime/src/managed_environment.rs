@@ -170,6 +170,8 @@ impl UpdateSettings {
     }
 }
 
+type AgentLaunch = fn(&Path, &Path) -> Result<Option<Vec<OsString>>, String>;
+
 pub struct Defaults {
     /// Eon Bar widgets shown, in order, when `[bar] widgets` is omitted.
     pub bar_widgets: &'static [&'static str],
@@ -207,6 +209,8 @@ pub struct Defaults {
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
     pub agent_commands: &'static [&'static [&'static str]],
+    /// A managed Agent launch for its config root and directory, or None for built-ins.
+    pub agent_launch: AgentLaunch,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2454,6 +2458,12 @@ pub(crate) fn prepare_popup_command(
             return Err("the supervisor builds Scrollback's command for each press".into());
         }
         PopupCommand::AgentAuto => {
+            if let Some(argv) = (defaults.agent_launch)(config, directory)? {
+                return Ok(PreparedCommand {
+                    argv,
+                    listener: None,
+                });
+            }
             for candidate in defaults.agent_commands {
                 let argv = candidate.iter().map(OsString::from).collect::<Vec<_>>();
                 if popup_executable(&argv[0], programs.shell_bin.as_deref(), directory)?.is_some() {
@@ -4227,6 +4237,7 @@ mod tests {
             custom_popup_keep_alive: defaults.custom_popup_keep_alive,
             ansi_palette: defaults.ansi_palette,
             agent_commands: defaults.agent_commands,
+            agent_launch: defaults.agent_launch,
         };
         let mut resolved: serde_json::Value =
             serde_json::from_str(&super::print_defaults(&resolved, true)?).unwrap();
@@ -5788,6 +5799,46 @@ label = "Browse"
                 OsString::from("./preferred-agent"),
                 OsString::from("--preferred")
             ]
+        );
+
+        defaults.agent_launch = |_, _| {
+            Ok(Some(vec![
+                std::env::current_exe().unwrap().into_os_string(),
+                "agent".into(),
+                "launch".into(),
+                "--popup".into(),
+            ]))
+        };
+        assert_eq!(
+            prepare_popup_command(
+                &PopupCommand::AgentAuto,
+                &inputs.managed,
+                &launch,
+                &root,
+                &defaults,
+                None
+            )
+            .unwrap()
+            .argv,
+            [
+                std::env::current_exe().unwrap().into_os_string(),
+                "agent".into(),
+                "launch".into(),
+                "--popup".into()
+            ]
+        );
+        defaults.agent_launch = |_, _| Err("cannot read agent configuration".into());
+        assert_eq!(
+            prepare_popup_command(
+                &PopupCommand::AgentAuto,
+                &inputs.managed,
+                &launch,
+                &root,
+                &defaults,
+                None
+            )
+            .unwrap_err(),
+            "cannot read agent configuration"
         );
 
         // The configured editor runs on the file, reread for each edit, and an

@@ -12481,6 +12481,285 @@ fn popup_show_cli_creates_in_background_and_focuses_the_exact_instance() {
     wait_for_successful_exit(&mut supervisor.child);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn agent_auto_popup_shares_cli_admission_source_command_and_context() {
+    for primary in [false, true] {
+        check_agent_auto_popup(primary, None);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn agent_auto_popup_relative_config_only_in_tab_uses_managed_admission() {
+    check_agent_auto_popup(false, Some(true));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn agent_auto_popup_relative_config_only_by_supervisor_keeps_builtin_path() {
+    check_agent_auto_popup(false, Some(false));
+}
+
+#[cfg(target_os = "linux")]
+fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
+    let mut window = PairWindow::new();
+    if primary {
+        let own = window.root.join(".eon-wrapped");
+        fs::copy(&window.binary, &own).unwrap();
+        window.binary = own;
+    }
+    let provider = window.root.join("provider");
+    let launched = window.root.join("provider.log");
+    executable(
+        &provider,
+        format!(
+            "#!/bin/sh\nprintf '%s|%s|%s|%s|%s\\n' \"$#\" \"$*\" \"$(pwd -P)\" \"$EON_TERMINAL\" \"$EON_TAB\" >> '{}'\n\
+             if [ \"${{EON_TEST_POPUP_ONCE:-}}\" = 1 ]; then exit 0; fi\n\
+             while [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+            launched.display()
+        ),
+    );
+    // A PATH eon must never receive the popup's dispatch.
+    executable(&window.root.join("session-bin/eon"), "#!/bin/sh\nexit 77\n");
+    symlink(&provider, window.root.join("session-bin/codex")).unwrap();
+    let state = window.root.join("agent-state");
+    let decisions = window.root.join("agent-decisions");
+    let fallback = match relative_in_tab {
+        Some(true) => window.home.join("rota.toml"),
+        Some(false) => window.launch.join("rota.toml"),
+        None => window.root.join("rota.toml"),
+    };
+    let source = if relative_in_tab.is_some() {
+        PathBuf::from("rota.toml")
+    } else {
+        fallback.clone()
+    };
+    let config = |name: &str| {
+        format!(
+            "state_file = '{}'\nlog_file = '{}'\n\
+             [[backends]]\nname = '{name}'\nroles = ['implement']\n\
+             guard = ['true']\nallow_unknown_quota = true\n\
+             popup_command = ['{}', '--resume']\n\
+             [backends.commands]\nmedium = ['never-start-this', '{{prompt}}']\n\
+             high = ['never-start-this', '{{prompt}}']\n",
+            state.display(),
+            decisions.display(),
+            provider.display()
+        )
+    };
+    fs::write(&fallback, config("fallback")).unwrap();
+    if primary {
+        fs::write(window.config.join("agent.toml"), config("primary")).unwrap();
+    }
+    let mut command = window.scrollback_command();
+    command
+        .env("ROTA_CONFIG", &source)
+        .env("XDG_CONFIG_HOME", window.root.join("other-config"));
+    let mut supervisor = window.start(command);
+    wait_for_ready(&window.control());
+    window.pair_launch("terminal-2");
+    assert!(
+        window
+            .eon(&[
+                "tab",
+                "directory",
+                "t1",
+                "--",
+                window.home.to_str().unwrap()
+            ])
+            .status
+            .success()
+    );
+    let shown = window.eon(&["popup", "show", "agent", "--json"]);
+    assert!(shown.status.success(), "{shown:?}");
+    let snapshot = window.inspect("agent-auto");
+    let popup = snapshot.tabs[0]
+        .popups
+        .iter()
+        .find(|p| p.entry == "agent")
+        .unwrap();
+    let lines = wait_for_lines(&launched, 1);
+    let context = lines[0].split('|').collect::<Vec<_>>();
+    if relative_in_tab == Some(false) {
+        assert_eq!(
+            &context[..3],
+            &["2", "resume --no-daemon", window.home.to_str().unwrap()]
+        );
+        assert!(
+            !decisions.exists(),
+            "supervisor cwd must not select managed admission"
+        );
+        let direct = eon_command(&window.binary)
+            .env("HOME", &window.home)
+            .env("EON_CONFIG_HOME", &window.config)
+            .env("ROTA_CONFIG", &source)
+            .current_dir(&window.home)
+            .args(["agent", "launch", "--popup", "--dry-run"])
+            .output()
+            .unwrap();
+        assert_eq!(direct.status.code(), Some(2), "{direct:?}");
+        window.stop_generation(&mut supervisor);
+        return;
+    }
+    assert_eq!(
+        &context[..3],
+        &["1", "--resume", window.home.to_str().unwrap()]
+    );
+    assert!(
+        context[3].starts_with(&format!("{}.", popup.session)),
+        "{context:?}"
+    );
+    assert_eq!(context[4], "t1");
+    let first = wait_for_lines(&decisions, 1);
+    let normalize = |text: &str| {
+        let mut value: serde_json::Value = serde_json::from_str(text).unwrap();
+        value.as_object_mut().unwrap().remove("time");
+        value
+    };
+    let expected = normalize(&first[0]);
+    assert_eq!(
+        expected["pick"],
+        if primary { "primary" } else { "fallback" }
+    );
+    assert!(window.eon(&["popup", "hide", &popup.id]).status.success());
+    assert!(window.eon(&["focus", &popup.id]).status.success());
+    assert_eq!(log_lines(&decisions).len(), 1);
+    fs::remove_file(&state).unwrap(); // Restore the popup's original rotation cursor.
+    let direct = eon_command(&window.binary)
+        .env("HOME", &window.home)
+        .env("XDG_CONFIG_HOME", window.root.join("other-config"))
+        .env("EON_CONFIG_HOME", &window.config)
+        .env("ROTA_CONFIG", &source)
+        .env("EON_TERMINAL", context[3])
+        .env("EON_TAB", context[4])
+        .env("EON_TEST_POPUP_ONCE", "1")
+        .current_dir(&window.home)
+        .args(["agent", "launch", "--popup"])
+        .output()
+        .unwrap();
+    assert!(direct.status.success(), "{direct:?}");
+    let records = wait_for_lines(&decisions, 2);
+    assert_eq!(normalize(&records[1]), expected);
+    assert_eq!(wait_for_lines(&launched, 2)[1], lines[0]);
+    window.stop_generation(&mut supervisor);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn agent_popup_failures_stay_visible_until_enter_and_keep_exit_status() {
+    for (bad_config, args, held, code) in [
+        (false, vec!["launch", "--popup"], true, 3),
+        (true, vec!["launch", "--popup"], true, 2),
+        (false, vec!["launch", "--popup", "--dry-run"], false, 3),
+        (false, vec!["launch", "brief"], false, 3),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("agent.toml");
+        let state = root.path().join("rotation");
+        let log = root.path().join("decisions");
+        fs::write(&config, if bad_config { "invalid TOML".into() } else { format!(
+            "state_file = '{}'\nlog_file = '{}'\n\
+             [[backends]]\nname = 'refused'\nroles = ['implement']\n\
+             guard = ['false']\nallow_unknown_quota = true\n\
+             [backends.commands]\nmedium = ['codex', '{{prompt}}']\nhigh = ['codex', '{{prompt}}']\n",
+            state.display(), log.display()
+        ) }).unwrap();
+        fs::write(root.path().join("brief"), "ordinary prompt").unwrap();
+        let (mut controller, device) = pseudo_terminal();
+        let device = fs::File::from(device);
+        // SAFETY: the controller is owned here; set only its nonblocking flag.
+        assert_eq!(
+            unsafe {
+                libc::fcntl(
+                    controller.as_raw_fd(),
+                    libc::F_SETFL,
+                    status_flags(controller.as_raw_fd()) | libc::O_NONBLOCK,
+                )
+            },
+            0
+        );
+        let mut child = ManagedChild(
+            Command::new(env!("CARGO_BIN_EXE_eon"))
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap())
+                .env("HOME", root.path())
+                .env("EON_CONFIG_HOME", root.path())
+                .current_dir(root.path())
+                .arg("agent")
+                .args(&args)
+                .stdin(device.try_clone().unwrap())
+                .stdout(device.try_clone().unwrap())
+                .stderr(device)
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let mut text = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut answered = false;
+        let status = loop {
+            let mut chunk = [0; 4096];
+            match controller.read(&mut chunk) {
+                Ok(n) => text.extend_from_slice(&chunk[..n]),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        || error.raw_os_error() == Some(libc::EIO) => {}
+                Err(error) => panic!("{error}"),
+            }
+            if !answered
+                && text
+                    .windows(b"Press Enter to close".len())
+                    .any(|v| v == b"Press Enter to close")
+            {
+                assert!(held, "unexpected hold for {args:?}");
+                assert!(child.0.try_wait().unwrap().is_none());
+                controller.write_all(b"\n").unwrap();
+                answered = true;
+            }
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "hung: {}",
+                String::from_utf8_lossy(&text)
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        loop {
+            let mut chunk = [0; 4096];
+            match controller.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => text.extend_from_slice(&chunk[..n]),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        || error.raw_os_error() == Some(libc::EIO) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        assert_eq!(
+            answered,
+            held,
+            "{args:?}: {}",
+            String::from_utf8_lossy(&text)
+        );
+        assert_eq!(status.code(), Some(code));
+        assert!(!state.exists());
+        if !bad_config {
+            assert_eq!(
+                String::from_utf8_lossy(&text)
+                    .matches("no backend available, refusing")
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
 #[test]
 fn popup_show_cli_scrollback_access_off_and_focus_refuse_with_or_without_caller() {
     let window = PairWindow::new();

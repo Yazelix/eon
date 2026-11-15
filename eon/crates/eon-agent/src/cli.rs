@@ -1,31 +1,48 @@
 use crate::config::{Config, Role};
 use crate::{decision, launch, ps, readings, run as headless, slots};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::{env, fs, process::ExitCode};
 
-const USAGE: &str = "Usage: rota launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>\n       rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...\n       rota ps [--json] [--all]\n       rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...\n       rota slot ls [--json]\n       rota retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]\n       rota status [--json]\nConfig: $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)";
+const USAGE: &str = "Usage: rota launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>\n       rota launch --popup [--only BACKEND] [--dry-run]\n       rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...\n       rota ps [--json] [--all]\n       rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...\n       rota slot ls [--json]\n       rota retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]\n       rota status [--json]\nConfig: $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)";
 
-fn load_config(primary: Option<&Path>) -> Result<(Config, PathBuf), String> {
-    if let Some(path) = primary {
-        match fs::read_to_string(path) {
-            Ok(text) => return Config::parse(&text).map(|config| (config, path.to_owned())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("cannot read config: {error}")),
-        }
-    }
-    let path = env::var_os("ROTA_CONFIG")
-        .map(std::path::PathBuf::from)
+fn fallback_config_path() -> Result<PathBuf, String> {
+    env::var_os("ROTA_CONFIG")
+        .map(PathBuf::from)
         .or_else(|| {
             env::var_os("XDG_CONFIG_HOME")
-                .map(std::path::PathBuf::from)
-                .or_else(|| {
-                    env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-                })
-                .map(|p| p.join("rota/config.toml"))
+                .map(PathBuf::from)
+                .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+                .map(|root| root.join("rota/config.toml"))
         })
-        .ok_or("cannot locate config: set ROTA_CONFIG")?;
+        .ok_or_else(|| "cannot locate config: set ROTA_CONFIG".into())
+}
+
+/// Locates configuration without parsing it or running any backend checks.
+/// Relative candidates use `directory`; reported paths keep their literal spelling.
+pub fn config_source(primary: Option<&Path>, directory: &Path) -> Result<Option<PathBuf>, String> {
+    let exists = |path: &Path| match fs::metadata(directory.join(path)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("cannot read config: {error}")),
+    };
+    if let Some(path) = primary {
+        if exists(path)? {
+            return Ok(Some(path.to_owned()));
+        }
+    }
+    let Ok(path) = fallback_config_path() else {
+        return Ok(None);
+    };
+    Ok(exists(&path)?.then_some(path))
+}
+
+fn load_config(primary: Option<&Path>) -> Result<(Config, PathBuf), String> {
+    let path = match config_source(primary, Path::new("."))? {
+        Some(path) => path,
+        None => fallback_config_path()?,
+    };
     let config =
         Config::parse(&fs::read_to_string(&path).map_err(|e| format!("cannot read config: {e}"))?)?;
     Ok((config, path))
@@ -71,8 +88,23 @@ fn run(
     }
     if args.first().is_some_and(|s| s == "launch") {
         let options = launch::parse(&args[1..])?;
-        let (config, _) = load().map_err(|e| (2, e))?;
-        return launch::run(&config, &options).map(|()| 0);
+        let result = load()
+            .map_err(|error| (2, error))
+            .and_then(|(config, _)| launch::run(&config, &options))
+            .map(|()| 0);
+        if options.popup
+            && !options.dry_run
+            && std::io::stdin().is_terminal()
+            && std::io::stderr().is_terminal()
+            && let Err((code, message)) = &result
+        {
+            print_error(message);
+            let _ = write!(std::io::stderr(), "\nPress Enter to close");
+            let _ = std::io::stderr().flush();
+            let _ = std::io::stdin().read_line(&mut String::new());
+            return Ok(*code);
+        }
+        return result;
     }
     if args.first().is_some_and(|s| s == "run") {
         let options = headless::parse(&args[1..])?;
@@ -161,9 +193,13 @@ pub fn main(
     match run(arguments, primary) {
         Ok(code) => ExitCode::from(code),
         Err((code, message)) => {
-            // A run may end after its caller closed stderr; never panic here.
-            let _ = writeln!(std::io::stderr(), "rota: {message}");
+            print_error(&message);
             ExitCode::from(code)
         }
     }
+}
+
+fn print_error(message: &str) {
+    // A run may end after its caller closed stderr; never panic here.
+    let _ = writeln!(std::io::stderr(), "rota: {message}");
 }

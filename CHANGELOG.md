@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- On Linux with agent configuration, Agent `auto` shares admission and rotation
+  with `eon agent launch --popup`, preserving resume commands and its own
+  directory/terminal context. Managed refusal never falls back to an unmanaged
+  backend. macOS and config-less users retain the built-in popup path; custom
+  backends can set `popup_command` (`eon-eon-agent-lr8sx.28`).
+  Interactive popup-mode failures retain their diagnostic until Enter, using
+  the existing dismissal interaction; dry-run and piped failures exit immediately.
+
 - Neutral chrome outlines meet 3:1 contrast against bar-widget fills. Dark chrome
   retains its colors apart from that outline correction; built-in dark and light
   chrome colors come from contrast-enforced OKLCH ramps (`eon-eon-themes-or3q.2`).

@@ -103,6 +103,27 @@ this move adds no new preference or default backend.
 to every backend object (a string, or a byte array for a non-UTF-8 path).
 Other output and record formats are unchanged.
 
+`eon agent launch --popup [--only BACKEND] [--dry-run]` uses implement/high
+admission and popup resume commands, with no prompt-file operand. Ordinary
+launch still requires its prompt file. Each backend may set an optional
+`popup_command = ["my-agent", "--resume"]` alongside `name`, `roles` and
+`guard`. Its argv must have a nonempty executable, contain no NUL or
+`{prompt}`, and may use a whole `{cwd}` argument. It runs under that backend's
+existing environment, checks, limits and preparation.
+
+When `popup_command` is absent, the configured high command's executable
+basename selects its popup argv: `codex` adds `resume --no-daemon`, `claude`
+adds `--resume`, and `grok`, `opencode` and `pi` add nothing. The executable
+path itself is retained. Other executables are unavailable in popup mode
+until given `popup_command`; normal launch remains available. Popup mode
+does not copy high-command model or permission flags into these defaults.
+Explicit popup argv remains your command choice. A busy admission lock
+refuses immediately (exit 3); there is no popup admission wait queue.
+On a real popup-mode failure with terminal input and stderr, the diagnostic
+stays in that terminal until Enter or EOF, then returns its original status.
+It uses the existing fixed `Press Enter to close` dismissal wording. Dry-run,
+nonterminal invocations and ordinary launch still return immediately.
+
 ### Remote heavy builds
 
 `eon agent slot run` can send an explicitly permitted build to Boat. Local
@@ -1082,10 +1103,15 @@ search is already shown. It rejects `command`, `enabled = false` and
 `keep_alive = true`, since it is required. A
 custom popup needs `command` and `keybinding`; its `label` defaults to its ID
 and its `keep_alive` to `true`.
-Agent's `auto` command runs the first of `codex resume --no-daemon`, `grok`,
-`opencode`, `pi` and `claude --resume` whose executable is on the terminal
-PATH. Codex runs without its shared daemon, so its `eon` commands act for the
-Agent popup's own terminal (see
+On Linux with an agent configuration source, Agent's `auto` command uses the
+supervisor build's `eon agent launch --popup` in the popup's own terminal and
+tab launch directory. Source precedence is the same as [agent commands](#agent-commands).
+An invalid or unreadable source, or a managed refusal, never retries through
+the built-ins. Without a source, and on macOS, `auto` runs the first of
+`codex resume --no-daemon`, `grok`, `opencode`, `pi` and `claude --resume`
+available on the terminal PATH. Showing a live Agent reuses its terminal
+without another choice. Built-in Codex popup commands disable its shared
+daemon so its `eon` commands act for the Agent popup's own terminal (see
 [Codex's shared daemon](USAGE.md#sending-to-a-terminal)).
 Files opens Yazi with Eon's own popup keys on Alt+Shift+Y and reads no Yazi
 configuration of yours. It is the tab's directory pair, so it is required: Eon

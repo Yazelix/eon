@@ -2202,8 +2202,14 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Runtime policy:** Project is required and defaults to Alt+Z; it has no
   command of its own and shows the tab's pair (EON-C18) on quick search. Git
   defaults to `eon-lazygit` on Alt+Shift+J;
-  Agent defaults to the first available provider in the accepted Nova order on
-  Alt+Shift+L. Git and Agent remain live when hidden. Reopening at the same tab
+  Agent defaults to `auto` on Alt+Shift+L. On Linux, when an Eon agent
+  configuration source exists, a new Agent popup invokes that supervisor
+  build's `eon agent launch --popup`, under EON-C40, in the popup's launch
+  directory and exact terminal context. Missing configuration on Linux and
+  the macOS preview retain existing first-available-provider selection in
+  Codex, Grok, OpenCode, Pi, Claude order. A managed refusal or invalid or
+  unreadable configuration never retries through this built-in path.
+  Venus never chooses a backend. Git and Agent remain live when hidden. Reopening at the same tab
   directory preserves identity. When a tab's directory changes explicitly
   (a pair pick or `SetTabDirectory`), a live Agent terminal
   launched at another directory is parked in the same step: it leaves the popup
@@ -6671,12 +6677,63 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   keeps rota's commands, arguments, output, exit codes, decision records and
   admission rules exactly, rather than the Trigger and Result text below;
   its configuration is read from Eon's configuration home, falling back to
-  rota's file while Eon's is absent, and output names the file read. The
-  Agent popup starts agents through it (`.28`), and it reads quota from
-  Eon's own facts in process (`.29`). The Trigger and Result below stay the
+  rota's file while Eon's is absent, and output names the file read. The Agent popup uses it on Linux when an agent configuration source exists
+  (`.28`), retaining the built-in popup path on macOS and without agent
+  configuration. Slice `.28` extends the moved CLI with `launch --popup`
+  and optional backend `popup_command` argv so managed popup starts retain
+  resume behavior without a prompt argument. Other moved CLI behavior is
+  unchanged. It reads quota from Eon's own facts in process (`.29`). The Trigger and Result below stay the
   later target; each deferred slice, when picked up, is rewritten as an
   improvement on the moved code. Proven clauses are only those the move's
   beads prove.
+
+  **Delivered popup mode (`eon-eon-agent-lr8sx.28`).** On Linux,
+  `eon agent launch --popup [--only BACKEND] [--dry-run]` accepts no prompt
+  file and admits implement/high using the moved launcher's configuration,
+  admission lock, guards, account checks, quota, caps, selection, decision
+  records, preparation, rotation and exec behavior. It runs in the calling
+  terminal and current directory; it creates no pane. Ordinary launch
+  retains its required prompt-file argument and behavior.
+
+  Popup mode uses optional backend `popup_command` argv. Without that
+  field, a configured high command whose executable basename is `codex`,
+  `claude`, `grok`, `opencode` or `pi` uses that executable with,
+  respectively, `resume --no-daemon`, `--resume`, or no extra arguments.
+  No empty prompt argument is passed. Other executables need explicit
+  `popup_command` and are unavailable in popup mode without one; ordinary
+  launch is unchanged. Explicit popup argv retains its declared environment
+  and existing cwd substitution, with no prompt substitution. The default
+  popup commands add no provider permission bypass. Explicit argv remains
+  the user's choice. Dry-run uses the same popup decision and argv without
+  launching or mutating state.
+
+  A new Agent `auto` popup uses this mode only on Linux when a configuration
+  source exists at the moved CLI's existing precedence: Eon's agent.toml,
+  otherwise ROTA_CONFIG when set, otherwise its XDG/HOME rota location.
+  Only absence permits fallback in lookup; present malformed or unreadable
+  configuration is an error. The product resolves the supervisor's own
+  executable, never another `eon` from PATH or a profile. Runtime supplies
+  the tab launch directory and exact popup terminal/tab identity; Venus
+  supplies no backend choice. After managed routing, a failure never retries
+  through unmanaged built-ins. Without configuration, and on macOS,
+  existing built-in selection and argv remain unchanged. Showing or hiding
+  an existing keep-alive terminal does not re-admit or advance rotation.
+  Explicit `[popups.agent]` argv remains a generic exact command outside
+  managed selection.
+
+  Popup mode retains moved CLI exit meanings: 2 invalid input/configuration,
+  3 admission or lock-busy refusal, and 1 operational error. Lock-busy
+  admission refuses immediately; no admission queue or new wait state is
+  introduced. A real `launch --popup` failure with terminal stdin and stderr retains
+  its diagnostic in that same terminal until Enter or EOF, then returns
+  the original failure status. It uses the existing `Press Enter to close`
+  dismissal interaction; it starts no shell, backend retry or admission
+  wait. Dry-run and nonterminal invocations return immediately. Ordinary
+  launch is unchanged. Existing refusal presentation and terminal attention remain
+  the popup presentation path. This conditional cutover and popup mode are
+  exceptions to the unchanged-move wording above. Trigger, Result and
+  planned amendments below remain the later clean-port target wherever
+  they differ from this delivered behavior.
 - **Consumer:** A person or local agent choosing and starting a coding-agent
   CLI, inspecting availability or tracking an attempt, with workspace effects
   governed by C10.

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -205,6 +205,7 @@ pub struct Backend {
     pub enabled: bool,
     pub roles: Vec<Role>,
     pub commands: BTreeMap<Level, Vec<String>>,
+    pub popup_command: Option<Vec<String>>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
@@ -292,6 +293,26 @@ fn command_valid(command: &[String]) -> bool {
     command.first().is_some_and(|s| !s.is_empty()) && command.iter().all(|s| !s.contains('\0'))
 }
 
+impl Backend {
+    pub fn popup_command(&self) -> Option<Vec<String>> {
+        if let Some(command) = &self.popup_command {
+            return Some(command.clone());
+        }
+        let executable = self.commands.get(&Level::High)?.first()?;
+        let tail: &[&str] = match Path::new(executable).file_name()?.to_str()? {
+            "codex" => &["resume", "--no-daemon"],
+            "claude" => &["--resume"],
+            "grok" | "opencode" | "pi" => &[],
+            _ => return None,
+        };
+        Some(
+            std::iter::once(executable.clone())
+                .chain(tail.iter().map(|s| s.to_string()))
+                .collect(),
+        )
+    }
+}
+
 fn run_valid(run: &Run) -> bool {
     let most_add_dirs = usize::from(run.add_dir.is_some());
     !run.commands.is_empty()
@@ -359,6 +380,11 @@ impl Config {
             }
             if b.roles.iter().collect::<BTreeSet<_>>().len() != b.roles.len() {
                 return fail("duplicate role");
+            }
+            if b.popup_command.as_ref().is_some_and(|command| {
+                !command_valid(command) || command.iter().any(|arg| arg.contains("{prompt}"))
+            }) {
+                return fail("popup_command needs a nonempty executable, no NUL or {prompt}");
             }
             if b.account_check.as_ref().is_some_and(|c| !command_valid(c))
                 || b.prepare.iter().any(|c| !command_valid(c))

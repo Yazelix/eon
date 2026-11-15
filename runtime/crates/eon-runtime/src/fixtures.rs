@@ -166,6 +166,7 @@ pub(crate) fn inputs() -> Inputs {
             editor_kind: crate::EditorKind::Auto,
             editor_open_in: crate::EditorOpenIn::Popup,
             agent_commands: &[],
+            agent_launch: |_, _| Ok(None),
         },
         orbit: "fixture-orbit".into(),
         venus: "fixture-venus".into(),

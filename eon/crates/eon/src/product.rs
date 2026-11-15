@@ -232,6 +232,7 @@ pub(crate) fn inputs() -> Inputs {
                 &["pi"],
                 &["claude", "--resume"],
             ],
+            agent_launch: agent_popup_launch,
         },
         orbit: configured_program("EON_ORBIT", "yazelix-orbit"),
         venus: configured_program("EON_VENUS", "yazelix-venus"),
@@ -250,6 +251,26 @@ pub(crate) fn inputs() -> Inputs {
             shell_bin: nonempty_environment_path("EON_SESSION_BIN"),
         },
     }
+}
+
+fn agent_popup_launch(
+    config: &std::path::Path,
+    directory: &std::path::Path,
+) -> Result<Option<Vec<std::ffi::OsString>>, String> {
+    #[cfg(target_os = "linux")]
+    if rota::cli::config_source(Some(&config.join("agent.toml")), directory)?.is_some() {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("cannot find the running Eon executable: {error}"))?;
+        return Ok(Some(vec![
+            executable.into_os_string(),
+            "agent".into(),
+            "launch".into(),
+            "--popup".into(),
+        ]));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (config, directory);
+    Ok(None)
 }
 
 fn configured_program(variable: &str, fallback: &str) -> std::path::PathBuf {

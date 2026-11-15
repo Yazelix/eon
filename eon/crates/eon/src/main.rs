@@ -10,6 +10,9 @@ fn main() -> ExitCode {
     #[cfg(target_os = "linux")]
     if arguments.first().is_some_and(|program| {
         std::path::Path::new(program).file_name() == Some(std::ffi::OsStr::new("eon"))
+            || (std::path::Path::new(program).file_name() != Some(std::ffi::OsStr::new("eonbase"))
+                && std::env::current_exe()
+                    .is_ok_and(|executable| executable.as_os_str() == program))
     }) && arguments.get(1).is_some_and(|command| command == "agent")
     {
         let primary =

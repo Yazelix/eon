@@ -1188,10 +1188,8 @@ mod tests {
             .unwrap();
         let count = neovim_request(Path::new("/a")).unwrap().len();
         let (accepted, waiting) = std::sync::mpsc::channel();
+        let listener = UnixListener::bind(socket).unwrap();
         let server = std::thread::spawn(move || {
-            // Exercise Ready-before-bind using the versioned Neovim marker.
-            std::thread::sleep(Duration::from_millis(5));
-            let listener = UnixListener::bind(socket).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))

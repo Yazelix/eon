@@ -16,6 +16,7 @@ pub struct Options {
     pub level: Level,
     pub only: Option<String>,
     pub dry_run: bool,
+    pub popup: bool,
     pub prompt_file: PathBuf,
 }
 
@@ -26,9 +27,11 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
         level: Level::High,
         only: None,
         dry_run: false,
+        popup: false,
         prompt_file: PathBuf::new(),
     };
     let mut i = 0;
+    let mut role_or_level = false;
     while let Some(arg) = args.get(i) {
         match arg.as_str() {
             "--role" | "--level" | "--only" => {
@@ -36,6 +39,7 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
                 let value = args.get(i).ok_or_else(|| bad("option needs a value"))?;
                 match arg.as_str() {
                     "--role" => {
+                        role_or_level = true;
                         options.role = match value.as_str() {
                             "implement" => Role::Implement,
                             "review" => Role::Review,
@@ -43,6 +47,7 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
                         }
                     }
                     "--level" => {
+                        role_or_level = true;
                         options.level = match value.as_str() {
                             "medium" => Level::Medium,
                             "high" => Level::High,
@@ -53,6 +58,7 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
                 }
             }
             "--dry-run" => options.dry_run = true,
+            "--popup" if !options.popup => options.popup = true,
             "--" => {
                 i += 1;
                 break;
@@ -62,10 +68,15 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
         }
         i += 1;
     }
-    if args.len() != i + 1 {
+    if options.popup {
+        if args.len() != i || role_or_level {
+            return Err(bad("--popup takes no prompt file, --role or --level"));
+        }
+    } else if args.len() != i + 1 {
         return Err(bad("launch needs exactly one prompt file"));
+    } else {
+        options.prompt_file = PathBuf::from(&args[i]);
     }
-    options.prompt_file = PathBuf::from(&args[i]);
     Ok(options)
 }
 
@@ -135,6 +146,10 @@ fn shell_quote(text: &str) -> String {
 }
 
 pub fn display_command(backend: &Backend, level: Level, cwd: &str, prompt_file: &str) -> String {
+    display_argv(backend, &backend.commands[&level], cwd, prompt_file)
+}
+
+fn display_argv(backend: &Backend, argv: &[String], cwd: &str, prompt_file: &str) -> String {
     let mut args = Vec::new();
     if !backend.env.is_empty() || !backend.unset_env.is_empty() {
         args.push("env".into());
@@ -145,7 +160,7 @@ pub fn display_command(backend: &Backend, level: Level, cwd: &str, prompt_file: 
             args.push(shell_quote(&format!("{key}={value}")));
         }
     }
-    for arg in &backend.commands[&level] {
+    for arg in argv {
         args.push(match arg.as_str() {
             "{prompt}" => format!("\"$(cat {})\"", shell_quote(prompt_file)),
             "{cwd}" => shell_quote(cwd),
@@ -235,22 +250,32 @@ pub fn print_readings(
 }
 
 pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
-    let prompt_file = fs::canonicalize(&options.prompt_file)
-        .map_err(|e| (2, format!("cannot read prompt file: {e}")))?;
-    let prompt = fs::read_to_string(&prompt_file)
-        .map_err(|e| (2, format!("cannot read prompt file: {e}")))?;
-    if prompt.contains('\0') {
-        return Err((2, "prompt contains a NUL byte".into()));
-    }
+    let brief = if options.popup {
+        None
+    } else {
+        let file = fs::canonicalize(&options.prompt_file)
+            .map_err(|e| (2, format!("cannot read prompt file: {e}")))?;
+        let prompt =
+            fs::read_to_string(&file).map_err(|e| (2, format!("cannot read prompt file: {e}")))?;
+        if prompt.contains('\0') {
+            return Err((2, "prompt contains a NUL byte".into()));
+        }
+        Some((file, prompt))
+    };
     let cwd = std::env::current_dir()
         .and_then(fs::canonicalize)
         .map_err(io_failure)?;
     let cwd_text = cwd
         .to_str()
         .ok_or_else(|| (2, "working directory must be UTF-8".into()))?;
-    let prompt_path = prompt_file
-        .to_str()
-        .ok_or_else(|| (2, "prompt path must be UTF-8".into()))?;
+    let prompt_path = brief
+        .as_ref()
+        .map(|(file, _)| {
+            file.to_str()
+                .ok_or_else(|| (2, "prompt path must be UTF-8".into()))
+        })
+        .transpose()?
+        .unwrap_or("");
     let mut indices = decision::candidates(config, options.role, options.only.as_deref())
         .map_err(|e| (e.code, e.message))?;
     if options.role == Role::Implement && options.only.is_none() {
@@ -273,7 +298,19 @@ pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(io_failure(e)),
     };
-    let mut readings = readings::collect(config, &indices, &cwd, !options.dry_run);
+    let checked = indices
+        .iter()
+        .copied()
+        .filter(|index| !options.popup || config.backends[*index].popup_command().is_some())
+        .collect::<Vec<_>>();
+    let mut readings = readings::collect(config, &checked, &cwd, !options.dry_run);
+    if options.popup {
+        for index in &indices {
+            if config.backends[*index].popup_command().is_none() {
+                readings[*index].problem = Some("no popup_command for this executable".into());
+            }
+        }
+    }
     let result = decision::choose(
         config,
         &readings,
@@ -302,10 +339,17 @@ pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
         );
     }
     println!("pick: {}", backend.name);
+    let command = if options.popup {
+        backend
+            .popup_command()
+            .expect("selection checked popup command")
+    } else {
+        backend.commands[&options.level].clone()
+    };
     if options.dry_run {
         println!(
             "command: {}",
-            display_command(backend, options.level, cwd_text, prompt_path)
+            display_argv(backend, &command, cwd_text, prompt_path)
         );
         return Ok(());
     }
@@ -315,10 +359,14 @@ pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
     for prepare in &backend.prepare {
         readings::probe(backend, prepare, 30, &cwd).map_err(io_failure)?;
     }
-    let argv: Vec<_> = backend.commands[&options.level]
+    let argv: Vec<_> = command
         .iter()
         .map(|a| match a.as_str() {
-            "{prompt}" => prompt.clone(),
+            "{prompt}" => brief
+                .as_ref()
+                .expect("only ordinary launch has a prompt")
+                .1
+                .clone(),
             "{cwd}" => cwd_text.into(),
             _ => a.clone(),
         })

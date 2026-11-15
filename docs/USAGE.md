@@ -43,6 +43,7 @@ running Eon window. Configure its separate
 
 ```text
 eon agent launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+eon agent launch --popup [--only BACKEND] [--dry-run]
 eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
 eon agent ps [--json] [--all]
 eon agent slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
@@ -67,7 +68,16 @@ cleanup guards and `--dry-run` before deleting build output. The
 unchanged behavior; replace its `rota` invocation with `eon agent`.
 Diagnostic text, session/unit names and ROTA_* variables keep rota's spellings.
 
-Agent popup integration and in-process Eon quota are separate pending changes.
+On Linux with an agent configuration file, the Agent popup uses
+`eon agent launch --popup`: the same admission and rotation, with popup resume
+commands and no prompt argument, in its own terminal and tab directory. Use
+`eon agent launch --popup --dry-run` to inspect that choice. Without an agent
+configuration file, and on macOS, Agent retains its built-in provider order.
+Invalid configuration and managed refusals never retry through the built-ins.
+Showing a live Agent popup reuses it without another admission. In-process Eon
+quota is a separate pending change.
+An interactive popup-mode error stays visible until Enter or EOF, then exits
+with its original status. Dry-run, piped calls and ordinary launch are unchanged.
 EON-C40's fuller Trigger/Result describes the later clean port, not additional
 flags supported by this initial move.
 

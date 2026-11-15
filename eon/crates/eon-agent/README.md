@@ -15,6 +15,7 @@ paths, commands, models and example percentages.
 
 ```text
 rota launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+rota launch --popup [--only BACKEND] [--dry-run]
 rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
 rota ps [--json] [--all]
 rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
@@ -26,6 +27,15 @@ rota status [--json]
 Launch defaults to `implement` and `high`, runs from the current folder and
 replaces itself with the selected CLI. It checks backend guards, account checks,
 quota limits and running processes before rotating to the next available backend.
+`launch --popup` shares that admission but takes no prompt file. It uses an
+optional backend `popup_command` argv (whole `{cwd}` substitution, no `{prompt}`)
+or the configured high executable with its built-in popup arguments: Codex
+`resume --no-daemon`, Claude `--resume`, Grok/OpenCode/Pi no extra arguments.
+Other executable basenames need `popup_command` to be eligible in popup mode.
+Ordinary launch still uses its level command and requires a prompt file.
+For a real popup-mode failure with terminal stdin and stderr, the diagnostic
+remains until Enter or EOF, then returns its original status. Dry-run,
+nonterminal calls and ordinary launch return immediately.
 Only implementers without `--only` can use the configured fallback, reported as
 `FALLBACK`. Exit codes: 2 for invalid input/config, 3 for refusal, 1 for I/O or
 launch failure. Status reports availability for both roles; a role a backend
