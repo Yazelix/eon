@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Linux's `eon` terminfo advertises `Smulx` underline styles 0–5 and `Setulc`
+  packed RGB underline colours (ORB-C10). Orbit's existing rich frames keep
+  both independently from the foreground. Darwin keeps its existing entry
+  and 4096-byte bound; extensions await `eon-nbjco` (`eon-khndw`).
+
 - Management generation 8 adds up to 16 counted PID/start identities, their
   completeness flag and the optional foreground leader identity to ProgramStatus
   within 4 KiB (ORB-C15). The raw background count and 512/255 bounds stay.

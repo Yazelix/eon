@@ -275,6 +275,8 @@ realPtyChecks
   orbit-terminfo = pkgs.runCommand "orbit-terminfo" { nativeBuildInputs = [ pkgs.ncurses ]; } ''
     export HOME="$TMPDIR"
     unset TERMINFO
+    TERMINFO_DIRS=${pkgs.ncurses}/share/terminfo tic -cx ${../orbit/terminfo/eon.terminfo} 2> tic.log
+    test ! -s tic.log
     if env -u TERMINFO_DIRS infocmp -x eon; then exit 1; fi
     export TERMINFO_DIRS=${orbitPackage}/share/terminfo
     infocmp -x eon | tee infocmp.log
@@ -283,11 +285,24 @@ realPtyChecks
     env -u TERMINFO_DIRS TERM=xterm-256color tput clear > expected.out
     test -s clear.out
     cmp clear.out expected.out
+    ${lib.optionalString pkgs.stdenv.isLinux ''
+      for style in 0 1 2 3 4 5; do
+        TERM=eon tput Smulx "$style" > style.out
+        printf '\033[4:%sm' "$style" > expected.out
+        cmp style.out expected.out
+      done
+      for rgb in '0 0 0' '255 0 0' '0 255 0' '0 0 255' '255 255 255' '18 52 86'; do
+        set -- $rgb
+        TERM=eon tput Setulc "$(($1 * 65536 + $2 * 256 + $3))" > color.out
+        printf '\033[58:2::%s:%s:%sm' "$1" "$2" "$3" > expected.out
+        cmp color.out expected.out
+      done
+    ''}
     touch "$out"
   '';
   # Darwin's entry is in the legacy format (magic 0432) within the legacy
   # reader's 4096 bytes, is the same file as 65/eon, and differs from the
-  # Linux entry only in pairs (ORB-C10).
+  # Linux entry only in pairs and Linux's underline extensions (ORB-C10).
   orbit-terminfo-darwin = pkgs.runCommand "orbit-terminfo-darwin" { nativeBuildInputs = [ pkgs.ncurses ]; } ''
     export HOME="$TMPDIR"
     unset TERMINFO TERMINFO_DIRS
@@ -296,8 +311,12 @@ realPtyChecks
     test "$(stat -c %s "$darwin/e/eon")" -le 4096
     cmp "$darwin/e/eon" "$darwin/65/eon"
     tic -x -o linux ${../orbit/terminfo/eon.terminfo}
-    infocmp -x -A linux -B "$darwin" eon eon | tee compare.log
-    test "$(grep -v '^ *comparing' compare.log)" = "$(printf '\tpairs: 65536, 32767.')"
+    infocmp -x -1 -A linux eon > linux.info
+    infocmp -x -1 -A "$darwin" eon > darwin.info
+    sed '/^#/d; /[[:space:]]pairs#/d; /[[:space:]]Smulx=/d; /[[:space:]]Setulc=/d' linux.info > linux.common
+    sed '/^#/d; /[[:space:]]pairs#/d' darwin.info > darwin.common
+    cmp linux.common darwin.common
+    test "$(TERMINFO_DIRS="$darwin" TERM=eon tput pairs)" = 32767
     touch "$out"
   '';
   # The committed boundary is what its schema generates, so a schema edit

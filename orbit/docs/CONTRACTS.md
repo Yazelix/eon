@@ -664,7 +664,13 @@ PTY pixel size rule needs no wire change.
 - **Trigger:** Orbit launches a PTY child.
 - **Result:** The child receives `TERM=eon` and `COLORTERM=truecolor`; the launch
   environment supplies the repository-owned compiled `eon` terminfo entry
-  inheriting `xterm-256color`, so lookup and `clear` succeed. On macOS the
+  inheriting `xterm-256color`, so lookup and `clear` succeed. On Linux the
+  entry advertises `Smulx` for underline styles 0 (off), 1 (single), 2
+  (double), 3 (curly), 4 (dotted) and 5 (dashed), and `Setulc` for an
+  independent 24-bit RGB underline colour supplied as a packed `0xRRGGBB`
+  parameter. The macOS entry does not advertise these extensions; its
+  existing capabilities and 4096-byte legacy-entry bound remain unchanged
+  (follow-up `eon-nbjco`). On macOS the
   entry is also readable by the system's ncurses, so programs such as
   `/bin/zsh` and `less` resolve `eon` too: it is written in the legacy
   terminfo format, which caps `pairs` at 32767 where `xterm-256color` has
@@ -672,7 +678,9 @@ PTY pixel size rule needs no wire change.
 - **Important failures:** Missing or invalid terminfo is exposed by lookup and
   real-PTY behavior checks rather than hidden by a fallback identity.
 - **Owner:** Orbit's Rust host, which spawns the PTY child, and
-  [`terminfo/eon.terminfo`](../terminfo/eon.terminfo); Eon installs the entry.
+  [`terminfo/eon.terminfo`](../terminfo/eon.terminfo) on Linux and
+  [`terminfo/eon-darwin.terminfo`](../terminfo/eon-darwin.terminfo) on macOS;
+  Eon installs the entry.
 - **Boundary:** Other distribution formats remain outside this contract's proof.
 - **Proof:** the `eon-awmq.3` import commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
@@ -689,11 +697,21 @@ PTY pixel size rule needs no wire change.
       `COLORTERM=truecolor` and only the package's terminfo, and that `clear`
       exits 0 and blanks the next frame. The host sets `TERM` and `COLORTERM`
       when it spawns the child in [`src/pty.rs`](../src/pty.rs).
+- **Linux underline checks (`eon-khndw`):**
+  - `orbit-terminfo` expands every style and RGB channel boundaries from the
+    compiled entry; `orbit-terminal-identity` sends its `tput` output through
+    a real PTY and reads a curly RGB underline, independent foreground and
+    reset from the canonical frame.
+  - [`styled_underlines_keep_independent_colors_and_resets`](../src/frame.rs)
+    covers styles 0–5, both RGB separator forms and style/colour resets.
+  - The bead records the exact candidate, Linux environment and isolated
+    native Helix/Neovim diagnostic captures for installed proof.
 - **Open proof:** The macOS clause has no native run. From Linux,
   `orbit-terminfo-darwin` (`eon-mac-launch-kz4p.20`) builds the macOS entry and
   checks that it starts with the legacy magic 0432, fits the legacy reader's
   4096 bytes, is reachable as `e/eon` and `65/eon`, and differs from the Linux
-  entry only in `pairs`. The macOS harness (`eon-mac-launch-kz4p.8`) is to run
+  entry only in `pairs` and the Linux-only `Smulx`/`Setulc` extensions. The
+  macOS harness (`eon-mac-launch-kz4p.8`) is to run
   the system's `/usr/bin/infocmp eon` and `TERM=eon /usr/bin/tput clear` with
   an empty `HOME` and only the package's `share/terminfo` on `TERMINFO_DIRS`.
 

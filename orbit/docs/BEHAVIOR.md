@@ -97,16 +97,24 @@ keeps its pathname and exits with its child's code.
 The PTY child gets `TERM=eon` and `COLORTERM=truecolor`
 (ORB-C10). The package carries the compiled `eon` entry, which inherits
 `xterm-256color`, in `share/terminfo`: the flake compiles
-[orbit/terminfo/eon.terminfo](../terminfo/eon.terminfo) with `tic -x`. Nothing
+[orbit/terminfo/eon.terminfo](../terminfo/eon.terminfo) with `tic -x` on Linux.
+The Linux entry advertises `Smulx` for underline styles 0–5 (off, single,
+double, curly, dotted and dashed), and `Setulc` for an independent underline
+colour supplied as a packed `0xRRGGBB` parameter. Editors discover these
+capabilities through terminfo. Orbit preserves the style and colour in its
+canonical frames and Venus draws them. Nothing
 falls back to another identity, so the launch environment must put that
 directory on `TERMINFO_DIRS`, as Eon's wrappers do; without it, lookup and
 `clear` fail visibly.
 
-For a macOS package, the flake compiles the same source with `pairs#0x7fff`
+For a macOS package, the flake compiles
+[eon-darwin.terminfo](../terminfo/eon-darwin.terminfo) with `pairs#0x7fff`
 added before `use=xterm-256color`. This lets the system's ncurses read the
 entry too, since it reads only the legacy terminfo format and looks under hex
 directory names. With every number within the legacy format's 0x7fff, `tic`
 writes that format. The package installs `e/eon` with a `65 -> e` link.
+Its existing capabilities stay within the 4096-byte legacy-entry bound;
+`Smulx` and `Setulc` are not advertised on macOS (`eon-nbjco`).
 
 The terminfo check resolves `eon` with only the package's directory on
 `TERMINFO_DIRS`, gets `xterm-256color`'s clear sequence from
@@ -114,11 +122,17 @@ The terminfo check resolves `eon` with only the package's directory on
 real-PTY terminal-identity check gives the child only the package's
 directory: the child reports its `TERM`, `COLORTERM` and `TERMINFO_DIRS`,
 `clear` exits 0, and the next frame is blank but for what the child prints
-after it. With the entry removed, the check failed.
+after it. On Linux the child also uses `tput Smulx 3` and `tput Setulc
+1193046` from that entry; the check expects a curly underline in RGB(18,52,86)
+with a separate foreground, and plain text after reset. The frame unit test
+`styled_underlines_keep_independent_colors_and_resets` covers styles 0–5,
+both RGB separator forms and independent style/colour resets. With the entry
+removed, the original lookup/clear check failed.
 
 The Darwin terminfo check builds the macOS entry on Linux and finds the legacy
 magic 0432, at most 4096 bytes, the same file at `65/eon`, and, from
-`infocmp`, no difference from the Linux entry but `pairs`. Without the cap,
+`infocmp`, no difference from the Linux entry but `pairs` and the Linux-only
+underline extensions. Without the cap,
 the check failed. No native macOS run has read it yet.
 
 Orbit starts with grapheme clustering (DEC mode 2027) on, and a full reset

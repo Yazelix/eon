@@ -932,6 +932,55 @@ mod tests {
     use libghostty_vt::terminal::ScrollViewport;
     use orbit_protocol::session::{self, MAX_RESOURCE_SIDE, ServerMessage, VerticalPreview};
 
+    #[test]
+    fn styled_underlines_keep_independent_colors_and_resets() {
+        for color in ["\x1b[58;2;18;52;86m", "\x1b[58:2::18:52:86m"] {
+            let mut terminal = Terminal::new(10, 2).unwrap();
+            terminal.vt_write(b"\x1b[38;2;210;220;230m");
+            terminal.vt_write(color.as_bytes());
+            let styles = [
+                Underline::None,
+                Underline::Single,
+                Underline::Double,
+                Underline::Curly,
+                Underline::Dotted,
+                Underline::Dashed,
+            ];
+            for number in 0..styles.len() {
+                terminal.vt_write(format!("\x1b[4:{number}m{number}").as_bytes());
+            }
+            terminal.vt_write(b"\x1b[4:0mO\x1b[4:3m\x1b[59mR\x1b[0mN");
+            let frame = FrameExtractor::new(false)
+                .unwrap()
+                .frame(1, &terminal)
+                .unwrap();
+            let cells = &frame.rows[0].cells;
+            let foreground = StyleColor::Rgb(Rgb {
+                r: 210,
+                g: 220,
+                b: 230,
+            });
+            let underline_color = StyleColor::Rgb(Rgb {
+                r: 18,
+                g: 52,
+                b: 86,
+            });
+            for (cell, style) in cells.iter().zip(styles) {
+                assert_eq!(cell.style.underline, style, "{color:?}");
+                assert_eq!(cell.style.underline_color, underline_color);
+                assert_eq!(cell.style.foreground, foreground);
+            }
+            assert_eq!(cells[6].style.underline, Underline::None);
+            assert_eq!(cells[6].style.underline_color, underline_color);
+            assert_eq!(cells[7].style.underline, Underline::Curly);
+            assert_eq!(cells[7].style.underline_color, StyleColor::None);
+            assert_eq!(cells[7].style.foreground, foreground);
+            assert_eq!(cells[8].style.underline, Underline::None);
+            assert_eq!(cells[8].style.underline_color, StyleColor::None);
+            assert_eq!(cells[8].style.foreground, StyleColor::None);
+        }
+    }
+
     /// Transmits a white RGB image of `width` by `height` pixels as Kitty
     /// image `id`, with the control keys `keys`.
     fn transmit(

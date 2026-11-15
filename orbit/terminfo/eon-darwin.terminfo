@@ -1,0 +1,3 @@
+# Underline extensions exceed the 4096-byte legacy-entry limit by 21 bytes (eon-nbjco).
+eon|Eon terminal,
+    use=xterm-256color,

@@ -1,5 +1,5 @@
 use crate::support::*;
-use orbit_protocol::Frame;
+use orbit_protocol::{Frame, Rgb, StyleColor, Underline};
 use std::{env, fs, path::PathBuf};
 
 /// The package's compiled terminfo, `share/terminfo` beside the `bin` that
@@ -74,6 +74,24 @@ pub fn run() {
     }
 
     gate.release();
+    if cfg!(target_os = "linux") {
+        let underlined = peer.frame_titled("UNDERLINED");
+        assert_eq!(row_text(&underlined, 1), "CAPABILITIES 0 0");
+        for cell in &underlined.rows[0].cells[..8] {
+            assert_eq!(cell.style.underline, Underline::Curly);
+            assert_eq!(
+                cell.style.underline_color,
+                StyleColor::Rgb(Rgb { r: 18, g: 52, b: 86 })
+            );
+            assert_eq!(
+                cell.style.foreground,
+                StyleColor::Rgb(Rgb { r: 210, g: 220, b: 230 })
+            );
+        }
+        assert_eq!(underlined.rows[1].cells[0].style.underline, Underline::None);
+        assert_eq!(underlined.rows[1].cells[0].style.underline_color, StyleColor::None);
+        gate.release();
+    }
     peer.exited(0);
     drop(peer);
     server.passed(0, 10.0);

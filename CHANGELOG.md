@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- On Linux, Eon's terminfo advertises styled underlines (`Smulx`) and
+  independent underline colours (`Setulc`) for editors' coloured undercurls.
+  macOS retains its existing legacy terminfo entry; its extensions are
+  tracked by `eon-nbjco` (`eon-khndw`, ORB-C10).
 - On Linux with agent configuration, Agent `auto` shares admission and rotation
   with `eon agent launch --popup`, preserving resume commands and its own
   directory/terminal context. Managed refusal never falls back to an unmanaged

@@ -388,7 +388,7 @@
           # (ORB-C10). orbit-terminfo-darwin inspects it on Linux.
           darwinTerminfo =
             let
-              source = builtins.readFile ./orbit/terminfo/eon.terminfo;
+              source = builtins.readFile ./orbit/terminfo/eon-darwin.terminfo;
               parent = "use=xterm-256color,";
               capped = builtins.replaceStrings [ parent ] [ "pairs#0x7fff, ${parent}" ] source;
             in
