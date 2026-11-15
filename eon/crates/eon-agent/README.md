@@ -148,6 +148,15 @@ expanded. Keep personal state and logs outside the repository.
 
 - `backends` array order is round-robin order. `roles` controls eligibility;
   the fallback backend has an empty role list. Disabled backends never run checks.
+- Optional top-level `popup_backend = "main"` pins `launch --popup` to an
+  implement backend or the configured fallback. Omission keeps dynamic
+  selection; explicit `--only` overrides it with its existing role restrictions.
+  The pinned backend keeps its checks and environment, and refusal never
+  selects another backend. Claude resume reads `CLAUDE_CONFIG_DIR`, defaulting
+  to `~/.claude` under its effective home. Pin that store's backend to resume
+  there; its `unset_env` can clear an inherited alternate store. Histories are
+  never merged. Ordinary launch/run selection is unchanged. Successful pinned
+  launches update the shared rotation cursor as usual.
 - `commands.medium` and `commands.high` are argv arrays, with one whole argument
   `{prompt}` and optional `{cwd}` arguments. They run directly, without a shell.
   OpenCode uses `opencode mini -m MODEL#VARIANT --prompt {prompt}`.

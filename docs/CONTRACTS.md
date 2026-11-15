@@ -2209,7 +2209,12 @@ names its socket. CLI JSON names a session `session` and a terminal
   the macOS preview retain existing first-available-provider selection in
   Codex, Grok, OpenCode, Pi, Claude order. A managed refusal or invalid or
   unreadable configuration never retries through this built-in path.
-  Venus never chooses a backend. Git and Agent remain live when hidden. Reopening at the same tab
+  Venus never chooses a backend.
+  EON-C40's optional `popup_backend` setting pins managed Agent popup
+  starts to the configured backend that owns the person's resume store.
+  That backend still passes managed admission; a refused pin starts no
+  other backend. Native provider session discovery stays with the provider.
+  Git and Agent remain live when hidden. Reopening at the same tab
   directory preserves identity. When a tab's directory changes explicitly
   (a pair pick or `SetTabDirectory`), a live Agent terminal
   launched at another directory is parked in the same step: it leaves the popup
@@ -6694,6 +6699,34 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   records, preparation, rotation and exec behavior. It runs in the calling
   terminal and current directory; it creates no pane. Ordinary launch
   retains its required prompt-file argument and behavior.
+
+  Optional top-level `popup_backend` in agent.toml names the backend used
+  by `launch --popup` when `--only` is absent. If omitted, popup mode keeps
+  the existing implement/high backend selection. A pin must name a
+  configured backend with the implement role or the explicitly configured
+  fallback; other names are invalid configuration (exit 2). An explicit
+  `--only` overrides the pin and retains its existing role restrictions.
+  Ordinary launch and run selection are unchanged.
+
+  A pin restricts eligible popup candidates before admission. The pinned
+  backend retains its enabled state, guard, required files, excluded roots,
+  account checks, quota limits, caps, preparation and environment. A pinned
+  configured fallback uses the existing reported `FALLBACK` decision path.
+  Failed admission, including an unavailable popup command, refuses with
+  exit 3 and never selects another backend or retries through unmanaged
+  built-ins. An exec failure keeps exit 1. Existing diagnostic retention,
+  decision records, lock and rotation behavior remain in force. Dry-run
+  applies the same pin without launching or mutating state.
+
+  Popup resume uses the admitted backend's effective native configuration
+  store, including its `env` and `unset_env`; Eon does not override the
+  store after admission or combine one backend's checks with another
+  backend's account. For Claude, `CLAUDE_CONFIG_DIR` selects that store;
+  when absent, Claude uses `~/.claude` under its effective home. To resume
+  sessions there independently of ordinary backend rotation, configure
+  `popup_backend` to the corresponding configured backend. Eon neither
+  searches nor merges histories across native stores. Showing an existing
+  keep-alive Agent terminal does not select or admit again.
 
   Popup mode uses optional backend `popup_command` argv. Without that
   field, a configured high command whose executable basename is `codex`,

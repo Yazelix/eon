@@ -276,17 +276,19 @@ pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
         })
         .transpose()?
         .unwrap_or("");
-    let mut indices = decision::candidates(config, options.role, options.only.as_deref())
-        .map_err(|e| (e.code, e.message))?;
-    if options.role == Role::Implement && options.only.is_none() {
-        if let Some(index) = config
-            .backends
-            .iter()
-            .position(|b| Some(&b.name) == config.fallback.as_ref())
-        {
-            indices.push(index);
-        }
-    }
+    let popup_backend = if options.popup {
+        config.popup_backend.as_deref()
+    } else {
+        None
+    };
+    let candidates =
+        decision::candidates(config, options.role, options.only.as_deref(), popup_backend)
+            .map_err(|e| (e.code, e.message))?;
+    let indices: Vec<_> = candidates
+        .normal
+        .into_iter()
+        .chain(candidates.fallback)
+        .collect();
     // Serialize rota launches from scan through exec.
     let _lock = if options.dry_run {
         None
@@ -317,6 +319,7 @@ pub fn run(config: &Config, options: &Options) -> Result<(), Failure> {
         options.role,
         options.only.as_deref(),
         last.as_deref().map(str::trim),
+        popup_backend,
     );
     if !options.dry_run {
         let level = Some(options.level);

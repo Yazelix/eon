@@ -22,6 +22,7 @@ pub struct Config {
     pub state_file: PathBuf,
     pub log_file: PathBuf,
     pub fallback: Option<String>,
+    pub popup_backend: Option<String>,
     #[serde(default)]
     pub run: RunEnv,
     #[serde(default)]
@@ -482,6 +483,18 @@ impl Config {
                 return Err("fallback backend must have no normal routing roles".into());
             }
         }
+        if let Some(pin) = &self.popup_backend {
+            if !self.backends.iter().any(|backend| {
+                &backend.name == pin
+                    && (backend.roles.contains(&Role::Implement)
+                        || self.fallback.as_ref() == Some(pin))
+            }) {
+                return Err(
+                    "popup_backend must name an implement backend or the configured fallback"
+                        .into(),
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -494,6 +507,24 @@ mod tests {
     #[test]
     fn example_is_valid() {
         Config::parse(EXAMPLE).unwrap();
+    }
+
+    #[test]
+    fn popup_pin_requires_an_implement_backend_or_the_configured_fallback() {
+        for name in ["alpha", "main"] {
+            Config::parse(&format!("popup_backend = '{name}'\n{EXAMPLE}")).unwrap();
+        }
+        for name in ["", "missing", "alpha"] {
+            let config = format!("popup_backend = '{name}'\n{EXAMPLE}").replace(
+                "roles = [\"implement\", \"review\"]",
+                "roles = [\"review\"]",
+            );
+            let error = Config::parse(&config).unwrap_err();
+            assert!(
+                error.contains("implement backend or the configured fallback"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

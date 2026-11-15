@@ -10,6 +10,10 @@ installation, and proven contract changes.
   directory/terminal context. Managed refusal never falls back to an unmanaged
   backend. macOS and config-less users retain the built-in popup path; custom
   backends can set `popup_command` (`eon-eon-agent-lr8sx.28`).
+  Optional `popup_backend` pins managed popup starts to the configured backend
+  owning the desired resume store; Claude uses that backend's
+  `CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. A refused pin starts no other
+  backend; omission keeps dynamic selection (`eon-6afbi`).
   Interactive popup-mode failures retain their diagnostic until Enter, using
   the existing dismissal interaction; dry-run and piped failures exit immediately.
 

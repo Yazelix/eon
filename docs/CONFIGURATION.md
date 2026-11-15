@@ -111,6 +111,22 @@ launch still requires its prompt file. Each backend may set an optional
 `{prompt}`, and may use a whole `{cwd}` argument. It runs under that backend's
 existing environment, checks, limits and preparation.
 
+Optional top-level `popup_backend = "main"` pins popup starts to a configured
+implement backend or the configured fallback. Omit it to keep dynamic
+implement/high selection. `--only BACKEND` overrides the pin with its existing
+role restrictions. A refused pin never selects another backend. Ordinary
+launch and run selection are unchanged. A successful pinned launch updates
+the shared rotation cursor as usual; the next ordinary launch rotates after it.
+
+Resume reads the admitted backend's native store. Claude uses
+`CLAUDE_CONFIG_DIR`, or `~/.claude` under its effective home when that variable
+is absent. To keep the popup on sessions in `~/.claude`, pin the configured
+backend owning that store, for example the `main` fallback in the
+[example configuration](../eon/crates/eon-agent/config.example.toml), whose
+`unset_env = ["CLAUDE_CONFIG_DIR"]` clears an inherited alternate store.
+Its guards, account checks, quota and caps still apply. Eon does not search
+or merge histories across stores or change accounts after admission.
+
 When `popup_command` is absent, the configured high command's executable
 basename selects its popup argv: `codex` adds `resume --no-daemon`, `claude`
 adds `--resume`, and `grok`, `opencode` and `pi` add nothing. The executable

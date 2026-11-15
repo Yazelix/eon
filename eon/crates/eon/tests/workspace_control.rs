@@ -12485,24 +12485,30 @@ fn popup_show_cli_creates_in_background_and_focuses_the_exact_instance() {
 #[test]
 fn agent_auto_popup_shares_cli_admission_source_command_and_context() {
     for primary in [false, true] {
-        check_agent_auto_popup(primary, None);
+        check_agent_auto_popup(primary, None, false);
     }
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn agent_auto_popup_relative_config_only_in_tab_uses_managed_admission() {
-    check_agent_auto_popup(false, Some(true));
+    check_agent_auto_popup(false, Some(true), false);
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn agent_auto_popup_relative_config_only_by_supervisor_keeps_builtin_path() {
-    check_agent_auto_popup(false, Some(false));
+    check_agent_auto_popup(false, Some(false), false);
 }
 
 #[cfg(target_os = "linux")]
-fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
+#[test]
+fn agent_auto_popup_pins_the_resume_store_and_shares_cli_admission() {
+    check_agent_auto_popup(true, None, true);
+}
+
+#[cfg(target_os = "linux")]
+fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>, pin: bool) {
     let mut window = PairWindow::new();
     if primary {
         let own = window.root.join(".eon-wrapped");
@@ -12514,7 +12520,7 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
     executable(
         &provider,
         format!(
-            "#!/bin/sh\nprintf '%s|%s|%s|%s|%s\\n' \"$#\" \"$*\" \"$(pwd -P)\" \"$EON_TERMINAL\" \"$EON_TAB\" >> '{}'\n\
+            "#!/bin/sh\nprintf '%s|%s|%s|%s|%s|%s\\n' \"$#\" \"$*\" \"$(pwd -P)\" \"$EON_TERMINAL\" \"$EON_TAB\" \"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\" >> '{}'\n\
              if [ \"${{EON_TEST_POPUP_ONCE:-}}\" = 1 ]; then exit 0; fi\n\
              while [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
             launched.display()
@@ -12536,9 +12542,29 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
         fallback.clone()
     };
     let config = |name: &str| {
+        let pinned = if pin {
+            format!(
+                "fallback = '{name}'\npopup_backend = '{name}'\n\
+                 [[backends]]\nname = 'secondary'\nroles = ['implement']\n\
+                 guard = ['true']\nallow_unknown_quota = true\n\
+                 popup_command = ['{}', '--resume']\n\
+                 [backends.env]\nCLAUDE_CONFIG_DIR = '{}/.sclaude'\n\
+                 [backends.commands]\nmedium = ['never-start-this', '{{prompt}}']\n\
+                 high = ['never-start-this', '{{prompt}}']\n",
+                provider.display(),
+                window.home.display(),
+            )
+        } else {
+            String::new()
+        };
+        let role = if pin {
+            "roles = []\nunset_env = ['CLAUDE_CONFIG_DIR']"
+        } else {
+            "roles = ['implement']"
+        };
         format!(
-            "state_file = '{}'\nlog_file = '{}'\n\
-             [[backends]]\nname = '{name}'\nroles = ['implement']\n\
+            "state_file = '{}'\nlog_file = '{}'\n{pinned}\
+             [[backends]]\nname = '{name}'\n{role}\n\
              guard = ['true']\nallow_unknown_quota = true\n\
              popup_command = ['{}', '--resume']\n\
              [backends.commands]\nmedium = ['never-start-this', '{{prompt}}']\n\
@@ -12555,6 +12581,7 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
     let mut command = window.scrollback_command();
     command
         .env("ROTA_CONFIG", &source)
+        .env("CLAUDE_CONFIG_DIR", window.root.join("inherited-store"))
         .env("XDG_CONFIG_HOME", window.root.join("other-config"));
     let mut supervisor = window.start(command);
     wait_for_ready(&window.control());
@@ -12611,6 +12638,9 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
         "{context:?}"
     );
     assert_eq!(context[4], "t1");
+    if pin {
+        assert_eq!(context[5], window.home.join(".claude").to_str().unwrap());
+    }
     let first = wait_for_lines(&decisions, 1);
     let normalize = |text: &str| {
         let mut value: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -12618,6 +12648,7 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
         value
     };
     let expected = normalize(&first[0]);
+    assert_eq!(expected["decision"], if pin { "FALLBACK" } else { "pick" });
     assert_eq!(
         expected["pick"],
         if primary { "primary" } else { "fallback" }
@@ -12634,6 +12665,7 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>) {
         .env("EON_TERMINAL", context[3])
         .env("EON_TAB", context[4])
         .env("EON_TEST_POPUP_ONCE", "1")
+        .env("CLAUDE_CONFIG_DIR", window.root.join("inherited-store"))
         .current_dir(&window.home)
         .args(["agent", "launch", "--popup"])
         .output()

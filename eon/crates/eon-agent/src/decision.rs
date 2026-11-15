@@ -117,8 +117,24 @@ pub struct Refusal {
     pub message: String,
 }
 
-pub fn candidates(config: &Config, role: Role, only: Option<&str>) -> Result<Vec<usize>, Refusal> {
-    if let Some(name) = only {
+pub struct Candidates {
+    pub normal: Vec<usize>,
+    pub fallback: Option<usize>,
+}
+
+pub fn candidates(
+    config: &Config,
+    role: Role,
+    only: Option<&str>,
+    popup_backend: Option<&str>,
+) -> Result<Candidates, Refusal> {
+    let pinned_fallback = role == Role::Implement
+        && only.is_none()
+        && popup_backend.is_some()
+        && popup_backend == config.fallback.as_deref();
+    let normal = if pinned_fallback {
+        Vec::new()
+    } else if let Some(name) = only.or(popup_backend) {
         let Some(index) = config
             .backends
             .iter()
@@ -129,14 +145,27 @@ pub fn candidates(config: &Config, role: Role, only: Option<&str>) -> Result<Vec
                 message: format!("--only {name} is not allowed for role {role:?}"),
             });
         };
-        return Ok(vec![index]);
-    }
-    Ok(config
-        .backends
-        .iter()
-        .enumerate()
-        .filter_map(|(i, b)| b.roles.contains(&role).then_some(i))
-        .collect())
+        vec![index]
+    } else {
+        config
+            .backends
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| b.roles.contains(&role).then_some(i))
+            .collect()
+    };
+    let fallback = if role == Role::Implement
+        && only.is_none()
+        && (popup_backend.is_none() || pinned_fallback)
+    {
+        config
+            .backends
+            .iter()
+            .position(|b| Some(&b.name) == config.fallback.as_ref())
+    } else {
+        None
+    };
+    Ok(Candidates { normal, fallback })
 }
 
 /// The first available backend in `allowed`, in rotation order after `last`.
@@ -166,29 +195,24 @@ pub fn choose(
     role: Role,
     only: Option<&str>,
     last: Option<&str>,
+    popup_backend: Option<&str>,
 ) -> Result<Pick, Refusal> {
-    let allowed = candidates(config, role, only)?;
-    if let Some(index) = rotate(config, &allowed, readings, role, last) {
+    let candidates = candidates(config, role, only, popup_backend)?;
+    if let Some(index) = rotate(config, &candidates.normal, readings, role, last) {
         return Ok(Pick {
             index,
             fallback: false,
         });
     }
-    if role == Role::Implement && only.is_none() {
-        if let Some(index) = config
-            .backends
-            .iter()
-            .position(|b| Some(&b.name) == config.fallback.as_ref())
+    if let Some(index) = candidates.fallback {
+        if readings
+            .get(index)
+            .is_some_and(|r| availability(&config.backends[index], r, role).is_ok())
         {
-            if readings
-                .get(index)
-                .is_some_and(|r| availability(&config.backends[index], r, role).is_ok())
-            {
-                return Ok(Pick {
-                    index,
-                    fallback: true,
-                });
-            }
+            return Ok(Pick {
+                index,
+                fallback: true,
+            });
         }
     }
     Err(Refusal {
@@ -225,42 +249,44 @@ mod tests {
         let config = config();
         let mut r = readings(&config);
         assert_eq!(
-            choose(&config, &r, Role::Implement, None, None)
+            choose(&config, &r, Role::Implement, None, None, None)
                 .unwrap()
                 .index,
             0
         );
         assert_eq!(
-            choose(&config, &r, Role::Implement, None, Some("alpha"))
+            choose(&config, &r, Role::Implement, None, Some("alpha"), None)
                 .unwrap()
                 .index,
             1
         );
         assert_eq!(
-            choose(&config, &r, Role::Review, None, Some("secondary"))
+            choose(&config, &r, Role::Review, None, Some("secondary"), None)
                 .unwrap()
                 .index,
             0
         );
         assert_eq!(
-            choose(&config, &r, Role::Implement, None, Some("code"))
+            choose(&config, &r, Role::Implement, None, Some("code"), None)
                 .unwrap()
                 .index,
             0
         );
         assert_eq!(
-            choose(&config, &r, Role::Implement, None, Some("deleted"))
+            choose(&config, &r, Role::Implement, None, Some("deleted"), None)
                 .unwrap()
                 .index,
             0
         );
         r[0].running = 1;
         assert_eq!(
-            choose(&config, &r, Role::Review, None, None).unwrap().index,
+            choose(&config, &r, Role::Review, None, None, None)
+                .unwrap()
+                .index,
             1
         );
         assert_eq!(
-            choose(&config, &r, Role::Review, Some("code"), None)
+            choose(&config, &r, Role::Review, Some("code"), None, None)
                 .unwrap_err()
                 .code,
             2
@@ -286,19 +312,19 @@ mod tests {
             reading.problem = Some("unavailable".into());
         }
         assert_eq!(
-            choose(&config, &r, Role::Review, None, None)
+            choose(&config, &r, Role::Review, None, None, None)
                 .unwrap_err()
                 .code,
             3
         );
         assert_eq!(
-            choose(&config, &r, Role::Implement, Some("code"), None)
+            choose(&config, &r, Role::Implement, Some("code"), None, None)
                 .unwrap_err()
                 .code,
             3
         );
         assert_eq!(
-            choose(&config, &r, Role::Implement, None, None).unwrap(),
+            choose(&config, &r, Role::Implement, None, None, None).unwrap(),
             Pick {
                 index: 4,
                 fallback: true
@@ -306,10 +332,29 @@ mod tests {
         );
         r[4].problem = Some("guard missing".into());
         assert_eq!(
-            choose(&config, &r, Role::Implement, None, None)
+            choose(&config, &r, Role::Implement, None, None, None)
                 .unwrap_err()
                 .code,
             3
+        );
+    }
+    #[test]
+    fn popup_pin_refuses_a_cap_even_when_other_readings_and_fallback_are_available() {
+        let config = config();
+        let mut r = readings(&config);
+        r[0].running = config.backends[0].cap.as_ref().unwrap().max;
+        assert_eq!(
+            choose(&config, &r, Role::Implement, None, None, Some("alpha"))
+                .unwrap_err()
+                .code,
+            3
+        );
+        assert_eq!(
+            choose(&config, &r, Role::Implement, None, None, Some("main")).unwrap(),
+            Pick {
+                index: 4,
+                fallback: true
+            }
         );
     }
     #[test]

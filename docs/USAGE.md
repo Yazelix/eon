@@ -70,7 +70,12 @@ Diagnostic text, session/unit names and ROTA_* variables keep rota's spellings.
 
 On Linux with an agent configuration file, the Agent popup uses
 `eon agent launch --popup`: the same admission and rotation, with popup resume
-commands and no prompt argument, in its own terminal and tab directory. Use
+commands and no prompt argument, in its own terminal and tab directory.
+Optional `popup_backend` in agent.toml pins it to the configured backend
+owning the desired resume store; omission keeps dynamic selection. For
+Claude sessions in `~/.claude`, use that store's configured backend, clearing
+an inherited `CLAUDE_CONFIG_DIR` through its `unset_env`. A refused pin never
+selects another backend. Ordinary launch and run selection are unchanged. Use
 `eon agent launch --popup --dry-run` to inspect that choice. Without an agent
 configuration file, and on macOS, Agent retains its built-in provider order.
 Invalid configuration and managed refusals never retry through the built-ins.

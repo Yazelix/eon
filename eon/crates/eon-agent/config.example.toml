@@ -4,6 +4,8 @@
 state_file = "/PATH/TO/state/last-pick"
 log_file = "/PATH/TO/state/decisions.jsonl"
 fallback = "main"
+# Optional: keep popup resume on main's store; omitted means dynamic selection.
+# popup_backend = "main"
 
 # Headless runs (rota run) only, never checks: drop these inherited variables
 # (a trailing * matches every name with that prefix), then set [run.env].
