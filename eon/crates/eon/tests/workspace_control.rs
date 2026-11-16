@@ -2859,6 +2859,11 @@ fn wait_for(path: &Path) {
     assert!(ready(), "{} was not created or populated", path.display());
 }
 
+fn wait_for_pid(path: &Path) -> u32 {
+    wait_for(path);
+    fs::read_to_string(path).unwrap().parse().unwrap()
+}
+
 fn wait_for_ready(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -3869,11 +3874,7 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
     // Presentation detachment dismisses a pending pair without stopping it.
     assert!(window.eon(&["tab", "create"]).status.success());
     window.pair_launch("terminal-6");
-    wait_for(&window.venus_pid);
-    let venus: i32 = fs::read_to_string(&window.venus_pid)
-        .unwrap()
-        .parse()
-        .unwrap();
+    let venus = i32::try_from(wait_for_pid(&window.venus_pid)).unwrap();
     // SAFETY: the PID came from this test's live Venus child.
     assert_eq!(unsafe { libc::kill(venus, libc::SIGTERM) }, 0);
     let detached = wait_for_snapshot(&control, "detached", |snapshot| {
@@ -6468,7 +6469,7 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
     );
     wait_for_process_removal(pair.process_id, "late Ready pair survived Stop");
     wait_for_process_removal(first.process_id, "completed terminal survived Stop");
-    let venus_pid: u32 = fs::read_to_string(venus_pid).unwrap().parse().unwrap();
+    let venus_pid = wait_for_pid(&venus_pid);
     // SAFETY: this is the unreaped presentation child recorded by this test's supervisor.
     assert_eq!(unsafe { libc::kill(venus_pid as i32, libc::SIGTERM) }, 0);
     wait_for_process_removal(venus_pid, "partial Stop retained an ended Venus child");
@@ -11597,10 +11598,7 @@ fn identity_record_retains_build_derived_launch_facts_and_recordless_recovery() 
     );
     assert_eq!(&original[114..], launcher.as_os_str().as_bytes());
     let host = live_identity(&runtime.join("orbit.sock"));
-    let venus: u32 = fs::read_to_string(&window.venus_pid)
-        .unwrap()
-        .parse()
-        .unwrap();
+    let venus = wait_for_pid(&window.venus_pid);
     let detach = window.venus_pid.with_extension("pid.detach");
     fs::write(&detach, b"detach").unwrap();
     wait_for_process_removal(venus, "Venus did not detach");
