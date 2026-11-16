@@ -91,30 +91,36 @@ mod tests {
 
     #[test]
     fn installed_capture_refuses_a_foreign_locator_and_symlinked_facts() {
-        let root = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.path().join("bin")).unwrap();
-        fs::create_dir_all(root.path().join("share/eon")).unwrap();
-        let executable = root.path().join("bin/.eon-wrapped");
+        use std::os::unix::{ffi::OsStrExt, fs::symlink};
+
+        // Force an ancestor alias on every platform, as macOS has for temporary paths.
+        let parent = tempfile::tempdir().unwrap();
+        let alias = parent.path().join("alias");
+        symlink(parent.path(), &alias).unwrap();
+        let root = tempfile::tempdir_in(&alias).unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        fs::create_dir_all(directory.join("bin")).unwrap();
+        fs::create_dir_all(directory.join("share/eon")).unwrap();
+        let executable = directory.join("bin/.eon-wrapped");
         fs::write(&executable, "raw").unwrap();
-        let wrapper = root.path().join("bin/eon");
+        let wrapper = directory.join("bin/eon");
         fs::write(&wrapper, "wrapper").unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-        let locator = root.path().join("share/eon/launch-environment");
+        let locator = directory.join("share/eon/launch-environment");
         let arguments = || vec!["eon".into()];
         let env = |path: &Path| vec![(LAUNCH_FACTS_VARIABLE.into(), path.into())];
         assert!(capture_at(&executable, arguments(), env(Path::new("/foreign"))).is_err());
         assert!(capture_at(&executable, arguments(), env(&locator)).is_err());
-        use std::os::unix::ffi::OsStrExt;
         let mut table = b"EON-LAUNCH-1\0".to_vec();
         for path in [&wrapper, &executable] {
             table.extend_from_slice(path.as_os_str().as_bytes());
             table.push(0);
         }
-        fs::write(root.path().join("table"), &table).unwrap();
-        std::os::unix::fs::symlink(root.path().join("table"), &locator).unwrap();
+        fs::write(directory.join("table"), &table).unwrap();
+        symlink(directory.join("table"), &locator).unwrap();
         assert!(capture_at(&executable, arguments(), env(&locator)).is_err());
         fs::remove_file(&locator).unwrap();
         fs::write(&locator, table).unwrap();
-        assert!(capture_at(&executable, arguments(), env(&locator)).is_ok());
+        capture_at(&executable, arguments(), env(&locator)).unwrap();
     }
 }
