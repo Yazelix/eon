@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Apple Silicon Nix cache builds run on release tags or manual dispatch.
+  Uploads and permanent release pins remain off until a maintainer enables
+  publishing after the cache owner's approval (`eon-mac-launch-kz4p.51`).
+
 - When `[agents] terminal_access = "none"` refuses a content command, its
   diagnostic explains how a person can restore `"window"` access and the
   window-wide read/send authority it grants (`eon-260mh.9`).

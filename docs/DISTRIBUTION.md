@@ -370,6 +370,65 @@ fresh Nix store with both caches and signing keys configured, signatures require
 and local builds disabled. A local build alone does not prove upload, retention
 or fresh-store source substitution.
 
+### Darwin publishing
+
+`.github/workflows/cachix-darwin.yml` builds on `v*` tag pushes and manual
+dispatches only. It builds `packages.aarch64-darwin.default` and
+`packages.aarch64-darwin.helix-grammar-sources`, including disabled grammar
+sources. Logs and the job summary report the exact revision, roots, individual
+closure sizes and deduplicated combined closure NAR bytes. These uncompressed
+sizes do not measure compressed incremental Cachix storage.
+
+Publishing defaults to off. The repository variable setting
+`EON_DARWIN_CACHE_PUSH=true` enables uploads to `eon-yazelix`. A maintainer must
+resolve the cache owner's consent and capacity question in
+[issue #8](https://github.com/Yazelix/eon/issues/8) before enabling it. The
+workflow uses the existing `CACHIX_AUTH_TOKEN` secret only in gated credential,
+upload and pin steps; enabled publishing fails early if that secret is absent.
+With the variable absent or set to `false`, a dispatch still builds both
+outputs and reports closure sizes without uploading or pinning anything.
+
+Enabled runs push both closures. Only runs selecting a `refs/tags/v*` ref,
+including manual dispatches on such tags, retain the two roots with
+`cachix pin --keep-forever`. Pin names are
+`aarch64-darwin-<tag>-default` and
+`aarch64-darwin-<tag>-helix-grammar-sources`. Branch dispatches leave their
+uploads to eviction. Cachix's action has automatic pushing disabled in every
+mode. The Linux workflow's publishing and retention policy is separate.
+
+Each run uses one standard `macos-15` Apple Silicon runner, restricted to the
+public upstream repository, with a 120-minute timeout. Runs on the same ref
+share a concurrency group and do not cancel an active run; distinct tags have
+distinct groups. GitHub may replace an older pending run in a group, so a
+missing release result needs an explicit rerun. There are no edge-push or
+pull-request triggers, paid runners, Actions artifacts or Actions caches.
+Additional paid spend is $0. Local Nix builds remain available independently.
+
+Historical cold-store mac-proof runs `42898289714` and `42342668048` took
+49–53 minutes for the default package, building 620–624 derivations and
+substituting about 630 paths (0.6–0.9 GiB downloaded, 6 GiB unpacked).
+Budget about 55 minutes cold plus unmeasured grammar-source and upload time;
+warm-cache savings are not guaranteed. GitHub documents `macos-15` as 3 M1
+CPUs, 7 GB RAM and 14 GB SSD, and limits hosted jobs to six hours; standard
+public-runner minutes are free. See the [runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+and [Actions limits](https://docs.github.com/en/actions/reference/limits).
+Build temporaries add disk pressure beyond closure sizes; the job reports disk
+before and after building, including after failure.
+
+Cachix advertises a free 5 GB open-source allowance with least-recently-used
+eviction at capacity; the donated cache's actual plan, usage and room for
+permanent release pins remain its owner's decision. See
+[Cachix pricing](https://www.cachix.org/pricing). Revisit the job if disk or
+timeout failures recur, public runners stop being free, the donation ends, or
+the owner's capacity is insufficient. No paid expansion is authorized.
+
+A build-only dispatch proves neither publication nor a compile-free install.
+After authorized publication, verify both release pins and exact output
+`.narinfo` records, then realise the default package in a fresh Apple Silicon
+Nix store with both caches and keys configured, signatures required and local
+builds disabled. Record the release revision, run, paths and installing-user
+result. Until that succeeds, Darwin substitution remains unproved.
+
 ## Canonical release input
 
 A versioned component manifest records each component's project, source,

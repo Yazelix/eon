@@ -1,0 +1,104 @@
+name: Build Darwin binary cache
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eon-cachix-darwin-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # No paid private-repository runs or publishing from forks.
+    if: github.repository == 'Yazelix/eon' && github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Enable only after the cache owner agrees (Yazelix/eon#8).
+      PUSH_ENABLED: ${{ vars.EON_DARWIN_CACHE_PUSH == 'true' }}
+    steps:
+      - name: Check publishing credential
+        if: env.PUSH_ENABLED == 'true'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [ -z "$CACHIX_AUTH_TOKEN" ]; then
+            echo '::error::Set the per-cache write token as the CACHIX_AUTH_TOKEN repository secret.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          # Only unsandboxed Darwin builds are proved; eon-zuou owns sandboxed builds.
+          extra_nix_config: sandbox = false
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: eon-yazelix
+          # Explicit gated steps below are the only writers.
+          skipPush: true
+
+      - name: Check runner and available disk
+        run: |
+          test "$(uname -m)" = arm64
+          df -h / /nix
+
+      - name: Build the Darwin cache roots
+        run: |
+          : > "$RUNNER_TEMP/darwin-roots"
+          for output in default helix-grammar-sources; do
+            path=$(nix build --print-build-logs --no-link --print-out-paths \
+              ".#packages.aarch64-darwin.$output")
+            printf '%s\t%s\n' "$output" "$path" >> "$RUNNER_TEMP/darwin-roots"
+          done
+
+      - name: Report output closures
+        run: |
+          paths=()
+          while IFS=$'\t' read -r _output path; do
+            paths+=("$path")
+          done < "$RUNNER_TEMP/darwin-roots"
+          {
+            echo '## Darwin cache build'
+            printf 'Revision: %s\n\n' "$(git rev-parse HEAD)"
+            printf 'Publishing enabled: %s\n\n' "$PUSH_ENABLED"
+            echo 'Roots (label and store path), followed by per-root closure NAR bytes:'
+            echo '```text'
+            cat "$RUNNER_TEMP/darwin-roots"
+            nix path-info --closure-size "${paths[@]}"
+            echo '```'
+            total=$(nix path-info --recursive --size "${paths[@]}" | sort -u | \
+              awk '{ sum += $2 } END { printf "%.0f", sum }')
+            printf '\nCombined closure NAR bytes (deduplicated): %s\n' "$total"
+            echo 'NAR bytes are uncompressed; compressed incremental Cachix storage is not measured.'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish Darwin closures
+        if: env.PUSH_ENABLED == 'true'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: cut -f2 "$RUNNER_TEMP/darwin-roots" | cachix push eon-yazelix
+
+      - name: Retain release-tag roots forever
+        if: env.PUSH_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          while IFS=$'\t' read -r output path; do
+            cachix pin eon-yazelix "aarch64-darwin-$RELEASE_TAG-$output" "$path" --keep-forever
+          done < "$RUNNER_TEMP/darwin-roots"
+
+      - name: Report remaining disk
+        if: always()
+        run: df -h / /nix
