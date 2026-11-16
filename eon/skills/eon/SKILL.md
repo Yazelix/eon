@@ -25,6 +25,10 @@ rather than guessing IDs.
 
 ## Preserve the person's focus
 
+For a person's onboarding, `eon tutor` prints lessons in the caller's terminal;
+`eon tutor list --json` reads progress without starting a session. `next`
+advances without verification. This build has no `eon tutor check` command.
+
 Leave the person's active tab, selection, shown popup and desktop focus alone
 unless asked to move them. Pass `--no-focus` to `pane create`, `session new`
 and directory-based `tab create`.

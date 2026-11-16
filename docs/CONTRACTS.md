@@ -2730,6 +2730,74 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Open proof:** Re-proof of EON-C10 on the beta candidate is pending under
   eon-igae.7.5, after the remote-chain amendments.
 
+
+- **Tutor amendment (2026-11-15):** Exact text approved by eon-overseer under
+  Lucca's delegation on `eon-orp67` (23:50Z comment). Core CLI/progress is
+  implemented by `eon-orp67.1`; optional checking (`eon-orp67.3`) and the startup
+  hint (`eon-orp67.2`) remain Planned. Proof pending the respective slices.
+
+### Tutor CLI and progress
+
+Full Eon's product CLI provides eon tutor, eon tutor list, eon tutor N, eon tutor next
+and eon tutor --reset. N is a decimal lesson number in the catalog's 1-based range. Each
+accepts a single --json before or after its operation. Conflicting operations, repeated
+flags, extra operands and invalid lesson numbers fail with usage status 2 before
+mutation.
+
+eon tutor prints a welcome and the current lesson in the invoking terminal and exits;
+missing progress selects lesson 1. eon tutor N selects and presents N without marking
+intervening lessons. eon tutor next always advances by one regardless of verification,
+unmet goals, missing tools or unavailable Eon state. At the final lesson it retains that
+lesson and reports the end; it never wraps. list reports current selection and every
+lesson's read/verified state without mutation or creation of missing state.
+
+Presenting a lesson marks it read, meaning delivered to the invoking person or program,
+not comprehension. next also marks the lesson being left read. --reset resets current
+selection and verification/read history to the initial state and then presents lesson 1,
+leaving only its read mark. It changes only tutor progress and never closes, attaches,
+creates or selects a window/tab/pane, executes a lesson step, deletes practice files,
+edits configuration or resets another application.
+
+Progress is per Eon user state root, shared across invocations/windows, with a format
+version and stable lesson IDs. The v1 file is eon/tutor-v1.json under an absolute
+XDG_STATE_HOME, otherwise .local/state/eon/tutor-v1.json under an absolute HOME.
+Mutations are serialized and atomically published; malformed/unsafe/unsupported state
+reports an error without overwriting it. Format migration retains the old versioned
+file. No terminal input/content, project paths or provider credentials are persisted.
+
+--json changes presentation only, retaining each operation's effects. A successful response is one JSON object with schema_version:1, catalog_version, current_lesson, check_available, lessons and check_result. Each lesson has id, number, title, text (rendered instruction lines), read, verified, checkable and blocked_reason (null or a concise diagnostic). check_result is null outside check; within it status is passed, unmet, blocked, unavailable or ungraded, with a concise reason. Human output shows verified separately from read/unverified and labels ungraded lessons. JSON never includes terminal contents, keystrokes or provider messages.
+
+Optional capability: a build implementing the bounded checker additionally provides eon
+tutor check [--json]. It inspects a fresh public Eon session snapshot without workspace
+mutations and evaluates only the current lesson's declared current-state predicate.
+Caller.tab is the target when present; otherwise the resolved session's active_tab. A
+passing check marks that lesson verified; failed checks preserve prior progress and
+historical verification. Existing state may satisfy the predicate; check does not attest
+that a lesson action occurred or a particular input was used. The detach/return guide is
+ungraded and cannot be marked verified. check is never a prerequisite for next.
+
+The checking capability is optional in the beta: check_available is false and check is
+absent from help/recognized operations until that slice ships; checkable still describes
+catalog goals. A build without it treats check as an unsupported operation (status 2),
+never a successful no-op. A build with it returns 0 on passed or explicitly ungraded, 1
+on unmet/blocked, 3 on a stale/unknown target, 4 on unavailable/incompatible/ambiguous
+session inspection. Other tutor success is 0, storage/operation failures 1 and invalid
+arguments 2. JSON failures have schema_version:1 and an error object with code and
+message, with no partial mutation.
+
+Missing tools, including a missing real configured editor, remain unverified with an
+explicit reason and never cause fake tool success or block navigation. Lessons/keys use
+the existing resolved Shortcuts owner; unavailable bindings are labelled and CLI
+alternatives are shown, never presented as active defaults.
+Printing/list/navigation/reset work without a graphical session, including over SSH. No
+observer, key recording, terminal-content grading or new protocol is introduced.
+
+The existing first normal startup directory-picker notice may present the Eon-supplied
+tutor pointer once after successful initial picker startup. Its bounded versioned
+discovery marker is distinct from lesson progress: tutor commands do not consume it, and
+--reset does not reset it. A failed initial startup does not consume it. This adds no
+popup or automatic tutorial launch.
+
 ## EON-C11 — Runtime generations and presentation
 
 - **Amendment (2026-11-15):** `eon-t3fyd.3`, approved by eon-overseer under

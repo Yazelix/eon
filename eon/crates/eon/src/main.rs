@@ -1,6 +1,7 @@
 mod launch;
 mod product;
 mod report;
+mod tutor;
 mod update;
 
 use std::process::ExitCode;
@@ -11,14 +12,17 @@ fn main() -> ExitCode {
     unsafe { launch::clear_capture() };
     let inputs = product::inputs(launch);
     let arguments: Vec<_> = std::env::args_os().collect();
-    #[cfg(target_os = "linux")]
-    if arguments.first().is_some_and(|program| {
+    let product_cli = arguments.first().is_some_and(|program| {
         std::path::Path::new(program).file_name() == Some(std::ffi::OsStr::new("eon"))
             || (std::path::Path::new(program).file_name() != Some(std::ffi::OsStr::new("eonbase"))
                 && std::env::current_exe()
                     .is_ok_and(|executable| executable.as_os_str() == program))
-    }) && arguments.get(1).is_some_and(|command| command == "agent")
-    {
+    });
+    if product_cli && arguments.get(1).is_some_and(|command| command == "tutor") {
+        return ExitCode::from(tutor::run(&arguments[2..]));
+    }
+    #[cfg(target_os = "linux")]
+    if product_cli && arguments.get(1).is_some_and(|command| command == "agent") {
         let primary =
             eon_runtime::configuration_directory().map(|root| Some(root.join("agent.toml")));
         return rota::cli::main(arguments.into_iter().skip(2), primary, &|deadline| {

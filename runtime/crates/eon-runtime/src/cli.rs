@@ -1127,6 +1127,11 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("  --dir DIR", "First tab in DIR: no quick search,"),
             ("", "no startup animation"),
             ("  --no-anima", "Skip the startup animation"),
+            (
+                "tutor [list|N|next|--reset]",
+                "Print lessons and save progress",
+            ),
+            ("  [--json]", "Or tutor --help for details"),
         ],
     ),
     #[cfg(target_os = "linux")]

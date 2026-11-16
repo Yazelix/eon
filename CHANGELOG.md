@@ -10,6 +10,11 @@ installation, and proven contract changes.
   Private capture never reaches terminal programs or agent commands. In-place
   Update execution remains planned. Fresh launches from an existing terminal
   preserve its current environment, including user edits (`eon-t3fyd.4`).
+- `eon tutor` prints ten short lessons in the caller's pane, with numbered
+  selection, `list`, always-advancing `next`, saved progress and `--json` on
+  each operation. `--reset` resets only lesson progress. Text/navigation work
+  outside a graphical Eon session, including over SSH; optional checking and
+  the first-launch hint remain planned (`eon-orp67.1`).
 
 - Full-Eon windows have lifetime IDs independent of their creation and active
   builds. Bare launch selects by active build; default control keeps the sole

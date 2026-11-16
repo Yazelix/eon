@@ -121,6 +121,12 @@ Run `eon`. After a short animation (most keys skip it), pick a directory: press
 Enter for a Zoxide match, or Tab to browse with Yazi and Alt+Enter to use a
 folder. A terminal opens there.
 
+Run `eon tutor` for ten short lessons printed in your current pane. Use
+`eon tutor next` to continue, `eon tutor list` to see progress, or `eon tutor 3`
+to revisit a lesson. Progress is saved; `eon tutor --reset` restarts the lessons
+without changing your files or sessions. The text also works outside Eon,
+including over SSH. See [Tutor](docs/USAGE.md#tutor).
+
 On macOS, the Nix package also includes `Eon.app`. In Finder, use **Go > Go
 to Folder** and enter `~/.nix-profile/Applications`, then open `Eon.app`.
 Drag that app to the Dock to keep it there. A plain `nix profile` install

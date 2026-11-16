@@ -1,5 +1,55 @@
 # Using Eon
 
+## Tutor
+
+`eon tutor` prints a welcome and the current lesson in your own terminal, then
+returns to your shell. It opens no window, pane, project or tool. Practice in
+your own session when ready; use normal close confirmations for work you
+choose to end. Run the command again whenever the text scrolls away.
+
+| Command | Result |
+| --- | --- |
+| `eon tutor` | Print the current lesson, starting at 1 |
+| `eon tutor list` | List all ten lessons and progress |
+| `eon tutor N` | Select and print lesson N (1–10) |
+| `eon tutor next` | Advance without checking a goal; at 10, show the end notice |
+| `eon tutor --reset` | Reset only lesson progress and print lesson 1 |
+| `eon tutor --help` | Show command help |
+
+Lesson, list, navigation and reset operations accept `--json` before or after
+their argument. JSON changes the output format, not the operation:
+`eon tutor next --json` still advances.
+`list` only reads progress and creates no state when none exists. Selecting a
+lesson marks it **read**, meaning presented to you or a program, not understood;
+jumping does not mark the lessons between. `next` also marks the lesson you
+leave as read. Progress is shared across your windows and invocations in
+`$XDG_STATE_HOME/eon/tutor-v1.json`, or
+`~/.local/state/eon/tutor-v1.json` when `XDG_STATE_HOME` is not absolute.
+Reset clears tutorial history, presents lesson 1 and leaves only its read mark.
+It deletes no practice files, changes no configuration and stops no terminals.
+
+The lessons cover tabs and the directory picker, panes, columns, Files, Git,
+Editor, Agent, attention, the bar and CLI, and detach/return. Keys come from
+`eon keys --json`, the same effective bindings as Shortcuts. Missing or
+overridden bindings use CLI alternatives. Outside a reachable Eon window,
+including an ordinary SSH shell, text and navigation still work with CLI
+instructions. An unavailable tool is not a completed goal: Editor needs a real
+configured editor, and Agent may need your own installed provider. You can
+always continue with `next`.
+
+This build reports `check_available: false` and has no `check` command. Optional
+verification is planned separately; reading never claims to verify session
+actions. The detach guide is ungraded. `list` distinguishes verified history
+from read/unverified lessons when such history exists.
+
+The JSON report carries `schema_version`, `catalog_version`, `current_lesson`,
+`check_available`, `lessons` and `check_result` (null in this build). Lesson rows
+include stable IDs, numbers, titles, rendered `text` lines, read/verified marks,
+`checkable` and `blocked_reason`. `checkable` describes a goal, not the presence
+of a checker. Failures have an `error` object with `code` and `message`. Success
+exits 0, storage failures 1 and invalid arguments 2. See
+[EON-C10](CONTRACTS.md#tutor-cli-and-progress) for the full boundary.
+
 ## Supported environment
 
 Eon is in alpha. v0.2.0 is the planned first beta; its cut requires explicit

@@ -23457,6 +23457,111 @@ esac
 }
 
 #[test]
+fn tutor_consumes_the_real_effective_keymap_projection() {
+    for override_tab in [false, true] {
+        let files_key = if override_tab { "" } else { "Ctrl+Alt+U" };
+        let extra = if override_tab {
+            "\n[popups.take-tab]\ncommand = ['sh']\nkeybinding = 'Alt+Shift+T'\n"
+        } else {
+            ""
+        };
+        let window = PairWindow::new();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(window.config.join("config.toml"))
+            .unwrap()
+            .write_all(
+                format!(
+                    "\n[popups.files]\nkeybinding = '{files_key}'\n[popups.editor]\nkeybinding = ''\n{extra}"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let mut supervisor = window.spawn(&[]);
+        window.pair_launch("terminal-2");
+        let run = |arguments: &[&str]| {
+            window
+                .command_with_arguments(arguments)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .unwrap()
+        };
+        let before = presented(&run(&["session", "--json"]));
+        let keys_output = run(&["keys", "--json"]);
+        assert!(keys_output.status.success(), "{keys_output:?}");
+        let keys: serde_json::Value = serde_json::from_slice(&keys_output.stdout).unwrap();
+        let tab = keys["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["action"] == "create_tab")
+            .unwrap();
+        let lesson = run(&["tutor", "1"]);
+        assert!(lesson.status.success(), "{lesson:?}");
+        if override_tab {
+            assert!(tab["display"].is_null());
+            assert!(
+                stdout(&lesson).contains("CLI: eon tab create"),
+                "{lesson:?}"
+            );
+        } else {
+            assert!(
+                stdout(&lesson).contains(&format!("Key: {}", tab["display"].as_str().unwrap())),
+                "{lesson:?}"
+            );
+        }
+        let files = keys["popups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "files")
+            .unwrap();
+        let lesson = run(&["tutor", "4"]);
+        assert!(lesson.status.success(), "{lesson:?}");
+        if override_tab {
+            assert!(files["keybinding"].is_null());
+            assert!(
+                before["tabs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .flat_map(|tab| tab["popups"].as_array().unwrap())
+                    .any(|popup| popup["entry"] == "files")
+            );
+            assert!(
+                stdout(&lesson).contains("Existing: eon focus uN"),
+                "{lesson:?}"
+            );
+            assert!(
+                stdout(&lesson).contains("Hide: eon popup hide uN"),
+                "{lesson:?}"
+            );
+        } else {
+            assert_eq!(files["keybinding"], "Ctrl+Alt+U");
+            assert!(
+                stdout(&lesson).contains(&format!("Key: {}", files["display"].as_str().unwrap())),
+                "{lesson:?}"
+            );
+        }
+        let lesson = run(&["tutor", "6"]);
+        assert!(lesson.status.success(), "{lesson:?}");
+        assert!(!stdout(&lesson).contains("Key:"), "{lesson:?}");
+        assert!(
+            stdout(&lesson).contains("Existing: eon focus uN"),
+            "{lesson:?}"
+        );
+        assert!(
+            stdout(&lesson).contains("Absent: eon popup show editor"),
+            "{lesson:?}"
+        );
+        let after = presented(&run(&["session", "--json"]));
+        assert_eq!(after, before);
+        window.stop_generation(&mut supervisor);
+    }
+}
+
+#[test]
 fn keys_cli_errors_and_live_projection() {
     use eon_workspace_protocol::shortcuts::{Platform, viewer_groups};
 
