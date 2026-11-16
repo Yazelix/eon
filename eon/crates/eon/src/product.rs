@@ -3,7 +3,7 @@ use eon_runtime::{
     PopupDefinition, ReleaseStage, ShellConfig, SlotClass, SlotPolicy, StartupAnimation,
     TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v46::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v47::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) const RELEASE_STAGE: ReleaseStage = ReleaseStage::Alpha;
 

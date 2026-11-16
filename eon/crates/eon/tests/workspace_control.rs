@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v46::{
+use eon_workspace_protocol::v47::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -6495,7 +6495,15 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
         "{listed}"
     );
     assert!(matches!(
-        workspace_action(&control, "blocked", Action::CreatePane { focus: true }),
+        protocol_action(
+            &control,
+            "blocked",
+            ProtocolAction::CreatePane {
+                tab: None,
+                argv: Vec::new(),
+                focus: true,
+            }
+        ),
         Response::Failure(_)
     ));
     let retried = invoke(binary, &runtime, &config, &stop);
@@ -8265,10 +8273,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         Response::Snapshot(snapshot) => snapshot,
         other => panic!("expected a workspace: {other:?}"),
     };
-    let original = snapshot(workspace_action(
+    let original = snapshot(protocol_action(
         &control,
         "second-pane",
-        Action::CreatePane { focus: true },
+        ProtocolAction::CreatePane {
+            tab: None,
+            argv: Vec::new(),
+            focus: true,
+        },
     ));
     let second = caller(&generation.join("terminal-2.sock"));
     let created = snapshot(protocol_action_from(
@@ -8315,7 +8327,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -8325,7 +8337,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -8336,7 +8348,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -8351,7 +8363,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -8369,14 +8381,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -8398,7 +8410,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -10943,7 +10955,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -12994,6 +13006,199 @@ fn popup_show_cli_creates_in_background_and_focuses_the_exact_instance() {
     wait_for_successful_exit(&mut supervisor.child);
 }
 
+/// EON-C10 `pane create --tab` (eon-89ho): a pane starts in another live tab of
+/// the addressed session, hidden or shown, selected or not, and never moves the
+/// shown session, the active tab or any other tab; foreign tabs change nothing.
+#[test]
+fn pane_create_tab_adds_a_pane_to_another_tab_without_moving_the_view() {
+    let window = PairWindow::new();
+    let mut supervisor = scrollback_window(&window, "\n[popups.anima]\nenabled = false\n");
+    let caller =
+        process::environ(live_identity(&window.generation().join("orbit.sock")).process_id)
+            .split(|b| *b == 0)
+            .find_map(|v| v.strip_prefix(b"EON_TERMINAL="))
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap();
+    let run = |args: &[&str]| {
+        eon_command(&window.binary)
+            .env("EON_RUNTIME_DIR", &window.runtime)
+            .env("EON_CONFIG_HOME", &window.config)
+            .env("EON_TERMINAL", &caller)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let json =
+        |output: &Output| -> serde_json::Value { serde_json::from_slice(&output.stdout).unwrap() };
+    let t2_of = |reply: &serde_json::Value| -> serde_json::Value {
+        reply["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tab| tab["id"] == "t2")
+            .unwrap()
+            .clone()
+    };
+    let created = window.eon(&[
+        "tab",
+        "create",
+        "--no-focus",
+        "--dir",
+        window.home.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(created.status.success(), "{created:?}");
+    let before = window.inspect("pane-tab-before");
+    assert_eq!(before.tabs[1].id, "t2");
+    let t2_selected = before.tabs[1].selected_pane.clone();
+    assert!(t2_selected.is_some());
+
+    // --no-focus: t2 gains the exact command and keeps its selected pane.
+    let background = run(&[
+        "pane",
+        "create",
+        "--tab",
+        "t2",
+        "--no-focus",
+        "--json",
+        "--",
+        "sh",
+        "-c",
+        "sleep 600",
+    ]);
+    assert!(background.status.success(), "{background:?}");
+    let reply = json(&background);
+    let pane = reply["created"]["pane"].as_str().unwrap().to_owned();
+    assert_eq!(
+        reply["created"],
+        serde_json::json!({"tab": "t2", "pane": pane}),
+        "{reply}"
+    );
+    assert_eq!(reply["active_tab"], before.active_tab);
+    let after = window.inspect("pane-tab-background");
+    assert_eq!(after.active_tab, before.active_tab);
+    assert_eq!(after.active_workspace, before.active_workspace);
+    assert_eq!(stable_tabs(&after.tabs)[0], stable_tabs(&before.tabs)[0]);
+    assert_eq!(after.tabs[1].selected_pane, t2_selected);
+    assert_eq!(after.tabs[1].columns.len(), before.tabs[1].columns.len());
+    assert_eq!(
+        after.tabs[1].panes().count(),
+        before.tabs[1].panes().count() + 1
+    );
+    let started = after.tabs[1]
+        .panes()
+        .find(|candidate| candidate.id == pane)
+        .unwrap();
+    let endpoint = Path::new(OsStr::from_bytes(&started.endpoint));
+    let orbit_arguments = process::cmdline(live_identity(endpoint).process_id);
+    assert!(
+        orbit_arguments.ends_with(b"sh\0-c\0sleep 600\0"),
+        "{}",
+        String::from_utf8_lossy(&orbit_arguments)
+    );
+
+    // Default focus: the new pane becomes t2's selected pane; t1 stays active.
+    let focused = run(&["pane", "create", "--tab", "t2", "--json"]);
+    assert!(focused.status.success(), "{focused:?}");
+    let reply = json(&focused);
+    assert_eq!(reply["created"]["tab"], "t2", "{reply}");
+    let pane = reply["created"]["pane"].as_str().unwrap().to_owned();
+    assert_eq!(reply["active_tab"], before.active_tab);
+    let selected = window.inspect("pane-tab-selected");
+    assert_eq!(
+        selected.tabs[1].selected_pane.as_deref(),
+        Some(pane.as_str())
+    );
+    assert_eq!(
+        selected.tabs[1].panes().count(),
+        after.tabs[1].panes().count() + 1
+    );
+    assert_eq!(selected.active_tab, before.active_tab);
+    assert_eq!(selected.active_workspace, before.active_workspace);
+    assert_eq!(stable_tabs(&selected.tabs)[0], stable_tabs(&before.tabs)[0]);
+
+    // A tab that is not live and a pane id given as a tab change nothing.
+    let unknown = run(&["pane", "create", "--tab", "t99", "--json"]);
+    assert_eq!(unknown.status.code(), Some(3), "{unknown:?}");
+    assert_eq!(json(&unknown)["error"]["code"], "unknown-tab");
+    let usage = run(&["pane", "create", "--tab", "p1", "--json"]);
+    assert_eq!(usage.status.code(), Some(2), "{usage:?}");
+    assert_eq!(
+        stable_tabs(&window.inspect("pane-tab-refused").tabs),
+        stable_tabs(&selected.tabs)
+    );
+
+    // A caller from s1 adds panes to s1's t2 while s2 remains shown.
+    assert!(window.eon(&["session", "new", "--json"]).status.success());
+    let visible = window.inspect("pane-tab-other-session");
+    let hidden_background = run(&[
+        "pane",
+        "create",
+        "--tab",
+        "t2",
+        "--no-focus",
+        "--json",
+        "--",
+        "sh",
+        "-c",
+        "sleep 600",
+    ]);
+    assert!(hidden_background.status.success(), "{hidden_background:?}");
+    let reply = json(&hidden_background);
+    assert_eq!(reply["session"], "s1", "{reply}");
+    assert_eq!(reply["created"]["tab"], "t2", "{reply}");
+    assert_eq!(reply["active_tab"], before.active_tab);
+    let t2 = t2_of(&reply);
+    assert_eq!(t2["selected_pane"], pane.as_str(), "{reply}");
+    assert!(
+        t2["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["id"] == reply["created"]["pane"]),
+        "{reply}"
+    );
+    let shown = window.inspect("pane-tab-hidden-background");
+    assert_eq!(stable_tabs(&shown.tabs), stable_tabs(&visible.tabs));
+    assert_eq!(shown.active_workspace, visible.active_workspace);
+
+    let hidden_focused = run(&["pane", "create", "--tab", "t2", "--json"]);
+    assert!(hidden_focused.status.success(), "{hidden_focused:?}");
+    let reply = json(&hidden_focused);
+    assert_eq!(reply["session"], "s1", "{reply}");
+    assert_eq!(reply["created"]["tab"], "t2", "{reply}");
+    assert_eq!(reply["active_tab"], before.active_tab);
+    assert_eq!(
+        t2_of(&reply)["selected_pane"],
+        reply["created"]["pane"],
+        "{reply}"
+    );
+    let shown = window.inspect("pane-tab-hidden-selected");
+    assert_eq!(stable_tabs(&shown.tabs), stable_tabs(&visible.tabs));
+    assert_eq!(shown.active_workspace, visible.active_workspace);
+
+    // A tab of another session is not live in the addressed session.
+    let foreign_tab = visible.tabs[0].id.clone();
+    assert!(foreign_tab != "t1" && foreign_tab != "t2", "{foreign_tab}");
+    let foreign = run(&["pane", "create", "--tab", &foreign_tab, "--json"]);
+    assert_eq!(foreign.status.code(), Some(3), "{foreign:?}");
+    assert_eq!(json(&foreign)["error"]["code"], "unknown-tab");
+    let callerless = window.eon(&["pane", "create", "--tab", "t2", "--json"]);
+    assert_eq!(callerless.status.code(), Some(3), "{callerless:?}");
+    assert_eq!(json(&callerless)["error"]["code"], "unknown-tab");
+    assert_eq!(
+        stable_tabs(&window.inspect("pane-tab-foreign").tabs),
+        stable_tabs(&visible.tabs)
+    );
+    assert!(
+        window
+            .eon(&["window", "stop", "default", "--json"])
+            .status
+            .success()
+    );
+    wait_for_successful_exit(&mut supervisor.child);
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn agent_auto_popup_shares_cli_admission_source_command_and_context() {
@@ -14411,7 +14616,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v46::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v47::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -16185,7 +16390,7 @@ fn previous_runtime(id: &str) -> Runtime {
     Runtime {
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
-        terminal_inventory: vec![eon_workspace_protocol::v46::TerminalInventory {
+        terminal_inventory: vec![eon_workspace_protocol::v47::TerminalInventory {
             terminal: "terminal-1".into(),
             run: "fixture-run".into(),
             origin_build: None,
@@ -16322,7 +16527,7 @@ fn default_alias_fixture(
             snapshot.active_build = record.active_build.clone();
             snapshot.running = None;
             if current && id == ids.last().unwrap() {
-                use eon_workspace_protocol::v46::{RunningWindows, WindowEntry, WindowState};
+                use eon_workspace_protocol::v47::{RunningWindows, WindowEntry, WindowState};
                 snapshot.running = Some(RunningWindows {
                     this: WindowEntry {
                         window: None,
@@ -17307,7 +17512,7 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     stream.read_to_end(&mut reply).unwrap();
     assert_eq!(
         decode_response(&reply),
-        Err(eon_workspace_protocol::v46::Error::UnsupportedVersion {
+        Err(eon_workspace_protocol::v47::Error::UnsupportedVersion {
             version: VERSION - 1
         })
     );
@@ -18343,7 +18548,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             &control,
             id,
             ProtocolAction::SendTerminal {
-                target: eon_workspace_protocol::v46::SendTarget::Id(pane.id.clone()),
+                target: eon_workspace_protocol::v47::SendTarget::Id(pane.id.clone()),
                 force: false,
                 input,
             },
@@ -20158,7 +20363,7 @@ fn popup_show_scrollback_access_precedes_stale_and_replay_checks() {
         protocol_action(
             &window.control(),
             "hide",
-            ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+            ProtocolAction::DismissPopup(eon_workspace_protocol::v47::PopupTarget {
                 tab: "t1".into(),
                 instance: popup.id
             })
@@ -20299,7 +20504,7 @@ fn popup_show_refusals_precede_history_pair_and_input_effects() {
     protocol_action(
         &window.control(),
         "hide-scrollback",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v47::PopupTarget {
             tab: "t1".into(),
             instance: popup.id,
         }),
@@ -20423,7 +20628,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
     protocol_action(
         &window.control(),
         "hide-background",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v47::PopupTarget {
             tab: target.id.clone(),
             instance: popup.id.clone(),
         }),
@@ -20491,7 +20696,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
         &window.control(),
         "hide-hidden",
         Some(&caller),
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v46::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v47::PopupTarget {
             tab: target.id.clone(),
             instance: hidden_popup.id.clone(),
         }),
@@ -21248,7 +21453,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
 
 #[test]
 fn focused_send_reports_the_persons_terminal_and_guards_enter() {
-    use eon_workspace_protocol::v46::{FocusReport, encode_focus_report};
+    use eon_workspace_protocol::v47::{FocusReport, encode_focus_report};
     let root = temporary_directory();
     let fifo = root.join("focus-reports");
     assert!(
@@ -21451,7 +21656,7 @@ fn focused_send_reports_the_persons_terminal_and_guards_enter() {
     let before = sent();
     assert!(
         matches!(protocol_action(&control, "guarded-old-pane", ProtocolAction::SendTerminal {
-        target: eon_workspace_protocol::v46::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
+        target: eon_workspace_protocol::v47::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
         force: true, input: TerminalInput::Enter,
     }), Response::Failure(failure) if failure.code == "focus-changed")
     );
@@ -23181,7 +23386,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
                         created_build: "g1-00000000000000000000000000000001".into(),
                         active_build: "g1-00000000000000000000000000000001".into(),
-                        terminal_inventory: vec![eon_workspace_protocol::v46::TerminalInventory {
+                        terminal_inventory: vec![eon_workspace_protocol::v47::TerminalInventory {
                             terminal: "terminal-1".into(),
                             run: "fixture-run".into(),
                             origin_build: None,
@@ -24105,7 +24310,7 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
     );
     assert_eq!(
         failure.reason,
-        eon_workspace_protocol::v46::QuotaFailureReason::Start
+        eon_workspace_protocol::v47::QuotaFailureReason::Start
     );
     drop(supervisor);
 }
@@ -24271,10 +24476,10 @@ fn native_quota_deadline_bounds_discovery_and_inspection_like_the_old_probe() {
         snapshot.created_build = id.clone();
         snapshot.active_build = id.clone();
         snapshot.running = None;
-        snapshot.codex_quota = Some(eon_workspace_protocol::v46::CodexQuota {
-            state: eon_workspace_protocol::v46::CodexQuotaState::Fresh,
+        snapshot.codex_quota = Some(eon_workspace_protocol::v47::CodexQuota {
+            state: eon_workspace_protocol::v47::CodexQuotaState::Fresh,
             observed_at: 1,
-            windows: vec![eon_workspace_protocol::v46::QuotaWindow {
+            windows: vec![eon_workspace_protocol::v47::QuotaWindow {
                 duration_minutes: 300,
                 remaining_percent: 80,
                 resets_at: None,

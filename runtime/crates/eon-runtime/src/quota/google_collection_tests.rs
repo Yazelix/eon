@@ -1,5 +1,5 @@
 use super::{tests::script, *};
-use eon_workspace_protocol::v46::{PopupGeometry, Sidebar};
+use eon_workspace_protocol::v47::{PopupGeometry, Sidebar};
 use serde_json::json;
 use std::os::unix::fs::{PermissionsExt, symlink};
 

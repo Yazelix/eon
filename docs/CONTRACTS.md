@@ -930,7 +930,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime session topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v46 session/popup values, Orbit terminal
+- **Consumes:** Current EONW v47 session/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -1423,6 +1423,12 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment (2026-11-16):** `eon-89ho`, approved by eon-lead under Lucca's
+  delegation (bead decision D1, 2026-11-12): `eon pane create --tab TAB`
+  adds the pane to an explicit tab of the addressed session without
+  changing the shown session, active tab or desktop focus. EONW v47
+  carries the optional tab on the one pane-creation request.
+
 - **Amendment (2026-11-16):** `eon-260mh.6`, `eon-260mh.7`, approved by
   eon-lead under the maintainer's accepted agent-authority scope:
   Scrollback's native key exemption requires authenticated presentation
@@ -1719,8 +1725,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     never inherit one. For session control, `EON_TERMINAL` selects the live supervisor and session that own that
     exact terminal, independently of the invoked CLI build's current generation. Within that session,
     `pane create`, `edit`, `pane move` and `tab move` retain their calling-tab,
-    column and pane rules: creation uses the caller's column and moves act on
-    its pane or tab. A popup terminal acts
+    column and pane rules: creation uses the caller's column, or the column
+    the `pane create --tab` clause below names, and moves act on its pane or
+    tab. A popup terminal acts
     for its tab and that tab's selected column and pane. Within that tab each
     action behaves as it does for the active tab, so `pane create` selects
     the new pane and dismisses the tab's popup; the active tab and desktop
@@ -1902,6 +1909,28 @@ names its socket. CLI JSON names a session `session` and a terminal
     becomes the tab's only, selected pane, and a shown popup still stays shown.
     Without `--no-focus`, `pane create` selects the new pane and dismisses the
     tab's popup, as above.
+  - `eon pane create --tab TAB`, with or without `--no-focus` and
+    `-- COMMAND`, adds the pane to live tab TAB of the addressed session
+    instead of the caller's tab or the active tab: the validated caller's
+    session inside Eon, which may be hidden, otherwise the shown session
+    of the selected supervisor. The pane joins the caller's column when
+    the caller is a pane of TAB, otherwise TAB's selected column, and
+    starts at TAB's directory. Within TAB every rule above applies as it
+    does to a calling terminal's tab: without `--no-focus` the new pane
+    becomes TAB's selected pane and TAB's popup is dismissed; with it,
+    TAB's selected pane and shown popup stay, except that a TAB without
+    panes gains the new pane as its only, selected pane. Either way the
+    shown session, the active tab, every other tab and desktop focus stay
+    as they are. `eon focus pN` later selects the pane and its tab in the
+    addressed session; a hidden session stays hidden until
+    `eon session switch` shows it. The pane never lands in another tab:
+    when dismissing TAB's popup would close TAB, the command refuses with
+    `unavailable` (exit 1). A command pane still requires a calling
+    terminal. A TAB that is not a `tN` identity, or a repeated `--tab`, is
+    a usage error (exit 2); a `tN` that is not a live tab of the addressed
+    session fails as `unknown-tab` (exit 3), and a pending TAB as
+    `choose-directory-first` (exit 1). Each refusal changes nothing.
+    `created` names TAB and the new pane.
   - A failed terminal start publishes no pane or `created` result. Its error
     reports no observed stages before spawn and states that this request did
     not start the command. After spawn it reports observed startup stages and
@@ -2194,7 +2223,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v46 and accepted Orbit management operations.
+- **Consumes:** Current EONW v47 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -2206,7 +2235,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v46 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v47 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
   The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
   failure records to Snapshot: fresh/stale state, observation and windows,
@@ -2503,7 +2532,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   (`[editor] command`) for `eon edit` and Files Enter `eon-ecupy` (automated
   and installed tiers); `pane create -- COMMAND`
   `eon-n6ga` (automated and installed tiers); `pane create --no-focus`
-  `eon-zhjj` (automated and installed tiers); UTF-8 paths as JSON strings
+  `eon-zhjj` (automated and installed tiers); `pane create --tab`
+  `eon-89ho` (automated tier; installed tier when its isolated observation
+  is recorded); UTF-8 paths as JSON strings
   `eon-readable-windows-and-child-notices-jf6f` (automated and installed
   tiers); final-tab `tab close` and `pane close`
   `eon-prove-close-and-detach-batch-bf8t` (installed tier); EONW v19 attention
@@ -3960,7 +3991,7 @@ popup or automatic tutorial launch.
   Yazi owns filesystem browsing, and Anima owns style selection, rendering,
   input dismissal, playback timing, and terminal restoration. Eon consumes one
   picked directory per pick without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17, current EONW v46 popup/pending-tab values, Orbit's
+- **Consumes:** EON-C17, current EONW v47 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer.
 - **Boundary:** No custom filesystem walker, file opening from a pending tab's
@@ -6840,7 +6871,7 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   filters, subscriber bounds and CLI projection. Its canonical EONW package
   owns the v44 `Subscribe` action and the `SUBSCRIBED`, `TABS`, `EVENT`,
   `GAP` and `END` messages.
-- **Consumes:** EON-C10 (current EONW v46; subscriptions introduced in v30
+- **Consumes:** EON-C10 (current EONW v47; subscriptions introduced in v30
   by `eon-ciwn.6`, targeting, exit codes),
   EON-C31 (attention records, the queue and its CLI visibility), EON-C11
   (busy terminals, generations), EON-C23 (window and supervisor start time)

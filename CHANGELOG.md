@@ -5,6 +5,16 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane create --tab TAB [--no-focus] [--json] [-- COMMAND...]` adds the
+  pane to tab TAB of the session instead of the caller's or the active tab,
+  so an agent can start a session in its project's tab. The active tab, the
+  shown session and desktop focus stay as they are; an unknown TAB exits 3
+  (`unknown-tab`) and changes nothing (`eon-89ho`).
+- Eon 0.1.28 uses EONW v47, which carries both pane creations on one request
+  with an optional tab. Windows started before this version need a restart to
+  use `--tab`; v46 requests are refused cleanly, never migrated. Existing live
+  windows keep running (`eon-89ho`).
+
 - The Editor popup starts on macOS when the runtime directory resolves through
   `/tmp` to `/private/tmp`. A runtime directory that is still too long reports
   its length and the limit and asks for a shorter `EON_RUNTIME_DIR`

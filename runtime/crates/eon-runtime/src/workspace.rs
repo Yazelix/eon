@@ -4,7 +4,7 @@ use super::session_registry::{Completion, Operation, Registration, Registry};
 use eon_workspace_protocol::shortcuts::{
     EffectiveBinding, EffectiveKeymap, EffectivePopup, ReservedChord,
 };
-use eon_workspace_protocol::v46::{
+use eon_workspace_protocol::v47::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
     CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
     GoogleQuotaState, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS,
@@ -330,7 +330,7 @@ impl WorkspaceSet {
     }
 
     fn pending_allowance(&self) -> Result<usize, Failure> {
-        if self.workspaces.len() >= eon_workspace_protocol::v46::MAX_WORKSPACES {
+        if self.workspaces.len() >= eon_workspace_protocol::v47::MAX_WORKSPACES {
             return Err(action_error(
                 "session-limit",
                 "a window holds at most 32 sessions",
@@ -445,7 +445,7 @@ impl WorkspaceSet {
         match action {
             Action::Workspace(WorkspaceAction::NewWorkspace { name, .. }) => {
                 if let Some(name) = name {
-                    eon_workspace_protocol::v46::validate_workspace_name(name)
+                    eon_workspace_protocol::v47::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -460,7 +460,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v46::validate_workspace_name(name)
+                    eon_workspace_protocol::v47::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -601,7 +601,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v46::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v47::WorkspaceInfo {
                 id: workspace.id.clone(),
                 persistent_id: workspace.persistent_id.clone(),
                 registration_error: workspace.registration_error.clone(),
@@ -769,13 +769,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v46::pane_label_character(character) {
+                if eon_workspace_protocol::v47::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v46::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v47::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -929,7 +929,7 @@ impl WorkspaceSet {
         // An exchange can execute despite a lost reply: never replay its request ID.
         self.remember(request_id, true);
         let workspace = &mut self.workspaces[index];
-        let (target, pane) = workspace.target_tab(caller)?;
+        let (target, pane) = workspace.caller_tab(caller)?;
         workspace.require_established(target)?;
         let file = PathBuf::from(OsString::from_vec(file));
         let live = workspace.tabs[target]
@@ -1016,7 +1016,7 @@ impl WorkspaceSet {
             Action::RenamePane { pane, name, tag } => {
                 let name = name.as_deref().map(str::trim);
                 let tag = tag.as_deref().map(str::trim);
-                eon_workspace_protocol::v46::validate_pane_rename(name, tag)
+                eon_workspace_protocol::v47::validate_pane_rename(name, tag)
                     .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 let target = self.workspaces[index]
                     .tabs
@@ -1034,7 +1034,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v46::validate_workspace_name(name)
+                    eon_workspace_protocol::v47::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -1089,7 +1089,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v46::validate_workspace_name(&name)
+                    eon_workspace_protocol::v47::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -1542,7 +1542,7 @@ impl Workspace {
             active_build: String::new(),
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v46::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
                 id: self.id.clone(),
                 persistent_id: self.persistent_id.clone(),
                 registration_error: self.registration_error.clone(),
@@ -1655,30 +1655,31 @@ impl Workspace {
             action,
             Action::CreateColumn
                 | Action::Edit { .. }
-                | Action::CreateCommandPane { .. }
+                | Action::CreatePane { .. }
                 | Action::LaunchTab { .. }
-                | Action::Workspace(WorkspaceAction::CreatePane { .. })
         ) {
             ids.check_pane_identity()?;
         }
         let (target, previous) = match &action {
             Action::Workspace(WorkspaceAction::Move(Direction::Left | Direction::Right)) => {
-                (self.target_tab(caller)?.0, None)
+                (self.caller_tab(caller)?.0, None)
             }
-            Action::Workspace(WorkspaceAction::CreatePane { .. } | WorkspaceAction::Move(_))
+            Action::Workspace(WorkspaceAction::Move(_))
             | Action::MovePaneSideways(_)
             | Action::Edit { .. }
-            | Action::CreateCommandPane { .. } => {
-                let (target, pane) = self.target_tab(caller)?;
+            | Action::CreatePane { .. } => {
+                let tab = match &action {
+                    Action::CreatePane { tab, .. } => tab.as_deref(),
+                    _ => None,
+                };
+                let (target, pane) = self.target_tab(caller, tab)?;
                 (target, pane.map(|pane| self.select(target, pane)))
             }
             _ => (self.active, None),
         };
         let focus = !matches!(
             action,
-            Action::Workspace(WorkspaceAction::CreatePane { focus: false })
-                | Action::CreateCommandPane { focus: false, .. }
-                | Action::LaunchTab { focus: false, .. }
+            Action::CreatePane { focus: false, .. } | Action::LaunchTab { focus: false, .. }
         );
         let result = self.apply(
             ids,
@@ -1710,15 +1711,9 @@ impl Workspace {
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         match action {
-            Action::Workspace(action) => self.dispatch_workspace(
-                ids,
-                allowance,
-                action,
-                target,
-                called,
-                &mut prepare,
-                &mut operate,
-            )?,
+            Action::Workspace(action) => {
+                self.dispatch_workspace(ids, allowance, action, target, &mut prepare, &mut operate)?
+            }
             Action::RenamePane { .. } | Action::ClosePane { .. } | Action::CloseColumn { .. } => {
                 return Err(action_error(
                     "unavailable",
@@ -1767,16 +1762,15 @@ impl Workspace {
                 self.dismiss_popup(ids, allowance, &target, &mut operate)?
             }
             // A tab without columns gains its first one exactly as a new pane would.
-            Action::CreateColumn if self.tabs[self.active].columns.is_empty() => self
-                .dispatch_workspace(
-                    ids,
-                    allowance,
-                    WorkspaceAction::CreatePane { focus: true },
-                    self.active,
-                    false,
-                    &mut prepare,
-                    &mut operate,
-                )?,
+            Action::CreateColumn if self.tabs[self.active].columns.is_empty() => self.create_pane(
+                ids,
+                allowance,
+                self.active,
+                false,
+                true,
+                LaunchCommand::Pane,
+                &mut operate,
+            )?,
             Action::CreateColumn => {
                 self.require_established(self.active)?;
                 if self.tabs[self.active].columns.len() >= MAX_COLUMNS {
@@ -1797,28 +1791,27 @@ impl Workspace {
                     "the supervisor resolves editor routing for each edit",
                 ));
             }
-            Action::CreateCommandPane { argv, focus } => {
-                if !called {
-                    return Err(action_error(
-                        "caller-required",
-                        "a command pane must be requested from an Eon terminal",
-                    ));
-                }
-                self.require_established(target)?;
-                let argv = prepare(
-                    &PopupCommand::Argv(argv.into_iter().map(OsString::from_vec).collect()),
-                    &self.tabs[target].directory,
-                )
-                .map_err(|detail| action_error("pane-command", detail))?;
-                self.create_pane(
-                    ids,
-                    allowance,
-                    target,
-                    called,
-                    focus,
-                    LaunchCommand::Tool(argv.argv),
-                    &mut operate,
-                )?;
+            Action::CreatePane { tab, argv, focus } => {
+                let command = if argv.is_empty() {
+                    LaunchCommand::Pane
+                } else {
+                    if !called {
+                        return Err(action_error(
+                            "caller-required",
+                            "a command pane must be requested from an Eon terminal",
+                        ));
+                    }
+                    self.require_established(target)?;
+                    let argv = prepare(
+                        &PopupCommand::Argv(argv.into_iter().map(OsString::from_vec).collect()),
+                        &self.tabs[target].directory,
+                    )
+                    .map_err(|detail| action_error("pane-command", detail))?;
+                    LaunchCommand::Tool(argv.argv)
+                };
+                // A tab named by its caller or by `tab` keeps the pane.
+                let named = called || tab.is_some();
+                self.create_pane(ids, allowance, target, named, focus, command, &mut operate)?;
             }
             Action::LaunchTab {
                 directory,
@@ -1845,7 +1838,6 @@ impl Workspace {
         allowance: usize,
         action: WorkspaceAction,
         target: usize,
-        called: bool,
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
@@ -1867,15 +1859,6 @@ impl Workspace {
                 ));
             }
             WorkspaceAction::CreateTab => self.create_tab(ids, allowance, prepare, operate)?,
-            WorkspaceAction::CreatePane { focus } => self.create_pane(
-                ids,
-                allowance,
-                target,
-                called,
-                focus,
-                LaunchCommand::Pane,
-                operate,
-            )?,
             WorkspaceAction::FocusId(id) => self.focus_id(ids, allowance, &id, operate)?,
             WorkspaceAction::Focus(direction) => {
                 self.focus_direction(ids, allowance, direction, operate)?
@@ -1891,20 +1874,22 @@ impl Workspace {
     /// Adds a pane to the target tab's selected column. A focused pane is
     /// selected and dismisses the tab's popup; an unfocused one joins its
     /// column collapsed, unless it is the first pane of a tab without panes.
+    /// A `named` target (by a caller or an explicit tab) refuses a dismissal
+    /// that would close it rather than let the pane fall to another tab.
     #[allow(clippy::too_many_arguments)]
     fn create_pane(
         &mut self,
         ids: &mut IdAllocator,
         allowance: usize,
         target: usize,
-        called: bool,
+        named: bool,
         focus: bool,
         command: LaunchCommand,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.require_established(target)?;
         let target = if focus {
-            if called {
+            if named {
                 self.require_surviving_dismissal(target)?;
             }
             self.dismiss_for_pane_action(ids, allowance, target, operate)?
@@ -2045,11 +2030,7 @@ impl Workspace {
         else {
             return Ok(());
         };
-        let tab_index = self
-            .tabs
-            .iter()
-            .position(|item| item.id == *tab)
-            .ok_or_else(|| action_error("unknown-tab", format!("tab {tab} is not live")))?;
+        let tab_index = self.tab_index(tab)?;
         self.definition(entry)?;
         if self.tabs[tab_index].pending && !matches!(entry.as_str(), PROJECT_ENTRY | FILES_ENTRY) {
             return Err(action_error(
@@ -2087,11 +2068,7 @@ impl Workspace {
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        let tab_index = self
-            .tabs
-            .iter()
-            .position(|item| item.id == tab)
-            .ok_or_else(|| action_error("unknown-tab", format!("tab {tab} is not live")))?;
+        let tab_index = self.tab_index(tab)?;
         if tab_index != self.active && intent != InvokeIntent::Show {
             return Err(action_error(
                 "not-active",
@@ -2474,11 +2451,7 @@ impl Workspace {
     }
 
     pub(crate) fn prepare_close_tab(&mut self, id: &str) -> Result<Vec<String>, Failure> {
-        let index = self
-            .tabs
-            .iter()
-            .position(|tab| tab.id == id)
-            .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))?;
+        let index = self.tab_index(id)?;
         let sessions = self.tab_sessions(index);
         Ok(sessions)
     }
@@ -3048,11 +3021,7 @@ impl Workspace {
                 "tab directory targets require a canonical tN identity",
             ));
         }
-        let tab_index = self
-            .tabs
-            .iter()
-            .position(|tab| tab.id == id)
-            .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))?;
+        let tab_index = self.tab_index(id)?;
         let directory = validated_directory(directory)?;
         if !self.tabs[tab_index].pending {
             return self.retarget(ids, tab_index, directory);
@@ -3169,9 +3138,33 @@ impl Workspace {
         }
     }
 
-    /// The implicit target tab: the active one, or the tab holding the caller's
-    /// terminal, with the caller's column and pane when it is a pane.
-    fn target_tab(&self, caller: Option<&str>) -> Result<(usize, Option<(usize, usize)>), Failure> {
+    /// The target tab: `tab` when named, otherwise the active one or the tab
+    /// holding the caller's terminal, with the caller's column and pane when
+    /// it is a pane of that tab. A named tab never waives caller validation.
+    fn target_tab(
+        &self,
+        caller: Option<&str>,
+        tab: Option<&str>,
+    ) -> Result<(usize, Option<(usize, usize)>), Failure> {
+        let (implicit, pane) = self.caller_tab(caller)?;
+        let Some(tab) = tab else {
+            return Ok((implicit, pane));
+        };
+        let index = self.tab_index(tab)?;
+        Ok((index, pane.filter(|_| implicit == index)))
+    }
+
+    /// A live tab of this session by its `tN` identity.
+    fn tab_index(&self, id: &str) -> Result<usize, Failure> {
+        self.tabs
+            .iter()
+            .position(|tab| tab.id == id)
+            .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))
+    }
+
+    /// The active tab, or the tab holding the caller's terminal with the
+    /// caller's column and pane when it is a pane.
+    fn caller_tab(&self, caller: Option<&str>) -> Result<(usize, Option<(usize, usize)>), Failure> {
         let Some(session) = caller else {
             return Ok((self.active, None));
         };
@@ -3684,7 +3677,7 @@ pub(crate) fn json_tab(output: &mut String, tab: &SnapshotTab) {
     output.push_str("]}");
 }
 
-pub(crate) fn json_inventory(hosts: &[eon_workspace_protocol::v46::TerminalInventory]) -> String {
+pub(crate) fn json_inventory(hosts: &[eon_workspace_protocol::v47::TerminalInventory]) -> String {
     serde_json::Value::Array(hosts.iter().map(|host| serde_json::json!({
         "terminal": host.terminal, "run": host.run, "origin_build": host.origin_build,
         "management_version": host.management_version, "record_generation": host.record_generation,
@@ -3827,8 +3820,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v46::WindowState) -> &'static str {
-    use eon_workspace_protocol::v46::WindowState;
+fn window_state(state: eon_workspace_protocol::v47::WindowState) -> &'static str {
+    use eon_workspace_protocol::v47::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -3838,7 +3831,7 @@ fn window_state(state: eon_workspace_protocol::v46::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v46::WindowEntry,
+    entry: &eon_workspace_protocol::v47::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -3975,7 +3968,7 @@ pub(crate) fn list_human(snapshot: &Snapshot) -> String {
 /// One session object, shared by inspection and event output.
 pub(crate) fn json_workspace(
     output: &mut String,
-    workspace: &eon_workspace_protocol::v46::WorkspaceInfo,
+    workspace: &eon_workspace_protocol::v47::WorkspaceInfo,
     shown: bool,
 ) {
     output.push_str(&format!(
@@ -3992,7 +3985,7 @@ pub(crate) fn json_workspace(
     output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
 }
 
-pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v46::WorkspaceInfo) -> String {
+pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v47::WorkspaceInfo) -> String {
     let mut output = String::from("\"persistent_id\":");
     json_option(&mut output, workspace.persistent_id.as_deref());
     output.push_str(",\"registration_error\":");
@@ -4123,7 +4116,7 @@ pub(crate) fn resolve_target<'a>(
 ) -> Result<usize, Failure> {
     match target {
         WorkspaceTarget::Selector(selector) => {
-            eon_workspace_protocol::v46::validate_workspace_name(selector)
+            eon_workspace_protocol::v47::validate_workspace_name(selector)
                 .map_err(|error| action_error("malformed-action", error.to_string()))?;
             resolve_selector(workspaces.map(|(id, name, _)| (id, name)), selector)
         }
@@ -4188,7 +4181,7 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v46::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v47::Shortcut) -> String {
     eon_workspace_protocol::shortcuts::config_chord(shortcut.modifiers, &shortcut.key)
 }
 
@@ -4405,7 +4398,29 @@ mod tests {
         snapshot
     }
     use super::*;
-    use eon_workspace_protocol::v46::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+
+    /// A default pane in the caller's or the active tab.
+    fn new_pane(focus: bool) -> Action {
+        Action::CreatePane {
+            tab: None,
+            argv: Vec::new(),
+            focus,
+        }
+    }
+
+    /// A default pane in the named tab.
+    fn pane_in(tab: &str, focus: bool) -> Action {
+        Action::CreatePane {
+            tab: Some(tab.into()),
+            argv: Vec::new(),
+            focus,
+        }
+    }
+
+    fn inspect() -> Action {
+        Action::Workspace(WorkspaceAction::Inspect)
+    }
+    use eon_workspace_protocol::v47::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn c38_set(root: &Path) -> (Registry, WorkspaceSet) {
         let registry = Registry::in_test_directory(root.join("sessions"));
@@ -5062,14 +5077,8 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        set.dispatch(
-            "stack",
-            None,
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-            prepared,
-            |_| Ok(()),
-        )
-        .unwrap();
+        set.dispatch("stack", None, new_pane(true), prepared, |_| Ok(()))
+            .unwrap();
         set.dispatch(
             "focus-again",
             None,
@@ -5210,8 +5219,8 @@ mod tests {
             ("s1", "s3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v46::encode_response(
-            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(caller_view)),
+        eon_workspace_protocol::v47::encode_response(
+            &eon_workspace_protocol::v47::Response::Snapshot(wire_snapshot(caller_view)),
         )
         .unwrap();
 
@@ -5221,7 +5230,7 @@ mod tests {
                 "ambiguous",
                 None,
                 Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector(
+                    workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector(
                         "work".into(),
                     ),
                 }),
@@ -5236,7 +5245,7 @@ mod tests {
             "same",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s3".into()),
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s3".into()),
             }),
             prepared,
             |_| panic!("a switch starts nothing"),
@@ -5309,7 +5318,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v46::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v47::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -5365,8 +5374,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v46::encode_response(
-            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(snapshot.clone())),
+        eon_workspace_protocol::v47::encode_response(
+            &eon_workspace_protocol::v47::Response::Snapshot(wire_snapshot(snapshot.clone())),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -5438,8 +5447,8 @@ mod tests {
         assert_eq!(error.code, "terminal-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v46::encode_response(
-            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(snapshot.clone())),
+        eon_workspace_protocol::v47::encode_response(
+            &eon_workspace_protocol::v47::Response::Snapshot(wire_snapshot(snapshot.clone())),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "s1");
@@ -5453,7 +5462,7 @@ mod tests {
             "name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v46::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v47::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s2".into(),
@@ -5466,7 +5475,7 @@ mod tests {
             "live-id",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5477,7 +5486,7 @@ mod tests {
             "absent-id-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v46::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v47::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s99".into(),
@@ -5490,7 +5499,7 @@ mod tests {
             "switch-name",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s99".into()),
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s99".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5501,7 +5510,7 @@ mod tests {
             "rename-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v46::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v47::WorkspaceTarget::Selector(
                     "s99".into(),
                 )),
                 name: "s100".into(),
@@ -5548,7 +5557,7 @@ mod tests {
         );
         for (request, workspace) in [("third", "s3"), ("second", "s2")] {
             let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector(workspace.into()),
             });
             set.dispatch(request, None, switch, prepared, |_| Ok(()))
                 .unwrap();
@@ -5729,7 +5738,7 @@ mod tests {
             "switch",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -5749,7 +5758,7 @@ mod tests {
             "show-second",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -5828,7 +5837,7 @@ mod tests {
             set.dispatch(
                 &format!("pane-{index}"),
                 None,
-                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+                new_pane(true),
                 prepared,
                 &mut record,
             )
@@ -6029,13 +6038,9 @@ mod tests {
                 .code,
             "duplicate-request"
         );
-        set.dispatch(
-            "local",
-            Some(&caller.id),
-            Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-            prepared,
-            |_| Ok(()),
-        )
+        set.dispatch("local", Some(&caller.id), new_pane(false), prepared, |_| {
+            Ok(())
+        })
         .unwrap();
         assert_eq!(set.workspaces[0].session_count(), 2);
         assert_eq!(set.snapshot().active_tab, foreign.id);
@@ -6055,7 +6060,7 @@ mod tests {
                 set.dispatch(
                     &format!("fill-{index}-{number}"),
                     None,
-                    Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+                    new_pane(false),
                     prepared,
                     |_| Ok(()),
                 )
@@ -6072,10 +6077,7 @@ mod tests {
         for index in 0..2 {
             set.shown = index;
             let tab = set.snapshot().active_tab;
-            for action in [
-                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-                invoke(&tab, "git"),
-            ] {
+            for action in [new_pane(false), invoke(&tab, "git")] {
                 assert!(
                     set.dispatch("full", None, action, prepared, |_| panic!(
                         "full window starts nothing"
@@ -6149,7 +6151,7 @@ mod tests {
             focus: false,
         });
         let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector("s2".into()),
         });
         set.dispatch("create", None, create.clone(), prepared, |_| Ok(()))
             .unwrap();
@@ -6241,13 +6243,9 @@ mod tests {
         set.shown = 1;
         let before = set.clone();
         assert_eq!(
-            set.dispatch(
-                "accepted",
-                None,
-                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-                prepared,
-                |_| panic!("replay performs no operations")
-            )
+            set.dispatch("accepted", None, new_pane(false), prepared, |_| panic!(
+                "replay performs no operations"
+            ))
             .unwrap_err()
             .code,
             "duplicate-request"
@@ -6442,7 +6440,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v46::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v47::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6515,7 +6513,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v46::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v47::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6576,7 +6574,7 @@ mod tests {
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v46::{
+        use eon_workspace_protocol::v47::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, GoogleQuota, QuotaWindow,
         };
@@ -6703,7 +6701,7 @@ mod tests {
             reason: QuotaFailureReason::Start,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v46::QueueEntry {
+            eon_workspace_protocol::v47::QueueEntry {
                 workspace: "s1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -6712,7 +6710,7 @@ mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v46::QueueEntry {
+            eon_workspace_protocol::v47::QueueEntry {
                 workspace: "s2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -6842,13 +6840,9 @@ mod tests {
             .dispatch("popup", None, invoke("t1", "git"), prepared, |_| Ok(()))
             .unwrap();
         before
-            .dispatch(
-                "pane",
-                Some("terminal-1"),
-                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-                prepared,
-                |_| Ok(()),
-            )
+            .dispatch("pane", Some("terminal-1"), new_pane(true), prepared, |_| {
+                Ok(())
+            })
             .unwrap();
         assert_eq!(
             before.snapshot().tabs[0].panes().nth(1).unwrap().session,
@@ -6933,7 +6927,7 @@ mod tests {
             let mut action = match kind {
                 0 => {
                     set.ids.next_pane = set.ids.limit - 1;
-                    Action::Workspace(WorkspaceAction::CreatePane { focus: true })
+                    new_pane(true)
                 }
                 1 => {
                     set.ids.next_tab = set.ids.limit - 1;
@@ -7733,8 +7727,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v46::encode_response(
-            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(after)),
+        eon_workspace_protocol::v47::encode_response(
+            &eon_workspace_protocol::v47::Response::Snapshot(wire_snapshot(after)),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -7802,32 +7796,48 @@ mod tests {
         // without panes has nothing to move: both change nothing.
         let before = workspace.snapshot();
         for action in [
-            WorkspaceAction::CreatePane { focus: true },
-            WorkspaceAction::Move(Direction::Down),
+            new_pane(true),
+            Action::Workspace(WorkspaceAction::Move(Direction::Down)),
         ] {
             let failure = workspace
-                .dispatch(
-                    "refused",
-                    Some(&caller),
-                    Action::Workspace(action),
-                    prepared,
-                    ok,
-                )
+                .dispatch("refused", Some(&caller), action, prepared, ok)
                 .unwrap_err();
             assert_eq!(failure.code, "unavailable");
             assert_eq!(workspace.snapshot(), before);
         }
+        // Naming t2 from t1 or from no terminal never lets the pane fall to
+        // another tab when the dismissal would close t2.
+        let t1 = workspace.snapshot().tabs[0].columns[0].panes[0]
+            .session
+            .clone();
+        for caller in [None, Some(t1.as_str())] {
+            let failure = workspace
+                .dispatch("named", caller, pane_in("t2", true), prepared, ok)
+                .unwrap_err();
+            assert_eq!(failure.code, "unavailable", "{caller:?}");
+            assert_eq!(workspace.snapshot(), before);
+        }
+        // Unfocused, the named paneless t2 gains its only, selected pane
+        // under its still-shown popup, and t1 stays active and unchanged.
+        let mut named = workspace.clone();
+        named
+            .dispatch("named-unfocused", None, pane_in("t2", false), prepared, ok)
+            .unwrap();
+        let snapshot = named.snapshot();
+        let tab = &snapshot.tabs[1];
+        assert_eq!(tab.panes().count(), 1);
+        assert_eq!(
+            tab.selected_pane,
+            tab.columns[0].panes.first().map(|pane| pane.id.clone())
+        );
+        assert_eq!(tab.selected_popup, before.tabs[1].selected_popup);
+        assert_eq!(snapshot.active_tab, "t1");
+        assert_eq!(snapshot.tabs[0], before.tabs[0]);
 
         // An unfocused pane dismisses nothing, so it becomes the tab's first,
         // selected pane under its still-shown popup.
         workspace
-            .dispatch(
-                "unfocused",
-                Some(&caller),
-                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-                prepared,
-                ok,
-            )
+            .dispatch("unfocused", Some(&caller), new_pane(false), prepared, ok)
             .unwrap();
         let snapshot = workspace.snapshot();
         let tab = &snapshot.tabs[1];
@@ -7839,6 +7849,161 @@ mod tests {
         assert_eq!(tab.selected_popup, before.tabs[1].selected_popup);
         assert_eq!(snapshot.active_tab, "t1");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `pane create --tab` (EON-C10): the pane goes to the named tab of this
+    /// session, in the caller's column only when the caller is a pane there,
+    /// and the active tab and every other tab stay as they were.
+    #[test]
+    fn an_explicit_tab_takes_the_pane_and_keeps_every_other_selection() {
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "terminal-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let mut request = |id: &str, caller: Option<&str>, action| {
+            workspace.dispatch(id, caller, action, prepared, |_| Ok(()))?;
+            Ok::<_, Failure>(workspace.snapshot())
+        };
+        // t1: the caller p1 in column 0, column 1 (p2) selected. t2: p3 in
+        // column 0, column 1 (p4) selected under a shown keep-alive popup.
+        request("c1", None, Action::CreateColumn).unwrap();
+        let launch = Action::LaunchTab {
+            directory: b"/".to_vec(),
+            argv: Vec::new(),
+            focus: true,
+        };
+        request("t2", None, launch).unwrap();
+        request("c2", None, Action::CreateColumn).unwrap();
+        let show = Action::InvokePopup {
+            tab: "t2".into(),
+            entry: "agent".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Show,
+        };
+        request("u", None, show).unwrap();
+        let away = Action::Workspace(WorkspaceAction::FocusId("t1".into()));
+        let before = request("away", None, away).unwrap();
+        assert_eq!(before.active_tab, "t1");
+        assert_eq!(before.tabs[0].selected_pane.as_deref(), Some("p2"));
+        assert_eq!(before.tabs[1].selected_pane.as_deref(), Some("p4"));
+        let popup = before.tabs[1].selected_popup.clone();
+        assert!(popup.is_some());
+        let ids = |tab: &eon_workspace_protocol::v47::Tab, column: usize| {
+            tab.columns[column]
+                .panes
+                .iter()
+                .map(|pane| pane.id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        // Unfocused from t1's unselected p1: t2's selected column gains the
+        // pane collapsed; t2's selection and popup and all of t1 stay.
+        let after = request("p5", Some("terminal-1"), pane_in("t2", false)).unwrap();
+        assert_eq!(after.active_tab, "t1");
+        assert_eq!(after.tabs[0], before.tabs[0]);
+        assert_eq!(ids(&after.tabs[1], 1), ["p4", "p5"]);
+        assert_eq!(after.tabs[1].selected_pane.as_deref(), Some("p4"));
+        assert_eq!(after.tabs[1].selected_popup, popup);
+
+        // Focused: p6 becomes t2's selected pane and t2's popup is dismissed;
+        // t1, including the caller's unselected column, stays as it was.
+        let after = request("p6", Some("terminal-1"), pane_in("t2", true)).unwrap();
+        assert_eq!(after.active_tab, "t1");
+        assert_eq!(after.tabs[0], before.tabs[0]);
+        assert_eq!(ids(&after.tabs[1], 1), ["p4", "p5", "p6"]);
+        assert_eq!(after.tabs[1].selected_pane.as_deref(), Some("p6"));
+        assert_eq!(after.tabs[1].selected_popup, None);
+
+        // A caller that is a pane of the named tab keeps its own column.
+        let p3 = after.tabs[1].columns[0].panes[0].session.clone();
+        let after = request("p7", Some(&p3), pane_in("t2", false)).unwrap();
+        assert_eq!(ids(&after.tabs[1], 0), ["p3", "p7"]);
+        assert_eq!(after.tabs[1].selected_pane.as_deref(), Some("p6"));
+        assert_eq!(after.active_tab, "t1");
+
+        // Refusals change nothing: an unknown tab, an unknown caller, a
+        // command without a calling terminal, and a pending tab.
+        let command = Action::CreatePane {
+            tab: Some("t2".into()),
+            argv: vec![b"claude".to_vec()],
+            focus: true,
+        };
+        for (index, (caller, action, code)) in [
+            (Some("terminal-1"), pane_in("t99", true), "unknown-tab"),
+            (None, pane_in("t99", false), "unknown-tab"),
+            (Some("terminal-9"), pane_in("t2", true), "unknown-caller"),
+            (None, command, "caller-required"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let failure = request(&format!("refused-{index}"), caller, action).unwrap_err();
+            assert_eq!(failure.code, code);
+            assert_eq!(
+                request(&format!("same-{index}"), None, inspect()).unwrap(),
+                after
+            );
+        }
+        request("t3", None, Action::Workspace(WorkspaceAction::CreateTab)).unwrap();
+        let pending = request("before-pending", None, inspect()).unwrap();
+        let failure = request("pending", Some("terminal-1"), pane_in("t3", true)).unwrap_err();
+        assert_eq!(failure.code, "choose-directory-first");
+        assert_eq!(request("after-pending", None, inspect()).unwrap(), pending);
+    }
+
+    /// A session's only tab survives losing its last terminal, so naming it
+    /// over its only, transient popup dismisses the popup and keeps the pane.
+    #[test]
+    fn an_explicit_sole_tab_takes_the_pane_over_its_last_popup() {
+        let ok = |_| Ok(());
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "terminal-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let transient = Action::InvokePopup {
+            tab: "t1".into(),
+            entry: "commands".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        };
+        workspace
+            .dispatch("open", None, transient, prepared, ok)
+            .unwrap();
+        workspace
+            .session_ended("terminal-1", SessionEnd::Exited, ok)
+            .unwrap();
+        let before = workspace.snapshot();
+        assert_eq!(before.tabs.len(), 1);
+        assert_eq!(before.tabs[0].panes().count(), 0);
+        assert!(before.tabs[0].selected_popup.is_some());
+        workspace
+            .dispatch("named", None, pane_in("t1", true), prepared, ok)
+            .unwrap();
+        let after = workspace.snapshot();
+        assert_eq!(after.tabs.len(), 1);
+        assert_eq!(after.tabs[0].id, "t1");
+        assert_eq!(after.tabs[0].panes().count(), 1);
+        assert_eq!(after.tabs[0].selected_popup, None);
     }
 
     #[test]
@@ -7863,15 +8028,12 @@ mod tests {
                 .unwrap();
             workspace.snapshot()
         };
-        let command = |focus| Action::CreateCommandPane {
+        let command = |focus| Action::CreatePane {
+            tab: None,
             argv: vec![b"claude".to_vec()],
             focus,
         };
-        request(
-            "p2",
-            None,
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-        );
+        request("p2", None, new_pane(true));
 
         // From the unselected p1, the pane joins the column collapsed.
         let snapshot = request("p3", Some("terminal-1"), command(false));
@@ -7892,13 +8054,7 @@ mod tests {
             },
         );
         let popup = snapshot.tabs[0].popups[0].clone();
-        for (id, action) in [
-            ("p4", command(false)),
-            (
-                "p5",
-                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-            ),
-        ] {
+        for (id, action) in [("p4", command(false)), ("p5", new_pane(false))] {
             let tab = request(id, Some(&popup.session), action).tabs.remove(0);
             assert_eq!(tab.panes().last().map(|pane| pane.id.as_str()), Some(id));
             assert_eq!(tab.selected_pane.as_deref(), Some("p2"));
@@ -8143,11 +8299,7 @@ mod tests {
             tab: tab.into(),
             target: target.into(),
         };
-        request(
-            "p2",
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-        )
-        .unwrap();
+        request("p2", new_pane(true)).unwrap();
         let agent = request("agent", invoke("agent")).unwrap().tabs[0].popups[0]
             .id
             .clone();
@@ -8232,12 +8384,7 @@ mod tests {
 
         // A new column opens right of the selected one and takes the selection.
         request(&mut workspace, "c1", Action::CreateColumn).unwrap();
-        request(
-            &mut workspace,
-            "c2",
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-        )
-        .unwrap();
+        request(&mut workspace, "c2", new_pane(true)).unwrap();
         assert_eq!(
             shape(&workspace),
             (vec!["p1@p1".into(), "p2,p3@p3".into()], "p3".into())
@@ -8384,11 +8531,7 @@ mod tests {
         };
 
         request(&mut workspace, "c1", Action::CreateColumn);
-        request(
-            &mut workspace,
-            "c2",
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-        );
+        request(&mut workspace, "c2", new_pane(true));
         assert_eq!(close(&mut workspace, "x2", "p3").unwrap(), "terminal-3");
         assert_eq!(
             refused(&mut workspace, "x2", "p2").code,
@@ -8432,11 +8575,7 @@ mod tests {
         );
         assert_eq!(workspace.snapshot(), before);
         for (id, caller) in [("x5b", agent.as_str()), ("x5c", "terminal-1")] {
-            request(
-                &mut workspace,
-                id,
-                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-            );
+            request(&mut workspace, id, new_pane(false));
             let pane = workspace.snapshot().tabs[0]
                 .panes()
                 .last()
@@ -8461,11 +8600,7 @@ mod tests {
         // A pane of a background tab closes by its ID, here under that tab's
         // popup by the popup's terminal, and the active pending tab, its
         // picker and the covered tab's popup stay as they were.
-        request(
-            &mut workspace,
-            "x6-pane",
-            Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-        );
+        request(&mut workspace, "x6-pane", new_pane(false));
         let background = workspace.snapshot().tabs[0].panes().last().unwrap().clone();
         request(
             &mut workspace,
@@ -8575,13 +8710,7 @@ mod tests {
         let active = panes(&workspace, "t2");
 
         // A pane in the inactive tab creates beside itself, and the user stays put.
-        request(
-            &mut workspace,
-            "c1",
-            Some("terminal-1"),
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-        )
-        .unwrap();
+        request(&mut workspace, "c1", Some("terminal-1"), new_pane(true)).unwrap();
         let (created, selected) = panes(&workspace, "t1");
         assert_eq!(created.len(), 2);
         assert_eq!(selected, created[1]);
@@ -8594,7 +8723,7 @@ mod tests {
             .dispatch(
                 "c-fails",
                 Some("terminal-1"),
-                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+                new_pane(true),
                 prepared,
                 |_| Err("start failed".into()),
             )
@@ -8674,25 +8803,14 @@ mod tests {
         .unwrap_err();
         assert_eq!(failure.code, "unavailable");
         assert_eq!(workspace.snapshot(), before);
-        request(
-            &mut workspace,
-            "c2",
-            Some(&agent),
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-        )
-        .unwrap();
+        request(&mut workspace, "c2", Some(&agent), new_pane(true)).unwrap();
         assert_eq!(panes(&workspace, "t2").0.len(), active.0.len() + 1);
         assert_eq!(panes(&workspace, "t1").0, ["p1"]);
 
         // A caller that is no terminal of this workspace changes nothing.
         let before = workspace.snapshot();
-        let failure = request(
-            &mut workspace,
-            "c3",
-            Some("terminal-99"),
-            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-        )
-        .unwrap_err();
+        let failure =
+            request(&mut workspace, "c3", Some("terminal-99"), new_pane(true)).unwrap_err();
         assert_eq!(failure.code, "unknown-caller");
         assert_eq!(workspace.snapshot(), before);
     }
@@ -8746,12 +8864,7 @@ mod tests {
                 .collect::<Vec<_>>();
             (columns, tab.selected_pane.clone().unwrap())
         };
-        workspace_action(
-            &mut workspace,
-            "p",
-            WorkspaceAction::CreatePane { focus: true },
-        )
-        .unwrap();
+        request(&mut workspace, "p", new_pane(true)).unwrap();
 
         // A stacked pane past the outer column opens a new column there.
         sideways(&mut workspace, "r1", Side::Right).unwrap();
@@ -8772,12 +8885,7 @@ mod tests {
         workspace_action(&mut workspace, "f1", WorkspaceAction::FocusId("p1".into())).unwrap();
         sideways(&mut workspace, "r3", Side::Right).unwrap();
         workspace_action(&mut workspace, "f2", WorkspaceAction::FocusId("p2".into())).unwrap();
-        workspace_action(
-            &mut workspace,
-            "p3",
-            WorkspaceAction::CreatePane { focus: true },
-        )
-        .unwrap();
+        request(&mut workspace, "p3", new_pane(true)).unwrap();
         workspace_action(&mut workspace, "f3", WorkspaceAction::FocusId("p2".into())).unwrap();
         workspace_action(&mut workspace, "f4", WorkspaceAction::FocusId("p1".into())).unwrap();
         assert_eq!(
@@ -8863,12 +8971,15 @@ mod tests {
         )
         .unwrap();
         for (id, action) in [
-            ("stack", WorkspaceAction::CreatePane { focus: true }),
-            ("other-tab", WorkspaceAction::CreateTab),
-            ("select", WorkspaceAction::FocusId("t1".into())),
+            ("stack", new_pane(true)),
+            ("other-tab", Action::Workspace(WorkspaceAction::CreateTab)),
+            (
+                "select",
+                Action::Workspace(WorkspaceAction::FocusId("t1".into())),
+            ),
         ] {
             workspace
-                .dispatch(id, None, Action::Workspace(action), prepared, |_| Ok(()))
+                .dispatch(id, None, action, prepared, |_| Ok(()))
                 .unwrap();
         }
         for entry in ["agent", "project"] {
@@ -8956,12 +9067,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         request(&mut workspace, "c1", Action::CreateColumn).unwrap();
-        workspace_action(
-            &mut workspace,
-            "p",
-            WorkspaceAction::CreatePane { focus: true },
-        )
-        .unwrap();
+        request(&mut workspace, "p", new_pane(true)).unwrap();
 
         // Moving a pane in the second column reorders only that column.
         workspace_action(&mut workspace, "m1", WorkspaceAction::Move(Direction::Up)).unwrap();
@@ -9357,7 +9463,7 @@ mod tests {
         };
         let switch = |workspace: &str| {
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v46::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector(workspace.into()),
             })
         };
         // Opens the picker over the shown terminal and returns its terminal.
@@ -10020,7 +10126,8 @@ mod tests {
             catalog(),
         )
         .unwrap();
-        let command = || Action::CreateCommandPane {
+        let command = || Action::CreatePane {
+            tab: None,
             argv: vec![b"claude".to_vec(), b"prime \xff".to_vec()],
             focus: true,
         };
@@ -10199,8 +10306,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "terminal-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v46::encode_response(
-            &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(workspace.snapshot())),
+        eon_workspace_protocol::v47::encode_response(
+            &eon_workspace_protocol::v47::Response::Snapshot(wire_snapshot(workspace.snapshot())),
         )
         .unwrap();
 
@@ -10263,8 +10370,8 @@ mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v46::encode_response(
-                &eon_workspace_protocol::v46::Response::Snapshot(wire_snapshot(state)),
+            eon_workspace_protocol::v47::encode_response(
+                &eon_workspace_protocol::v47::Response::Snapshot(wire_snapshot(state)),
             )
             .unwrap();
         }
@@ -10448,12 +10555,7 @@ mod tests {
                 set.dispatch(id, caller, action, prepared, |_| Ok(()))
                     .unwrap();
             };
-            apply(
-                &mut set,
-                "t1-p2",
-                Some("terminal-1"),
-                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-            );
+            apply(&mut set, "t1-p2", Some("terminal-1"), new_pane(false));
             apply(&mut set, "t1-git", Some("terminal-1"), invoke("t1", "git"));
             apply(
                 &mut set,
@@ -10640,12 +10742,7 @@ mod tests {
                 .session
                 .clone();
             apply(&mut set, "t3-col2", None, Action::CreateColumn);
-            apply(
-                &mut set,
-                "t3-p2",
-                Some(&t3_first_session),
-                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
-            );
+            apply(&mut set, "t3-p2", Some(&t3_first_session), new_pane(true));
             apply(
                 &mut set,
                 "focus-t2",
@@ -10739,12 +10836,7 @@ mod tests {
                 .unwrap();
         };
         let new_pane = |set: &mut WorkspaceSet, id: &str| {
-            apply(
-                set,
-                id,
-                Some("terminal-1"),
-                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-            );
+            apply(set, id, Some("terminal-1"), new_pane(false));
             set.snapshot().tabs[0].panes().last().unwrap().clone()
         };
         // t1 shows Git over p1, and the active t2 shows Agent over its pane.
@@ -10954,12 +11046,7 @@ mod tests {
                 .unwrap();
         };
         // Give s2 a second tab (background) and a second pane on its first tab.
-        apply(
-            &mut set,
-            "s2-p2",
-            Some(&s2_caller),
-            Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
-        );
+        apply(&mut set, "s2-p2", Some(&s2_caller), new_pane(false));
         apply(
             &mut set,
             "s2-bg-tab",
@@ -11338,7 +11425,7 @@ mod tests {
                 label: "Agent".into(),
                 shortcut: PopupKey::Overridden {
                     default: Shortcut {
-                        modifiers: ALT | eon_workspace_protocol::v46::SHIFT,
+                        modifiers: ALT | eon_workspace_protocol::v47::SHIFT,
                         key: "KeyL".into(),
                     },
                     by: "pane-maker".into(),

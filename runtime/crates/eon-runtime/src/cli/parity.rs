@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v46::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v47::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -86,9 +86,6 @@ fn cli_path(action: &Action) -> CliPath {
             WorkspaceAction::CloseWorkspace { workspace } => {
                 [words(&["session", "close"]), target(workspace)].concat()
             }
-            WorkspaceAction::CreatePane { focus } => {
-                [words(&["pane", "create"]), flag(!focus, "--no-focus")].concat()
-            }
             WorkspaceAction::FocusId(tab) if tab_number(tab).is_some() => {
                 words(&["tab", "switch", tab])
             }
@@ -145,8 +142,8 @@ fn cli_path(action: &Action) -> CliPath {
             force,
         } => {
             let target = match target {
-                eon_workspace_protocol::v46::SendTarget::Id(id) => id.as_str(),
-                eon_workspace_protocol::v46::SendTarget::Focused { .. } => "focused",
+                eon_workspace_protocol::v47::SendTarget::Id(id) => id.as_str(),
+                eon_workspace_protocol::v47::SendTarget::Focused { .. } => "focused",
             };
             let mut arguments = words(&["pane", "send", target]);
             if *force {
@@ -183,11 +180,17 @@ fn cli_path(action: &Action) -> CliPath {
             },
         ]),
         Action::Edit { file } => [words(&["edit", "--"]), vec![bytes(file)]].concat(),
-        Action::CreateCommandPane { argv, focus } => [
+        Action::CreatePane { tab, argv, focus } => [
             words(&["pane", "create"]),
             flag(!focus, "--no-focus"),
-            words(&["--"]),
-            argv.iter().map(bytes).collect(),
+            tab.iter()
+                .flat_map(|tab| words(&["--tab", tab.as_str()]))
+                .collect(),
+            if argv.is_empty() {
+                Vec::new()
+            } else {
+                [words(&["--"]), argv.iter().map(bytes).collect()].concat()
+            },
         ]
         .concat(),
         Action::LaunchTab {
@@ -244,7 +247,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::Present { workspace: true },
         WorkspaceAction::ReloadPresentation {
             venus: "/nix/store/fixture/bin/venus".into(),
-            eonw: eon_workspace_protocol::v46::VERSION,
+            eonw: eon_workspace_protocol::v47::VERSION,
             orbs: 14,
             orbf: 3,
         },
@@ -271,8 +274,6 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::CloseWorkspace {
             workspace: SessionTarget::Selector(text("-s2")),
         },
-        WorkspaceAction::CreatePane { focus: true },
-        WorkspaceAction::CreatePane { focus: false },
         WorkspaceAction::FocusId(text("p2")),
         WorkspaceAction::FocusId(text("u2")),
         WorkspaceAction::FocusId(text("t2")),
@@ -334,9 +335,25 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::Edit {
             file: b"/tmp/notes\xff.md".to_vec(),
         },
-        Action::CreateCommandPane {
+        Action::CreatePane {
+            tab: None,
+            argv: Vec::new(),
+            focus: true,
+        },
+        Action::CreatePane {
+            tab: Some(text("t2")),
+            argv: Vec::new(),
+            focus: false,
+        },
+        Action::CreatePane {
+            tab: None,
             argv: vec![b"echo".to_vec(), b"--window".to_vec(), b"\xff".to_vec()],
             focus: false,
+        },
+        Action::CreatePane {
+            tab: Some(text("t2")),
+            argv: vec![b"echo".to_vec(), b"--tab".to_vec(), b"t9".to_vec()],
+            focus: true,
         },
         Action::LaunchTab {
             directory: b"/tmp/project-\xff".to_vec(),
@@ -361,22 +378,22 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::ReadTerminalHistory { target: text("u1") },
         Action::EditTerminalHistory { target: text("p1") },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v46::SendTarget::Id(text("u1")),
+            target: eon_workspace_protocol::v47::SendTarget::Id(text("u1")),
             force: false,
             input: TerminalInput::Paste(text("echo hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v46::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v47::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Enter,
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v46::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v47::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Paste(text("hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v46::SendTarget::Focused {
+            target: eon_workspace_protocol::v47::SendTarget::Focused {
                 expected_terminal: None,
             },
             force: false,
@@ -453,11 +470,11 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                 assert_eq!(
                     Action::SendTerminal {
                         target: if send.target == "focused" {
-                            eon_workspace_protocol::v46::SendTarget::Focused {
+                            eon_workspace_protocol::v47::SendTarget::Focused {
                                 expected_terminal: None,
                             }
                         } else {
-                            eon_workspace_protocol::v46::SendTarget::Id(send.target)
+                            eon_workspace_protocol::v47::SendTarget::Id(send.target)
                         },
                         force: send.force,
                         input

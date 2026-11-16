@@ -1064,8 +1064,8 @@ line points agents to `eon --skill`.
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals; on a pending tab, use DIRECTORY as quick search would: start its first terminal there and hide its Files |
 | `eon tab switch TAB [--json]` | Make tab TAB the active tab of the session, as clicking it does; from an Eon terminal in a hidden session, its active tab changes and it stays hidden. Desktop focus stays where it is. A TAB that is not live exits 3 (`unknown-tab`) |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
-| `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are. The JSON reply names the new pane and its tab in `created`, as `{"tab": "tN", "pane": "pN"}` |
-| `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` and `created` as above; refused with exit 1 outside an Eon terminal |
+| `eon pane create [--json] [--no-focus] [--tab TAB]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are. With `--tab TAB`, the pane goes to tab TAB of the same session instead, and the active tab stays as it is. The JSON reply names the new pane and its tab in `created`, as `{"tab": "tN", "pane": "pN"}` |
+| `eon pane create [--json] [--no-focus] [--tab TAB] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, or of tab TAB, at that tab's directory, with `--no-focus` and `created` as above; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in the configured editor: packaged Helix and selected Neovim use the tab's Editor popup by default, retaining loaded buffers and unsaved edits (Neovim works without Helix too); `[editor] open_in = "pane"`, other editors, directories, disabled Editor and an existing Editor without Eon's listener use a new pane placed as `pane create` places it; JSON names Editor in the tab's `selected_popup`, or the new pane in `created` |
 | `eon pane close PANE [--yes] [--json]` | Close any pane of the addressed session, stopping its terminal without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab's last pane quits the window, or closes the session while others remain, asking first from a terminal |
 | `eon column close PANE --yes [--json]` | Close the column (Stack) holding PANE. Without `--yes`, list every terminal it would stop and fail `not-confirmed` (exit 1); never reads stdin. A changed scope fails `close-changed` (exit 1) and stops nothing |
@@ -1277,6 +1277,13 @@ Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
 an Eon terminal, `pane create`, `edit`, `pane move` and `tab move` act on
 that terminal's own tab rather than the active one: a pane adds the new pane to
 its own column and moves itself, and a popup acts for its tab's selected pane.
+`pane create --tab TAB` adds the pane to TAB instead, in the caller's column
+when the caller is a pane of TAB and otherwise in TAB's selected column. It
+never changes the active tab or the shown session; `eon focus pN` selects the
+new pane afterwards, and `eon session switch` shows a hidden session. A TAB
+that is not live in the caller's session fails with exit 3 (`unknown-tab`),
+and when showing the pane would close TAB's only, transient popup and with it
+TAB, the command refuses with exit 1 (`unavailable`); use `--no-focus` there.
 `tab close TAB` and `pane close PANE` close any named tab or pane in the
 caller's session, even when another session is shown, and refuse IDs in
 another session with exit 3 (`unknown-tab` or `unknown-pane`).

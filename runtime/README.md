@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, session state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v46 types, the Reserved Stop and bounded codecs | `0.1.0` |
+| `eon-workspace-protocol` | EONW v47 types, the Reserved Stop and bounded codecs | `0.1.0` |
 
 ## Consumer boundary
 
@@ -95,6 +95,12 @@ owns product policy and installed acceptance.
 EONW v40 adds the `ReloadPresentation` lifecycle action and the presenting
 Venus path in `Runtime`. EON-C11 owns its exact-version, focused-window
 replacement and rollback rules.
+
+EONW v47 carries both pane creations on one request with an optional tab:
+an empty argv starts the default pane, a command runs as an exact argv for a
+calling terminal, and a named tab of the addressed session replaces the
+caller's or active tab without changing the active tab or shown session. The
+v46 requests are rejected, never migrated.
 
 EONW v46 adds creation-only `InvokeIntent::Show` with no expected instance.
 Runtime can create in any addressed tab without changing the session's active
@@ -233,7 +239,7 @@ its calling terminal; v12 adds a request that
 moves the selected pane into the neighbouring column; v11 adds a request that
 closes one pane by its stable identity; v10 arranges each tab's panes into up
 to four columns; v9 permits genuinely absent provider resets, including stale
-observations. Only v46 remains: the CLI
+observations. Only v47 remains: the CLI
 inspects supervisors that use it, lists any other as incompatible and stops
 every one with the Reserved Stop, and ordinary presentation remains bound to the
 original exact executable; explicit Reload follows EON-C11.
@@ -244,7 +250,7 @@ Runtime and codec have separate package manifests and version owners. Runtime
 depends on the in-tree Orbit protocol crate.
 
 EONW's complete package is its Cargo manifest, `src/lib.rs`, `src/stop.rs`,
-`src/v46.rs` and its `src/v46/subscription.rs` module. It has no external dependencies,
+`src/v47.rs` and its `src/v47/subscription.rs` module. It has no external dependencies,
 feature declarations, build script or workspace-inherited settings.
 
 Runtime evolution has one owner here; Eon owns product composition and

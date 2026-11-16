@@ -77,6 +77,14 @@ and its tab in `created`, as `{"tab": "tN", "pane": "pN"}`; read its terminal
 from that pane's `terminal`. With `--no-focus`, `selected_pane` stays on the
 person's selected pane; it does not identify the new pane.
 
+To start it in another tab of your session, for example a project's own tab,
+add `--tab tN` with a tab ID from `eon session --json`; the person's active
+tab stays as it is:
+
+```sh
+eon pane create --tab tN --no-focus --json -- COMMAND ARGS...
+```
+
 ## Open files, tabs and sessions
 
 When asked to open a file for the person, run `eon edit --json -- FILE` to open
