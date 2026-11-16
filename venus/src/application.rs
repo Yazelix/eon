@@ -3625,6 +3625,231 @@ impl Application {
         }
     }
 
+    /// Drain on an Orbit wake, applying popup workspace changes before terminal events.
+    fn drain_transport_events(
+        &mut self,
+        apply_workspace: impl FnOnce(&mut Self, Vec<WorkspaceEvent>),
+    ) {
+        let events = self
+            .terminal
+            .transport
+            .as_ref()
+            .map_or_else(Vec::new, Transport::drain_events);
+        // A shown popup that Eon hid before these frames were written stops showing
+        // first, and they leave with its attachment (EON-C39).
+        let attachment = self.attachments;
+        if self
+            .workspace_model
+            .snapshot()
+            .and_then(active_popup)
+            .is_some()
+            && let Some(workspace) = &self.workspace_transport
+        {
+            let events = workspace.catch_up();
+            apply_workspace(self, events);
+        }
+        if self.attachments == attachment {
+            for event in events {
+                self.handle_transport(event);
+            }
+        }
+        for index in 0..self.column_views.len() {
+            let events = self.column_views[index]
+                .transport
+                .as_ref()
+                .map_or_else(Vec::new, Transport::drain_events);
+            for event in events {
+                self.handle_column_transport(index, event);
+            }
+        }
+        self.drive_terminal_scroll();
+    }
+
+    /// Drain on a workspace wake; the host applies these events through its native lifecycle.
+    fn drain_workspace_events(&self) -> Vec<WorkspaceEvent> {
+        self.workspace_transport
+            .as_ref()
+            .map_or_else(Vec::new, WorkspaceTransport::drain_events)
+    }
+
+    /// Advance before sleep, then wait until the returned deadline or indefinitely on None.
+    fn advance_deadlines(&mut self, now: Instant) -> Option<Instant> {
+        if let Some(result) = self
+            .link_opener
+            .as_mut()
+            .and_then(|opener| opener.poll(now))
+        {
+            self.link_opener = None;
+            self.links.show_notice(
+                result.unwrap_or_else(|error| error),
+                result.is_ok(),
+                now,
+                self.workspace_model.notice_serial(),
+            );
+            self.refresh_client_view();
+        }
+        if self.links.expire_notice(now) {
+            self.refresh_client_view();
+        }
+        self.retry_orbit(now);
+        self.retry_column_views(now);
+        // Items Eon leaves out of the bar are never read and never wake Venus.
+        let shown = |item| self.bar_items.contains(&item);
+        let (show_clock, show_cpu, show_ram, show_disk, show_gpu) = (
+            shown(BarItem::Clock),
+            shown(BarItem::Cpu),
+            shown(BarItem::Ram),
+            shown(BarItem::Disk),
+            shown(BarItem::Gpu),
+        );
+        if self.workspace_model.snapshot().is_some()
+            && show_clock
+            && self.next_clock.is_none_or(|due| now >= due)
+        {
+            let reading = read_local_clock();
+            self.next_clock = Some(now + reading.as_ref().map_or(MINUTE, |(_, wait)| *wait));
+            let clock = reading.map(|(clock, _)| clock);
+            if clock != self.clock {
+                // Showing or losing the clock gives or takes its room in the shortcut hints.
+                let room = clock.is_some() != self.clock.is_some();
+                self.clock = clock;
+                if room {
+                    self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
+                    self.presentation.content_changed();
+                }
+                self.refresh_client_view();
+            }
+        }
+        if self.workspace_model.snapshot().is_some()
+            && (show_cpu || show_ram)
+            && self.next_reading.is_none_or(|due| now >= due)
+        {
+            self.next_reading = Some(now + READING_INTERVAL);
+            // After a failed read or an event-loop stall, the next reading starts over.
+            let cpu = self.cpu_readings.push(
+                now,
+                show_cpu.then(CpuTimes::read).flatten(),
+                READING_INTERVAL * 3 / 2,
+                self.load_levels,
+            );
+            let ram = show_ram
+                .then(RamUse::read)
+                .flatten()
+                .map(|ram| ram.rated(self.load_levels));
+            if cpu != self.cpu || ram != self.ram {
+                self.cpu = cpu;
+                self.ram = ram;
+                self.refresh_client_view();
+            }
+        }
+        if self.workspace_model.snapshot().is_some()
+            && show_disk
+            && self.disk_path.is_some()
+            && self.next_disk.is_none_or(|due| now >= due)
+        {
+            self.next_disk = Some(now + DISK_INTERVAL);
+            if !self.disk_reading {
+                self.read_disk();
+            }
+        }
+        if gpu_reading_due(
+            self.workspace_model.snapshot().is_some() && cfg!(target_os = "linux") && show_gpu,
+            self.window_occluded,
+            &mut self.next_gpu,
+            now,
+        ) {
+            // Only sysfs/cache are polled here; the shared query gate owns driver cadence.
+            if self.gpu_reading {
+                // A hung driver child cannot leave an old reading visible or start another child.
+                if self.gpu.take().is_some() {
+                    self.refresh_client_view();
+                }
+            } else {
+                self.read_gpu();
+            }
+        }
+        if self.next_age.is_some_and(|due| now >= due) {
+            self.refresh_client_view();
+        }
+        self.drive_selection_autoscroll(now);
+        if self.terminal.terminal_scroll.retry_preview(now) {
+            self.drive_terminal_scroll();
+        }
+        let blinking = std::iter::once(&self.terminal)
+            .chain(&self.column_views)
+            .filter_map(|view| view.model.scene())
+            .any(Scene::has_blinking_content);
+        if update_blink(blinking, &mut self.blink_visible, &mut self.next_blink, now)
+            && let Some(state) = &self.window
+        {
+            state.window.request_redraw();
+        }
+        let spinning = !self.window_occluded
+            && self
+                .window
+                .as_ref()
+                .is_some_and(|state| state.renderer.spinning());
+        if update_spinner(spinning, &mut self.next_spinner, now)
+            && let Some(state) = &mut self.window
+        {
+            state.renderer.turn_spinners();
+            state.window.request_redraw();
+        }
+        // A pending image entry's marker comes due without any other change (VEN-C31).
+        let next_marker = self
+            .window
+            .as_ref()
+            .and_then(|state| state.renderer.next_marker_deadline());
+        if next_marker.is_some_and(|due| now >= due && self.marker_wake != Some(due))
+            && let Some(state) = &self.window
+        {
+            self.marker_wake = next_marker;
+            state.window.request_redraw();
+        }
+        let animation_active = self
+            .window
+            .as_ref()
+            .is_some_and(|state| state.renderer.cursor_animation_active());
+        if update_animation_deadline(
+            animation_active,
+            cursor_animation_allowed(self.window_focused, self.window_occluded),
+            &mut self.next_animation,
+            now,
+        ) && let Some(state) = &self.window
+        {
+            state.window.request_redraw();
+        }
+        [
+            self.next_blink,
+            self.next_spinner,
+            self.next_animation,
+            self.next_clock,
+            self.next_age,
+            self.next_reading,
+            self.next_disk,
+            self.next_gpu,
+            next_marker.filter(|due| *due > now),
+            self.terminal.selection_scroll.next,
+            self.terminal.terminal_scroll.preview_retry_at(),
+            self.terminal.orbit_retry.deadline,
+            self.column_views
+                .iter()
+                .filter_map(|view| view.orbit_retry.deadline)
+                .min(),
+            // winit may suppress output-enter wakeups. Poll only until
+            // this window completes its initial native size admission.
+            (self.initial_scale_pending && self.window.is_some())
+                .then_some(now + ANIMATION_FRAME_INTERVAL),
+            self.link_opener
+                .as_ref()
+                .map(|_| now + Duration::from_millis(50)),
+            self.links.notice_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
     fn apply_workspace_events(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -6408,46 +6633,11 @@ impl ApplicationHandler<UserEvent> for Application {
                         .request_user_attention(Some(UserAttentionType::Informational));
                 }
             }
-            UserEvent::Transport => {
-                let events = self
-                    .terminal
-                    .transport
-                    .as_ref()
-                    .map_or_else(Vec::new, Transport::drain_events);
-                // A shown popup that Eon hid before these frames were written stops showing
-                // first, and they leave with its attachment (EON-C39).
-                let attachment = self.attachments;
-                if self
-                    .workspace_model
-                    .snapshot()
-                    .and_then(active_popup)
-                    .is_some()
-                    && let Some(workspace) = &self.workspace_transport
-                {
-                    let events = workspace.catch_up();
-                    self.apply_workspace_events(event_loop, events);
-                }
-                if self.attachments == attachment {
-                    for event in events {
-                        self.handle_transport(event);
-                    }
-                }
-                for index in 0..self.column_views.len() {
-                    let events = self.column_views[index]
-                        .transport
-                        .as_ref()
-                        .map_or_else(Vec::new, Transport::drain_events);
-                    for event in events {
-                        self.handle_column_transport(index, event);
-                    }
-                }
-                self.drive_terminal_scroll();
-            }
+            UserEvent::Transport => self.drain_transport_events(|app, events| {
+                app.apply_workspace_events(event_loop, events);
+            }),
             UserEvent::Workspace => {
-                let events = self
-                    .workspace_transport
-                    .as_ref()
-                    .map_or_else(Vec::new, WorkspaceTransport::drain_events);
+                let events = self.drain_workspace_events();
                 self.apply_workspace_events(event_loop, events);
             }
             UserEvent::AccessKit(event) => {
@@ -6588,184 +6778,8 @@ impl ApplicationHandler<UserEvent> for Application {
             self.start_initial_attachment();
             self.refresh_client_view();
         }
-        let now = Instant::now();
-        if let Some(result) = self
-            .link_opener
-            .as_mut()
-            .and_then(|opener| opener.poll(now))
-        {
-            self.link_opener = None;
-            self.links.show_notice(
-                result.unwrap_or_else(|error| error),
-                result.is_ok(),
-                now,
-                self.workspace_model.notice_serial(),
-            );
-            self.refresh_client_view();
-        }
-        if self.links.expire_notice(now) {
-            self.refresh_client_view();
-        }
-        self.retry_orbit(now);
-        self.retry_column_views(now);
-        // Items Eon leaves out of the bar are never read and never wake Venus.
-        let shown = |item| self.bar_items.contains(&item);
-        let (show_clock, show_cpu, show_ram, show_disk, show_gpu) = (
-            shown(BarItem::Clock),
-            shown(BarItem::Cpu),
-            shown(BarItem::Ram),
-            shown(BarItem::Disk),
-            shown(BarItem::Gpu),
-        );
-        if self.workspace_model.snapshot().is_some()
-            && show_clock
-            && self.next_clock.is_none_or(|due| now >= due)
-        {
-            let reading = read_local_clock();
-            self.next_clock = Some(now + reading.as_ref().map_or(MINUTE, |(_, wait)| *wait));
-            let clock = reading.map(|(clock, _)| clock);
-            if clock != self.clock {
-                // Showing or losing the clock gives or takes its room in the shortcut hints.
-                let room = clock.is_some() != self.clock.is_some();
-                self.clock = clock;
-                if room {
-                    self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
-                    self.presentation.content_changed();
-                }
-                self.refresh_client_view();
-            }
-        }
-        if self.workspace_model.snapshot().is_some()
-            && (show_cpu || show_ram)
-            && self.next_reading.is_none_or(|due| now >= due)
-        {
-            self.next_reading = Some(now + READING_INTERVAL);
-            // After a failed read or an event-loop stall, the next reading starts over.
-            let cpu = self.cpu_readings.push(
-                now,
-                show_cpu.then(CpuTimes::read).flatten(),
-                READING_INTERVAL * 3 / 2,
-                self.load_levels,
-            );
-            let ram = show_ram
-                .then(RamUse::read)
-                .flatten()
-                .map(|ram| ram.rated(self.load_levels));
-            if cpu != self.cpu || ram != self.ram {
-                self.cpu = cpu;
-                self.ram = ram;
-                self.refresh_client_view();
-            }
-        }
-        if self.workspace_model.snapshot().is_some()
-            && show_disk
-            && self.disk_path.is_some()
-            && self.next_disk.is_none_or(|due| now >= due)
-        {
-            self.next_disk = Some(now + DISK_INTERVAL);
-            if !self.disk_reading {
-                self.read_disk();
-            }
-        }
-        if gpu_reading_due(
-            self.workspace_model.snapshot().is_some() && cfg!(target_os = "linux") && show_gpu,
-            self.window_occluded,
-            &mut self.next_gpu,
-            now,
-        ) {
-            // Only sysfs/cache are polled here; the shared query gate owns driver cadence.
-            if self.gpu_reading {
-                // A hung driver child cannot leave an old reading visible or start another child.
-                if self.gpu.take().is_some() {
-                    self.refresh_client_view();
-                }
-            } else {
-                self.read_gpu();
-            }
-        }
-        if self.next_age.is_some_and(|due| now >= due) {
-            self.refresh_client_view();
-        }
-        self.drive_selection_autoscroll(now);
-        if self.terminal.terminal_scroll.retry_preview(now) {
-            self.drive_terminal_scroll();
-        }
-        let blinking = std::iter::once(&self.terminal)
-            .chain(&self.column_views)
-            .filter_map(|view| view.model.scene())
-            .any(Scene::has_blinking_content);
-        if update_blink(blinking, &mut self.blink_visible, &mut self.next_blink, now)
-            && let Some(state) = &self.window
-        {
-            state.window.request_redraw();
-        }
-        let spinning = !self.window_occluded
-            && self
-                .window
-                .as_ref()
-                .is_some_and(|state| state.renderer.spinning());
-        if update_spinner(spinning, &mut self.next_spinner, now)
-            && let Some(state) = &mut self.window
-        {
-            state.renderer.turn_spinners();
-            state.window.request_redraw();
-        }
-        // A pending image entry's marker comes due without any other change (VEN-C31).
-        let next_marker = self
-            .window
-            .as_ref()
-            .and_then(|state| state.renderer.next_marker_deadline());
-        if next_marker.is_some_and(|due| now >= due && self.marker_wake != Some(due))
-            && let Some(state) = &self.window
-        {
-            self.marker_wake = next_marker;
-            state.window.request_redraw();
-        }
-        let animation_active = self
-            .window
-            .as_ref()
-            .is_some_and(|state| state.renderer.cursor_animation_active());
-        if update_animation_deadline(
-            animation_active,
-            cursor_animation_allowed(self.window_focused, self.window_occluded),
-            &mut self.next_animation,
-            now,
-        ) && let Some(state) = &self.window
-        {
-            state.window.request_redraw();
-        }
-        event_loop.set_control_flow(
-            [
-                self.next_blink,
-                self.next_spinner,
-                self.next_animation,
-                self.next_clock,
-                self.next_age,
-                self.next_reading,
-                self.next_disk,
-                self.next_gpu,
-                next_marker.filter(|due| *due > now),
-                self.terminal.selection_scroll.next,
-                self.terminal.terminal_scroll.preview_retry_at(),
-                self.terminal.orbit_retry.deadline,
-                self.column_views
-                    .iter()
-                    .filter_map(|view| view.orbit_retry.deadline)
-                    .min(),
-                // winit may suppress output-enter wakeups. Poll only until
-                // this window completes its initial native size admission.
-                (self.initial_scale_pending && self.window.is_some())
-                    .then_some(now + ANIMATION_FRAME_INTERVAL),
-                self.link_opener
-                    .as_ref()
-                    .map(|_| now + Duration::from_millis(50)),
-                self.links.notice_deadline(),
-            ]
-            .into_iter()
-            .flatten()
-            .min()
-            .map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
-        );
+        let deadline = self.advance_deadlines(Instant::now());
+        event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }
 

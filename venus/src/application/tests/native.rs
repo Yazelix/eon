@@ -558,12 +558,79 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         TransportEvent::Server(ServerMessage::Frame(frame))
     }
 
+    fn check_host_drain_and_deadlines(app: &mut Application, root: &Path) {
+        let socket = root.join("column.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (wake, woken) = mpsc::channel();
+        let mut column = TerminalView::new(Some(socket.clone()));
+        column.transport = Some(Transport::start(socket.clone(), move || {
+            let _ = wake.send(());
+        }));
+        assert!(app.column_views.is_empty());
+        app.column_views.push(column);
+        let (mut server, _) = listener.accept().unwrap();
+        for event in [
+            TransportEvent::Server(ServerMessage::Attached),
+            linked_frame(1, ""),
+        ] {
+            let TransportEvent::Server(message) = event else {
+                unreachable!()
+            };
+            server
+                .write_all(&session::encode_server_message(&message).unwrap())
+                .unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            woken
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("column output wakes the host without input");
+            app.drain_transport_events(|_, _| panic!("this fixture has no popup"));
+            if app.column_views[0].model.scene().is_some() {
+                break;
+            }
+        }
+        assert_eq!(app.column_views[0].model.scene().unwrap().revision, 1);
+        let identity = app.presentation.candidate(app.presented_revision());
+        app.drain_transport_events(|_, _| panic!("this fixture has no popup"));
+        assert_eq!(
+            app.presentation.candidate(app.presented_revision()),
+            identity
+        );
+
+        let bar_items = std::mem::take(&mut app.bar_items);
+        let now = Instant::now();
+        assert_eq!(app.advance_deadlines(now), None, "an idle host can sleep");
+        app.terminal
+            .orbit_retry
+            .schedule(now + Duration::from_secs(1));
+        app.column_views[0].orbit_retry.schedule(now);
+        assert_eq!(app.advance_deadlines(now), Some(now + INITIAL_RETRY_DELAY));
+        app.initial_scale_pending = true;
+        assert_eq!(
+            app.advance_deadlines(now),
+            Some(now + ANIMATION_FRAME_INTERVAL),
+            "native admission still has its bounded wake"
+        );
+        app.initial_scale_pending = false;
+        app.terminal.orbit_retry.reset();
+        app.column_views.clear();
+        app.bar_items = bar_items;
+        drop(server);
+        drop(listener);
+        std::fs::remove_file(socket).unwrap();
+    }
+
     struct Probe {
         app: Application,
         listener: UnixListener,
         stream: Option<UnixStream>,
         actions: mpsc::Receiver<WorkspaceAction>,
         checked: bool,
+        idle_redraws: usize,
+        idle_drained: bool,
+        idle_checked: bool,
+        idle_timer: Option<thread::JoinHandle<()>>,
     }
     impl ApplicationHandler<UserEvent> for Probe {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -576,11 +643,23 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 "normal workspace attachment must not announce its first-frame wait"
             );
             self.app.handle_transport(frame(1, Screen::Primary));
+            let address = self.listener.local_addr().unwrap();
+            check_host_drain_and_deadlines(
+                &mut self.app,
+                address.as_pathname().unwrap().parent().unwrap(),
+            );
         }
 
         fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+            let redraw = matches!(event, WindowEvent::RedrawRequested);
             self.app.window_event(event_loop, id, event);
-            if self.checked || self.app.presented_revision() != Some(1) {
+            if self.checked {
+                if redraw {
+                    self.idle_redraws += 1;
+                }
+                return;
+            }
+            if self.app.presented_revision() != Some(1) {
                 return;
             }
             let app = &mut self.app;
@@ -1601,6 +1680,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             empty.tabs[0].columns.clear();
             empty.tabs[0].selected_pane = None;
             empty.tabs[0].selected_popup = None;
+            app.bar_items.clear();
+            app.next_clock = None;
+            app.next_reading = None;
+            app.next_disk = None;
+            app.next_gpu = None;
             app.handle_workspace(WorkspaceEvent::Response(
                 eon_workspace_protocol::v46::Response::Snapshot(empty),
             ));
@@ -1615,7 +1699,40 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 "an empty body has no resize failure"
             );
             self.checked = true;
-            event_loop.exit();
+            let proxy = self.app.proxy.clone();
+            self.idle_timer = Some(thread::spawn(move || {
+                thread::sleep(Duration::from_millis(100));
+                let _ = proxy.send_event(UserEvent::Transport);
+                thread::sleep(Duration::from_millis(150));
+                let _ = proxy.send_event(UserEvent::Exit);
+            }));
+        }
+
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            if self.checked {
+                self.app.about_to_wait(event_loop);
+                assert_eq!(event_loop.control_flow(), ControlFlow::Wait);
+            }
+        }
+
+        fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+            if self.checked && matches!(event, UserEvent::Transport) {
+                self.app.user_event(event_loop, event);
+                self.idle_drained = true;
+                return;
+            }
+            if matches!(event, UserEvent::Exit) {
+                assert!(
+                    self.idle_drained,
+                    "the idle host drains an empty transport wake"
+                );
+                assert_eq!(
+                    self.idle_redraws, 1,
+                    "no redraw after the idle scene settles"
+                );
+                self.idle_checked = true;
+                event_loop.exit();
+            }
         }
     }
 
@@ -1753,9 +1870,15 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         stream: None,
         actions,
         checked: false,
+        idle_redraws: 0,
+        idle_drained: false,
+        idle_checked: false,
+        idle_timer: None,
     };
     event_loop.run_app(&mut probe).unwrap();
     assert!(probe.checked);
+    assert!(probe.idle_checked);
+    probe.idle_timer.take().unwrap().join().unwrap();
     drop(probe);
     server.join().unwrap();
     std::fs::remove_dir_all(root).unwrap();
