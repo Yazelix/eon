@@ -65,6 +65,66 @@ Eon's product version is bumped at least whenever EONW's protocol version
 changes, so one version never names builds that cannot control each other
 (`eon-7sjm`, decided 2026-10-24).
 
+### Release signing custody and recovery
+
+Custody assurance from the release owner, 2026-11-16: the OpenSSH Ed25519
+private key for identity `eon-release`, namespace `eon-bundle`, lives in
+owner-controlled cloud storage. The key stays outside development and agent
+environments, including during signing. Only the release owner signs, by hand.
+A backup exists; this record establishes neither its location nor a recovery
+rehearsal. Authenticated cloud-session reachability from the development
+environment remains **not independently verified**.
+
+Under this reported custody, a compromised worker cannot sign with a local
+private-key file. The owner must approve the exact checksums through the
+[release-assets procedure](INSTALLER.md#release-assets). A signature
+authenticates those checksums under the trusted release key; it does not prove
+safe source or an uncompromised build. A compromised worker could alter source,
+the local build or the comparison and induce the owner to sign malicious
+content. Separate key custody does not remove that content-integrity risk.
+
+Agents never create, move, delete or push `v*` tags or run any signing step.
+An agent asked to sign refuses and reports the request. These are standing
+agent rules, not technical access restrictions.
+
+Release owner policy, 2026-11-16: on key loss or suspected compromise:
+
+1. Generate a replacement Ed25519 signer outside development and agent
+   environments.
+2. Publish the replacement allowed-signers line in the README and release
+   notes, and update the [installer signer setup](INSTALLER.md#install-a-release).
+   Identify the revoked old public key in [SECURITY.md](../SECURITY.md#release-signing-and-revocation).
+3. Publish a new patch release signed with the replacement key. Preserve
+   existing immutable tags and assets. The release notice names the old key
+   and which releases users must stop trusting.
+4. Tell users to remove or replace the old entry in their local allowed-signers
+   files using an independently authenticated replacement. This includes the
+   file selected by `updates.allowed_signers` for direct updates. Publishing a
+   revocation notice does not change local trust files.
+
+A repository-hosted notice alone cannot authenticate a replacement key if
+repository authority is compromised. A separate replacement-key authentication
+route remains **unverified**.
+
+This records the recovery procedure; an end-to-end recovery and replacement
+publication rehearsal remains **unverified**.
+
+The read-only repository ruleset API observation on 2026-11-16 found active
+**Protect release tags** rules for `refs/tags/v*`, with no exclusions. The
+rules restrict tag creation, updates and deletion; repository administrators
+can always bypass them. Maintainer automation runs with administrator access,
+so the ruleset does not stop a compromised agent from creating a release tag.
+A rogue tag supplies no release signature. The signature remains the signed
+bundle installer's authorization boundary; Nix cache publication has separate
+authority.
+
+The [Linux cache workflow](../.github/workflows/cachix.yml) runs on `edge`
+pushes or manual dispatch. The [Darwin cache workflow](../.github/workflows/cachix-darwin.yml)
+runs on `v*` tag pushes or manual dispatch and can publish and retain cache roots
+when its publishing switch is enabled and credentials are available. A rogue tag can
+therefore expose a cache-publication path without a bundle signature. Actual
+workflow activation and cache access policy remain **unverified**.
+
 ### Nix channel
 
 One Nix flake path builds, composes, and installs the accepted component set.

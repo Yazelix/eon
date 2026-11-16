@@ -327,14 +327,25 @@ mode policy (`eon/crates/eon/src/update/direct.rs:256`,
 different signer; possession of a repository token alone does not establish
 release-signing authority.
 
-Nix composition declares a Cachix substituter and public key. The cache
+Nix composition declares a Cachix substituter and public key. The Linux cache
 workflow triggers on `edge` pushes or manual dispatch, restricts publishing to
 the public upstream repository and needs its configured cache credential and
 successful checks/builds before publication (`flake.nix:4`,
 `.github/workflows/cachix.yml:3`, `.github/workflows/cachix.yml:18`,
-`.github/workflows/cachix.yml:63`). Repository protections, actual workflow
-activation, cache access policy and release private-key custody are
-**unverified**.
+`.github/workflows/cachix.yml:63`). Actual workflow activation and cache access
+policy remain **unverified**; the dated record below also covers the conditional
+Darwin tag-triggered publication path.
+
+Post-audit record (2026-11-16): read-only ruleset API checks found active
+**Protect edge and main** restrictions on non-fast-forward updates and deletion
+for `edge` and `main`, with no bypass actors or required reviews/checks.
+**Protect release tags** restricts `v*` creation, updates and deletion, with
+an administrator bypass available to maintainer automation. The release owner
+provided a dated custody assurance and manual-signing policy. See
+[release signing custody and recovery](DISTRIBUTION.md#release-signing-custody-and-recovery)
+for the assurance, backup, recovery/revocation policy and remaining limitations.
+Authenticated cloud-session reachability remains **not independently verified**;
+the assurance does not establish safe source, builds or checksum comparison.
 
 ## Conditional agent-spread scenario
 
@@ -404,12 +415,12 @@ finding across follow-up work; the referenced sections above supply evidence.
 | 3 | High, conditional | Backend environment inheritance can expose available credentials; home access can bypass environment restrictions. | Limit inherited credentials and pair that policy with filesystem isolation. |
 | 4 | Medium, established design limitation | EONW caller identity supplies routing, with callerless access and no per-agent authentication. | Establish a capability/identity boundary before relying on per-agent policy. |
 | 5 | High, conditional | EONW command creation escapes a caller sandbox into host execution, including under terminal access `none`; a live caller assertion is required. | Define and enforce agent authority for host execution; cover the additional routes in 13 and 18. |
-| 6 | Unverified / unrated | Remote repository and cache protections may permit unauthorized distribution. | Verify protections and release/cache authority separately. |
+| 6 | Unverified / unrated | Branch/tag protections observed 2026-11-16; administrator automation can bypass tag rules. Workflow activation and cache authority remain unverified. | Keep repository/cache authority separate from bundle signing; see the dated distribution record above. |
 | 7 | Medium, source-supported | OSC 7501 app and attention text are self-reported. | Expose provenance and distinguish reported identity from verified process observations. |
 | 8 | Medium, source-supported | OSC 52 can replace the clipboard without consent. | Offer a configurable write policy with a useful preview/notice. |
 | 9 | Medium, source-supported | The optional session-start hook introduces program-authored labels into agent context. | Minimize hook text and label untrusted fields. |
 | 10 | Medium, configuration-dependent | Configured `trusted_settings` enrolls launch directories without a separate approval. | Require explicit scoped trust enrollment; verify downstream effects. |
-| 11 | Unverified / unrated | Release private-key access and custody are unknown. | Verify custody; keep signing authority outside agent execution authority. |
+| 11 | Custody record closed; owner assurance, 2026-11-16 | Owner holds the key outside development/agent environments and signs manually. Authenticated cloud-session reachability is not independently verified. | Follow the [custody and recovery policy](DISTRIBUTION.md#release-signing-custody-and-recovery); source/build integrity and recovery rehearsal remain separate, unproved concerns. |
 | 12 | Low, conditional | Predictable fallback runtime paths permit precreation denial of service in shared temporary parents. | Use a private per-user parent or fail safely without one. |
 | 13 | High, conditional | A reachable Neovim Editor RPC socket is an additional host-execution route under `none`, with the authority impact of 5. | Restrict sandbox access to auxiliary IPC or replace general RPC with a constrained boundary. |
 | 14 | Low, verified | No terminal reply returns program-chosen control bytes or shell syntax; the OSC 5522 clipboard id echoes only `[A-Za-z0-9-_+.]`, at most 512 bytes, which a modal line editor can read as commands. | Keep title reports off; re-run the terminal-replies check on each libghostty update; eon-z7ghx.4 asks upstream about the id. |

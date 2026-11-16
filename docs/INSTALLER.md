@@ -41,7 +41,8 @@ chmod 600 "$HOME/.config/eon/allowed_signers"
 
 Take the key from this page or the README, never from a file downloaded beside
 the archive: an accompanying downloaded public key alone is not a trust
-anchor. Lucca holds the release signing key.
+anchor. The release owner's dated [custody and recovery record](DISTRIBUTION.md#release-signing-custody-and-recovery)
+describes signing authority and its limitations.
 
 Pass the record's absolute path as `--signers "$HOME/.config/eon/allowed_signers"`.
 The installer requires an absolute signer path and refuses a missing, unreadable,
@@ -195,9 +196,15 @@ The draft notes name the selected release attribute. Before signing, the
 maintainer who holds the release key compares its `SHA256SUMS` with one from
 a local build of that same attribute at the same commit. If
 they differ, do not sign: stop and file a bead, since bit-for-bit parity of the
-hosted and local builds is unproven until a rehearsal shows it. Otherwise sign
-offline and publish. This maintainer procedure requires the release owner's
-explicit go-ahead:
+hosted and local builds is unproven until a rehearsal shows it. The
+[custody policy](DISTRIBUTION.md#release-signing-custody-and-recovery) requires
+the owner to sign in a separate context, with the private key outside the
+development environment. A signature authenticates the checksums; it does not
+prove that the source, build or local comparison is safe from compromise.
+
+Only the release owner performs the tag and signing steps below; agents must
+not run them. This procedure requires the owner's explicit go-ahead. First
+dispatch the build and compare checksums in the development environment:
 
 ```sh
 release_attribute=release-without-accelerando # use release only with the recorded grant
@@ -206,9 +213,22 @@ gh workflow run release.yml -R Yazelix/eon --ref vVERSION -f tag=vVERSION -f rel
 # Once that run has succeeded; each step runs only if the previous one passed.
 gh release download vVERSION -R Yazelix/eon -p SHA256SUMS &&
   git checkout vVERSION && nix build ".#$release_attribute" &&
-  diff SHA256SUMS result/SHA256SUMS &&
-  ssh-keygen -Y sign -f RELEASE_KEY -n eon-bundle SHA256SUMS &&
-  gh release upload vVERSION -R Yazelix/eon SHA256SUMS.sig &&
+  diff SHA256SUMS result/SHA256SUMS
+```
+
+Stop if any step fails. After a successful comparison, the owner carries the
+exact compared `SHA256SUMS` to the separate signing context and signs there:
+
+```sh
+ssh-keygen -Y sign -f RELEASE_KEY -n eon-bundle SHA256SUMS
+```
+
+The owner returns `SHA256SUMS.sig` for publication against those exact compared
+checksums. Keep the private key out of the development environment. After the
+owner approves publication:
+
+```sh
+gh release upload vVERSION -R Yazelix/eon SHA256SUMS.sig &&
   gh release edit vVERSION -R Yazelix/eon --draft=false
 ```
 

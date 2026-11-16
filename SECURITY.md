@@ -23,6 +23,15 @@ and work with the reporter on a fix or mitigation and coordinated disclosure.
 We publish confirmed issues and available fixes or mitigations through GitHub
 security advisories and release notes. We make no response-time guarantee.
 
+## Release signing and revocation
+
+The dated [release signing custody and recovery policy](docs/DISTRIBUTION.md#release-signing-custody-and-recovery)
+records the release owner's assurance, signing boundary and remaining unknowns.
+On revocation, we identify the old public key here and announce the replacement
+signer and affected releases through release notes and the README. Users must
+remove or replace the old entry in local allowed-signers files, including the
+file selected by `updates.allowed_signers`. A notice does not update those files.
+
 ## Agent security during the beta
 
 Eon defaults `[agents] terminal_access` to `"window"`, which permits reads and
