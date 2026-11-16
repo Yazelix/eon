@@ -318,10 +318,19 @@ the new hints or guaranteed cache coverage.
 ### Publishing
 
 Before activating `.github/workflows/cachix.yml`, a repository maintainer must
-add the cache owner's per-cache write token as the `CACHIX_AUTH_TOKEN` Actions
-repository secret. Never put the token in Git, an issue, or a pull request. Cache
-reads are public; the credential check and the two upload steps receive the token.
-A missing secret fails before installing tools or building the package.
+add the cache owner's per-cache write token as the `CACHIX_AUTH_TOKEN` secret of
+the `cachix` Actions environment, not as a repository secret. The environment's
+deployment rules allow only the `edge` branch and `v*` tags, and both Cachix
+workflows run their jobs in it, so a dispatch from any other branch fails before
+a step runs and a branch-modified workflow never receives the token. While a
+repository-level `CACHIX_AUTH_TOKEN` secret also exists, a modified workflow can
+skip the environment and read it, so delete the repository secret once the
+environment secret is set. Never put
+the token in Git, an issue, or a pull request. Cache reads are public; the
+credential check and the two upload steps receive the token. A missing secret
+fails before installing tools or building the package. To build the Apple Silicon
+package from another branch without credentials, dispatch
+`.github/workflows/darwin-build.yml`.
 
 A push to `edge` or a manual dispatch first runs the pinned Helix grammar check.
 The check rejects all five evaluator source-fetch builtins (`fetchTree`,
@@ -383,17 +392,20 @@ Publishing defaults to off. The repository variable setting
 `EON_DARWIN_CACHE_PUSH=true` enables uploads to `eon-yazelix`. A maintainer must
 resolve the cache owner's consent and capacity question in
 [issue #8](https://github.com/Yazelix/eon/issues/8) before enabling it. The
-workflow uses the existing `CACHIX_AUTH_TOKEN` secret only in gated credential,
-upload and pin steps; enabled publishing fails early if that secret is absent.
-With the variable absent or set to `false`, a dispatch still builds both
-outputs and reports closure sizes without uploading or pinning anything.
+workflow runs in the `cachix` environment and uses its `CACHIX_AUTH_TOKEN`
+secret only in gated credential, upload and pin steps; enabled publishing fails
+early if that secret is absent. With the variable absent or set to `false`, a
+dispatch from `edge` or a `v*` tag still builds both outputs and reports closure
+sizes without uploading or pinning anything. A dispatch from any other branch
+fails at the environment check; build-only runs on other branches use
+`.github/workflows/darwin-build.yml`.
 
 Enabled runs push both closures. Only runs selecting a `refs/tags/v*` ref,
 including manual dispatches on such tags, retain the two roots with
 `cachix pin --keep-forever`. Pin names are
 `aarch64-darwin-<tag>-default` and
-`aarch64-darwin-<tag>-helix-grammar-sources`. Branch dispatches leave their
-uploads to eviction. Cachix's action has automatic pushing disabled in every
+`aarch64-darwin-<tag>-helix-grammar-sources`. The only branch whose dispatches
+can upload is `edge`, and its uploads are left to eviction. Cachix's action has automatic pushing disabled in every
 mode. The Linux workflow's publishing and retention policy is separate.
 
 Each run uses one standard `macos-15` Apple Silicon runner, restricted to the

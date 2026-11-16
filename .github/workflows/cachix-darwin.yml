@@ -17,6 +17,9 @@ jobs:
     # No paid private-repository runs or publishing from forks.
     if: github.repository == 'Yazelix/eon' && github.event.repository.private == false
     runs-on: macos-15
+    # The write token lives in the cachix environment, which only edge and v* tags can use,
+    # so a branch-modified copy of this workflow never receives it.
+    environment: cachix
     timeout-minutes: 120
     defaults:
       run:
@@ -31,7 +34,7 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
           if [ -z "$CACHIX_AUTH_TOKEN" ]; then
-            echo '::error::Set the per-cache write token as the CACHIX_AUTH_TOKEN repository secret.'
+            echo '::error::Set the per-cache write token as the CACHIX_AUTH_TOKEN secret of the cachix environment.'
             exit 1
           fi
 
