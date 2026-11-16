@@ -310,6 +310,15 @@ Select the profile with `codex --no-daemon --permission-profile rota` and verify
 cutover by running `rota slot run -- true` in the sandbox. See
 [Codex permission profiles](https://learn.chatgpt.com/docs/permissions#define-and-select-a-profile).
 
+Eon's `eon agent slot --config FILE run -- COMMAND...` and `ls` use a dedicated
+slot configuration without exporting a config override to the child.
+`slots.local_runner = []` keeps native admission; a trusted nonempty command
+prefix owns local queueing. It receives original queue-age/class metadata and
+must acquire local capacity before its supplied payload runs. Captured remote
+source identity is checked before local admission and again before execution;
+a changed/unverifiable source refuses with125. No automatic post-start retry.
+Set `slots.boat.snapshot = ""` to keep stopped-pool reuse without named saves.
+
 The optional `[slots.boat]` route runs permitted headless builds with no caller credentials on a
 Boat VM using a separate lease; see Eon's [configuration reference](../../../docs/CONFIGURATION.md#remote-heavy-builds)
 for policy, budget, exact-tree transfer, results and failure behavior. The default

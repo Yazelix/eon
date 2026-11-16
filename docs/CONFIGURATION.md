@@ -168,6 +168,33 @@ nonterminal invocations and ordinary launch still return immediately.
 execution is the default; the Boat CLI must already be installed and signed in
 on the calling machine. Its account credentials stay there.
 
+`eon agent slot --config FILE run -- COMMAND...` and `slot --config FILE ls`
+use a slot-only configuration override. Other agent commands keep their normal
+lookup; the override is not exported into the command's environment.
+
+`slots.local_runner = []` keeps native local admission. A trusted nonempty argv
+prefix delegates local admission to that host-only command, without holding a
+native slot or remote lease. It receives original queue age/class through
+`EON_SLOT_QUEUED_NS`/`EON_SLOT_CLASS`, with `HEAVY_DIR` from `legacy_dir` and
+front/quiet flags. The delegate must preserve that age and acquire local
+capacity before executing its supplied payload. The payload verifies a captured
+remote source again after admission, then executes the original argv/cwd;
+source mismatch/untracked additions exit125. Internal handoff variables are
+removed before execution. A missing delegate fails rather than running unqueued.
+Use private0700 state/queue/holders/boat/runs directories and0600 records;
+unsafe existing state is refused, never repaired by changing shared Rota modes.
+Delegated commands retain token-checked, locked ownership evidence so a nested
+slot call reuses admission rather than waiting on its own target. Cancellation
+is forwarded to the delegate's own process group. Terminal calls give that
+group foreground access before exec and restore the caller's foreground group
+on completion or cancellation, so terminal input remains usable.
+With `legacy_dir`, remote admission requires its `boat-on` marker (absent by
+default). Removing it moves waiting remote requests to local admission before
+their next lease claim; it does not interrupt an already-started remote command.
+The private fleet front reads the same opt-in marker before native dispatch.
+Without `legacy_dir`, the marker is `slots/boat-on` beside `state_file`;
+absence still selects local admission. No configuration implicitly enables it.
+
 ```toml
 [slots.boat]
 allow_shapes = []
@@ -259,7 +286,9 @@ The route reuses only its own stopped, credential-free VM after confirmed
 completion and checks credentials
 again after resume. `snapshot` names one warm image (default `eon-warm`);
 named images are created only when the paid plan permits them and their count
-fits the included allowance. The trial uses the stopped pool without an early
+fits the included allowance. Set `snapshot = ""` to disable named-image
+restoration/publication, including on a paid plan; a successful stopped pool
+is still reusable. The trial uses the stopped pool without an early
 payment. Cargo.lock/flake.lock fingerprints select a matching named image;
 after a successful Nix gate, changed locks refresh that single image. Unknown
 images are not adopted. A pending save keeps its source identity until ready.
@@ -276,6 +305,16 @@ An unreadable or incompatible Boat journal appears as `boat_error` in JSON
 listing and a reason in text; local holders and waiters remain visible.
 Usage dollars are Boat's metered list cost consumed from the included allowance,
 not authorization to spend beyond it.
+Only a verified trial or active standard `box_20` plan is admitted; wallet,
+packs and nonstandard paid plans cannot bypass the included-credit guard.
+Unknown identity/schema and near-reserve credit choose local before execution;
+after execution may have begun, budget loss/provider stop is unresolved125,
+with no local retry. Each start/resume reads fresh limits. Cleanup always runs.
+Private records retain `kill_sent`, monotonic `duration_seconds`, VM `usage`,
+and observed `trial_seconds_used` with `trial_usage_reason`. Trial counter
+deltas are account-wide observations, not exact per-VM metering. Unknown/tier
+resets remain null. `queue_wait_avoided_seconds` is null with
+`queue_wait_reason = "deferred-to-child26"`; no saved-wait estimate is claimed.
 
 For a shared local fleet, `slots.lock_files` supplies one lock per configured
 slot and optionally the timed extra slot; `legacy_dir` reads the existing

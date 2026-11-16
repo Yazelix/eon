@@ -1,4 +1,5 @@
 mod boat;
+pub(crate) mod delegate;
 mod legacy;
 
 use crate::config::{Config, SlotConfig};
@@ -490,6 +491,31 @@ struct Slots<'a> {
 }
 
 impl Slots<'_> {
+    fn remote_enabled(&self) -> bool {
+        self.config
+            .legacy_dir
+            .as_deref()
+            .unwrap_or(&self.root)
+            .join("boat-on")
+            .try_exists()
+            .unwrap_or(false)
+    }
+    fn failure(&self, ticket: &Ticket, error: impl std::fmt::Display) -> Failure {
+        let code = if ticket.remote
+            || ticket
+                .fallback_reason
+                .as_deref()
+                .is_some_and(|s| s != "policy-local")
+        {
+            125
+        } else {
+            1
+        };
+        if code == 125 {
+            self.log("exit", ticket, None, Some(code));
+        }
+        (code, error.to_string())
+    }
     fn queue_lock(&self, create: bool) -> io::Result<Option<File>> {
         let path = self.queue.join(".lock");
         let lock = if create {
@@ -645,6 +671,9 @@ impl Slots<'_> {
     }
 
     fn nested(&self) -> bool {
+        if delegate::nested() {
+            return true;
+        }
         let Some((holder, file)) = std::env::var("ROTA_SLOT")
             .ok()
             .and_then(|slot| slot.parse::<u16>().ok())
@@ -728,7 +757,7 @@ fn command(config: &SlotConfig, options: &RunOptions<'_>, slot: u16, token: &str
     command
 }
 
-fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Failure> {
+fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Result<u8, Failure> {
     let class = class_for(slots.config, options)?;
     let cwd = std::env::current_dir()
         .map_err(io_failure)?
@@ -765,9 +794,36 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
         .and_then(|ms| ms.parse::<u64>().ok())
         .filter(|ms| (1..=5_000).contains(ms))
         .map_or(Duration::from_secs(5), Duration::from_millis);
+    let mut source: Option<boat::tree::Identity> = None;
     let (holder, slot_lock, holder_lock) = loop {
+        if ticket.remote && !slots.remote_enabled() {
+            let _queue = slots
+                .queue_lock(true)
+                .map_err(|e| slots.failure(&ticket, e))?;
+            ticket.remote = false;
+            ticket.fallback_reason = Some("boat-not-enabled".into());
+            fs::write(
+                &pending.path,
+                serde_json::to_vec(&ticket).map_err(|e| slots.failure(&ticket, e))?,
+            )
+            .map_err(|e| slots.failure(&ticket, e))?;
+            slots.log("fallback", &ticket, None, None);
+        }
+        if !ticket.remote && !slots.config.local_runner.is_empty() {
+            drop(pending);
+            let result = delegate::run(&slots, &ticket, source.as_ref(), eon);
+            slots.log(
+                "exit",
+                &ticket,
+                None,
+                Some(result.as_ref().copied().unwrap_or(125)),
+            );
+            return result;
+        }
         {
-            let _queue = slots.queue_lock(true).map_err(|e| slots.refuse_queue(e))?;
+            let _queue = slots
+                .queue_lock(true)
+                .map_err(|e| slots.failure(&ticket, e))?;
             let now = now_ns();
             let policy = legacy::policy(slots.config);
             let tickets = slots.tickets(None);
@@ -785,22 +841,37 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                         && (now / SECOND >= policy.quiet_until || item.ticket.quiet_exempt)
                 });
                 let quiet = now / SECOND < policy.quiet_until && !ticket.quiet_exempt;
-                if !quiet && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket)) {
-                    if let Some(lease) = boat::Lease::claim(&slots.root).map_err(io_failure)? {
+                if !quiet
+                    && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket))
+                    && slots.remote_enabled()
+                {
+                    if let Some(lease) =
+                        boat::Lease::claim(&slots.root).map_err(|e| slots.failure(&ticket, e))?
+                    {
                         drop(ranked);
                         drop(_queue);
                         slots.log("grant", &ticket, None, None);
-                        match boat::run(lease, &slots.config.boat, options.argv) {
+                        match boat::run(lease, &slots.config.boat, options.argv, &mut source) {
                             Ok(boat::Outcome::Local(reason)) => {
-                                let _queue = slots.queue_lock(true).map_err(io_failure)?;
                                 ticket.remote = false;
                                 ticket.fallback_reason = Some(reason.clone());
+                                if let Some(source) = &source {
+                                    if let Err(reason) = source.verify() {
+                                        ticket.fallback_reason = Some(reason.clone());
+                                        slots.log("exit", &ticket, None, Some(125));
+                                        return Err((125, reason));
+                                    }
+                                }
+                                let _queue = slots
+                                    .queue_lock(true)
+                                    .map_err(|e| slots.failure(&ticket, e))?;
                                 // Keep the same ticket inode, lock and FIFO age on fallback.
                                 fs::write(
                                     &pending.path,
-                                    serde_json::to_vec(&ticket).map_err(io_failure)?,
+                                    serde_json::to_vec(&ticket)
+                                        .map_err(|e| slots.failure(&ticket, e))?,
                                 )
-                                .map_err(io_failure)?;
+                                .map_err(|e| slots.failure(&ticket, e))?;
                                 slots.log("fallback", &ticket, None, None);
                                 let _ = writeln!(
                                     io::stderr(),
@@ -833,8 +904,8 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 }
                 let lock = slots
                     .open_slot(slot)
-                    .map_err(|e| io_failure(format!("open slot {slot}: {e}")))?;
-                if try_lock(&lock).map_err(io_failure)? {
+                    .map_err(|e| slots.failure(&ticket, format!("open slot {slot}: {e}")))?;
+                if try_lock(&lock).map_err(|e| slots.failure(&ticket, e))? {
                     grant = Some((slot, lock));
                     break;
                 }
@@ -849,7 +920,8 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                     ticket,
                 };
                 let path = slots.holder_path(slot);
-                let record = serde_json::to_vec(&holder).map_err(io_failure)?;
+                let record =
+                    serde_json::to_vec(&holder).map_err(|e| slots.failure(&holder.ticket, e))?;
                 let holder_lock = (|| {
                     atomic_write(&path, &record)?;
                     let file = File::open(&path)?;
@@ -859,7 +931,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 })()
                 .map_err(|e| {
                     let _ = fs::remove_file(&path);
-                    io_failure(format!("grant slot {slot}: {e}"))
+                    slots.failure(&holder.ticket, format!("grant slot {slot}: {e}"))
                 })?;
                 slots.log("grant", &holder.ticket, Some(slot), None);
                 drop(pending);
@@ -871,28 +943,51 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
     let slot = holder.slot;
     let _ = writeln!(io::stderr(), "rota slot: slot {slot}, pid {pid}");
     let mut child = command(slots.config, options, slot, &nesting_token);
-    let status = match holder
-        .ticket
-        .fallback_reason
-        .as_deref()
-        .filter(|reason| *reason != "policy-local")
-    {
-        Some(reason) => boat::local::run(&slots.root, &mut child, reason),
-        None => child.status(),
-    }
-    .map(|status| {
-        status
-            .code()
-            .unwrap_or_else(|| 128 + status.signal().unwrap_or_default()) as u8
-    })
-    .map_err(|e| io_failure(format!("cannot start {}: {e}", options.argv[0])));
+    let status = source
+        .as_ref()
+        .map_or(Ok(()), |source| source.verify().map_err(|e| (125, e)))
+        .and_then(|()| {
+            match holder
+                .ticket
+                .fallback_reason
+                .as_deref()
+                .filter(|reason| *reason != "policy-local")
+            {
+                Some(reason) => boat::local::run(
+                    &slots.root,
+                    &mut child,
+                    reason,
+                    source.as_ref().map(boat::tree::Identity::tree),
+                ),
+                None => child.status(),
+            }
+            .map(|status| {
+                status
+                    .code()
+                    .unwrap_or_else(|| 128 + status.signal().unwrap_or_default())
+                    as u8
+            })
+            .map_err(|e| {
+                let failure = io_failure(format!("cannot start {}: {e}", options.argv[0]));
+                if holder
+                    .ticket
+                    .fallback_reason
+                    .as_deref()
+                    .is_some_and(|s| s != "policy-local")
+                {
+                    (125, failure.1)
+                } else {
+                    failure
+                }
+            })
+        });
     let cleanup = (|| {
         let _queue = slots.queue_lock(true)?;
         slots.log(
             "exit",
             &holder.ticket,
             Some(slot),
-            Some(status.as_ref().copied().unwrap_or(1)),
+            Some(status.as_ref().map_or_else(|error| error.0, |code| *code)),
         );
         let removed = fs::remove_file(slots.holder_path(slot));
         drop(holder_lock);
@@ -1036,8 +1131,16 @@ fn describe(ticket: &Ticket, age_ns: u64) -> String {
     )
 }
 
-pub fn run(config: &Config, options: Options<'_>) -> Result<u8, Failure> {
+pub fn run(config: &Config, options: Options<'_>, eon: bool) -> Result<u8, Failure> {
     let root = state_dir(&config.state_file).join("slots");
+    if matches!(options, Options::Run(_))
+        && (!config.slots.boat.allow_shapes.is_empty() || !config.slots.local_runner.is_empty())
+    {
+        boat::private_directory(&state_dir(&config.state_file)).map_err(io_failure)?;
+        for child in ["", "queue", "holders", "boat"] {
+            boat::private_directory(&root.join(child)).map_err(io_failure)?;
+        }
+    }
     let slots = Slots {
         config: &config.slots,
         queue: root.join("queue"),
@@ -1058,7 +1161,7 @@ pub fn run(config: &Config, options: Options<'_>) -> Result<u8, Failure> {
                     .exec(),
             ))
         }
-        Options::Run(options) => run_queued(slots, &options),
+        Options::Run(options) => run_queued(slots, &options, eon),
         Options::List { json } => list(slots, json, observed_flocks, io::stdout().lock()),
     }
 }

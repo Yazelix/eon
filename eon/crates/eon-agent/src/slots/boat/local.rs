@@ -6,11 +6,107 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+fn wait(child: &mut Child) -> io::Result<ExitStatus> {
+    let mut forwarded = 0;
+    let mut deadline = None;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            let signal = super::SIGNAL.load(Ordering::Relaxed);
+            return Ok(if signal == 0 {
+                status
+            } else {
+                ExitStatus::from_raw(signal)
+            });
+        }
+        let signal = super::SIGNAL.load(Ordering::Relaxed);
+        if signal != 0 && forwarded == 0 {
+            forwarded = signal;
+            deadline = Some(Instant::now() + Duration::from_secs(super::CLEANUP));
+            unsafe {
+                libc::kill(-(child.id() as i32), signal);
+            }
+        }
+        if deadline.is_some_and(|until| Instant::now() >= until) {
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            deadline = None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn foreground(fd: i32, group: i32) -> io::Result<()> {
+    unsafe {
+        let previous = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+        if previous == libc::SIG_ERR {
+            return Err(io::Error::last_os_error());
+        }
+        let result = if libc::tcsetpgrp(fd, group) == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        };
+        libc::signal(libc::SIGTTOU, previous);
+        result
+    }
+}
+
+struct Foreground {
+    tty: File,
+    previous: i32,
+}
+impl Foreground {
+    fn open() -> io::Result<Option<Self>> {
+        if !(io::stdin().is_terminal() || io::stdout().is_terminal() || io::stderr().is_terminal())
+        {
+            return Ok(None);
+        }
+        let tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
+            Ok(tty) => tty,
+            Err(e)
+                if matches!(
+                    e.raw_os_error(),
+                    Some(libc::ENXIO | libc::ENOENT | libc::ENODEV)
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        };
+        let previous = unsafe { libc::tcgetpgrp(tty.as_raw_fd()) };
+        if previous < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Some(Self { tty, previous }))
+    }
+}
+impl Drop for Foreground {
+    fn drop(&mut self) {
+        let _ = foreground(self.tty.as_raw_fd(), self.previous);
+    }
+}
+
+pub(in crate::slots) fn status(command: &mut Command) -> io::Result<ExitStatus> {
+    let _signals = super::Signals::install();
+    let terminal = Foreground::open()?;
+    command.process_group(0);
+    if let Some(terminal) = &terminal {
+        let fd = terminal.tty.as_raw_fd();
+        // Give the child its terminal before exec: it must not race into SIGTTIN/EIO.
+        unsafe {
+            command.pre_exec(move || foreground(fd, libc::getpid()));
+        }
+    }
+    wait(&mut command.spawn()?)
+}
 
 fn copy_output(
     mut input: impl Read + AsRawFd,
@@ -65,12 +161,16 @@ pub(in crate::slots) fn run(
     root: &Path,
     command: &mut Command,
     reason: &str,
+    tree: Option<&str>,
 ) -> io::Result<ExitStatus> {
     if io::stdin().is_terminal() || io::stdout().is_terminal() || io::stderr().is_terminal() {
-        return command.status();
+        return status(command);
     }
+    let _signals = super::Signals::install();
+    command.process_group(0);
     let run_id =
         crate::run::random().map_err(|_| io::Error::other("cannot create run identity"))?;
+    super::private_directory(&root.join("runs")).map_err(io::Error::other)?;
     let directory = root.join("runs").join(&run_id);
     super::private_directory(&directory).map_err(io::Error::other)?;
     let log = OpenOptions::new()
@@ -82,7 +182,7 @@ pub(in crate::slots) fn run(
     let mut receipt = serde_json::json!({
         "schema": 1, "run_id": run_id, "pid": std::process::id(), "where": "local",
         "phase": "running", "fallback_reason": reason, "started": started,
-        "tree": null, "exit_code": null, "output_complete": false
+        "tree": tree, "exit_code": null, "output_complete": false
     });
     let receipt_path = directory.join("receipt.json");
     atomic_write(&receipt_path, &serde_json::to_vec(&receipt)?)?;
@@ -104,7 +204,7 @@ pub(in crate::slots) fn run(
         std::thread::scope(|scope| {
             let stdout = scope.spawn(|| copy_output(stdout, log, false, &done));
             let stderr = scope.spawn(|| copy_output(stderr, stderr_log, true, &done));
-            let status = child.wait();
+            let status = wait(&mut child);
             if status.is_err() {
                 let _ = child.kill();
                 let _ = child.wait();

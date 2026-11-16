@@ -1262,7 +1262,7 @@
             ROTA_TEST_ALLOW_NO_BWRAP = "1";
             nativeCheckInputs = [ nushellPackage pkgs.jq pkgs.bash pkgs.git pkgs.python3
               (pkgs.coreutils.override { singleBinary = false; }) ]
-              ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
+              ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.util-linux ];
             cargoNextestExtraArgs = ''--config-file ${./.config/nextest.toml} --no-fail-fast --no-tests fail --test-threads "$NIX_BUILD_CORES"'';
             preCheck = ''
               eonTestBuildTmpdir="$TMPDIR"

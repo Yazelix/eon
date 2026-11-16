@@ -26,13 +26,26 @@ env)
   printf '{"safeForThirdParties":true,"passGithub":%s,"passSecrets":false,"passSandboxCredentials":false,"passAgentsCredentials":false,"proxyAiCredentials":false,"variables":0,"secretFiles":[],"selectedRepositories":[],"latestVersionNumber":1}\n' "$github"
   ;;
 limits)
+  if [ "$mode" = mutate-source ]; then echo changed > "$root/../source"; echo '{"ok":false}'; exit 1; fi
+  if [ "$mode" = break-local-queue ]; then chmod 000 "$root/../state/slots/queue/.lock"; echo '{"ok":false}'; exit 1; fi
+  if [ "$mode" = break-local-slot ]; then chmod 000 "$root/../legacy/old-1.lock"; echo '{"ok":false}'; exit 1; fi
+  if [ "$mode" = break-local-holder ]; then chmod 500 "$root/../state/slots/holders"; echo '{"ok":false}'; exit 1; fi
+  if [ "$mode" = break-fallback-record ]; then for ticket in "$root/../state/slots/queue"/*.json; do chmod 000 "$ticket"; done; echo '{"ok":false}'; exit 1; fi
   if [ "$mode" = unreachable ]; then echo '{"ok":false}'; exit 1; fi
   used=2000
   [ "$mode" != exhausted ] || used=90000
   tier=trial
   status=trialing
-  case "$mode" in paid*) tier=paid; status=active ;; esac
-  printf '{"canStart":true,"activeSandboxes":0,"keepGoing":{"enabled":false},"nextStartDollars":0,"machineTypes":[{"type":"default","available":true}],"starts":{"minute":{"remaining":3},"hour":{"remaining":20},"day":{"remaining":74}},"planIncluded":{"vmHoursRemaining":555,"periodEnd":"2099-01-01T00:00:00.000Z"},"subscriptionRemainingSeconds":1998000,"accessTier":"%s","subscriptionStatus":"%s","trialComputeCapSeconds":90000,"trialComputeUsedSeconds":%s,"subscriptionTrialEndsAt":"2099-01-01T00:00:00.000Z"}\n' "$tier" "$status" "$used"
+  plan=trial
+  active_plan=box_20
+  case "$mode" in paid*) tier=paid; status=active; plan=box_20 ;; esac
+  if [ "$mode" = paid-mismatch ]; then active_plan=box_100; fi
+  if [ -e "$root/attached" ]; then
+    [ "$mode" != paid-after-gate-mismatch ] || active_plan=box_100
+    [ "$mode" != post-reserve-loss ] || used=90000
+    if [ "$mode" = post-plan-loss ]; then tier=paid; status=active; plan=box_20; active_plan=box_100; fi
+  fi
+  printf '{"canStart":true,"activeSandboxes":0,"keepGoing":{"enabled":false},"nextStartDollars":0,"machineTypes":[{"type":"default","available":true}],"starts":{"minute":{"remaining":3},"hour":{"remaining":20},"day":{"remaining":74}},"planIncluded":{"vmHoursRemaining":555,"periodEnd":"2099-01-01T00:00:00.000Z"},"subscriptionRemainingSeconds":1998000,"accessTier":"%s","subscriptionStatus":"%s","sandboxPlanKey":"%s","activeSandboxPlanKey":"%s","trialComputeCapSeconds":90000,"trialComputeUsedSeconds":%s,"subscriptionTrialEndsAt":"2099-01-01T00:00:00.000Z"}\n' "$tier" "$status" "$plan" "$active_plan" "$used"
   ;;
 new)
   if [ "$mode" = create-refused ]; then echo '{"ok":false}'; exit 1; fi
@@ -63,7 +76,9 @@ info)
     if [ "$remaining" = 0 ]; then state=stopped; echo stopped > "$root/state";
     else echo "$((remaining-1))" > "$root/stop-polls"; fi
   fi
-  printf '{"id":"%s","state":"%s","holdsCreatorLogins":false,"environment":"eon-builds","environmentVersion":1}\n' "$id" "$state"
+  type=default
+  [ "$mode" != wrong-type ] || type=large
+  printf '{"id":"%s","state":"%s","type":"%s","holdsCreatorLogins":false,"environment":"eon-builds","environmentVersion":1}\n' "$id" "$state" "$type"
   ;;
 push)
   [ "$1" = "$id" ]; [ "$3" = --to ]; [ "$4" = /home/user/eon ]
@@ -95,6 +110,7 @@ exec)
       touch "$root/attached"
       echo '{"type":"stdout","data":"remote stdout\n"}'
       echo '{"type":"stderr","data":"remote stderr\n"}'
+      case "$mode" in post-*) sleep 35 ;; esac
       while [ -e "$root/hold" ]; do sleep 0.05; done
       if [ "$mode" = disconnected ]; then touch "$root/old-command"; exit 1; fi
       ;;

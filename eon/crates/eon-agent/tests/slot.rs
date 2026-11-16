@@ -4,7 +4,7 @@ use fs2::FileExt;
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
@@ -19,6 +19,567 @@ struct Fixture {
 
 // Keep subprocess-heavy cases from contending at idle priority under the build wrapper.
 static CASE: Mutex<()> = Mutex::new(());
+
+fn delegate(f: &Fixture, pause: bool) {
+    let helper = f.dir.path().join("fake/local.sh");
+    fs::write(
+        &helper,
+        format!(
+            r#"set -eu
+flock -n legacy/old-1.lock true
+flock -n state/slots/queue/.lock true
+[ ! -e state/slots/boat/lease.lock ] || flock -n state/slots/boat/lease.lock true
+printf '%s %s' "$EON_SLOT_QUEUED_NS" "$EON_SLOT_CLASS" > provider/handoff
+touch provider/delegated
+{}
+exec "$@"
+"#,
+            if pause {
+                "while [ ! -f provider/continue ]; do sleep 0.01; done"
+            } else {
+                ""
+            }
+        ),
+    )
+    .unwrap();
+    let config = f.dir.path().join("config.toml");
+    let text = fs::read_to_string(&config).unwrap().replace(
+        "[slots]\n",
+        &format!("[slots]\nlocal_runner = ['bash', '{}']\n", helper.display()),
+    );
+    fs::write(config, text).unwrap();
+}
+
+#[test]
+fn delegated_fallback_releases_capacity_and_preserves_exact_command() {
+    let f = Fixture::boat_fixture();
+    delegate(&f, false);
+    let out = f
+        .boat_command(&[
+            "slot",
+            "run",
+            "--",
+            "sh",
+            "-c",
+            "printf '%s' \"$1\"; test -z \"${EON_SLOT_QUEUED_NS+x}${EON_SLOT_CLASS+x}\"; exit 7",
+            "sh",
+            "literal $word with spaces",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.stdout, b"literal $word with spaces");
+    assert!(f.dir.path().join("provider/delegated").exists());
+    assert!(!f.dir.path().join("provider/calls").exists());
+}
+
+#[test]
+fn delegated_fallback_rechecks_source_after_waiting_in_local_queue() {
+    for added_untracked in [false, true] {
+        let f = Fixture::boat_fixture();
+        delegate(&f, true);
+        fs::write(f.dir.path().join("provider/mode"), "unreachable").unwrap();
+        let mut child = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !f.dir.path().join("provider/delegated").exists() {
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("delegate never queued");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        fs::write(
+            f.dir.path().join(if added_untracked {
+                "new-input"
+            } else {
+                "source"
+            }),
+            "changed while queued",
+        )
+        .unwrap();
+        fs::write(f.dir.path().join("provider/continue"), "go").unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(125));
+        assert!(!f.dir.path().join("local-ran").exists());
+    }
+}
+
+#[test]
+fn delegated_pre_execution_barrier_still_uses_local_queue() {
+    let f = Fixture::boat_fixture();
+    delegate(&f, false);
+    f.pending_boat(false);
+    let result = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert!(f.dir.path().join("local-ran").exists());
+    assert!(f.dir.path().join("provider/delegated").exists());
+    assert!(f.root().join("boat/current.json").exists());
+}
+
+#[test]
+fn delegated_remote_verdict_log_loss_and_own_kill_never_replay() {
+    for (mode, expected) in [
+        ("normal", 7),
+        ("incomplete-log", 125),
+        ("disconnected", 125),
+    ] {
+        let f = Fixture::boat_fixture();
+        delegate(&f, false);
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        fs::write(f.dir.path().join("provider/code"), "7").unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(expected), "{mode}: {out:?}");
+        assert!(!f.dir.path().join("provider/delegated").exists());
+        assert!(!f.dir.path().join("local-ran").exists());
+        let record: Value =
+            serde_json::from_slice(&fs::read(f.root().join("boat/current.json")).unwrap()).unwrap();
+        if mode == "disconnected" {
+            assert_eq!(record["kill_sent"], true);
+            assert_eq!(record["exit_code"], Value::Null);
+        } else {
+            assert_eq!(record["exit_code"], 7);
+        }
+        assert_eq!(record["queue_wait_avoided_seconds"], Value::Null);
+        assert_eq!(record["trial_usage_reason"], "account-counter-delta");
+    }
+}
+
+#[test]
+fn delegated_nesting_reuses_verified_ownership_without_second_target_wait() {
+    let f = Fixture::boat_fixture();
+    delegate(&f, false);
+    let helper = f.dir.path().join("fake/local.sh");
+    let script = fs::read_to_string(&helper).unwrap().replace(
+        "exec \"$@\"",
+        "echo call >> provider/delegate-calls\nexec flock \"$CARGO_TARGET_DIR/lock\" \"$@\"",
+    );
+    fs::write(&helper, script).unwrap();
+    let target = f.dir.path().join("provider/target");
+    fs::create_dir(&target).unwrap();
+    let mut command = Command::new("timeout");
+    command
+        .args([
+            "5",
+            env!("CARGO_BIN_EXE_rota"),
+            "slot",
+            "run",
+            "--",
+            env!("CARGO_BIN_EXE_rota"),
+            "slot",
+            "run",
+            "--",
+            "true",
+        ])
+        .current_dir(f.dir.path())
+        .env("CARGO_TARGET_DIR", &target)
+        .env("ROTA_CONFIG", f.dir.path().join("config.toml"));
+    let result = command.output().unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(
+        fs::read_to_string(f.dir.path().join("provider/delegate-calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert_eq!(
+        f.events().iter().filter(|e| e["event"] == "queue").count(),
+        1
+    );
+}
+
+#[test]
+fn fallback_refuses_symlink_and_unsafe_mode_runs_parent() {
+    for symlink in [true, false] {
+        let f = Fixture::boat_fixture();
+        delegate(&f, false);
+        f.pending_boat(false);
+        let outside = tempfile::tempdir().unwrap();
+        let runs = f.root().join("runs");
+        if symlink {
+            std::os::unix::fs::symlink(outside.path(), &runs).unwrap();
+        } else {
+            fs::create_dir(&runs).unwrap();
+            fs::set_permissions(&runs, fs::Permissions::from_mode(0o775)).unwrap();
+        }
+        let output = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(125), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unsafe-boat-state-directory"));
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+        assert!(!f.dir.path().join("provider/delegated").exists());
+    }
+}
+
+#[test]
+fn billing_mismatch_and_wrong_vm_type_refuse_before_execution() {
+    for mode in ["paid-mismatch", "wrong-type"] {
+        let f = Fixture::boat_fixture();
+        delegate(&f, false);
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{mode}: {out:?}");
+        assert!(f.dir.path().join("local-ran").exists());
+        assert!(!f.dir.path().join("provider/attached").exists());
+        assert!(!f.dir.path().join("provider/upload").exists());
+        if mode == "wrong-type" {
+            assert!(f.dir.path().join("provider/deleted").exists());
+        }
+    }
+}
+
+#[test]
+fn post_start_plan_and_reserve_loss_clean_up_without_local_replay() {
+    for mode in ["post-plan-loss", "post-reserve-loss"] {
+        let f = Fixture::boat_fixture();
+        delegate(&f, false);
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125), "{mode}: {out:?}");
+        assert!(f.dir.path().join("provider/deleted").exists());
+        assert!(!f.dir.path().join("provider/delegated").exists());
+        assert!(!f.dir.path().join("local-ran").exists());
+        let record = f.list()["boat"].clone();
+        assert_eq!(record["reason"], "remote-budget-observation-or-reserve");
+        assert_eq!(record["kill_sent"], true);
+    }
+}
+
+#[test]
+fn paid_snapshot_disabled_keeps_only_stopped_pool() {
+    let f = Fixture::boat_fixture();
+    let config = f.dir.path().join("config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)
+            .unwrap()
+            .replace("[slots.boat]", "[slots.boat]\nsnapshot = ''"),
+    )
+    .unwrap();
+    fs::write(f.dir.path().join("provider/mode"), "paid").unwrap();
+    assert!(
+        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(!f.dir.path().join("provider/snapshot").exists());
+    assert!(!f.dir.path().join("provider/deleted").exists());
+    assert_eq!(f.list()["boat"]["trial_seconds_used"], 0);
+}
+
+#[test]
+fn snapshot_publish_rechecks_standard_plan_after_gate() {
+    let f = Fixture::boat_fixture();
+    fs::write(
+        f.dir.path().join("provider/mode"),
+        "paid-after-gate-mismatch",
+    )
+    .unwrap();
+    assert!(
+        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(!f.dir.path().join("provider/snapshot").exists());
+}
+
+#[test]
+fn delegated_pid_signal_releases_target_and_stops_command() {
+    let f = Fixture::boat_fixture();
+    delegate(&f, false);
+    let helper = f.dir.path().join("fake/local.sh");
+    fs::write(
+        &helper,
+        fs::read_to_string(&helper)
+            .unwrap()
+            .replace("exec \"$@\"", "exec flock provider/guard-lock \"$@\""),
+    )
+    .unwrap();
+    let mut run = f.spawn(&[
+        "slot",
+        "run",
+        "--",
+        "sh",
+        "-c",
+        "echo $$ > provider/command-pid; exec sleep 120",
+    ]);
+    until(|| {
+        f.dir
+            .path()
+            .join("provider/command-pid")
+            .exists()
+            .then_some(())
+    });
+    unsafe {
+        libc::kill(run.pid() as i32, libc::SIGTERM);
+    }
+    assert_eq!(run.wait().code(), Some(143));
+    let lock = File::open(f.dir.path().join("provider/guard-lock")).unwrap();
+    assert!(FileExt::try_lock_exclusive(&lock).is_ok());
+    let pid = fs::read_to_string(f.dir.path().join("provider/command-pid")).unwrap();
+    until(
+        || match fs::read_to_string(format!("/proc/{}/stat", pid.trim())) {
+            Err(_) => Some(()),
+            Ok(stat) => stat
+                .rsplit_once(')')
+                .is_some_and(|(_, fields)| fields.starts_with(" Z "))
+                .then_some(()),
+        },
+    );
+}
+
+#[test]
+fn queued_remote_request_observes_boat_off_before_claim() {
+    let f = Fixture::boat_fixture();
+    delegate(&f, false);
+    f.policy("quiet-until", "9999999999");
+    let mut run = Running(
+        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    until(|| f.root().join("queue").exists().then_some(()));
+    let ticket = f.queued(run.pid());
+    fs::remove_file(f.dir.path().join("legacy/boat-on")).unwrap();
+    f.policy("quiet-until", "0");
+    assert!(run.wait().success());
+    assert!(f.dir.path().join("local-ran").exists());
+    assert!(!f.dir.path().join("provider/calls").exists());
+    let handoff = fs::read_to_string(f.dir.path().join("provider/handoff")).unwrap();
+    assert_eq!(handoff, format!("{} nix", ticket["queued_ns"]));
+}
+
+#[test]
+fn changed_source_is_refused_before_local_admission() {
+    let f = Fixture::boat_fixture();
+    delegate(&f, false);
+    fs::write(f.dir.path().join("provider/mode"), "mutate-source").unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(125));
+    assert!(!f.dir.path().join("provider/delegated").exists());
+    assert!(!f.dir.path().join("local-ran").exists());
+}
+
+#[test]
+fn native_local_grant_rechecks_source_and_logs_125() {
+    let f = Fixture::boat_fixture();
+    let lock = f.hold(1);
+    fs::write(f.dir.path().join("provider/mode"), "unreachable").unwrap();
+    let mut run = Running(
+        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    f.queued(run.pid());
+    until(|| {
+        f.events()
+            .iter()
+            .any(|e| e["event"] == "fallback")
+            .then_some(())
+    });
+    fs::write(f.dir.path().join("source"), "changed after admission check").unwrap();
+    drop(lock);
+    assert_eq!(run.wait().code(), Some(125));
+    assert!(!f.dir.path().join("local-ran").exists());
+    assert_eq!(f.events().last().unwrap()["exit_code"], 125);
+}
+
+#[test]
+fn local_queue_failure_after_remote_attempt_is_unresolved_125() {
+    for mode in [
+        "break-local-queue",
+        "break-local-slot",
+        "break-local-holder",
+        "break-fallback-record",
+    ] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125), "{mode}");
+        assert_eq!(f.events().last().unwrap()["exit_code"], 125, "{mode}");
+        assert!(!f.dir.path().join("local-ran").exists());
+    }
+}
+
+#[test]
+fn remote_without_legacy_policy_requires_state_boat_on() {
+    let f = Fixture::boat_fixture();
+    let config = f.dir.path().join("config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config).unwrap().replace(
+            &format!("legacy_dir = '{}/legacy'\n", f.dir.path().display()),
+            "",
+        ),
+    )
+    .unwrap();
+    let args = ["slot", "run", "--", "nix", "build", ".#default"];
+    assert!(f.boat_command(&args).output().unwrap().status.success());
+    assert!(f.dir.path().join("local-ran").exists());
+    assert!(!f.dir.path().join("provider/calls").exists());
+    fs::remove_file(f.dir.path().join("local-ran")).unwrap();
+    fs::write(f.root().join("boat-on"), "enabled").unwrap();
+    assert!(f.boat_command(&args).output().unwrap().status.success());
+    assert!(!f.dir.path().join("local-ran").exists());
+    assert!(f.dir.path().join("provider/attached").exists());
+}
+
+#[test]
+fn delegated_terminal_signals_stop_foreground_group_and_keep_input() {
+    use std::os::unix::process::CommandExt;
+    struct Session {
+        child: Child,
+        root: PathBuf,
+    }
+    impl Drop for Session {
+        fn drop(&mut self) {
+            let session = self.child.id() as i32;
+            for name in ["helper-pid", "command-pid"] {
+                if let Ok(text) = fs::read_to_string(self.root.join(name))
+                    && let Ok(pid) = text.trim().parse::<i32>()
+                {
+                    unsafe {
+                        let group = libc::getpgid(pid);
+                        if group > 0 && group != session && libc::getsid(pid) == session {
+                            libc::kill(-group, libc::SIGKILL);
+                        }
+                    }
+                }
+            }
+            unsafe {
+                libc::kill(-session, libc::SIGKILL);
+            }
+            let _ = self.child.wait();
+        }
+    }
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        let f = Fixture::boat_fixture();
+        delegate(&f, false);
+        let helper = f.dir.path().join("fake/local.sh");
+        fs::write(
+            &helper,
+            fs::read_to_string(&helper).unwrap().replace(
+                "exec \"$@\"",
+                "echo $$ > provider/helper-pid\nexec flock provider/guard-lock \"$@\"",
+            ),
+        )
+        .unwrap();
+        let (mut master, mut slave) = (-1, -1);
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            },
+            0
+        );
+        let mut master = unsafe { File::from_raw_fd(master) };
+        let slave = unsafe { File::from_raw_fd(slave) };
+        let mut command = Command::new("sh");
+        command.args(["-c", "\"$@\" <&0 & owner=$!; echo $owner > provider/wrapper-pid; wait $owner; echo $? > provider/wrapper-status; while :; do sleep 1; done", "sh", env!("CARGO_BIN_EXE_rota"), "slot", "run", "--", "sh", "-c", "read token; test \"$token\" = start || exit 42; echo $$ > provider/command-pid; exec sleep 120"])
+            .env("ROTA_CONFIG", f.dir.path().join("config.toml"))
+            .env_remove("ROTA_SLOT").env_remove("ROTA_SLOT_TOKEN").env_remove("EON_SLOT_DELEGATE")
+            .current_dir(f.dir.path()).stdin(slave.try_clone().unwrap()).stdout(slave.try_clone().unwrap()).stderr(slave);
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let _session = Session {
+            child: command.spawn().unwrap(),
+            root: f.dir.path().join("provider"),
+        };
+        master.write_all(b"start\n").unwrap();
+        until(|| {
+            f.dir
+                .path()
+                .join("provider/command-pid")
+                .exists()
+                .then_some(())
+        });
+        let wrapper: i32 = fs::read_to_string(f.dir.path().join("provider/wrapper-pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        unsafe {
+            libc::kill(wrapper, signal);
+        }
+        let status = until(|| {
+            fs::read_to_string(f.dir.path().join("provider/wrapper-status"))
+                .ok()
+                .and_then(|text| text.trim().parse::<i32>().ok())
+        });
+        assert_eq!(status, 128 + signal);
+        assert_eq!(
+            unsafe { libc::tcgetpgrp(master.as_raw_fd()) },
+            _session.child.id() as i32
+        );
+        let pid = fs::read_to_string(f.dir.path().join("provider/command-pid")).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let stopped = loop {
+            let dead =
+                fs::read_to_string(format!("/proc/{}/stat", pid.trim())).map_or(true, |stat| {
+                    stat.rsplit_once(')')
+                        .is_some_and(|(_, fields)| fields.starts_with(" Z "))
+                });
+            if dead || Instant::now() >= deadline {
+                break dead;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(
+            stopped,
+            "terminal foreground command survived signal {signal}"
+        );
+        let lock = File::open(f.dir.path().join("provider/guard-lock")).unwrap();
+        assert!(FileExt::try_lock_exclusive(&lock).is_ok());
+    }
+}
 
 impl Fixture {
     fn new(count: u16) -> Self {
@@ -84,6 +645,7 @@ high = ['never-start-this', '{{prompt}}']
 
     fn boat_fixture() -> Self {
         let fixture = Self::configure(1, true, "[slots.boat]\nallow_shapes = ['nix-gate']\n");
+        fixture.policy("boat-on", "enabled");
         for name in ["fake", "provider"] {
             fs::create_dir(fixture.dir.path().join(name)).unwrap();
         }

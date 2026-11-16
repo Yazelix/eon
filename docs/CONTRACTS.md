@@ -7917,6 +7917,8 @@ reference to existing pane creation, not by the unapproved targeting beads.
   apply to that delivered route; its existing local admission and quiet policy
   remain in force. Each route's availability and proof are recorded in its own
   Proof/Open proof entries.
+  Local delegation/source-match amendment approved by eon-lead under Lucca's standing rule
+  on 2026-11-16 (INBOX20:36:52Z), exact bead/23 text after Opus approval.
 - **Consumer:** A person or cooperating local agent running a heavy foreground
   command, in any project or terminal, under the same operating-system user.
 - **Trigger:**
@@ -7985,7 +7987,15 @@ reference to existing pane creation, not by the unapproved targeting beads.
     and start allowances, the configured reserve and bounded run lifetime; it
     never enables paid overage. A remote run holds a separate remote lease, not
     local heavy capacity. Policy refusal or pre-execution unavailability
-    falls back through the local queue with a reason. A remote command failure
+    falls back through the local queue with a reason. A configured host-only
+    local admission runner may own this local queue: the handoff preserves
+    original queue age, releases native capacity before the delegate waits or
+    runs, and retains its true status and private fallback output. When remote
+    source identity was captured, local fallback requires matching repository,
+    repository-relative working directory and tree before admission and again
+    before execution; mismatch or unverifiable source exits 125. The local
+    runner prefix, configuration and verification metadata never reach the VM.
+    A remote command failure
     passes through; lost contact after execution may have begun never triggers
     an automatic duplicate local run. Every owned VM ID and command identity is
     recorded before execution, and shutdown is confirmed after the run. Unknown

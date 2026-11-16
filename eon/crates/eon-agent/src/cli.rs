@@ -57,6 +57,8 @@ fn run(
     let usage = if eon {
         USAGE.replace("Usage: rota ", "Usage: eon agent ")
             .replace("       rota ", "       eon agent ")
+            .replace("eon agent slot run", "eon agent slot [--config FILE] run")
+            .replace("eon agent slot ls", "eon agent slot [--config FILE] ls")
             .replace("Config: $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)",
                 "Config: <eon config dir>/agent.toml; when absent, $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)")
     } else {
@@ -72,6 +74,12 @@ fn run(
     if args == ["--help"] || args == ["-h"] {
         println!("{usage}");
         return Ok(0);
+    }
+    if let [internal, path, separator, argv @ ..] = args.as_slice()
+        && internal == "_slot-local-exec"
+        && separator == "--"
+    {
+        return slots::delegate::execute(Path::new(path), argv);
     }
     if args.first().is_some_and(|s| s == "retire") {
         if args[1..] == ["--help"] || args[1..] == ["-h"] {
@@ -118,9 +126,17 @@ fn run(
         return ps::run(&config, &options).map(|()| 0);
     }
     if args.first().is_some_and(|s| s == "slot") {
-        let options = slots::parse(&args[1..])?;
-        let (config, _) = load().map_err(|e| (2, e))?;
-        return slots::run(&config, options);
+        let (config, rest) = if eon && args.get(1).is_some_and(|s| s == "--config") {
+            let path = args
+                .get(2)
+                .ok_or_else(|| (2, "slot --config needs a file".into()))?;
+            let text = fs::read_to_string(path).map_err(|e| (2, e.to_string()))?;
+            (Config::parse(&text).map_err(|e| (2, e))?, &args[3..])
+        } else {
+            (load().map_err(|e| (2, e))?.0, &args[1..])
+        };
+        let options = slots::parse(rest)?;
+        return slots::run(&config, options, eon);
     }
     if args != ["status"] && args != ["status", "--json"] {
         return Err((2, usage));

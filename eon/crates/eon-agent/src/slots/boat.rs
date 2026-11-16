@@ -1,6 +1,6 @@
 //! Opt-in build execution; the local slot scheduler remains the admission owner.
 pub(super) mod local;
-mod tree;
+pub(super) mod tree;
 
 use crate::config::BoatConfig;
 use crate::launch::{atomic_write, ensure_parent};
@@ -54,7 +54,7 @@ impl Drop for Signals {
     }
 }
 
-fn private_directory(path: &Path) -> Result<(), String> {
+pub(super) fn private_directory(path: &Path) -> Result<(), String> {
     ensure_parent(&path.join("entry")).map_err(|_| "boat-state-directory")?;
     let metadata = fs::symlink_metadata(path).map_err(|_| "boat-state-directory")?;
     if !metadata.is_dir()
@@ -66,7 +66,9 @@ fn private_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn read_private<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+pub(super) fn read_private<T: serde::de::DeserializeOwned>(
+    path: &Path,
+) -> Result<Option<T>, String> {
     match fs::symlink_metadata(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Ok(meta)
@@ -101,6 +103,16 @@ pub(super) struct Record {
     environment_version: Option<u64>,
     reason: Option<String>,
     credentials_absent: bool,
+    #[serde(default)]
+    kill_sent: bool,
+    #[serde(default)]
+    trial_seconds_used: Option<u64>,
+    #[serde(default)]
+    trial_usage_reason: Option<String>,
+    #[serde(default)]
+    queue_wait_avoided_seconds: Option<u64>,
+    #[serde(default)]
+    queue_wait_reason: Option<String>,
 }
 
 pub(super) struct Lease {
@@ -203,12 +215,18 @@ fn snapshot_ready<'a>(list: &'a Value, saved: &Saved) -> Option<&'a Value> {
 }
 
 fn publish_snapshot(client: &Client, config: &BoatConfig, warm: &mut Warm) -> Result<(), String> {
+    if config.snapshot.is_empty() {
+        return Ok(());
+    }
     let limits = client.json(&["limits", "--all"])?;
     if limits["accessTier"] == "trial" {
         return Ok(());
     }
     if limits["subscriptionStatus"] != "active" {
         return Err("snapshot-plan-not-paid".into());
+    }
+    if billing_policy(&limits) != Ok(false) {
+        return Err("snapshot-unverified-standard-plan".into());
     }
     if limits["keepGoing"]["enabled"] != false {
         return Err("snapshot-budget-unsafe".into());
@@ -418,7 +436,8 @@ impl Client {
             if stream.is_some() && !self.cleanup && Instant::now() >= next_budget {
                 let limits = self.json(&["limits", "--all"]);
                 let safe = limits.as_ref().is_ok_and(|limits| {
-                    limits["keepGoing"]["enabled"] == false
+                    billing_policy(limits).is_ok()
+                        && limits["keepGoing"]["enabled"] == false
                         && remaining(limits)
                             .is_ok_and(|seconds| seconds > self.reserve_seconds + CLEANUP as f64)
                 });
@@ -632,6 +651,17 @@ pub(super) enum Outcome {
 }
 
 fn fallback(reason: String) -> Result<Outcome, String> {
+    if matches!(
+        reason.as_str(),
+        "budget-reserve-or-trial-cap"
+            | "unverified-or-nonstandard-plan"
+            | "billing-period-boundary"
+    ) {
+        let _ = writeln!(
+            io::stderr(),
+            "REQUEST: Boat included credit/plan needs owner attention ({reason}); using queued local admission, no billing action"
+        );
+    }
     let signal = SIGNAL.load(Ordering::Relaxed);
     Ok(if signal == 0 {
         Outcome::Local(reason)
@@ -640,8 +670,14 @@ fn fallback(reason: String) -> Result<Outcome, String> {
     })
 }
 
-pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<Outcome, String> {
+pub(super) fn run(
+    lease: Lease,
+    config: &BoatConfig,
+    argv: &[String],
+    identity: &mut Option<tree::Identity>,
+) -> Result<Outcome, String> {
     let _signals = Signals::install();
+    let wall_started = Instant::now();
     let started = super::now_ns() / super::SECOND;
     let client = Client {
         deadline: Instant::now() + Duration::from_secs(config.timeout_seconds - CLEANUP),
@@ -655,6 +691,7 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
         Ok(source) => source,
         Err(reason) => return fallback(reason),
     };
+    *identity = Some(source.identity());
     let lock_key = match source.lock_key() {
         Ok(key) => key,
         Err(reason) => return fallback(reason),
@@ -711,6 +748,7 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
         None
     };
     let run_id = crate::run::random().map_err(|_| "run-id")?;
+    private_directory(&lease.root.join("runs"))?;
     let directory = lease.root.join("runs").join(&run_id);
     private_directory(&directory)?;
     let live = OpenOptions::new()
@@ -738,13 +776,20 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
         environment_version: Some(env_version),
         reason: None,
         credentials_absent: false,
+        kill_sent: false,
+        trial_seconds_used: None,
+        trial_usage_reason: Some("unavailable".into()),
+        queue_wait_avoided_seconds: None,
+        queue_wait_reason: Some("deferred-to-child26".into()),
     };
     lease.save(&record)?;
     let name = format!("eon-build-{run_id}");
     let ttl = config.timeout_seconds.to_string();
-    if let Err(reason) = client
-        .json(&["limits", "--all"])
-        .and_then(|limits| budget(&limits, config, super::now_ns() / super::SECOND))
+    let allowance_before = client.json(&["limits", "--all"]);
+    if let Err(reason) = allowance_before
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|limits| budget(limits, config, super::now_ns() / super::SECOND))
     {
         record.phase = "stopped".into();
         record.reason = Some(reason.clone());
@@ -825,6 +870,7 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
         let info = client.json(&["info", &id])?;
         let info = sandbox(&info);
         if info["holdsCreatorLogins"].as_bool() != Some(false)
+            || info["type"] != "default"
             || info["environment"].as_str() != Some(&config.environment)
             || info["environmentVersion"].as_u64() != Some(env_version)
         {
@@ -897,9 +943,15 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
         client.success(&["exec", &id, "--", "touch", "/home/user/eon-run/go"], None)?;
         let process = record.command_pid.unwrap().to_string();
         let attach = client.success(&["exec", &id, "--attach", &process], Some(&live));
-        if attach.is_err() {
+        if let Err(reason) = attach {
+            record.kill_sent = true;
+            lease.save(&record)?;
             let _ = client.json(&["exec", &id, "--kill", &process]);
-            return Err("remote-result-unknown".into());
+            return Err(if reason == "remote-budget-observation-or-reserve" {
+                reason
+            } else {
+                "remote-result-unknown".into()
+            });
         }
         Ok::<_, String>(())
     })();
@@ -910,7 +962,10 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
     };
     if execution.is_err() {
         if let Some(process) = record.command_pid {
-            let _ = cleanup.json(&["exec", &id, "--kill", &process.to_string()]);
+            record.kill_sent = true;
+            if lease.save(&record).is_ok() {
+                let _ = cleanup.json(&["exec", &id, "--kill", &process.to_string()]);
+            }
         }
     }
     let output_path = directory.join("output.log");
@@ -927,7 +982,6 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
             .map_err(|_| "boat-log-permissions".to_owned())
     })();
     let execution = execution.and_then(|()| {
-        log_result?;
         let result_path = directory.join("result.json");
         cleanup.success(
             &[
@@ -951,13 +1005,16 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
         if result["build_identity_absent"] != true {
             return Err("remote-build-identity-unproven".into());
         }
+        let code = u8::try_from(result["exit_code"].as_u64().ok_or("remote-result-status")?)
+            .map_err(|_| "remote-result-status".to_owned())?;
+        record.exit_code = Some(code);
         if result["log_complete"] != true {
             return Err("remote-log-incomplete".into());
         }
-        u8::try_from(result["exit_code"].as_u64().ok_or("remote-result-status")?)
-            .map_err(|_| "remote-result-status".into())
+        log_result?;
+        Ok(code)
     });
-    record.exit_code = execution.as_ref().ok().copied();
+    record.exit_code = execution.as_ref().ok().copied().or(record.exit_code);
     record.reason = execution.as_ref().err().cloned();
     record.phase = "stopping".into();
     let mut cacheable = matches!(execution, Ok(0)) && record.credentials_absent;
@@ -1010,6 +1067,28 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
     };
     let stopped = stop_vm(&cleanup, &id);
     record.usage = usage(&cleanup, &id, started);
+    if let (Ok(before), Ok(after)) = (
+        allowance_before.as_ref(),
+        cleanup.json(&["limits", "--all"]),
+    ) {
+        if billing_policy(before) == Ok(true) && billing_policy(&after) == Ok(true) {
+            record.trial_seconds_used = before["trialComputeUsedSeconds"]
+                .as_u64()
+                .zip(after["trialComputeUsedSeconds"].as_u64())
+                .and_then(|(a, b)| b.checked_sub(a));
+            record.trial_usage_reason = Some(
+                if record.trial_seconds_used.is_some() {
+                    "account-counter-delta"
+                } else {
+                    "counter-reset-or-unavailable"
+                }
+                .into(),
+            );
+        } else if billing_policy(before) == Ok(false) && billing_policy(&after) == Ok(false) {
+            record.trial_seconds_used = Some(0);
+            record.trial_usage_reason = Some("standard-plan-run".into());
+        }
+    }
     let stopped = stopped.and_then(|()| {
         if execution.is_err() {
             delete_vm(&cleanup, &id)
@@ -1022,7 +1101,7 @@ pub(super) fn run(lease: Lease, config: &BoatConfig, argv: &[String]) -> Result<
     } else {
         record.phase = "cleanup-unknown".into();
     }
-    record.duration_seconds = Some((super::now_ns() / super::SECOND).saturating_sub(started));
+    record.duration_seconds = Some(wall_started.elapsed().as_secs());
     let saved = lease.save(&record);
     record_saved?;
     saved?;
@@ -1195,6 +1274,22 @@ fn timestamp(value: &Value) -> Option<u64> {
     text.starts_with(&canonical).then_some(epoch)
 }
 
+fn billing_policy(limits: &Value) -> Result<bool, String> {
+    match (
+        limits["accessTier"].as_str(),
+        limits["subscriptionStatus"].as_str(),
+        limits["sandboxPlanKey"].as_str(),
+    ) {
+        (Some("trial"), Some("trialing"), Some("trial")) => Ok(true),
+        (Some("paid"), Some("active"), Some("box_20"))
+            if limits["activeSandboxPlanKey"] == "box_20" =>
+        {
+            Ok(false)
+        }
+        _ => Err("unverified-or-nonstandard-plan".into()),
+    }
+}
+
 fn remaining(limits: &Value) -> Result<f64, String> {
     let missing = || "unsupported-provider-output".to_owned();
     let number = |v: &Value| {
@@ -1204,11 +1299,7 @@ fn remaining(limits: &Value) -> Result<f64, String> {
     };
     let mut seconds = (number(&limits["planIncluded"]["vmHoursRemaining"])? * 3600.0)
         .min(number(&limits["subscriptionRemainingSeconds"])?);
-    let trial = match limits["accessTier"].as_str() {
-        Some("trial") => true,
-        Some(_) if limits["subscriptionStatus"] == "active" => false,
-        _ => return Err("unsupported-provider-output".into()),
-    };
+    let trial = billing_policy(limits)?;
     if trial {
         let trial = number(&limits["trialComputeCapSeconds"])?
             - number(&limits["trialComputeUsedSeconds"])?;
@@ -1288,6 +1379,7 @@ mod tests {
             "planIncluded": {"vmHoursRemaining": 555.0},
             "subscriptionRemainingSeconds": 1998000,
             "accessTier": "trial", "trialComputeCapSeconds": 90000,
+            "subscriptionStatus": "trialing", "sandboxPlanKey": "trial",
             "trialComputeUsedSeconds": 2000,
             "subscriptionTrialEndsAt": "2099-01-01T00:00:00.000Z"
         })
@@ -1395,5 +1487,21 @@ mod tests {
         assert!(budget(&boundary, &config, 1).is_ok());
         boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 59);
         assert!(budget(&boundary, &config, 1).is_err());
+    }
+
+    #[test]
+    fn only_verified_standard_plan_can_spend_included_paid_credit() {
+        let mut paid = limits();
+        paid["accessTier"] = json!("paid");
+        paid["subscriptionStatus"] = json!("active");
+        paid["sandboxPlanKey"] = json!("box_20");
+        paid["activeSandboxPlanKey"] = json!("box_20");
+        assert!(remaining(&paid).is_ok());
+        paid["sandboxPlanKey"] = json!("box_100");
+        assert!(remaining(&paid).is_err());
+        let mut trial = limits();
+        trial["trialComputeUsedSeconds"] = json!(90000);
+        trial["wallet"] = json!({"balanceDollars": 10000});
+        assert!(budget(&trial, &BoatConfig::default(), 1).is_err());
     }
 }

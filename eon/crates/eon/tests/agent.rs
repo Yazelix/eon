@@ -46,6 +46,53 @@ fn run(root: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
+fn slot_specific_config_overrides_primary_without_leaking_into_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("eon")).unwrap();
+    fs::write(root.join("eon/agent.toml"), "invalid primary config").unwrap();
+    let dedicated = root.join("slots.toml");
+    config(&dedicated, "slots-only");
+    let output = run(
+        root,
+        &[
+            "slot",
+            "--config",
+            dedicated.to_str().unwrap(),
+            "run",
+            "--",
+            "sh",
+            "-c",
+            "printf '%s' \"$ROTA_CONFIG\"; exit 9",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(9), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        root.join("override.toml").to_str().unwrap()
+    );
+    assert!(
+        run(
+            root,
+            &[
+                "slot",
+                "--config",
+                dedicated.to_str().unwrap(),
+                "ls",
+                "--json"
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        !run(root, &["slot", "--config", "missing", "run", "--", "true"])
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn launch_capture_never_reaches_managed_shells_or_anima() {
     use std::os::unix::process::CommandExt;
     let root = tempfile::tempdir().unwrap();

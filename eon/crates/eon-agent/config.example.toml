@@ -17,6 +17,7 @@ unset_env = ["DISPLAY", "WAYLAND_DISPLAY", "TERMINAL_*"]
 TERMINAL_RUNTIME_DIR = "/PATH/TO/private-runtime"
 
 [slots]
+local_runner = [] # Host-only queued local command prefix; empty uses native admission.
 count = 2
 nice = 19
 # During a transition, use the exact paths to existing flock files. List the
@@ -42,7 +43,7 @@ environment = "eon-builds"
 reserve_hours = 2
 timeout_seconds = 3600 # 120..7200; use 7200 for a cold bootstrap.
 jobs = 4
-snapshot = "eon-warm" # Trial uses the stopped pool; no early payment for images.
+snapshot = "" # Disable named-image saves/restores; keep successful stopped-pool reuse.
 
 [[backends]]
 name = "alpha"

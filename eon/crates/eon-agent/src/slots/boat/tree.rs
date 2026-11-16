@@ -1,5 +1,6 @@
 //! Capture through a temporary index, then export verified raw blobs without checkout filters.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
 use std::fs;
@@ -9,12 +10,34 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[derive(Deserialize, Serialize)]
+pub(in crate::slots) struct Identity {
+    root: PathBuf,
+    tree: String,
+    cwd: String,
+}
+
+impl Identity {
+    pub fn tree(&self) -> &str {
+        &self.tree
+    }
+    pub fn verify(&self) -> Result<(), String> {
+        let cwd = std::env::current_dir().map_err(|_| "source-cwd")?;
+        let actual = Source::capture(&cwd)?;
+        if actual.root != self.root || actual.tree != self.tree || actual.cwd != self.cwd {
+            return Err("local-source-mismatch".into());
+        }
+        Ok(())
+    }
+}
+
 pub(super) struct Source {
     _temporary: tempfile::TempDir,
     pub directory: PathBuf,
     pub tree: String,
     pub base: String,
     pub cwd: String,
+    root: PathBuf,
 }
 
 fn git_command(root: &Path, index: Option<&Path>, args: &[&OsStr]) -> Command {
@@ -83,6 +106,13 @@ fn text(bytes: Vec<u8>) -> Result<String, String> {
 }
 
 impl Source {
+    pub(in crate::slots) fn identity(&self) -> Identity {
+        Identity {
+            root: self.root.clone(),
+            tree: self.tree.clone(),
+            cwd: self.cwd.clone(),
+        }
+    }
     pub fn lock_key(&self) -> Result<String, String> {
         let mut hash = Sha256::new();
         for name in ["Cargo.lock", "flake.lock"] {
@@ -229,6 +259,7 @@ impl Source {
         let cwd = relative.to_str().ok_or("source-cwd-not-utf8")?.to_owned();
         let base = text(git(&root, None, &["rev-parse".as_ref(), "HEAD".as_ref()])?)?;
         Ok(Self {
+            root,
             _temporary: temporary,
             directory,
             tree,

@@ -43,6 +43,7 @@ pub struct SlotConfig {
     pub classes: Vec<SlotClass>,
     pub lock_files: Vec<PathBuf>,
     pub legacy_dir: Option<PathBuf>,
+    pub local_runner: Vec<String>,
     pub boat: BoatConfig,
 }
 
@@ -55,6 +56,7 @@ impl Default for SlotConfig {
             classes: Vec::new(),
             lock_files: Vec::new(),
             legacy_dir: None,
+            local_runner: Vec::new(),
             boat: BoatConfig::default(),
         }
     }
@@ -112,7 +114,6 @@ impl SlotConfig {
             || boat.reserve_hours < 0.0
             || !(120..=7200).contains(&boat.timeout_seconds)
             || !(1..=4).contains(&boat.jobs)
-            || boat.snapshot.is_empty()
             || boat.snapshot.len() > 63
             || boat.snapshot.starts_with('-')
             || !boat
@@ -136,6 +137,9 @@ impl SlotConfig {
         }
         if self.legacy_dir.as_ref().is_some_and(|p| !p.is_absolute()) {
             return Err("slots.legacy_dir must be absolute".into());
+        }
+        if !self.local_runner.is_empty() && !command_valid(&self.local_runner) {
+            return Err("slots.local_runner must be a nonempty command prefix".into());
         }
         if self
             .env
