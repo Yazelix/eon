@@ -390,7 +390,7 @@ enabled = true # Enable this feature or popup.
 [agents]
 send_enter_delay_ms = 300 # Wait between `eon pane send` text and its --enter.
 send_typing_quiet_ms = 2000 # Refuse unforced sends within this many ms of typing; 0 disables (0 to 60000).
-terminal_access = "window" # Let `eon pane read`, `history` and `send` reach this window's terminals; "none" refuses all three.
+terminal_access = "window" # "none" denies pane read/history/send and CLI Scrollback, even when you run them yourself; the window shortcut still works. This is not sandbox isolation.
 
 [editor]
 command = ["hx"] # Direct argv that `eon edit` and Files run with the file appended.
@@ -947,20 +947,45 @@ setting when it starts. Alt+Shift+H shows or hides the sidebar; it also steps
 aside while the window leaves fewer than 80 cells for the terminals beside it.
 See [Agent sidebar](USAGE.md#agent-sidebar).
 
-`[agents] terminal_access` decides whether `eon pane read`, `eon pane history`
-(with `--edit` too) and `eon pane send` may reach this window's terminals.
+`[agents] terminal_access` limits the direct terminal-content commands used
+by well-behaved agents through Eon's workspace control socket. It applies
+with or without a calling terminal, including commands run outside Eon.
 
-- `"window"`, the default, lets any process running as you read or send to any
-  pane or popup of the window, in any session, shown or hidden.
-- `"none"` refuses all three with `terminal-access-off` and reveals no
-  terminal content. It also refuses a terminal's request to open Scrollback;
-  the window's Scrollback key keeps working. `eon popup show scrollback` and
-  `eon focus uN` for an existing Scrollback also refuse under `none`, even
-  outside an Eon terminal; explicit `eon popup hide uN` stays available.
+- `"window"`, the default, lets any process running as you read or send to
+  any pane or popup of the window, in any session, shown or hidden.
+- `"none"` refuses `eon pane read`, `eon pane history` (including `--edit`)
+  and `eon pane send` with `terminal-access-off`. It also refuses
+  `eon popup show scrollback`, `eon focus uN` for an existing Scrollback,
+  and Scrollback requests from other programs even when they name no
+  calling terminal. These requests return no screen or history text and
+  fail before reading history, creating a snapshot file or starting its
+  editor. Explicit `eon popup hide uN` remains available. These commands are
+  refused even when you run them
+  yourself in a shell pane; use the configured Scrollback shortcut to open
+  history in the window. The shortcut keeps working because its request
+  comes from the supervised window process, rather than merely naming no
+  calling terminal.
 
-The window reads the setting when it starts. It is a preference and a kill
-switch, not a security boundary: Eon's socket is private to your user, whose
-processes can already read and drive terminals.
+The window reads the setting when it starts. `none` is a direct-content
+preference and kill switch. It does not isolate an agent or other client
+that can reach Eon's socket. Workspace inspection still exposes metadata
+such as terminal titles, working directories and reported attention. The
+setting does not restrict host command creation
+through `eon pane create` or `eon tab create`; command-bearing requests
+require a live caller assertion, which supplies routing rather than
+authenticated agent authority. Editor RPC and Quick-search helper sockets
+have separate access rules and are not disabled by this setting.
+
+Window reload is also separate. Even under `none`, a client with no calling
+terminal can request a window reload while the window is focused, choosing
+a canonical immutable executable in the Nix store with matching protocol
+requirements. Its replacement receives the window process's access to
+Scrollback and Orbit terminal attachment, bypassing the direct-command
+restriction. Constraining this replacement authority is tracked in
+`eon-260mh.2.5`. Programs permitted to inject keystrokes can also trigger
+the window's actions; those requests are treated as native input too.
+Sandboxed agents must not reach Eon's socket or auxiliary host sockets. See the
+[security model](SECURITY-MODEL.md#workspace-control-and-terminal-access).
 
 `[agents] send_enter_delay_ms`, 300 by default, is how long
 `eon pane send --enter` waits after the text before sending Enter, so agent

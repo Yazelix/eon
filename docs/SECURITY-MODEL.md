@@ -73,6 +73,10 @@ session and summarizes the others; it does not expose every terminal in every
 session at once (`runtime/crates/eon-runtime/src/workspace.rs:588`). Explicit window
 selection can reach other windows of the user (`docs/USAGE.md:1354`).
 
+Post-audit update (2026-11-16): `eon-260mh.6` fixes finding 17's direct
+Scrollback bypass; the reload/Orbit attachment route remains tracked in
+`eon-260mh.2.5`. The description below records the audited revision.
+
 There is a source-inferred exception to Scrollback denial under `none`.
 A callerless EONW `InvokePopup` with `Toggle` skips the guard that covers
 caller-bearing invocations and `Show`. With an eligible active tab and no

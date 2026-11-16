@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- With `[agents] terminal_access = "none"`, direct Scrollback requests from
+  other processes fail before reading history, creating snapshots or starting
+  an editor, including requests with no calling terminal. The window's own
+  Scrollback shortcut still works. This preference restricts direct commands;
+  host execution, window reload and helper IPC retain their separate authority
+  (`eon-260mh.6`, `eon-260mh.7`).
+
 - Shipped agent examples no longer bypass backend approvals or sandboxing.
   agy requests `--sandbox`; Codex TUI commands use
   `--no-daemon -s workspace-write -a on-request`. Codex may request approval

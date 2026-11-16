@@ -20,7 +20,7 @@ use std::{
     fs,
     io::{Read, Write},
     net::Shutdown,
-    os::fd::AsRawFd,
+    os::fd::{AsFd, AsRawFd},
     os::unix::{
         ffi::OsStrExt,
         fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
@@ -2412,6 +2412,23 @@ fn managed_orbit_helper() {
                     {
                         let request = management::decode_client_message(&input[..length]).unwrap();
                         input.drain(..length);
+                        if matches!(
+                            request,
+                            ManagementClientMessage::ReadVisible
+                                | ManagementClientMessage::ReadHistory
+                                | ManagementClientMessage::Input { .. }
+                        ) && let Some(path) = std::env::var_os("EON_TEST_CONTENT_LOG")
+                        {
+                            writeln!(
+                                fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(path)
+                                    .unwrap(),
+                                "content"
+                            )
+                            .unwrap();
+                        }
                         // A test scripts how Orbit refuses a read or an input
                         // by writing `busy`, `closed`, `unbracketed` (pastes
                         // only) or `busy-enter` (Enter only) to the file
@@ -3033,14 +3050,18 @@ fn protocol_action_from(
     .unwrap();
     let mut stream = UnixStream::connect(socket).unwrap();
     stream.write_all(&request).unwrap();
-    let mut response = vec![0; HEADER_BYTES];
+    decode_response(&read_protocol_message(&mut stream, id)).unwrap()
+}
+
+fn read_protocol_message(stream: &mut UnixStream, id: &str) -> Vec<u8> {
+    let mut message = vec![0; HEADER_BYTES];
     stream
-        .read_exact(&mut response)
-        .unwrap_or_else(|error| panic!("{id} response header failed: {error}"));
-    let length = declared_message_len(&response).unwrap();
-    response.resize(length, 0);
-    stream.read_exact(&mut response[HEADER_BYTES..]).unwrap();
-    decode_response(&response).unwrap()
+        .read_exact(&mut message)
+        .unwrap_or_else(|error| panic!("{id} message header failed: {error}"));
+    let length = declared_message_len(&message).unwrap();
+    message.resize(length, 0);
+    stream.read_exact(&mut message[HEADER_BYTES..]).unwrap();
+    message
 }
 
 /// The first pending tab's Files pair in `snapshot` (EON-C18).
@@ -18133,6 +18154,7 @@ fn terminal_access_workspace(root: &Path, agents: &str) -> (TestProcess, PathBuf
         .env("EON_VENUS", &venus)
         .env("EON_TEST_STOP", &stop)
         .env("EON_TEST_INPUT_LOG", root.join("input.log"))
+        .env("EON_TEST_CONTENT_LOG", root.join("content.log"))
         .env("EON_TEST_QUIET_LOG", root.join("quiet.log"))
         .env("EON_TEST_ORBIT_REPLY", root.join("orbit-reply"))
         .env("EON_TEST_INPUT_TIMES", root.join("input-times.log"))
@@ -18359,6 +18381,58 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn presentation_request_helper() {
+    if std::env::var_os("EON_TEST_PRESENTATION_HELPER").is_none() {
+        return;
+    }
+    let socket = PathBuf::from(std::env::var_os("EON_TEST_PRESENTATION_SOCKET").unwrap());
+    let control = generation_runtime(&socket.parent().unwrap().join("runtime")).join("eon.sock");
+    let stop = PathBuf::from(std::env::var_os("EON_TEST_STOP").unwrap());
+    let mut presentation = UnixStream::from(std::io::stdin().as_fd().try_clone_to_owned().unwrap());
+    presentation.set_nonblocking(true).unwrap();
+    match fs::remove_file(&socket) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("stale presentation socket: {error}"),
+    }
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    while !stop.exists() {
+        match presentation.read(&mut [0; 64]) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("presentation control: {error}"),
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let request =
+                    decode_request(&read_protocol_message(&mut stream, "native")).unwrap();
+                let response = protocol_action_from(
+                    &control,
+                    &request.id,
+                    request.caller.as_deref(),
+                    request.action,
+                );
+                stream
+                    .write_all(&encode_response(&response).unwrap())
+                    .unwrap();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("presentation helper accept: {error}"),
+        }
+    }
+}
+
 /// A window with `configuration` added whose configured editor logs the file
 /// it opens and runs until the editor release file exists, with its first
 /// tab committed.
@@ -18383,6 +18457,13 @@ while [ ! -e "$EON_TEST_EDITOR_RELEASE" ] && [ ! -e "$EON_TEST_STOP" ]; do sleep
             .as_bytes(),
         )
         .unwrap();
+    executable(
+        &window.root.join("venus"),
+        format!(
+            "#!/bin/sh\nEON_TEST_PRESENTATION_HELPER=1 exec '{}' --exact presentation_request_helper --nocapture >/dev/null\n",
+            std::env::current_exe().unwrap().display(),
+        ),
+    );
     let supervisor = window.spawn_scrollback();
     window.pair_launch("terminal-2");
     let home = window.home.to_str().unwrap();
@@ -18401,6 +18482,7 @@ impl PairWindow {
         let mut command = self.command(&[]);
         command
             .env("EON_TEST_ORBIT_REPLY", self.root.join("orbit-reply"))
+            .env("EON_TEST_PRESENTATION_SOCKET", self.root.join("v.sock"))
             .env("EON_TEST_EDITOR_LOG", self.root.join("editor.log"))
             .env("EON_TEST_EDITOR_RELEASE", self.root.join("editor-release"))
             .env("EON_TEST_SNAPSHOT_LOG", self.root.join("snapshot.log"))
@@ -18419,12 +18501,32 @@ impl PairWindow {
         process
     }
 
+    fn presentation_action(
+        &self,
+        id: &str,
+        caller: Option<&str>,
+        action: ProtocolAction,
+    ) -> Response {
+        let socket = self.root.join("v.sock");
+        wait_for(&socket);
+        protocol_action_from(&socket, id, caller, action)
+    }
+
     /// Presses the active tab's Scrollback key and returns the new popup and
     /// the snapshot its editor opened, which named the popup's terminal
     /// before its Orbit started.
     fn open_scrollback(&self, id: &str) -> (Popup, PathBuf) {
         let opened = log_lines(&self.root.join("editor.log")).len();
-        let Response::Snapshot(snapshot) = self.invoke_popup(id, "scrollback", None) else {
+        let Response::Snapshot(snapshot) = self.presentation_action(
+            id,
+            None,
+            ProtocolAction::InvokePopup {
+                tab: self.inspect(&format!("{id}-tab")).active_tab,
+                entry: "scrollback".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        ) else {
             panic!("{id}: Scrollback did not open");
         };
         let tab = snapshot
@@ -19809,7 +19911,7 @@ fn recovery_whose_venus_cannot_start_removes_adopted_snapshots() {
 /// snapshot a terminal, but the window's key still opens Scrollback; stopping
 /// the window with it live removes its snapshot and the store (EON-C10).
 #[test]
-fn scrollback_refuses_callers_without_terminal_access_and_ends_with_its_window() {
+fn scrollback_authorizes_native_origin_and_denies_eonw_without_terminal_access() {
     let window = PairWindow::new();
     let mut supervisor = scrollback_window(&window, "\n[agents]\nterminal_access = \"none\"\n");
     let snapshots = window.generation().join("snapshots");
@@ -19819,60 +19921,137 @@ fn scrollback_refuses_callers_without_terminal_access_and_ends_with_its_window()
             .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
             .map(|token| String::from_utf8(token.to_vec()).unwrap())
             .unwrap();
-    let tab = window.inspect("before").tabs.remove(0);
-    assert!(matches!(
-        protocol_action_from(
-            &window.control(),
-            "caller",
-            Some(&caller),
-            ProtocolAction::InvokePopup {
-                tab: tab.id.clone(),
-                entry: "scrollback".into(),
-                expected_instance: None,
-                intent: InvokeIntent::Toggle,
-            },
-        ),
-        Response::Failure(failure) if failure.code == "terminal-access-off"
-    ));
-    assert_eq!(window.snapshot_directories(), Vec::<PathBuf>::new());
-    assert_eq!(
-        stable_tabs(&window.inspect("after-caller").tabs),
-        stable_tabs(std::slice::from_ref(&tab))
-    );
-
-    // A shown Scrollback is refused to the terminal too, whatever the intent.
-    let (popup, file) = window.open_scrollback("key");
-    let shown = window.inspect("shown").tabs.remove(0);
-    for (id, expected, intent) in [
-        ("toggle", Some(popup.id.clone()), InvokeIntent::Toggle),
-        ("focus", None, InvokeIntent::Focus),
-    ] {
-        assert!(
-            matches!(
-                protocol_action_from(
-                    &window.control(),
-                    id,
-                    Some(&caller),
-                    ProtocolAction::InvokePopup {
-                        tab: shown.id.clone(),
-                        entry: "scrollback".into(),
-                        expected_instance: expected,
-                        intent,
+    let invoke = |intent, expected_instance| ProtocolAction::InvokePopup {
+        tab: "t1".into(),
+        entry: "scrollback".into(),
+        expected_instance,
+        intent,
+    };
+    let (mut popup, mut file) = (None, None);
+    for state in ["absent", "shown"] {
+        let before = window.inspect(&format!("{state}-before"));
+        let directories = window.snapshot_directories();
+        let logs = ["history.log", "snapshot.log", "editor.log"]
+            .map(|name| log_lines(&window.root.join(name)));
+        for (case, caller) in [None, Some(caller.as_str())].into_iter().enumerate() {
+            for intent in [
+                InvokeIntent::Toggle,
+                InvokeIntent::Focus,
+                InvokeIntent::Show,
+            ] {
+                let id = format!("venus-{state}-{case}-{intent:?}");
+                let action = invoke(
+                    intent,
+                    if intent == InvokeIntent::Show {
+                        None
+                    } else {
+                        popup.clone()
                     },
-                ),
-                Response::Failure(failure) if failure.code == "terminal-access-off"
-            ),
-            "{id}"
-        );
+                );
+                let response = protocol_action_from(&window.control(), &id, caller, action.clone());
+                assert!(
+                    matches!(response, Response::Failure(ref f) if f.code == "terminal-access-off" && f.detail.contains("terminal_access")),
+                    "{id}: {response:?}"
+                );
+                // Only a callerless native key (Toggle or Focus) is exempt.
+                if caller.is_some() || intent == InvokeIntent::Show {
+                    let response =
+                        window.presentation_action(&format!("native-{id}"), caller, action);
+                    assert!(
+                        matches!(response, Response::Failure(ref f) if f.code == "terminal-access-off"),
+                        "{response:?}"
+                    );
+                }
+            }
+            if let Some(popup) = &popup {
+                let action = ProtocolAction::Workspace(Action::FocusId(popup.clone()));
+                for native in [false, true] {
+                    let id = format!("{state}-focus-id-{case}-{native}");
+                    let response = if native {
+                        window.presentation_action(&id, caller, action.clone())
+                    } else {
+                        protocol_action_from(&window.control(), &id, caller, action.clone())
+                    };
+                    assert!(
+                        matches!(response, Response::Failure(ref f) if f.code == "terminal-access-off"),
+                        "{response:?}"
+                    );
+                }
+            }
+        }
         assert_eq!(
-            stable_tabs(&window.inspect(&format!("{id}-after")).tabs),
-            stable_tabs(std::slice::from_ref(&shown)),
-            "{id}"
+            stable_tabs(&window.inspect(&format!("{state}-after")).tabs),
+            stable_tabs(&before.tabs)
         );
+        assert_eq!(window.snapshot_directories(), directories);
+        assert_eq!(
+            ["history.log", "snapshot.log", "editor.log"]
+                .map(|name| log_lines(&window.root.join(name))),
+            logs
+        );
+        if state == "absent" {
+            let (opened, snapshot) = window.open_scrollback("native-toggle");
+            popup = Some(opened.id);
+            file = Some(snapshot);
+        }
     }
+    let file = file.unwrap();
+    let history = log_lines(&window.root.join("history.log"));
+    assert!(matches!(
+        window.presentation_action(
+            "native-focus-existing",
+            None,
+            invoke(InvokeIntent::Focus, popup.clone())
+        ),
+        Response::Snapshot(_)
+    ));
+    assert_eq!(log_lines(&window.root.join("history.log")), history);
+    assert!(matches!(
+        window.presentation_action("native-dismiss", None, invoke(InvokeIntent::Toggle, popup)),
+        Response::Snapshot(_)
+    ));
+    wait_for_removal(file.parent().unwrap());
+    assert!(window.snapshot_directories().is_empty());
+    // The key from chrome uses Focus, which must also open an absent Scrollback.
+    assert!(matches!(
+        window.presentation_action(
+            "native-focus-absent",
+            None,
+            invoke(InvokeIntent::Focus, None)
+        ),
+        Response::Snapshot(_)
+    ));
+    let file = PathBuf::from(&wait_for_lines(&window.root.join("editor.log"), 2)[1]);
     window.stop_generation(&mut supervisor);
     assert!(!file.parent().unwrap().exists());
     assert!(!snapshots.exists());
+}
+
+#[test]
+fn scrollback_window_access_allows_callerless_toggle_and_focus() {
+    for intent in [InvokeIntent::Toggle, InvokeIntent::Focus] {
+        let window = PairWindow::new();
+        let mut supervisor =
+            scrollback_window(&window, "\n[agents]\nterminal_access = \"window\"\n");
+        let action = ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "scrollback".into(),
+            expected_instance: None,
+            intent,
+        };
+        assert!(matches!(
+            protocol_action(&window.control(), "ordinary-open", action),
+            Response::Snapshot(_)
+        ));
+        let file = PathBuf::from(&wait_for_lines(&window.root.join("editor.log"), 1)[0]);
+        assert!(
+            fs::read_to_string(&file)
+                .unwrap()
+                .contains("history of terminal-1")
+        );
+        window.stop_generation(&mut supervisor);
+        assert!(!file.parent().unwrap().exists());
+    }
 }
 
 #[test]
@@ -19885,7 +20064,7 @@ fn popup_show_scrollback_access_precedes_stale_and_replay_checks() {
             .find_map(|v| v.strip_prefix(b"EON_TERMINAL="))
             .map(|v| String::from_utf8(v.to_vec()).unwrap())
             .unwrap();
-    // The old caller-free window key remains allowed, including under none.
+    // The supervised window key remains allowed, including under none.
     let (popup, file) = window.open_scrollback("accepted-key");
     let before = window.inspect("before-access");
     let history = log_lines(&window.root.join("history.log"));
@@ -20643,6 +20822,13 @@ fn terminal_access_none_refuses_every_read_and_send() {
     let root = temporary_directory();
     let (mut supervisor, _, control) =
         terminal_access_workspace(&root, "\n[agents]\nterminal_access = \"none\"\n");
+    let caller = process::environ(
+        live_identity(&generation_runtime(&root.join("runtime")).join("orbit.sock")).process_id,
+    )
+    .split(|byte| *byte == 0)
+    .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+    .map(|token| String::from_utf8(token.to_vec()).unwrap())
+    .unwrap();
     for (id, action) in [
         (
             "read",
@@ -20663,6 +20849,14 @@ fn terminal_access_none_refuses_every_read_and_send() {
             },
         ),
         (
+            "enter",
+            ProtocolAction::SendTerminal {
+                target: "p1".into(),
+                force: false,
+                input: TerminalInput::Enter,
+            },
+        ),
+        (
             "send",
             ProtocolAction::SendTerminal {
                 target: "p1".into(),
@@ -20671,12 +20865,20 @@ fn terminal_access_none_refuses_every_read_and_send() {
             },
         ),
     ] {
-        assert!(matches!(
-            protocol_action(&control, id, action),
-            Response::Failure(failure) if failure.code == "terminal-access-off"
-        ));
+        for caller in [None, Some(caller.as_str())] {
+            assert!(matches!(
+                protocol_action_from(&control, id, caller, action.clone()),
+                Response::Failure(failure) if failure.code == "terminal-access-off"
+            ));
+        }
     }
     assert!(!root.join("input.log").exists());
+    assert!(!root.join("content.log").exists());
+    assert!(
+        !generation_runtime(&root.join("runtime"))
+            .join("snapshots")
+            .exists()
+    );
     fs::write(&supervisor.stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();

@@ -1423,6 +1423,13 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment (2026-11-16):** `eon-260mh.6`, `eon-260mh.7`, approved by
+  eon-lead under the maintainer's accepted agent-authority scope:
+  Scrollback's native key exemption requires authenticated presentation
+  origin; direct requests from other processes receive the same
+  terminal-access denial with or without a caller. ReloadPresentation and
+  Orbit attachment remain the named exception tracked by `eon-260mh.2.5`.
+
 - **Amendment (2026-11-15):** `eon-t3fyd.3`, approved by eon-overseer under
   Lucca's delegation: lifetime/build separation, active-build selection and
   controlling-build Routing under EON-C11/C23. Update execution remains planned.
@@ -2315,20 +2322,44 @@ names its socket. CLI JSON names a session `session` and a terminal
   that belongs to a popup it adopts in recovery, which it removes when that
   popup ends. A tab showing no terminal changes nothing. If the export fails
   or times out, or the editor is missing, no popup starts, the window shows
-  the existing popup start-failure notice, and no snapshot is left. The window
-  key is the person's own action, and `[agents] terminal_access` does not
-  govern it; its CLI path, `eon pane history --edit`, is governed (EON-C35),
-  and a Scrollback request a terminal sends is an agent's read, which
-  `terminal_access = "none"` refuses with `terminal-access-off`.
+  the existing popup start-failure notice, and no snapshot is left. The
+  window key is the person's own action, and `[agents] terminal_access` does
+  not govern its Toggle or Focus invocation. The supervisor authenticates
+  this origin by matching the control connection's operating-system peer
+  identity to its current live supervised presentation process, including
+  its process start identity. A missing caller does not establish native
+  origin. Its CLI path, `eon pane history --edit`, is governed (EON-C35).
+  Every Scrollback invocation from another process, with or without a
+  calling terminal and for any invocation intent, is an agent read, which
+  `terminal_access = "none"` refuses with `terminal-access-off`. A
+  caller-bearing invocation remains governed even when sent by Venus. The
+  peer check identifies the supervised presentation process, not human
+  intent or the provenance of its executable. `terminal_access = "none"`
+  limits direct content commands for well-behaved agents; it is not
+  isolation from a client that can reach the workspace socket. EON-C11's
+  `ReloadPresentation` admission is separate: a callerless client can
+  request replacement with a canonical immutable executable in the Nix
+  store, subject to the existing protocol-match and focus requirements,
+  without establishing that it is approved Venus. The replacement receives
+  this exemption and Orbit attachment authority. Constraining that authority
+  route is tracked in `eon-260mh.2.5` and is an explicit exception to this
+  amendment's direct-command guarantee. Injected keystrokes that reach Venus
+  are treated as native input too; the peer check does not distinguish them
+  from a person's key presses. The person's own CLI content commands from a
+  shell pane are refused under `none` like an agent's; the native Scrollback
+  key remains their route. Sandboxed agents must not reach Eon's workspace
+  or auxiliary host sockets.
   A `Show` invocation of Scrollback is an agent read even without a calling
   terminal. It snapshots the terminal its target tab shows: the selected
   popup, otherwise the selected pane, in that tab's session. The private
   file, editor command, notices and cleanup follow the window's Scrollback
-  path. A tab showing no terminal changes nothing. With `[agents]
-  terminal_access = "none"`, every `Show` invocation of Scrollback and
-  every popup-ID focus of an existing Scrollback refuse with
-  `terminal-access-off`, exit 1, before any read, write or selection change,
-  with or without `EON_TERMINAL`. Explicit hide remains available. The
+  path. A tab showing no terminal changes nothing. With `[agents] terminal_access = "none"`, the supervisor refuses each
+  Scrollback invocation other than an authenticated callerless native Toggle
+  or Focus, including every `Show`, and each popup-ID focus of an existing
+  Scrollback with
+  `terminal-access-off`, exit 1, before any terminal-content read, snapshot
+  creation, editor start or selection change. This applies with or without
+  `EON_TERMINAL`. Explicit hide remains available. The
   person's window key remains unaffected, and EON-C35's `history --edit`
   keeps its own target restriction and failures. An export failure uses
   `popup-start`; a missing editor uses `popup-command`. Failed starts retain
@@ -2637,11 +2668,13 @@ names its socket. CLI JSON names a session `session` and a terminal
     (`a_scrollback_start_whose_rollback_is_unconfirmed_keeps_its_snapshot`),
     and the recovery adopting that editor removes it when it ends
     (`a_recovery_adopts_the_snapshot_of_an_unconfirmed_scrollback_start`).
-    With `terminal_access = "none"`, a terminal's request, for a new or a
-    shown Scrollback, fails with `terminal-access-off` and leaves no
-    snapshot while the window key still opens Scrollback, and stopping the
-    window with it live removes the snapshot and the store
-    (`scrollback_refuses_callers_without_terminal_access_and_ends_with_its_window`).
+    With `terminal_access = "none"`, an ordinary EONW request for a new or
+    shown Scrollback, with or without a caller and for any invocation intent,
+    fails with `terminal-access-off` before a history read, snapshot creation
+    or editor start. A callerless Toggle or Focus from the supervised
+    presentation remains available, while Show and popup-ID focus refuse for
+    every origin. Stopping the window removes its live snapshot and the store
+    (`scrollback_authorizes_native_origin_and_denies_eonw_without_terminal_access`).
     The record precedes the editor's start, a record that cannot be written
     starts nothing and leaves no snapshot, and only a failed start whose
     rollback confirmed cleanup discards its snapshot

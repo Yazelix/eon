@@ -652,7 +652,7 @@ impl ControlListener {
 
     pub(super) fn accept<D: Into<Dispatched>>(
         &self,
-        dispatch: impl FnOnce(Incoming) -> D,
+        dispatch: impl FnOnce(Incoming, Option<(libc::pid_t, libc::uid_t)>) -> D,
     ) -> Result<Accepted, String> {
         match self.listener.accept() {
             Ok((stream, _)) => {
@@ -680,8 +680,9 @@ impl Drop for ControlListener {
 
 fn handle_client<D: Into<Dispatched>>(
     mut stream: UnixStream,
-    dispatch: impl FnOnce(Incoming) -> D,
+    dispatch: impl FnOnce(Incoming, Option<(libc::pid_t, libc::uid_t)>) -> D,
 ) -> Accepted {
+    let peer = super::platform::peer_identity(&stream).ok();
     let unserved = Accepted::Replied { shutdown: false };
     // Accepted sockets inherit the listener's nonblocking mode on macOS.
     if stream.set_nonblocking(false).is_err() {
@@ -700,7 +701,7 @@ fn handle_client<D: Into<Dispatched>>(
         )
     };
     let (encoded, shutdown) = match read_incoming(&mut stream)
-        .map(|incoming| dispatch(incoming).into())
+        .map(|incoming| dispatch(incoming, peer).into())
         .unwrap_or_else(|unread| unread)
     {
         Dispatched::Reply(response, shutdown) => (
@@ -1079,7 +1080,7 @@ mod tests {
             if stopping {
                 thread::sleep(SESSION_CLEANUP_TIMEOUT / SCALE);
             }
-            super::handle_client(peer, |incoming| match incoming {
+            super::handle_client(peer, |incoming, _peer| match incoming {
                 super::Incoming::Stop(generation) => super::Dispatched::Stop(
                     eon_workspace_protocol::stop::Reply::Stopped {
                         generation,
@@ -1114,7 +1115,7 @@ mod tests {
         drop(peer);
 
         assert!(
-            super::handle_client(stream, |received| {
+            super::handle_client(stream, |received, _peer| {
                 assert_eq!(received, super::Incoming::Request(request));
                 (
                     super::ControlResponse::Workspace(super::Response::Failure(super::failure(
@@ -1179,7 +1180,7 @@ mod tests {
             peer.write_all(request).unwrap();
             peer.shutdown(std::net::Shutdown::Write).unwrap();
             let dispatched = std::cell::Cell::new(false);
-            let accepted = super::handle_client(stream, |received| {
+            let accepted = super::handle_client(stream, |received, _peer| {
                 dispatched.set(true);
                 assert_eq!(received, super::Incoming::Stop(GENERATION.into()));
                 super::Dispatched::Stop(reply.clone().unwrap(), true)
@@ -1239,7 +1240,7 @@ mod tests {
             assert_eq!(received, expected);
         });
 
-        let shutdown = super::handle_client(stream, |received| {
+        let shutdown = super::handle_client(stream, |received, _peer| {
             assert_eq!(received, super::Incoming::Request(request));
             (super::ControlResponse::Workspace(response), true)
         })
@@ -1301,7 +1302,9 @@ mod tests {
             }
         });
         let start = Instant::now();
-        super::handle_client(stream, |_| (super::ControlResponse::Workspace(full), false));
+        super::handle_client(stream, |_, _peer| {
+            (super::ControlResponse::Workspace(full), false)
+        });
         let held = start.elapsed();
         assert!(
             held >= super::REPLY_DEADLINE && held < super::REPLY_DEADLINE + Duration::from_secs(1),
@@ -1313,7 +1316,7 @@ mod tests {
         let expected = super::encode_response(&small).unwrap();
         let (stream, mut peer) = UnixStream::pair().unwrap();
         peer.write_all(&request("next")).unwrap();
-        super::handle_client(stream, |_| {
+        super::handle_client(stream, |_, _peer| {
             (super::ControlResponse::Workspace(small), false)
         });
         let mut received = Vec::new();

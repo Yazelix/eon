@@ -1188,7 +1188,7 @@ fn configuration_metadata() -> &'static [ConfigKey] {
             ConfigKey::new(
                 "agents.terminal_access",
                 "string",
-                "Let `eon pane read`, `history` and `send` reach this window's terminals; \"none\" refuses all three.",
+                "\"none\" denies pane read/history/send and CLI Scrollback, even when you run them yourself; the window shortcut still works. This is not sandbox isolation.",
                 &["next-supervisor-start"],
             )
             .choices(&["window","none"]),

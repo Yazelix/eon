@@ -954,6 +954,17 @@ impl PresentationProcess {
         false
     }
 
+    fn is_native_peer(&self, peer: Option<(libc::pid_t, libc::uid_t)>) -> bool {
+        peer.is_some_and(|(pid, uid)| {
+            pid > 0
+                && uid == effective_uid()
+                && pid as u32 == self.child.id()
+                && self.name.is_some_and(|name| {
+                    AttachName::of(pid as u32).is_ok_and(|current| current == name)
+                })
+        })
+    }
+
     /// Whether this Venus last reported that its native window has focus.
     fn viewing(&self) -> bool {
         self.focus.usable && self.focus.focused == Some(true)
@@ -1613,8 +1624,10 @@ fn supervise(
                     return Ok(state.initial_status.unwrap_or(0));
                 }
 
-                let accepted = control_listener.accept(|request| {
-                    dispatch(request, &mut state, inputs, config, runtime, generation)
+                let accepted = control_listener.accept(|request, peer| {
+                    dispatch(
+                        request, &mut state, inputs, config, runtime, generation, peer,
+                    )
                 })?;
                 state.end_turn(Instant::now());
                 match accepted {
@@ -1667,7 +1680,7 @@ fn await_initial_registration(
     starting: &Runtime,
 ) -> Result<Option<Registration>, String> {
     loop {
-        let accepted = listener.accept(|incoming| match incoming {
+        let accepted = listener.accept(|incoming, _peer| match incoming {
             Incoming::Stop(target) if target == starting.generation => Dispatched::Stop(
                 eon_workspace_protocol::stop::Reply::Stopped {
                     generation: target,
@@ -1798,6 +1811,7 @@ impl SupervisorState {
                             runtime,
                             generation,
                             Some(registration),
+                            RequestOrigin::Control,
                         );
                         if let Some(workspaces) = &mut self.workspaces {
                             workspaces.remember_registration(&request.id);
@@ -3422,6 +3436,12 @@ pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<Lifecy
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RequestOrigin {
+    Control,
+    Presentation,
+}
+
 /// Serves one control request: a `Subscribe` keeps its connection for the
 /// event stream (EON-C39), and every other request gets one reply. The turn's
 /// events, the request's change included, are published first and written
@@ -3433,6 +3453,7 @@ fn dispatch(
     config: &Path,
     runtime: &Path,
     generation: &str,
+    peer: Option<(libc::pid_t, libc::uid_t)>,
 ) -> Dispatched {
     super::diagnostics::bench_trace("dispatch_begin", "");
     let request = match incoming {
@@ -3513,7 +3534,17 @@ fn dispatch(
             }
         };
     }
-    let reply = dispatch_control_request(request, state, inputs, config, runtime, generation);
+    let origin = if state
+        .venus
+        .as_ref()
+        .is_some_and(|venus| venus.is_native_peer(peer))
+    {
+        RequestOrigin::Presentation
+    } else {
+        RequestOrigin::Control
+    };
+    let reply =
+        dispatch_control_request(request, state, inputs, config, runtime, generation, origin);
     super::diagnostics::bench_trace("dispatch_end", "");
     state.serve_subscribers(Instant::now());
     reply.into()
@@ -3607,8 +3638,11 @@ fn dispatch_control_request(
     config: &Path,
     runtime: &Path,
     generation: &str,
+    origin: RequestOrigin,
 ) -> (ControlResponse, bool) {
-    dispatch_registered_request(request, state, inputs, config, runtime, generation, None)
+    dispatch_registered_request(
+        request, state, inputs, config, runtime, generation, None, origin,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3620,6 +3654,7 @@ fn dispatch_registered_request(
     runtime: &Path,
     generation: &str,
     registration: Option<Registration>,
+    origin: RequestOrigin,
 ) -> (ControlResponse, bool) {
     let mode = launch_mode(state);
     if state.stopping.is_some()
@@ -3972,22 +4007,20 @@ fn dispatch_registered_request(
             }
             let scrollback_read = match &action {
                 Action::InvokePopup { entry, intent, .. } => {
-                    (caller.is_some() || *intent == InvokeIntent::Show)
-                        && workspace.is_scrollback(caller.as_deref(), entry)
+                    let native_key = origin == RequestOrigin::Presentation
+                        && caller.is_none()
+                        && matches!(intent, InvokeIntent::Toggle | InvokeIntent::Focus);
+                    !native_key && workspace.is_scrollback(caller.as_deref(), entry)
                 }
                 Action::Workspace(WorkspaceAction::FocusId(id)) => {
                     workspace.is_scrollback_popup(caller.as_deref(), id)
                 }
                 _ => false,
             };
-            if state.agents.terminal_access == TerminalAccess::None && scrollback_read {
-                return (
-                    ControlResponse::Workspace(Response::Failure(failure(
-                        "terminal-access-off",
-                        "[agents] terminal_access is \"none\" for this window",
-                    ))),
-                    false,
-                );
+            if scrollback_read
+                && let Err(error) = require_terminal_access(state.agents.terminal_access)
+            {
+                return (ControlResponse::Workspace(Response::Failure(error)), false);
             }
             if let Err(error) =
                 workspace.preflight_popup_show(&request.id, caller.as_deref(), &action)
@@ -4269,12 +4302,7 @@ fn edit_terminal_history(
     if state.workspaces.is_none() {
         return Err(failure("session-unavailable", "eonbase has no Eon session"));
     }
-    if state.agents.terminal_access == TerminalAccess::None {
-        return Err(failure(
-            "terminal-access-off",
-            "[agents] terminal_access is \"none\" for this window",
-        ));
-    }
+    require_terminal_access(state.agents.terminal_access)?;
     let caller = caller_session(state, inputs, config, &request)?;
     let Some(workspace) = &mut state.workspaces else {
         unreachable!("reconciliation keeps the workspace owner");
@@ -4461,6 +4489,16 @@ fn scrollback_snapshot(
     store.write(target, &history)
 }
 
+fn require_terminal_access(access: TerminalAccess) -> Result<(), Failure> {
+    if access == TerminalAccess::None {
+        return Err(failure(
+            "terminal-access-off",
+            "[agents] terminal_access is \"none\" for this window",
+        ));
+    }
+    Ok(())
+}
+
 /// What a terminal request does to its target.
 enum Operation {
     Read,
@@ -4481,12 +4519,7 @@ fn terminal_access(
     if state.workspaces.is_none() {
         return Err(failure("session-unavailable", "eonbase has no Eon session"));
     }
-    if state.agents.terminal_access == TerminalAccess::None {
-        return Err(failure(
-            "terminal-access-off",
-            "[agents] terminal_access is \"none\" for this window",
-        ));
-    }
+    require_terminal_access(state.agents.terminal_access)?;
     let caller = caller_session(state, inputs, config, &request)?;
     if matches!(
         &request.action,
@@ -5669,6 +5702,7 @@ mod tests {
                     &root,
                     &root,
                     "g1-test",
+                    super::RequestOrigin::Control,
                 );
                 assert!(!ended);
                 assert!(matches!(
@@ -5748,6 +5782,7 @@ mod tests {
                 &root,
                 &root,
                 "g1-test",
+                super::RequestOrigin::Control,
             );
             match (code, response) {
                 (
@@ -5779,6 +5814,7 @@ mod tests {
                 &root,
                 &root,
                 "g1-test",
+                super::RequestOrigin::Control,
             );
             assert!(
                 matches!(response, crate::control::ControlResponse::Workspace(super::Response::Failure(error)) if error.code == "session-unavailable")
@@ -6249,6 +6285,7 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
+            None,
         ) else {
             panic!("subscription refused");
         };
@@ -6427,7 +6464,7 @@ mod tests {
             .write_all(&encode_request(&request).unwrap())
             .unwrap();
         let super::Accepted::Deferred(stream) = listener
-            .accept(|incoming| {
+            .accept(|incoming, peer| {
                 super::dispatch(
                     incoming,
                     &mut state,
@@ -6435,6 +6472,7 @@ mod tests {
                     &root,
                     &root,
                     "g1-00000000000000000000000000000001",
+                    peer,
                 )
             })
             .unwrap()
@@ -6462,6 +6500,7 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
+            None,
         );
         assert!(
             matches!(replay, Dispatched::Reply(control::ControlResponse::Workspace(super::Response::Failure(error)), false) if error.code == "duplicate-request")
@@ -6473,7 +6512,7 @@ mod tests {
         });
         loop {
             let accepted = listener
-                .accept(|incoming| {
+                .accept(|incoming, peer| {
                     super::dispatch(
                         incoming,
                         &mut state,
@@ -6481,6 +6520,7 @@ mod tests {
                         &root,
                         &root,
                         "g1-00000000000000000000000000000001",
+                        peer,
                     )
                 })
                 .unwrap();
@@ -6503,7 +6543,7 @@ mod tests {
         });
         loop {
             let accepted = listener
-                .accept(|incoming| {
+                .accept(|incoming, peer| {
                     super::dispatch(
                         incoming,
                         &mut state,
@@ -6511,6 +6551,7 @@ mod tests {
                         &root,
                         &root,
                         "g1-00000000000000000000000000000001",
+                        peer,
                     )
                 })
                 .unwrap();
@@ -6602,6 +6643,7 @@ mod tests {
                 &root,
                 &root,
                 "g1-00000000000000000000000000000001",
+                None,
             )
         };
         let refusal = |dispatched| match dispatched {
@@ -6818,6 +6860,7 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
+            None,
         ) else {
             panic!("a subscription is served");
         };
@@ -6881,7 +6924,7 @@ mod tests {
     ) {
         state.tend(Instant::now());
         let accepted = control
-            .accept(|request| {
+            .accept(|request, peer| {
                 super::dispatch(
                     request,
                     state,
@@ -6889,6 +6932,7 @@ mod tests {
                     root,
                     root,
                     "g1-00000000000000000000000000000001",
+                    peer,
                 )
             })
             .unwrap();
@@ -7030,6 +7074,7 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
+            None,
         ) else {
             panic!("a subscription is served");
         };
@@ -7460,6 +7505,7 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
+            super::RequestOrigin::Control,
         );
         assert!(!ended);
         assert!(
@@ -7646,6 +7692,7 @@ mod tests {
                     &root,
                     &root,
                     "g1-00000000000000000000000000000001",
+                    super::RequestOrigin::Control,
                 )
             };
             if outcome == 0 {
@@ -7994,6 +8041,7 @@ mod tests {
             Path::new("/unused"),
             Path::new("/unused"),
             "g1-00000000000000000000000000000001",
+            super::RequestOrigin::Control,
         );
         assert!(!ended);
         let snapshot = match response {
@@ -8116,6 +8164,7 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
+            super::RequestOrigin::Control,
         );
         assert!(!ended);
         assert_eq!(queued(&mut state), (Some(Finished), 1), "focused by CLI");
@@ -8175,6 +8224,56 @@ mod tests {
         peer.shutdown(Shutdown::Write).unwrap();
         assert!(matches!(focus.poll(&stream), Err(FocusFailure::Ended)));
         assert_eq!(focus.focused, None);
+    }
+
+    #[test]
+    fn native_peer_requires_the_current_live_presentation_identity() {
+        let root = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let start = || {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "exec cat >/dev/null"]);
+            super::PresentationProcess::start(
+                command,
+                false,
+                None,
+                Duration::from_secs(5),
+                &mut [],
+                &log,
+            )
+            .unwrap()
+        };
+        let mut first = start();
+        let second = start();
+        let peer = Some((first.child.id() as libc::pid_t, effective_uid()));
+        assert!(first.is_native_peer(peer));
+        for peer in [
+            None,
+            Some((0, effective_uid())),
+            Some((-1, effective_uid())),
+            Some((
+                first.child.id() as libc::pid_t,
+                effective_uid().wrapping_add(1),
+            )),
+            Some((second.child.id() as libc::pid_t, effective_uid())),
+        ] {
+            assert!(!first.is_native_peer(peer));
+        }
+        let recorded = first.name;
+        first.name = None;
+        assert!(!first.is_native_peer(peer));
+        first.name = second.name;
+        assert!(!first.is_native_peer(peer));
+        first.name = recorded;
+        assert!(
+            !second.is_native_peer(peer),
+            "a replacement must not inherit the old peer"
+        );
+        first.child.kill().unwrap();
+        first.child.wait().unwrap();
+        assert!(!first.is_native_peer(peer));
+        drop((first, second));
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// EON-C31: a replacement Venus inherits no focus report, and one whose
@@ -8311,6 +8410,7 @@ mod tests {
                     &root,
                     &root,
                     "g1-00000000000000000000000000000001",
+                    super::RequestOrigin::Control,
                 );
                 assert!(!ended);
                 assert!(matches!(
