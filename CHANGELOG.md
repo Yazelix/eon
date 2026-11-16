@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Editor popup starts on macOS when the runtime directory resolves through
+  `/tmp` to `/private/tmp`. A runtime directory that is still too long reports
+  its length and the limit and asks for a shorter `EON_RUNTIME_DIR`
+  (`eon-mac-launch-kz4p.71`).
+
 - Nix installations use stock nixpkgs Yazi so its binary can come from
   cache.nixos.org. The Nix-free archive retains the Lua source-order patch
   required for reproducible builds (`eon-6nm02.2`).

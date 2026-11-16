@@ -41,6 +41,8 @@ struct Marker {
 const FRAME_LIMIT: usize = 65_536;
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(1);
+// Canonical /private/tmp adds eight bytes; keep Editor within the management socket budget.
+const SOCKET_DIRECTORY: &str = "ed";
 
 fn failure(code: &str, detail: impl Into<String>) -> Failure {
     Failure {
@@ -794,7 +796,7 @@ impl Sockets {
         sessions: &[RunningSession],
         log: &DiagnosticLog,
     ) -> Self {
-        let directory = runtime.join("editor");
+        let directory = runtime.join(SOCKET_DIRECTORY);
         let mut sockets = Self::default();
         let recovered = (|| {
             match fs::symlink_metadata(&directory) {
@@ -853,10 +855,18 @@ impl Sockets {
                         .file_name()
                         .expect("terminal endpoint has a filename"),
                 );
-            if canonical.to_str().is_none() || !platform::socket_path_fits(&canonical) {
+            if canonical.to_str().is_none() {
                 return Err(format!(
-                    "Editor socket path {} must fit a Unix socket and be UTF-8",
+                    "Editor socket path {} must be UTF-8; set EON_RUNTIME_DIR to a runtime root with a UTF-8 resolved path",
                     canonical.display()
+                ));
+            }
+            if !platform::socket_path_fits(&canonical) {
+                return Err(format!(
+                    "Editor socket path {} is {} bytes, exceeding the {}-byte Unix socket limit; set EON_RUNTIME_DIR to a shorter runtime root whose resolved path fits; command was not started",
+                    canonical.display(),
+                    canonical.as_os_str().len(),
+                    platform::SOCKET_PATH_BYTES,
                 ));
             }
             remove_stale(&canonical)?;
@@ -951,7 +961,7 @@ fn terminal_may_run(endpoint: &Path, running: &[RunningSession]) -> bool {
 }
 
 fn socket_path(endpoint: &Path) -> PathBuf {
-    endpoint.with_file_name("editor").join(
+    endpoint.with_file_name(SOCKET_DIRECTORY).join(
         endpoint
             .file_name()
             .expect("terminal endpoint has a filename"),
@@ -1018,6 +1028,135 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::{fs::symlink, net::UnixListener};
 
+    fn runtime_at_management_socket_limit(expansion: usize) -> (PathBuf, PathBuf, PathBuf) {
+        let root = super::super::supervisor::temporary_directory()
+            .canonicalize()
+            .unwrap();
+        let management = "terminal-9999.sock.management";
+        let alias = (1..=255)
+            .map(|length| root.join("a".repeat(length)))
+            .find(|alias| {
+                platform::socket_path_fits(&alias.join(management))
+                    && !platform::socket_path_fits(&alias.join(format!("{management}x")))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "test parent {} is too long to calibrate a private runtime at the {}-byte Unix socket limit",
+                    root.display(),
+                    platform::SOCKET_PATH_BYTES,
+                )
+            });
+        let physical = root.join("r".repeat(alias.file_name().unwrap().len() + expansion));
+        prepare_runtime(&physical).unwrap();
+        symlink(&physical, &alias).unwrap();
+        (root, alias, physical)
+    }
+
+    #[test]
+    fn editor_listener_fits_the_management_socket_budget_after_canonical_expansion() {
+        for kind in [ListenerKind::Helix, ListenerKind::Neovim] {
+            let (root, alias, physical) = runtime_at_management_socket_limit(8);
+            let endpoint = alias.join("terminal-9999.sock");
+            let management = alias.join("terminal-9999.sock.management");
+            assert!(platform::socket_path_fits(&management));
+            assert!(!platform::socket_path_fits(
+                &alias.join("terminal-9999.sock.managementx")
+            ));
+            let old_editor = physical.join("editor/terminal-9999.sock");
+            assert_eq!(
+                old_editor.as_os_str().len(),
+                management.as_os_str().len() + 4
+            );
+            assert!(!platform::socket_path_fits(&old_editor));
+            prepare_runtime(old_editor.parent().unwrap()).unwrap();
+            assert!(UnixListener::bind(&old_editor).is_err());
+            fs::remove_dir(old_editor.parent().unwrap()).unwrap();
+            for address in [
+                endpoint.clone(),
+                management.clone(),
+                alias.join("eon.sock"),
+                alias.join("terminal-9999.quick.sock"),
+            ] {
+                let listener = UnixListener::bind(&address).unwrap();
+                drop(listener);
+                fs::remove_file(address).unwrap();
+            }
+            let mut sockets = Sockets::default();
+            let selected = sockets.prepare(&endpoint, &[], kind).unwrap();
+            assert_eq!(selected.as_os_str().len(), management.as_os_str().len());
+            let listener = UnixListener::bind(&selected).unwrap();
+            let marker = selected.with_extension("owner");
+            assert_eq!(listener_kind(&endpoint).unwrap(), Some(kind));
+            assert_eq!(
+                fs::metadata(selected.parent().unwrap()).unwrap().mode() & 0o7777,
+                0o700
+            );
+            assert_eq!(fs::metadata(&marker).unwrap().mode() & 0o7777, 0o600);
+            drop(listener);
+            let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+            sockets.retain(&[], Instant::now(), &log);
+            assert!(!selected.exists());
+            assert!(!marker.exists());
+            assert!(!selected.parent().unwrap().exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn editor_listener_refuses_one_byte_over_the_canonical_limit_without_state() {
+        for kind in [ListenerKind::Helix, ListenerKind::Neovim] {
+            let (root, alias, physical) = runtime_at_management_socket_limit(9);
+            let endpoint = alias.join("terminal-9999.sock");
+            let selected = socket_path(&physical.join("terminal-9999.sock"));
+            assert!(platform::socket_path_fits(
+                &alias.join("terminal-9999.sock.management")
+            ));
+            assert_eq!(selected.as_os_str().len(), platform::SOCKET_PATH_BYTES + 1);
+            let mut sockets = Sockets::default();
+            let error = sockets.prepare(&endpoint, &[], kind).unwrap_err();
+            assert!(
+                error.contains(&format!("is {} bytes", selected.as_os_str().len())),
+                "{error}"
+            );
+            assert!(
+                error.contains(&format!(
+                    "{}-byte Unix socket limit",
+                    platform::SOCKET_PATH_BYTES
+                )),
+                "{error}"
+            );
+            assert!(
+                error.contains("set EON_RUNTIME_DIR to a shorter runtime root"),
+                "{error}"
+            );
+            assert!(
+                !selected.parent().unwrap().exists(),
+                "refusal left listener state"
+            );
+            assert!(sockets.listeners.is_empty());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn editor_listener_refuses_non_utf8_canonical_paths_without_state() {
+        use std::os::unix::ffi::OsStrExt;
+        for kind in [ListenerKind::Helix, ListenerKind::Neovim] {
+            let root = super::super::supervisor::temporary_directory();
+            // APFS rejects non-UTF-8 objects; the uncreated endpoint still tests refusal.
+            let endpoint = root.join(std::ffi::OsStr::from_bytes(b"terminal-\xff.sock"));
+            let mut sockets = Sockets::default();
+            let error = sockets.prepare(&endpoint, &[], kind).unwrap_err();
+            assert!(
+                error.contains("must be UTF-8") && error.contains("EON_RUNTIME_DIR"),
+                "{error}"
+            );
+            assert!(!socket_path(&endpoint).parent().unwrap().exists());
+            assert!(sockets.listeners.is_empty());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn neovim_listener_refuses_colons_in_the_canonical_runtime_path() {
         let root = super::super::supervisor::temporary_directory();
@@ -1035,7 +1174,7 @@ mod tests {
             "{error}"
         );
         assert!(
-            !runtime.join("editor").exists(),
+            !runtime.join(SOCKET_DIRECTORY).exists(),
             "refusal created listener state"
         );
         // Helix's Unix socket parser accepts colons, so its existing route stays usable.
@@ -1043,7 +1182,7 @@ mod tests {
             .prepare(&endpoint, &[], ListenerKind::Helix)
             .unwrap();
         assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
-        assert_eq!(socket.parent().unwrap(), runtime.join("editor"));
+        assert_eq!(socket.parent().unwrap(), runtime.join(SOCKET_DIRECTORY));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1714,7 +1853,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             selected,
-            root.canonicalize().unwrap().join("editor/terminal-2.sock")
+            root.canonicalize()
+                .unwrap()
+                .join(SOCKET_DIRECTORY)
+                .join("terminal-2.sock")
         );
         assert!(!path.exists());
         fs::remove_dir_all(root).unwrap();

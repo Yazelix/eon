@@ -39,6 +39,8 @@ use std::{
 
 mod process;
 
+const EDITOR_SOCKET_DIRECTORY: &str = "ed";
+
 const AFTER_START_ROLLBACK_MS: u128 = eon_workspace_protocol::TERMINAL_START_TIMEOUT
     .saturating_add(eon_workspace_protocol::SESSION_CLEANUP_TIMEOUT)
     .saturating_add(Duration::from_millis(100))
@@ -6321,7 +6323,13 @@ fn editor_popup_uses_the_supervisors_resolver_without_a_packaged_helix() {
     let host = live_identity(endpoint).process_id;
     let arguments = process::cmdline(host);
     assert!(arguments.ends_with(&[editor.as_os_str().as_bytes(), b"\0--visual\0"].concat()));
-    assert!(!endpoint.parent().unwrap().join("editor").exists());
+    assert!(
+        !endpoint
+            .parent()
+            .unwrap()
+            .join(EDITOR_SOCKET_DIRECTORY)
+            .exists()
+    );
     assert_eq!(opened.tabs[0].selected_popup.as_ref(), Some(&popup.id));
     window.stop();
 }
@@ -19002,7 +19010,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
             opened.status.success() && stdout(&opened).contains("\"created\""),
             "{settings}: {opened:?}"
         );
-        assert!(!window.generation().join("editor").exists());
+        assert!(!window.generation().join(EDITOR_SOCKET_DIRECTORY).exists());
         let arguments = window.root.join("editor-socket.log.pane");
         wait_for(&arguments);
         let bytes = fs::read(arguments).unwrap();
@@ -19051,7 +19059,7 @@ fn neovim_initial_targets_disqualify_auto_and_refuse_explicit_popup_routing() {
                 before
             );
         }
-        assert!(!window.generation().join("editor").exists());
+        assert!(!window.generation().join(EDITOR_SOCKET_DIRECTORY).exists());
         window.stop_generation(&mut supervisor);
     }
 }
@@ -19081,7 +19089,7 @@ fn neovim_colon_listener_refuses_before_displacing_the_shown_popup() {
         stable_tabs(&window.inspect("colon-refused").tabs),
         stable_tabs(&before.tabs)
     );
-    assert!(!window.generation().join("editor").exists());
+    assert!(!window.generation().join(EDITOR_SOCKET_DIRECTORY).exists());
     window.stop_generation(&mut supervisor);
 }
 
@@ -19101,7 +19109,7 @@ fn neovim_editor_key_launch_without_helix_keeps_identity_and_cleans_its_listener
     let identity = live_identity(endpoint);
     let socket = window
         .generation()
-        .join("editor")
+        .join(EDITOR_SOCKET_DIRECTORY)
         .join(format!("{}.sock", popup.session));
     wait_for_lines(&window.root.join("editor-socket.log"), 1);
     let marker = socket.with_extension("owner");
@@ -19131,7 +19139,7 @@ fn neovim_editor_key_launch_without_helix_keeps_identity_and_cleans_its_listener
     let next = open_editor_popup(&window, "nvim-fresh");
     assert_ne!(next.session, popup.session);
     wait_for_lines(&window.root.join("editor-socket.log"), 2);
-    let directory = window.generation().join("editor");
+    let directory = window.generation().join(EDITOR_SOCKET_DIRECTORY);
     window.stop_generation(&mut supervisor);
     assert!(!directory.exists());
 }
@@ -19181,7 +19189,7 @@ fn neovim_edits_reuse_the_recorded_kind_after_configuration_changes() {
     }
     let marker = window
         .generation()
-        .join("editor")
+        .join(EDITOR_SOCKET_DIRECTORY)
         .join(format!("{}.owner", popup.session));
     fs::write(marker, "").unwrap();
     let before = window.inspect("old-marker-before");
@@ -19226,7 +19234,7 @@ fn explicit_neovim_wrappers_listen_and_conflicts_refuse_before_displacement() {
         let popup = open_editor_popup(&window, "wrapper");
         let marker = window
             .generation()
-            .join("editor")
+            .join(EDITOR_SOCKET_DIRECTORY)
             .join(format!("{}.owner", popup.session));
         assert_eq!(marker.exists(), listening);
         if listening {
@@ -19253,7 +19261,7 @@ fn explicit_neovim_wrappers_listen_and_conflicts_refuse_before_displacement() {
         stable_tabs(&window.inspect("not-displaced").tabs),
         stable_tabs(&before.tabs)
     );
-    assert!(!window.generation().join("editor").exists());
+    assert!(!window.generation().join(EDITOR_SOCKET_DIRECTORY).exists());
     window.stop_generation(&mut supervisor);
 }
 
@@ -19512,7 +19520,7 @@ fn editor_edit_uses_a_pane_for_directories_and_disabled_editor() {
                 .iter()
                 .any(|popup| popup.entry == "editor")
         );
-        assert!(!window.generation().join("editor").exists());
+        assert!(!window.generation().join(EDITOR_SOCKET_DIRECTORY).exists());
         window.stop_generation(&mut supervisor);
     }
 }
@@ -19526,7 +19534,7 @@ fn editor_popup_keeps_its_terminal_and_cleans_up_the_packaged_listener() {
     let launch = window.launch.to_str().unwrap();
     let launcher = window.root.join("session-bin/hx");
     let log = window.root.join("editor-socket.log");
-    let directory = window.generation().join("editor");
+    let directory = window.generation().join(EDITOR_SOCKET_DIRECTORY);
     fs::DirBuilder::new()
         .mode(0o700)
         .create(&directory)
@@ -19632,7 +19640,7 @@ fn editor_popup_recovery_preserves_a_listener_that_has_yet_to_bind() {
         let hold = window.root.join("editor-bind-hold");
         fs::write(&hold, "").unwrap();
         let starting = open_editor_popup(&window, "starting-editor");
-        let directory = window.generation().join("editor");
+        let directory = window.generation().join(EDITOR_SOCKET_DIRECTORY);
         let canonical = directory.canonicalize().unwrap();
         let socket = canonical.join(format!("{}.sock", starting.session));
         assert!(!socket.exists());
@@ -19698,7 +19706,7 @@ fn editor_popup_refuses_a_configured_helix_listener_before_stopping_the_shown_po
         stable_tabs(&window.inspect("after-refusal").tabs),
         stable_tabs(&before.tabs)
     );
-    assert!(!window.generation().join("editor").exists());
+    assert!(!window.generation().join(EDITOR_SOCKET_DIRECTORY).exists());
 
     let settings = window.config.join("config.toml");
     let source = fs::read_to_string(&settings)

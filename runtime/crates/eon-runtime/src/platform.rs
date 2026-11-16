@@ -34,7 +34,7 @@ pub(crate) fn boot_time() -> io::Result<Duration> {
 }
 
 /// The longest Unix socket path this platform binds: `sun_path` less its NUL.
-const SOCKET_PATH_BYTES: usize = std::mem::size_of::<libc::sockaddr_un>()
+pub(crate) const SOCKET_PATH_BYTES: usize = std::mem::size_of::<libc::sockaddr_un>()
     - std::mem::offset_of!(libc::sockaddr_un, sun_path)
     - 1;
 
