@@ -90,6 +90,17 @@ order. Each backend specifies roles, a guard and argv commands; quota, account
 checks, caps, preparation, trust settings and headless run commands retain
 rota's schema. No backend or provider is configured implicitly.
 
+The example requests agy's sandbox and Codex's workspace-write sandbox with
+on-request approvals. Codex TUI commands also use `--no-daemon`; headless
+implementation/review commands keep workspace-write/read-only respectively.
+Other backends retain their own permission settings. No example command opts
+into permission bypass. Sandboxing can deny host-socket access and writes to
+external state directories. See the
+[backend permission guidance](../eon/crates/eon-agent/README.md#configuration)
+for state-directory access and deliberate custom bypass choices. A custom
+bypass backend's configured name appears in status; that name is a label,
+not an Eon security check.
+
 The [moved crate's configuration reference](../eon/crates/eon-agent/README.md#configuration)
 documents every field. Its unchanged defaults include implement/high for
 launch, implement/current directory for run, reader timeout 30 seconds, refresh

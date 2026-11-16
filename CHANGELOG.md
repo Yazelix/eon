@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Shipped agent examples no longer bypass backend approvals or sandboxing.
+  agy requests `--sandbox`; Codex TUI commands use
+  `--no-daemon -s workspace-write -a on-request`. Codex may request approval
+  or refuse Eon socket commands and writes to external state directories;
+  use `--add-dir` for the state directories that need to be writable
+  (`eon-260mh.4`, `eon-260mh.5`).
+
 - Full-Eon and no-Helix Nix wrappers preserve launch inputs for target
   preparation without accumulating old component values or terminfo prefixes.
   Private capture never reaches terminal programs or agent commands. In-place

@@ -146,6 +146,40 @@ outlives the command cannot retain a slot lock.
 Paths in TOML are literal: use absolute paths; shell variables and `~` are not
 expanded. Keep personal state and logs outside the repository.
 
+The example keeps backend permission handling: agy uses `--sandbox`, and
+interactive Codex uses `-s workspace-write -a on-request`. Codex TUI commands
+also use `--no-daemon` so command execution retains the launching terminal's
+environment; include it in custom TUI and resume commands too. The headless
+`codex exec` examples retain workspace-write for implementation and read-only
+for review; they do not use the TUI-only daemon flag. Headless stdin is not a
+terminal: denied work must fail rather than be retried with permission bypass.
+Other example backends retain their own permission settings. Eon does not
+create or attest to a backend sandbox; backend configuration and the separate
+`trusted_settings` workspace-trust grant still matter.
+
+Workspace-write can deny access to Eon's host socket and writes to state outside
+the workspace. Codex may request approval for an operation or refuse it; an
+approval is not a guarantee of socket access. For the state directory, see
+[sandboxed slot access](#sandboxed-slot-access). Do not grant broad host-socket
+access to work around a denial: Eon's control and helper sockets can provide
+execution outside the agent sandbox.
+
+If you deliberately configure permission bypass, give that backend an explicit
+name such as `code-bypass` or `agy-bypass` and select it with `--only NAME`.
+For example, renaming a Codex backend to `code-bypass` and replacing its sandbox
+and approval arguments with `--dangerously-bypass-approvals-and-sandbox` grants
+command execution without sandboxing or confirmation prompts. Retain
+`--no-daemon`; external isolation is your responsibility. agy's
+`--dangerously-skip-permissions` instead auto-approves tool permission requests.
+These are deliberate edits to your commands, not options enabled by the example.
+Inspect the choice with `rota status --json` and
+`rota launch --only code-bypass --dry-run task.md` before launching.
+Human status prints the configured name, JSON status exposes it as `backend`,
+and dry-run prints it as `pick`. Names describe your choice; Eon does not infer
+or enforce permissions from them. A backend enabled for rotation, fallback or a
+popup pin can also be selected without `--only`; those are configuration choices.
+Custom popup and headless argv remain your explicit command choices too.
+
 - `backends` array order is round-robin order. `roles` controls eligibility;
   the fallback backend has an empty role list. Disabled backends never run checks.
 - Optional top-level `popup_backend = "main"` pins `launch --popup` to an
@@ -250,9 +284,19 @@ expanded. Keep personal state and logs outside the repository.
   up to `yield-max-minutes` (default 30 minutes), then resumes FIFO by its
   original arrival time.
 
-For a sandboxed Codex agent, add the directory containing rota's `state_file`
-as a writable root in the active permission profile. These settings extend
-an existing profile named `rota`.
+### Sandboxed slot access
+
+With the example's Codex workspace-write sandbox, add
+`--add-dir /PATH/TO/state` to permit writes to the directory containing rota's
+`state_file`. Grant only the required state directory; this does not grant
+access to Eon's host sockets.
+
+The permission-profile recipe below requires a Codex version whose own help
+advertises `--permission-profile`. Codex 0.169.0 rejects that option, including
+when combined with `-s workspace-write`; use `--add-dir` with this example
+instead. Do not assume the two permission interfaces can be combined.
+For a supporting version, these settings extend an existing profile named
+`rota` with a writable state root:
 
 ```toml
 [permissions.rota.workspace_roots]
@@ -262,7 +306,7 @@ an existing profile named `rota`.
 "." = "write"
 ```
 
-Select the profile with `codex --permission-profile rota` and verify it before
+Select the profile with `codex --no-daemon --permission-profile rota` and verify it before
 cutover by running `rota slot run -- true` in the sandbox. See
 [Codex permission profiles](https://learn.chatgpt.com/docs/permissions#define-and-select-a-profile).
 

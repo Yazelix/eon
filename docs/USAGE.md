@@ -110,6 +110,13 @@ JSON status includes the config file used. Exit codes retain rota's meanings:
 Headless run passes through the agent's status after cleanup, with 124 for a
 timeout, 130 for interruption and 125 for abandoned processes.
 
+The shipped examples retain backend permission handling and use Codex's
+per-terminal TUI mode. Sandboxes may deny host-socket access or writes to
+external state directories; see the
+[backend permission guidance](../eon/crates/eon-agent/README.md#configuration)
+for scoped state access and explicit, named custom bypass choices. Status
+reports the configured backend name, not an attestation of its permissions.
+
 `run` retains rota's requirement for Linux 5.14+, cgroup v2, a systemd user
 manager and systemd 254+. Other Eon commands keep their existing platform
 requirements. Retire requires Linux 5.6+; use `eon agent retire --help` for its
@@ -1523,7 +1530,13 @@ that terminal, or for the shown session, not for the pane Codex runs in.
 Once that terminal has ended they fail under the caller-discovery rules above.
 An agent's `eon quit --json` through a daemon started in Eon quits the window
 of the terminal that started the daemon, without asking. Start Codex in Eon
-with `codex --no-daemon`; the Agent popup's `auto` command already does.
+with `codex --no-daemon`. On Linux, when an agent configuration file exists,
+the Agent popup's `auto` command uses its configured managed backend. Derived
+Codex resume commands include `--no-daemon`; custom `popup_command` argv must
+include it themselves. Without an agent configuration file, and on macOS,
+the built-in Codex popup command is `codex resume --no-daemon`. Explicit
+`[popups.agent] command` argv also needs the flag when it starts the Codex TUI.
+Editing an example or configuration does not restart an existing Agent popup.
 
 ### Exit status
 

@@ -1,6 +1,8 @@
 # Replace all /PATH/TO values; percentages below are invented examples.
 # Commands are argv arrays, never shell strings. Only whole arguments {prompt}
 # and {cwd} are substituted. Backend order is rotation order.
+# These commands do not request permission bypass. Custom bypass choices and their
+# status labels are described in README.md#configuration.
 state_file = "/PATH/TO/state/last-pick"
 log_file = "/PATH/TO/state/decisions.jsonl"
 fallback = "main"
@@ -48,8 +50,8 @@ roles = ["implement", "review"]
 guard = ["test", "-f", "/PATH/TO/guard"]
 trusted_settings = "/PATH/TO/agy/settings.json"
 [backends.commands]
-medium = ["agy", "-i", "{prompt}", "--model", "MODEL-MEDIUM", "--dangerously-skip-permissions"]
-high = ["agy", "-i", "{prompt}", "--model", "MODEL-HIGH", "--dangerously-skip-permissions"]
+medium = ["agy", "-i", "{prompt}", "--model", "MODEL-MEDIUM", "--sandbox"]
+high = ["agy", "-i", "{prompt}", "--model", "MODEL-HIGH", "--sandbox"]
 [backends.quota]
 command = ["agy", "-p", "/usage"]
 parser = "agy"
@@ -109,9 +111,12 @@ account_check = ["/PATH/TO/account-check"]
 excluded_roots = ["/PATH/TO/other-account-projects"]
 [backends.env]
 CODEX_HOME = "/PATH/TO/codex"
+# Workspace-write can deny Eon's socket and writes to external state; Codex may
+# ask for approval or refuse. See README.md#sandboxed-slot-access for state access.
+# TUI execution uses --no-daemon to retain this terminal's routing environment.
 [backends.commands]
-medium = ["codex", "-m", "MODEL", "-c", "model_reasoning_effort=high", "--dangerously-bypass-approvals-and-sandbox", "-C", "{cwd}", "{prompt}"]
-high = ["codex", "-m", "MODEL", "-c", "model_reasoning_effort=xhigh", "--dangerously-bypass-approvals-and-sandbox", "-C", "{cwd}", "{prompt}"]
+medium = ["codex", "--no-daemon", "-m", "MODEL", "-c", "model_reasoning_effort=high", "-s", "workspace-write", "-a", "on-request", "-C", "{cwd}", "{prompt}"]
+high = ["codex", "--no-daemon", "-m", "MODEL", "-c", "model_reasoning_effort=xhigh", "-s", "workspace-write", "-a", "on-request", "-C", "{cwd}", "{prompt}"]
 [backends.quota]
 parser = "eon_codex"
 [backends.limits.implement]

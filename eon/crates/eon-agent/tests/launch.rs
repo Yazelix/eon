@@ -8,6 +8,135 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[test]
+fn shipped_example_commands_preserve_backend_permissions_and_tui_isolation() {
+    use rota::config::{Config, Level, Role};
+
+    let example = include_str!("../config.example.toml");
+    let original = Config::parse(example).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(root.path()).unwrap();
+    fs::write(root.join("brief"), "example task").unwrap();
+    let mut fixture: toml::Value = example.parse().unwrap();
+    let mut backends = fixture["backends"].as_array().unwrap().clone();
+    for backend in &mut backends {
+        let backend = backend.as_table_mut().unwrap();
+        // Keep the shipped work argv, replacing only admission and environment fixtures.
+        backend.retain(|key, _| matches!(key, "name" | "commands" | "popup_command" | "run"));
+        backend.insert("roles".into(), vec!["implement"].into());
+        backend.insert("guard".into(), vec!["true"].into());
+        backend.insert("allow_unknown_quota".into(), true.into());
+    }
+    fixture = toml::Value::Table(toml::map::Map::from_iter([
+        (
+            "state_file".into(),
+            root.join("state").to_str().unwrap().into(),
+        ),
+        ("log_file".into(), root.join("log").to_str().unwrap().into()),
+        ("backends".into(), backends.into()),
+    ]));
+    fs::write(root.join("config.toml"), toml::to_string(&fixture).unwrap()).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rota"))
+            .env_clear()
+            .env("PATH", env::var_os("PATH").unwrap())
+            .env("HOME", &root)
+            .env("ROTA_CONFIG", root.join("config.toml"))
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let mut failures = Vec::new();
+    for backend in &original.backends {
+        let mut commands: Vec<_> = backend.commands.values().cloned().collect();
+        commands.extend(backend.popup_command());
+        if let Some(run) = &backend.run {
+            commands.extend(run.commands.values().cloned());
+            for (role, argv) in &run.commands {
+                let sandbox = if *role == Role::Implement {
+                    "workspace-write"
+                } else {
+                    "read-only"
+                };
+                assert!(argv.windows(2).any(|pair| pair == ["-s", sandbox]));
+                assert!(!argv.iter().any(|arg| arg == "--no-daemon"));
+            }
+        }
+        for argv in &commands {
+            let bypass = argv.iter().any(|arg| {
+                arg.starts_with("--dangerously")
+                    || matches!(
+                        arg.as_str(),
+                        "--yolo"
+                            | "danger-full-access"
+                            | "--sandbox=danger-full-access"
+                            | "--full-auto"
+                            | "--ask-for-approval=never"
+                            | "--permission-mode=bypassPermissions"
+                    )
+            }) || argv.windows(2).any(|pair| {
+                matches!(pair[0].as_str(), "-a" | "--ask-for-approval") && pair[1] == "never"
+                    || pair[0] == "--permission-mode" && pair[1] == "bypassPermissions"
+            });
+            if bypass {
+                failures.push(format!("{} bypass: {argv:?}", backend.name));
+            }
+        }
+        for (level, key) in [(Level::Medium, "medium"), (Level::High, "high")] {
+            let argv = &backend.commands[&level];
+            if argv[0] == "codex" {
+                if !argv.iter().any(|arg| arg == "--no-daemon") {
+                    failures.push(format!("{} {key} missing --no-daemon", backend.name));
+                }
+                for pair in [["-s", "workspace-write"], ["-a", "on-request"]] {
+                    if !argv.windows(2).any(|args| args == pair) {
+                        failures.push(format!("{} {key} missing {pair:?}", backend.name));
+                    }
+                }
+            }
+            if argv[0] == "agy" && !argv.iter().any(|arg| arg == "--sandbox") {
+                failures.push(format!("{} {key} missing --sandbox", backend.name));
+            }
+            let output = run(&[
+                "launch",
+                "--dry-run",
+                "--only",
+                &backend.name,
+                "--level",
+                key,
+                "brief",
+            ]);
+            assert!(output.status.success(), "{}: {output:?}", backend.name);
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(stdout.starts_with(&format!("pick: {}\ncommand: ", backend.name)));
+            for arg in argv
+                .iter()
+                .filter(|arg| !matches!(arg.as_str(), "{prompt}" | "{cwd}"))
+            {
+                assert!(stdout.contains(arg), "{} {key}: {stdout}", backend.name);
+            }
+        }
+        if backend.popup_command().is_some() {
+            let output = run(&["launch", "--popup", "--dry-run", "--only", &backend.name]);
+            assert!(
+                output.status.success(),
+                "{} popup: {output:?}",
+                backend.name
+            );
+            assert!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .starts_with(&format!("pick: {}\ncommand: ", backend.name))
+            );
+        }
+    }
+    assert!(!root.join("state").exists());
+    assert!(!root.join("state.lock").exists());
+    assert!(!root.join("log").exists());
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 fn tool(name: &str) -> PathBuf {
     // Renamed fixtures need standalone tools; multicall aliases depend on argv[0].
     env::split_paths(&env::var_os("PATH").unwrap())
