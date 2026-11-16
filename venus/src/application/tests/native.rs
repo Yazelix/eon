@@ -97,26 +97,21 @@ fn window_menu_application_routes_input_and_lifecycle() {
                 .apply(eon_workspace_protocol::v46::Response::Snapshot(snapshot));
             app.set_window_menu(true);
             app.handle_window_menu_button(
-                event_loop,
                 MouseButton::Left,
                 ElementState::Pressed,
                 false,
                 Some(WindowMenuAction::Quit),
             );
             assert_eq!(app.window_menu.pressed, Some(WindowMenuAction::Quit));
-            assert!(app.handle_window_menu_key(
-                event_loop,
-                &ShortcutKey {
-                    physical_key: PhysicalKey::Code(KeyCode::Escape),
-                    state: ElementState::Pressed,
-                    repeat: false,
-                }
-            ));
+            assert!(app.handle_window_menu_key(&ShortcutKey {
+                physical_key: PhysicalKey::Code(KeyCode::Escape),
+                state: ElementState::Pressed,
+                repeat: false,
+            }));
             assert!(!app.window_menu.open);
             assert!(app.window_menu.pressed.is_none());
             app.set_window_menu(true);
             app.handle_window_menu_button(
-                event_loop,
                 MouseButton::Left,
                 ElementState::Released,
                 false,
@@ -124,7 +119,6 @@ fn window_menu_application_routes_input_and_lifecycle() {
             );
             assert!(app.close_prompt.is_none() && !event_loop.exiting());
             assert!(app.handle_window_menu_button(
-                event_loop,
                 MouseButton::Left,
                 ElementState::Pressed,
                 true,
@@ -132,7 +126,6 @@ fn window_menu_application_routes_input_and_lifecycle() {
             ));
             assert!(!app.window_menu.open);
             assert!(app.handle_window_menu_button(
-                event_loop,
                 MouseButton::Left,
                 ElementState::Released,
                 false,
@@ -140,7 +133,6 @@ fn window_menu_application_routes_input_and_lifecycle() {
             ));
             app.set_window_menu(true);
             app.handle_window_menu_button(
-                event_loop,
                 MouseButton::Left,
                 ElementState::Pressed,
                 false,
@@ -148,27 +140,27 @@ fn window_menu_application_routes_input_and_lifecycle() {
             );
             assert!(app.close_prompt.is_none());
             app.handle_window_menu_button(
-                event_loop,
                 MouseButton::Left,
                 ElementState::Released,
                 false,
                 Some(WindowMenuAction::Detach),
             );
             assert!(app.close_prompt.is_none() && !event_loop.exiting());
-            app.activate_window_action(event_loop, WindowMenuAction::Quit);
+            app.activate_window_action(WindowMenuAction::Quit);
             assert!(matches!(
                 app.close_prompt.as_ref().map(|prompt| &prompt.target),
                 Some(PromptTarget::QuitWindow)
             ));
             app.close_prompt = None;
             app.set_window_menu(true);
-            app.activate_window_action(event_loop, action.clone());
+            app.activate_window_action(action.clone());
             assert!(
                 matches!(app.close_prompt.as_ref().map(|prompt| &prompt.target), Some(PromptTarget::QuitOtherWindow(target)) if *target == action)
             );
             app.close_prompt = None;
             app.set_window_menu(true);
-            app.activate_window_action(event_loop, WindowMenuAction::Detach);
+            app.activate_window_action(WindowMenuAction::Detach);
+            app.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
             assert!(event_loop.exiting());
         }
         fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
@@ -303,10 +295,24 @@ fn native_startup(explicit_grid: bool) {
         app: Application,
         explicit_grid: bool,
         checked: bool,
+        admission: UnixStream,
+        readiness: UnixStream,
     }
     impl ApplicationHandler<UserEvent> for Probe {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             self.app.resumed(event_loop);
+            // A renderer/window alone cannot admit startup without native output entry.
+            self.app
+                .admit_initial_scale(false, &mut self.admission)
+                .unwrap();
+            self.readiness.set_nonblocking(true).unwrap();
+            assert_eq!(
+                self.readiness.read(&mut [0; 8]).unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+            self.readiness.set_nonblocking(false).unwrap();
+            assert!(self.app.initial_scale_pending);
+            assert!(self.app.terminal.transport.is_none());
         }
         fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
             assert!(
@@ -325,11 +331,36 @@ fn native_startup(explicit_grid: bool) {
             self.app.window_event(event_loop, id, event);
         }
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            let output_admitted = self
+                .app
+                .window
+                .as_ref()
+                .is_some_and(|state| state.window.current_monitor().is_some());
+            self.app
+                .admit_initial_scale(output_admitted, &mut self.admission)
+                .unwrap();
             self.app.about_to_wait(event_loop);
             if self.app.initial_scale_pending {
                 return;
             }
+            let mut ready = [0; 8];
+            self.readiness.read_exact(&mut ready).unwrap();
+            assert_eq!(&ready, b"ready-v1");
+            // Observe the reporting owner against focus delivered by this private native window.
+            self.app.focus_reporter =
+                admit_presentation(&mut self.admission, false, true, self.app.window_focused)
+                    .unwrap();
+            assert!(self.app.focus_reporter.is_some());
+            let expected = focus_frame(self.app.window_focused);
+            let mut focus = vec![0; expected.len()];
+            self.readiness.read_exact(&mut focus).unwrap();
+            assert_eq!(focus, expected);
+            eprintln!("native focus report: {}", self.app.window_focused);
             assert!(self.app.terminal.transport.is_some());
+            assert!(
+                !self.app.initial_scale_pending,
+                "admission clears the fallback wake"
+            );
             let state = self
                 .app
                 .window
@@ -377,8 +408,16 @@ fn native_startup(explicit_grid: bool) {
         None,
     )
     .unwrap();
+    let (admission, readiness) = UnixStream::pair().unwrap();
+    readiness
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut app = Application::new(arguments, event_loop.create_proxy());
+    app.startup_admission = true;
     let mut probe = Probe {
-        app: Application::new(arguments, event_loop.create_proxy()),
+        app,
+        admission,
+        readiness,
         explicit_grid,
         checked: false,
     };
@@ -558,7 +597,12 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         TransportEvent::Server(ServerMessage::Frame(frame))
     }
 
-    fn check_host_drain_and_deadlines(app: &mut Application, root: &Path) {
+    fn check_host_drain_and_deadlines(
+        app: &mut Application,
+        event_loop: &ActiveEventLoop,
+        root: &Path,
+    ) {
+        app.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
         let socket = root.join("column.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let (wake, woken) = mpsc::channel();
@@ -591,8 +635,19 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             }
         }
         assert_eq!(app.column_views[0].model.scene().unwrap().revision, 1);
+        let mut requests = Vec::new();
+        app.apply_native_requests(|app, request| {
+            requests.push(request);
+            app.apply_winit_request(event_loop, request);
+        });
+        assert_eq!(
+            requests,
+            [NativeRequest::Redraw],
+            "column output requests one native redraw"
+        );
         let identity = app.presentation.candidate(app.presented_revision());
         app.drain_transport_events(|_, _| panic!("this fixture has no popup"));
+        app.apply_native_requests(|_, request| panic!("empty drain requested {request:?}"));
         assert_eq!(
             app.presentation.candidate(app.presented_revision()),
             identity
@@ -614,6 +669,29 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         );
         app.initial_scale_pending = false;
         app.terminal.orbit_retry.reset();
+        // A retry uses the host's supplied wake, including when no unrelated input arrives.
+        let (wake, woken) = mpsc::channel();
+        let previous_wake = app.transport_wake.clone();
+        let native_wake = previous_wake.clone();
+        app.transport_wake = Arc::new(move || {
+            let _ = wake.send(());
+            native_wake();
+        });
+        app.column_views[0].transport = None;
+        app.column_views[0].orbit_retry.deadline = Some(now);
+        app.advance_deadlines(now);
+        let mut retry_server = listener.accept().unwrap().0;
+        retry_server
+            .write_all(&session::encode_server_message(&ServerMessage::Attached).unwrap())
+            .unwrap();
+        woken
+            .recv_timeout(Duration::from_secs(5))
+            .expect("retried column wakes the supplied host");
+        app.drain_transport_events(|_, _| panic!("this fixture has no popup"));
+        assert!(app.column_views[0].model.is_attached());
+        app.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
+        drop(retry_server);
+        app.transport_wake = previous_wake;
         app.column_views.clear();
         app.bar_items = bar_items;
         drop(server);
@@ -646,6 +724,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             let address = self.listener.local_addr().unwrap();
             check_host_drain_and_deadlines(
                 &mut self.app,
+                event_loop,
                 address.as_pathname().unwrap().parent().unwrap(),
             );
         }
@@ -1730,8 +1809,32 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                     self.idle_redraws, 1,
                     "no redraw after the idle scene settles"
                 );
+                self.app.window_focused = false;
+                let mut requests = Vec::new();
+                run_presentation_control(&b"present\npresent\npart"[..], |event| {
+                    let exit = matches!(event, UserEvent::Exit);
+                    let mut native = |app: &mut Application, request| {
+                        requests.push(request);
+                        app.apply_winit_request(event_loop, request);
+                    };
+                    self.app.handle_user_event(event, &mut native);
+                    self.app.apply_native_requests(&mut native);
+                    assert_eq!(
+                        event_loop.exiting(),
+                        exit,
+                        "attention must be issued before native exit"
+                    );
+                    true
+                });
+                assert_eq!(
+                    requests,
+                    [
+                        NativeRequest::Present,
+                        NativeRequest::Present,
+                        NativeRequest::Exit
+                    ]
+                );
                 self.idle_checked = true;
-                event_loop.exit();
             }
         }
     }
@@ -2879,26 +2982,24 @@ fn quit_prompt_open(app: &Application) -> bool {
 /// Drives the production shortcut chain, as winit's key events do.
 #[cfg(target_os = "linux")]
 fn press_shortcut(app: &mut Application, event_loop: &ActiveEventLoop, code: KeyCode) -> bool {
-    app.handle_shortcut_key(
-        event_loop,
-        &ShortcutKey {
-            physical_key: PhysicalKey::Code(code),
-            state: ElementState::Pressed,
-            repeat: false,
-        },
-    )
+    let consumed = app.handle_shortcut_key(&ShortcutKey {
+        physical_key: PhysicalKey::Code(code),
+        state: ElementState::Pressed,
+        repeat: false,
+    });
+    app.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
+    consumed
 }
 
 #[cfg(target_os = "linux")]
 fn release_shortcut(app: &mut Application, event_loop: &ActiveEventLoop, code: KeyCode) -> bool {
-    app.handle_shortcut_key(
-        event_loop,
-        &ShortcutKey {
-            physical_key: PhysicalKey::Code(code),
-            state: ElementState::Released,
-            repeat: false,
-        },
-    )
+    let consumed = app.handle_shortcut_key(&ShortcutKey {
+        physical_key: PhysicalKey::Code(code),
+        state: ElementState::Released,
+        repeat: false,
+    });
+    app.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
+    consumed
 }
 
 /// Two quick popup toggles answered in one batch, hidden then shown again, replace the popup's

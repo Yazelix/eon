@@ -519,6 +519,42 @@ impl From<AccessKitEvent> for UserEvent {
     }
 }
 
+/// Operations chosen by Venus policy; native hosts execute them without interpreting consent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeRequest {
+    Resume,
+    Present,
+    Redraw,
+    Exit,
+}
+
+/// Fixed pending work, drained at every native callback and synchronously at workspace catch-up.
+#[derive(Default)]
+struct NativeRequests {
+    resume: bool,
+    present: bool,
+    redraw: bool,
+    exit: bool,
+}
+
+impl NativeRequests {
+    fn take(&mut self) -> Option<NativeRequest> {
+        for (pending, request) in [
+            (&mut self.resume, NativeRequest::Resume),
+            (&mut self.present, NativeRequest::Present),
+            (&mut self.redraw, NativeRequest::Redraw),
+            (&mut self.exit, NativeRequest::Exit),
+        ] {
+            if std::mem::take(pending) {
+                return Some(request);
+            }
+        }
+        None
+    }
+}
+
+type Wake = Arc<dyn Fn() + Send + Sync>;
+
 struct WindowState {
     renderer: Renderer,
     scale_factor: f64,
@@ -1350,6 +1386,9 @@ struct Application {
     fatal_error: Option<String>,
     initial_scale_pending: bool,
     proxy: EventLoopProxy<UserEvent>,
+    transport_wake: Wake,
+    workspace_wake: Wake,
+    native_requests: NativeRequests,
     window: Option<WindowState>,
     /// The terminal that receives keyboard and pointer input: the selected column's,
     /// a popup's, or the standalone session's.
@@ -1475,7 +1514,16 @@ impl Application {
             || columns.is_some()
             || rows.is_some()
             || fonts != FontSettings::default();
+        let transport_proxy = proxy.clone();
+        let workspace_proxy = proxy.clone();
         Self {
+            transport_wake: Arc::new(move || {
+                let _ = transport_proxy.send_event(UserEvent::Transport);
+            }),
+            workspace_wake: Arc::new(move || {
+                let _ = workspace_proxy.send_event(UserEvent::Workspace);
+            }),
+            native_requests: NativeRequests::default(),
             application_id,
             terminal: TerminalView::new(orbit_socket),
             column_views: Vec::new(),
@@ -1673,15 +1721,13 @@ impl Application {
     }
 
     fn start_workspace(&mut self, socket: PathBuf) {
-        let proxy = self.proxy.clone();
-        self.workspace_transport = Some(WorkspaceTransport::start(socket, move || {
-            let _ = proxy.send_event(UserEvent::Workspace);
-        }));
+        let wake = self.workspace_wake.clone();
+        self.workspace_transport = Some(WorkspaceTransport::start(socket, move || wake()));
     }
 
     fn start_orbit(&mut self, socket: PathBuf) {
         self.terminal.orbit_socket = Some(socket.clone());
-        self.terminal.transport = Some(orbit_transport(&self.proxy, socket));
+        self.terminal.transport = Some(orbit_transport(&self.transport_wake, socket));
     }
 
     fn reset_cursor_animation(&mut self) {
@@ -1704,7 +1750,7 @@ impl Application {
         }
         if let Some(state) = &mut self.window {
             state.renderer.reset_cursor_animation();
-            state.window.request_redraw();
+            self.native_requests.redraw = true;
         }
     }
 
@@ -2089,12 +2135,14 @@ impl Application {
         self.refresh_client_view();
     }
 
-    fn activate_window_action(&mut self, event_loop: &ActiveEventLoop, action: WindowMenuAction) {
+    fn activate_window_action(&mut self, action: WindowMenuAction) {
         if !self.window_menu.open {
             return;
         }
         match action {
-            WindowMenuAction::Detach => event_loop.exit(),
+            WindowMenuAction::Detach => {
+                self.native_requests.exit = true;
+            }
             WindowMenuAction::Quit => {
                 self.set_window_menu(false);
                 self.begin_quit();
@@ -2131,7 +2179,6 @@ impl Application {
 
     fn handle_window_menu_button(
         &mut self,
-        event_loop: &ActiveEventLoop,
         button: MouseButton,
         state: ElementState,
         outside: bool,
@@ -2149,16 +2196,12 @@ impl Application {
             return false;
         }
         if let Some(action) = self.window_menu.button(button, state, target) {
-            self.activate_window_action(event_loop, action);
+            self.activate_window_action(action);
         }
         true
     }
 
-    fn handle_window_menu_key(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        event: &ShortcutKey,
-    ) -> bool {
+    fn handle_window_menu_key(&mut self, event: &ShortcutKey) -> bool {
         if !self.window_menu.open
             || !self
                 .input
@@ -2180,7 +2223,7 @@ impl Application {
             && modifiers == session::Modifiers::empty()
         {
             if let Some(action) = self.window_menu.highlighted.clone() {
-                self.activate_window_action(event_loop, action);
+                self.activate_window_action(action);
             }
         } else if (matches!(code, KeyCode::ArrowUp | KeyCode::ArrowDown)
             && modifiers == session::Modifiers::empty())
@@ -2328,7 +2371,7 @@ impl Application {
     }
 
     /// A compositor close request, or Command+Q on macOS (EON-C8, VEN-C8).
-    fn request_close(&mut self, event_loop: &ActiveEventLoop) {
+    fn request_close(&mut self) {
         match close_request(
             self.workspace_model.snapshot(),
             self.workspace_model.unavailable(),
@@ -2336,13 +2379,15 @@ impl Application {
             // An open prompt owns the answer: Enter, Esc or Alt+Shift+D.
             CloseRequest::Quit if self.close_prompt.is_some() => {}
             CloseRequest::Quit => self.begin_quit(),
-            CloseRequest::Detach => event_loop.exit(),
+            CloseRequest::Detach => {
+                self.native_requests.exit = true;
+            }
         }
     }
 
     /// Command+Q in an Eon workspace on macOS is the window's close request in any dialog
     /// state, as the close button is (VEN-C8).
-    fn handle_command_q(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
+    fn handle_command_q(&mut self, event: &ShortcutKey) -> bool {
         let closes = self.workspace_socket.is_some()
             && command_q(
                 event.physical_key,
@@ -2358,13 +2403,13 @@ impl Application {
             return false;
         }
         if shortcut_is_ready(event.state, event.repeat) {
-            self.request_close(event_loop);
+            self.request_close();
         }
         true
     }
 
     /// Alt+Shift+D detaches from any workspace state (VEN-C14).
-    fn handle_detach_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
+    fn handle_detach_key(&mut self, event: &ShortcutKey) -> bool {
         let detaches = self.workspace_model.snapshot().is_some()
             && native_key_shortcut(
                 event.physical_key,
@@ -2381,7 +2426,7 @@ impl Application {
             return false;
         }
         if shortcut_is_ready(event.state, event.repeat) {
-            event_loop.exit();
+            self.native_requests.exit = true;
         }
         true
     }
@@ -2536,18 +2581,18 @@ impl Application {
 
     /// Offers a key to Venus's own shortcuts in precedence order; true when one took it, so
     /// it reaches no terminal.
-    fn handle_shortcut_key(&mut self, event_loop: &ActiveEventLoop, event: &ShortcutKey) -> bool {
+    fn handle_shortcut_key(&mut self, event: &ShortcutKey) -> bool {
         if event.state == ElementState::Pressed {
             self.forget_pending();
         }
         self.input
             .suppresses_retired_key(event.physical_key, event.state, event.repeat)
-            || self.handle_command_q(event_loop, event)
+            || self.handle_command_q(event)
             || self.handle_attention_inbox_key(event)
-            || self.handle_detach_key(event_loop, event)
+            || self.handle_detach_key(event)
             || self.handle_quit_hold_key(event)
             || self.handle_close_prompt_key(event)
-            || self.handle_window_menu_key(event_loop, event)
+            || self.handle_window_menu_key(event)
             || self.handle_shortcut_viewer_key(event)
             || self.handle_link_copy(event.physical_key, event.state, event.repeat)
             || self.handle_workspace_key(event)
@@ -3402,7 +3447,7 @@ impl Application {
         view.retry_suppressed = false;
         view.last_resize = None;
         view.orbit_retry.reset();
-        view.transport = Some(orbit_transport(&self.proxy, socket));
+        view.transport = Some(orbit_transport(&self.transport_wake, socket));
     }
 
     fn retry_allowed(&self) -> bool {
@@ -3464,7 +3509,7 @@ impl Application {
             }
             let socket = PathBuf::from(OsString::from_vec(endpoint.clone()));
             let mut view = TerminalView::new(Some(socket.clone()));
-            view.transport = Some(orbit_transport(&self.proxy, socket));
+            view.transport = Some(orbit_transport(&self.transport_wake, socket));
             view.active_endpoint = Some(endpoint);
             view.active_endpoint_live = true;
             self.column_views.push(view);
@@ -3550,8 +3595,8 @@ impl Application {
         if self.column_views[index].model.image_attachment() != image_attachment {
             self.sweep_images();
         }
-        if let Some(state) = &self.window {
-            state.window.request_redraw();
+        if self.window.is_some() {
+            self.native_requests.redraw = true;
         }
     }
 
@@ -3568,7 +3613,7 @@ impl Application {
             view.retry_suppressed = false;
             view.last_resize = None;
             view.transport = Some(orbit_transport(
-                &self.proxy,
+                &self.transport_wake,
                 view.orbit_socket
                     .clone()
                     .expect("a column view has an attachment socket"),
@@ -3626,10 +3671,7 @@ impl Application {
     }
 
     /// Drain on an Orbit wake, applying popup workspace changes before terminal events.
-    fn drain_transport_events(
-        &mut self,
-        apply_workspace: impl FnOnce(&mut Self, Vec<WorkspaceEvent>),
-    ) {
+    fn drain_transport_events(&mut self, mut native: impl FnMut(&mut Self, NativeRequest)) {
         let events = self
             .terminal
             .transport
@@ -3646,7 +3688,9 @@ impl Application {
             && let Some(workspace) = &self.workspace_transport
         {
             let events = workspace.catch_up();
-            apply_workspace(self, events);
+            self.apply_workspace_events(events);
+            // Creation/attachment must happen before testing the captured attachment identity.
+            self.apply_native_requests(&mut native);
         }
         if self.attachments == attachment {
             for event in events {
@@ -3665,7 +3709,7 @@ impl Application {
         self.drive_terminal_scroll();
     }
 
-    /// Drain on a workspace wake; the host applies these events through its native lifecycle.
+    /// Collect workspace events for the shared lifecycle policy.
     fn drain_workspace_events(&self) -> Vec<WorkspaceEvent> {
         self.workspace_transport
             .as_ref()
@@ -3780,9 +3824,9 @@ impl Application {
             .filter_map(|view| view.model.scene())
             .any(Scene::has_blinking_content);
         if update_blink(blinking, &mut self.blink_visible, &mut self.next_blink, now)
-            && let Some(state) = &self.window
+            && self.window.is_some()
         {
-            state.window.request_redraw();
+            self.native_requests.redraw = true;
         }
         let spinning = !self.window_occluded
             && self
@@ -3793,7 +3837,7 @@ impl Application {
             && let Some(state) = &mut self.window
         {
             state.renderer.turn_spinners();
-            state.window.request_redraw();
+            self.native_requests.redraw = true;
         }
         // A pending image entry's marker comes due without any other change (VEN-C31).
         let next_marker = self
@@ -3801,10 +3845,10 @@ impl Application {
             .as_ref()
             .and_then(|state| state.renderer.next_marker_deadline());
         if next_marker.is_some_and(|due| now >= due && self.marker_wake != Some(due))
-            && let Some(state) = &self.window
+            && self.window.is_some()
         {
             self.marker_wake = next_marker;
-            state.window.request_redraw();
+            self.native_requests.redraw = true;
         }
         let animation_active = self
             .window
@@ -3815,9 +3859,9 @@ impl Application {
             cursor_animation_allowed(self.window_focused, self.window_occluded),
             &mut self.next_animation,
             now,
-        ) && let Some(state) = &self.window
+        ) && self.window.is_some()
         {
-            state.window.request_redraw();
+            self.native_requests.redraw = true;
         }
         [
             self.next_blink,
@@ -3850,11 +3894,7 @@ impl Application {
         .min()
     }
 
-    fn apply_workspace_events(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        events: Vec<WorkspaceEvent>,
-    ) {
+    fn apply_workspace_events(&mut self, events: Vec<WorkspaceEvent>) {
         for event in events {
             // A close that stopped the last terminal ended the
             // generation; exit as on control loss.
@@ -3862,17 +3902,17 @@ impl Application {
                 event,
                 WorkspaceEvent::Response(eon_workspace_protocol::v46::Response::Ended(_))
             ) {
-                event_loop.exit();
+                self.native_requests.exit = true;
                 return;
             }
             self.handle_workspace(event);
         }
         if self.window.is_none() {
             if self.workspace_model.snapshot().is_some() {
-                self.resumed(event_loop);
+                self.native_requests.resume = true;
             } else if let Some(notice) = self.workspace_model.notice() {
                 self.fatal_error = Some(notice.to_owned());
-                event_loop.exit();
+                self.native_requests.exit = true;
             }
         }
     }
@@ -5251,7 +5291,7 @@ impl Application {
             state.renderer.metrics(),
             link_generation,
         );
-        state.window.request_redraw();
+        self.native_requests.redraw = true;
     }
 
     fn send(&mut self, message: ClientMessage) -> bool {
@@ -5863,12 +5903,21 @@ fn window_attributes(
         .with_blur(background_blur)
 }
 
-impl ApplicationHandler<UserEvent> for Application {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+impl Application {
+    fn resume_window(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "macos")]
         if self.workspace_socket.is_some() {
             release_command_q();
         }
+        if self.prepare_resume()
+            && let Err(error) = self.create_window(event_loop)
+        {
+            self.fatal_error = Some(error.to_string());
+            self.native_requests.exit = true;
+        }
+    }
+
+    fn prepare_resume(&mut self) -> bool {
         if self.window.is_none()
             && self.initial_scale_pending
             && self.workspace_model.snapshot().is_none()
@@ -5877,22 +5926,12 @@ impl ApplicationHandler<UserEvent> for Application {
             if self.workspace_transport.is_none() {
                 self.start_workspace(socket);
             }
-            return;
+            return false;
         }
-        if self.window.is_none()
-            && let Err(error) = self.create_window(event_loop)
-        {
-            self.fatal_error = Some(error.to_string());
-            event_loop.exit();
-        }
+        self.window.is_none()
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn handle_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
         let _bench_input = BenchInput::start(&event);
         if local_input(&event) {
             self.pending_pane = None;
@@ -5934,7 +5973,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         .menu_target_at(self.cursor.x as f32, self.cursor.y as f32)
                         .cloned()
                 });
-            if self.handle_window_menu_button(event_loop, *button, *state, outside_menu, target) {
+            if self.handle_window_menu_button(*button, *state, outside_menu, target) {
                 return;
             }
         }
@@ -5943,8 +5982,10 @@ impl ApplicationHandler<UserEvent> for Application {
         };
 
         match event {
-            WindowEvent::CloseRequested => self.request_close(event_loop),
-            WindowEvent::Destroyed => event_loop.exit(),
+            WindowEvent::CloseRequested => self.request_close(),
+            WindowEvent::Destroyed => {
+                self.native_requests.exit = true;
+            }
             WindowEvent::Resized(size) => {
                 self.next_animation = None;
                 self.input.reset_scroll();
@@ -5983,7 +6024,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         Ok(()) => {}
                         Err(error) => {
                             self.fatal_error = Some(error.to_string());
-                            event_loop.exit();
+                            self.native_requests.exit = true;
                             return;
                         }
                     }
@@ -6037,7 +6078,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 let copies =
                     native_key_shortcut(event.physical_key, modifiers, self.popup_entries())
                         .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy);
-                if self.handle_shortcut_key(event_loop, &ShortcutKey::of(&event)) {
+                if self.handle_shortcut_key(&ShortcutKey::of(&event)) {
                     bench_trace("input_consumed", "shortcut");
                 } else if self.input.consumes_shortcut(
                     event.physical_key,
@@ -6599,7 +6640,11 @@ impl ApplicationHandler<UserEvent> for Application {
         }
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+    fn handle_user_event(
+        &mut self,
+        event: UserEvent,
+        mut native: impl FnMut(&mut Self, NativeRequest),
+    ) {
         match event {
             UserEvent::WindowCommandFailed(detail) => {
                 self.terminal
@@ -6623,22 +6668,18 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.disk_reading = false;
                 self.show_disk(disk);
             }
-            UserEvent::Exit => event_loop.exit(),
+            UserEvent::Exit => {
+                self.native_requests.exit = true;
+            }
             UserEvent::Present => {
-                if !self.window_focused
-                    && let Some(state) = &self.window
-                {
-                    state
-                        .window
-                        .request_user_attention(Some(UserAttentionType::Informational));
+                if !self.window_focused && self.window.is_some() {
+                    self.native_requests.present = true;
                 }
             }
-            UserEvent::Transport => self.drain_transport_events(|app, events| {
-                app.apply_workspace_events(event_loop, events);
-            }),
+            UserEvent::Transport => self.drain_transport_events(&mut native),
             UserEvent::Workspace => {
                 let events = self.drain_workspace_events();
-                self.apply_workspace_events(event_loop, events);
+                self.apply_workspace_events(events);
             }
             UserEvent::AccessKit(event) => {
                 let Some(state) = &mut self.window else {
@@ -6659,7 +6700,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         match target {
                             Some(AccessibilityTarget::WindowMenu { action, activate }) => {
                                 if activate {
-                                    self.activate_window_action(event_loop, action);
+                                    self.activate_window_action(action);
                                 } else {
                                     self.select_window_action(action);
                                 }
@@ -6731,17 +6772,15 @@ impl ApplicationHandler<UserEvent> for Application {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // winit calls this once per loop turn, after that turn's events.
-        self.turns = self.turns.wrapping_add(1);
-        // Initial Wayland scale can arrive after the first buffer. Once the
-        // window has entered an output, later scale/size changes belong to the user.
+    fn admit_initial_scale(
+        &mut self,
+        output_admitted: bool,
+        output: &mut (impl Write + AsFd),
+    ) -> Result {
         if self.initial_scale_pending
             && self.fatal_error.is_none()
-            && self
-                .window
-                .as_ref()
-                .is_some_and(|state| state.window.current_monitor().is_some())
+            && output_admitted
+            && self.window.is_some()
         {
             self.initial_scale_pending = false;
             if self.startup_admission
@@ -6754,31 +6793,82 @@ impl ApplicationHandler<UserEvent> for Application {
                     })
                     .is_none()
             {
-                self.fatal_error =
-                    Some("initial native window leaves no valid terminal grid".into());
-                event_loop.exit();
-                return;
+                return Err("initial native window leaves no valid terminal grid".into());
             }
             if self.startup_admission {
-                match admit_presentation(
-                    &mut io::stdout(),
+                self.focus_reporter = admit_presentation(
+                    output,
                     true,
                     self.workspace_socket.is_some(),
                     self.window_focused,
-                ) {
-                    Ok(reporter) => self.focus_reporter = reporter,
-                    Err(error) => {
-                        self.fatal_error =
-                            Some(format!("Cannot report Venus startup readiness: {error}"));
-                        event_loop.exit();
-                        return;
-                    }
-                }
+                )
+                .map_err(|error| format!("Cannot report Venus startup readiness: {error}"))?;
             }
             self.start_initial_attachment();
             self.refresh_client_view();
         }
+        Ok(())
+    }
+
+    fn apply_native_requests(&mut self, mut native: impl FnMut(&mut Self, NativeRequest)) {
+        while let Some(request) = self.native_requests.take() {
+            native(self, request);
+        }
+    }
+
+    fn apply_winit_request(&mut self, event_loop: &ActiveEventLoop, request: NativeRequest) {
+        match request {
+            NativeRequest::Resume => self.resume_window(event_loop),
+            NativeRequest::Present => {
+                if let Some(state) = &self.window {
+                    state
+                        .window
+                        .request_user_attention(Some(UserAttentionType::Informational));
+                }
+            }
+            NativeRequest::Redraw => {
+                if let Some(state) = &self.window {
+                    state.window.request_redraw();
+                }
+            }
+            NativeRequest::Exit => event_loop.exit(),
+        }
+    }
+}
+
+impl ApplicationHandler<UserEvent> for Application {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.native_requests.resume = true;
+        self.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        self.handle_window_event(id, event);
+        self.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        self.handle_user_event(event, |app, request| {
+            app.apply_winit_request(event_loop, request)
+        });
+        self.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.turns = self.turns.wrapping_add(1);
+        // Initial output entry is sampled after this turn's scale/size events, as before.
+        let output_admitted = self
+            .window
+            .as_ref()
+            .is_some_and(|state| state.window.current_monitor().is_some());
+        if let Err(error) = self.admit_initial_scale(output_admitted, &mut io::stdout()) {
+            self.fatal_error = Some(error.to_string());
+            self.native_requests.exit = true;
+            self.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
+            return;
+        }
         let deadline = self.advance_deadlines(Instant::now());
+        self.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
         event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }
@@ -6996,11 +7086,9 @@ fn column_scenes<'a>(
     })
 }
 
-fn orbit_transport(proxy: &EventLoopProxy<UserEvent>, socket: PathBuf) -> Transport {
-    let proxy = proxy.clone();
-    Transport::start(socket, move || {
-        let _ = proxy.send_event(UserEvent::Transport);
-    })
+fn orbit_transport(wake: &Wake, socket: PathBuf) -> Transport {
+    let wake = wake.clone();
+    Transport::start(socket, move || wake())
 }
 
 /// Write a terminal's clipboard effect natively and report the result on that terminal.
