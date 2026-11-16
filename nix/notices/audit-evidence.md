@@ -12,8 +12,10 @@ feature or build-context changes require explicit inspection and reviewed renewa
 unused exceptions and missing evidence anchors fail. The full native-binding
 graph remains intact. See the checked-in [inspection and renewal recipe](../../eon/tools/archive-notices/README.md).
 The binary SHA-256 values below identify observations, not acceptance keys.
-The Eon, Orbit and Venus sections record the 2026-11-13 dependency renewal for
-`eon-eon-agent-lr8sx.27`; their historical observations remain below it.
+The Eon, Orbit and Venus sections record the 2026-11-16 renewal for
+`eon-igae.19`, observed on composition base `661fe604`. Their earlier
+observations remain labelled historical. The owning bead records the final
+staged-tree gates and artifact identities after the evidence update.
 
 Each producer section gives the exact binary, source, vendor and actual build
 flags from `nix log <producer-output>`. Its runtime graph uses
@@ -46,7 +48,64 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+The current three contexts differ from the accepted 2026-11-13 contexts only
+in normalized Cargo.lock. Commit `4200c940c29fade5d2be955b285045c1022006f5`
+adds `wayland-client` and `wayland-protocols-wlr` edges to benchmark-only
+`eon-bench`; it changes no shipped runtime/native package, feature or audit
+identity. The compiler and nixpkgs identities are unchanged. The raw runtime
+trees also show local Eon 0.1.25 -> 0.1.27; both manifests declare Apache-2.0
+and their LICENSE bytes match, so copyleft/source obligations are unchanged.
+No registry/git runtime crate is added, removed or version-changed.
+All eight local runtime crates also retain their declared licence/licence-file
+fields and existing Cargo-about clarifications between accepted landing
+`2a63b11c` and base `661fe604`; all six LICENSE files are byte-identical.
+`eon-agent` remains MIT OR Apache-2.0; the other local runtime crates retain
+Apache-2.0 through their declarations or existing clarifications.
+
+Independent inspection of both variants reproduces every saved actual-binary
+graph. Exact-vendor offline runtime and normal/build feature trees reproduce
+the producer trees after translating only the local `/build/source` prefix.
+All 12 Rust producers have equal full/fallback contexts and missing sets;
+the three renewed hashes are recorded in their sections below. The existing
+strict proposal changes only these six fingerprint fields and exactly equals
+the edited JSON after canonical comparison; no exception identity changes.
+
+The producer logs retain the exact flags below and no unselected exception's
+compile line. These builds reuse `/nix/store/7hfm2gci8h6nik3l9jd3y6xn65h36qyg-eon-workspace-deps-0`;
+log absence alone cannot prove non-selection of cached code. The exact
+normal/build feature trees establish that those packages are unselected.
+The existing omission falsifier on Eon's `fs2 0.4.3` and Venus's
+`libc 0.2.189`, independently in both variants, retains each root and rejects
+the missing audited runtime dependency under the renewed context.
+
+The report paths below identify the observations used to justify renewal;
+their `report.json` may still record the preceding stale-key rejection.
+Their audit graphs and actual binaries were inspected directly. The owning
+bead records passing reports generated with the accepted keys on the final
+tree; evidence does not depend on a report file claiming its own acceptance.
+
 ## eon
+
+Renewed on 2026-11-16 for `eon-igae.19` to context
+`73ec261a2f561ac31bf0847bc31a743a1c88b4c725449eca555bbded7a86b454`.
+The full and without-Accelerando values are identical. Compared with accepted
+context `c70fb5048770f0f09e8ff5ed556388ba036120a596d2630ecc8614d2012726de`,
+only the benchmark lock edges described above differ. The same 9 host-only
+and 2 unselected exceptions remain; no target-runtime dependency is waived.
+
+- Source: `/nix/store/f80fwj5b2ys0fpi2arsyxq9nx3m23z3c-source`.
+- Vendor: `/nix/store/2315zg2zx3f5jd9n9886wa7pjp7fr3ir-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `eon/crates/eon/Cargo.toml`;
+  root: `eon`; default features, no added features.
+- Full observation: `/nix/store/hml9kk3mifhi71dnyrz20wm1dfxjjdnk-eon-cargo-notices-0.1.27`.
+  Binary: `/nix/store/8miw0xrh7i78k1zihf93s6q7ds9gfg70-eon-rust-0.1.27/bin/eon`.
+  SHA-256: `f3fec424938d96464fa233f1c1b1c5a2b2589d4bbcf4d91adf6918e6a18e264e`.
+- Without-Accelerando observation: `/nix/store/nbybygfmcpw0a2m4gq5km08h1s0lgayz-eon-cargo-notices-0.1.27`.
+  Binary: `/nix/store/7bqkl8q51ni21j915vryq8syxpdb4nlx-eon-rust-0.1.27/bin/eon`.
+  SHA-256: `fa66151387d9938fabe8eb1b65b26f75d7ca217459f8ddc5c0aa28a418c782e0`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (2026-11-13):
 
 Renewed on 2026-11-13 from staged tree
 `85aa2da7f6c11a847fa6eb186d797c6a2c727088` (`eon-eon-agent-lr8sx.27`).
@@ -109,6 +168,25 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-16 for `eon-igae.19` to context
+`097e2347ea1e59e721f3de3c7b22d180cafa7e556f2e059b6618536cd3055e68`.
+The full and without-Accelerando values are identical, sharing the exact
+report and binary. Compared with accepted context
+`db98f03d0c971c16d1dfac652ec82a7c25d8803af58563d45cf4ec6502626f07`,
+only the benchmark lock edges differ. The same 6 host-only and 1 unselected
+exceptions remain; no target-runtime dependency is waived.
+
+- Source: `/nix/store/ibhp5z8c43hm12kppwda6p1g5lj0jxgh-source`.
+- Vendor: `/nix/store/2315zg2zx3f5jd9n9886wa7pjp7fr3ir-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `orbit/Cargo.toml`;
+  root: `yazelix-orbit`; default features, no added features.
+- Both observations: `/nix/store/30ch3vipjk29lmn4c21a7kdlfsai8c2i-orbit-cargo-notices-0.1.0`.
+- Binary: `/nix/store/p8zgxwis9n36fds7vxb6vz9spyl6567g-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+- SHA-256: `10b9d6f80e796529ef5b583b5e8f839a4687467bb99a713723944981760406ea`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (2026-11-13):
+
 Renewed on 2026-11-13 for `eon-eon-agent-lr8sx.27` to dependency context
 `db98f03d0c971c16d1dfac652ec82a7c25d8803af58563d45cf4ec6502626f07`.
 Only normalized lock data differs from the accepted prior context; runtime,
@@ -137,6 +215,26 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-16 for `eon-igae.19` to context
+`f5bd33e8e6af2cc1b3b604bc31789009ca4169bdf3ecd6f10ee7d7e8c53f4ffb`.
+The full and without-Accelerando values are identical. Compared with accepted
+context `1acb176eec03eca4ae079793fed52246022c1c9b4b05146b422f8bc227944173`,
+only the benchmark lock edges differ. The same 15 host-only and 4 unselected
+exceptions remain; no target-runtime dependency is waived.
+
+- Source: `/nix/store/awqn2h223kwqh5v05q14k8hvbp1kj3jw-source`.
+- Vendor: `/nix/store/2315zg2zx3f5jd9n9886wa7pjp7fr3ir-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `venus/Cargo.toml`;
+  root: `yazelix-venus`; default features, no added features.
+- Full observation: `/nix/store/bmkbbhdadfq9wm6sf2445hss1925c87x-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/6mjv8xhq357ggyvmlb8nhhqyw4acvfkd-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Without-Accelerando observation: `/nix/store/wp1xp1p1r6kpwzzgaq4rhyrm4cffpbh6-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/ka25kx1rrznxq1wmw17v1b67fx7m9b92-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Both binaries' SHA-256: `bd3ba284b8d3da20da4f95eac6cc83d62470d5b5f6e94974a9901707efbd7f6c`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (2026-11-13):
 
 Renewed on 2026-11-13 for `eon-eon-agent-lr8sx.27` to dependency context
 `1acb176eec03eca4ae079793fed52246022c1c9b4b05146b422f8bc227944173`.
