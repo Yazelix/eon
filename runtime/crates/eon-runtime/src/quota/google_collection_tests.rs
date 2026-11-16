@@ -93,7 +93,7 @@ fn snapshot(quotas: &Quotas) -> Snapshot {
 
 #[test]
 fn google_source_is_verified_before_usage() {
-    let root = root();
+    let root = root().canonicalize().unwrap();
     let absolute = root.join("bin");
     fs::create_dir(&absolute).unwrap();
     let program = good(&absolute);
@@ -273,44 +273,54 @@ fn google_worker_classifies_object_reports_and_nonzero_exits() {
 fn google_read_bounds_cover_both_phases() {
     let root = root();
     let (_stop, stopped) = mpsc::channel();
+    // An infinite producer can reach either bound first; finite cases pin the byte cap.
+    let bounded_errors = &[Failure::Deadline, Failure::OutputLimit][..];
     for (name, version, body, expected) in [
         (
             "slow-version",
             "sleep 2; printf 1.4.1",
             "exit 9",
-            Failure::Deadline,
+            &[Failure::Deadline][..],
         ),
-        ("slow-usage", "printf 1.4.1", "sleep 2", Failure::Deadline),
+        (
+            "slow-usage",
+            "printf 1.4.1",
+            "sleep 2",
+            &[Failure::Deadline][..],
+        ),
         (
             "combined",
             "sleep 0.15; printf 1.4.1",
             "sleep 0.15",
-            Failure::Deadline,
+            &[Failure::Deadline][..],
         ),
         (
             "flood-version",
             "while :; do printf '%01024d' 0; done",
             "exit 9",
-            Failure::OutputLimit,
+            bounded_errors,
         ),
         (
             "flood-usage",
             "printf 1.4.1",
             "while :; do printf '%01024d' 0; done",
-            Failure::OutputLimit,
+            bounded_errors,
         ),
         (
             "aggregate",
             "printf '1.4.1'; printf '%0100d' 0 | tr 0 ' '",
             "printf '%065436d' 0",
-            Failure::OutputLimit,
+            &[Failure::OutputLimit][..],
         ),
     ] {
         let program = backend(&root, name, version, body);
-        assert_eq!(
-            google::fetch(&program, Duration::from_millis(250), &stopped),
-            Err(expected),
-            "{name}"
+        let fetched = google::fetch(&program, Duration::from_millis(250), &stopped)
+            .map(|bytes| bytes.map(|bytes| bytes.len()));
+        assert!(
+            fetched
+                .as_ref()
+                .is_err_and(|failure| expected.contains(failure)),
+            "{name}: expected {expected:?}, got {fetched:?}"
         );
     }
     let bytes = report().to_string();
