@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Nix installations use stock nixpkgs Yazi so its binary can come from
+  cache.nixos.org. The Nix-free archive retains the Lua source-order patch
+  required for reproducible builds (`eon-6nm02.2`).
+
 - Apple Silicon Nix cache builds run on release tags or manual dispatch.
   Uploads and permanent release pins remain off until a maintainer enables
   publishing after the cache owner's approval (`eon-mac-launch-kz4p.51`).

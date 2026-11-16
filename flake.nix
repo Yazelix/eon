@@ -664,7 +664,7 @@
           yaziPackage =
             assert yazi.rev == yaziIdentity.revision;
             assert pkgs.yazi-unwrapped.version == yaziIdentity.version;
-            pkgs.yazi-unwrapped.overrideAttrs (old: {
+            if !archive then pkgs.yazi-unwrapped else pkgs.yazi-unwrapped.overrideAttrs (old: {
               # The vendored lua-src hands Lua's C files to cc in directory order, which
               # differs between filesystems, so yazi's link order did between hosts.
               postPatch = (old.postPatch or "") + ''
