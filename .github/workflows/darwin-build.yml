@@ -1,0 +1,69 @@
+name: Build Darwin package
+
+on:
+  push:
+    branches: [edge]
+    paths:
+      - 'venus/**'
+      - 'orbit/**'
+      - 'runtime/**'
+      - 'eon/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'components/**'
+      - 'launcher/**'
+      - 'LICENSE'
+      - 'docs/CONFIGURATION.md'
+      - 'docs/USAGE.md'
+      - '.github/workflows/darwin-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eon-darwin-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # No paid private-repository runs or runs from forks.
+    if: github.repository == 'Yazelix/eon' && github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          # Only unsandboxed Darwin builds are proved; eon-zuou owns sandboxed builds.
+          extra_nix_config: sandbox = false
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: eon-yazelix
+          skipPush: true
+
+      - name: Check runner and available disk
+        run: |
+          test "$(uname -m)" = arm64
+          df -h / /nix
+
+      - name: Evaluate Darwin checks without building
+        run: >-
+          nix eval --no-allow-import-from-derivation --json
+          .#checks.aarch64-darwin
+          --apply 'checks: builtins.mapAttrs (_: check: check.drvPath) checks'
+
+      - name: Build the Darwin package
+        run: nix build --print-build-logs --no-link .#packages.aarch64-darwin.default
+
+      - name: Report remaining disk
+        if: always()
+        run: df -h / /nix
