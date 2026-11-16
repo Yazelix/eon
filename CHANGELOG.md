@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- When `[agents] terminal_access = "none"` refuses a content command, its
+  diagnostic explains how a person can restore `"window"` access and the
+  window-wide read/send authority it grants (`eon-260mh.9`).
+
 - With `[agents] terminal_access = "none"`, direct Scrollback requests from
   other processes fail before reading history, creating snapshots or starting
   an editor, including requests with no calling terminal. The window's own

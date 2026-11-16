@@ -214,6 +214,7 @@ has the full list of Mac gaps. Intel Macs are out of scope. Mac reports are
 welcome: [open an issue](https://github.com/Yazelix/eon/issues/new).
 
 [Report a problem](https://github.com/Yazelix/eon/issues/new?template=bug_report.yml).
+For vulnerabilities, use [private security reporting](SECURITY.md).
 
 ## Guides
 

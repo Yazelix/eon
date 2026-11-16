@@ -987,6 +987,14 @@ the window's actions; those requests are treated as native input too.
 Sandboxed agents must not reach Eon's socket or auxiliary host sockets. See the
 [security model](SECURITY-MODEL.md#workspace-control-and-terminal-access).
 
+### Terminal orchestration
+
+The default remains `"window"`. If you do not run terminal orchestration, we
+recommend setting `[agents] terminal_access = "none"` in `config.toml` before
+opening a new window. Running windows retain their startup value. See the
+[public security policy](../SECURITY.md#agent-security-during-the-beta) for
+the accepted beta risks and sandbox guidance.
+
 `[agents] send_enter_delay_ms`, 300 by default, is how long
 `eon pane send --enter` waits after the text before sending Enter, so agent
 prompts take the whole paste first. It must be 0 to 5000.

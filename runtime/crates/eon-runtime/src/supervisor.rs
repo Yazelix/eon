@@ -4493,7 +4493,7 @@ fn require_terminal_access(access: TerminalAccess) -> Result<(), Failure> {
     if access == TerminalAccess::None {
         return Err(failure(
             "terminal-access-off",
-            "[agents] terminal_access is \"none\" for this window",
+            "terminal content access is off; a person can set [agents] terminal_access = \"window\" in Eon's config.toml and open a new window; this lets any same-user client with socket access read and send across all sessions in that window",
         ));
     }
     Ok(())

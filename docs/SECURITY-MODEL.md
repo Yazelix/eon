@@ -8,6 +8,20 @@ implementation does not establish equivalent product proof
 (`docs/AGENT-RULES.md:294`). Recommendations below describe future work, not
 current guarantees.
 
+## Beta policy update (2026-11-16)
+
+The maintainer accepted cross-agent terminal input and agents inheriting their
+launcher's credentials as beta risks. Agent authority across EONW and helper
+IPC remains tracked for work after the beta (`eon-260mh.2`, `.3`, `.10`).
+Sandboxed agents must not reach Eon's socket or helper sockets: a client that
+can reach them can run commands on the host even under `none`. Helpers include
+Editor RPC (such as a Neovim server) and the Quick-search listener.
+These restrictions must be enforced by the agent's sandbox; the content
+setting does not establish isolation. See the [public security policy](../SECURITY.md)
+for private reporting and beta guidance, and the
+[terminal orchestration recommendation](CONFIGURATION.md#terminal-orchestration)
+when choosing terminal access.
+
 ## Assets and attackers
 
 Eon brings people and agents into the same workspace. A window holds sessions;
@@ -393,17 +407,17 @@ finding across follow-up work; the referenced sections above supply evidence.
 | 17 | Medium, source-inferred | Callerless Scrollback `Toggle` bypasses the `none` guard under the eligibility conditions above. | Distinguish native-window authority from unauthenticated EONW requests and cover the bypass. |
 | 18 | High, conditional | A reachable Quick-search fzf listener accepts shell-execution actions when its API-key check permits the request; an additional route to 5. | Constrain auxiliary IPC actions/access together with the agent authority design. |
 
-### Recommended use with this revision
+### Current recommended use
 
 Keep worker agents in a sandbox that denies EONW and auxiliary host sockets;
 grant workspace control only where the task requires that authority. Verify
 the backend's actual socket restrictions. Remove bypass flags from copied
 examples and use Codex's per-terminal mode described above. Set terminal
-access to `none` when content orchestration is unnecessary, while accounting
-for finding 17 and the separate command/editor/Quick-search paths. The default
-remains `window`; a safer default is a separate product decision that must
-account for these bypasses and execution paths. These measures reduce
-exposure; they do not create isolation between unrestricted same-user programs.
+access to `none` when content orchestration is unnecessary. The maintainer
+retained the `window` default for the beta. The post-audit update above
+records finding 17's fix; command creation, reload and helper sockets retain
+their separate authority. These measures reduce exposure; they do not create
+isolation between unrestricted same-user programs.
 
 Give agents credentials scoped to the repository, actions and duration their
 task needs. Existing backend `unset_env` and `env` settings can reduce ambient
