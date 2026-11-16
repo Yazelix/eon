@@ -1,3 +1,8 @@
+use crate::contour::{
+    CardFill, band_cap_space, bar_card_margin, bar_edge, bar_pill_band, chrome_title_metrics,
+    first_band_clearance, header_height, header_heights, painted_bottom, pill_row, stack_band,
+    tab_gap, tab_inset, tab_max_width, tab_row, title_rule_y, title_tab_return, title_tab_rise,
+};
 use crate::{
     CpuUse, DiskUse, GpuUse, Load, MAX_LINK_BYTES, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
@@ -28,9 +33,8 @@ pub(crate) mod tokens;
 
 use tokens::{
     WRAPPED_LINE_ROWS, attention_app_size, attention_row_gap, attention_status_size,
-    attention_symbol_gap, badge_size, card_gap, chrome_title_metrics, dialog_padding,
-    hint_hover_reach, icon_gap, inner_inset, pill_gap, popup_label_font_size, popup_title_gutter,
-    sidebar_heading_gap, stack_inset, title_tab_return, title_tab_rise,
+    attention_symbol_gap, badge_size, card_gap, dialog_padding, hint_hover_reach, icon_gap,
+    inner_inset, popup_label_font_size, popup_title_gutter, sidebar_heading_gap, stack_inset,
 };
 
 /// Physical rectangle shared by workspace drawing, hit testing, and accessibility.
@@ -40,195 +44,6 @@ pub struct SceneRect {
     pub top: f32,
     pub width: f32,
     pub height: f32,
-}
-
-/// The single outer shape shared by a card's backdrop and terminal paint.
-#[derive(Clone, Copy)]
-pub(crate) struct CardFill {
-    pub bounds: SceneRect,
-    pub radius: f32,
-}
-
-/// A rounded frame and the part of it that belongs to one stacked edge and its joins.
-pub(crate) struct PaneOutline {
-    pub bounds: SceneRect,
-    pub clip: SceneRect,
-    pub radius: f32,
-    pub title_y: Option<f32>,
-    pub expanded: bool,
-}
-
-pub(crate) fn rounded_radius(rect: SceneRect, radius: f32) -> f32 {
-    radius
-        .min(rect.width / 2.0)
-        .min(rect.height / 2.0)
-        .max(0.0)
-        .floor()
-}
-
-fn grid_safe_bottom(bottom: f32, grid_bottom: Option<f32>, stroke_width: f32) -> f32 {
-    grid_bottom.map_or(bottom, |grid| bottom.max(grid.ceil() + stroke_width))
-}
-
-fn painted_bottom(
-    bottom: f32,
-    metrics: CellMetrics,
-    stroke_width: f32,
-    grid_bottom: Option<f32>,
-) -> f32 {
-    let inset =
-        (chrome_title_metrics(metrics).text_height / 2.0).min(metrics.padding - stroke_width);
-    grid_safe_bottom((bottom - inset).floor(), grid_bottom, stroke_width)
-}
-
-impl WorkspaceScene {
-    pub(crate) fn pane_outlines(
-        &self,
-        panes: &[WorkspacePane],
-        terminal: SceneRect,
-        fill: CardFill,
-        border_width: f32,
-        metrics: CellMetrics,
-        stroke_width: f32,
-    ) -> Vec<PaneOutline> {
-        let viewport = self.pane_viewport;
-        let Some(expanded) = panes.iter().position(|pane| pane.selected) else {
-            return Vec::new();
-        };
-        let grid_bottom = self.grid_bottom(terminal, metrics);
-        let mut expanded_frame = panes[expanded].frame(terminal);
-        let next = panes.get(expanded + 1);
-        // The bottom stroke can use the space before the next header, including the reserve
-        // after a first pane's terminal.
-        let bottom_limit = next.map_or(expanded_frame.bottom(), |next| next.rect.top);
-        // Scrolling may leave no room for a bottom stroke inside the fixed card.
-        let bottom_limit = grid_safe_bottom(
-            bottom_limit.min(fill.bounds.bottom()),
-            grid_bottom,
-            stroke_width,
-        );
-        let bottom = next.map_or(bottom_limit, |next| {
-            let target = title_rule_y(next.rect.top, next.rect.height) - next.rect.height;
-            target
-                .max(painted_bottom(
-                    terminal.bottom(),
-                    metrics,
-                    stroke_width,
-                    grid_bottom,
-                ))
-                .min(bottom_limit)
-        });
-        expanded_frame.height = (bottom - expanded_frame.top).max(0.0);
-        let mut outlines = Vec::with_capacity(panes.len());
-        for (index, pane) in panes.iter().enumerate() {
-            let mut frame = pane.frame(terminal);
-            if pane.selected {
-                frame = expanded_frame;
-            } else if index + 1 == panes.len() {
-                // Move paint with the scrolled row, keeping its allocated title band unchanged.
-                frame.top += fill.bounds.bottom()
-                    - title_rule_y(viewport.bottom() - pane.rect.height, pane.rect.height);
-            }
-            let radius = rounded_radius(frame, fill.radius);
-            let (bounds, clip) = if pane.selected {
-                (frame, frame)
-            } else if index < expanded {
-                let next = if index + 1 == expanded {
-                    expanded_frame
-                } else {
-                    panes[index + 1].frame(terminal)
-                };
-                let join = next.top + rounded_radius(next, fill.radius);
-                (
-                    SceneRect {
-                        height: join + radius - frame.top,
-                        ..frame
-                    },
-                    SceneRect {
-                        height: join - frame.top,
-                        ..frame
-                    },
-                )
-            } else {
-                let previous = &panes[index - 1];
-                let previous_frame = if previous.selected {
-                    expanded_frame
-                } else {
-                    previous.frame(terminal)
-                };
-                let join = if previous.selected {
-                    previous_frame.bottom()
-                } else {
-                    previous_frame.top + border_width
-                } - rounded_radius(previous_frame, fill.radius);
-                let bottom = if index + 1 == panes.len() {
-                    frame.top
-                } else {
-                    frame.top + border_width
-                };
-                (
-                    SceneRect {
-                        top: join - radius,
-                        height: bottom - join + radius,
-                        ..frame
-                    },
-                    SceneRect {
-                        top: join,
-                        height: bottom - join,
-                        ..frame
-                    },
-                )
-            };
-            outlines.push(PaneOutline {
-                bounds,
-                // Scrolled headers pass under the Stack band.
-                clip: clip
-                    .intersection(self.header_viewport)
-                    .unwrap_or(SceneRect {
-                        height: 0.0,
-                        ..clip
-                    }),
-                radius,
-                title_y: Some(if index + 1 == panes.len() && !pane.selected {
-                    frame.top - border_width
-                } else {
-                    frame.top
-                }),
-                expanded: pane.selected,
-            });
-        }
-        outlines
-    }
-
-    /// The column card's segment above `first`, its first pane's outline: the Stack tab's top
-    /// line and the sides down to where that pane's top corners turn into them, or to the header
-    /// viewport's top while that pane is scrolled under the Stack band.
-    pub(crate) fn stack_outline(&self, first: &PaneOutline, fill: CardFill) -> PaneOutline {
-        let top = fill.bounds.top;
-        let join = (first.bounds.top + first.radius)
-            .max(self.header_viewport.top)
-            .max(top);
-        let radius = rounded_radius(
-            SceneRect {
-                height: join - top + fill.radius,
-                ..fill.bounds
-            },
-            fill.radius,
-        );
-        PaneOutline {
-            bounds: SceneRect {
-                height: join - top + radius,
-                ..fill.bounds
-            },
-            clip: SceneRect {
-                height: join - top,
-                ..fill.bounds
-            },
-            radius,
-            title_y: Some(top),
-            expanded: false,
-        }
-    }
 }
 
 impl SceneRect {
@@ -573,13 +388,6 @@ fn tab_labels(index: usize, tab_count: usize, directory: &[u8]) -> (String, Stri
         format!("{position}  {}", directory_leaf(directory)),
         format!("Tab {position} of {tab_count}  {full_path}"),
     )
-}
-
-/// The widest tab pill: it fits the viewport after the pills' left inset and keeps one tab gap
-/// before the viewport's end.
-pub(crate) fn tab_max_width(metrics: CellMetrics, viewport_width: f32) -> f32 {
-    (metrics.font_size * 17.5)
-        .min((viewport_width - card_gap(metrics) - pill_gap(metrics)).max(1.0))
 }
 
 /// One action in the native Eon workspace header: the workspace label, while it opens the
@@ -2559,108 +2367,6 @@ pub fn workspace_column_width(width: f32, count: usize, metrics: CellMetrics) ->
     ((width - side_gap(width, count, metrics) * (count + 1) as f32).max(0.0) / count as f32).floor()
 }
 
-fn header_heights(metrics: CellMetrics) -> (f32, f32) {
-    // Preserve header allocation independently of the painted bar band.
-    let row = pill_row(metrics);
-    (
-        row + (card_gap(metrics) - tab_gap(metrics, row)).max(0.0) * 2.0,
-        chrome_title_metrics(metrics).text_height,
-    )
-}
-
-/// The row of tab pills and header buttons: the pills plus one tab gap above and below them.
-fn pill_row(metrics: CellMetrics) -> f32 {
-    (metrics.height * 1.75).round().max(1.0)
-}
-
-/// The pill row inside a header `tab_height` tall, which yields only after the header's inset.
-fn tab_row(metrics: CellMetrics, tab_height: f32) -> f32 {
-    pill_row(metrics).min(tab_height)
-}
-
-/// The header's height in a window `height` tall whose content above any hints ends at
-/// `content_height`: the header's extra inset yields first, keeping `minimum_height` for the
-/// cards, and the pill row only when the window itself is shorter.
-fn header_height(
-    metrics: CellMetrics,
-    height: f32,
-    content_height: f32,
-    minimum_height: f32,
-) -> f32 {
-    header_heights(metrics)
-        .0
-        .min((content_height - minimum_height).max(pill_row(metrics)))
-        .min(height)
-}
-
-/// The space between neighbouring tab pills.
-fn tab_gap(metrics: CellMetrics, tab_height: f32) -> f32 {
-    pill_gap(metrics).min(tab_row(metrics, tab_height) / 4.0)
-}
-
-/// The tab hit targets' inset: one card gap at full header height. The first tab still lines
-/// up with the first card horizontally; its painted vertical band is independent.
-fn tab_inset(metrics: CellMetrics, tab_height: f32) -> f32 {
-    tab_gap(metrics, tab_height) + (tab_height - tab_row(metrics, tab_height)) / 2.0
-}
-
-/// The tab pills' height in a header with room for its full height.
-fn nominal_pill_height(metrics: CellMetrics) -> f32 {
-    header_heights(metrics).0 - (chrome_title_metrics(metrics).text_height / 2.0).floor()
-}
-
-/// The painted bar band, independent of its hover and accessibility rectangles.
-fn bar_pill_band(metrics: CellMetrics, tab_height: f32, card_top: f32) -> Range<f32> {
-    let end = card_top.min(header_heights(metrics).0);
-    let height = nominal_pill_height(metrics).min(end);
-    if height >= metrics.height {
-        end - height..end
-    } else {
-        // Keep the old tiny-window band, clipped to the space left above the cards.
-        let inset = tab_inset(metrics, tab_height);
-        let end = (tab_height - inset).min(card_top);
-        inset.min(end)..end
-    }
-}
-
-/// The bar's edge: how far the painted band's centre lies below the window's top. The close
-/// glyph's centre lies as far from the window's right edge, and the Eon icon's from its left.
-fn bar_edge(metrics: CellMetrics, tab_height: f32, card_top: f32) -> f32 {
-    let band = bar_pill_band(metrics, tab_height, card_top);
-    (band.start + band.end) / 2.0
-}
-
-/// Give the cap one snapped title pitch, crediting the rise already supplied by the Stack band.
-fn band_cap_clearance(metrics: CellMetrics, provided_rise: f32) -> f32 {
-    let title_height = chrome_title_metrics(metrics).text_height;
-    (title_height.floor() - title_height / 2.0 + (title_tab_rise(metrics) - provided_rise)).ceil()
-}
-
-fn first_band_clearance(metrics: CellMetrics) -> f32 {
-    band_cap_clearance(metrics, title_tab_rise(metrics))
-}
-
-fn band_cap_space(metrics: CellMetrics, panes: usize) -> f32 {
-    match panes {
-        0 => 0.0,
-        1 => first_band_clearance(metrics),
-        _ => band_cap_clearance(metrics, 0.0),
-    }
-}
-
-/// The space between the bar's pills and the card areas, which puts the title tabs' caps one card
-/// gap below the pills.
-fn bar_card_margin(metrics: CellMetrics) -> f32 {
-    card_gap(metrics) + title_tab_rise(metrics)
-}
-
-/// The band at the top of each column card that carries its Stack tab: one title row plus a tab's
-/// rise, so the first pane's title row clears the Stack tab's row as the tab's cap clears its
-/// label.
-fn stack_band(metrics: CellMetrics) -> f32 {
-    chrome_title_metrics(metrics).text_height + title_tab_rise(metrics)
-}
-
 /// The label of a column's Stack tab: numbered from 1, left to right, unless it is the only one.
 fn stack_label(index: usize, count: usize) -> String {
     if count == 1 {
@@ -2701,11 +2407,6 @@ pub(crate) fn eon_icon_rect(band: Range<f32>, scale: f32) -> Option<SceneRect> {
         width: side,
         height: side,
     })
-}
-
-/// Snap the complete title midpoint once, in physical pixels.
-pub(crate) fn title_rule_y(top: f32, height: f32) -> f32 {
-    (top + height / 2.0).floor()
 }
 
 pub(crate) fn popup_card_rect(allocated: SceneRect, metrics: CellMetrics) -> SceneRect {
@@ -5038,7 +4739,7 @@ impl WorkspaceScene {
         }
     }
 
-    fn grid_bottom(&self, terminal: SceneRect, metrics: CellMetrics) -> Option<f32> {
+    pub(crate) fn grid_bottom(&self, terminal: SceneRect, metrics: CellMetrics) -> Option<f32> {
         metrics
             .surface_size(terminal.screen_size())
             .map(|size| metrics.grid_rect(terminal, size.cols, size.rows).bottom())

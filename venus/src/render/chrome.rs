@@ -1,19 +1,23 @@
 //! Eon workspace chrome drawing: tabs, pane headers, Eon Bar controls and quota chips, the
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
+use crate::contour::{
+    CardFill, FrameTitle, FrameTitleTab, PaneTitleTab, bottom_title_row, buffer_ink,
+    chrome_title_metrics, fit_header_text, heading_button_gap, pane_rule_gaps,
+    physical_outline_width, rounded_outline_rects, status_glyph_ink, title_tab_bands,
+};
 
 use super::{
-    CellFont, CellMetrics, CursorPoint, DrawStyleKind, FrameTitle, FrameTitleTab, PaneTitleTab,
-    PlacedText, RectangleBatch, Renderer, SceneColor,
+    CellFont, CellMetrics, CursorPoint, DrawStyleKind, PlacedText, RectangleBatch, Renderer,
+    SceneColor,
     cells::card_surfaces,
     palette::{self, blend_to_contrast, blend_to_contrast_pair, contrast_ratio},
-    physical_outline_width, shape_styled_text, shaping,
+    shape_styled_text, shaping,
 };
 use crate::{
     DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         AppMark, HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup,
-        ShortcutHintsScene, TabBadge, WorkspaceControl,
-        tokens::{self, chrome_title_metrics},
+        ShortcutHintsScene, TabBadge, WorkspaceControl, tokens,
     },
 };
 use eon_workspace_protocol::v46::AttentionState;
@@ -675,72 +679,6 @@ fn chip_label_top(
     top + (centred.min(rows.bottom - ink_bottom) as f32 - baseline)
 }
 
-/// `glyph` shaped in the status font, and its ink box from an origin at zero in whole physical
-/// pixels: left, top, right and bottom. A glyph without ink gives its layout box.
-pub(super) fn status_glyph_ink(
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    metrics: CellMetrics,
-    glyph: &str,
-) -> (Buffer, (i32, i32, i32, i32)) {
-    let title = chrome_title_metrics(metrics);
-    let mut buffer = Buffer::new(
-        font_system,
-        Metrics::new(title.font_size, title.line_height),
-    );
-    buffer.set_size(None, None);
-    buffer.set_wrap(Wrap::None);
-    buffer.set_text(
-        glyph,
-        &Attrs::new().family(Family::SansSerif),
-        shaping(glyph),
-        None,
-    );
-    buffer.shape_until_scroll(font_system, false);
-    let ink = buffer_ink(font_system, swash_cache, &buffer).unwrap_or((
-        0,
-        0,
-        buffer
-            .layout_runs()
-            .map(|run| run.line_w.ceil() as i32)
-            .max()
-            .unwrap_or(0),
-        title.line_height.ceil() as i32,
-    ));
-    (buffer, ink)
-}
-
-fn buffer_ink(
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    buffer: &Buffer,
-) -> Option<(i32, i32, i32, i32)> {
-    let mut ink: Option<(i32, i32, i32, i32)> = None;
-    for run in buffer.layout_runs() {
-        for glyph in run.glyphs {
-            let physical = glyph.physical((0.0, 0.0), 1.0);
-            let Some(image) = swash_cache.get_image(font_system, physical.cache_key) else {
-                continue;
-            };
-            let (width, height) = (image.placement.width as i32, image.placement.height as i32);
-            if width == 0 || height == 0 {
-                continue;
-            }
-            let left = physical.x + image.placement.left;
-            let top = run.line_y.round() as i32 + physical.y - image.placement.top;
-            ink = Some(ink.map_or((left, top, left + width, top + height), |ink| {
-                (
-                    ink.0.min(left),
-                    ink.1.min(top),
-                    ink.2.max(left + width),
-                    ink.3.max(top + height),
-                )
-            }));
-        }
-    }
-    ink
-}
-
 /// Area-averages a provider or app mark, or the Eon icon when Eon supplied one, to the
 /// requested physical pixels. Colour sources use premultiplied RGBA.
 pub(super) fn rasterize_bar_icon(
@@ -956,7 +894,7 @@ impl Spinners {
         let fill = pills
             .into_iter()
             .filter(|(pill, _)| {
-                super::CardFill {
+                CardFill {
                     bounds: *pill,
                     radius: tokens::capsule_radius(pill.height),
                 }
@@ -1012,13 +950,13 @@ fn push_popup_marker(
     let radius = tokens::popup_marker_radius(side);
     // Keep tiny squares hollow when the configured card stroke would fill them.
     let stroke = stroke.min(((side - 1.0) / 2.0).floor().max(1.0));
-    let mask = super::CardFill {
+    let mask = CardFill {
         bounds: front,
         radius,
     }
     .bands()
     .collect::<Vec<_>>();
-    for (rect, alpha) in super::rounded_outline_rects(back, radius, stroke) {
+    for (rect, alpha) in rounded_outline_rects(back, radius, stroke) {
         for rect in super::uncovered(rect, &mask) {
             rectangles.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
         }
@@ -1512,469 +1450,6 @@ fn push_dots(
     }
 }
 
-/// The gap a heading's button leaves in its card's top edge where no notch holds it: its
-/// target and half a padding each side, the margin a compact title's gap keeps around its text.
-pub(super) fn heading_button_gap(target: SceneRect, metrics: CellMetrics) -> SceneRect {
-    SceneRect {
-        left: target.left - tokens::title_margin(metrics),
-        width: target.width + metrics.padding,
-        ..target
-    }
-}
-
-impl FrameTitle {
-    pub(super) fn fit(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        label: &str,
-        available: f32,
-    ) -> Self {
-        let (label, width) = fit_header_text(fonts, metrics, label, available);
-        Self { label, width }
-    }
-
-    pub(super) fn ink_width(&self, metrics: CellMetrics, stroke: f32) -> f32 {
-        self.width + (tokens::title_margin(metrics) - stroke).max(0.0)
-    }
-
-    pub(super) fn border_gap(&self, row: SceneRect, metrics: CellMetrics) -> SceneRect {
-        SceneRect {
-            left: row.left + tokens::title_margin(metrics),
-            top: row.top + 1.0,
-            width: self.width + metrics.padding,
-            height: (row.height - 2.0).max(0.0),
-        }
-    }
-}
-
-impl FrameTitleTab {
-    fn with_heading(mut self, heading: super::PanelHeading) -> Self {
-        self.heading = heading;
-        self
-    }
-
-    pub(super) fn popup(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        workspace: &WorkspaceScene,
-        stroke: f32,
-    ) -> Option<Self> {
-        let label = workspace.popup_label()?;
-        let row = workspace.popup_title_row(metrics)?;
-        let card = workspace.card_fill(workspace.chrome, metrics, stroke);
-        // A clear raster row separates the cap from both the bar and the title box.
-        let frame_top = workspace
-            .tab_viewport
-            .bottom()
-            .max(workspace.header.bottom());
-        Self::new(
-            fonts,
-            metrics,
-            label,
-            row,
-            card,
-            frame_top,
-            stroke,
-            workspace.heading_action(crate::HeadingAction::HidePopup),
-        )
-    }
-
-    /// The tab over `row`; with an `action` button it also carries the mirrored right notch
-    /// around that button, and its label stops before that notch.
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        label: &str,
-        row: SceneRect,
-        card: crate::scene::CardFill,
-        frame_top: f32,
-        stroke: f32,
-        action: Option<SceneRect>,
-    ) -> Option<Self> {
-        let extra = tokens::title_tab_rise(metrics).max(stroke + 1.0);
-        let top = (row.top - extra).floor().max(frame_top.ceil() + 1.0);
-        if top + stroke + 1.0 > row.top {
-            return None;
-        }
-        let Some(target) = action else {
-            return Self::at(fonts, metrics, label, row, card, top, row.top, stroke);
-        };
-        // Both notches return to the top edge over the same run; flat edge stays between them.
-        let return_run = tokens::title_tab_return(card.bounds.top - top);
-        let label_row = SceneRect {
-            width: (target.left - metrics.padding - return_run - row.left).max(0.0),
-            ..row
-        };
-        let mut tab = Self::at(fonts, metrics, label, label_row, card, top, row.top, stroke)?;
-        // The title's return starts this far before the padded right edge of its label; the
-        // mirrored one starts as far before the padded left edge of the button.
-        let label_edge = card.bounds.left
-            + metrics.padding
-            + tab.title.ink_width(metrics, stroke)
-            + tokens::title_margin(metrics);
-        tab.action = Some(
-            card.bounds.left + card.bounds.right() - target.left + tokens::title_margin(metrics)
-                - (label_edge - tab.start),
-        );
-        Some(tab)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn at(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        label: &str,
-        row: SceneRect,
-        card: crate::scene::CardFill,
-        top: f32,
-        ink_top: f32,
-        stroke: f32,
-    ) -> Option<Self> {
-        if top + stroke + 1.0 > ink_top || top >= card.bounds.top {
-            return None;
-        }
-        let rise = card.bounds.top - top;
-        let join_radius = (card.radius / 2.0).min(rise / 2.0);
-        let return_run = tokens::title_tab_return(rise);
-        let right_padding = tokens::title_margin(metrics);
-        if right_padding < stroke + 1.0 {
-            return None;
-        }
-        // Keep antialiased corner pixels outside the title box, including at large fonts.
-        let corner_limit = |padding: f32| {
-            let clearance = (padding - stroke - 1.0).max(0.0);
-            let extra = (ink_top - top - stroke).max(0.0);
-            stroke + clearance + extra + (2.0 * clearance * extra).sqrt()
-        };
-        let left_radius = rise.min(corner_limit(metrics.padding));
-        let right_radius = left_radius
-            .min(rise - join_radius)
-            .min(corner_limit(right_padding));
-        let available = row
-            .right()
-            .min(card.bounds.right() - super::rounded_radius(card.bounds, card.radius))
-            - card.bounds.left
-            - (return_run - right_radius)
-            - stroke
-            - metrics.padding
-            - right_padding
-            - (right_padding - stroke);
-        let title = FrameTitle::fit(fonts, metrics, label, available.max(0.0));
-        let right =
-            card.bounds.left + metrics.padding + title.ink_width(metrics, stroke) + right_padding;
-        if title.label.is_empty() {
-            return None;
-        }
-        Some(Self {
-            heading: super::PanelHeading::Notch,
-            top,
-            start: right - right_radius,
-            left_radius,
-            row,
-            return_run,
-            title,
-            action: None,
-        })
-    }
-
-    /// The tab on the top line of a card allocated `area`, labelled `label`, with the right
-    /// notch of its `action` button when it has one.
-    #[allow(clippy::too_many_arguments)]
-    fn card(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        workspace: &WorkspaceScene,
-        area: SceneRect,
-        label: &str,
-        stroke: f32,
-        card_stroke: f32,
-        action: Option<SceneRect>,
-    ) -> Option<Self> {
-        let row = SceneRect {
-            height: chrome_title_metrics(metrics).text_height,
-            ..area
-        };
-        let card = crate::scene::CardFill {
-            bounds: workspace.card_rect(area, metrics, card_stroke),
-            radius: workspace.card_radius(),
-        };
-        if card.bounds.top != crate::scene::title_rule_y(row.top, row.height) {
-            return None;
-        }
-        Self::new(
-            fonts,
-            metrics,
-            label,
-            row,
-            card,
-            workspace
-                .header
-                .bottom()
-                .max(workspace.tab_viewport.bottom()),
-            stroke,
-            action,
-        )
-    }
-
-    pub(super) fn sidebar(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        workspace: &WorkspaceScene,
-        stroke: f32,
-        card_stroke: f32,
-    ) -> Option<Self> {
-        let area = workspace.sidebar_area()?;
-        Self::card(
-            fonts,
-            metrics,
-            workspace,
-            area,
-            SIDEBAR_TITLE,
-            stroke,
-            card_stroke,
-            workspace.heading_action(crate::HeadingAction::HideSidebar),
-        )
-    }
-
-    pub(super) fn dialog(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        viewer: &DialogScene,
-        stroke: f32,
-    ) -> Option<(crate::scene::CardFill, Self)> {
-        let height = chrome_title_metrics(metrics).text_height;
-        let row = SceneRect {
-            // Keep the lower chrome title inside the existing heading band, clear of bar chips.
-            top: (viewer.title.bottom() - height).ceil(),
-            height,
-            ..viewer.bounds
-        };
-        let top = crate::scene::title_rule_y(row.top, row.height);
-        if top >= viewer.bounds.bottom() {
-            return None;
-        }
-        let card = crate::scene::CardFill {
-            bounds: SceneRect {
-                top,
-                height: (viewer.bounds.bottom() - top).max(0.0),
-                ..viewer.bounds
-            },
-            radius: tokens::card_radius(metrics),
-        };
-        Self::new(
-            fonts,
-            metrics,
-            &viewer.kind.title(),
-            row,
-            card,
-            viewer.bounds.top,
-            stroke,
-            None,
-        )
-        .map(|tab| (card, tab))
-    }
-    /// Each column's Stack tab, the selected column's first, or the popup's; then the sidebar's.
-    pub(super) fn workspace(
-        fonts: &mut FontSystem,
-        metrics: CellMetrics,
-        workspace: &WorkspaceScene,
-        pane_frames: bool,
-        widths: (f32, f32),
-    ) -> Vec<Option<Self>> {
-        let (border, focus) = widths;
-        let card_stroke = border.max(focus);
-        let mut tabs = if workspace.popup_label().is_some() {
-            vec![FrameTitleTab::popup(fonts, metrics, workspace, border)]
-        } else {
-            workspace
-                .column_cards()
-                .map(|(chrome, label, panes, index)| {
-                    label
-                        .filter(|_| pane_frames && !panes.is_empty())
-                        .and_then(|label| {
-                            Self::card(
-                                fonts,
-                                metrics,
-                                workspace,
-                                chrome,
-                                label,
-                                border,
-                                card_stroke,
-                                workspace.heading_action(crate::HeadingAction::CloseStack(index)),
-                            )
-                        })
-                })
-                .collect()
-        };
-        if workspace.sidebar().is_some() {
-            tabs.push(
-                pane_frames
-                    .then(|| FrameTitleTab::sidebar(fonts, metrics, workspace, border, card_stroke))
-                    .flatten(),
-            );
-        }
-        tabs
-    }
-}
-
-impl PaneTitleTab {
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn fit(
-        fonts: &mut FontSystem,
-        swash: &mut SwashCache,
-        metrics: CellMetrics,
-        pane: &crate::scene::WorkspacePane,
-        above: Option<&crate::scene::WorkspacePane>,
-        outline: &crate::scene::PaneOutline,
-        viewport: SceneRect,
-        right: f32,
-        stroke: f32,
-    ) -> Option<Self> {
-        let row = pane.rect;
-        let card = crate::scene::CardFill {
-            bounds: outline.bounds,
-            radius: outline.radius,
-        };
-        let mut ink = |pane: &crate::scene::WorkspacePane| {
-            let (_, (_, top, _, bottom)) = status_glyph_ink(fonts, swash, metrics, pane.label());
-            let row = pane.rect;
-            SceneRect {
-                top: (row.top + (row.height - chrome_title_metrics(metrics).text_height) / 2.0)
-                    .trunc()
-                    + top as f32,
-                height: (bottom - top) as f32,
-                ..row
-            }
-        };
-        let own_ink = ink(pane);
-        let rise = tokens::title_tab_rise(metrics);
-        // With at least a tab rise of room, keep the cap out of the previous row too. A short
-        // window can shrink the gap below that threshold, leaving the ink and viewport bounds.
-        // Fractional row sums can round just below a whole rise.
-        let limit = above
-            .map(|above| {
-                let edge = above.rect.bottom();
-                let ink = ink(above).bottom();
-                if row.top - edge >= rise - 0.01 {
-                    ink.max(edge)
-                } else {
-                    ink
-                }
-            })
-            .unwrap_or(f32::NEG_INFINITY)
-            .max(viewport.top);
-        let top = (row.top - rise).floor().max(limit.ceil());
-        let tab = FrameTitleTab::at(
-            fonts,
-            metrics,
-            pane.label(),
-            SceneRect {
-                width: (right - row.left).max(0.0),
-                ..row
-            },
-            card,
-            top,
-            own_ink.top,
-            stroke,
-        )?;
-        Some(Self { card, tab })
-    }
-
-    pub(super) fn workspace(
-        fonts: &mut FontSystem,
-        swash: &mut SwashCache,
-        metrics: CellMetrics,
-        workspace: &WorkspaceScene,
-        widths: (f32, f32),
-        right_limit: Option<f32>,
-    ) -> Vec<Vec<Option<PaneTitleTab>>> {
-        if workspace.popup_label().is_some() {
-            return Vec::new();
-        }
-        let (border, focus) = widths;
-        let terminals = std::iter::once(workspace.terminal)
-            .chain(workspace.other_columns.iter().map(|column| column.terminal));
-        workspace
-            .column_cards()
-            .zip(terminals)
-            .enumerate()
-            .map(|(column, ((area, _, panes, _), terminal))| {
-                let fill = workspace.card_fill(area, metrics, border.max(focus));
-                let outlines = workspace.pane_outlines(
-                    panes,
-                    terminal,
-                    fill,
-                    border,
-                    metrics,
-                    border.max(focus),
-                );
-                panes
-                    .iter()
-                    .zip(&outlines)
-                    .enumerate()
-                    .map(|(index, (pane, outline))| {
-                        // Only the expanded pane has a band; a collapsed title sits in its
-                        // row's line.
-                        if !pane.selected {
-                            return None;
-                        }
-                        let current = column == 0 && pane.selected;
-                        let right = if current {
-                            right_limit
-                                .unwrap_or(pane.header_content(metrics).right())
-                                .min(pane.header_content(metrics).right())
-                        } else {
-                            pane.header_content(metrics).right()
-                        };
-                        let above = index.checked_sub(1).and_then(|above| panes.get(above));
-                        let top = (workspace.header_viewport.top - tokens::title_tab_rise(metrics))
-                            .max(fill.bounds.top);
-                        let viewport = SceneRect {
-                            top,
-                            height: (workspace.header_viewport.bottom() - top).max(0.0),
-                            ..workspace.header_viewport
-                        };
-                        PaneTitleTab::fit(
-                            fonts,
-                            swash,
-                            metrics,
-                            pane,
-                            above,
-                            outline,
-                            viewport,
-                            right,
-                            if current { focus } else { border },
-                        )
-                    })
-                    .collect()
-            })
-            .collect()
-    }
-}
-
-/// Raised notches replace the rule under their buttons; compact groups need a gap.
-pub(super) fn pane_rule_gaps(
-    title: SceneRect,
-    mut scrollback: SceneRect,
-    actions: Option<[SceneRect; 2]>,
-    notched: bool,
-) -> [SceneRect; 2] {
-    if !notched && let Some(actions) = actions {
-        let left = if scrollback.width > 0.0 {
-            scrollback.left
-        } else {
-            actions[0].left
-        };
-        scrollback = SceneRect {
-            left,
-            width: actions[1].right() - left,
-            ..actions[0]
-        };
-    }
-    [title, scrollback]
-}
-
 impl Renderer {
     pub(super) fn workspace_pane_tabs(
         &mut self,
@@ -2222,83 +1697,6 @@ pub(super) fn dialog_text_lines(
     .layout_runs()
     .count()
     .max(1)
-}
-
-pub(super) fn fit_header_text(
-    fonts: &mut FontSystem,
-    metrics: CellMetrics,
-    text: &str,
-    width: f32,
-) -> (String, f32) {
-    let title = chrome_title_metrics(metrics);
-    let mut buffer = Buffer::new(fonts, Metrics::new(title.font_size, title.line_height));
-    buffer.set_size(None, Some(title.text_height));
-    buffer.set_wrap(Wrap::None);
-    let measure = |buffer: &mut Buffer, fonts: &mut FontSystem, text: &str| {
-        buffer.set_text(
-            text,
-            &Attrs::new().family(Family::SansSerif),
-            shaping(text),
-            None,
-        );
-        buffer.shape_until_scroll(fonts, false);
-        buffer
-            .layout_runs()
-            .map(|run| run.line_w)
-            .fold(0.0, f32::max)
-    };
-    let measured = measure(&mut buffer, fonts, text);
-    if measured <= width {
-        return (text.to_owned(), measured);
-    }
-
-    // Keep the positional prefix; cuts use the shaper's original cluster boundaries.
-    let prefix = text.find("  ").map_or(0, |index| index + 2);
-    let mut boundaries: Vec<_> = buffer
-        .layout_runs()
-        .flat_map(|run| run.glyphs.iter())
-        .flat_map(|glyph| [glyph.start, glyph.end])
-        .filter(|index| *index >= prefix)
-        .collect();
-    boundaries.extend([prefix, text.len()]);
-    boundaries.sort_unstable();
-    boundaries.dedup();
-    let mut low = 0;
-    let mut high = boundaries.len().saturating_sub(2);
-    let identity = text[..prefix].trim_end();
-    let identity_width = measure(&mut buffer, fonts, identity);
-    let mut best = if identity_width <= width {
-        (identity.to_owned(), identity_width)
-    } else {
-        (String::new(), 0.0)
-    };
-    while low <= high {
-        let kept = low + (high - low) / 2;
-        let candidate = format!(
-            "{}…{}",
-            &text[..boundaries[kept.div_ceil(2)]],
-            &text[boundaries[boundaries.len() - 1 - kept / 2]..]
-        );
-        let measured = measure(&mut buffer, fonts, &candidate);
-        if measured <= width {
-            best = (candidate, measured);
-            low = kept + 1;
-        } else if kept == 0 {
-            break;
-        } else {
-            high = kept - 1;
-        }
-    }
-    best
-}
-
-pub(super) fn bottom_title_row(row: SceneRect, bottom: f32, text_height: f32) -> SceneRect {
-    SceneRect {
-        top: (bottom - row.height / 2.0)
-            .min(row.top)
-            .min(row.bottom() - (row.height + text_height) / 2.0),
-        ..row
-    }
 }
 
 fn measure_monospace_text(
@@ -3186,7 +2584,7 @@ impl Renderer {
                 .filter(|_| tab.is_none_or(|tab| tab.action.is_none()))
                 .map(|hide| heading_button_gap(hide, self.metrics));
             if self.pane_frames {
-                let card = crate::scene::CardFill {
+                let card = crate::contour::CardFill {
                     bounds: workspace.card_rect(area, self.metrics, self.card_stroke_width()),
                     radius: workspace.card_radius(),
                 };
@@ -3739,18 +3137,18 @@ impl Renderer {
                 ..SceneRect::default()
             };
             let fill = workspace.card_fill(card, self.metrics, self.card_stroke_width());
-            let mut rules = workspace
-                .pane_outlines(
-                    panes,
-                    terminal,
-                    fill,
-                    physical_outline_width(self.border_width, self.metrics.scale),
-                    self.metrics,
-                    self.card_stroke_width(),
-                )
-                .into_iter()
-                .map(|outline| (outline, [empty_gap; 2]))
-                .collect::<Vec<_>>();
+            let mut rules = crate::contour::pane_outlines(
+                workspace,
+                panes,
+                terminal,
+                fill,
+                physical_outline_width(self.border_width, self.metrics.scale),
+                self.metrics,
+                self.card_stroke_width(),
+            )
+            .into_iter()
+            .map(|outline| (outline, [empty_gap; 2]))
+            .collect::<Vec<_>>();
             for (index, (pane, (outline, rule_gaps))) in panes.iter().zip(&mut rules).enumerate() {
                 // Only the selected column's expanded header shows selection and scrollback.
                 let current = pane.selected && selected_column;
@@ -3915,7 +3313,7 @@ impl Renderer {
             if let Some(stack_label) = stack_label
                 && let Some((first, _)) = rules.first()
             {
-                let mut stack = workspace.stack_outline(first, fill);
+                let mut stack = crate::contour::stack_outline(workspace, first, fill);
                 let stroke = physical_outline_width(self.border_width, self.metrics.scale);
                 let color = stack_label_color(
                     backgrounds
@@ -4197,11 +3595,11 @@ impl RectangleBatch {
         &mut self,
         bounds: SceneRect,
         padding: f32,
-        tab: Option<&(crate::scene::CardFill, FrameTitleTab)>,
+        tab: Option<&(crate::contour::CardFill, FrameTitleTab)>,
         stroke: f32,
     ) -> Vec<TextBounds> {
         if let Some((card, tab)) = tab {
-            let fill = super::title_tab_bands(*card, tab, 0.0);
+            let fill = title_tab_bands(*card, tab, 0.0);
             for band in &fill {
                 self.push(
                     band.left,
@@ -8374,7 +7772,7 @@ mod tests {
         let mut fonts = test_sans();
         for scale in [1.0, 1.25, 2.0] {
             let metrics = CellMetrics::for_scale(scale);
-            let available = (crate::scene::tab_max_width(metrics, 1000.0 * scale as f32)
+            let available = (crate::contour::tab_max_width(metrics, 1000.0 * scale as f32)
                 - metrics.padding * 2.0)
                 .floor();
             for label in ["1  eon", "2  machine_vs_aliens"] {

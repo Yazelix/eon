@@ -953,7 +953,7 @@ impl Images {
 mod tests {
     use super::super::cells::{build_scene_rectangles, tests::plain_style};
     use super::*;
-    use crate::{DrawCell, DrawCursor, DrawRow, Scene, ScenePreview, scene::CardFill};
+    use crate::{DrawCell, DrawCursor, DrawRow, Scene, ScenePreview, contour::CardFill};
     use orbit_protocol::{
         CellWidth, CursorShape, Screen, SourceRect, Underline, session::VerticalDirection,
     };

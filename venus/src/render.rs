@@ -1,10 +1,11 @@
+use crate::contour::{
+    CardFill, FrameTitleTab, PaneOutline, PaneTitleTab, chrome_title_metrics, corner_rows,
+    fit_header_text, physical_outline_width, rounded_outline_rects, rounded_radius, span_rects,
+    title_tab_bands, title_tab_outline_rects,
+};
 use crate::{
     Color as SceneColor, DialogScene, DrawRow, DrawStyle, GlyphRun, ImageKey, ImageResource, Scene,
-    ScenePlacement, ScenePreview, SceneRect, WorkspaceFocus, WorkspaceScene,
-    scene::{
-        CardFill, PaneOutline, rounded_radius,
-        tokens::{self, chrome_title_metrics},
-    },
+    ScenePlacement, ScenePreview, SceneRect, WorkspaceFocus, WorkspaceScene, scene::tokens,
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, FontSystem, Metrics, Resolution,
@@ -57,7 +58,7 @@ use cells::{
     fitted_cell_font, set_cell_layer, shape_cell_text, symbol_spans,
 };
 pub use chrome::read_eon_icon;
-use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_bar_icon, spinners_turn};
+use chrome::{HeaderInteraction, Spinners, rasterize_bar_icon, spinners_turn};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
 use images::{BandItem, DrawStep, ImageDraw, Images, draw_steps};
 
@@ -1014,31 +1015,6 @@ fn push_card_backdrop(
     }
 }
 
-#[derive(Clone)]
-struct FrameTitle {
-    label: String,
-    width: f32,
-}
-
-#[derive(Clone)]
-struct FrameTitleTab {
-    heading: PanelHeading,
-    top: f32,
-    start: f32,
-    left_radius: f32,
-    row: SceneRect,
-    return_run: f32,
-    title: FrameTitle,
-    /// `start` of the mirrored action notch at the card's right, on headings that hold a button.
-    action: Option<f32>,
-}
-
-#[derive(Clone)]
-struct PaneTitleTab {
-    card: CardFill,
-    tab: FrameTitleTab,
-}
-
 struct PaneTitleCache {
     workspace: WorkspaceScene,
     metrics: CellMetrics,
@@ -1060,171 +1036,6 @@ impl PaneTitleCache {
             && self.widths == widths
             && self.scrollback == *scrollback
     }
-}
-
-impl PaneTitleTab {
-    fn bands(&self, inset: f32) -> Vec<SceneRect> {
-        let cut = self.card.bounds.top + rounded_radius(self.card.bounds, self.card.radius);
-        title_tab_bands(self.card, &self.tab, inset)
-            .into_iter()
-            .map(|mut band| {
-                if band.top < cut {
-                    band.width = (self.card.bounds.left + self.card.bounds.right()
-                        - 2.0 * band.left)
-                        .max(0.0);
-                }
-                band
-            })
-            .collect()
-    }
-
-    fn outline_rects(&self, width: f32) -> Vec<(SceneRect, f32)> {
-        let inner = self.bands(width);
-        let replacement = self.replacement();
-        self.bands(0.0)
-            .into_iter()
-            .filter_map(|band| band.intersection(replacement))
-            .flat_map(|band| uncovered(band, &inner))
-            .flat_map(|piece| span_rects(piece.left, piece.right(), piece.top))
-            .collect()
-    }
-
-    fn replacement(&self) -> SceneRect {
-        SceneRect {
-            top: self.tab.top,
-            height: self.card.bounds.top + rounded_radius(self.card.bounds, self.card.radius)
-                - self.tab.top,
-            ..self.card.bounds
-        }
-    }
-}
-
-// Fill and stroke share the contour, including the tangent return into the top rule.
-fn title_tab_bands(card: CardFill, tab: &FrameTitleTab, inset: f32) -> Vec<SceneRect> {
-    if tab.heading == PanelHeading::Connected {
-        let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
-        return CardFill {
-            bounds: SceneRect {
-                left: card.bounds.left + inset,
-                top: tab.top + inset,
-                width: (card.bounds.width - inset * 2.0).max(0.0),
-                height: (card.bounds.bottom() - tab.top - inset * 2.0).max(0.0),
-            },
-            radius: (rounded_radius(card.bounds, card.radius) - inset).max(0.0),
-        }
-        .bands()
-        // Outline sampling emits one raster row per band above the existing join.
-        .flat_map(|band| {
-            let rows = (cut - band.top).clamp(0.0, band.height) as u32;
-            (0..rows)
-                .map(move |row| SceneRect {
-                    top: band.top + row as f32,
-                    height: 1.0,
-                    ..band
-                })
-                .chain((band.height > rows as f32).then_some(SceneRect {
-                    top: band.top + rows as f32,
-                    height: band.height - rows as f32,
-                    ..band
-                }))
-        })
-        .collect();
-    }
-    let (mut bands, body) = notch_bands(card, tab, tab.start, inset);
-    if let Some(start) = tab.action {
-        // The action notch is the title notch mirrored about the card's centre. Each row keeps
-        // the title's band and adds only what the mirrored band reaches beyond it, starting at
-        // that band's own right edge, so no pixel blends twice.
-        let mirror = card.bounds.left + card.bounds.right();
-        let (action, _) = notch_bands(card, tab, start, inset);
-        let pieces = bands
-            .iter()
-            .zip(action)
-            .filter_map(|(band, action)| {
-                let left = (mirror - action.right()).max(band.right());
-                let right = mirror - action.left;
-                (right > left).then_some(SceneRect {
-                    left,
-                    width: right - left,
-                    ..*band
-                })
-            })
-            .collect::<Vec<_>>();
-        bands.extend(pieces);
-    }
-    bands.extend(body);
-    bands
-}
-
-/// The rows of one notch of `tab` whose flat top ends at `start`, down to where the card's
-/// own corner ends, and the card's bands below them.
-fn notch_bands(
-    card: CardFill,
-    tab: &FrameTitleTab,
-    start: f32,
-    inset: f32,
-) -> (Vec<SceneRect>, Vec<SceneRect>) {
-    let bounds = SceneRect {
-        left: card.bounds.left + inset,
-        top: card.bounds.top + inset,
-        width: (card.bounds.width - inset * 2.0).max(0.0),
-        height: (card.bounds.height - inset * 2.0).max(0.0),
-    };
-    let radius = (rounded_radius(card.bounds, card.radius) - inset).max(0.0);
-    let left_radius = (tab.left_radius - inset).max(0.0);
-    let top = tab.top + inset;
-    let return_start = start;
-    let cut = bounds.top + radius;
-    let circle =
-        |radius: f32, distance: f32| (radius * radius - distance * distance).max(0.0).sqrt();
-    let mut bands = Vec::new();
-    for row in top.floor() as i32..cut.ceil() as i32 {
-        let y = row as f32 + 0.5;
-        let left = if y < top + left_radius {
-            bounds.left + left_radius - circle(left_radius, top + left_radius - y)
-        } else {
-            bounds.left
-        };
-        let end = if y >= bounds.top {
-            bounds.right() - radius + circle(radius, bounds.top + radius - y)
-        } else {
-            let rise = card.bounds.top - tab.top;
-            let radius = (tab.return_run.powi(2) + rise.powi(2)) / (4.0 * rise);
-            let join_y = tab.top + rise / 2.0 + inset * (1.0 - rise / (2.0 * radius));
-            if y < join_y {
-                return_start + circle((radius - inset).max(0.0), tab.top + radius - y)
-            } else {
-                return_start + tab.return_run
-                    - circle(radius + inset, y - (card.bounds.top - radius))
-            }
-        };
-        bands.push(SceneRect {
-            left,
-            top: row as f32,
-            width: (end - left).max(0.0),
-            height: 1.0,
-        });
-    }
-    let body = CardFill { bounds, radius }
-        .bands()
-        .filter(|band| band.top >= cut)
-        .collect();
-    (bands, body)
-}
-
-fn title_tab_outline_rects(
-    card: CardFill,
-    tab: &FrameTitleTab,
-    width: f32,
-) -> Vec<(SceneRect, f32)> {
-    let inner = title_tab_bands(card, tab, width);
-    let cut = card.bounds.top + rounded_radius(card.bounds, card.radius);
-    title_tab_bands(card, tab, 0.0)
-        .into_iter()
-        .filter(|band| band.top < cut)
-        .flat_map(|band| uncovered(band, &inner))
-        .flat_map(|piece| span_rects(piece.left, piece.right(), piece.top))
-        .collect()
 }
 
 // Partition once so the terminal background under the title never double-blends.
@@ -1348,14 +1159,21 @@ fn build_workspace_padding(
         let outer =
             (pane_frames || popup).then(|| workspace.card_fill(allocated, metrics, stroke_width));
         let pane = outer.map(|outer| {
-            workspace
-                .pane_outlines(panes, terminal, outer, stroke_width, metrics, stroke_width)
-                .into_iter()
-                .find(|outline| outline.expanded)
-                .map_or(outer, |outline| CardFill {
-                    bounds: outline.bounds,
-                    radius: outline.radius,
-                })
+            crate::contour::pane_outlines(
+                workspace,
+                panes,
+                terminal,
+                outer,
+                stroke_width,
+                metrics,
+                stroke_width,
+            )
+            .into_iter()
+            .find(|outline| outline.expanded)
+            .map_or(outer, |outline| CardFill {
+                bounds: outline.bounds,
+                radius: outline.radius,
+            })
         });
         let bounds = if popup {
             let card = outer.unwrap();
@@ -1439,7 +1257,7 @@ fn text_clip_bounds(bounds: SceneRect) -> TextBounds {
 }
 
 /// The parts of `area` that no rectangle covers, as horizontal bands; covers may overlap.
-fn uncovered(area: SceneRect, cards: &[SceneRect]) -> Vec<SceneRect> {
+pub(crate) fn uncovered(area: SceneRect, cards: &[SceneRect]) -> Vec<SceneRect> {
     let cards = cards
         .iter()
         .filter_map(|card| card.intersection(area))
@@ -3490,7 +3308,7 @@ fn shape_cell_layers(
     layers
 }
 
-fn shaping(text: &str) -> Shaping {
+pub(crate) fn shaping(text: &str) -> Shaping {
     if text.is_ascii() {
         Shaping::Basic
     } else {
@@ -3536,132 +3354,6 @@ fn text_areas<'a>(
                 custom_glyphs: text.custom_glyph.as_slice(),
             })
     })
-}
-
-pub(crate) fn physical_outline_width(logical_width: u8, scale: f32) -> f32 {
-    (f32::from(logical_width) * scale).round().max(1.0)
-}
-
-/// Each pixel row of a rounded rectangle's top and bottom corner bands, with how far the curve
-/// sits in from the sides at that row.
-fn corner_rows(rect: SceneRect, radius: f32) -> impl Iterator<Item = (f32, f32)> {
-    (0..radius as u32).flat_map(move |row| {
-        let dy = radius - row as f32 - 0.5;
-        let inset = radius - (radius * radius - dy * dy).sqrt();
-        [
-            (rect.top + row as f32, inset),
-            (rect.bottom() - row as f32 - 1.0, inset),
-        ]
-    })
-}
-
-impl CardFill {
-    fn middle(self) -> SceneRect {
-        let radius = rounded_radius(self.bounds, self.radius);
-        SceneRect {
-            top: self.bounds.top + radius,
-            height: self.bounds.height - radius * 2.0,
-            ..self.bounds
-        }
-    }
-
-    fn bands(self) -> impl Iterator<Item = SceneRect> {
-        let rect = self.bounds;
-        std::iter::once(self.middle()).chain(
-            corner_rows(rect, rounded_radius(rect, self.radius)).map(move |(top, inset)| {
-                SceneRect {
-                    left: rect.left + inset,
-                    top,
-                    width: rect.width - inset * 2.0,
-                    height: 1.0,
-                }
-            }),
-        )
-    }
-}
-
-fn span_rects(left: f32, right: f32, top: f32) -> impl Iterator<Item = (SceneRect, f32)> {
-    let parts = if left.floor() == right.floor() {
-        [
-            (left.floor(), 1.0, right - left),
-            (0.0, 0.0, 0.0),
-            (0.0, 0.0, 0.0),
-        ]
-    } else {
-        [
-            (left.floor(), 1.0, left.ceil() - left),
-            (left.ceil(), right.floor() - left.ceil(), 1.0),
-            (right.floor(), 1.0, right - right.floor()),
-        ]
-    };
-    parts
-        .into_iter()
-        .filter(|(_, width, alpha)| *width > 0.0 && *alpha > 0.0)
-        .map(move |(left, width, alpha)| {
-            (
-                SceneRect {
-                    left,
-                    top,
-                    width,
-                    height: 1.0,
-                },
-                alpha,
-            )
-        })
-}
-
-fn rounded_outline_rects(rect: SceneRect, radius: f32, width: f32) -> Vec<(SceneRect, f32)> {
-    let radius = rounded_radius(rect, radius);
-    if rect.width <= width * 2.0 || rect.height <= width * 2.0 {
-        let fill = CardFill {
-            bounds: rect,
-            radius,
-        };
-        let mut rects = vec![(fill.middle(), 1.0)];
-        for (top, inset) in corner_rows(rect, radius) {
-            rects.extend(span_rects(rect.left + inset, rect.right() - inset, top));
-        }
-        return rects;
-    }
-    let mut rects = Vec::new();
-    for left in [rect.left, rect.right() - width] {
-        rects.push((
-            SceneRect {
-                left,
-                top: rect.top + radius,
-                width,
-                height: rect.height - radius * 2.0,
-            },
-            1.0,
-        ));
-    }
-    if width > radius {
-        for top in [rect.top + radius, rect.bottom() - width] {
-            rects.push((
-                SceneRect {
-                    left: rect.left + width,
-                    top,
-                    width: rect.width - width * 2.0,
-                    height: width - radius,
-                },
-                1.0,
-            ));
-        }
-    }
-    for row in 0..radius as u32 {
-        let dy = radius - row as f32 - 0.5;
-        let outer = radius - (radius * radius - dy * dy).sqrt();
-        for top in [rect.top + row as f32, rect.bottom() - row as f32 - 1.0] {
-            if (row as f32) < width {
-                rects.extend(span_rects(rect.left + outer, rect.right() - outer, top));
-            } else {
-                let inner = radius - ((radius - width).powi(2) - dy * dy).sqrt();
-                rects.extend(span_rects(rect.left + outer, rect.left + inner, top));
-                rects.extend(span_rects(rect.right() - inner, rect.right() - outer, top));
-            }
-        }
-    }
-    rects
 }
 
 /// Clip triangles to a fill band without moving vertices that are already inside it.

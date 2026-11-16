@@ -83,12 +83,6 @@ pub(crate) const fn tooltip_gap(metrics: CellMetrics) -> f32 {
     metrics.padding / 3.0
 }
 
-/// The margin a card's title keeps around its text where the title interrupts the card's edge,
-/// and a heading's button keeps on each side of its target there.
-pub(crate) const fn title_margin(metrics: CellMetrics) -> f32 {
-    metrics.padding / 2.0
-}
-
 /// The room a popup card keeps above its terminal for its title.
 pub(crate) const fn popup_title_gutter(metrics: CellMetrics) -> f32 {
     metrics.padding / 2.0
@@ -153,16 +147,6 @@ pub(crate) const fn stack_inset(metrics: CellMetrics) -> f32 {
     metrics.padding / 3.0
 }
 
-/// How far a title tab's cap rises above its title row: a third of the title padding.
-pub(crate) const fn title_tab_rise(metrics: CellMetrics) -> f32 {
-    metrics.padding / 3.0
-}
-
-/// The run along a card's top edge over which a title tab that rose `rise` returns to it.
-pub(crate) const fn title_tab_return(rise: f32) -> f32 {
-    rise * 1.5
-}
-
 // The dialog. Its padding yields in a narrow dialog, so what follows takes that padding.
 /// A dialog's padding where it has `width` to lay out in: the padding, or an eighth of a narrower
 /// width.
@@ -190,21 +174,6 @@ pub(crate) const fn dialog_chip_label_margins(padding: f32) -> f32 {
 /// Shared Zoom/Restore affordances in pane headers and tab labels.
 pub(crate) const ZOOM_GLYPH: &str = "□";
 pub(crate) const RESTORE_GLYPH: &str = "▣";
-/// Shared typography for chrome titles and their descender-safe clip box.
-pub(crate) struct ChromeTitleMetrics {
-    pub font_size: f32,
-    pub line_height: f32,
-    pub text_height: f32,
-}
-
-pub(crate) const fn chrome_title_metrics(metrics: CellMetrics) -> ChromeTitleMetrics {
-    let text_height = metrics.height.max(metrics.font_size * 1.25);
-    ChromeTitleMetrics {
-        font_size: metrics.font_size,
-        line_height: metrics.height,
-        text_height,
-    }
-}
 
 /// The font size of the smaller label face: a hint popup's section titles, and a dialog's
 /// headings, subtitle and footer.

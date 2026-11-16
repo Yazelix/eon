@@ -274,21 +274,21 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                 );
                 if frames || popup {
                     let outer = workspace.card_fill(workspace.chrome, metrics, stroke);
-                    let pane = workspace
-                        .pane_outlines(
-                            &workspace.panes,
-                            workspace.terminal,
-                            outer,
-                            stroke,
-                            metrics,
-                            stroke,
-                        )
-                        .into_iter()
-                        .find(|outline| outline.expanded)
-                        .map_or(outer, |outline| CardFill {
-                            bounds: outline.bounds,
-                            radius: outline.radius,
-                        });
+                    let pane = crate::contour::pane_outlines(
+                        &workspace,
+                        &workspace.panes,
+                        workspace.terminal,
+                        outer,
+                        stroke,
+                        metrics,
+                        stroke,
+                    )
+                    .into_iter()
+                    .find(|outline| outline.expanded)
+                    .map_or(outer, |outline| CardFill {
+                        bounds: outline.bounds,
+                        radius: outline.radius,
+                    });
                     for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
                         let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 200.0;
                         let y =
@@ -385,18 +385,18 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         width: metrics.width * 3.0,
                         height: stroke,
                     };
-                    let rules = workspace
-                        .pane_outlines(
-                            &workspace.panes,
-                            workspace.terminal,
-                            fill,
-                            stroke,
-                            metrics,
-                            stroke,
-                        )
-                        .into_iter()
-                        .map(|outline| (outline, [label_gap, SceneRect::default()]))
-                        .collect::<Vec<_>>();
+                    let rules = crate::contour::pane_outlines(
+                        &workspace,
+                        &workspace.panes,
+                        workspace.terminal,
+                        fill,
+                        stroke,
+                        metrics,
+                        stroke,
+                    )
+                    .into_iter()
+                    .map(|outline| (outline, [label_gap, SceneRect::default()]))
+                    .collect::<Vec<_>>();
                     let mut chrome = RectangleBatch::new(400, 300);
                     chrome.push_pane_outlines(
                         fill,
@@ -623,7 +623,8 @@ fn lone_pane_header_keeps_the_shared_fill_through_its_raised_cap() {
     let (workspace, _) = retained_frame_text_clip(PhysicalSize::new(1280, 800));
     let scene = padding_scene();
     let fill = workspace.card_fill(workspace.chrome, metrics, 2.0);
-    let outline = &workspace.pane_outlines(
+    let outline = &crate::contour::pane_outlines(
+        &workspace,
         &workspace.panes,
         workspace.terminal,
         fill,
@@ -632,7 +633,7 @@ fn lone_pane_header_keeps_the_shared_fill_through_its_raised_cap() {
         2.0,
     )[0];
     let row = workspace.panes[0].rect;
-    let top = row.top - crate::scene::tokens::title_tab_rise(metrics);
+    let top = row.top - crate::contour::title_tab_rise(metrics);
     let notch = PaneTitleTab {
         card: CardFill {
             bounds: outline.bounds,

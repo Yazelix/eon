@@ -420,7 +420,7 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
             open.card_rect(
                 open.chrome,
                 metrics,
-                crate::render::physical_outline_width(2, metrics.scale)
+                crate::contour::physical_outline_width(2, metrics.scale)
             )
             .top,
             open.pane_viewport.bottom()

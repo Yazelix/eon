@@ -6,6 +6,7 @@
 pub const MAX_LINK_BYTES: usize = 4096;
 
 mod accessibility;
+mod contour;
 mod input;
 mod model;
 mod native_command;

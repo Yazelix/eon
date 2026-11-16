@@ -203,7 +203,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
                 .card_rect(
                     scene.chrome,
                     metrics,
-                    crate::render::physical_outline_width(2, metrics.scale)
+                    crate::contour::physical_outline_width(2, metrics.scale)
                 )
                 .top,
             (scene.pane_viewport.top + chrome_title_metrics(metrics).text_height / 2.0).floor(),
@@ -216,13 +216,14 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
         let scene = WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
             (text.into(), text.len() as f32 * metrics.width)
         });
-        let outlines = scene.pane_outlines(
+        let outlines = crate::contour::pane_outlines(
+            &scene,
             &scene.panes,
             scene.terminal,
             scene.card_fill(
                 scene.chrome,
                 metrics,
-                crate::render::physical_outline_width(2, metrics.scale),
+                crate::contour::physical_outline_width(2, metrics.scale),
             ),
             3.0,
             metrics,
@@ -289,7 +290,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
         let painted = scene.card_rect(
             scene.chrome,
             metrics,
-            crate::render::physical_outline_width(2, metrics.scale),
+            crate::contour::physical_outline_width(2, metrics.scale),
         );
         // The card's top line carries the Stack tab; the first header sits one band lower.
         assert_eq!(
@@ -513,7 +514,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                             let fill = scene.card_fill(
                                 allocated,
                                 metrics,
-                                crate::render::physical_outline_width(2, metrics.scale),
+                                crate::contour::physical_outline_width(2, metrics.scale),
                             );
                             assert!(
                                 metrics.padding >= fill.radius,
@@ -592,7 +593,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
             let painted = panes.card_rect(
                 panes.chrome,
                 metrics,
-                crate::render::physical_outline_width(2, metrics.scale),
+                crate::contour::physical_outline_width(2, metrics.scale),
             );
             assert_eq!(popup.pane_viewport, panes.pane_viewport);
             assert_eq!(
@@ -600,13 +601,13 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                     .card_rect(
                         popup.chrome,
                         metrics,
-                        crate::render::physical_outline_width(2, metrics.scale)
+                        crate::contour::physical_outline_width(2, metrics.scale)
                     )
                     .top,
                 painted.top
             );
             assert_eq!(popup.sidebar().unwrap().top, painted.top);
-            let stroke = crate::render::physical_outline_width(2, metrics.scale);
+            let stroke = crate::contour::physical_outline_width(2, metrics.scale);
             let popup_bottom = popup
                 .card_fill(popup.chrome, metrics, stroke)
                 .bounds
@@ -629,7 +630,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                         .card_rect(
                             column.chrome,
                             metrics,
-                            crate::render::physical_outline_width(2, metrics.scale)
+                            crate::contour::physical_outline_width(2, metrics.scale)
                         )
                         .top,
                     painted.top
@@ -695,7 +696,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                 let pane_card = panes.card_rect(
                     panes.chrome,
                     metrics,
-                    crate::render::physical_outline_width(2, metrics.scale),
+                    crate::contour::physical_outline_width(2, metrics.scale),
                 );
                 // Each column's first header sits below its Stack band.
                 assert_eq!(
@@ -741,7 +742,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                 {
                     assert_eq!(popup_card.top, pane_card.top);
                 }
-                let stroke = crate::render::physical_outline_width(2, metrics.scale);
+                let stroke = crate::contour::physical_outline_width(2, metrics.scale);
                 let popup_bottom = popup
                     .card_fill(popup.chrome, metrics, stroke)
                     .bounds
@@ -790,7 +791,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
             .card_rect(
                 popup.chrome,
                 metrics,
-                crate::render::physical_outline_width(2, metrics.scale),
+                crate::contour::physical_outline_width(2, metrics.scale),
             )
             .top
             - popup.chrome.top;
@@ -1856,14 +1857,21 @@ fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
         Some(WorkspaceHit::Pane(_))
     ));
     let fill = scrolled.card_fill(scrolled.chrome, metrics, 1.0);
-    let outlines =
-        scrolled.pane_outlines(&scrolled.panes, scrolled.terminal, fill, 1.0, metrics, 1.0);
+    let outlines = crate::contour::pane_outlines(
+        &scrolled,
+        &scrolled.panes,
+        scrolled.terminal,
+        fill,
+        1.0,
+        metrics,
+        1.0,
+    );
     assert!(
         outlines.iter().all(|outline| outline.clip.height == 0.0
             || outline.clip.top >= scrolled.header_viewport.top)
     );
     // The Stack segment reaches down to the header viewport while its first pane is scrolled away.
-    let stack = scrolled.stack_outline(&outlines[0], fill);
+    let stack = crate::contour::stack_outline(&scrolled, &outlines[0], fill);
     assert_eq!(stack.clip.top, fill.bounds.top);
     assert_eq!(stack.clip.bottom(), scrolled.header_viewport.top);
     // Scrolled a few pixels past the expanded pane's header, terminals pass under the band too:

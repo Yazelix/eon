@@ -178,6 +178,187 @@ fn panel_heading_notch_draw_inputs_are_stable() {
 }
 
 #[test]
+fn connected_pane_stack_and_header_band_draw_inputs_are_stable() {
+    fn bytes(digest: &mut u64, bytes: impl IntoIterator<Item = u8>) {
+        for byte in bytes {
+            *digest = (*digest ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        }
+    }
+    fn floats(digest: &mut u64, values: impl IntoIterator<Item = f32>) {
+        for value in values {
+            bytes(digest, value.to_le_bytes());
+        }
+    }
+    fn rect(digest: &mut u64, rect: SceneRect) {
+        floats(digest, [rect.left, rect.top, rect.width, rect.height]);
+    }
+    fn title(digest: &mut u64, tab: &FrameTitleTab) {
+        rect(digest, tab.row);
+        floats(
+            digest,
+            [
+                tab.top,
+                tab.start,
+                tab.left_radius,
+                tab.return_run,
+                tab.title.width,
+            ],
+        );
+        bytes(digest, tab.title.label.bytes());
+        bytes(digest, [u8::from(tab.action.is_some())]);
+        if let Some(action) = tab.action {
+            floats(digest, [action]);
+        }
+    }
+
+    let mut fonts = panel_heading_fonts();
+    let mut swash = SwashCache::new();
+    let mut digests = Vec::new();
+    for scale in [1.0, 1.125, 2.0] {
+        let metrics = CellMetrics::for_scale(scale);
+        let border = physical_outline_width(1, metrics.scale);
+        let focus = physical_outline_width(2, metrics.scale);
+        let mut digest = 0xcbf29ce484222325;
+        let mut headings = 0;
+        let mut pane_caps = 0;
+        let mut fallbacks = 0;
+        for (width, height) in [(1280, 800), (240, 200), (400, 32)] {
+            let size = PhysicalSize::new(
+                (f64::from(width) * scale) as u32,
+                (f64::from(height) * scale) as u32,
+            );
+            for (columns, panes, expanded, scroll) in
+                [(1, 1, 0, 0.0), (2, 3, 0, 0.0), (2, 3, 1, 37.5)]
+            {
+                let snapshot = stack_tab_snapshot(columns, panes, 0, expanded);
+                let workspace = WorkspaceScene::from_snapshot(
+                    &snapshot,
+                    size,
+                    metrics,
+                    0.0,
+                    scroll,
+                    |_, label| fit_header_text(&mut fonts, metrics, label, 180.0 * metrics.scale),
+                );
+                for bounds in [
+                    workspace.header,
+                    workspace.tab_viewport,
+                    workspace.pane_viewport,
+                    workspace.header_viewport,
+                    workspace.terminal,
+                    workspace.bar_pill_rect(workspace.header, metrics),
+                ] {
+                    rect(&mut digest, bounds);
+                }
+                let (horizontal, vertical) = WorkspaceScene::initial_overhead(&snapshot, metrics);
+                floats(
+                    &mut digest,
+                    [
+                        horizontal,
+                        vertical,
+                        WorkspaceScene::tab_text_width(size, metrics),
+                    ],
+                );
+                let tabs = FrameTitleTab::workspace(
+                    &mut fonts,
+                    metrics,
+                    &workspace,
+                    true,
+                    (border, focus),
+                );
+                let pane_tabs = PaneTitleTab::workspace(
+                    &mut fonts,
+                    &mut swash,
+                    metrics,
+                    &workspace,
+                    (border, focus),
+                    None,
+                );
+                let terminals = std::iter::once(workspace.terminal)
+                    .chain(workspace.other_columns.iter().map(|column| column.terminal));
+                let mut batch = RectangleBatch::new(size.width, size.height);
+                for (index, ((area, _, panes, _), terminal)) in
+                    workspace.column_cards().zip(terminals).enumerate()
+                {
+                    let fill = workspace.card_fill(area, metrics, focus);
+                    let outlines = crate::contour::pane_outlines(
+                        &workspace, panes, terminal, fill, border, metrics, focus,
+                    );
+                    if let Some(first) = outlines.first() {
+                        let stack = crate::contour::stack_outline(&workspace, first, fill);
+                        rect(&mut digest, stack.bounds);
+                        rect(&mut digest, stack.clip);
+                        floats(&mut digest, [stack.radius, stack.title_y.unwrap()]);
+                    }
+                    for heading in [PanelHeading::Connected, PanelHeading::Notch] {
+                        if let Some(Some(tab)) = tabs.get(index) {
+                            let mut tab = tab.clone();
+                            tab.heading = heading;
+                            headings += 1;
+                            title(&mut digest, &tab);
+                            for band in title_tab_bands(fill, &tab, 0.0) {
+                                rect(&mut digest, band);
+                            }
+                            batch.push_title_tab_outline(
+                                fill,
+                                &tab,
+                                border,
+                                palette::DARK.card_outline,
+                            );
+                        } else {
+                            fallbacks += 1;
+                            bytes(&mut digest, [0]);
+                        }
+                    }
+                    let caps = pane_tabs.get(index).map_or(&[][..], Vec::as_slice);
+                    for cap in caps {
+                        bytes(&mut digest, [u8::from(cap.is_some())]);
+                        if let Some(cap) = cap {
+                            pane_caps += 1;
+                            title(&mut digest, &cap.tab);
+                            rect(&mut digest, cap.replacement());
+                            for band in cap.bands(0.0) {
+                                rect(&mut digest, band);
+                            }
+                            for (piece, alpha) in cap.outline_rects(focus) {
+                                rect(&mut digest, piece);
+                                floats(&mut digest, [alpha]);
+                            }
+                        }
+                    }
+                    let frames = outlines
+                        .into_iter()
+                        .map(|outline| {
+                            rect(&mut digest, outline.bounds);
+                            rect(&mut digest, outline.clip);
+                            floats(&mut digest, [outline.radius, outline.title_y.unwrap()]);
+                            (outline, [SceneRect::default(); 2])
+                        })
+                        .collect::<Vec<_>>();
+                    batch.push_pane_outlines(
+                        fill,
+                        workspace.pane_viewport,
+                        &frames,
+                        caps,
+                        Some(expanded),
+                        Some(palette::DARK.primary_text),
+                        border,
+                        focus,
+                    );
+                }
+                bytes(&mut digest, batch.bytes);
+            }
+        }
+        assert!(headings > 0 && pane_caps > 0 && fallbacks > 0);
+        digests.push(digest);
+    }
+    // Recorded before the contour extraction, with the packaged test sans face.
+    assert_eq!(
+        digests,
+        [0xb927ec6ec008ba0b, 0x939081b6c6b09945, 0xc91fb2ed20aaee93],
+    );
+}
+
+#[test]
 fn panel_heading_connected_uses_full_radius_and_clears_title_ink_and_buttons() {
     let mut fonts = panel_heading_fonts();
     let mut swash = SwashCache::new();
@@ -224,8 +405,12 @@ fn panel_heading_connected_uses_full_radius_and_clears_title_ink_and_buttons() {
                         );
                     }
                     let inner = title_tab_bands(card, &tab, stroke);
-                    let (_, (left, ink_top, right, ink_bottom)) =
-                        chrome::status_glyph_ink(&mut fonts, &mut swash, metrics, &tab.title.label);
+                    let (_, (left, ink_top, right, ink_bottom)) = crate::contour::status_glyph_ink(
+                        &mut fonts,
+                        &mut swash,
+                        metrics,
+                        &tab.title.label,
+                    );
                     let ink = SceneRect {
                         left: row.left + metrics.padding + left as f32,
                         top: row.top + ink_top as f32,
@@ -1694,44 +1879,47 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                 } else {
                                     let last = panes.last().unwrap();
                                     assert_eq!(
-                                        crate::scene::title_rule_y(last.rect.top, last.rect.height),
-                                        crate::scene::title_rule_y(
+                                        crate::contour::title_rule_y(
+                                            last.rect.top,
+                                            last.rect.height
+                                        ),
+                                        crate::contour::title_rule_y(
                                             card.bottom() - last.rect.height,
                                             last.rect.height
                                         )
                                     );
                                 }
-                                let rules = workspace
-                                    .pane_outlines(
-                                        panes,
-                                        terminal,
-                                        fill,
-                                        border_width,
-                                        metrics,
-                                        focus_width.max(border_width),
-                                    )
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(index, outline)| {
-                                        let pane = &panes[index.min(panes.len() - 1)];
-                                        let label = SceneRect {
-                                            left: pane.rect.left + metrics.padding / 2.0,
-                                            width: 80.0 * metrics.scale,
-                                            ..pane.rect
-                                        };
-                                        let scrollback = SceneRect {
-                                            left: card.right() - 60.0 * metrics.scale,
-                                            width: 40.0 * metrics.scale,
-                                            ..pane.rect
-                                        };
-                                        let gaps = if outline.title_y.is_some() {
-                                            [label, scrollback]
-                                        } else {
-                                            [SceneRect::default(); 2]
-                                        };
-                                        (outline, gaps)
-                                    })
-                                    .collect::<Vec<_>>();
+                                let rules = crate::contour::pane_outlines(
+                                    &workspace,
+                                    panes,
+                                    terminal,
+                                    fill,
+                                    border_width,
+                                    metrics,
+                                    focus_width.max(border_width),
+                                )
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, outline)| {
+                                    let pane = &panes[index.min(panes.len() - 1)];
+                                    let label = SceneRect {
+                                        left: pane.rect.left + metrics.padding / 2.0,
+                                        width: 80.0 * metrics.scale,
+                                        ..pane.rect
+                                    };
+                                    let scrollback = SceneRect {
+                                        left: card.right() - 60.0 * metrics.scale,
+                                        width: 40.0 * metrics.scale,
+                                        ..pane.rect
+                                    };
+                                    let gaps = if outline.title_y.is_some() {
+                                        [label, scrollback]
+                                    } else {
+                                        [SceneRect::default(); 2]
+                                    };
+                                    (outline, gaps)
+                                })
+                                .collect::<Vec<_>>();
                                 // The Stack band stays fixed while its segment joins the
                                 // first pane's allocated title row.
                                 let band = chrome_title_metrics(metrics).text_height
@@ -1745,19 +1933,22 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                 );
                                 assert_eq!(
                                     rules[0].0.title_y,
-                                    Some(crate::scene::title_rule_y(
+                                    Some(crate::contour::title_rule_y(
                                         panes[0].rect.top,
                                         panes[0].rect.height
                                     ))
                                 );
-                                let stack = workspace.stack_outline(&rules[0].0, fill);
+                                let stack =
+                                    crate::contour::stack_outline(&workspace, &rules[0].0, fill);
                                 assert_eq!(stack.title_y, Some(fill.bounds.top));
                                 let mut rules = rules;
                                 rules.push((stack, [SceneRect::default(); 2]));
                                 if frames && selected + 1 < panes.len() {
                                     let next = &panes[selected + 1];
-                                    let next_line =
-                                        crate::scene::title_rule_y(next.rect.top, next.rect.height);
+                                    let next_line = crate::contour::title_rule_y(
+                                        next.rect.top,
+                                        next.rect.height,
+                                    );
                                     let pitch = next_line - rules[selected].0.bounds.bottom();
                                     if border <= 2 && focus_border <= 2 {
                                         assert!(
@@ -1767,10 +1958,10 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                         );
                                     }
                                     for rows in panes[selected + 1..].windows(2) {
-                                        let pitch = crate::scene::title_rule_y(
+                                        let pitch = crate::contour::title_rule_y(
                                             rows[1].rect.top,
                                             rows[1].rect.height,
-                                        ) - crate::scene::title_rule_y(
+                                        ) - crate::contour::title_rule_y(
                                             rows[0].rect.top,
                                             rows[0].rect.height,
                                         );
@@ -2071,18 +2262,18 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                             top: terminal.top - scroll,
                                             ..terminal
                                         };
-                                        let scrolled = workspace
-                                            .pane_outlines(
-                                                &scrolled_panes,
-                                                scrolled_terminal,
-                                                fill,
-                                                border_width,
-                                                metrics,
-                                                focus_width.max(border_width),
-                                            )
-                                            .into_iter()
-                                            .zip(rules.iter().map(|(_, gaps)| *gaps))
-                                            .collect::<Vec<_>>();
+                                        let scrolled = crate::contour::pane_outlines(
+                                            &workspace,
+                                            &scrolled_panes,
+                                            scrolled_terminal,
+                                            fill,
+                                            border_width,
+                                            metrics,
+                                            focus_width.max(border_width),
+                                        )
+                                        .into_iter()
+                                        .zip(rules.iter().map(|(_, gaps)| *gaps))
+                                        .collect::<Vec<_>>();
                                         let mut batch = RectangleBatch::new(1600, 900);
                                         batch.push_pane_outlines(
                                             fill,
@@ -2253,11 +2444,18 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                     .iter()
                     .all(|(card, _)| card.unwrap().bounds.bottom() == fill.bounds.bottom())
             );
-            let rules = paint
-                .pane_outlines(&paint.panes, paint.terminal, fill, 1.0, metrics, 1.0)
-                .into_iter()
-                .map(|rule| (rule, [SceneRect::default(); 2]))
-                .collect::<Vec<_>>();
+            let rules = crate::contour::pane_outlines(
+                &paint,
+                &paint.panes,
+                paint.terminal,
+                fill,
+                1.0,
+                metrics,
+                1.0,
+            )
+            .into_iter()
+            .map(|rule| (rule, [SceneRect::default(); 2]))
+            .collect::<Vec<_>>();
             let (clip, _) =
                 terminal_paint_clip(&paint, paint.chrome, paint.terminal, metrics, true, 1.0)
                     .unwrap();
@@ -2275,7 +2473,8 @@ fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
                 assert_eq!(rules[1].0.bounds.bottom(), 665.0);
                 let settled_fill = settled.card_fill(settled.chrome, metrics, 1.0);
                 assert_eq!(
-                    settled.pane_outlines(
+                    crate::contour::pane_outlines(
+                        &settled,
                         &settled.panes,
                         settled.terminal,
                         settled_fill,
@@ -2642,18 +2841,18 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                             assert_eq!(workspace.terminal.height, 42.0);
                             assert_eq!(((workspace.terminal.height - 24.0) / 18.0).floor(), 1.0);
                         }
-                        let rules = workspace
-                            .pane_outlines(
-                                &workspace.panes,
-                                workspace.terminal,
-                                fill,
-                                neutral,
-                                metrics,
-                                stroke,
-                            )
-                            .into_iter()
-                            .map(|rule| (rule, [SceneRect::default(); 2]))
-                            .collect::<Vec<_>>();
+                        let rules = crate::contour::pane_outlines(
+                            &workspace,
+                            &workspace.panes,
+                            workspace.terminal,
+                            fill,
+                            neutral,
+                            metrics,
+                            stroke,
+                        )
+                        .into_iter()
+                        .map(|rule| (rule, [SceneRect::default(); 2]))
+                        .collect::<Vec<_>>();
                         if expanded < pane_count
                             && column_count == 1
                             && pane_scroll == 0.0
@@ -2661,7 +2860,7 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                         {
                             let next = &workspace.panes[expanded];
                             let next_line =
-                                crate::scene::title_rule_y(next.rect.top, next.rect.height);
+                                crate::contour::title_rule_y(next.rect.top, next.rect.height);
                             let edge = rules[expanded - 1].0.bounds.bottom();
                             println!(
                                 "raised edge: scale={scale}, font={font_size}, line_height={line_height}, stroke={stroke}, expanded={expanded}, terminal bottom={}, edge={edge}, next={next_line}, pitch={}, row={}",
@@ -2693,7 +2892,11 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                         {
                             let title = chrome_title_metrics(metrics);
                             let edge = rules.last().unwrap().0.bounds.bottom();
-                            let row = chrome::bottom_title_row(pane.rect, edge, title.text_height);
+                            let row = crate::contour::bottom_title_row(
+                                pane.rect,
+                                edge,
+                                title.text_height,
+                            );
                             if fill.bounds.height > 0.0
                                 && (pane.rect.bottom() - workspace.pane_viewport.bottom()).abs()
                                     < 0.001
@@ -2777,18 +2980,18 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                         );
                         for column in &workspace.other_columns {
                             let peer_fill = workspace.card_fill(column.chrome, metrics, stroke);
-                            let rules = workspace
-                                .pane_outlines(
-                                    &column.panes,
-                                    column.terminal,
-                                    peer_fill,
-                                    neutral,
-                                    metrics,
-                                    stroke,
-                                )
-                                .into_iter()
-                                .map(|rule| (rule, [SceneRect::default(); 2]))
-                                .collect::<Vec<_>>();
+                            let rules = crate::contour::pane_outlines(
+                                &workspace,
+                                &column.panes,
+                                column.terminal,
+                                peer_fill,
+                                neutral,
+                                metrics,
+                                stroke,
+                            )
+                            .into_iter()
+                            .map(|rule| (rule, [SceneRect::default(); 2]))
+                            .collect::<Vec<_>>();
                             batch.push_pane_outlines(
                                 peer_fill,
                                 workspace.pane_viewport,
@@ -2914,14 +3117,15 @@ fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
                                 fill.bounds.top >= allocated.top
                                     && fill.bounds.bottom() <= allocated.bottom()
                             );
-                            let rules = paint
-                                .pane_outlines(panes, terminal, fill, neutral, metrics, stroke)
-                                .into_iter()
-                                .map(|rule| (rule, [SceneRect::default(); 2]))
-                                .collect::<Vec<_>>();
+                            let rules = crate::contour::pane_outlines(
+                                &paint, panes, terminal, fill, neutral, metrics, stroke,
+                            )
+                            .into_iter()
+                            .map(|rule| (rule, [SceneRect::default(); 2]))
+                            .collect::<Vec<_>>();
                             if let Some(pane) = panes.last().filter(|pane| !pane.selected) {
                                 let text_height = chrome_title_metrics(metrics).text_height;
-                                let row = chrome::bottom_title_row(
+                                let row = crate::contour::bottom_title_row(
                                     pane.rect,
                                     rules.last().unwrap().0.bounds.bottom(),
                                     text_height,
@@ -2988,7 +3192,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                 ..card
             };
             batch.clip = Some(viewport);
-            let top = crate::scene::title_rule_y(top, 20.0);
+            let top = crate::contour::title_rule_y(top, 20.0);
             let frame = SceneRect {
                 top,
                 height: card.bottom() - top,
@@ -3028,7 +3232,7 @@ fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
                         title_y: Some(top),
                         expanded: true,
                     },
-                    super::super::chrome::pane_rule_gaps(
+                    crate::contour::pane_rule_gaps(
                         label,
                         scrollback,
                         Some([
@@ -4067,7 +4271,7 @@ fn compact_heading_button_gap_keeps_the_titles_margin_and_clears_its_gap() {
             );
             let row = workspace.popup_title_row(metrics).unwrap();
             let hide = workspace.heading_action(HeadingAction::HidePopup).unwrap();
-            let gap = chrome::heading_button_gap(hide, metrics);
+            let gap = crate::contour::heading_button_gap(hide, metrics);
             // The edge breaks half a padding before and after the button, as around a title.
             assert_eq!(gap.left, hide.left - metrics.padding / 2.0);
             assert_eq!(gap.right(), hide.right() + metrics.padding / 2.0);
@@ -4103,7 +4307,7 @@ fn compact_heading_button_gap_keeps_the_titles_margin_and_clears_its_gap() {
                     height: chrome_title_metrics(metrics).text_height,
                     ..chrome
                 };
-                let gap = chrome::heading_button_gap(close, metrics);
+                let gap = crate::contour::heading_button_gap(close, metrics);
                 assert_eq!(gap.left, close.left - metrics.padding / 2.0);
                 assert_eq!(gap.right(), close.right() + metrics.padding / 2.0);
                 assert!(gap.right() <= row.right());
@@ -4370,13 +4574,13 @@ fn clipped_sidebar_title_falls_back_when_its_card_edge_does_not_align() {
         |_, text| (text.into(), text.len() as f32 * metrics.width),
     );
     workspace.pane_viewport.height =
-        crate::scene::tokens::chrome_title_metrics(metrics).text_height / 2.0;
+        crate::contour::chrome_title_metrics(metrics).text_height / 2.0;
     let area = workspace.sidebar_area().unwrap();
     assert_ne!(
         workspace.card_rect(area, metrics, 1.0).top,
-        crate::scene::title_rule_y(
+        crate::contour::title_rule_y(
             area.top,
-            crate::scene::tokens::chrome_title_metrics(metrics).text_height
+            crate::contour::chrome_title_metrics(metrics).text_height
         )
     );
     assert!(
@@ -4514,7 +4718,8 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                 let border = physical_outline_width(1, metrics.scale);
                 let focus = physical_outline_width(2, metrics.scale);
                 let fill = workspace.card_fill(workspace.chrome, metrics, focus);
-                let outlines = workspace.pane_outlines(
+                let outlines = crate::contour::pane_outlines(
+                    &workspace,
                     &workspace.panes,
                     workspace.terminal,
                     fill,
@@ -4633,7 +4838,7 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                     .enumerate()
                     .map(|(index, (outline, pane))| {
                         let row = if index == 3 && !pane.selected {
-                            super::super::chrome::bottom_title_row(
+                            crate::contour::bottom_title_row(
                                 pane.rect,
                                 outline.bounds.bottom(),
                                 chrome_title_metrics(metrics).text_height,
@@ -4652,7 +4857,7 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                                     pane.header_content(metrics).width - 2.0 * metrics.padding,
                                 )
                             });
-                        let (buffer, _) = super::super::chrome::status_glyph_ink(
+                        let (buffer, _) = crate::contour::status_glyph_ink(
                             &mut fonts.font_system,
                             &mut swash,
                             metrics,
@@ -4680,7 +4885,7 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                         }
                         (
                             outline,
-                            super::super::chrome::pane_rule_gaps(
+                            crate::contour::pane_rule_gaps(
                                 title.border_gap(row, metrics),
                                 SceneRect::default(),
                                 pane.visible_actions(),
@@ -4856,11 +5061,12 @@ fn first_pane_bands_keep_stack_clearance_in_selected_and_unselected_columns() {
                     (gap - pitch).abs() <= tolerance,
                     "first gap {gap}, pitch {pitch}, scale {scale}, panes {count}, focused {focused}"
                 );
-                let rules = workspace
-                    .pane_outlines(panes, terminal, fill, border, metrics, stroke)
-                    .into_iter()
-                    .map(|outline| (outline, [SceneRect::default(); 2]))
-                    .collect::<Vec<_>>();
+                let rules = crate::contour::pane_outlines(
+                    &workspace, panes, terminal, fill, border, metrics, stroke,
+                )
+                .into_iter()
+                .map(|outline| (outline, [SceneRect::default(); 2]))
+                .collect::<Vec<_>>();
                 let mut batch = RectangleBatch::new(1600, 900);
                 batch.push_pane_outlines(
                     fill,

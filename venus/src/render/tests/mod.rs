@@ -1,5 +1,6 @@
 use super::cells::tests::plain_style;
 use super::*;
+use crate::contour::FrameTitle;
 use crate::{DrawCell, DrawRow, SceneGraphics};
 use orbit_protocol::{CellWidth, Screen};
 

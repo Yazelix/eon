@@ -289,7 +289,7 @@ impl FontSetup {
 
     /// Header text's shaped width at `metrics`, as the renderer measures tab labels and hints.
     pub fn measure_header_text(&mut self, metrics: CellMetrics, text: &str) -> f32 {
-        super::chrome::fit_header_text(&mut self.font_system, metrics, text, f32::INFINITY).1
+        crate::contour::fit_header_text(&mut self.font_system, metrics, text, f32::INFINITY).1
     }
 }
 

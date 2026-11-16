@@ -590,7 +590,7 @@ fn dialog_text_lines_count_the_lines_a_dialog_row_draws() {
     };
     assert_eq!(lines("Focus next tab", 1000.0), 1);
     assert_eq!(lines("", 1000.0), 1);
-    let glyph = crate::render::chrome::fit_header_text(
+    let glyph = crate::contour::fit_header_text(
         &mut FontSetup::new(&FontSettings::default())
             .unwrap()
             .font_system,
