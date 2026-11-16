@@ -96,7 +96,7 @@ known regression.
 
 Before review of a code, test or script candidate, the author runs
 `nix develop -c eon-test` over the whole workspace, not only changed crates;
-before pushing a landing, the overseer runs `nix build`, batching landings
+before pushing a landing, the lead runs `nix build`, batching landings
 that come close together. On Linux, `.#default`, `.#eonbase` and
 `.#checks.x86_64-linux.default` require the cached dev-profile
 `.#checks.x86_64-linux.eon-tests` check: all eon/eon-runtime
