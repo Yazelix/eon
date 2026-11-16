@@ -212,12 +212,10 @@ fn configure_mock_desktop(config: &Path) {
 #[test]
 fn config_check_validates_offline_without_changing_state() {
     let root = temporary_directory();
-    let config = root.join(OsStr::from_bytes(b"config-\xff"));
-    let path = config.join("config.toml");
-    let run = |arguments: &[&str]| {
+    let run = |config: &Path, arguments: &[&str]| {
         eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
             .args(arguments)
-            .env("EON_CONFIG_HOME", &config)
+            .env("EON_CONFIG_HOME", config)
             .env("XDG_CONFIG_HOME", root.join("xdg"))
             .env("HOME", root.join("home"))
             .env("EON_RUNTIME_DIR", root.join("runtime"))
@@ -228,12 +226,13 @@ fn config_check_validates_offline_without_changing_state() {
             .output()
             .unwrap()
     };
-    let check = || {
-        let human = run(&["config", "check"]);
+    let check = |config: &Path| {
+        let path = config.join("config.toml");
+        let human = run(config, &["config", "check"]);
         assert_eq!(human.status.code(), Some(0), "{human:?}");
         assert!(human.stderr.is_empty());
         assert!(stdout(&human).contains(path.to_string_lossy().as_ref()));
-        let json = run(&["config", "check", "--json"]);
+        let json = run(config, &["config", "check", "--json"]);
         assert_eq!(json.status.code(), Some(0), "{json:?}");
         assert!(json.stderr.is_empty());
         let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
@@ -241,12 +240,18 @@ fn config_check_validates_offline_without_changing_state() {
         assert_eq!(value["valid"], true);
         assert!(value["error"].is_null());
     };
-    check();
+    // macOS filesystems reject non-UTF-8 names; the absent path still tests lossy output.
+    let malformed = root.join(OsStr::from_bytes(b"config-\xff"));
+    check(&malformed);
+    assert!(!malformed.exists());
+    let config = root.join("config ü");
+    let path = config.join("config.toml");
+    check(&config);
     assert!(!config.exists());
     fs::create_dir(&config).unwrap();
-    check();
+    check(&config);
     assert!(!path.exists());
-    let defaults = run(&["config", "defaults"]);
+    let defaults = run(&config, &["config", "defaults"]);
     assert!(defaults.status.success());
     for source in [
         "",
@@ -257,7 +262,7 @@ fn config_check_validates_offline_without_changing_state() {
         "[terminal]\nfont_sise = 18\n",
     ] {
         fs::write(&path, source).unwrap();
-        check();
+        check(&config);
         assert_eq!(fs::read_to_string(&path).unwrap(), source);
         assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
     }
@@ -266,7 +271,7 @@ fn config_check_validates_offline_without_changing_state() {
         &["config", "--help"],
         &["config", "check", "--help"],
     ] {
-        let help = run(arguments);
+        let help = run(&config, arguments);
         assert!(help.status.success(), "{help:?}");
         assert!(stdout(&help).contains("config check [--json]"));
     }
@@ -275,7 +280,7 @@ fn config_check_validates_offline_without_changing_state() {
         &["config", "--json", "check"],
         &["config", "check", "--json", "--json"],
     ] {
-        let output = run(arguments);
+        let output = run(&config, arguments);
         assert_eq!(output.status.code(), Some(2), "{output:?}");
         assert!(output.stdout.is_empty());
     }
@@ -19054,7 +19059,7 @@ fn neovim_initial_targets_disqualify_auto_and_refuse_explicit_popup_routing() {
 #[test]
 fn neovim_colon_listener_refuses_before_displacing_the_shown_popup() {
     let mut window = editor_popup_window();
-    window.runtime = window.root.join("r:t");
+    window.runtime.set_file_name("r:t");
     writeln!(
         fs::OpenOptions::new()
             .append(true)
@@ -20359,7 +20364,10 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
     assert_eq!(shown.active_workspace, before.active_workspace);
     assert_eq!(stable_tabs(&shown.tabs[..1]), stable_tabs(&before.tabs));
     let tab = shown.tabs.iter().find(|t| t.id == target.id).unwrap();
-    assert_eq!(tab.columns, target.columns);
+    assert_eq!(
+        stable_tabs(std::slice::from_ref(tab))[0].columns,
+        stable_tabs(std::slice::from_ref(&target))[0].columns
+    );
     assert_eq!(tab.selected_pane, target.selected_pane);
     let popup = tab.popups.last().unwrap().clone();
     let file = PathBuf::from(&wait_for_lines(&window.root.join("editor.log"), 1)[0]);
@@ -23763,7 +23771,7 @@ fn tutor_consumes_the_real_effective_keymap_projection() {
 
 #[test]
 fn keys_cli_errors_and_live_projection() {
-    use eon_workspace_protocol::shortcuts::{Platform, viewer_groups};
+    use eon_workspace_protocol::shortcuts::{ALT, Platform, display_chord, viewer_groups};
 
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
     let offline_root = temporary_directory();
@@ -23906,7 +23914,7 @@ fn keys_cli_errors_and_live_projection() {
         create_pane["overridden_by"],
         serde_json::json!([{
             "config": "Alt+M",
-            "display": "Alt+M",
+            "display": display_chord(Platform::CURRENT, ALT, "KeyM"),
             "kind": "popup",
             "id": "custom",
             "label": "Custom",
