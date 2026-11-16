@@ -685,6 +685,12 @@ impl SessionModel {
         self.scene.as_ref()
     }
 
+    /// Charge measured scene construction to this model's next presentation.
+    #[doc(hidden)]
+    pub fn record_scene_build_ns(&mut self, ns: u64) {
+        self.scene_build_ns += ns;
+    }
+
     /// Scene work since the last successful presentation, consumed once by the diagnostic.
     #[doc(hidden)]
     pub fn take_scene_build_ns(&mut self) -> u64 {
@@ -793,7 +799,7 @@ impl SessionModel {
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
                 let started = crate::transport::frame_time();
                 let scene = Scene::from_frame(frame, self.attachment);
-                self.scene_build_ns += crate::transport::frame_elapsed(started);
+                self.record_scene_build_ns(crate::transport::frame_elapsed(started));
                 self.accept_scene(scene);
                 if !preview_compatible {
                     self.scroll_preview = None;
@@ -804,7 +810,7 @@ impl SessionModel {
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
                 let started = crate::transport::frame_time();
                 let scene = Scene::from_frame(frame, self.attachment);
-                self.scene_build_ns += crate::transport::frame_elapsed(started);
+                self.record_scene_build_ns(crate::transport::frame_elapsed(started));
                 self.accept_scene(scene);
                 self.scroll_preview = None;
                 self.awaiting_current_frame = false;
@@ -844,7 +850,7 @@ impl SessionModel {
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
                 let started = crate::transport::frame_time();
                 let scene = Scene::from_frame(frame, self.attachment);
-                self.scene_build_ns += crate::transport::frame_elapsed(started);
+                self.record_scene_build_ns(crate::transport::frame_elapsed(started));
                 self.accept_scene(scene);
                 self.scroll_preview = Some(preview);
                 self.awaiting_current_frame = false;

@@ -9,44 +9,23 @@ mod shortcuts;
 
 #[test]
 fn presented_scene_timing_does_not_follow_a_column_across_focus_switches() {
-    const CHILD: &str = "EON_VENUS_TEST_SCENE_TIMINGS_CHILD";
-    if std::env::var_os(CHILD).is_none() {
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "application::tests::presented_scene_timing_does_not_follow_a_column_across_focus_switches"])
-            .env(CHILD, "1")
-            .env("EON_VENUS_FRAME_TIMINGS", "unused-scene-test.jsonl")
-            .output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
     let mut terminal = TerminalView::new(None);
     let mut columns = [TerminalView::new(None)];
-    for view in std::iter::once(&mut terminal).chain(&mut columns) {
-        view.model.apply(ServerMessage::Attached).unwrap();
-        let TransportEvent::Server(frame) = native::frame(1, orbit_protocol::Screen::Primary)
-        else {
-            unreachable!()
-        };
-        view.model.apply(frame).unwrap();
-    }
-    assert!(take_scene_build_ns(&mut terminal, &mut columns) > 0);
+    terminal.model.record_scene_build_ns(5);
+    terminal.model.record_scene_build_ns(6);
+    columns[0].model.record_scene_build_ns(17);
+    assert_eq!(take_scene_build_ns(&mut terminal, &mut columns), 28);
     std::mem::swap(&mut terminal, &mut columns[0]);
+    columns[0].model.record_scene_build_ns(0);
     assert_eq!(
         take_scene_build_ns(&mut terminal, &mut columns),
         0,
         "switching focus must not charge a previously presented background scene again"
     );
-    let TransportEvent::Server(frame) = native::frame(2, orbit_protocol::Screen::Primary) else {
-        unreachable!()
-    };
-    columns[0].model.apply(frame).unwrap();
-    assert!(
-        take_scene_build_ns(&mut terminal, &mut columns) > 0,
+    columns[0].model.record_scene_build_ns(23);
+    assert_eq!(
+        take_scene_build_ns(&mut terminal, &mut columns),
+        23,
         "new background scene work belongs to this window presentation"
     );
     std::mem::swap(&mut terminal, &mut columns[0]);
