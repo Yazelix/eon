@@ -606,6 +606,25 @@ frames keep arriving. The real-PTY terminal-replies check has the child ask for
 its cursor position before any client attaches, and for its cursor position and
 device attributes while one is, and receive each answer.
 
+No reply returns text a program chose, except one bounded id. libghostty keeps
+title reports (CSI 21t) and screen checksums (DECRQCRA) off, and Orbit installs
+no answerback, version, colour-scheme or clipboard-read callback, so those
+requests and OSC 52 reads get no answer and XTVERSION names `libghostty`. The
+other replies carry numbers, colours as `rgb:` values, fixed text, or names
+from fixed tables. The Kitty clipboard protocol (OSC 5522) echoes the
+request's `id` inside its reply after libghostty reduces it to letters,
+digits and `-_+.`, at most 512 of them: it cannot submit a line or start a
+separate shell word, though a modal line editor can read its letters as
+commands (eon-z7ghx.4). With raw input on its terminal, the check's child
+sends titles, DECRQSS, XTGETTCAP, colour, OSC 7, OSC 52 and 5522, OSC 7501
+reports, Kitty graphics, Glyph and OSC 72 requests holding shell syntax,
+quotes, a backslash, CR, LF, ^C, ^U, DEL, the end of a bracketed paste and C1
+controls, both before and
+while a client attaches. It reads every byte that comes back, through a device
+attributes answer, and compares the bytes exactly. A sensitivity check that
+turned on title reports made it fail with the hostile title, DEL and UTF-8 C1
+controls included, in the child's input.
+
 ## PTY pixel size
 
 The PTY's pixel fields hold the text area, the columns times the cell width by

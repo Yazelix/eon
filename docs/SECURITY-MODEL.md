@@ -266,12 +266,23 @@ spawning the desktop dispatcher (`venus/src/application.rs:250`,
 Runtime escapes notification body markup
 (`runtime/crates/eon-runtime/src/notification.rs:301`).
 
-Orbit forwards libghostty's terminal replies to the PTY. Existing real-PTY
-coverage checks cursor-position, device-attribute and OSC 7501 probe replies
-(`orbit/src/pty.rs:232`, `orbit/tests/real_pty/terminal_replies.rs:17`). Title
-reporting and attacker-controlled reply payloads remain **unverified** in this
-model. Missing coverage alone does not establish injection; legitimate color
-query replies need not be suppressed.
+Orbit forwards libghostty's terminal replies to the PTY
+(`orbit/src/pty.rs:232`). An audit of every reply producer at the pinned
+libghostty (Ghostty `0fa3d577`) found no reply that returns program-chosen
+control bytes, whitespace or shell syntax. libghostty keeps title reports off
+because a reported title can inject input; Orbit leaves them off and installs
+no answerback, version, colour-scheme or clipboard-read callback. Other replies
+carry numbers, `rgb:` colours, fixed text or names from fixed tables. The one
+echo is the Kitty clipboard (OSC 5522) `id`, reduced to letters, digits and
+`-_+.` (at most 512) inside the reply, as Kitty does. It is bounded, not inert:
+it follows the fixed `id=` with no separator, so it cannot submit a line or
+start a separate shell word, but a modal (vi-mode) line editor can read its
+letters as editing commands. This residual is accepted; eon-z7ghx.4 asks
+upstream about it. The real-PTY terminal-replies check sends hostile requests of
+every family with raw input and compares every byte the child reads, detached
+and attached (`orbit/tests/real_pty/terminal_replies.rs`,
+`orbit/tests/terminal-replies-shell.sh`); turning title reports on makes it
+fail. Linux only; macOS shares the library but is unproved.
 
 ## Filesystem and distribution
 
@@ -401,7 +412,7 @@ finding across follow-up work; the referenced sections above supply evidence.
 | 11 | Unverified / unrated | Release private-key access and custody are unknown. | Verify custody; keep signing authority outside agent execution authority. |
 | 12 | Low, conditional | Predictable fallback runtime paths permit precreation denial of service in shared temporary parents. | Use a private per-user parent or fail safely without one. |
 | 13 | High, conditional | A reachable Neovim Editor RPC socket is an additional host-execution route under `none`, with the authority impact of 5. | Restrict sandbox access to auxiliary IPC or replace general RPC with a constrained boundary. |
-| 14 | Unverified / unrated | Terminal reply injection has no demonstrated payload here. | Inspect the pinned parser and add targeted real-PTY coverage. |
+| 14 | Low, verified | No terminal reply returns program-chosen control bytes or shell syntax; the OSC 5522 clipboard id echoes only `[A-Za-z0-9-_+.]`, at most 512 bytes, which a modal line editor can read as commands. | Keep title reports off; re-run the terminal-replies check on each libghostty update; eon-z7ghx.4 asks upstream about the id. |
 | 15 | Low, source-supported | Signer-file validation lacks an owner/mode policy. | Define a safe trust-anchor ownership and writability policy. |
 | 16 | Medium, configuration-dependent | Example Codex commands omit the default popup's daemon isolation flag; shared routing can target another window. | Align examples with `--no-daemon` and verify the supported backend version. |
 | 17 | Medium, source-inferred | Callerless Scrollback `Toggle` bypasses the `none` guard under the eligibility conditions above. | Distinguish native-window authority from unauthenticated EONW requests and cover the bypass. |

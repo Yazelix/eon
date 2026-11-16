@@ -161,6 +161,57 @@ pub fn replies(path: &Path) -> HashMap<String, String> {
         .collect()
 }
 
+/// The bytes a reply recorded with bash's `printf %q` holds: `''` or a
+/// `$'...'` string, as bash quotes any text holding a control byte.
+pub fn reply_bytes(quoted: &str) -> Vec<u8> {
+    if quoted == "''" {
+        return Vec::new();
+    }
+    let body = quoted
+        .strip_prefix("$'")
+        .and_then(|body| body.strip_suffix('\''))
+        .unwrap_or_else(|| panic!("not a quoted reply: {quoted}"))
+        .as_bytes();
+    let mut bytes = Vec::new();
+    let mut index = 0;
+    while index < body.len() {
+        let byte = body[index];
+        index += 1;
+        if byte != b'\\' {
+            bytes.push(byte);
+            continue;
+        }
+        let escape = body[index];
+        index += 1;
+        bytes.push(match escape {
+            b'E' => 0x1b,
+            b'a' => 0x07,
+            b'b' => 0x08,
+            b't' => b'\t',
+            b'n' => b'\n',
+            b'v' => 0x0b,
+            b'f' => 0x0c,
+            b'r' => b'\r',
+            b'\\' | b'\'' => escape,
+            b'0'..=b'7' => {
+                let mut value = u32::from(escape - b'0');
+                for _ in 0..2 {
+                    match body.get(index) {
+                        Some(digit @ b'0'..=b'7') => {
+                            value = value * 8 + u32::from(digit - b'0');
+                            index += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                u8::try_from(value).expect("an octal byte")
+            }
+            other => panic!("unknown escape \\{} in {quoted}", char::from(other)),
+        });
+    }
+    bytes
+}
+
 /// Waits up to ten seconds for a path to exist.
 pub fn wait_for(path: &Path) {
     let deadline = Instant::now() + seconds(10.0);
