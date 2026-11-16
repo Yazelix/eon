@@ -158,6 +158,39 @@ and canonical slot-home resolution returns an explicit Unsupported error there.
 
 ## macOS proof harness
 
+### CI failure collection
+
+For the full failure list before landing a Darwin change, a maintainer pushes
+the candidate to a `ci/` branch and dispatches:
+
+```sh
+gh workflow run darwin-build.yml --repo Yazelix/eon --ref ci/BRANCH
+```
+
+The workflow's `build` job keeps the strict Nix package gate. Manual dispatch
+also runs `workspace-tests` on a separate Apple Silicon runner; failure in
+either job does not cancel the other. Filtered `edge` pushes run only `build`
+while the extra leg's duration and disk use are measured. Both jobs retain a
+90-minute timeout, read-only cache access and per-ref cancellation.
+
+`workspace-tests` builds release Orbit directly from source and supplies it as
+`ORBIT_BIN`, so a failing package dependency cannot block test collection. It
+runs release-profile ordinary workspace executable tests through `eon-test`
+and nextest without fail-fast, then workspace doctests without fail-fast,
+then ignored tests from only `eon` and `eon-runtime`, one at a time. Later
+phases still run after a test failure; any failed phase keeps the job failed.
+Read each collection step's log for its failure list and summary. The package
+job's log remains the authority for its packaged release configuration.
+
+This does not enable Orbit's ignored `real_pty` checks, ignored display or
+host-facility tests elsewhere in the workspace, or the Linux-only installer.
+Darwin `eon-test` provides private HOME, TMPDIR and runtime directories and
+refuses a running Eon supervisor, but shares the runner's host processes,
+network and files; it does not provide Linux namespace isolation. A build
+failure, cancellation or timeout can prevent complete test collection.
+
+### Remote proof harness
+
 `nix run .#mac-proof -- remote --host USER@HOST --out DIR`, run on Linux inside
 the checkout, proves a tree on an Apple Silicon Mac over SSH. It sends `git
 archive` of HEAD, or of the candidate tree when the checkout has uncommitted

@@ -30,10 +30,18 @@ concurrency:
 
 jobs:
   build:
+    name: ${{ matrix.check }}
     # No paid private-repository runs or runs from forks.
     if: github.repository == 'Yazelix/eon' && github.event.repository.private == false
     runs-on: macos-15
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Measure the extra test leg on dispatches before enabling it on edge pushes.
+        check: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["build","workspace-tests"]' || '["build"]') }}
+    env:
+      CARGO_BUILD_JOBS: '1'
     defaults:
       run:
         shell: bash
@@ -54,15 +62,37 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           df -h / /nix
+          printf 'CARGO_TARGET_DIR=%s/eon-darwin-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Evaluate Darwin checks without building
+        if: matrix.check == 'build'
         run: >-
           nix eval --no-allow-import-from-derivation --json
           .#checks.aarch64-darwin
           --apply 'checks: builtins.mapAttrs (_: check: check.drvPath) checks'
 
       - name: Build the Darwin package
+        if: matrix.check == 'build'
         run: nix build --print-build-logs --no-link .#packages.aarch64-darwin.default
+
+      - name: Build release Orbit for workspace tests
+        if: matrix.check == 'workspace-tests'
+        id: release_orbit
+        run: |
+          nix develop -c cargo build --locked --release -p yazelix-orbit
+          printf 'ORBIT_BIN=%s/release/yazelix-orbit\n' "$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
+
+      - name: Collect workspace executable test failures
+        if: matrix.check == 'workspace-tests'
+        run: nix develop -c eon-test --workspace --cargo-profile release
+
+      - name: Collect workspace doctest failures
+        if: ${{ !cancelled() && matrix.check == 'workspace-tests' && steps.release_orbit.outcome == 'success' }}
+        run: nix develop -c eon-test --doc --workspace --release --no-fail-fast
+
+      - name: Collect ignored Eon and Runtime test failures
+        if: ${{ !cancelled() && matrix.check == 'workspace-tests' && steps.release_orbit.outcome == 'success' }}
+        run: nix develop -c eon-test -p eon -p eon-runtime --cargo-profile release --run-ignored only --test-threads 1
 
       - name: Report remaining disk
         if: always()
