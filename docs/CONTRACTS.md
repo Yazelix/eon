@@ -2887,6 +2887,36 @@ names its socket. CLI JSON names a session `session` and a terminal
     this record as Delegation describes; commands use the same record and build
     lookup as Routing describes. Reading or using the record does not require
     an EONW change, a package-manager query or a second component graph.
+    Full-Eon's full and no-Helix installed Nix wrappers preserve reconstructible
+    launch arguments and the environment as the wrapper received it, except
+    variables its interpreter sets, before applying composition-owned values.
+    Interpreter-owned `_`, `PWD` and `SHLVL` are recreated for each target rather
+    than carried as user inputs. Exported Bash functions retain their behavior;
+    their interpreter serialization is not a byte-preservation guarantee.
+    Preparing a later build for the same lifetime replays that lifetime's saved
+    launch inputs with the target's validated wrapper facts; it never substitutes
+    the active wrapper's expanded environment for that saved baseline. A fresh
+    lifetime explicitly launched from a terminal uses that terminal's actual
+    current environment, including inherited values and user edits. It does not
+    infer an ancestor's pre-wrapper inputs or strip inherited paths. Ancestor
+    provenance for such fresh launches is a separate planning boundary.
+    A wrapper adds its known prefix only when absent; an existing matching entry
+    leaves the user's value intact. Presence-empty and absence remain distinct.
+    Saved original inputs retain their exact entries and duplicates.
+    User-owned entries are retained, including
+    entries equal to a wrapper prefix. Removed wrapper-only values do not
+    survive preparation. Route, attach-delegation and caller markers do not
+    authorize a new supervisor or propagate to its children. Each terminal still
+    receives its own caller identity through the existing launch owner.
+    Existing programs' environments remain unchanged. Capture entries never
+    reach terminal programs. Missing, malformed or contradictory launch facts
+    make a target ineligible and refuse target preparation before runtime
+    mutation. Runtime consumes opaque validated launch paths and never queries
+    a package manager for these inputs. This is preparatory infrastructure;
+    actual Update execution and relocated-bundle target qualification remain
+    planned in their owning slices. Launch-capture ineligibility does not fail
+    an ordinary Eon command or launch.
+
     Full Eon stores `generation`, `created_build`, `active_build` and optional
     `active_launcher` together in an owned mode-0600 regular `identity` file
     in its owned mode-0700 generation directory. Format 1 is `EONI`, u16

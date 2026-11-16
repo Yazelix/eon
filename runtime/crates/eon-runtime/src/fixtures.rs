@@ -9,6 +9,7 @@ use eon_workspace_protocol::v46::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut}
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
+        launch: Err("unwrapped fixture".into()),
         version: "fixture-product",
         release_stage: crate::ReleaseStage::Alpha,
         skill: "fixture-skill",

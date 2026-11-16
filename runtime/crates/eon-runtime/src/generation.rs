@@ -71,7 +71,7 @@ pub(super) fn generation_directory(root: &Path, generation: &str) -> PathBuf {
 const LAUNCHER: &str = "eon";
 /// Set on a delegated attach to the generation it presents, and removed from
 /// everything Eon starts.
-pub(super) const DELEGATION_MARKER: &str = "EON_ATTACH_DELEGATED";
+pub(super) use super::launch_environment::DELEGATION_MARKER;
 
 /// How this build runs another build's recorded `eon` to present one of that
 /// build's generations (EON-C11, Delegation).
@@ -144,7 +144,7 @@ pub(super) fn delegated_elsewhere(shown: &str) -> Error {
 
 /// Set on a routed session command to the generation it was routed to, and
 /// removed from everything Eon starts (EON-C11, Routing).
-pub(super) const ROUTE_MARKER: &str = "EON_ROUTED";
+pub(super) use super::launch_environment::ROUTE_MARKER;
 
 /// A routing hop narrows its namespace to the generation already selected.
 pub(super) fn routed_generation(
@@ -1653,7 +1653,7 @@ pub(super) fn attach_generation(
             return Err(format!("cannot run {}: {error}", launcher.display()).into());
         }
         // Recovery becomes a normal supervisor child; the attaching CLI still returns.
-        let mut command = Command::new(env::current_exe().map_err(|error| error.to_string())?);
+        let mut command = inputs.supervisor_command()?;
         command
             .arg("run")
             .env(DELEGATION_MARKER, target)

@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Full-Eon and no-Helix Nix wrappers preserve launch inputs for target
+  preparation without accumulating old component values or terminfo prefixes.
+  Private capture never reaches terminal programs or agent commands. In-place
+  Update execution remains planned. Fresh launches from an existing terminal
+  preserve its current environment, including user edits (`eon-t3fyd.4`).
+
 - Full-Eon windows have lifetime IDs independent of their creation and active
   builds. Bare launch selects by active build; default control keeps the sole
   older window reachable after a profile refresh. Exact attach can recover a

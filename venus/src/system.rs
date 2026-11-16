@@ -483,7 +483,7 @@ fn gpu_record(bdf: &str, bytes: &[u8]) -> Option<(u64, String)> {
 
 #[cfg(target_os = "linux")]
 fn query_gpu(bdf: &str) -> Option<(u64, String)> {
-    let mut command = std::process::Command::new("nvidia-smi");
+    let mut command = crate::external_command("nvidia-smi");
     command.args([
         &format!("--id={bdf}"),
         "--query-gpu=pci.bus_id,utilization.gpu,name",

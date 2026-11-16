@@ -1,6 +1,4 @@
 use crate::Result;
-#[cfg(target_os = "macos")]
-use std::process::Command;
 use std::{
     collections::hash_map::{DefaultHasher, RandomState},
     env,
@@ -701,7 +699,9 @@ fn default_socket_path() -> Result<PathBuf> {
     let uid = fs::metadata("/proc/self")?.uid();
     #[cfg(target_os = "macos")]
     let uid = {
-        let output = Command::new("/usr/bin/id").arg("-u").output()?;
+        let output = yazelix_venus::external_command("/usr/bin/id")
+            .arg("-u")
+            .output()?;
         if !output.status.success() {
             return Err(format!("/usr/bin/id -u failed with {}", output.status).into());
         }

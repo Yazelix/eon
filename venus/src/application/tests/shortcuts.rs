@@ -8,6 +8,7 @@ use eon_workspace_protocol::v46::{InvokeIntent, Side, Tab};
 
 #[test]
 fn new_window_shortcut_invokes_the_supplied_eon_command() {
+    let native = |path: &Path| WindowCommand::new(path.into(), []);
     use std::{fs, os::unix::fs::PermissionsExt, time::SystemTime};
 
     let shortcut = native_key_shortcut_for(
@@ -57,7 +58,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         "failing",
         "#!/bin/sh\nprintf '%s|%s' \"$1\" \"$2\" >&2\nexit 7\n",
     );
-    let error = run_new_window(&failing).unwrap_err();
+    let error = run_new_window(&native(&failing)).unwrap_err();
     assert!(error.contains("window|new"), "{error}");
     let peer = script(
         "peer",
@@ -69,7 +70,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
     window.generation = "g1-11111111111111111111111111111111".into();
     snapshot.running.as_mut().unwrap().others = Some(vec![window.clone()]);
     let action = WindowMenuAction::peer(&window);
-    let error = stop_other_window(&peer, &snapshot, &action).unwrap_err();
+    let error = stop_other_window(&native(&peer), &snapshot, &action).unwrap_err();
     assert!(error.contains("window|stop|01234567|--json"), "{error}");
     // The menu snapshot stays unchanged while the CLI inventory changes.
     for (name, inventory) in [
@@ -94,14 +95,14 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
                 "#!/bin/sh\nif [ \"$#|$1|$2|$3\" = '3|window|ls|--json' ]; then printf '%s' '{inventory}'; exit 0; fi\nprintf '%s' 'STOP RAN' >&2\nexit 7\n"
             ),
         );
-        let error = stop_other_window(&fresh, &snapshot, &action).unwrap_err();
+        let error = stop_other_window(&native(&fresh), &snapshot, &action).unwrap_err();
         assert!(
             error.contains("fresh inventory") && error.contains("eon window ls"),
             "{error}"
         );
         fs::remove_file(fresh).unwrap();
     }
-    let error = stop_other_window(&failing, &snapshot, &action).unwrap_err();
+    let error = stop_other_window(&native(&failing), &snapshot, &action).unwrap_err();
     assert!(
         error.contains("fresh inventory") && error.contains("window|ls"),
         "{error}"
@@ -117,7 +118,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         .as_mut()
         .unwrap()
         .push(replacement);
-    let error = stop_other_window(&peer, &snapshot, &action).unwrap_err();
+    let error = stop_other_window(&native(&peer), &snapshot, &action).unwrap_err();
     assert!(
         error.contains("more than one generation") && error.contains("eon window stop 01234567"),
         "{error}"
@@ -132,14 +133,14 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         .truncate(1);
     snapshot.running.as_mut().unwrap().this.window = window.window.clone();
     assert!(
-        stop_other_window(&peer, &snapshot, &action)
+        stop_other_window(&native(&peer), &snapshot, &action)
             .unwrap_err()
             .contains("includes this window")
     );
     snapshot.running.as_mut().unwrap().this.window = None;
     snapshot.running.as_mut().unwrap().omitted = 1;
     assert!(
-        stop_other_window(&peer, &snapshot, &action)
+        stop_other_window(&native(&peer), &snapshot, &action)
             .unwrap_err()
             .contains("scope unknown")
     );
@@ -148,7 +149,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
     window.window = None;
     snapshot.running.as_mut().unwrap().others = Some(vec![window.clone()]);
     let action = WindowMenuAction::peer(&window);
-    let error = stop_other_window(&peer, &snapshot, &action).unwrap_err();
+    let error = stop_other_window(&native(&peer), &snapshot, &action).unwrap_err();
     assert!(
         error.contains("window|stop|11111111111111111111111111111111|--json"),
         "{error}"
@@ -157,7 +158,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         .generation
         .push('2');
     assert!(
-        stop_other_window(&peer, &snapshot, &action)
+        stop_other_window(&native(&peer), &snapshot, &action)
             .unwrap_err()
             .contains("confirmed generation")
     );
@@ -166,14 +167,14 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         "#!/bin/sh\nprintf '%s' '{\"error\":{\"code\":\"stop-failed\",\"detail\":\"the supervisor refused Stop\"}}'\nexit 1\n",
     );
     assert!(
-        run_new_window(&json_failure)
+        run_new_window(&native(&json_failure))
             .unwrap_err()
             .contains("the supervisor refused Stop")
     );
     fs::remove_file(json_failure).unwrap();
     fs::remove_file(peer).unwrap();
     let succeeding = script("succeeding", "#!/bin/sh\nexit 0\n");
-    assert_eq!(run_new_window(&succeeding), Ok(()));
+    assert_eq!(run_new_window(&native(&succeeding)), Ok(()));
     fs::remove_file(failing).unwrap();
     fs::remove_file(succeeding).unwrap();
 }

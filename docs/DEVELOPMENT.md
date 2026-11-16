@@ -80,6 +80,20 @@ the canonical EONW package. `eon/crates/eon/tests/workspace_control.rs`
 exercises the real Eon binary, aliases and self-launches.
 
 The package's wrapper supplies each component's path in an `EON_*` variable.
+Full-Eon and no-Helix wrappers record their environment changes in
+`share/eon/launch-environment` and pass original values through private
+`EON_LAUNCH_*` entries. Eon consumes these at single-threaded process entry,
+before product initialization or agent dispatch; they never reach terminal
+programs. Runtime retains the validated launch inputs in memory. Ordinary
+unwrapped invocations work but are ineligible as Update targets. The focused
+`checks.x86_64-linux.eon-update-launch-environment` check uses generated fixture
+wrappers and the production capture code; actual supervisor re-exec is a later
+proof boundary.
+Same-lifetime target preparation replays that lifetime's saved inputs. A fresh
+launch from an Eon terminal captures its current environment, including inherited
+entries and deliberate edits; it does not infer an ancestor's environment.
+Repeated wrapper calls preserve an already-present terminfo prefix and user order.
+
 An `eon` started without `EON_HX`, such as a `cargo run` or the unwrapped
 executable outside an Eon terminal (Eon terminals inherit the variable), runs
 as the build without Helix: `[editor] command` has no default, and `hx` and

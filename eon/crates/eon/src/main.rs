@@ -1,3 +1,4 @@
+mod launch;
 mod product;
 mod report;
 mod update;
@@ -5,7 +6,10 @@ mod update;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let inputs = product::inputs();
+    let launch = launch::capture();
+    // SAFETY: main is still single-threaded, before product initialization or any worker.
+    unsafe { launch::clear_capture() };
+    let inputs = product::inputs(launch);
     let arguments: Vec<_> = std::env::args_os().collect();
     #[cfg(target_os = "linux")]
     if arguments.first().is_some_and(|program| {

@@ -21,7 +21,7 @@ use std::{
         fd::AsFd,
         unix::{ffi::OsStringExt, net::UnixStream},
     },
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread,
@@ -50,6 +50,7 @@ use yazelix_venus::{
     bench_tracing, focused_terminal, labels_only_change, read_eon_icon, shown_workspace,
     validate_copy_uri, validate_open_uri, wrapped_lines,
 };
+use yazelix_venus::{WindowCommand, external_command};
 
 mod geometry;
 mod scroll;
@@ -77,6 +78,8 @@ use shortcuts::{
 use eon_workspace_protocol::v46::Direction as WorkspaceDirection;
 #[cfg(test)]
 use shortcuts::{copy_paste_modifiers, native_key_shortcut_for};
+#[cfg(test)]
+use std::path::Path;
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
 /// A working badge steps one braille frame at most 10 times a second (VEN-C21, AP-PERF-001).
@@ -375,12 +378,12 @@ struct LinkOpener {
 fn link_command(platform: NativePlatform, uri: &str) -> Command {
     let mut command = match platform {
         NativePlatform::Linux => {
-            let mut command = Command::new("gio");
+            let mut command = external_command("gio");
             command.args(["open", "--", uri]);
             command
         }
         NativePlatform::Macos => {
-            let mut command = Command::new("/usr/bin/open");
+            let mut command = external_command("/usr/bin/open");
             command.args(["-u", uri]);
             command
         }
@@ -399,16 +402,17 @@ fn link_spawn_error(platform: NativePlatform) -> &'static str {
     }
 }
 
-fn run_new_window(executable: &Path) -> std::result::Result<(), String> {
+fn run_new_window(executable: &WindowCommand) -> std::result::Result<(), String> {
     run_window_command(executable, &["window", "new"], "open a new Eon window").map(|_| ())
 }
 
 fn run_window_command(
-    executable: &Path,
+    executable: &WindowCommand,
     args: &[&str],
     action: &str,
 ) -> std::result::Result<Vec<u8>, String> {
-    let output = Command::new(executable)
+    let output = executable
+        .command()?
         .args(args)
         .stdin(Stdio::null())
         .output()
@@ -1312,7 +1316,7 @@ struct Application {
     )]
     application_id: String,
     workspace_socket: Option<PathBuf>,
-    new_window_executable: Option<PathBuf>,
+    new_window_executable: Option<WindowCommand>,
     supervised: bool,
     startup_admission: bool,
     decorations: bool,
@@ -1481,7 +1485,8 @@ impl Application {
             workspace_socket,
             new_window_executable: std::env::var_os("EON_NEW_WINDOW_EXECUTABLE")
                 .map(PathBuf::from)
-                .filter(|path| path.is_absolute()),
+                .filter(|path| path.is_absolute())
+                .map(|path| WindowCommand::new(path, std::env::vars_os())),
             supervised,
             startup_admission,
             decorations,
@@ -7592,7 +7597,7 @@ fn peer_quit_id<'a>(
 }
 
 fn stop_other_window(
-    executable: &Path,
+    executable: &WindowCommand,
     snapshot: &eon_workspace_protocol::v46::Snapshot,
     action: &WindowMenuAction,
 ) -> std::result::Result<(), String> {

@@ -1093,26 +1093,36 @@
                 install -Dm444 ${helix}/LICENSE "$out/share/licenses/eon/helix/LICENSE"
               '';
             };
-          eonEnvironment = tools: out: tools.environment // {
-            set = {
+          eonComponents = {
+            environment = {
               EON_ORBIT = "${orbitPackage}/bin/yazelix-orbit";
               EON_VENUS = "${venusPackage}/bin/yazelix-venus";
               EON_CODEXBAR = "${codexbarPackage}/bin/CodexBarCLI";
               EON_ANIMA = "${animaPackage}/bin/anima";
               # `eon update --check` asks GitHub through this curl, never PATH's.
               EON_CURL = "${pkgs.curlMinimal}/bin/curl";
-              EON_ICON = "${out}/share/eon/eon-icon-256.rgba";
               EON_NU = "${nushellPackage}/bin/nu";
               EON_BASH = "${bashPackage}/bin/bash";
               EON_YAZI = "${yaziPackage}/bin/yazi";
               EON_FILES_CONFIG = "${filesPopupConfig}";
               EON_YA = "${yaziPackage}/bin/ya";
               EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
+            };
+            terminfo = "${orbitPackage}/share/terminfo";
+          };
+          eonEnvironment = components: tools: out: tools.environment // {
+            set = components.environment // {
+              EON_ICON = "${out}/share/eon/eon-icon-256.rgba";
               EON_NU_VENDOR_AUTOLOAD = "${out}/libexec/eon/shell/nu";
               EON_BASH_RC = "${out}/libexec/eon/shell/eon.bashrc";
               EON_SESSION_BIN = "${out}/libexec/eon/bin";
             } // (tools.environment.set or { });
-            prefix.TERMINFO_DIRS = [ "${orbitPackage}/share/terminfo" ];
+            prefix.TERMINFO_DIRS = [ components.terminfo ];
+          };
+          eonLaunchWrapper = import ./nix/eon-launch-wrapper.nix { inherit lib wrapperArgs; };
+          eonWrapperFragment = tools: eonLaunchWrapper {
+            program = "${placeholder "out"}/bin/eon";
+            environment = eonEnvironment eonComponents tools (placeholder "out");
           };
           macosApp = import ./nix/macos-app.nix {
             inherit pkgs nushellPackage bashPackage;
@@ -1205,13 +1215,19 @@
               postFixup = ''
                 substituteInPlace "$out/share/applications/eon.desktop" \
                   --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
-                wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment tools (placeholder "out"))}
-              '';
+              '' + eonWrapperFragment tools;
             };
           eonPackage = composeEon "eon" eonHelix;
-          eonNoHelixPackage = composeEon "eon-no-helix" {
+          eonNoHelix = {
             environment.unset = [ "EON_HX" ];
           };
+          eonNoHelixPackage = composeEon "eon-no-helix" eonNoHelix;
+          updateLaunchEnvironmentCheck =
+            assert lib.hasSuffix (eonWrapperFragment eonHelix) eonPackage.postFixup;
+            assert lib.hasSuffix (eonWrapperFragment eonNoHelix) eonNoHelixPackage.postFixup;
+            import ./nix/update-launch-environment-check.nix {
+              inherit pkgs rustToolchain eonEnvironment eonComponents eonHelix eonNoHelix eonLaunchWrapper wrapperArgs;
+            };
           eonTestArgs = {
             pname = "eon-tests";
             inherit (eonCargo.package) version;
@@ -1487,7 +1503,7 @@
             wrappers = [
               {
                 program = "${eonPackage}/bin/eon";
-                environment = eonEnvironment eonHelix "${eonPackage}";
+                environment = eonEnvironment eonComponents eonHelix "${eonPackage}";
                 # Bash's ncurses for terminal types other than Orbit's.
                 relocated.prefix.TERMINFO_DIRS = [ "${pkgs.ncurses}/share/terminfo" ];
                 relocated.set.EON_INSTALLER = "${installerPackage}/bin/eon-install";
@@ -1656,6 +1672,7 @@
               touch "$out"
             '';
           } // lib.optionalAttrs pkgs.stdenv.isLinux {
+            eon-update-launch-environment = updateLaunchEnvironmentCheck;
             eon-tests = eonTests;
             bundle-relink = bundleRelink.tree;
             bundle-launch = bundleRelink.launch;

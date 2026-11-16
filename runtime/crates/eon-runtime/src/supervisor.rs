@@ -515,7 +515,7 @@ fn venus_command(
     animate_working_badge: bool,
     number_keys: bool,
 ) -> Command {
-    let mut command = venus_process_command(venus, config, mode);
+    let mut command = venus_process_command(inputs, venus, config, mode);
     if !decorations {
         command.arg("--no-decorations");
     }
@@ -652,16 +652,28 @@ fn venus_command(
     command
 }
 
-fn venus_process_command(venus: &Path, config: &Path, mode: LaunchMode) -> Command {
+fn venus_process_command(
+    inputs: &Inputs,
+    venus: &Path,
+    config: &Path,
+    mode: LaunchMode,
+) -> Command {
     let mut command = Command::new(venus);
     managed_environment::remove_agent_session(&mut command)
         .env_remove(TERMINAL_VARIABLE)
         .env_remove(TAB_VARIABLE)
         .env("EON_CONFIG_HOME", config);
     if mode == LaunchMode::Workspace
-        && let Ok(executable) = env::current_exe()
+        && let Ok(launch) = &inputs.launch
     {
-        command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
+        launch.native_window_environment(&mut command, config, &runtime_directory("eon"));
+    } else {
+        super::launch_environment::clear_native_window_environment(&mut command);
+        if mode == LaunchMode::Workspace
+            && let Ok(executable) = env::current_exe()
+        {
+            command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
+        }
     }
     command
 }
@@ -3223,11 +3235,12 @@ fn reload_presentation(
     );
     let accepted = state.venus.as_ref().unwrap();
     let previous = accepted.executable.clone();
-    let mut rollback = venus_process_command(&previous, config, LaunchMode::Workspace);
+    let mut rollback = venus_process_command(inputs, &previous, config, LaunchMode::Workspace);
     rollback.args(&accepted.arguments);
     // Both launch paths use flags resolved by this supervisor.
     let fallback = (previous != inputs.venus).then(|| {
-        let mut command = venus_process_command(&inputs.venus, config, LaunchMode::Workspace);
+        let mut command =
+            venus_process_command(inputs, &inputs.venus, config, LaunchMode::Workspace);
         command.args(&accepted.arguments);
         (inputs.venus.clone(), command)
     });
@@ -10384,6 +10397,58 @@ rows = 30
             ]
             .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn native_new_window_receives_saved_baseline_and_installed_wrapper() {
+        use std::ffi::OsStr;
+        let mut inputs = crate::fixtures::inputs();
+        let facts = crate::LaunchFacts::decode(
+            b"EON-LAUNCH-1\0/installed/bin/eon\0/installed/bin/.eon-wrapped\0set\0EON_ORBIT\0/installed/orbit\0",
+            Path::new("/installed/bin/eon"), Path::new("/installed/bin/.eon-wrapped"),
+        ).unwrap();
+        inputs.launch = crate::LaunchInputs::capture(
+            &facts,
+            vec!["eon".into()],
+            [
+                (
+                    "EON_LAUNCH_FACTS".into(),
+                    "/installed/share/eon/launch-environment".into(),
+                ),
+                ("EON_LAUNCH_SAVED_EON_ORBIT".into(), "+user orbit".into()),
+                ("EON_ORBIT".into(), "/installed/orbit".into()),
+                ("PATH".into(), "/user/bin".into()),
+            ],
+        );
+        let command = venus_command(
+            &inputs,
+            &inputs.venus,
+            Path::new("/config"),
+            Path::new("/runtime/eon.sock"),
+            LaunchMode::Workspace,
+            &terminal_presentation(0.88, true),
+            &inputs.defaults.bar(),
+            "eon",
+            true,
+            false,
+            false,
+            false,
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "EON_NEW_WINDOW_EXECUTABLE"
+                    && value == Some(OsStr::new("/installed/bin/eon")))
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "EON_NEW_WINDOW_ENVIRONMENT"
+                    && value == Some(OsStr::new("1")))
+        );
+        assert!(command.get_envs().any(|(key, value)| key
+            == "EON_NEW_WINDOW_ENV_454f4e5f4f52424954"
+            && value == Some(OsStr::new("user orbit"))));
     }
 
     #[test]

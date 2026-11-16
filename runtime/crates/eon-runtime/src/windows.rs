@@ -611,10 +611,8 @@ fn runs(root: &Path, generation: &str) -> bool {
     fs::symlink_metadata(generation_directory(root, generation)).is_ok_and(|entry| entry.is_dir())
 }
 
-fn window_command(root: &Path) -> Result<Command, String> {
-    let binary = env::current_exe()
-        .map_err(|error| format!("cannot find the running Eon executable: {error}"))?;
-    let mut command = Command::new(binary);
+fn window_command(inputs: &Inputs, root: &Path) -> Result<Command, String> {
+    let mut command = inputs.supervisor_command()?;
     command.env(WINDOW_RUNTIME, root);
     command.env_remove(DELEGATION_MARKER);
     command.env_remove(ROUTE_MARKER);
@@ -785,7 +783,7 @@ pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32
         .mode(0o600)
         .open(&log)
         .map_err(|error| format!("cannot create {}: {error}", log.display()))?;
-    let mut command = window_command(&root)?;
+    let mut command = window_command(inputs, &root)?;
     command.arg("run");
     if let Some(directory) = &options.directory {
         command.arg("--dir").arg(directory);

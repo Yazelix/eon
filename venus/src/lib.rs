@@ -8,6 +8,7 @@ pub const MAX_LINK_BYTES: usize = 4096;
 mod accessibility;
 mod input;
 mod model;
+mod native_command;
 mod render;
 mod scene;
 mod system;
@@ -20,6 +21,7 @@ pub use model::{
     ModelError, SessionModel, WorkspaceModel, active_popup, attention_only_change,
     focused_terminal, labels_only_change,
 };
+pub use native_command::{WindowCommand, external_command};
 pub use render::{
     CellMetrics, FontSettings, FontSetup, FrameTimings, ImageResync, PaddingColor, Palette,
     PaletteContrast, PaletteMode, PanelHeading, PresentOutcome, RenderError, RenderTimings,

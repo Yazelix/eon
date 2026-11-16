@@ -66,6 +66,9 @@ impl ReleaseStage {
 }
 
 pub struct Inputs {
+    /// Original supported launch inputs, or why this invocation is not an Update target.
+    /// Ineligibility never fails an ordinary command or launch.
+    pub launch: Result<super::launch_environment::LaunchInputs, String>,
     pub release_stage: ReleaseStage,
     pub version: &'static str,
     /// The agent skill this build ships, which `eon --skill` prints.
@@ -91,6 +94,15 @@ pub struct Inputs {
 }
 
 impl Inputs {
+    pub(crate) fn supervisor_command(&self) -> Result<Command, String> {
+        let mut command = match &self.launch {
+            Ok(launch) => launch.command(launch.facts()),
+            Err(_) => Command::new(env::current_exe().map_err(|error| error.to_string())?),
+        };
+        super::launch_environment::remove_launch_markers(&mut command);
+        Ok(command)
+    }
+
     pub(crate) fn component_report(&self) -> Result<&str, String> {
         self.component_report.as_deref().map_err(Clone::clone)
     }
@@ -3403,6 +3415,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn launch_capture_survives_supervisor_self_launch_without_old_authority() {
+        let facts = crate::LaunchFacts::decode(
+            b"EON-LAUNCH-1\0/target/bin/eon\0/target/bin/.eon-wrapped\0prefix\0TERMINFO_DIRS\0/target/info\0",
+            Path::new("/target/bin/eon"), Path::new("/target/bin/.eon-wrapped"),
+        ).unwrap();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.launch = crate::LaunchInputs::capture(
+            &facts,
+            vec!["eon".into(), "window".into(), "new".into()],
+            [
+                (
+                    "EON_LAUNCH_FACTS".into(),
+                    "/target/share/eon/launch-environment".into(),
+                ),
+                (
+                    "EON_LAUNCH_SAVED_TERMINFO_DIRS".into(),
+                    "+/user/info".into(),
+                ),
+                ("TERMINFO_DIRS".into(), "/target/info:/user/info".into()),
+                ("EON_ROUTED".into(), "old".into()),
+                ("EON_TERMINAL".into(), "old".into()),
+            ],
+        );
+        let command = inputs.supervisor_command().unwrap();
+        assert_eq!(command.get_program(), "/target/bin/eon");
+        assert_eq!(command.get_args().count(), 0);
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "TERMINFO_DIRS"
+                    && value == Some(OsStr::new("/user/info")))
+        );
+        for name in [
+            "EON_ROUTED",
+            "EON_ATTACH_DELEGATED",
+            "EON_TERMINAL",
+            "EON_TAB",
+        ] {
+            assert!(
+                command
+                    .get_envs()
+                    .all(|(key, value)| key != name || value.is_none())
+            );
+        }
+    }
+
+    #[test]
     fn failed_endpoint_suggests_discovery_instead_of_another_launch() {
         for kind in [EndpointFailureKind::Dead, EndpointFailureKind::Unreachable] {
             let error = unreachable_supervisor(EndpointFailure::new(kind, "test endpoint"), "8644");
@@ -3418,6 +3477,51 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn launch_capture_parent_environment_is_not_forwarded() {
+        if env::var_os("EON_CAPTURE_TEST_CHILD").is_none() {
+            let output = Command::new(env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "cli::tests::launch_capture_parent_environment_is_not_forwarded",
+                    "--nocapture",
+                ])
+                .env("EON_CAPTURE_TEST_CHILD", "1")
+                .env("EON_PARENT_ONLY", "must disappear")
+                .env("EON_ROUTED", "old")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+        let facts = crate::LaunchFacts::decode(
+            b"EON-LAUNCH-1\0/bin/sh\0/bin/.sh-wrapped\0",
+            Path::new("/bin/sh"),
+            Path::new("/bin/.sh-wrapped"),
+        )
+        .unwrap();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.launch = crate::LaunchInputs::capture(
+            &facts,
+            vec!["eon".into()],
+            [(
+                "EON_LAUNCH_FACTS".into(),
+                "/share/eon/launch-environment".into(),
+            )],
+        );
+        let output = inputs
+            .supervisor_command()
+            .unwrap()
+            .args([
+                "-c",
+                "test -z \"${EON_PARENT_ONLY+x}\" && test -z \"${EON_ROUTED+x}\" && printf clean",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"clean");
     }
 
     #[test]

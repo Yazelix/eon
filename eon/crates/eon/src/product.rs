@@ -7,7 +7,7 @@ use eon_workspace_protocol::v46::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut}
 
 pub(crate) const RELEASE_STAGE: ReleaseStage = ReleaseStage::Alpha;
 
-pub(crate) fn inputs() -> Inputs {
+pub(crate) fn inputs(launch: Result<eon_runtime::LaunchInputs, String>) -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v5.json");
     // The composition supplies its Helix here; without it, this build has none.
     let helix = nonempty_environment_path("EON_HX");
@@ -18,6 +18,7 @@ pub(crate) fn inputs() -> Inputs {
             Err(error) => (Err(error.to_string()), Err(error.to_string())),
         };
     Inputs {
+        launch,
         version: env!("CARGO_PKG_VERSION"),
         release_stage: RELEASE_STAGE,
         skill: include_str!("../../../skills/eon/SKILL.md"),
@@ -298,7 +299,10 @@ mod tests {
 
     #[test]
     fn packaged_font_defaults_follow_the_accelerando_omission() {
-        let fonts = inputs().defaults.terminal.font_fallbacks;
+        let fonts = inputs(Err("unwrapped test".into()))
+            .defaults
+            .terminal
+            .font_fallbacks;
         assert!(fonts.iter().any(|font| font == "Symbols Nerd Font Mono"));
         assert_eq!(
             fonts.iter().any(|font| font == "Accelerando Terminal"),
@@ -308,7 +312,7 @@ mod tests {
 
     #[test]
     fn agent_popup_starts_codex_without_its_shared_daemon() {
-        let codex = inputs()
+        let codex = inputs(Err("unwrapped test".into()))
             .defaults
             .agent_commands
             .iter()

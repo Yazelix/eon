@@ -1775,11 +1775,11 @@ impl RunningSession {
     }
 }
 
+/// A popup terminal's owning tab identity when it started.
+pub(super) use super::launch_environment::TAB_VARIABLE;
 /// Names the calling terminal for `eon` commands. Only Orbit terminals carry
 /// it; the supervisor's other children never inherit the launching terminal's.
-pub(super) const TERMINAL_VARIABLE: &str = "EON_TERMINAL";
-/// A popup terminal's owning tab identity when it started.
-pub(super) const TAB_VARIABLE: &str = "EON_TAB";
+pub(super) use super::launch_environment::TERMINAL_VARIABLE;
 /// Runtime-private marker on the default shell the supervisor starts, after it read
 /// the configuration through its log; the managed shell launcher removes it.
 pub(super) const CONFIG_WARNED_VARIABLE: &str = "EON_CONFIG_WARNED";

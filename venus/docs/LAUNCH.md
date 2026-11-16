@@ -60,6 +60,24 @@ attachment retains progress messages.
 
 ### Workspace mode
 
+Eon supplies private native CLI launch inputs for New Window and peer-window
+commands. These fields are an internal same-closure interface, not a public API.
+`EON_NEW_WINDOW_EXECUTABLE` names the validated installed Eon wrapper.
+`EON_NEW_WINDOW_ENVIRONMENT=1` accompanies a complete saved launch baseline:
+each `EON_NEW_WINDOW_ENV_<HEX>` value is a raw original value, with its original
+variable-name bytes encoded as nonempty even-length lowercase hexadecimal.
+Names contain neither NUL nor equals; empty and non-UTF-8 values are preserved.
+Only OS process limits apply. Runtime clears stale fields before exporting and
+includes the resolved Eon configuration directory and selected window namespace.
+
+Venus decodes this snapshot once. Native Eon CLI children start with that
+environment through the supplied wrapper, instead of inheriting Venus's wrapper
+values. Partial, malformed or unknown-version metadata refuses the command
+through its existing notice path. Unwrapped development without the metadata
+keeps ordinary inherited-environment behavior and gains no Update qualification.
+Every other external child, including link handlers and system probes, loses
+these private fields. No presentation stdin/control framing changes.
+
 For an Eon workspace, select workspace mode with only the EONW socket:
 
 ```sh

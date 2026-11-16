@@ -46,6 +46,101 @@ fn run(root: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
+fn launch_capture_never_reaches_managed_shells_or_anima() {
+    use std::os::unix::process::CommandExt;
+    let root = tempfile::tempdir().unwrap();
+    let script = "test -z \"${!EON_LAUNCH_@}\" && printf clean";
+    for tool in ["eon-bash", "anima"] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_eon"));
+        command
+            .env("EON_CONFIG_HOME", root.path())
+            .env("EON_BASH", "bash")
+            .env("EON_ANIMA", "bash")
+            .env("EON_LAUNCH_FACTS", "/missing/capture")
+            .env("EON_LAUNCH_SAVED_TEST", "+secret");
+        if tool == "eon-bash" {
+            command.arg0(tool);
+        } else {
+            command.arg("anima");
+        }
+        let output = command
+            .args(["--noprofile", "--norc", "-c", script])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{tool}: {output:?}");
+        assert_eq!(output.stdout, b"clean");
+    }
+}
+
+#[test]
+fn launch_capture_never_reaches_agent_or_slot_exec() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let probe = root.join("probe");
+    fs::write(
+        &probe,
+        "#!/bin/sh\n! env | grep '^EON_LAUNCH_' && printf clean\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
+    let config_path = root.join("override.toml");
+    config(&config_path, "fake");
+    fs::write(
+        &config_path,
+        fs::read_to_string(&config_path)
+            .unwrap()
+            .replace("never-start-this", probe.to_str().unwrap()),
+    )
+    .unwrap();
+    fs::write(root.join("brief"), "test").unwrap();
+    use std::io::Write;
+    writeln!(
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&config_path)
+            .unwrap(),
+        "\n[slots]\nnice = 0\n[[slots.classes]]\nname = 'probe'\nslots = [1]"
+    )
+    .unwrap();
+    for args in [
+        vec!["launch", "--only", "fake", "brief"],
+        // The unclassified Nix fast path still executes a real external command.
+        vec!["slot", "run", "--", "nix", "eval", "--expr", "1"],
+        vec![
+            "slot",
+            "run",
+            "--class",
+            "probe",
+            "--",
+            probe.to_str().unwrap(),
+        ],
+    ] {
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(&probe, bin.join("nix")).ok();
+        let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+            .env_clear()
+            .env(
+                "PATH",
+                format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+            )
+            .env("HOME", root)
+            .env("EON_CONFIG_HOME", root.join("eon"))
+            .env("ROTA_CONFIG", &config_path)
+            .env("EON_LAUNCH_FACTS", "/missing/capture")
+            .env("EON_LAUNCH_SAVED_TEST", "+secret")
+            .current_dir(root)
+            .arg("agent")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(output.stdout.ends_with(b"clean"), "{output:?}");
+    }
+}
+
+#[test]
 fn agent_config_prefers_eon_then_rota_and_preserves_bad_primary() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
