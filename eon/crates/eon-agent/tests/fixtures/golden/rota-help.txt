@@ -1,0 +1,9 @@
+Usage: rota launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+       rota launch --popup [--only BACKEND] [--dry-run]
+       rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+       rota ps [--json] [--all]
+       rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
+       rota slot ls [--json]
+       rota retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]
+       rota status [--json]
+Config: $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)

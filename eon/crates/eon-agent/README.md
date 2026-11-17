@@ -229,6 +229,9 @@ Custom popup and headless argv remain your explicit command choices too.
   window under its limit as `NAME_left=N%`, adding `(resets TIME)` when the reader
   reports a reset time, for example
   `quota limit: weekly_left=0% (resets 2030-01-08T14:00:00Z)`.
+- `account = "NAME"` names the subscription account a backend draws on; it
+  defaults to the backend's `name`. Backends sharing one account declare the same
+  `account`.
 - A backend without a quota reader requires explicit `allow_unknown_quota = true`.
   An unsuccessful configured reader always refuses. The example disables OpenCode
   until a model and guard are chosen.

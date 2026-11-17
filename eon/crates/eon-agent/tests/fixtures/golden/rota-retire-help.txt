@@ -1,0 +1,5 @@
+Usage: rota retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]
+Guard: resolved cwd, executable, CARGO_TARGET_DIR, open-fd and mapped-file paths, plus cwd directory identity.
+Unreadable details of owned processes keep files and exit 1, naming the PID.
+The caller vouches that NAME and --bead identify the same finished task.
+Bind-mount aliases of agent directories are unsupported and may not be detected.

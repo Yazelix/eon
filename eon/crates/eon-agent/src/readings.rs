@@ -247,7 +247,31 @@ fn running_in(proc: &Path, uid: u32, cap: &Cap) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Runtime's session facts; supplied by the product that owns the invocation inputs.
+/// The host's quota facts, read by the native parsers `eon_codex` and `eon_claude`.
+///
+/// The reader is called with a deadline and returns one JSON object as text, or an error
+/// message (which makes the reading fail). A host without facts returns an error; backends that
+/// use a native parser then fail their reading. Only these keys are read; others are ignored:
+///
+/// ```text
+/// {
+///   "codex_quota":  SNAPSHOT,   // read by parser "eon_codex"
+///   "claude_quota": SNAPSHOT    // read by parser "eon_claude"
+/// }
+/// SNAPSHOT = {
+///   "state": "fresh",           // any other value ("stale", ...) fails the reading
+///   "observed_at": 1720000001000,  // Unix milliseconds when the provider data was fetched;
+///                               // optional; reported as Source::observed_at_ms
+///   "windows": [                // nonempty; in the provider's order
+///     { "duration_minutes": 300,      // unsigned integer
+///       "remaining_percent": 25 }     // number, 0 to 100
+///   ]
+/// }
+/// ```
+///
+/// A missing snapshot, a missing or empty `windows`, or a window without both fields fails the
+/// reading. Window `i` is named `DURATIONm/i` (for example `300m/0`) in limits and output, so
+/// windows sharing a duration stay distinct. Eon supplies this object from `eon session --json`.
 pub type SessionReader<'a> = dyn Fn(Instant) -> Result<String, String> + 'a;
 
 pub fn read(
@@ -278,7 +302,7 @@ pub fn read(
             probe(backend, check, 20, cwd).map_err(|_| "account check failed")?;
         }
         if let Some(reader) = &backend.quota {
-            let get = || {
+            let get = || -> Result<(crate::quota::Quota, Option<u64>), String> {
                 let text = if reader.parser.native() {
                     let deadline = Instant::now()
                         .checked_add(Duration::from_secs(reader.timeout_seconds()))
@@ -296,7 +320,9 @@ pub fn read(
                         .ok_or_else(|| "reader command missing".into())
                         .and_then(|command| probe(backend, command, reader.timeout_seconds(), cwd))
                 };
-                text.and_then(|s| quota::parse(reader.parser, reader.agy_group.as_deref(), &s))
+                let text = text?;
+                let quota = quota::parse(reader.parser, reader.agy_group.as_deref(), &text)?;
+                Ok((quota, quota::observed_at_ms(reader.parser, &text)))
             };
             let mut quota = get();
             if quota.is_err() && allow_refresh {
@@ -306,7 +332,11 @@ pub fn read(
                     quota = get();
                 }
             }
-            let quota = quota.map_err(|e| format!("quota unreadable: {e}"))?;
+            let (quota, observed_at_ms) = quota.map_err(|e| format!("quota unreadable: {e}"))?;
+            reading.source = Some(crate::decision::Source {
+                account: backend.account().into(),
+                observed_at_ms,
+            });
             reading.detail = quota
                 .remaining
                 .iter()
@@ -373,6 +403,61 @@ pub fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn backend(extra: &str) -> Backend {
+        toml::from_str(&format!(
+            "name = 'b'\nroles = ['implement']\nguard = ['true']\ncommands = {{}}\n{extra}"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn readings_report_the_configured_account_and_the_reader_reported_time() {
+        let no_host = |_: Instant| Err("no host".to_string());
+        let command = "[quota]\ncommand = ['printf', '{\"week\":45}']\nparser = 'remaining_json'\n";
+        // Without an `account` key, a backend is its own account; command readers report no time.
+        let reading = read(&backend(command), Path::new("."), false, &no_host);
+        let source = reading.source.expect("a successful reading has a source");
+        assert_eq!(source.account, "b");
+        assert_eq!(source.observed_at_ms, None);
+        // Backends that declare one account share it, whatever their reader.
+        let shared = format!("account = 'acct'\n{command}");
+        assert_eq!(
+            read(&backend(&shared), Path::new("."), false, &no_host)
+                .source
+                .unwrap()
+                .account,
+            "acct"
+        );
+        // A failed reading has no source.
+        let failed = "[quota]\ncommand = ['printf', 'not-json']\nparser = 'remaining_json'\n";
+        assert_eq!(
+            read(&backend(failed), Path::new("."), false, &no_host).source,
+            None
+        );
+        // Host facts report their snapshot's own `observed_at`, in milliseconds, as Eon
+        // Runtime writes it (`workspace.rs` session JSON test: 1720000001000).
+        let native = "account = 'claude-main'\n[quota]\nparser = 'eon_claude'\n";
+        for at in [1_720_000_001_000_u64, 1_720_000_002_000] {
+            let facts = format!(
+                "{{\"claude_quota\":{{\"state\":\"fresh\",\"observed_at\":{at},\
+                 \"windows\":[{{\"duration_minutes\":300,\"remaining_percent\":60}}]}}}}"
+            );
+            let host = |_: Instant| Ok(facts.clone());
+            for _ in 0..2 {
+                let source = read(&backend(native), Path::new("."), false, &host)
+                    .source
+                    .unwrap();
+                assert_eq!(
+                    source,
+                    crate::decision::Source {
+                        account: "claude-main".into(),
+                        observed_at_ms: Some(at),
+                    }
+                );
+            }
+        }
+    }
 
     #[test]
     fn native_quota_matches_session_reader_admission_table() {
@@ -607,7 +692,7 @@ mod tests {
     }
     #[test]
     fn disabled_backend_never_runs_checks() {
-        let config = Config::parse(include_str!("../config.example.toml")).unwrap();
+        let config = Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
         assert_eq!(
             read(&config.backends[3], Path::new("."), false, &|_| panic!(
                 "disabled backend read quota"
@@ -619,7 +704,7 @@ mod tests {
     }
     #[test]
     fn timeout_includes_descendant_output_drain() {
-        let config = Config::parse(include_str!("../config.example.toml")).unwrap();
+        let config = Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
         let start = Instant::now();
         let result = probe(
             &config.backends[0],

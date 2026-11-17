@@ -675,6 +675,7 @@ pub(super) fn run(
     config: &BoatConfig,
     argv: &[String],
     identity: &mut Option<tree::Identity>,
+    program: &str,
 ) -> Result<Outcome, String> {
     let _signals = Signals::install();
     let wall_started = Instant::now();
@@ -1120,7 +1121,7 @@ pub(super) fn run(
         } {
             let _ = writeln!(
                 io::stderr(),
-                "eon agent slot: warm snapshot unavailable ({reason}); retaining stopped pool"
+                "{program} slot: warm snapshot unavailable ({reason}); retaining stopped pool"
             );
         }
         atomic_write(

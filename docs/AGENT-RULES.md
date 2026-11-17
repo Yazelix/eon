@@ -245,7 +245,11 @@ Among workspace crates, Venus and Eon Runtime depend only on the protocol crates
 `orbit-protocol` and `eon-workspace-protocol`, Eon's crates depend on Eon
 Runtime and the protocol crates, and only Orbit depends on `libghostty-vt`.
 The protocol crates stay standalone, with no workspace-inherited settings, so
-projects outside this repository can use them.
+projects outside this repository can use them. The managed-agent core
+`eon/crates/eon-agent` (library `rota`) is standalone too: it depends on no Eon
+crate and uses no workspace-inherited settings, and Eon hosts it as `eon agent`
+through `rota::cli::Host`. Its source lives only in this repository. Publishing
+it as `rota` is gated by `eon-eon-agent-lr8sx.40`.
 
 Yazelix Nova remains an independent product line. Do not make Eon a successor
 repository, compatibility layer, or release channel for Nova.

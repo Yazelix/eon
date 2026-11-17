@@ -1,0 +1,9 @@
+Usage: eon agent launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+       eon agent launch --popup [--only BACKEND] [--dry-run]
+       eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+       eon agent ps [--json] [--all]
+       eon agent slot [--config FILE] run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
+       eon agent slot [--config FILE] ls [--json]
+       eon agent retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]
+       eon agent status [--json]
+Config: <eon config dir>/agent.toml; when absent, $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)

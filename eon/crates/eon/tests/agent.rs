@@ -277,7 +277,7 @@ fn agent_dispatch_keeps_arguments_exit_codes_and_eonbase_boundary() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert_eq!(output.stderr, b"rota: arguments must be UTF-8\n");
+    assert_eq!(output.stderr, b"eon agent: arguments must be UTF-8\n");
     let alias = root.path().join("eonbase");
     symlink(env!("CARGO_BIN_EXE_eon"), &alias).unwrap();
     let output = Command::new(alias)
@@ -330,4 +330,164 @@ fn agent_config_provenance_preserves_filename_bytes() {
         json[0]["config_file"],
         serde_json::json!(path.as_os_str().as_bytes())
     );
+}
+
+/// The `eon agent` twins of eon-agent's tests/golden.rs: goldens captured before the host seam
+/// (eon-eon-agent-lr8sx.39.1). The only differences are the host's program name in the listed
+/// message rows, asserted here explicitly.
+mod golden {
+    use std::{fs, path::Path, process::Command};
+
+    fn golden(name: &str) -> String {
+        fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../eon-agent/tests/fixtures/golden")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    fn root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for child in ["state", "home", "eon"] {
+            fs::create_dir_all(root.join(child)).unwrap();
+        }
+        let config = golden("config.toml").replace("<ROOT>", root.to_str().unwrap());
+        fs::write(root.join("eon/agent.toml"), config).unwrap();
+        fs::write(root.join("brief"), "brief text\n").unwrap();
+        dir
+    }
+
+    fn eon_agent(root: &Path, args: &[&str]) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_eon"))
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", root.join("home"))
+            .env("XDG_CONFIG_HOME", root.join("xdg"))
+            .env("EON_CONFIG_HOME", root.join("eon"))
+            .current_dir(root)
+            .arg("agent")
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    /// Replaces the scratch root with `<ROOT>` and every decision time with 0.
+    fn normalized(root: &Path, bytes: &[u8]) -> String {
+        let text = String::from_utf8(bytes.to_vec())
+            .unwrap()
+            .replace(root.to_str().unwrap(), "<ROOT>");
+        let mut out = String::new();
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("\"time\":") {
+            let (head, tail) = rest.split_at(at + "\"time\":".len());
+            out += head;
+            out += "0";
+            rest = tail.trim_start_matches(|c: char| c.is_ascii_digit());
+        }
+        out + rest
+    }
+
+    #[test]
+    fn eon_agent_help_texts_are_unchanged() {
+        let dir = root();
+        let help = eon_agent(dir.path(), &["--help"]);
+        assert!(help.status.success());
+        assert_eq!(
+            String::from_utf8(help.stdout).unwrap(),
+            golden("eon-agent-help.txt")
+        );
+        let help = eon_agent(dir.path(), &["retire", "--help"]);
+        assert!(help.status.success());
+        assert_eq!(
+            String::from_utf8(help.stdout).unwrap(),
+            golden("eon-agent-retire-help.txt")
+        );
+    }
+
+    #[test]
+    fn eon_agent_names_itself_where_rota_did() {
+        let dir = root();
+        let root = dir.path();
+        let status = eon_agent(root, &["status", "--json"]);
+        assert!(status.status.success(), "{status:?}");
+        // Listed exception: a run-only backend's availability names the host program.
+        assert_eq!(
+            normalized(root, &status.stdout),
+            golden("eon-agent-status.json")
+                .replace("available for rota run", "available for eon agent run")
+        );
+        let dry = eon_agent(root, &["launch", "--dry-run", "brief"]);
+        assert!(dry.status.success(), "{dry:?}");
+        assert_eq!(
+            normalized(root, &dry.stdout),
+            golden("eon-agent-dry-run.stdout")
+        );
+        // Listed exception (closes eon-eon-agent-lr8sx.31): decision lines say `eon agent:`.
+        let stderr = normalized(root, &dry.stderr);
+        assert!(!stderr.contains("rota"), "{stderr}");
+        assert_eq!(
+            stderr,
+            golden("eon-agent-dry-run.stderr").replace("rota: ", "eon agent: ")
+        );
+        // The decision record names no program: a real launch writes rota's record exactly.
+        let launch = eon_agent(root, &["launch", "brief"]);
+        assert!(launch.status.success(), "{launch:?}");
+        let record = fs::read(root.join("state/decisions.jsonl")).unwrap();
+        assert_eq!(normalized(root, &record), golden("rota-decision.jsonl"));
+    }
+
+    #[test]
+    fn eon_agent_config_errors_name_eon_agent() {
+        let dir = root();
+        let root = dir.path();
+        let config = fs::read_to_string(root.join("eon/agent.toml")).unwrap();
+        fs::write(
+            root.join("eon/agent.toml"),
+            format!("{config}\n[run]\nunset_env = ['XDG_RUNTIME_DIR']\n"),
+        )
+        .unwrap();
+        let status = eon_agent(root, &["status"]);
+        assert!(!status.status.success());
+        assert_eq!(
+            String::from_utf8(status.stderr).unwrap(),
+            "eon agent: [run] must keep XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS: eon agent run reaches the systemd user manager through them\n"
+        );
+    }
+
+    #[test]
+    fn eon_agent_slot_delegate_reinvokes_eon_agent() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = root();
+        let root = dir.path();
+        let runner = root.join("runner.sh");
+        fs::write(
+            &runner,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexec \"$@\"\n",
+                root.join("argv").display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&runner, fs::Permissions::from_mode(0o700)).unwrap();
+        // Slot state must be private (owner-only), as Boat checks.
+        fs::set_permissions(root.join("state"), fs::Permissions::from_mode(0o700)).unwrap();
+        let config = fs::read_to_string(root.join("eon/agent.toml")).unwrap();
+        fs::write(
+            root.join("eon/agent.toml"),
+            format!(
+                "{config}\n[slots]\nlocal_runner = ['{}']\n",
+                runner.display()
+            ),
+        )
+        .unwrap();
+        let output = eon_agent(root, &["slot", "run", "--", "sh", "-c", "exit 7"]);
+        assert_eq!(output.status.code(), Some(7), "{output:?}");
+        let argv = fs::read_to_string(root.join("argv")).unwrap();
+        let argv: Vec<_> = argv.lines().collect();
+        assert_eq!(argv[0], env!("CARGO_BIN_EXE_eon"));
+        assert_eq!(argv[1..3], ["agent", "_slot-local-exec"]);
+        assert_eq!(argv[4..], ["--", "sh", "-c", "exit 7"]);
+    }
 }

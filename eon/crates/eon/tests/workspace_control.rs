@@ -24413,7 +24413,7 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
         let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         let session = window.eon(&["session", "--json"]);
         assert!(session.status.success(), "{case}: {session:?}");
-        let config = rota::config::Config::parse(&text).unwrap();
+        let config = rota::config::Config::parse(&text, "rota").unwrap();
         for (index, parser) in [Parser::EonCodex, Parser::EonClaude]
             .into_iter()
             .enumerate()
@@ -24541,6 +24541,7 @@ fn native_quota_deadline_bounds_discovery_and_inspection_like_the_old_probe() {
         let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         let config = rota::config::Config::parse(
             &fs::read_to_string(root.join("config/agent.toml")).unwrap(),
+            "rota",
         )
         .unwrap();
         let old = rota::readings::probe(

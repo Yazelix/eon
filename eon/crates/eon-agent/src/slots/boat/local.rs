@@ -162,6 +162,7 @@ pub(in crate::slots) fn run(
     command: &mut Command,
     reason: &str,
     tree: Option<&str>,
+    program: &str,
 ) -> io::Result<ExitStatus> {
     if io::stdin().is_terminal() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return status(command);
@@ -188,7 +189,7 @@ pub(in crate::slots) fn run(
     atomic_write(&receipt_path, &serde_json::to_vec(&receipt)?)?;
     let _ = writeln!(
         io::stderr(),
-        "eon agent slot: local output {}",
+        "{program} slot: local output {}",
         directory.join("output.log").display()
     );
     let mut complete = false;
@@ -228,13 +229,13 @@ pub(in crate::slots) fn run(
     if let Err(error) = atomic_write(&receipt_path, &serde_json::to_vec(&receipt)?) {
         let _ = writeln!(
             io::stderr(),
-            "eon agent slot: cannot finish local receipt: {error}"
+            "{program} slot: cannot finish local receipt: {error}"
         );
     }
     if !complete {
         let _ = writeln!(
             io::stderr(),
-            "eon agent slot: local output recording incomplete"
+            "{program} slot: local output recording incomplete"
         );
     }
     status

@@ -10,6 +10,19 @@ pub struct Reading {
     pub running: usize,
     pub problem: Option<String>,
     pub detail: String,
+    /// Whose usage this is and when it was fetched; set on a successful quota reading.
+    /// Not serialized: nothing consumes it yet.
+    #[serde(skip)]
+    pub source: Option<Source>,
+}
+
+/// The account a quota reading describes and when its provider data was fetched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Source {
+    pub account: String,
+    /// When the provider data was fetched, in Unix milliseconds, as the reader reports it;
+    /// None when the reader reports no time.
+    pub observed_at_ms: Option<u64>,
 }
 
 pub fn availability(backend: &Backend, reading: &Reading, role: Role) -> Result<(), String> {
@@ -225,7 +238,7 @@ pub fn choose(
 mod tests {
     use super::*;
     fn config() -> Config {
-        Config::parse(include_str!("../config.example.toml")).unwrap()
+        Config::parse(include_str!("../config.example.toml"), "rota").unwrap()
     }
     fn readings(config: &Config) -> Vec<Reading> {
         config

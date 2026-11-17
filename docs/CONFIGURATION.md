@@ -140,6 +140,10 @@ role restrictions. A refused pin never selects another backend. Ordinary
 launch and run selection are unchanged. A successful pinned launch updates
 the shared rotation cursor as usual; the next ordinary launch rotates after it.
 
+Each backend may set `account = "NAME"`, the subscription account it draws
+on; it defaults to the backend's `name`. Backends that use one account under
+different models or wrappers declare the same `account`.
+
 Resume reads the admitted backend's native store. Claude uses
 `CLAUDE_CONFIG_DIR`, or `~/.claude` under its effective home when that variable
 is absent. To keep the popup on sessions in `~/.claude`, pin the configured

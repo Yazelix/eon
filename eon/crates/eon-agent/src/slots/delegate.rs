@@ -25,7 +25,6 @@ pub(super) fn run(
     slots: &Slots<'_>,
     ticket: &Ticket,
     source: Option<&boat::tree::Identity>,
-    eon: bool,
 ) -> Result<u8, Failure> {
     boat::private_directory(&slots.root.join("delegates")).map_err(failure)?;
     let directory = tempfile::Builder::new()
@@ -42,9 +41,7 @@ pub(super) fn run(
     let mut command = Command::new(&slots.config.local_runner[0]);
     command.args(&slots.config.local_runner[1..]);
     command.arg(std::env::current_exe().map_err(failure)?);
-    if eon {
-        command.arg("agent");
-    }
+    command.args(slots.reinvoke);
     command.args([
         "_slot-local-exec",
         path.to_str().ok_or_else(|| failure("local-record-path"))?,
@@ -74,6 +71,7 @@ pub(super) fn run(
             &mut command,
             reason,
             source.map(boat::tree::Identity::tree),
+            slots.program,
         )
     }
     .map_err(failure)?;

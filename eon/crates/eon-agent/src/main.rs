@@ -1,8 +1,10 @@
 #[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {
-    rota::cli::main(std::env::args_os().skip(1), Ok(None), &|_| {
-        Err("native quota requires eon agent".into())
-    })
+    let session = |_: std::time::Instant| Err("native quota requires eon agent".into());
+    rota::cli::main(
+        std::env::args_os().skip(1),
+        &rota::cli::Host::rota(&session),
+    )
 }
 
 #[cfg(not(target_os = "linux"))]

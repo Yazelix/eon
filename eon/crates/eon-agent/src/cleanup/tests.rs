@@ -34,7 +34,7 @@ impl Fixture {
         }
     }
     fn config(base: &Path) -> Config {
-        let mut config = Config::parse(include_str!("../../config.example.toml")).unwrap();
+        let mut config = Config::parse(include_str!("../../config.example.toml"), "rota").unwrap();
         config.state_file = base.join("state/last");
         config.log_file = base.join("state/log");
         config.projects.clear();

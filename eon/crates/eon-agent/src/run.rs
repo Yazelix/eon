@@ -554,7 +554,7 @@ fn utf8(path: &Path) -> Result<&str, Failure> {
 pub fn run(
     config: &Config,
     options: &RunOptions,
-    session: &readings::SessionReader<'_>,
+    host: &crate::cli::Host<'_>,
 ) -> Result<(), Failure> {
     let input = |what: &str, e: std::io::Error| (2, format!("cannot use {what}: {e}"));
     let brief = fs::canonicalize(&options.brief).map_err(|e| input("brief file", e))?;
@@ -602,14 +602,14 @@ pub fn run(
         ));
     }
     // Wait for other rota selections instead of failing a batch of runs.
-    let lock = lock(config, true)?;
+    let lock = lock(config, true, host.program)?;
     let last = match fs::read_to_string(&config.state_file) {
         Ok(last) => Some(last),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(io_failure(e)),
     };
     let last = last.as_deref().map(str::trim);
-    let mut readings = readings::collect(config, &indices, &cwd, true, session);
+    let mut readings = readings::collect(config, &indices, &cwd, true, host.session);
     let pick = decision::rotate(config, &indices, &readings, options.role, last).map(|index| {
         decision::Pick {
             index,
@@ -617,7 +617,7 @@ pub fn run(
         }
     });
     log(config, options.role, None, &cwd, &readings, pick.as_ref())?;
-    print_readings(config, &indices, &readings, options.role);
+    print_readings(config, &indices, &readings, options.role, host.program);
     let Some(pick) = pick else {
         return Err((3, "no backend available, refusing".into()));
     };
@@ -646,7 +646,10 @@ pub fn run(
         Err(e) => Some(e.clone()),
     } {
         let needs = "systemd 254 or newer and cgroup v2 with cgroup.kill (Linux 5.14 or newer)";
-        let message = format!("rota run needs a systemd user manager, {needs} ({detail})");
+        let message = format!(
+            "{} run needs a systemd user manager, {needs} ({detail})",
+            host.program
+        );
         return Err((1, message));
     }
     atomic_write(&config.state_file, format!("{}\n", backend.name).as_bytes())
@@ -793,7 +796,7 @@ pub fn run(
         ));
     }
     if code == 0 {
-        let _ = writeln!(std::io::stderr(), "rota: {id} {message}");
+        let _ = writeln!(std::io::stderr(), "{}: {id} {message}", host.program);
         return Ok(());
     }
     Err((code, format!("{id} {message}")))
@@ -860,7 +863,7 @@ mod tests {
         let values = [("{cwd}", "/w/{effort}"), ("{effort}", "xhigh")];
         assert_eq!(fill("effort={effort}", &values), "effort=xhigh");
         assert_eq!(fill("{cwd}/{x}", &values), "/w/{effort}/{x}");
-        let config = Config::parse(include_str!("../config.example.toml")).unwrap();
+        let config = Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
         let run = config.backends[2].run.as_ref().unwrap();
         let built = argv(run, Role::Implement, &values, &["/d1", "/d2"]);
         let at = built.iter().position(|a| a == "workspace-write").unwrap();

@@ -68,6 +68,22 @@ fn rfc3339(text: &str) -> bool {
     }
 }
 
+/// When the reader says its usage data was fetched, in Unix milliseconds. Only the host's
+/// quota facts carry a time today: their snapshot's `observed_at`, which is milliseconds (see
+/// [`crate::readings::SessionReader`]). Command readers report none.
+pub fn observed_at_ms(parser: Parser, text: &str) -> Option<u64> {
+    let key = match parser {
+        Parser::EonCodex => "codex_quota",
+        Parser::EonClaude => "claude_quota",
+        _ => return None,
+    };
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()?
+        .get(key)?
+        .get("observed_at")?
+        .as_u64()
+}
+
 pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quota, String> {
     let mut windows = Windows::new();
     let mut resets = Resets::new();

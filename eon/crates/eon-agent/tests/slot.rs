@@ -298,14 +298,18 @@ fn snapshot_publish_rechecks_standard_plan_after_gate() {
         "paid-after-gate-mismatch",
     )
     .unwrap();
-    assert!(
-        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
-            .output()
-            .unwrap()
-            .status
-            .success()
-    );
+    let output = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
     assert!(!f.dir.path().join("provider/snapshot").exists());
+    // Under the rota host the warning names rota (was a hard-coded `eon agent slot:`).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("rota slot: warm snapshot unavailable (snapshot-unverified-standard-plan)"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -1334,7 +1338,16 @@ fn boat_policy_budget_and_connectivity_negatives_use_local_queue() {
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        assert!(String::from_utf8_lossy(&result.stderr).contains("where=local reason="));
+        // Under the rota host the fallback line names rota (was a hard-coded `eon agent slot:`).
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        // Under the rota host every fallback line names rota (were hard-coded `eon agent slot:`),
+        // including the non-terminal local fallback's output line.
+        assert!(
+            stderr.contains("rota slot: where=local reason="),
+            "{stderr}"
+        );
+        assert!(stderr.contains("rota slot: local output "), "{stderr}");
+        assert!(!stderr.contains("eon agent"), "{stderr}");
         assert!(f.dir.path().join("local-ran").exists());
     }
     let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();

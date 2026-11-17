@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent` names itself in its messages: decision, error and slot lines
+  start with `eon agent:` instead of `rota:`, including the lines the Agent
+  popup shows before the agent starts, and a run-only backend's status reads
+  `available for eon agent run`. A backend may declare the subscription
+  `account` it draws on (`eon-eon-agent-lr8sx.39.1`).
+
 - `eon pane create --tab TAB [--no-focus] [--json] [-- COMMAND...]` adds the
   pane to tab TAB of the session instead of the caller's or the active tab,
   so an agent can start a session in its project's tab. The active tab, the

@@ -6943,6 +6943,85 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   improvement on the moved code. Proven clauses are only those the move's
   beads prove.
 
+  Amended on 2026-11-17 (`eon-eon-agent-lr8sx.39`; approved by eon-lead
+  under Lucca's delegation; its policy clauses carry Lucca's 2026-11-16
+  rules). Each clause takes effect when the named child lands and is proven
+  only by that child's proof; until then the moved behavior above stands.
+
+  1. **Core and host** (`.39.1`). The managed-agent core is the `rota`
+     library in `eon/crates/eon-agent`, whose only source is this repository.
+     It depends on no Eon crate and also builds as a standalone `rota`
+     binary; publishing it is gated by `eon-eon-agent-lr8sx.40`. `eon agent`
+     is Eon's host over it: the host supplies the program name used in usage
+     and every message line (`eon agent:`), Eon's `agent.toml`, Eon's quota
+     facts in process, and which optional surfaces it offers. Every backend
+     belongs to an account (`account`, by default its name); backends that
+     draw on one subscription account declare the same one. Every quota
+     reading reports its account and `observed_at`, when the provider data was
+     fetched, as its reader reports it.
+  2. **Order** (`.39.2`). Admission picks the first eligible backend in
+     configured order; nothing rotates. `--only` restricts candidates for an
+     explicit single-backend run; fleet callers do not use it to choose
+     between accounts. The implement fallback is unchanged. The person's
+     Agent popup keeps its `popup_backend` pin, which takes precedence over
+     configured order for popup launches only.
+  3. **Fresh readings** (`.39.2`). The quota reader contract carries
+     `observed_at`, the time the provider data was fetched. For a backend that
+     sets limits, an admission consumes (account, observed_at). A later
+     admission for that account needs a later `observed_at`: it reads again
+     (running a configured refresh where one exists) and holds when it is
+     unchanged. A failed or unreadable reading holds, and a reading without
+     `observed_at` counts as unreadable. `--dry-run` reads but consumes
+     nothing. Backends without limits keep their existing
+     `allow_unknown_quota` behavior.
+  4. **Windows** (`.39.2`). A window that a role's limits name must be in the
+     reading, or admission holds, unless the backend declares that window
+     absent (`absent_windows`). A window used at or above its `max_used`
+     holds. `allow_missing` is removed; `allow_unknown_quota` is invalid on a
+     backend that sets limits; a backend that sets limits declares `account`.
+  5. **Leads** (`.39.2`). Lead launches are exempt from the quota gate
+     entirely: role `lead` reads no quota, consumes no observation and checks
+     no limits; the backend's enabled state, guard, account check and caps
+     still apply. It is admitted only by `launch` in the calling terminal,
+     refused for `run` and `--pane`, and recorded in the decision log. It
+     marks lead launches by convention, not as a security boundary.
+  6. **Projects** (`.39.3`). `[projects.NAME]`, selected by `--project NAME`
+     or by the working directory's repository, sets live-agent caps in total,
+     per role and per backend; guards per role; and per-role command overlays,
+     which apply to every backend that role can pick. Launch commands accept
+     `{name}` and `{add_dirs}` as `run` commands do.
+  7. **Waiting and exits** (`.39.4`). `launch` and `run` accept
+     `--wait DURATION`: admission retries with new readings until it admits or
+     the deadline passes, with no ordering among waiters. A hold (quota, a
+     consumed observation, cap, guard, project cap, or the wait deadline)
+     exits 75; a refusal that waiting cannot change (no backend serves the
+     role, an unknown project or `--only` backend) exits 69; invalid input or
+     configuration exits 2; I/O or launch failure exits 1. `--pane` keeps
+     forwarding EON-C10's 3 and 4. Every hold and refusal names its reason on
+     stderr and in `--json`.
+  8. **Receipts** (`.39.5`). `run` prints a JSON started receipt and then a
+     finished receipt on stdout, naming the run, its log path and its exit
+     code; its own exit carries the provider's status, and 124 on timeout.
+  9. **Panes** (`.39.7`, Eon host only). `eon agent launch --pane [--tab TAB]
+     --label LABEL [--json]` admits as `launch` does and, while still holding
+     the admission lock, creates an unfocused pane in the caller's tab or in
+     TAB, names it LABEL and prints its pane ID. It then waits for a working
+     attention state within a configured time; a failed check, including an
+     agent stopped at a trust prompt, exits non-zero naming the pane and the
+     reason. Folder trust is applied only where the backend's configuration
+     asks for it (`trusted_settings`), as `launch` already does; Eon never
+     answers a prompt by sending keys. A hold creates no pane.
+
+  **Fleet profile** (Lucca, 2026-11-16; configuration, not code). Claude
+  accounts are tried in configured order, sclaude then uclaude, never pinned.
+  Every Claude launch takes a fresh reading and is admitted only under 50%
+  use of the account's five-hour window and under 40% use of its week, as
+  ceilings: a role's configured limits may be stricter (the fleet runs
+  sclaude implement at 30% of five hours); an unreadable window counts as
+  over; an account with no five-hour window (uclaude) is gated on its week
+  alone. Lead launches are exempt. The core keeps these limits configurable;
+  changing this profile is Lucca's call.
+
   **Delivered popup mode (`eon-eon-agent-lr8sx.28`).** On Linux,
   `eon agent launch --popup [--only BACKEND] [--dry-run]` accepts no prompt
   file and admits implement/high using the moved launcher's configuration,
@@ -6964,9 +7043,11 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   account checks, quota limits, caps, preparation and environment. A pinned
   configured fallback uses the existing reported `FALLBACK` decision path.
   Failed admission, including an unavailable popup command, refuses with
-  exit 3 and never selects another backend or retries through unmanaged
+  exit 3 (with `.39.4`: 75 for a hold, 69 for a refusal waiting cannot
+  change) and never selects another backend or retries through unmanaged
   built-ins. An exec failure keeps exit 1. Existing diagnostic retention,
-  decision records, lock and rotation behavior remain in force. Dry-run
+  decision records and lock behavior remain in force, and selection follows
+  configured order (with `.39.2`). Dry-run
   applies the same pin without launching or mutating state.
 
   Popup resume uses the admitted backend's effective native configuration
@@ -7099,8 +7180,10 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
     256-argument and frame bounds. Larger briefs use headless stdin, up to
     1 MiB. Runtime executes argv directly, without
     a shell or rescanning substitutions, with the backend account environment
-    after inherited agent-session markers are removed. It does not change
-    provider trust, approvals, sandbox settings or credentials. Explicit user
+    after inherited agent-session markers are removed. It changes provider
+    trust only where the backend's configuration asks for it
+    (`trusted_settings`), for the launch directory, and never approvals,
+    sandbox settings or credentials. Explicit user
     argv remains the user's choice. With exec, provider stdin/output and exit
     status remain the provider's; structured output is permitted only for
     dry-run, before exec.
@@ -7177,7 +7260,7 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
     log follower or completion report. EON-C31/C39 own terminal attention.
   - **Dry-run.** Returns the prospective choice, reason codes and advisory
     counts without starting an agent, taking an admission lock,
-    advancing rotation, writing state/cache/log/registry, applying
+    consuming an observation, writing state/cache/log/registry, applying
     trust or preparation changes, or refreshing quota. Read-only custom probes
     may run. No brief content, arbitrary argv or environment values are printed.
   - **CLI/configuration projection.** Human and JSON output reflect the same
@@ -7193,10 +7276,11 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
     command and configuration documentation. Loss of stdout never abandons a
     live run's cleanup and final recording.
 - **Important failures:**
-  - New commands retain EON-C10 status meanings: 1 for admission/operational
-    refusal, 2 invalid syntax/configuration or unsupported option combination,
-    130 interruption; --pane forwards C10 target/supervisor statuses 3/4.
-    Standalone admission never uses 3 for refusal. EON-C36 owns typing status 5.
+  - New commands use 75 for a hold that waiting can change, 69 for a refusal
+    it cannot, 1 for operational failure, 2 invalid syntax/configuration or
+    unsupported option combination, 130 interruption; --pane forwards C10
+    target/supervisor statuses 3/4. Admission never uses 3 or 4 for its own
+    refusals. EON-C36 owns typing status 5.
     Stable failure codes and exact JSON/attempt keys are specified in the
     accompanying CLI documentation. Missing target codes are retained.
   - After a headless start, recorded backend exit status or 128+signal passes
@@ -7211,8 +7295,9 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
     admission-lock acquisition and the configured guard/account checks that
     use it; quota readers retain their own deadlines. It is not the run's
     execution timeout. After acquiring the lock, capacity is evaluated once;
-    no qualifying backend means refusal. There is no capacity queue or
-    `run --wait`. Probe output, account environment and raw provider error
+    no qualifying backend means refusal. There is no capacity queue;
+    `--wait DURATION` retries admission with new readings until its
+    deadline, with no ordering among waiters. Probe output, account environment and raw provider error
     text are not copied to EONW, metadata logs or diagnostics.
   - Failed spawn/registration releases only resources proven to belong to
     that attempt; possible partial starts retain their identity/effects for
@@ -7220,9 +7305,12 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   - Native on-demand reads retain C27's current bounds and Claude shared
     backoff. Codex remains per supervisor/collector: cross-invocation read
     spacing and failure persistence are not guaranteed by this contract.
-- **Owner:** Eon Runtime owns configuration resolution, admission, quota
-  adaptation, cap enforcement, execution and attempt records. Eon owns product
-  defaults and distribution. Orbit retains persistent terminal/PTY ownership;
+- **Owner:** The `rota` core (`eon/crates/eon-agent`) owns configuration
+  resolution, admission, quota adaptation, cap enforcement, execution and
+  attempt records. The `eon` crate hosts it as `eon agent`, supplying the
+  program name, configuration path and Eon Runtime's quota facts, and owns
+  pane placement and the launch check. Eon owns product defaults and
+  distribution. Orbit retains persistent terminal/PTY ownership;
   Venus presents typed state. User/provider tools own authentication and
   provider permission/trust policy.
 - **Boundary:** Full Eon only; not eonbase. No new network/MCP API, provider
@@ -7273,7 +7361,8 @@ implementation slices land.
 ### Planned EON-C9 amendment — add to Result
 
 > New keys in existing `[agents]` configure managed agents, resolved by Runtime
-> for EON-C40. Its backend array order is rotation order; a supplied array
+> for EON-C40. Its backend array order is selection order: the first
+> eligible backend is admitted; a supplied array
 > replaces built-ins rather than merging them. Built-in popup candidates keep
 > Codex, Grok, OpenCode, Pi, Claude order and current launch/resume commands.
 > Built-in Codex launch and popup commands disable the shared daemon so

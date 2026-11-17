@@ -38,9 +38,14 @@ pub struct RunOptions<'a> {
     argv: &'a [String],
 }
 
-pub fn parse(args: &[String]) -> Result<Options<'_>, Failure> {
+pub fn parse<'a>(args: &'a [String], program: &str) -> Result<Options<'a>, Failure> {
     let bad = || {
-        (2, "usage: rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND... | rota slot ls [--json]".into())
+        (
+            2,
+            format!(
+                "usage: {program} slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND... | {program} slot ls [--json]"
+            ),
+        )
     };
     match args {
         [ls] if ls == "ls" => return Ok(Options::List { json: false }),
@@ -485,6 +490,10 @@ impl Drop for Pending {
 
 struct Slots<'a> {
     config: &'a SlotConfig,
+    /// The host program's name, for message lines.
+    program: &'a str,
+    /// Arguments that re-invoke the host program from its executable.
+    reinvoke: &'a [&'a str],
     root: PathBuf,
     queue: PathBuf,
     warned: HashSet<PathBuf>,
@@ -542,8 +551,9 @@ impl Slots<'_> {
         (
             3,
             format!(
-                "cannot register a ticket in {}: {error}. Give rota write access to this queue directory",
-                self.queue.display()
+                "cannot register a ticket in {}: {error}. Give {} write access to this queue directory",
+                self.queue.display(),
+                self.program
             ),
         )
     }
@@ -606,7 +616,8 @@ impl Slots<'_> {
                         if self.warned.insert(path.clone()) {
                             let _ = writeln!(
                                 io::stderr(),
-                                "rota slot: malformed live ticket {}",
+                                "{} slot: malformed live ticket {}",
+                                self.program,
                                 path.display()
                             );
                         }
@@ -689,7 +700,11 @@ impl Slots<'_> {
 
     fn log(&self, event: &str, ticket: &Ticket, slot: Option<u16>, code: Option<u8>) {
         if let Err(e) = self.append_event(event, ticket, slot, code) {
-            let _ = writeln!(io::stderr(), "rota slot: cannot log {event}: {e}");
+            let _ = writeln!(
+                io::stderr(),
+                "{} slot: cannot log {event}: {e}",
+                self.program
+            );
         }
     }
 
@@ -757,7 +772,7 @@ fn command(config: &SlotConfig, options: &RunOptions<'_>, slot: u16, token: &str
     command
 }
 
-fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Result<u8, Failure> {
+fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Failure> {
     let class = class_for(slots.config, options)?;
     let cwd = std::env::current_dir()
         .map_err(io_failure)?
@@ -766,7 +781,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Resu
     let pid = process::id();
     let process_start = proc_start(pid)
         .map_err(io_failure)?
-        .ok_or_else(|| io_failure("cannot read rota process identity"))?;
+        .ok_or_else(|| io_failure(format!("cannot read {} process identity", slots.program)))?;
     let nesting_token = random()?;
     let (mut ticket, pending) = {
         let _queue = slots.queue_lock(true).map_err(|e| slots.refuse_queue(e))?;
@@ -811,7 +826,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Resu
         }
         if !ticket.remote && !slots.config.local_runner.is_empty() {
             drop(pending);
-            let result = delegate::run(&slots, &ticket, source.as_ref(), eon);
+            let result = delegate::run(&slots, &ticket, source.as_ref());
             slots.log(
                 "exit",
                 &ticket,
@@ -851,7 +866,13 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Resu
                         drop(ranked);
                         drop(_queue);
                         slots.log("grant", &ticket, None, None);
-                        match boat::run(lease, &slots.config.boat, options.argv, &mut source) {
+                        match boat::run(
+                            lease,
+                            &slots.config.boat,
+                            options.argv,
+                            &mut source,
+                            slots.program,
+                        ) {
                             Ok(boat::Outcome::Local(reason)) => {
                                 ticket.remote = false;
                                 ticket.fallback_reason = Some(reason.clone());
@@ -875,7 +896,8 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Resu
                                 slots.log("fallback", &ticket, None, None);
                                 let _ = writeln!(
                                     io::stderr(),
-                                    "eon agent slot: where=local reason={reason}"
+                                    "{} slot: where=local reason={reason}",
+                                    slots.program
                                 );
                             }
                             result => {
@@ -941,7 +963,11 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Resu
         std::thread::sleep(poll);
     };
     let slot = holder.slot;
-    let _ = writeln!(io::stderr(), "rota slot: slot {slot}, pid {pid}");
+    let _ = writeln!(
+        io::stderr(),
+        "{} slot: slot {slot}, pid {pid}",
+        slots.program
+    );
     let mut child = command(slots.config, options, slot, &nesting_token);
     let status = source
         .as_ref()
@@ -958,6 +984,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Resu
                     &mut child,
                     reason,
                     source.as_ref().map(boat::tree::Identity::tree),
+                    slots.program,
                 ),
                 None => child.status(),
             }
@@ -997,7 +1024,8 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>, eon: bool) -> Resu
     if let Err(e) = cleanup {
         let _ = writeln!(
             io::stderr(),
-            "rota slot: cannot remove holder for slot {slot}: {e}"
+            "{} slot: cannot remove holder for slot {slot}: {e}",
+            slots.program
         );
     }
     status
@@ -1131,7 +1159,11 @@ fn describe(ticket: &Ticket, age_ns: u64) -> String {
     )
 }
 
-pub fn run(config: &Config, options: Options<'_>, eon: bool) -> Result<u8, Failure> {
+pub fn run(
+    config: &Config,
+    options: Options<'_>,
+    host: &crate::cli::Host<'_>,
+) -> Result<u8, Failure> {
     let root = state_dir(&config.state_file).join("slots");
     if matches!(options, Options::Run(_))
         && (!config.slots.boat.allow_shapes.is_empty() || !config.slots.local_runner.is_empty())
@@ -1143,6 +1175,8 @@ pub fn run(config: &Config, options: Options<'_>, eon: bool) -> Result<u8, Failu
     }
     let slots = Slots {
         config: &config.slots,
+        program: host.program,
+        reinvoke: host.reinvoke,
         queue: root.join("queue"),
         root,
         warned: HashSet::new(),
@@ -1161,7 +1195,7 @@ pub fn run(config: &Config, options: Options<'_>, eon: bool) -> Result<u8, Failu
                     .exec(),
             ))
         }
-        Options::Run(options) => run_queued(slots, &options, eon),
+        Options::Run(options) => run_queued(slots, &options),
         Options::List { json } => list(slots, json, observed_flocks, io::stdout().lock()),
     }
 }
@@ -1176,6 +1210,8 @@ mod tests {
         let config = SlotConfig::default();
         let slots = Slots {
             config: &config,
+            program: "rota",
+            reinvoke: &[],
             root: directory.path().to_path_buf(),
             queue: directory.path().join("queue"),
             warned: HashSet::new(),

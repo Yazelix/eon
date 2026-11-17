@@ -201,7 +201,7 @@ pub fn io_failure(error: impl std::fmt::Display) -> Failure {
 }
 
 /// Serializes rota's backend selection; the descriptor closes on exec.
-pub fn lock(config: &Config, wait: bool) -> Result<File, Failure> {
+pub fn lock(config: &Config, wait: bool, program: &str) -> Result<File, Failure> {
     let mut lock_path = config.state_file.as_os_str().to_os_string();
     lock_path.push(".lock");
     let lock_path = PathBuf::from(lock_path);
@@ -221,7 +221,10 @@ pub fn lock(config: &Config, wait: bool) -> Result<File, Failure> {
     };
     locked.map_err(|e| {
         if e.kind() == std::io::ErrorKind::WouldBlock {
-            (3, "another rota command is selecting a backend".into())
+            (
+                3,
+                format!("another {program} command is selecting a backend"),
+            )
         } else {
             io_failure(e)
         }
@@ -234,12 +237,13 @@ pub fn print_readings(
     indices: &[usize],
     readings: &[decision::Reading],
     role: Role,
+    program: &str,
 ) {
     for index in indices {
         let b = &config.backends[*index];
         let r = &readings[*index];
         eprintln!(
-            "rota: {} [{}]: {}",
+            "{program}: {} [{}]: {}",
             b.name,
             decision::availability(b, r, role)
                 .err()
@@ -249,11 +253,7 @@ pub fn print_readings(
     }
 }
 
-pub fn run(
-    config: &Config,
-    options: &Options,
-    session: &readings::SessionReader<'_>,
-) -> Result<(), Failure> {
+pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> Result<(), Failure> {
     let brief = if options.popup {
         None
     } else {
@@ -297,7 +297,7 @@ pub fn run(
     let _lock = if options.dry_run {
         None
     } else {
-        Some(lock(config, false)?)
+        Some(lock(config, false, host.program)?)
     };
     let last = match fs::read_to_string(&config.state_file) {
         Ok(last) => Some(last),
@@ -309,7 +309,7 @@ pub fn run(
         .copied()
         .filter(|index| !options.popup || config.backends[*index].popup_command().is_some())
         .collect::<Vec<_>>();
-    let mut readings = readings::collect(config, &checked, &cwd, !options.dry_run, session);
+    let mut readings = readings::collect(config, &checked, &cwd, !options.dry_run, host.session);
     if options.popup {
         for index in &indices {
             if config.backends[*index].popup_command().is_none() {
@@ -336,13 +336,13 @@ pub fn run(
             result.as_ref().ok(),
         )?;
     }
-    print_readings(config, &indices, &readings, options.role);
+    print_readings(config, &indices, &readings, options.role, host.program);
     let pick = result.map_err(|e| (e.code, e.message))?;
     let backend = &config.backends[pick.index];
     if pick.fallback {
         eprintln!(
-            "rota: FALLBACK {} (no normal backend available)",
-            backend.name
+            "{}: FALLBACK {} (no normal backend available)",
+            host.program, backend.name
         );
     }
     println!("pick: {}", backend.name);
@@ -468,7 +468,7 @@ mod tests {
     }
     #[test]
     fn renders_shell_arguments_without_prompt_content() {
-        let config = Config::parse(include_str!("../config.example.toml")).unwrap();
+        let config = Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
         let command = display_command(
             &config.backends[3],
             Level::High,

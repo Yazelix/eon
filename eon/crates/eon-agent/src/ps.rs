@@ -92,7 +92,7 @@ pub fn line(session: &Session, alive: bool, now: u64) -> String {
     parts.join(" ")
 }
 
-pub fn run(config: &Config, options: &PsOptions) -> Result<(), Failure> {
+pub fn run(config: &Config, options: &PsOptions, program: &str) -> Result<(), Failure> {
     let (sessions, problems) = session::list(&config.state_file).map_err(io_failure)?;
     let now = now();
     let kept: Vec<_> = sessions
@@ -117,7 +117,7 @@ pub fn run(config: &Config, options: &PsOptions) -> Result<(), Failure> {
         }
     }
     for problem in &problems {
-        eprintln!("rota: {problem}");
+        eprintln!("{program}: {problem}");
     }
     if !problems.is_empty() {
         return Err((1, format!("unreadable session records: {}", problems.len())));

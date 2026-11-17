@@ -23,11 +23,18 @@ fn main() -> ExitCode {
     }
     #[cfg(target_os = "linux")]
     if product_cli && arguments.get(1).is_some_and(|command| command == "agent") {
-        let primary =
-            eon_runtime::configuration_directory().map(|root| Some(root.join("agent.toml")));
-        return rota::cli::main(arguments.into_iter().skip(2), primary, &|deadline| {
-            eon_runtime::session_json(&inputs, deadline)
-        });
+        let session = |deadline| eon_runtime::session_json(&inputs, deadline);
+        let host = rota::cli::Host {
+            program: "eon agent",
+            reinvoke: &["agent"],
+            config: eon_runtime::configuration_directory()
+                .map(|root| Some(root.join("agent.toml"))),
+            config_label: Some("<eon config dir>/agent.toml"),
+            slot_config_flag: true,
+            report_config_file: true,
+            session: &session,
+        };
+        return rota::cli::main(arguments.into_iter().skip(2), &host);
     }
     let invoked = || update::Build {
         version: Some(inputs.version.into()),

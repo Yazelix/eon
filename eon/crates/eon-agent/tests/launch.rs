@@ -13,7 +13,7 @@ fn shipped_example_commands_preserve_backend_permissions_and_tui_isolation() {
     use rota::config::{Config, Level, Role};
 
     let example = include_str!("../config.example.toml");
-    let original = Config::parse(example).unwrap();
+    let original = Config::parse(example, "rota").unwrap();
     let root = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(root.path()).unwrap();
     fs::write(root.join("brief"), "example task").unwrap();
@@ -319,7 +319,8 @@ fn process_cap_follows_account_directory_and_executable_symlinks() {
         .unwrap();
     wait_for_exec(&mut child, &tool("sleep"));
     let count = running(&cap);
-    let mut config = rota::config::Config::parse(include_str!("../config.example.toml")).unwrap();
+    let mut config =
+        rota::config::Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
     config.backends[0].cap = Some(cap);
     let mut reading = rota::decision::Reading::default();
     let rechecked = rota::readings::recheck_cap(&config.backends[0], &mut reading);
@@ -337,7 +338,8 @@ fn refresh_rechecks_cap_after_a_slow_failed_probe() {
     let started = dir.join("probe-started");
     let child_ready = dir.join("child-ready");
     let refreshed = dir.join("refreshed");
-    let mut config = rota::config::Config::parse(include_str!("../config.example.toml")).unwrap();
+    let mut config =
+        rota::config::Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
     let mut backend = config.backends.remove(1);
     backend.guard = vec!["true".into()];
     backend.required_files.clear();

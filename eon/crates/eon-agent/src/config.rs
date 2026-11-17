@@ -206,6 +206,9 @@ pub enum Stdin {
 #[serde(deny_unknown_fields)]
 pub struct Backend {
     pub name: String,
+    /// The subscription account this backend draws on; backends that share one account
+    /// declare the same name. Defaults to the backend's own name.
+    pub account: Option<String>,
     #[serde(default = "yes")]
     pub enabled: bool,
     pub roles: Vec<Role>,
@@ -310,6 +313,11 @@ fn command_valid(command: &[String]) -> bool {
 }
 
 impl Backend {
+    /// The account this backend's quota describes.
+    pub fn account(&self) -> &str {
+        self.account.as_deref().unwrap_or(&self.name)
+    }
+
     pub fn popup_command(&self) -> Option<Vec<String>> {
         if let Some(command) = &self.popup_command {
             return Some(command.clone());
@@ -353,13 +361,14 @@ fn run_valid(run: &Run) -> bool {
 }
 
 impl Config {
-    pub fn parse(text: &str) -> Result<Self, String> {
+    /// Parses and validates a configuration; `program` names the host in error messages.
+    pub fn parse(text: &str, program: &str) -> Result<Self, String> {
         let config: Self = toml::from_str(text).map_err(|e| e.to_string())?;
-        config.validate()?;
+        config.validate(program)?;
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self, program: &str) -> Result<(), String> {
         self.slots.validate()?;
         crate::cleanup::validate(self)?;
         if self.state_file.as_os_str().is_empty()
@@ -484,11 +493,10 @@ impl Config {
             .iter()
             .any(|key| self.run.env.contains_key(*key) || crate::run::scrubbed(&self.run, key))
         {
-            return Err(
+            return Err(format!(
                 "[run] must keep XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS: \
-                 rota run reaches the systemd user manager through them"
-                    .into(),
-            );
+                 {program} run reaches the systemd user manager through them"
+            ));
         }
         if let Some(fallback) = &self.fallback {
             let Some(b) = self.backends.iter().find(|b| &b.name == fallback) else {
@@ -521,23 +529,26 @@ mod tests {
 
     #[test]
     fn example_is_valid() {
-        Config::parse(EXAMPLE).unwrap();
+        Config::parse(EXAMPLE, "rota").unwrap();
     }
 
     #[test]
     fn native_readers_accept_shared_commands_and_custom_readers_require_commands() {
         for parser in ["eon_codex", "eon_claude"] {
             let native = EXAMPLE.replace("parser = \"eon_codex\"", &format!("parser = '{parser}'"));
-            Config::parse(&native).unwrap();
+            Config::parse(&native, "rota").unwrap();
             for field in [
                 "command = ['eon', 'session', '--json']",
                 "command = []",
                 "timeout_seconds = 10",
             ] {
-                Config::parse(&native.replace(
-                    &format!("parser = '{parser}'"),
-                    &format!("parser = '{parser}'\n{field}"),
-                ))
+                Config::parse(
+                    &native.replace(
+                        &format!("parser = '{parser}'"),
+                        &format!("parser = '{parser}'\n{field}"),
+                    ),
+                    "rota",
+                )
                 .unwrap();
             }
         }
@@ -550,13 +561,13 @@ mod tests {
                 "parser = \"eon_codex\"",
                 &format!("parser = 'remaining_json'\n{field}"),
             );
-            assert!(Config::parse(&text).is_err(), "{field}");
+            assert!(Config::parse(&text, "rota").is_err(), "{field}");
         }
         let custom = EXAMPLE.replace(
             "parser = \"eon_codex\"",
             "parser = 'remaining_json'\ncommand = ['printf', '{}']",
         );
-        let config = Config::parse(&custom).unwrap();
+        let config = Config::parse(&custom, "rota").unwrap();
         assert_eq!(
             config.backends[2].quota.as_ref().unwrap().timeout_seconds(),
             30
@@ -570,14 +581,14 @@ mod tests {
     #[test]
     fn popup_pin_requires_an_implement_backend_or_the_configured_fallback() {
         for name in ["alpha", "main"] {
-            Config::parse(&format!("popup_backend = '{name}'\n{EXAMPLE}")).unwrap();
+            Config::parse(&format!("popup_backend = '{name}'\n{EXAMPLE}"), "rota").unwrap();
         }
         for name in ["", "missing", "alpha"] {
             let config = format!("popup_backend = '{name}'\n{EXAMPLE}").replace(
                 "roles = [\"implement\", \"review\"]",
                 "roles = [\"review\"]",
             );
-            let error = Config::parse(&config).unwrap_err();
+            let error = Config::parse(&config, "rota").unwrap_err();
             assert!(
                 error.contains("implement backend or the configured fallback"),
                 "{error}"
@@ -631,14 +642,17 @@ mod tests {
             ("\"TERMINAL_*\"", "\"*\""),
         ] {
             assert_ne!(EXAMPLE, EXAMPLE.replace(from, to));
-            assert!(Config::parse(&EXAMPLE.replace(from, to)).is_err(), "{from}");
+            assert!(
+                Config::parse(&EXAMPLE.replace(from, to), "rota").is_err(),
+                "{from}"
+            );
         }
-        assert!(Config::parse(&format!("typo = true\n{EXAMPLE}")).is_err());
+        assert!(Config::parse(&format!("typo = true\n{EXAMPLE}"), "rota").is_err());
     }
 
     #[test]
     fn example_run_settings_parse() {
-        let config = Config::parse(EXAMPLE).unwrap();
+        let config = Config::parse(EXAMPLE, "rota").unwrap();
         assert_eq!(config.run.unset_env.len(), 3);
         assert_eq!(config.run.env.len(), 1);
         let run = config.backends[2].run.as_ref().unwrap();
@@ -655,9 +669,9 @@ mod tests {
             .replace("\"workspace-write\", \"{add_dirs}\"", "\"workspace-write\"")
             .replace("implement = [\"codex\"", "implement = [\"{add_dirs}\"");
         assert_ne!(text.matches("{add_dirs}").count(), 0);
-        assert!(Config::parse(&text).is_err());
+        assert!(Config::parse(&text, "rota").is_err());
         let text = EXAMPLE.replace("\"workspace-write\", \"{add_dirs}\"", "\"workspace-write\"");
-        Config::parse(&text).unwrap();
+        Config::parse(&text, "rota").unwrap();
     }
 
     #[test]
@@ -665,22 +679,29 @@ mod tests {
         let unset = "unset_env = [\"DISPLAY\", \"WAYLAND_DISPLAY\", \"TERMINAL_*\"]";
         for bad in ["\"XDG_RUNTIME_DIR\"", "\"XDG_*\"", "\"DBUS_*\""] {
             let text = EXAMPLE.replace(unset, &format!("unset_env = [{bad}]"));
-            assert!(Config::parse(&text).is_err(), "{bad}");
+            assert!(Config::parse(&text, "rota").is_err(), "{bad}");
         }
         let text = EXAMPLE.replace(
             "TERMINAL_RUNTIME_DIR = ",
             "DBUS_SESSION_BUS_ADDRESS = \"unix:path=/x\"\nTERMINAL_RUNTIME_DIR = ",
         );
-        assert!(Config::parse(&text).is_err());
-        Config::parse(&EXAMPLE.replace(unset, "unset_env = [\"XDG_SESSION_ID\"]")).unwrap();
+        assert!(Config::parse(&text, "rota").is_err());
+        Config::parse(
+            &EXAMPLE.replace(unset, "unset_env = [\"XDG_SESSION_ID\"]"),
+            "rota",
+        )
+        .unwrap();
     }
 
     #[test]
     fn accepts_agy_group_on_agy_parser() {
-        let config = Config::parse(&EXAMPLE.replace(
-            "parser = \"agy\"",
-            "parser = \"agy\"\nagy_group = \"Gemini Models\"",
-        ))
+        let config = Config::parse(
+            &EXAMPLE.replace(
+                "parser = \"agy\"",
+                "parser = \"agy\"\nagy_group = \"Gemini Models\"",
+            ),
+            "rota",
+        )
         .unwrap();
         assert_eq!(
             config.backends[0]

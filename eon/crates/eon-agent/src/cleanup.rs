@@ -28,11 +28,16 @@ use std::process::Command;
 const TAG: &str = "CACHEDIR.TAG";
 const SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
 
-pub const HELP: &str = "Usage: rota retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]\n\
+const HELP: &str = "Usage: {program} retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]\n\
 Guard: resolved cwd, executable, CARGO_TARGET_DIR, open-fd and mapped-file paths, plus cwd directory identity.\n\
 Unreadable details of owned processes keep files and exit 1, naming the PID.\n\
 The caller vouches that NAME and --bead identify the same finished task.\n\
 Bind-mount aliases of agent directories are unsupported and may not be detected.";
+
+/// The retire help text, naming the host program.
+pub fn help(program: &str) -> String {
+    HELP.replacen("{program}", program, 1)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -1,0 +1,42 @@
+fallback = 'fallback'
+state_file = '<ROOT>/state/last-pick'
+log_file = '<ROOT>/state/decisions.jsonl'
+
+[[backends]]
+name = 'limited'
+roles = ['implement', 'review']
+guard = ['true']
+[backends.commands]
+medium = ['true', '{prompt}']
+high = ['true', '{prompt}']
+[backends.quota]
+command = ['printf', '{"week":45,"five_hour":80}']
+parser = 'remaining_json'
+[backends.limits.implement.min_remaining]
+week = 10
+[backends.limits.review.max_used]
+five_hour = 50
+
+[[backends]]
+name = 'runonly'
+roles = []
+guard = ['true']
+allow_unknown_quota = true
+[backends.commands]
+medium = ['true', '{prompt}']
+high = ['true', '{prompt}']
+[backends.run]
+stdin = 'brief'
+efforts = ['high']
+default_effort = 'high'
+[backends.run.commands]
+review = ['true']
+
+[[backends]]
+name = 'fallback'
+roles = []
+guard = ['true']
+allow_unknown_quota = true
+[backends.commands]
+medium = ['true', '{prompt}']
+high = ['true', '{prompt}']

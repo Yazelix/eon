@@ -5,7 +5,72 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::{env, fs, process::ExitCode};
 
-const USAGE: &str = "Usage: rota launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>\n       rota launch --popup [--only BACKEND] [--dry-run]\n       rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...\n       rota ps [--json] [--all]\n       rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...\n       rota slot ls [--json]\n       rota retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]\n       rota status [--json]\nConfig: $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)";
+/// What the embedding program supplies. `rota` and `eon agent` differ only here; every other
+/// behaviour is the core's.
+pub struct Host<'a> {
+    /// How usage and every message line name the program: "rota" or "eon agent".
+    pub program: &'a str,
+    /// Arguments after the executable that re-invoke this same program (the slot delegate).
+    pub reinvoke: &'a [&'a str],
+    /// The host's own configuration file, read before rota's; Err when it cannot be located.
+    pub config: Result<Option<PathBuf>, String>,
+    /// How usage names that file.
+    pub config_label: Option<&'a str>,
+    /// `slot --config FILE` is accepted.
+    pub slot_config_flag: bool,
+    /// `status` names the configuration file it read.
+    pub report_config_file: bool,
+    /// Quota facts for the native parsers (see [`readings::SessionReader`]).
+    pub session: &'a readings::SessionReader<'a>,
+}
+
+impl<'a> Host<'a> {
+    /// The standalone `rota` program: rota's own configuration file only, no host facts.
+    pub fn rota(session: &'a readings::SessionReader<'a>) -> Self {
+        Host {
+            program: "rota",
+            reinvoke: &[],
+            config: Ok(None),
+            config_label: None,
+            slot_config_flag: false,
+            report_config_file: false,
+            session,
+        }
+    }
+}
+
+const COMMANDS: [&str; 8] = [
+    "launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>",
+    "launch --popup [--only BACKEND] [--dry-run]",
+    "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...",
+    "ps [--json] [--all]",
+    "slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...",
+    "slot ls [--json]",
+    "retire NAME [--project P] [--bead ID] [--target-only] [--dry-run] [--json]",
+    "status [--json]",
+];
+const ROTA_CONFIG_HELP: &str =
+    "$ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)";
+
+fn usage(host: &Host<'_>) -> String {
+    let mut text = String::new();
+    for (index, command) in COMMANDS.iter().enumerate() {
+        text += if index == 0 { "Usage: " } else { "\n       " };
+        text += host.program;
+        text += " ";
+        match command.strip_prefix("slot ") {
+            Some(rest) if host.slot_config_flag => {
+                text += "slot [--config FILE] ";
+                text += rest;
+            }
+            _ => text += command,
+        }
+    }
+    match host.config_label {
+        Some(label) => format!("{text}\nConfig: {label}; when absent, {ROTA_CONFIG_HELP}"),
+        None => format!("{text}\nConfig: {ROTA_CONFIG_HELP}"),
+    }
+}
 
 fn fallback_config_path() -> Result<PathBuf, String> {
     env::var_os("ROTA_CONFIG")
@@ -38,33 +103,29 @@ pub fn config_source(primary: Option<&Path>, directory: &Path) -> Result<Option<
     Ok(exists(&path)?.then_some(path))
 }
 
-fn load_config(primary: Option<&Path>) -> Result<(Config, PathBuf), String> {
+fn load_config(primary: Option<&Path>, program: &str) -> Result<(Config, PathBuf), String> {
     let path = match config_source(primary, Path::new("."))? {
         Some(path) => path,
         None => fallback_config_path()?,
     };
-    let config =
-        Config::parse(&fs::read_to_string(&path).map_err(|e| format!("cannot read config: {e}"))?)?;
+    let config = Config::parse(
+        &fs::read_to_string(&path).map_err(|e| format!("cannot read config: {e}"))?,
+        program,
+    )?;
     Ok((config, path))
 }
 
 fn run(
     arguments: impl Iterator<Item = std::ffi::OsString>,
-    primary: Result<Option<PathBuf>, String>,
-    session: &readings::SessionReader<'_>,
+    host: &Host<'_>,
 ) -> Result<u8, (u8, String)> {
-    let eon = !matches!(&primary, Ok(None));
-    let usage = if eon {
-        USAGE.replace("Usage: rota ", "Usage: eon agent ")
-            .replace("       rota ", "       eon agent ")
-            .replace("eon agent slot run", "eon agent slot [--config FILE] run")
-            .replace("eon agent slot ls", "eon agent slot [--config FILE] ls")
-            .replace("Config: $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)",
-                "Config: <eon config dir>/agent.toml; when absent, $ROTA_CONFIG or $XDG_CONFIG_HOME/rota/config.toml (default ~/.config/rota/config.toml)")
-    } else {
-        USAGE.to_owned()
+    let usage = usage(host);
+    let load = || {
+        load_config(
+            host.config.as_ref().map_err(Clone::clone)?.as_deref(),
+            host.program,
+        )
     };
-    let load = || load_config(primary.as_ref().map_err(Clone::clone)?.as_deref());
     let args: Vec<_> = arguments
         .map(|arg| {
             arg.into_string()
@@ -83,12 +144,7 @@ fn run(
     }
     if args.first().is_some_and(|s| s == "retire") {
         if args[1..] == ["--help"] || args[1..] == ["-h"] {
-            let help = if eon {
-                crate::cleanup::HELP.replacen("Usage: rota ", "Usage: eon agent ", 1)
-            } else {
-                crate::cleanup::HELP.to_owned()
-            };
-            println!("{help}");
+            println!("{}", crate::cleanup::help(host.program));
             return Ok(0);
         }
         let options = crate::cleanup::parse(&args[1..])?;
@@ -99,7 +155,7 @@ fn run(
         let options = launch::parse(&args[1..])?;
         let result = load()
             .map_err(|error| (2, error))
-            .and_then(|(config, _)| launch::run(&config, &options, session))
+            .and_then(|(config, _)| launch::run(&config, &options, host))
             .map(|()| 0);
         if options.popup
             && !options.dry_run
@@ -107,7 +163,7 @@ fn run(
             && std::io::stderr().is_terminal()
             && let Err((code, message)) = &result
         {
-            print_error(message);
+            print_error(host.program, message);
             let _ = write!(std::io::stderr(), "\nPress Enter to close");
             let _ = std::io::stderr().flush();
             let _ = std::io::stdin().read_line(&mut String::new());
@@ -118,25 +174,29 @@ fn run(
     if args.first().is_some_and(|s| s == "run") {
         let options = headless::parse(&args[1..])?;
         let (config, _) = load().map_err(|e| (2, e))?;
-        return headless::run(&config, &options, session).map(|()| 0);
+        return headless::run(&config, &options, host).map(|()| 0);
     }
     if args.first().is_some_and(|s| s == "ps") {
         let options = ps::parse(&args[1..])?;
         let (config, _) = load().map_err(|e| (2, e))?;
-        return ps::run(&config, &options).map(|()| 0);
+        return ps::run(&config, &options, host.program).map(|()| 0);
     }
     if args.first().is_some_and(|s| s == "slot") {
-        let (config, rest) = if eon && args.get(1).is_some_and(|s| s == "--config") {
-            let path = args
-                .get(2)
-                .ok_or_else(|| (2, "slot --config needs a file".into()))?;
-            let text = fs::read_to_string(path).map_err(|e| (2, e.to_string()))?;
-            (Config::parse(&text).map_err(|e| (2, e))?, &args[3..])
-        } else {
-            (load().map_err(|e| (2, e))?.0, &args[1..])
-        };
-        let options = slots::parse(rest)?;
-        return slots::run(&config, options, eon);
+        let (config, rest) =
+            if host.slot_config_flag && args.get(1).is_some_and(|s| s == "--config") {
+                let path = args
+                    .get(2)
+                    .ok_or_else(|| (2, "slot --config needs a file".into()))?;
+                let text = fs::read_to_string(path).map_err(|e| (2, e.to_string()))?;
+                (
+                    Config::parse(&text, host.program).map_err(|e| (2, e))?,
+                    &args[3..],
+                )
+            } else {
+                (load().map_err(|e| (2, e))?.0, &args[1..])
+            };
+        let options = slots::parse(rest, host.program)?;
+        return slots::run(&config, options, host);
     }
     if args != ["status"] && args != ["status", "--json"] {
         return Err((2, usage));
@@ -144,12 +204,12 @@ fn run(
     let (config, config_path) = load().map_err(|e| (2, e))?;
     let cwd = env::current_dir().map_err(|e| (1, e.to_string()))?;
     let indices: Vec<_> = (0..config.backends.len()).collect();
-    let readings = readings::collect(&config, &indices, &cwd, false, session);
+    let readings = readings::collect(&config, &indices, &cwd, false, host.session);
     if args.len() == 2 {
         let status: Vec<_> = config.backends.iter().zip(&readings).map(|(b,r)| {
             let mut value = serde_json::json!({ "backend": b.name, "enabled": b.enabled, "reading": r,
-                "implement": status_for(&config, b, r, Role::Implement), "review": status_for(&config, b, r, Role::Review) });
-            if eon {
+                "implement": status_for(&config, b, r, Role::Implement, host.program), "review": status_for(&config, b, r, Role::Review, host.program) });
+            if host.report_config_file {
                 value["config_file"] = match config_path.to_str() {
                     Some(path) => serde_json::json!(path),
                     None => serde_json::json!(config_path.as_os_str().as_bytes()),
@@ -159,15 +219,15 @@ fn run(
         }).collect();
         println!("{}", serde_json::to_string_pretty(&status).unwrap());
     } else {
-        if eon {
+        if host.report_config_file {
             println!("config: {}", config_path.display());
         }
         for (b, r) in config.backends.iter().zip(&readings) {
             println!(
                 "{}: implement={} review={} running={} {}",
                 b.name,
-                status_for(&config, b, r, Role::Implement),
-                status_for(&config, b, r, Role::Review),
+                status_for(&config, b, r, Role::Implement, host.program),
+                status_for(&config, b, r, Role::Review, host.program),
                 r.running,
                 r.detail
             );
@@ -180,6 +240,7 @@ fn status_for(
     b: &crate::config::Backend,
     r: &decision::Reading,
     role: Role,
+    program: &str,
 ) -> String {
     if role == Role::Implement && config.fallback.as_deref() == Some(&b.name) {
         return match decision::availability(b, r, role) {
@@ -193,8 +254,8 @@ fn status_for(
             .is_some_and(|run| run.commands.contains_key(&role))
         {
             return match decision::availability(b, r, role) {
-                Ok(()) => "available for rota run".into(),
-                Err(problem) => format!("unavailable for rota run: {problem}"),
+                Ok(()) => format!("available for {program} run"),
+                Err(problem) => format!("unavailable for {program} run: {problem}"),
             };
         }
         return "not allowed for role".into();
@@ -203,21 +264,17 @@ fn status_for(
         .err()
         .unwrap_or_else(|| "available".into())
 }
-pub fn main(
-    arguments: impl Iterator<Item = std::ffi::OsString>,
-    primary: Result<Option<PathBuf>, String>,
-    session: &readings::SessionReader<'_>,
-) -> ExitCode {
-    match run(arguments, primary, session) {
+pub fn main(arguments: impl Iterator<Item = std::ffi::OsString>, host: &Host<'_>) -> ExitCode {
+    match run(arguments, host) {
         Ok(code) => ExitCode::from(code),
         Err((code, message)) => {
-            print_error(&message);
+            print_error(host.program, &message);
             ExitCode::from(code)
         }
     }
 }
 
-fn print_error(message: &str) {
+fn print_error(program: &str, message: &str) {
     // A run may end after its caller closed stderr; never panic here.
-    let _ = writeln!(std::io::stderr(), "rota: {message}");
+    let _ = writeln!(std::io::stderr(), "{program}: {message}");
 }

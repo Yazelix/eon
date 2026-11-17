@@ -1,0 +1,44 @@
+[
+  {
+    "backend": "limited",
+    "config_file": "<ROOT>/eon/agent.toml",
+    "enabled": true,
+    "implement": "available",
+    "reading": {
+      "detail": "five_hour_left=80% week_left=45%",
+      "problem": null,
+      "remaining": {
+        "five_hour": 80.0,
+        "week": 45.0
+      },
+      "running": 0
+    },
+    "review": "available"
+  },
+  {
+    "backend": "runonly",
+    "config_file": "<ROOT>/eon/agent.toml",
+    "enabled": true,
+    "implement": "not allowed for role",
+    "reading": {
+      "detail": "quota unknown",
+      "problem": null,
+      "remaining": null,
+      "running": 0
+    },
+    "review": "available for rota run"
+  },
+  {
+    "backend": "fallback",
+    "config_file": "<ROOT>/eon/agent.toml",
+    "enabled": true,
+    "implement": "fallback available",
+    "reading": {
+      "detail": "quota unknown",
+      "problem": null,
+      "remaining": null,
+      "running": 0
+    },
+    "review": "not allowed for role"
+  }
+]
