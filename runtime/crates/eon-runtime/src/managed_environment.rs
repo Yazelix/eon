@@ -2294,7 +2294,7 @@ fn validate_argv<S: AsRef<OsStr>>(key: &str, argv: &[S]) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_popup_id(id: &str) -> Result<(), String> {
+pub(super) fn validate_popup_id(id: &str) -> Result<(), String> {
     let valid = !id.is_empty()
         && id.len() <= MAX_ENTRY_ID_BYTES
         && id
