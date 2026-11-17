@@ -6013,7 +6013,10 @@ impl WindowWithoutHelix {
         let orbit = root.join("orbit");
         let venus = root.join("venus");
         managed_orbit_executable(&orbit);
-        executable(&venus, "#!/bin/sh\nexit 0\n");
+        executable(
+            &venus,
+            "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+        );
         let editor = root.join("editor");
         fs::create_dir(&editor).unwrap();
 
@@ -6269,6 +6272,7 @@ fn without_helix_an_unset_editor_is_visual_and_a_configured_one_overrides_it() {
     let full = listed_window(eon_command(binary), &window.runtime, &window.config);
     let own = listed_window(window.command(), &window.runtime, &window.config);
     assert_eq!(full["attach"]["available"], true, "{full}");
+    assert!(full["venus"].is_string(), "{full}");
     assert_eq!(full, own);
     assert!(
         full["component_report"]

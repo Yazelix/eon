@@ -1159,7 +1159,9 @@ mod tests {
 
     #[test]
     fn neovim_listener_refuses_colons_in_the_canonical_runtime_path() {
-        let root = super::super::supervisor::temporary_directory();
+        let root = super::super::supervisor::temporary_directory()
+            .canonicalize()
+            .unwrap();
         let runtime = root.join("with:colon");
         fs::create_dir(&runtime).unwrap();
         let alias = root.join("alias");
