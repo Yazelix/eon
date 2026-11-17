@@ -1,0 +1,79 @@
+# First match wins. Lowering any tier needs Lucca's recorded approval, like a contract.
+high    mode: old and new modes differ, both non-zero               mode change
+high    mode: either mode 120000                                    symlink
+high    mode: either mode 160000                                    submodule
+high    mode: status T                                              type change
+high    mode: status U                                              unmerged
+high    path: **/CONTRACTS.md                                       contract
+high    path: runtime/crates/eon-workspace-protocol/**              wire and protocol
+high    path: orbit/crates/protocol/**                              wire and protocol
+high    path: orbit/src/boundary.rs                                 wire and protocol
+high    path: orbit/src/boundary.schema                             wire and protocol
+high    path: orbit/src/socket.rs                                   wire and protocol
+high    path: orbit/src/management.rs                               wire and protocol
+high    path: venus/src/transport.rs                                wire and protocol
+high    path: runtime/crates/eon-runtime/src/control.rs             wire and protocol
+high    path: **/*.bend                                             Bend policy and proofs
+high    path: orbit/proof/**                                        Bend policy and proofs
+high    path: runtime/crates/eon-runtime/src/supervisor.rs          lifecycle
+high    path: runtime/crates/eon-runtime/src/running.rs             lifecycle
+high    path: runtime/crates/eon-runtime/src/generation.rs          lifecycle
+high    path: runtime/crates/eon-runtime/src/generation/**          lifecycle
+high    path: runtime/crates/eon-runtime/src/session_registry.rs    lifecycle
+high    path: runtime/crates/eon-runtime/src/session_registry/**    lifecycle
+high    path: orbit/src/host.rs                                     lifecycle
+high    path: orbit/src/pty.rs                                      lifecycle
+high    path: eon/crates/eon/src/update.rs                          lifecycle
+high    path: eon/crates/eon/src/update/**                          lifecycle
+high    path: eon/crates/eon-agent/src/cleanup.rs                   lifecycle
+high    path: eon/crates/eon-agent/src/cleanup/**                   lifecycle
+high    path: runtime/crates/eon-runtime/src/private_file.rs        trust boundary
+high    path: runtime/crates/eon-runtime/src/launch_environment.rs  trust boundary
+high    path: eon/crates/eon-agent/src/launch.rs                    trust boundary
+high    path: installer/**                                          trust boundary
+high    path: launcher/**                                           trust boundary
+high    path: relink/**                                             trust boundary
+high    path: **/Cargo.toml                                         dependencies and composition
+high    path: Cargo.lock                                            dependencies and composition
+high    path: flake.nix                                             dependencies and composition
+high    path: flake.lock                                            dependencies and composition
+high    path: nix/**                                                dependencies and composition
+high    path: .github/**                                            dependencies and composition
+high    path: components/**                                         dependencies and composition
+high    path: **/.gitattributes                                     dependencies and composition
+high    path: eon/tools/**                                          gate or validator tool
+high    path: orbit/tools/**                                        gate or validator tool
+high    path: **/AGENTS.md                                          agent policy
+high    path: .agent-protocols*                                     agent policy
+high    path: docs/AGENT-*.md                                       agent policy
+high    path: REVIEW.md                                             agent policy
+medium  path: venus/src/**                                          ordinary code
+medium  path: orbit/src/**                                          ordinary code
+medium  path: runtime/crates/eon-runtime/src/**                     ordinary code
+medium  path: eon/crates/*/src/**                                   ordinary code
+medium  path: eon/skills/**                                         ordinary code
+medium  path: demo/**                                               ordinary code
+medium  path: eon/crates/*/*.example.toml                           ordinary code
+medium  path: **/tests/**                                           test
+medium  path: **/testdata/**                                        test
+medium  path: venus/assets/**                                       asset
+medium  path: assets/**                                             asset
+high    token in a medium .rs line: unsafe                          risky token: unsafe
+high    token in a medium .rs line: pre_exec                        risky token: pre_exec
+high    token in a medium .rs line: kill(                           risky token: kill(
+high    token in a medium .rs line: killpg                          risky token: killpg
+high    token in a medium .rs line: SIGKILL                         risky token: SIGKILL
+high    token in a medium .rs line: SIGTERM                         risky token: SIGTERM
+high    token in a medium .rs line: set_permissions                 risky token: set_permissions
+high    token in a medium .rs line: from_mode                       risky token: from_mode
+high    token in a medium .rs line: UnixListener::bind              risky token: UnixListener::bind
+high    token in a medium .rs line: UnixDatagram::bind              risky token: UnixDatagram::bind
+high    token in a medium .rs line: TcpListener::bind               risky token: TcpListener::bind
+high    token in a medium .rs line: UdpSocket::bind                 risky token: UdpSocket::bind
+low     path: .beads/issues.jsonl                                   planning
+low     path: .beads/config.yaml                                    planning
+low     path: .beads/metadata.json                                  planning
+low     path: **/*.md                                               docs
+high    low path with a mode other than 100644 or 000000            mode
+medium  low .md path named in a .rs or .nix file                    Markdown read by code
+high    anything else                                               not on the Medium or Low lists

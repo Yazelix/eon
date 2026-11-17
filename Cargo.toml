@@ -12,6 +12,7 @@ members = [
     "eon/tools/mac-proof",
     "eon/tools/eon-bench",
     "eon/tools/archive-notices",
+    "eon/tools/review-tier",
 ]
 resolver = "3"
 

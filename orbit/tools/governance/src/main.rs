@@ -758,6 +758,7 @@ mod dependency_direction {
     const PROTOCOLS: &[&str] = &["orbit-protocol", "eon-workspace-protocol"];
     const ALLOWED_WORKSPACE_DEPENDENCIES: &[(&str, &[&str])] = &[
         ("archive-notices", &[]),
+        ("review-tier", &[]),
         ("orbit-protocol", &[]),
         ("eon-workspace-protocol", &[]),
         ("yazelix-orbit", &["orbit-protocol"]),

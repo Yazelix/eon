@@ -1,0 +1,224 @@
+# Reviewer eval cases for eon-uxgal. Format: eon/tools/review-tier/src (eval). Each case is a landed commit a reviewer should have stopped.
+
+[[case]]
+id = "R01"
+kind = "revert"
+commit = "ff0b5fe4bc8819b4834f609e57ad5a201b3ea269"
+fixed_by = "dcfabf7d12e4f4e1e7fb06cc8f391375f3eaa696"
+class = "release-flip"
+tier = "high"
+summary = "The 0.2.0 version and Beta release stage landed on edge, although the flip belongs only to the release cut (eon-igae.9) on Lucca's word, so the Eon Bar would read beta 0.2.0."
+evidence = "ff0b5fe4 message says 'Nothing is tagged ... the cut is eon-igae.9' yet changes version and RELEASE_STAGE; dcfabf7d reverted to 0.1.24 Alpha keeping the key, workflow and artwork gate; memory rule: beta flip only at cut."
+mechanism = [["beta", "0.2.0", "release stage"], ["cut", "gated", "flip", "premature", "before the release"]]
+
+[[case.expect]]
+file = "eon/crates/eon/src/product.rs"
+lines = [7, 7]
+
+[[case.expect]]
+file = "eon/crates/eon/Cargo.toml"
+lines = [3, 3]
+
+[[case]]
+id = "R02"
+kind = "fix-forward"
+commit = "4910b81e9d68942a65ad96ad21e03385de7144f5"
+fixed_by = "5767f08b46662bd5e02ab7bd448d3acd63f5881c"
+class = "companion-code"
+tier = "high"
+summary = "Insetting the first tab pill by the card gap left two derived widths (the widest pill and the narrowest strip's identity width) sized for the old offset, so in a 100 px window the point after the first pill hit New tab instead of the gap."
+evidence = "5767f08b body: bisect named 4910b81, which moved the first pill but 'left two widths sized for the old offset'; bead eon-75b7. The defect is the omission: tab_max_width and identity_width are untouched in the bad commit."
+mechanism = [["width", "inset", "offset", "sized"], ["gap", "hit", "pill", "new tab", "narrow"]]
+
+[[case.expect]]
+file = "venus/src/scene.rs"
+lines = [675, 683]
+
+[[case.expect]]
+file = "venus/src/scene.rs"
+lines = [210, 212]
+
+[[case.expect]]
+file = "venus/src/scene.rs"
+lines = [745, 747]
+
+[[case]]
+id = "R04"
+kind = "fix-forward"
+commit = "0e3912b1245e248391296aef91449fade8803a03"
+fixed_by = "699b67abbac48432774c9009c8307a710148b3f4"
+class = "companion-code"
+tier = "high"
+summary = "While the Agents sidebar is visible every attention-only snapshot takes the whole-presentation invalidate path, advancing the link-focus epoch, clearing link hover and retiring a held Ctrl+click, so links rarely opened with busy agents."
+evidence = "699b67ab body: 'Since the Agents sidebar landed (0e3912b), every attention update invalidated the whole presentation while the sidebar was visible'; bead eon-ctrl-click-links-n8uar; latent about 15 days."
+mechanism = [["invalidate", "epoch", "link focus", "link-focus", "presentation"], ["attention", "sidebar", "ctrl", "hover", "click"]]
+
+[[case.expect]]
+file = "venus/src/application.rs"
+lines = [1873, 1879]
+
+[[case]]
+id = "R05"
+kind = "fix-forward"
+commit = "eba457dbd52a0505f47a496fcf5d8cbbc0a9c381"
+fixed_by = "72449060632c7f5fedf7b774b9e2bb836473919a"
+class = "companion-code"
+tier = "high"
+summary = "Two new CLI arguments were added to Venus's launch argv in eon-runtime, but the eon crate test bare_eon_attaches_only_to_the_live_current_generation still pinned the old argument list, so the package build's tests failed."
+evidence = "72449060 body: eba457d passes --cpu-temperature-warning-celsius and --cpu-temperature-critical-celsius, but the test 'still pinned the old argument list'. The bad diff changes venus_command in supervisor.rs and no test in the eon crate."
+mechanism = [["argv", "argument", "launch", "--cpu"], ["test", "pinned", "pin", "stale", "expected"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/supervisor.rs"
+lines = [498, 502]
+
+[[case.expect]]
+file = "eon/crates/eon/tests/workspace_control.rs"
+lines = [4472, 4472]
+
+[[case]]
+id = "R06"
+kind = "fix-forward"
+commit = "0a8ee15377a25cbb6783f2052a62d5bbac825b89"
+fixed_by = "f821f8357e44f095e0cc8d2074561cbc9735ce1e"
+class = "macos-portability"
+tier = "high"
+summary = "The Editor popup's listener socket lives at <runtime>/generations/<id>/editor/<terminal>.sock, four bytes longer than the terminal management socket, so under macOS's /private/tmp it exceeded the 104-byte Unix socket limit and the Editor popup could not start."
+evidence = "f821f835 body: path ran past macOS's 104-byte limit, ten Editor tests failed on the native package build, fixed by renaming editor/ to ed/; bead eon-mac-launch-kz4p.71. The inventory named 7d1f9214, but the editor/ layout and the length check come from 0a8ee153 (Add the Editor popup, eon-xodrj.4); 7d1f9214 only reworked around them."
+mechanism = [["socket", "sun_path", "unix socket", "listener"], ["104", "path length", "macos", "byte", "limit", "too long"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/editor.rs"
+lines = [228, 234]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/editor.rs"
+lines = [140, 145]
+
+[[case]]
+id = "R08"
+kind = "fix-forward"
+commit = "c1b18c1977ead0f0b538cc65d0c5220a2eb7f16f"
+fixed_by = "70138784e5436ff9469ff88b590e92b9a2d381d9"
+class = "missing-gate-evidence"
+tier = "high"
+summary = "The new notice_hashes entries for the Clawd assets key their paths through builtins.unsafeDiscardStringContext, so the asset files never enter the archive notice check's sandbox and .#archive-notice-check fails with 'cannot hash'."
+evidence = "70138784 body: 'Since the Clawd and Codex sidebar marks landed, .#archive-notice-check failed ... notice_hashes keys were built through builtins.unsafeDiscardStringContext'; bead eon-f4c3n. Only c1b18c19 is used; the Codex symbol commit 82cf4c41 repeats the same pattern."
+mechanism = [["unsafediscardstringcontext", "string context", "context", "sandbox"], ["notice", "hash", "asset", "archive"]]
+
+[[case.expect]]
+file = "nix/notices/inputs.nix"
+lines = [428, 433]
+
+[[case]]
+id = "R09"
+kind = "fix-forward"
+commit = "4200c940c29fade5d2be955b285045c1022006f5"
+fixed_by = "0f09495d6b205c3397053e0be460fc867bcfdf38"
+class = "missing-gate-evidence"
+tier = "high"
+summary = "Benchmark-only wayland dependencies added to eon-bench changed Cargo.lock edges, which altered six audit-exception graph fingerprints, so the archive's notice and corresponding-source checks failed on edge."
+evidence = "0f09495d body: 'six Eon, Orbit and Venus audit-exception fingerprints no longer matched ... the eon-bench lockfile edges from 4200c940'; renewed graph_sha256 fields (eon-igae.19)."
+mechanism = [["cargo.lock", "lockfile", "dependency", "dependencies", "wayland"], ["audit", "fingerprint", "graph", "notice", "archive"]]
+
+[[case.expect]]
+file = "eon/tools/eon-bench/Cargo.toml"
+lines = [14, 18]
+
+[[case.expect]]
+file = "Cargo.lock"
+lines = [835, 836]
+
+[[case]]
+id = "R10"
+kind = "fix-forward"
+commit = "7267b8ae507c3595b897ecc3eecbf7f9b3615e2d"
+fixed_by = "eb0905eb086f07adaf0ec2ecff3f62cc51b9bb86"
+class = "live-terminals"
+tier = "high"
+summary = "The EOF probe treated any unsolicited bytes on a lease (such as the Stopped an Orbit writes when SIGTERM stops it) as a fatal management error and could reconcile only a NaturalExit tombstone, so one terminal's stop failed the whole supervisor and closed the window; an undecodable ProgramStatus header also stayed in flight and broke later probes."
+evidence = "eb0905eb body: the error 'failed the whole supervisor, which closed Lucca's window on 2026-10-22'; reply that fails to decode stayed in flight; bead eon-wt6l; EON-C15 text states the new rules."
+mechanism = [["unsolicited", "eof", "tombstone", "stopped", "sigterm"], ["supervisor", "whole", "window", "other terminals", "escalat"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/sessions.rs"
+lines = [1357, 1372]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/sessions.rs"
+lines = [829, 833]
+
+[[case]]
+id = "R11"
+kind = "fix-forward"
+commit = "481fe2724826be11ecaa4c93571fa05d316cc935"
+fixed_by = "134d09311c9f7a238959141837692551d68eead7"
+class = "false-success"
+tier = "high"
+summary = "reload_presentation returns Ok(()) early when the running Venus executable equals the target, so eon window reload reports success without re-resolving any configuration."
+evidence = "134d0931 body: 'a reload on an unchanged build applies changed config instead of reporting success without rereading it'; bead eon-u199d.3 cites the early return in reload_presentation."
+mechanism = [["early return", "early-return", "returns ok", "same executable", "equal", "skips", "no-op"], ["config", "reread", "re-resolve", "success", "reports"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/supervisor.rs"
+lines = [3004, 3010]
+
+[[case]]
+id = "R14"
+kind = "fix-forward"
+commit = "5a82cc0e7e7b7bf8616298d0307301ee7b0906dc"
+fixed_by = "63b01272d18a5e163421c4dbf1b251fd1c4a9eb2"
+class = "macos-portability"
+tier = "high"
+summary = "The golden test panel_heading_notch_draw_inputs_are_stable draws a Shortcuts dialog whose footer reads Alt+/ on Linux and Option+/ on macOS, so the card resized and the hash differed; the Darwin package stopped building unnoticed for five days."
+evidence = "63b01272 body: 'the test drew a Shortcuts dialog whose footer reads Alt+/ on Linux and Option+/ on macOS, and the wider footer resized the card'; 9190bcc9 body; bead eon-mac-launch-kz4p.62."
+mechanism = [["footer", "label", "alt+", "option+", "key name"], ["macos", "platform", "golden", "hash", "darwin"]]
+
+[[case.expect]]
+file = "venus/src/render/tests/outlines.rs"
+lines = [109, 119]
+
+[[case]]
+id = "R15"
+kind = "fix-forward"
+commit = "27bcff4e82ddfdb6da44f3bc64be62e9deae0eb4"
+fixed_by = "8bd804eab44d8cbde3a9e3ceb01e20da56c703d3"
+class = "racy-test"
+tier = "high"
+summary = "The scene timing test asserts that building an empty background scene takes a non-zero measured time, which a fast host or coarse clock can report as zero, so it failed on the macOS package build."
+evidence = "8bd804ea body: 'An empty 0x0 scene can legitimately take zero measured time on a fast host or coarse clock'; bead eon-mac-launch-kz4p.69."
+mechanism = [["zero", "clock", "duration", "wall-clock", "elapsed", "timing"], ["measurable", "non-zero", "nonzero", "greater than", "coarse", "fast host", "flaky"]]
+
+[[case.expect]]
+file = "venus/src/application/tests/mod.rs"
+lines = [35, 50]
+
+[[case]]
+id = "R16"
+kind = "fix-forward"
+commit = "e4324189ffac22c31cb153509f646968c11c462b"
+fixed_by = "566565857fb618366fba5415e5d33fe87a419c00"
+class = "macos-portability"
+tier = "high"
+summary = "The installed-capture test builds its fixture under tempfile::tempdir() without canonicalizing it, but the product resolves symlinks, so on macOS where /var aliases /private/var the locator and executable paths mismatch and the check refuses."
+evidence = "56656585 body: 'macOS temporary directories sit under /var, an alias of /private/var, so the fixture's locator path still contained the alias while the resolved executable did not'; bead eon-mac-launch-kz4p.70."
+mechanism = [["canonical", "alias", "symlink", "/private", "resolve"], ["tmp", "temp", "tempdir", "macos", "/var"]]
+
+[[case.expect]]
+file = "eon/crates/eon/src/launch.rs"
+lines = [94, 99]
+
+[[case]]
+id = "R19"
+kind = "fix-forward"
+commit = "dd8b9ab92d3b2620e7619e73bac28484401461b2"
+fixed_by = "2a7631255e745d7a0aa32b93556b6b142f0daa1d"
+class = "missing-gate-evidence"
+tier = "high"
+summary = "ORB-C15's Status field carries approval and amendment prose ('Planned. Approved on 2026-10-21 (draft 15 ...'), which orbit-governance rejects as an invalid status, leaving the guard on Orbit's contract index red for days."
+evidence = "bead eon-lgul: ORB-C15 invalid status 'present since dd8b9ab'; ORB-C6 'Graphics proof' and ORB-C16 evidence errors 'came with 9e2fc14' and its follow-ups. dd8b9ab carries the Status defect as written; at 9e2fc147 the C6 and C16 text used 'Open proof' and 'Not proved' and only reached the rejected form in later commits, so dd8b9ab is the cleaner single commit. Fix 2a763125 moves the prose to Proof."
+mechanism = [["status", "governance", "contract index"], ["prose", "approval", "rejects", "not run"]]
+
+[[case.expect]]
+file = "orbit/docs/CONTRACTS.md"
+lines = [792, 795]
