@@ -7026,6 +7026,74 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   alone. Lead launches are exempt. The core keeps these limits configurable;
   changing this profile is Lucca's call.
 
+  Amended on 2026-11-17, **Standalone rota distribution**
+  (`eon-eon-agent-lr8sx.40`; approved by eon-lead under Lucca's delegation;
+  publishing rota is a v0.2.0 beta gate, Lucca 2026-11-17). Each clause takes
+  effect when the named child lands and is proven only by that child's
+  proof; the published crate is proven by the candidate proof on the beta
+  cut commit (`.40.10`) and the post-publish check (`.40.11`). For the
+  standalone crate, these clauses replace the Boundary's "Full Eon only" and
+  "Platform support remains exactly EON-C7's status", which keep governing
+  `eon agent` inside Eon; the Boundary's no-service-manager rule binds both.
+
+  1. **Crate and binary** (`.40.1`). The core is published on crates.io as
+     the crate `rota-cli`, which installs the binary `rota`
+     (`cargo install --locked rota-cli`); its library keeps the name `rota`.
+     crates.io is the artifact authority, and the crate's
+     `.cargo_vcs_info.json` names the Eon commit it was packaged from. The
+     first publish is 0.1.0, packaged from the beta cut commit.
+  2. **A separate product** (this amendment). `rota-cli` is its own product,
+     not a channel for Eon. It neither consumes nor forks Eon's component
+     manifest; its version graph is the `Cargo.lock` packaged in the crate.
+     Eon's two channels are unchanged, and rota has no prebuilt binary, Nix
+     attribute or GitHub release.
+  3. **Platform** (`.40.7`). x86_64 Linux is the proved platform; other Linux
+     architectures compile but are unproved. On any other target the `rota`
+     binary prints that rota supports Linux only and exits 2. The library
+     stays Linux-only, so Eon's macOS build is unaffected.
+  4. **`run` containment** (`.40.6`). `run` uses a systemd user scope when
+     the probe for one passes. Otherwise it runs the command in its own
+     process group, with the same receipts, timeout (124), signals and stop
+     phases (TERM and CONT with a grace of up to 5 seconds, then KILL and a
+     wait of up to 10 seconds). It confirms the group empty when
+     `kill(-pgid, 0)` fails with ESRCH and exits 125 when processes survive.
+     A descendant that leaves the process group (`setsid` or `setpgid`)
+     escapes cleanup, the same limit Platform Discipline accepts for Orbit's
+     PTY shutdown. The started receipt's `containment` field names the
+     mechanism used: `"scope"` or `"process-group"`. The choice is automatic,
+     with no configuration key, because the stronger mechanism always wins.
+     `run` needs no service manager.
+  5. **Semver promise** (`.40.7`). Within 0.N.x nothing in the public surface
+     is removed or changes meaning; additions are allowed. The public
+     surface is:
+     - the commands and flags in `rota --help`;
+     - the exit codes: 0 success, 1 I/O or launch failure, 2 invalid input or
+       configuration (and a non-Linux target), 69 a refusal that waiting
+       cannot change, 75 a hold, 124 run timeout, 125 abandoned run, 130
+       rota's own interrupt exit (not a forwarded child status), and `run`
+       forwarding the provider's exit status;
+     - `--json` field names and types, and the `run` receipt fields;
+     - the configuration keys and their meaning, and the `ROTA_CONFIG` and
+       XDG lookup;
+     - `--version`.
+
+     The Rust library API, the state-directory layout, the decision-log
+     records and `_slot-local-exec` are not public; the crate documentation
+     and README say the library exists for Eon and carries no promise. A
+     renamed or removed configuration key follows Configurability: a
+     tombstone, a warning naming the replacement and a corpus fixture, with
+     startup failing only when ignoring the key is unsafe. Standalone `rota`
+     warns that `[slots.boat]` and `local_runner` need `eon agent` and keeps
+     every command local (`.40.4`). A breaking change bumps to 0.(N+1).0 and
+     is listed in the crate's `CHANGELOG.md`. Compatibility fixtures enforce
+     the surface: a golden `--help`, one fixture per exit code, golden JSON
+     field sets, a golden accepted-key list, and a 0.1.0 configuration corpus
+     that every 0.1.x loads. 1.0 waits for outside users.
+  6. **Same core** (`.40.1`, `.40.7`). `eon` depends on the core with an
+     exact version requirement (`=X.Y.Z`), so a version mismatch fails the
+     build, and `rota --version` and `eon agent --version` print the same
+     core version.
+
   **Delivered popup mode (`eon-eon-agent-lr8sx.28`).** On Linux,
   `eon agent launch --popup [--only BACKEND] [--dry-run]` accepts no prompt
   file and admits implement/high using the moved launcher's configuration,

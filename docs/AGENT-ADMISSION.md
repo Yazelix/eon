@@ -7,7 +7,7 @@ their current contracts. [Usage](USAGE.md) and [Configuration](CONFIGURATION.md)
 describe delivered behavior; each implementation slice updates them as it lands.
 Where this page differs on selection, readings, windows, projects, waiting,
 exit codes, receipts or pane launches, EON-C40's amendment of 2026-11-17
-governs.
+(`eon-eon-agent-lr8sx.39`) governs.
 
 Approved on 2026-11-12 by Lucca's "you decide" over eon-desk's yes, relayed by
 eon-overseer and recorded on `eon-eon-agent-lr8sx.22` in comment 7406.

@@ -290,10 +290,12 @@ Among workspace crates, Venus and Eon Runtime depend only on the protocol crates
 Runtime and the protocol crates, and only Orbit depends on `libghostty-vt`.
 The protocol crates stay standalone, with no workspace-inherited settings, so
 projects outside this repository can use them. The managed-agent core
-`eon/crates/eon-agent` (library `rota`) is standalone too: it depends on no Eon
-crate and uses no workspace-inherited settings, and Eon hosts it as `eon agent`
-through `rota::cli::Host`. Its source lives only in this repository. Publishing
-it as `rota` is gated by `eon-eon-agent-lr8sx.40`.
+`rota-cli` (`eon/crates/eon-agent`, library `rota`) is standalone too: it
+depends on no Eon crate and uses no workspace-inherited settings, and Eon
+hosts it as `eon agent` through `rota::cli::Host`. Eon's Boat crate may depend
+on it, and `eon` on both. Its source lives only in this repository. It
+publishes as the crate `rota-cli` with binary `rota` (EON-C40, Standalone rota
+distribution).
 
 Yazelix Nova remains an independent product line. Do not make Eon a successor
 repository, compatibility layer, or release channel for Nova.
@@ -324,7 +326,11 @@ TypeScript of its own.
 
 Publish Eon through two channels: Nix, and for x86_64 Linux the signed
 Nix-free archive and installer on GitHub releases (approved by Lucca,
-2026-11-06). Publish no other channel until the user approves it. Nix stays
+2026-11-06). Publish no other channel until the user approves it. The
+managed-agent core `rota-cli` on crates.io is approved (Lucca, 2026-11-16,
+`eon-eon-agent-lr8sx.40`) as a separate product, not an Eon channel: it does
+not consume Eon's component manifest, and its packaged `Cargo.lock` is its own
+version graph (EON-C40). Nix stays
 the one composition channel: it builds the Nix-free archive from the same
 component graph. Keep runtime ownership distribution-neutral:
 Nix may supply store paths as opaque component launch inputs, but Eon code must
