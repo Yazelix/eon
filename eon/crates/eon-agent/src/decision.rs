@@ -217,16 +217,15 @@ pub fn choose(
             fallback: false,
         });
     }
-    if let Some(index) = candidates.fallback {
-        if readings
+    if let Some(index) = candidates.fallback
+        && readings
             .get(index)
             .is_some_and(|r| availability(&config.backends[index], r, role).is_ok())
-        {
-            return Ok(Pick {
-                index,
-                fallback: true,
-            });
-        }
+    {
+        return Ok(Pick {
+            index,
+            fallback: true,
+        });
     }
     Err(Refusal {
         code: 3,

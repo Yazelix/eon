@@ -802,28 +802,15 @@ dependencies = [
 name = "eon"
 version = "0.1.28"
 dependencies = [
- "eon-agent",
  "eon-manifest",
  "eon-runtime",
  "eon-workspace-protocol",
  "libc",
  "orbit-protocol",
  "rmp",
+ "rota-cli",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "eon-agent"
-version = "0.1.0"
-dependencies = [
- "fs2",
- "libc",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "toml 0.8.23",
 ]
 
 [[package]]
@@ -2314,6 +2301,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "rota-cli"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]

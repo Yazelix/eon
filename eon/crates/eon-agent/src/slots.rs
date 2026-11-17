@@ -859,62 +859,60 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 if !quiet
                     && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket))
                     && slots.remote_enabled()
-                {
-                    if let Some(lease) =
+                    && let Some(lease) =
                         boat::Lease::claim(&slots.root).map_err(|e| slots.failure(&ticket, e))?
-                    {
-                        drop(ranked);
-                        drop(_queue);
-                        slots.log("grant", &ticket, None, None);
-                        match boat::run(
-                            lease,
-                            &slots.config.boat,
-                            options.argv,
-                            &mut source,
-                            slots.program,
-                        ) {
-                            Ok(boat::Outcome::Local(reason)) => {
-                                ticket.remote = false;
+                {
+                    drop(ranked);
+                    drop(_queue);
+                    slots.log("grant", &ticket, None, None);
+                    match boat::run(
+                        lease,
+                        &slots.config.boat,
+                        options.argv,
+                        &mut source,
+                        slots.program,
+                    ) {
+                        Ok(boat::Outcome::Local(reason)) => {
+                            ticket.remote = false;
+                            ticket.fallback_reason = Some(reason.clone());
+                            if let Some(source) = &source
+                                && let Err(reason) = source.verify()
+                            {
                                 ticket.fallback_reason = Some(reason.clone());
-                                if let Some(source) = &source {
-                                    if let Err(reason) = source.verify() {
-                                        ticket.fallback_reason = Some(reason.clone());
-                                        slots.log("exit", &ticket, None, Some(125));
-                                        return Err((125, reason));
-                                    }
-                                }
-                                let _queue = slots
-                                    .queue_lock(true)
-                                    .map_err(|e| slots.failure(&ticket, e))?;
-                                // Keep the same ticket inode, lock and FIFO age on fallback.
-                                fs::write(
-                                    &pending.path,
-                                    serde_json::to_vec(&ticket)
-                                        .map_err(|e| slots.failure(&ticket, e))?,
-                                )
+                                slots.log("exit", &ticket, None, Some(125));
+                                return Err((125, reason));
+                            }
+                            let _queue = slots
+                                .queue_lock(true)
                                 .map_err(|e| slots.failure(&ticket, e))?;
-                                slots.log("fallback", &ticket, None, None);
-                                let _ = writeln!(
-                                    io::stderr(),
-                                    "{} slot: where=local reason={reason}",
-                                    slots.program
-                                );
-                            }
-                            result => {
-                                let code = match &result {
-                                    Ok(boat::Outcome::Complete(code)) => *code,
-                                    _ => 125,
-                                };
-                                slots.log("exit", &ticket, None, Some(code));
-                                return match result {
-                                    Ok(boat::Outcome::Complete(code)) => Ok(code),
-                                    Err(reason) => Err((125, reason)),
-                                    _ => unreachable!(),
-                                };
-                            }
+                            // Keep the same ticket inode, lock and FIFO age on fallback.
+                            fs::write(
+                                &pending.path,
+                                serde_json::to_vec(&ticket)
+                                    .map_err(|e| slots.failure(&ticket, e))?,
+                            )
+                            .map_err(|e| slots.failure(&ticket, e))?;
+                            slots.log("fallback", &ticket, None, None);
+                            let _ = writeln!(
+                                io::stderr(),
+                                "{} slot: where=local reason={reason}",
+                                slots.program
+                            );
                         }
-                        continue;
+                        result => {
+                            let code = match &result {
+                                Ok(boat::Outcome::Complete(code)) => *code,
+                                _ => 125,
+                            };
+                            slots.log("exit", &ticket, None, Some(code));
+                            return match result {
+                                Ok(boat::Outcome::Complete(code)) => Ok(code),
+                                Err(reason) => Err((125, reason)),
+                                _ => unreachable!(),
+                            };
+                        }
                     }
+                    continue;
                 }
             }
             let mut grant = None;

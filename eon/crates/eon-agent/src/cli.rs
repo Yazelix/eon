@@ -92,10 +92,10 @@ pub fn config_source(primary: Option<&Path>, directory: &Path) -> Result<Option<
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("cannot read config: {error}")),
     };
-    if let Some(path) = primary {
-        if exists(path)? {
-            return Ok(Some(path.to_owned()));
-        }
+    if let Some(path) = primary
+        && exists(path)?
+    {
+        return Ok(Some(path.to_owned()));
     }
     let Ok(path) = fallback_config_path() else {
         return Ok(None);

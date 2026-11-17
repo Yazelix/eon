@@ -193,10 +193,10 @@ pub fn unsupported(backend: &Backend, options: &RunOptions) -> Option<String> {
     let Some(command) = run.commands.get(&options.role) else {
         return Some(format!("no headless command for role {role}"));
     };
-    if let Some(effort) = &options.effort {
-        if !run.efforts.contains(effort) {
-            return Some(format!("effort {effort} is not in efforts"));
-        }
+    if let Some(effort) = &options.effort
+        && !run.efforts.contains(effort)
+    {
+        return Some(format!("effort {effort} is not in efforts"));
     }
     if !options.add_dirs.is_empty() && !command.iter().any(|a| a == "{add_dirs}") {
         return Some(format!("the {role} command takes no --add-dir"));

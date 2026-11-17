@@ -7,8 +7,8 @@ product line.
 
 ## Agent manager tests
 
-The moved `eon-agent` crate keeps rota's library and test-driver name `rota`.
-Its ordinary tests run through `nix develop -c eon-test -p eon-agent`.
+The `rota-cli` package (`eon/crates/eon-agent`) keeps rota's library and test-driver name `rota`.
+Its ordinary tests run through `nix develop -c eon-test -p rota-cli`.
 Twenty existing headless cleanup/execution tests need a real systemd user
 manager and cgroup v2. They are marked ignored because eon-test's isolated
 namespaces hide the bus and cannot supply delegated cgroups. The Nix check
@@ -43,7 +43,7 @@ bash "$heavy_runner" nix develop -c env -i PATH="$PATH" \
   XDG_RUNTIME_DIR="$manager_runtime" DBUS_SESSION_BUS_ADDRESS="$manager_bus" \
   CARGO_HOME="$task_cargo" CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
   CARGO_BUILD_JOBS=6 CARGO_PROFILE_DEV_DEBUG=line-tables-only \
-  cargo nextest run --locked --offline -p eon-agent \
+  cargo nextest run --locked --offline -p rota-cli \
   --run-ignored only --test-threads 1 --no-tests fail \
   -E 'not (test(=cleanup::tests::nondumpable_child) | test(=cleanup::tests::interrupted_removal_child) | test(=cleanup::tests::mount_boundary_child))'
 ```

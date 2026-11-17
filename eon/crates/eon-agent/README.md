@@ -9,7 +9,7 @@ backend that has room, with the model and effort level the task asks for.
 
 ## Usage
 
-Build with `cargo build --release` (Linux, Rust 1.85 or later). Copy
+Build with `cargo build --release` (Linux, Rust 1.96 or later). Copy
 `config.example.toml` to `~/.config/rota/config.toml` and replace its placeholder
 paths, commands, models and example percentages.
 
@@ -327,8 +327,8 @@ Boat VM using a separate lease; see Eon's [configuration reference](../../../doc
 for policy, budget, exact-tree transfer, results and failure behavior. The default
 allowlist is empty. Boat is a local prerequisite, not an injected VM credential.
 
-Run this crate's tests through `nix develop -c eon-test -p eon-agent`.
-Run `cargo fmt --check` and `cargo clippy --locked -p eon-agent --all-targets -- -D warnings`
+Run this crate's tests through `nix develop -c eon-test -p rota-cli`.
+Run `cargo fmt --check` and `cargo clippy --locked -p rota-cli --all-targets -- -D warnings`
 inside the pinned development shell before review.
 The slot namespace test requires Bubblewrap with working PID namespaces and fails
 if its probe cannot run. On hosts that cannot run this probe,

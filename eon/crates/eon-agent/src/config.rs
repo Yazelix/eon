@@ -506,17 +506,16 @@ impl Config {
                 return Err("fallback backend must have no normal routing roles".into());
             }
         }
-        if let Some(pin) = &self.popup_backend {
-            if !self.backends.iter().any(|backend| {
+        if let Some(pin) = &self.popup_backend
+            && !self.backends.iter().any(|backend| {
                 &backend.name == pin
                     && (backend.roles.contains(&Role::Implement)
                         || self.fallback.as_ref() == Some(pin))
-            }) {
-                return Err(
-                    "popup_backend must name an implement backend or the configured fallback"
-                        .into(),
-                );
-            }
+            })
+        {
+            return Err(
+                "popup_backend must name an implement backend or the configured fallback".into(),
+            );
         }
         Ok(())
     }

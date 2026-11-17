@@ -232,16 +232,16 @@ fn publish_snapshot(client: &Client, config: &BoatConfig, warm: &mut Warm) -> Re
         return Err("snapshot-budget-unsafe".into());
     }
     let list = client.json(&["snapshots"])?;
-    if let Some(saved) = warm.snapshot.as_mut() {
-        if saved.name == config.snapshot && saved.lock_key == warm.lock_key {
-            if let Some(ready) = snapshot_ready(&list, saved) {
-                saved.snapshot_id = ready["snapshotId"]
-                    .as_str()
-                    .ok_or("snapshot-identity-unknown")?
-                    .into();
-                return Ok(());
-            }
-        }
+    if let Some(saved) = warm.snapshot.as_mut()
+        && saved.name == config.snapshot
+        && saved.lock_key == warm.lock_key
+        && let Some(ready) = snapshot_ready(&list, saved)
+    {
+        saved.snapshot_id = ready["snapshotId"]
+            .as_str()
+            .ok_or("snapshot-identity-unknown")?
+            .into();
+        return Ok(());
     }
     let named = list["named"]
         .as_array()
@@ -373,22 +373,22 @@ impl Client {
                     let mut input = io::BufReader::new(input);
                     let mut line = Vec::new();
                     while input.read_until(b'\n', &mut line).is_ok_and(|n| n > 0) {
-                        if let Ok(frame) = serde_json::from_slice::<Value>(&line) {
-                            if let Some(data) = frame["data"].as_str() {
-                                if !data.is_empty()
-                                    && matches!(frame["type"].as_str(), Some("stdout" | "stderr"))
-                                {
-                                    last_output
-                                        .store(super::now_ns() / super::SECOND, Ordering::Relaxed);
-                                }
-                                if let Some(log) = &mut log {
-                                    let _ = log.write_all(data.as_bytes());
-                                }
-                                if frame["type"] == "stderr" {
-                                    let _ = io::stderr().write_all(data.as_bytes());
-                                } else if frame["type"] == "stdout" {
-                                    let _ = io::stdout().write_all(data.as_bytes());
-                                }
+                        if let Ok(frame) = serde_json::from_slice::<Value>(&line)
+                            && let Some(data) = frame["data"].as_str()
+                        {
+                            if !data.is_empty()
+                                && matches!(frame["type"].as_str(), Some("stdout" | "stderr"))
+                            {
+                                last_output
+                                    .store(super::now_ns() / super::SECOND, Ordering::Relaxed);
+                            }
+                            if let Some(log) = &mut log {
+                                let _ = log.write_all(data.as_bytes());
+                            }
+                            if frame["type"] == "stderr" {
+                                let _ = io::stderr().write_all(data.as_bytes());
+                            } else if frame["type"] == "stdout" {
+                                let _ = io::stdout().write_all(data.as_bytes());
                             }
                         }
                         line.clear();
@@ -554,13 +554,13 @@ fn stop_vm(client: &Client, id: &str) -> Result<(), String> {
             .unwrap_or_else(Instant::now),
     );
     loop {
-        if let Ok(info) = client.json(&["info", id]) {
-            if matches!(
+        if let Ok(info) = client.json(&["info", id])
+            && matches!(
                 sandbox(&info)["state"].as_str(),
                 Some("stopped" | "archived")
-            ) {
-                return Ok(());
-            }
+            )
+        {
+            return Ok(());
         }
         if Instant::now() >= stop_deadline {
             break;
@@ -961,12 +961,12 @@ pub(super) fn run(
         cleanup: true,
         reserve_seconds: 0.0,
     };
-    if execution.is_err() {
-        if let Some(process) = record.command_pid {
-            record.kill_sent = true;
-            if lease.save(&record).is_ok() {
-                let _ = cleanup.json(&["exec", &id, "--kill", &process.to_string()]);
-            }
+    if execution.is_err()
+        && let Some(process) = record.command_pid
+    {
+        record.kill_sent = true;
+        if lease.save(&record).is_ok() {
+            let _ = cleanup.json(&["exec", &id, "--kill", &process.to_string()]);
         }
     }
     let output_path = directory.join("output.log");
@@ -1134,10 +1134,8 @@ pub(super) fn run(
     if signal != 0 {
         return Ok(Outcome::Complete((128 + signal) as u8));
     }
-    if !released {
-        if let Err(reason) = &execution {
-            return fallback(reason.clone());
-        }
+    if !released && let Err(reason) = &execution {
+        return fallback(reason.clone());
     }
     Ok(Outcome::Complete(execution?))
 }
@@ -1431,7 +1429,7 @@ mod tests {
         ));
         assert!(allowed(
             &config,
-            &words(&["nix", "develop", "-c", "eon-test", "-p", "eon-agent"])
+            &words(&["nix", "develop", "-c", "eon-test", "-p", "rota-cli"])
         ));
         for argv in [
             vec!["nix", "develop", "-c", "cargo", "test"],

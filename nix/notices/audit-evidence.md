@@ -12,10 +12,11 @@ feature or build-context changes require explicit inspection and reviewed renewa
 unused exceptions and missing evidence anchors fail. The full native-binding
 graph remains intact. See the checked-in [inspection and renewal recipe](../../eon/tools/archive-notices/README.md).
 The binary SHA-256 values below identify observations, not acceptance keys.
-The Eon, Orbit and Venus sections record the 2026-11-16 renewal for
-`eon-igae.19`, observed on composition base `661fe604`. Their earlier
-observations remain labelled historical. The owning bead records the final
-staged-tree gates and artifact identities after the evidence update.
+The Eon, Orbit and Venus sections record the 2026-11-17 renewal for
+`eon-eon-agent-lr8sx.40.1`, observed on that bead's staged tree over edge
+`c901a60f`. Their earlier observations remain labelled historical. The owning
+bead records the final staged-tree gates and artifact identities after the
+evidence update.
 
 Each producer section gives the exact binary, source, vendor and actual build
 flags from `nix log <producer-output>`. Its runtime graph uses
@@ -47,6 +48,33 @@ are also absent from the actual compile log and selected graphs.
 
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
+
+The current three contexts differ from the accepted 2026-11-16 contexts only
+by two local-package changes in normalized Cargo.lock, compared field by field
+with the accepted observations named below. Commit
+`c3d73feea3d0efa9d39a570756e2322d1541361f` adds the local `review-tier`
+stanza; `review-tier` is repository tooling in no producer's runtime, native
+or audited set. `eon-eon-agent-lr8sx.40.1` renames the local package
+`eon-agent` to `rota-cli` with the same directory, version, licence
+(MIT OR Apache-2.0, unchanged LICENSE-MIT and LICENSE-APACHE) and dependency
+list. Orbit and Venus differ only in that lock text. Eon's runtime, native and
+audited sets differ only by that package name: the same local crate appears as
+`rota-cli` where it appeared as `eon-agent`. Context fields (target, roots,
+features, flags, toolchain) are unchanged. No registry/git crate is added,
+removed or version-changed, and no feature changes.
+
+Both variants were built from that tree. All 12 Rust producers have equal
+full/fallback contexts; only Eon, Orbit and Venus rejected their old keys.
+`inspect-audit` on each actual binary reproduces every saved graph. The strict
+proposal changes only the six fingerprint fields and exactly equals the edited
+JSON after canonical comparison; no exception identity changes. Because the
+native normal/build feature data is identical apart from the name, each host
+and unselected classification carries over unchanged. The omission falsifier
+on Eon's `fs2 0.4.3` and Venus's `libc 0.2.189`, independently in both
+variants, retains each root and rejects the missing audited runtime dependency
+under the renewed keys.
+
+Historical (2026-11-16):
 
 The current three contexts differ from the accepted 2026-11-13 contexts only
 in normalized Cargo.lock. Commit `4200c940c29fade5d2be955b285045c1022006f5`
@@ -85,6 +113,28 @@ bead records passing reports generated with the accepted keys on the final
 tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
+
+Renewed on 2026-11-17 for `eon-eon-agent-lr8sx.40.1` to context
+`3c8036faf5a889ebb14b58572717640ad2d4ac35bcd47f1794290917ba93d36a`.
+The full and without-Accelerando values are identical. Compared with accepted
+context `73ec261a2f561ac31bf0847bc31a743a1c88b4c725449eca555bbded7a86b454`,
+only the `review-tier` lock stanza and the `eon-agent` -> `rota-cli` package
+name differ. The same 9 host-only and 2 unselected exceptions remain; no
+target-runtime dependency is waived.
+
+- Source: `/nix/store/q7xf8r1ag5w8m4539w7jbsx3bp9m4r3b-source`.
+- Vendor: `/nix/store/d5bys2iry7p84jnbaj30yhcl3xsj78y3-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `eon/crates/eon/Cargo.toml`;
+  root: `eon`; default features, no added features.
+- Full observation: `/nix/store/jlv208cw9v89wpwnxxwzyzxj6m2mp4mg-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/vmlrwbj18vbfzyxqmrk6yh8ihxqy2lss-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `1a3aa70d5fb0b42556fd317a19207051a6d804f604fc0774fe0eb20515cc869d`.
+- Without-Accelerando observation: `/nix/store/djvw8z795za2bmrqf0jz770zlsf8pj99-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/p7ykvhjr06l4wpndnnahv0x6r0d124hp-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `724e7a4ee3d1689ef1ef64e26fc851f4525be477463590ad1de97d0f33ae8e21`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (2026-11-16):
 
 Renewed on 2026-11-16 for `eon-igae.19` to context
 `73ec261a2f561ac31bf0847bc31a743a1c88b4c725449eca555bbded7a86b454`.
@@ -168,6 +218,26 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-17 for `eon-eon-agent-lr8sx.40.1` to context
+`e33f056c79434e86397a56cc4e9af89dfa18ee131b9caad6d28acc854c8bce04`.
+The full and without-Accelerando values are identical, sharing the exact
+report and binary. Compared with accepted context
+`097e2347ea1e59e721f3de3c7b22d180cafa7e556f2e059b6618536cd3055e68`,
+only the lock text differs (the `review-tier` stanza and the `rota-cli`
+rename); the binary's SHA-256 is unchanged. The same 6 host-only and 1
+unselected exceptions remain; no target-runtime dependency is waived.
+
+- Source: `/nix/store/yfi665mzm3r68hbbz3bz28cn0h0xv2np-source`.
+- Vendor: `/nix/store/d5bys2iry7p84jnbaj30yhcl3xsj78y3-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `orbit/Cargo.toml`;
+  root: `yazelix-orbit`; default features, no added features.
+- Both observations: `/nix/store/v0ywfnwm6vzhhkysdy76hx4j1as8rvzn-orbit-cargo-notices-0.1.0`.
+- Binary: `/nix/store/n654vqgil1ify4z3zry70kgibicba66f-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+- SHA-256: `10b9d6f80e796529ef5b583b5e8f839a4687467bb99a713723944981760406ea`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (2026-11-16):
+
 Renewed on 2026-11-16 for `eon-igae.19` to context
 `097e2347ea1e59e721f3de3c7b22d180cafa7e556f2e059b6618536cd3055e68`.
 The full and without-Accelerando values are identical, sharing the exact
@@ -215,6 +285,27 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-17 for `eon-eon-agent-lr8sx.40.1` to context
+`79f8d05538d07a968347a93ce2f0ca35ebe149b6f36abc223db694cf3ea9335b`.
+The full and without-Accelerando values are identical. Compared with accepted
+context `f5bd33e8e6af2cc1b3b604bc31789009ca4169bdf3ecd6f10ee7d7e8c53f4ffb`,
+only the lock text differs (the `review-tier` stanza and the `rota-cli`
+rename). The same 15 host-only and 4 unselected exceptions remain; no
+target-runtime dependency is waived.
+
+- Source: `/nix/store/224bywpl5sl3151ss0p9j6ing5mfg57r-source`.
+- Vendor: `/nix/store/d5bys2iry7p84jnbaj30yhcl3xsj78y3-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `venus/Cargo.toml`;
+  root: `yazelix-venus`; default features, no added features.
+- Full observation: `/nix/store/whw7wqvlpcpf8v0xs772lg5pprh04bb7-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/5ya0blq4fh7ji31vlhqnk5wqx0b0hgar-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Without-Accelerando observation: `/nix/store/8qga6pwb7ihmcp2gpsvf8vci9zy4iyil-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/d5njc9f489dkrip8a1ag6mh2xyg2574j-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Both binaries' SHA-256: `7ce1195634bae437c5578578628a85366df44c9ee3cc669ed97bcdf5811012db`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (2026-11-16):
 
 Renewed on 2026-11-16 for `eon-igae.19` to context
 `f5bd33e8e6af2cc1b3b604bc31789009ca4169bdf3ecd6f10ee7d7e8c53f4ffb`.

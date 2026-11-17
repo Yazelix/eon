@@ -111,8 +111,8 @@ pub fn validate(config: &Config) -> Result<(), String> {
                     .into(),
             );
         }
-        if let Some(done) = &project.done {
-            if done.command.first().is_none_or(|s| s.is_empty())
+        if let Some(done) = &project.done
+            && (done.command.first().is_none_or(|s| s.is_empty())
                 || done.command.iter().any(|s| s.contains('\0'))
                 || !done.command.iter().any(|s| s.contains("{bead}"))
                 || done.pointers.is_empty()
@@ -122,12 +122,9 @@ pub fn validate(config: &Config) -> Result<(), String> {
                             .windows(2)
                             .any(|p| p[0] == b'~' && !b"01".contains(&p[1]))
                         || s.ends_with('~')
-                })
-            {
-                return Err(
-                    "project done needs command with {bead} and valid JSON pointers".into(),
-                );
-            }
+                }))
+        {
+            return Err("project done needs command with {bead} and valid JSON pointers".into());
         }
     }
     Ok(())

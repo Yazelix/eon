@@ -1,15 +1,25 @@
 [package]
-name = "eon-agent"
+name = "rota-cli"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.96"
 description = "Picks which coding-agent subscription runs your next agent session"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Yazelix/rota"
-homepage = "https://github.com/Yazelix/rota"
+repository = "https://github.com/Yazelix/eon"
+homepage = "https://github.com/Yazelix/eon/blob/edge/eon/crates/eon-agent/README.md"
 readme = "README.md"
-exclude = [".beads/"]
-publish = false
+keywords = ["coding-agent", "llm", "quota", "codex", "claude"]
+categories = ["command-line-utilities", "development-tools"]
+include = [
+    "src/**",
+    "tests/**",
+    "config.example.toml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+publish = ["crates-io"]
 
 [lib]
 name = "rota"

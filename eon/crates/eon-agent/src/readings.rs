@@ -325,12 +325,13 @@ pub fn read(
                 Ok((quota, quota::observed_at_ms(reader.parser, &text)))
             };
             let mut quota = get();
-            if quota.is_err() && allow_refresh {
-                if let Some(refresh) = &reader.refresh {
-                    recheck_cap(backend, &mut reading)?;
-                    let _ = probe(backend, refresh, reader.refresh_timeout_seconds, cwd);
-                    quota = get();
-                }
+            if quota.is_err()
+                && allow_refresh
+                && let Some(refresh) = &reader.refresh
+            {
+                recheck_cap(backend, &mut reading)?;
+                let _ = probe(backend, refresh, reader.refresh_timeout_seconds, cwd);
+                quota = get();
             }
             let (quota, observed_at_ms) = quota.map_err(|e| format!("quota unreadable: {e}"))?;
             reading.source = Some(crate::decision::Source {
@@ -389,12 +390,11 @@ pub fn collect(
         })
         .collect();
     for index in indices {
-        if config.backends[*index].enabled {
-            if let Err(problem) = recheck_cap(&config.backends[*index], &mut readings[*index]) {
-                if readings[*index].problem.is_none() {
-                    readings[*index].problem = Some(problem);
-                }
-            }
+        if config.backends[*index].enabled
+            && let Err(problem) = recheck_cap(&config.backends[*index], &mut readings[*index])
+            && readings[*index].problem.is_none()
+        {
+            readings[*index].problem = Some(problem);
         }
     }
     readings

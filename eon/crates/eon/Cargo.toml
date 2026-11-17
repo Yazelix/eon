@@ -19,4 +19,4 @@ rmp = "=0.8.15"
 orbit-protocol = { path = "../../../orbit/crates/protocol" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rota = { package = "eon-agent", path = "../eon-agent" }
+rota = { package = "rota-cli", path = "../eon-agent", version = "=0.1.0" }

@@ -332,7 +332,7 @@ fn agent_config_provenance_preserves_filename_bytes() {
     );
 }
 
-/// The `eon agent` twins of eon-agent's tests/golden.rs: goldens captured before the host seam
+/// The `eon agent` twins of rota-cli's tests/golden.rs: goldens captured before the host seam
 /// (eon-eon-agent-lr8sx.39.1). The only differences are the host's program name in the listed
 /// message rows, asserted here explicitly.
 mod golden {
