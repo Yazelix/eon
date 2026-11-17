@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![cfg(target_os = "linux")]
 //! The admission gate end to end (EON-C40, 2026-11-17 amendment clauses 2-5): configured order,
 //! one admission per quota observation across `launch` and `run`, fresh readings, declared-absent

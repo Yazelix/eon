@@ -1,10 +1,11 @@
+#![deny(unsafe_code)]
 #![cfg(target_os = "linux")]
 
 use fs2::FileExt;
+use rustix::process::{Pid, Signal};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
@@ -339,9 +340,7 @@ fn delegated_pid_signal_releases_target_and_stops_command() {
             .exists()
             .then_some(())
     });
-    unsafe {
-        libc::kill(run.pid() as i32, libc::SIGTERM);
-    }
+    let _ = rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM);
     assert_eq!(run.wait().code(), Some(143));
     let lock = File::open(f.dir.path().join("provider/guard-lock")).unwrap();
     assert!(FileExt::try_lock_exclusive(&lock).is_ok());
@@ -467,7 +466,6 @@ fn remote_without_legacy_policy_requires_state_boat_on() {
 
 #[test]
 fn delegated_terminal_signals_stop_foreground_group_and_keep_input() {
-    use std::os::unix::process::CommandExt;
     struct Session {
         child: Child,
         root: PathBuf,
@@ -478,18 +476,21 @@ fn delegated_terminal_signals_stop_foreground_group_and_keep_input() {
             for name in ["helper-pid", "command-pid"] {
                 if let Ok(text) = fs::read_to_string(self.root.join(name))
                     && let Ok(pid) = text.trim().parse::<i32>()
+                    && pid > 0
                 {
-                    unsafe {
-                        let group = libc::getpgid(pid);
-                        if group > 0 && group != session && libc::getsid(pid) == session {
-                            libc::kill(-group, libc::SIGKILL);
-                        }
+                    let pid = Pid::from_raw(pid).unwrap();
+                    if let (Ok(group), Ok(owner)) = (
+                        rustix::process::getpgid(Some(pid)),
+                        rustix::process::getsid(Some(pid)),
+                    ) && group.as_raw_pid() != session
+                        && owner.as_raw_pid() == session
+                    {
+                        let _ = rustix::process::kill_process_group(group, Signal::KILL);
                     }
                 }
             }
-            unsafe {
-                libc::kill(-session, libc::SIGKILL);
-            }
+            let _ =
+                rustix::process::kill_process_group(Pid::from_raw(session).unwrap(), Signal::KILL);
             let _ = self.child.wait();
         }
     }
@@ -505,34 +506,21 @@ fn delegated_terminal_signals_stop_foreground_group_and_keep_input() {
             ),
         )
         .unwrap();
-        let (mut master, mut slave) = (-1, -1);
-        assert_eq!(
-            unsafe {
-                libc::openpty(
-                    &mut master,
-                    &mut slave,
-                    std::ptr::null_mut(),
-                    std::ptr::null(),
-                    std::ptr::null(),
-                )
-            },
-            0
-        );
-        let mut master = unsafe { File::from_raw_fd(master) };
-        let slave = unsafe { File::from_raw_fd(slave) };
+        let flags = rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY;
+        let master = rustix::pty::openpt(flags).unwrap();
+        rustix::pty::grantpt(&master).unwrap();
+        rustix::pty::unlockpt(&master).unwrap();
+        let name = rustix::pty::ptsname(&master, Vec::new()).unwrap();
+        let slave =
+            File::from(rustix::fs::open(&name, flags.into(), rustix::fs::Mode::empty()).unwrap());
+        let mut master = File::from(master);
+        let tty = slave.try_clone().unwrap();
         let mut command = Command::new("sh");
         command.args(["-c", "\"$@\" <&0 & owner=$!; echo $owner > provider/wrapper-pid; wait $owner; echo $? > provider/wrapper-status; while :; do sleep 1; done", "sh", env!("CARGO_BIN_EXE_rota"), "slot", "run", "--", "sh", "-c", "read token; test \"$token\" = start || exit 42; echo $$ > provider/command-pid; exec sleep 120"])
             .env("ROTA_CONFIG", f.dir.path().join("config.toml"))
             .env_remove("ROTA_SLOT").env_remove("ROTA_SLOT_TOKEN").env_remove("EON_SLOT_DELEGATE")
             .current_dir(f.dir.path()).stdin(slave.try_clone().unwrap()).stdout(slave.try_clone().unwrap()).stderr(slave);
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        platform::session_on_exec(&mut command, tty);
         let _session = Session {
             child: command.spawn().unwrap(),
             root: f.dir.path().join("provider"),
@@ -550,9 +538,10 @@ fn delegated_terminal_signals_stop_foreground_group_and_keep_input() {
             .trim()
             .parse()
             .unwrap();
-        unsafe {
-            libc::kill(wrapper, signal);
-        }
+        let _ = rustix::process::kill_process(
+            Pid::from_raw(wrapper).unwrap(),
+            Signal::from_named_raw(signal).unwrap(),
+        );
         let status = until(|| {
             fs::read_to_string(f.dir.path().join("provider/wrapper-status"))
                 .ok()
@@ -560,7 +549,7 @@ fn delegated_terminal_signals_stop_foreground_group_and_keep_input() {
         });
         assert_eq!(status, 128 + signal);
         assert_eq!(
-            unsafe { libc::tcgetpgrp(master.as_raw_fd()) },
+            rustix::termios::tcgetpgrp(&master).unwrap().as_raw_pid(),
             _session.child.id() as i32
         );
         let pid = fs::read_to_string(f.dir.path().join("provider/command-pid")).unwrap();
@@ -1023,7 +1012,7 @@ fn review_canceled_resume_returns_signal_status_after_cleanup() {
             .exists()
             .then_some(())
     });
-    assert_eq!(unsafe { libc::kill(run.pid() as i32, libc::SIGTERM) }, 0);
+    rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM).unwrap();
     assert_eq!(run.wait().code(), Some(143));
     assert_eq!(f.list()["boat"]["phase"], "stopped");
     assert!(!f.dir.path().join("local-ran").exists());
@@ -1161,7 +1150,7 @@ fn review_canceling_reconciliation_never_falls_back_or_starts_a_vm() {
             .exists()
             .then_some(())
     });
-    assert_eq!(unsafe { libc::kill(run.pid() as i32, libc::SIGTERM) }, 0);
+    rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM).unwrap();
     assert_eq!(run.wait().code(), Some(143));
     assert!(!f.dir.path().join("local-ran").exists());
 }
@@ -1371,7 +1360,7 @@ fn canceling_boat_preflight_exits_without_starting_remote_or_local_work() {
             .exists()
             .then_some(())
     });
-    assert_eq!(unsafe { libc::kill(run.pid() as i32, libc::SIGTERM) }, 0);
+    rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM).unwrap();
     assert_eq!(run.wait().code(), Some(143));
     assert!(!f.dir.path().join("local-ran").exists());
     let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
@@ -1826,7 +1815,7 @@ fn background_child_does_not_hold_slot() {
     struct Descendant(i32);
     impl Drop for Descendant {
         fn drop(&mut self) {
-            unsafe { libc::kill(self.0, libc::SIGTERM) };
+            let _ = rustix::process::kill_process(Pid::from_raw(self.0).unwrap(), Signal::TERM);
         }
     }
     let _descendant = Descendant(pid);
@@ -2145,7 +2134,7 @@ fn scans_skip_io_errors_in_other_tickets() {
     File::create(&legacy_queue).unwrap();
     let mut run = f.spawn(&["slot", "run", "--", "true"]);
     let own = f.queued(run.pid());
-    let _file = if unsafe { libc::geteuid() } != 0 {
+    let _file = if rustix::process::geteuid().as_raw() != 0 {
         let unreadable = f.root().join("queue").join(format!(
             "{}-999999.json",
             own["queued_ns"].as_u64().unwrap() - 1
@@ -2183,11 +2172,13 @@ fn ls_observes_existing_and_free_legacy_locks_without_opening_them() {
     let mut run = f.spawn(&["slot", "run", "--", "true"]);
     run.success();
     let path = f.dir.path().join("legacy/old-1.lock");
-    let path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
-    let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
-    assert!(fd >= 0);
-    let mut events = unsafe { File::from_raw_fd(fd) };
-    assert!(unsafe { libc::inotify_add_watch(fd, path.as_ptr(), libc::IN_OPEN) } >= 0);
+    let mut events = File::from(
+        rustix::fs::inotify::init(
+            rustix::fs::inotify::CreateFlags::CLOEXEC | rustix::fs::inotify::CreateFlags::NONBLOCK,
+        )
+        .unwrap(),
+    );
+    rustix::fs::inotify::add_watch(&events, &path, rustix::fs::inotify::WatchFlags::OPEN).unwrap();
     assert_eq!(f.list()["holders"], serde_json::json!([]));
     assert_eq!(
         events.read(&mut [0; 256]).unwrap_err().kind(),
@@ -2394,4 +2385,22 @@ fn built_in_nix_inference_and_read_only_commands() {
     heavy.success();
     forced.success();
     assert_eq!(f.grants(), [(heavy.pid(), 2), (forced.pid(), 2)]);
+}
+
+#[allow(unsafe_code)]
+mod platform {
+    use super::{Command, File};
+    use std::os::unix::process::CommandExt;
+
+    pub(super) fn session_on_exec(command: &mut Command, tty: File) {
+        // SAFETY: pre_exec has no safe registration equivalent; the closure owns
+        // its tty and calls only async-signal-safe setsid/ioctl wrappers after fork.
+        unsafe {
+            command.pre_exec(move || {
+                rustix::process::setsid()?;
+                rustix::process::ioctl_tiocsctty(&tty)?;
+                Ok(())
+            });
+        }
+    }
 }

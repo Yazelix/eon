@@ -1,11 +1,10 @@
 //! Linux directory-handle operations. Names passed here are single components.
+use rustix::fs::{self, AtFlags, Mode, OFlags, ResolveFlags};
 use std::collections::BTreeSet;
-use std::ffi::{CStr, CString, OsStr, OsString};
-use std::fs::{File, OpenOptions};
+use std::ffi::{CString, OsStr, OsString};
+use std::fs::File;
 use std::io::{self, Read};
-use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path};
 
 pub(super) struct Dir(File);
@@ -41,35 +40,26 @@ fn component(name: &OsStr) -> io::Result<CString> {
     CString::new(name.as_bytes()).map_err(|_| invalid("NUL in name"))
 }
 
-fn file(fd: i32) -> io::Result<File> {
-    if fd < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        // The successful syscall transfers this fresh descriptor to File.
-        Ok(unsafe { File::from_raw_fd(fd) })
-    }
-}
-
 pub(super) fn ancestors_match(path: &Path, protected: &BTreeSet<(u64, u64)>) -> io::Result<bool> {
     use std::os::unix::fs::MetadataExt;
     // Inspection follows /proc/PID/cwd and crosses mount roots to recognize bind aliases.
-    let mut dir = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC)
-        .open(path)?;
+    let mut dir = File::from(fs::open(
+        path,
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?);
     loop {
         let stat = dir.metadata()?;
         let id = (stat.dev(), stat.ino());
         if protected.contains(&id) {
             return Ok(true);
         }
-        let up = file(unsafe {
-            libc::openat(
-                dir.as_raw_fd(),
-                c"..".as_ptr(),
-                libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
-            )
-        })?;
+        let up = File::from(fs::openat(
+            &dir,
+            c"..",
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?);
         let stat = up.metadata()?;
         if (stat.dev(), stat.ino()) == id {
             return Ok(false);
@@ -83,17 +73,16 @@ impl Dir {
         if !path.is_absolute() {
             return Err(invalid("directory must be absolute"));
         }
-        let mut dir = Self(
-            OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                .open("/")?,
-        );
+        let mut dir = Self(File::from(fs::open(
+            "/",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?));
         for part in path.components() {
             match part {
                 Component::RootDir => (),
                 Component::Normal(name) => {
-                    dir = Self(dir.open(name, libc::O_RDONLY | libc::O_DIRECTORY, 0)?);
+                    dir = Self(dir.open(name, OFlags::RDONLY | OFlags::DIRECTORY)?);
                 }
                 _ => return Err(invalid("non-normal directory path")),
             }
@@ -101,94 +90,64 @@ impl Dir {
         Ok(dir)
     }
 
-    fn open(&self, name: &OsStr, flags: i32, mode: u32) -> io::Result<File> {
+    fn open(&self, name: &OsStr, flags: OFlags) -> io::Result<File> {
         let name = component(name)?;
-        file(unsafe {
-            libc::openat(
-                self.0.as_raw_fd(),
-                name.as_ptr(),
-                flags | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
-                mode,
-            )
-        })
+        Ok(File::from(fs::openat(
+            &self.0,
+            &name,
+            flags | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        )?))
     }
 
     pub fn child(&self, name: &OsStr) -> io::Result<Self> {
         let name = component(name)?;
-        let mut how: libc::open_how = unsafe { std::mem::zeroed() };
-        how.flags =
-            (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64;
         // O_NOFOLLOW alone permits bind mounts into unrelated evidence trees.
-        how.resolve = libc::RESOLVE_NO_SYMLINKS | libc::RESOLVE_NO_XDEV;
-        let fd = unsafe {
-            libc::syscall(
-                libc::SYS_openat2,
-                self.0.as_raw_fd(),
-                name.as_ptr(),
-                &how,
-                std::mem::size_of::<libc::open_how>(),
-            )
-        };
-        file(fd as i32).map(Self)
+        Ok(Self(File::from(fs::openat2(
+            &self.0,
+            &name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+        )?)))
     }
 
     pub fn stat(&self, name: &OsStr) -> io::Result<Stat> {
         let name = component(name)?;
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        let result = unsafe {
-            libc::fstatat(
-                self.0.as_raw_fd(),
-                name.as_ptr(),
-                stat.as_mut_ptr(),
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        };
-        if result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let stat = unsafe { stat.assume_init() };
+        let stat = fs::statat(&self.0, &name, AtFlags::SYMLINK_NOFOLLOW)?;
         Ok(Stat {
             dev: stat.st_dev,
             ino: stat.st_ino,
             mode: stat.st_mode,
             blocks: stat.st_blocks.max(0) as u64,
             mtime: stat.st_mtime,
-            nanos: stat.st_mtime_nsec,
+            nanos: stat.st_mtime_nsec as i64,
         })
     }
 
     pub fn names(&self) -> io::Result<Vec<OsString>> {
-        let fd = self.open(OsStr::new("."), libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
-        use std::os::fd::IntoRawFd;
-        let fd = fd.into_raw_fd();
-        let stream = unsafe { libc::fdopendir(fd) };
-        if stream.is_null() {
-            let error = io::Error::last_os_error();
-            unsafe { libc::close(fd) };
-            return Err(error);
-        }
+        let fd = self.open(OsStr::new("."), OFlags::RDONLY | OFlags::DIRECTORY)?;
+        let mut buffer = [std::mem::MaybeUninit::uninit(); 8192];
         let mut names = Vec::new();
-        let result = loop {
-            unsafe { *libc::__errno_location() = 0 };
-            let entry = unsafe { libc::readdir(stream) };
-            if entry.is_null() {
-                let errno = unsafe { *libc::__errno_location() };
-                break if errno == 0 {
-                    Ok(())
-                } else {
-                    Err(io::Error::from_raw_os_error(errno))
-                };
-            }
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
-            if name != b"." && name != b".." {
-                names.push(OsString::from_vec(name.to_vec()));
+        let result = {
+            let mut entries = fs::RawDir::new(&fd, &mut buffer);
+            loop {
+                match entries.next() {
+                    Some(Ok(entry)) => {
+                        let name = entry.file_name().to_bytes();
+                        if name != b"." && name != b".." {
+                            names.push(OsString::from_vec(name.to_vec()));
+                        }
+                    }
+                    // libc readdir treats an unlinked directory as end-of-directory.
+                    Some(Err(rustix::io::Errno::NOENT)) | None => break Ok(()),
+                    Some(Err(error)) => break Err(io::Error::from(error)),
+                }
             }
         };
-        let closed = unsafe { libc::closedir(stream) };
+        let closed = crate::platform::close(fd);
         result?;
-        if closed != 0 {
-            return Err(io::Error::last_os_error());
-        }
+        closed?;
         names.sort();
         Ok(names)
     }
@@ -197,7 +156,7 @@ impl Dir {
         if !expected.is(libc::S_IFREG) {
             return Err(invalid("not a regular file"));
         }
-        let fd = self.open(name, libc::O_RDONLY, 0)?;
+        let fd = self.open(name, OFlags::RDONLY)?;
         let meta = fd.metadata()?;
         use std::os::unix::fs::MetadataExt;
         if (meta.dev(), meta.ino(), meta.mode()) != (expected.dev, expected.ino, expected.mode) {
@@ -214,60 +173,38 @@ impl Dir {
     pub fn link(&self, name: &OsStr) -> io::Result<OsString> {
         let name = component(name)?;
         let mut bytes = vec![0; 65_536];
-        let n = unsafe {
-            libc::readlinkat(
-                self.0.as_raw_fd(),
-                name.as_ptr(),
-                bytes.as_mut_ptr().cast(),
-                bytes.len(),
-            )
-        };
-        if n < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if n as usize == bytes.len() {
+        let n = fs::readlinkat_raw(&self.0, &name, &mut bytes)?;
+        if n == bytes.len() {
             return Err(invalid("symlink text too long"));
         }
-        bytes.truncate(n as usize);
+        bytes.truncate(n);
         Ok(OsString::from_vec(bytes))
     }
 
     pub fn unlink(&self, name: &OsStr, directory: bool) -> io::Result<()> {
         event(if directory { "rmdir" } else { "unlink" })?;
         let name = component(name)?;
-        if unsafe {
-            libc::unlinkat(
-                self.0.as_raw_fd(),
-                name.as_ptr(),
-                if directory { libc::AT_REMOVEDIR } else { 0 },
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        fs::unlinkat(
+            &self.0,
+            &name,
+            if directory {
+                AtFlags::REMOVEDIR
+            } else {
+                AtFlags::empty()
+            },
+        )?;
         Ok(())
     }
 
     pub fn check_write(&self) -> io::Result<()> {
-        if unsafe {
-            libc::faccessat(
-                self.0.as_raw_fd(),
-                c".".as_ptr(),
-                libc::W_OK | libc::X_OK,
-                libc::AT_EACCESS,
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        crate::platform::check_write(&self.0)
     }
 
     pub fn writable(&self) -> io::Result<()> {
         use std::os::unix::fs::MetadataExt;
         let mode = self.0.metadata()?.mode();
-        if mode & 0o700 != 0o700 && unsafe { libc::fchmod(self.0.as_raw_fd(), mode | 0o700) } != 0 {
-            return Err(io::Error::last_os_error());
+        if mode & 0o700 != 0o700 {
+            fs::fchmod(&self.0, Mode::from_bits_retain(mode | 0o700))?;
         }
         Ok(())
     }
@@ -293,4 +230,66 @@ pub(super) fn event(name: &str) -> io::Result<()> {
         Some(hook) => hook(name),
         None => Ok(()),
     })
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn removed_directory_is_an_empty_listing() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("gone-work");
+        std::fs::create_dir(&path).unwrap();
+        let dir = Dir::absolute(&path).unwrap();
+        std::fs::remove_dir(&path).unwrap();
+        assert!(dir.names().unwrap().is_empty());
+    }
+
+    #[test]
+    fn directory_handles_preserve_flags_names_and_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let name = OsStr::from_bytes(b"file-\xff");
+        std::fs::write(root.path().join(name), b"owned").unwrap();
+        std::fs::create_dir(root.path().join("child")).unwrap();
+        symlink(name, root.path().join("link")).unwrap();
+        let dir = Dir::absolute(root.path()).unwrap();
+        let flags = fs::fcntl_getfl(&dir.0).unwrap();
+        assert!(flags.contains(OFlags::DIRECTORY | OFlags::NONBLOCK));
+        assert!(
+            rustix::io::fcntl_getfd(&dir.0)
+                .unwrap()
+                .contains(rustix::io::FdFlags::CLOEXEC)
+        );
+        let child = dir.child(OsStr::new("child")).unwrap();
+        assert!(
+            !fs::fcntl_getfl(&child.0)
+                .unwrap()
+                .contains(OFlags::NONBLOCK)
+        );
+        assert!(
+            rustix::io::fcntl_getfd(&child.0)
+                .unwrap()
+                .contains(rustix::io::FdFlags::CLOEXEC)
+        );
+        let names = vec![
+            OsString::from("child"),
+            name.to_owned(),
+            OsString::from("link"),
+        ];
+        assert_eq!(dir.names().unwrap(), names);
+        assert_eq!(dir.names().unwrap(), names);
+        assert_eq!(dir.link(OsStr::new("link")).unwrap(), name);
+        assert_eq!(dir.read(name, &dir.stat(name).unwrap()).unwrap(), b"owned");
+        assert_eq!(
+            dir.stat(OsStr::new("absent")).unwrap_err().raw_os_error(),
+            Some(libc::ENOENT)
+        );
+        assert_eq!(
+            dir.child(OsStr::new("link")).err().unwrap().raw_os_error(),
+            Some(libc::ENOTDIR)
+        );
+        assert!(dir.open(OsStr::new("../file"), OFlags::RDONLY).is_err());
+    }
 }

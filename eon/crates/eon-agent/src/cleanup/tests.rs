@@ -69,7 +69,11 @@ impl Fixture {
     fn process(&self, pid: u32, cwd: &Path, exe: &Path, env: &[u8]) {
         let path = self.proc.join(pid.to_string());
         disk::create_dir(&path).unwrap();
-        disk::write(path.join("status"), status(unsafe { libc::geteuid() }, "S")).unwrap();
+        disk::write(
+            path.join("status"),
+            status(rustix::process::geteuid().as_raw(), "S"),
+        )
+        .unwrap();
         symlink(cwd, path.join("cwd")).unwrap();
         symlink(exe, path.join("exe")).unwrap();
         disk::write(path.join("environ"), env).unwrap();
@@ -384,7 +388,7 @@ fn registry_live_outside_folders_and_errors_keep_all() {
     assert_eq!(f.run().0.unwrap(), 3);
     disk::write(
         f.proc.join("4242/status"),
-        status(unsafe { libc::geteuid() }.wrapping_add(1), "S"),
+        status(rustix::process::geteuid().as_raw().wrapping_add(1), "S"),
     )
     .unwrap();
     assert_eq!(f.run().0.unwrap(), 3);
@@ -421,7 +425,7 @@ fn process_inspection_failures_keep_everything() {
 
 #[test]
 fn unreadable_process_details_and_vanishing_processes() {
-    if unsafe { libc::geteuid() } != 0 {
+    if rustix::process::geteuid().as_raw() != 0 {
         for field in ["status", "environ", "fd", "maps"] {
             let f = Fixture::new();
             let target = f.target("a-target");
@@ -585,7 +589,7 @@ fn zombie_and_other_owner_processes_are_skipped() {
     let f = Fixture::new();
     f.target("a-target");
     disk::create_dir(f.proc.join("4242")).unwrap();
-    let uid = unsafe { libc::geteuid() };
+    let uid = rustix::process::geteuid().as_raw();
     disk::write(f.proc.join("4242/status"), status(uid, "Z")).unwrap();
     assert_eq!(f.run().0.unwrap(), 0);
     f.target("a-target");
@@ -898,16 +902,10 @@ fn effective_uid_is_read_from_status() {
 #[test]
 #[ignore = "subprocess helper for non-dumpable process coverage"]
 fn nondumpable_child() {
+    use rustix::process::{DumpableBehavior, dumpable_behavior, set_dumpable_behavior};
     use std::io::{Read, Write};
-    let zero: libc::c_ulong = 0;
-    assert_eq!(
-        unsafe { libc::prctl(libc::PR_SET_DUMPABLE, zero, zero, zero, zero) },
-        0
-    );
-    assert_eq!(
-        unsafe { libc::prctl(libc::PR_GET_DUMPABLE, zero, zero, zero, zero) },
-        0
-    );
+    set_dumpable_behavior(DumpableBehavior::NotDumpable).unwrap();
+    assert_eq!(dumpable_behavior().unwrap(), DumpableBehavior::NotDumpable);
     println!("NON-DUMPABLE READY");
     io::stdout().flush().unwrap();
     let mut stop = [0];
@@ -918,7 +916,7 @@ fn nondumpable_child() {
 fn nondumpable_owned_process_cannot_be_skipped() {
     use std::io::BufRead;
     use std::process::Stdio;
-    let uid = unsafe { libc::geteuid() };
+    let uid = rustix::process::geteuid().as_raw();
     if uid == 0 {
         eprintln!("non-dumpable ownership test requires a non-root user");
         return;
@@ -993,7 +991,8 @@ fn interrupted_removal_child() {
     let phase = std::env::var("ROTA_TEST_INTERRUPT_PHASE").unwrap();
     hook(move |at| {
         if at == phase {
-            unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
+            rustix::process::kill_process(rustix::process::getpid(), rustix::process::Signal::KILL)
+                .unwrap();
         }
         Ok(())
     });
@@ -1040,7 +1039,7 @@ fn interrupted_removal_retries_before_and_after_tag_unlink() {
 
 #[test]
 fn unreadable_directory_and_unwritable_parent_fail_without_content_loss() {
-    if unsafe { libc::geteuid() } == 0 {
+    if rustix::process::geteuid().as_raw() == 0 {
         return;
     }
     let f = Fixture::new();
@@ -1114,20 +1113,7 @@ fn mount_boundary_child() {
         .as_bytes(),
     )
     .unwrap();
-    assert_eq!(
-        unsafe {
-            libc::mount(
-                source.as_ptr(),
-                dest.as_ptr(),
-                std::ptr::null(),
-                libc::MS_BIND,
-                std::ptr::null(),
-            )
-        },
-        0,
-        "bind mount: {}",
-        io::Error::last_os_error()
-    );
+    rustix::mount::mount_bind(&source, &dest).unwrap();
     println!("MOUNT FIXTURE ACTIVE");
     use std::io::Write;
     io::stdout().flush().unwrap();
@@ -1151,7 +1137,7 @@ fn mount_boundary_child() {
     if live_alias {
         disk::write(
             base.join("proc/4242/status"),
-            status(unsafe { libc::geteuid() }, "S"),
+            status(rustix::process::geteuid().as_raw(), "S"),
         )
         .unwrap();
         for target_only in [false, true] {

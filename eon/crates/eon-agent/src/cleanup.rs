@@ -600,7 +600,7 @@ fn live(
             Err(e) => return Err(e),
         }
     }
-    let uid = unsafe { libc::geteuid() };
+    let uid = rustix::process::geteuid().as_raw();
     let mut found = None;
     for entry in std::fs::read_dir(proc)? {
         let entry = entry?;

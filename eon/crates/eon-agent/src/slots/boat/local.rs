@@ -2,9 +2,10 @@
 
 use super::super::{SECOND, now_ns};
 use crate::launch::atomic_write;
+use rustix::process::{Pid, Signal};
 use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::AsFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
@@ -29,40 +30,36 @@ fn wait(child: &mut Child) -> io::Result<ExitStatus> {
         if signal != 0 && forwarded == 0 {
             forwarded = signal;
             deadline = Some(Instant::now() + Duration::from_secs(super::CLEANUP));
-            unsafe {
-                libc::kill(-(child.id() as i32), signal);
-            }
+            let _ = rustix::process::kill_process_group(
+                Pid::from_raw(child.id() as i32).unwrap(),
+                Signal::from_named_raw(signal).unwrap(),
+            );
         }
         if deadline.is_some_and(|until| Instant::now() >= until) {
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
-            }
+            let _ = rustix::process::kill_process_group(
+                Pid::from_raw(child.id() as i32).unwrap(),
+                Signal::KILL,
+            );
             deadline = None;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
 }
 
-fn foreground(fd: i32, group: i32) -> io::Result<()> {
-    unsafe {
-        let previous = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
-        if previous == libc::SIG_ERR {
-            return Err(io::Error::last_os_error());
-        }
-        let result = if libc::tcsetpgrp(fd, group) == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        };
-        libc::signal(libc::SIGTTOU, previous);
-        result
+struct Foreground {
+    tty: File,
+    previous: Option<Pid>,
+}
+
+fn previous_group(tty: &File) -> io::Result<Option<Pid>> {
+    match rustix::termios::tcgetpgrp(tty) {
+        Ok(group) => Ok(Some(group)),
+        // rustix represents the kernel's successful group-zero reply as OPNOTSUPP.
+        Err(rustix::io::Errno::OPNOTSUPP) => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 
-struct Foreground {
-    tty: File,
-    previous: i32,
-}
 impl Foreground {
     fn open() -> io::Result<Option<Self>> {
         if !(io::stdin().is_terminal() || io::stdout().is_terminal() || io::stderr().is_terminal())
@@ -81,16 +78,16 @@ impl Foreground {
             }
             Err(e) => return Err(e),
         };
-        let previous = unsafe { libc::tcgetpgrp(tty.as_raw_fd()) };
-        if previous < 0 {
-            return Err(io::Error::last_os_error());
-        }
+        let previous = previous_group(&tty)?;
         Ok(Some(Self { tty, previous }))
     }
 }
+
 impl Drop for Foreground {
     fn drop(&mut self) {
-        let _ = foreground(self.tty.as_raw_fd(), self.previous);
+        if let Some(previous) = self.previous {
+            let _ = crate::platform::foreground(&self.tty, previous);
+        }
     }
 }
 
@@ -99,36 +96,27 @@ pub(in crate::slots) fn status(command: &mut Command) -> io::Result<ExitStatus> 
     let terminal = Foreground::open()?;
     command.process_group(0);
     if let Some(terminal) = &terminal {
-        let fd = terminal.tty.as_raw_fd();
         // Give the child its terminal before exec: it must not race into SIGTTIN/EIO.
-        unsafe {
-            command.pre_exec(move || foreground(fd, libc::getpid()));
-        }
+        crate::platform::foreground_on_exec(command, &terminal.tty)?;
     }
     wait(&mut command.spawn()?)
 }
 
 fn copy_output(
-    mut input: impl Read + AsRawFd,
+    mut input: impl Read + AsFd,
     mut log: File,
     stderr: bool,
     done: &AtomicBool,
 ) -> io::Result<bool> {
-    let fd = input.as_raw_fd();
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
+    let flags = rustix::fs::fcntl_getfl(&input)?;
+    rustix::fs::fcntl_setfl(&input, flags | rustix::fs::OFlags::NONBLOCK)?;
     let mut remaining = None;
     let mut complete = true;
     let mut buffer = [0u8; 16384];
     loop {
         if remaining.is_none() && done.load(Ordering::Acquire) {
             // Drain foreground bytes, without waiting on detached descendants' open pipes.
-            let mut available: libc::c_int = 0;
-            if unsafe { libc::ioctl(fd, libc::FIONREAD, &mut available) } < 0 {
-                return Err(io::Error::last_os_error());
-            }
+            let available = rustix::io::ioctl_fionread(&input)? as i32;
             remaining = Some(available.max(0) as usize);
         }
         let limit = remaining.unwrap_or(buffer.len()).min(buffer.len());
@@ -239,4 +227,24 @@ pub(in crate::slots) fn run(
         );
     }
     status
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_pty_has_no_previous_group_and_nonterminals_keep_their_error() {
+        let master = File::from(
+            rustix::pty::openpt(rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY)
+                .unwrap(),
+        );
+        assert_eq!(previous_group(&master).unwrap(), None);
+        assert_eq!(
+            previous_group(&tempfile::tempfile().unwrap())
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::ENOTTY)
+        );
+    }
 }

@@ -1,15 +1,15 @@
 use crate::config::{Backend, Config, Role, Run, RunEnv, Stdin};
 use crate::launch::{Failure, io_failure, lock, log, print_readings, record_admission};
+use crate::platform::RUN_STOP as STOP;
 use crate::session::{self, SCHEMA, Session};
 use crate::{decision, readings};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -236,20 +236,24 @@ pub fn command(settings: &RunEnv, backend: &Backend, argv: &[String]) -> Command
     cmd
 }
 
-static STOP: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn request_stop(_: libc::c_int) {
-    STOP.store(true, Ordering::SeqCst);
-}
-
 /// Whether `leader` has exited, leaving it unreaped so its status is kept. A leader whose
 /// main thread exited while other threads run has not exited yet.
 fn leader_exited(leader: i32) -> bool {
-    // SAFETY: waitid writes only into `info`; WNOWAIT leaves the child waitable.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    let found = unsafe { libc::waitid(libc::P_PID, leader as libc::id_t, &mut info, flags) };
-    found == 0 && unsafe { info.si_pid() } == leader
+    let Some(pid) = (leader > 0)
+        .then(|| rustix::process::Pid::from_raw(leader))
+        .flatten()
+    else {
+        return false;
+    };
+    matches!(
+        rustix::process::waitid(
+            rustix::process::WaitId::Pid(pid),
+            rustix::process::WaitIdOptions::EXITED
+                | rustix::process::WaitIdOptions::NOHANG
+                | rustix::process::WaitIdOptions::NOWAIT
+        ),
+        Ok(Some(_))
+    )
 }
 
 /// Runs `cmd` with stdin and stdout closed. If it has not finished within `limit`, `kill`
@@ -291,8 +295,9 @@ fn bounded(
 }
 
 /// Sends `signal` to every process in the scope. Each PID read from `cgroup.procs` is pinned
-/// with a pidfd and then checked to be alive and still in the scope, so a reused PID is never
-/// signalled. This needs no systemd manager, and unlike `cgroup.kill` it also ends a process
+/// with a pidfd and then checked to still be in the scope. Sending through that descriptor
+/// fails if the process exited, so a reused PID is never signalled. This needs no systemd
+/// manager, and unlike `cgroup.kill` it also ends a process
 /// whose main thread has exited while other threads run. SIGKILL also writes `cgroup.kill`,
 /// which kills processes forked meanwhile.
 pub fn signal_scope(scope: &Scope, signal: libc::c_int) {
@@ -300,22 +305,18 @@ pub fn signal_scope(scope: &Scope, signal: libc::c_int) {
         let _ = fs::write(cgroup.join("cgroup.kill"), "1");
     }
     for pid in scope.pids() {
-        // SAFETY: pidfd_open takes a PID and flags and returns a new descriptor or -1.
-        let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-        if raw < 0 {
+        let Some(pid_id) = (pid > 0)
+            .then(|| rustix::process::Pid::from_raw(pid))
+            .flatten()
+        else {
             continue;
-        }
-        // SAFETY: the descriptor is new and owned by nothing else.
-        let fd = unsafe { OwnedFd::from_raw_fd(raw as i32) };
-        let send = |signal: libc::c_int| {
-            let none = std::ptr::null::<libc::siginfo_t>();
-            // SAFETY: pidfd_send_signal reads only its arguments.
-            unsafe {
-                libc::syscall(libc::SYS_pidfd_send_signal, fd.as_raw_fd(), signal, none, 0) == 0
-            }
         };
-        if scope.holds(pid) && send(0) {
-            send(signal);
+        let Ok(fd) = rustix::process::pidfd_open(pid_id, rustix::process::PidfdFlags::empty())
+        else {
+            continue;
+        };
+        if scope.holds(pid) {
+            crate::platform::pidfd_signal(&fd, signal);
         }
     }
 }
@@ -462,10 +463,11 @@ fn stop(
         if now >= term_until {
             if bound {
                 signal(scope, libc::SIGKILL);
-            } else if leader_alive {
-                unsafe {
-                    libc::kill(leader, libc::SIGKILL);
-                }
+            } else if leader_alive
+                && leader > 0
+                && let Some(pid) = rustix::process::Pid::from_raw(leader)
+            {
+                let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
             }
         } else if bound && !termed {
             termed = true;
@@ -529,9 +531,9 @@ fn scoped(unit: Option<&str>, argv: Vec<String>) -> Vec<String> {
 /// 128 random bits from the kernel, as hex.
 pub(crate) fn random() -> Result<String, Failure> {
     let mut bytes = [0u8; 16];
-    // SAFETY: getrandom writes at most `bytes.len()` bytes into `bytes`.
-    let filled = unsafe { libc::getrandom(bytes.as_mut_ptr().cast(), bytes.len(), 0) };
-    if filled != bytes.len() as isize {
+    let filled = rustix::rand::getrandom(&mut bytes, rustix::rand::GetRandomFlags::empty())
+        .map_err(io_failure)?;
+    if filled != bytes.len() {
         return Err(io_failure(std::io::Error::last_os_error()));
     }
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
@@ -689,12 +691,7 @@ pub fn run(
     };
     // Taken before spawn, so the first record write never waits while the run is going.
     let registry = session::lock(&config.state_file).map_err(io_failure)?;
-    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-        // The handler only sets an atomic flag, which is async-signal-safe.
-        unsafe {
-            libc::signal(signal, request_stop as *const () as libc::sighandler_t);
-        }
-    }
+    crate::platform::install_run_signals();
     let spawned = command(&config.run, backend, &argv)
         .current_dir(&cwd)
         .process_group(0)
@@ -932,6 +929,50 @@ mod tests {
         assert_eq!(stop(&mut scope, pid, &FAST, signal_scope), Ok(()));
         assert_eq!(scope.population(), Population::Empty);
         assert!(leader.wait().unwrap().signal().is_some());
+    }
+    #[test]
+    fn waitid_and_pidfd_preserve_owned_child_identity() {
+        struct OwnedChild(std::process::Child);
+        impl Drop for OwnedChild {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = OwnedChild(Command::new("sleep").arg("30").spawn().unwrap());
+        let pid = child.0.id() as i32;
+        let fd = rustix::process::pidfd_open(
+            rustix::process::Pid::from_raw(pid).unwrap(),
+            rustix::process::PidfdFlags::empty(),
+        )
+        .unwrap();
+        assert!(!leader_exited(pid));
+        assert!(!leader_exited(0));
+        assert!(!leader_exited(-1));
+        assert!(crate::platform::pidfd_signal(&fd, 0));
+        assert!(!crate::platform::pidfd_signal(&fd, -1));
+
+        let root = tempfile::tempdir().unwrap();
+        let proc_dir = root.path().join("proc");
+        fs::create_dir_all(proc_dir.join(pid.to_string())).unwrap();
+        fs::write(proc_dir.join(format!("{pid}/cgroup")), "0::/owned\n").unwrap();
+        fs::write(root.path().join("cgroup.procs"), format!("-1\n0\n{pid}\n")).unwrap();
+        let mut scope = Scope::new("owned".into());
+        scope.path = Some("/owned".into());
+        scope.cgroup = Some(root.path().to_owned());
+        scope.proc_dir = proc_dir;
+        signal_scope(&scope, 0);
+        assert!(child.0.try_wait().unwrap().is_none());
+        let signal = libc::SIGRTMIN();
+        signal_scope(&scope, signal);
+        let until = Instant::now() + Duration::from_secs(5);
+        while !leader_exited(pid) {
+            assert!(Instant::now() < until, "owned child did not exit");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(child.0.wait().unwrap().signal(), Some(signal));
+        assert!(!crate::platform::pidfd_signal(&fd, 0));
+        assert!(!leader_exited(pid));
     }
     #[test]
     fn a_listed_pid_outside_the_scope_is_spared() {

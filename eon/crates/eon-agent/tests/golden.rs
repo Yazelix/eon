@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![cfg(target_os = "linux")]
 //! Byte-exact output of the standalone `rota` host. The goldens under tests/fixtures/golden were
 //! captured from the binary before the host seam (eon-eon-agent-lr8sx.39.1) and updated once for

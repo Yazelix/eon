@@ -38,17 +38,10 @@ pub(super) fn policy(config: &SlotConfig) -> Policy<'_> {
 }
 
 fn boot_time() -> io::Result<(u64, u64)> {
-    let mut uptime = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
     // /proc/PID/stat expresses start time in clock ticks since boot.
     let now = now_ns();
-    let result = unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut uptime) };
-    if result != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    let uptime = rustix::time::clock_gettime_dynamic(rustix::time::DynamicClockId::Boottime)?;
+    let ticks = rustix::param::clock_ticks_per_second() as i64;
     if ticks <= 0 {
         return Err(io::Error::last_os_error());
     }

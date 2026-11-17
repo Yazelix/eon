@@ -1,4 +1,8 @@
 #![cfg(target_os = "linux")]
+#![deny(unsafe_code)]
+
+#[allow(unsafe_code)]
+mod platform;
 
 pub mod admissions;
 pub mod cleanup;

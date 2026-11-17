@@ -4,6 +4,7 @@ pub(super) mod tree;
 
 use crate::config::{BoatConfig, Shape};
 use crate::launch::{atomic_write, ensure_parent};
+use crate::platform::{BOAT_SIGNAL as SIGNAL, BoatSignals as Signals};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,7 +15,7 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const CONTROL: u64 = 30;
@@ -22,46 +23,11 @@ const CLEANUP: u64 = 60;
 /// Boat's deadline starts before recovery, upload, Nix bootstrap and warmup; a `timeout`
 /// envelope must leave this much of it for them (a cold warmup measured about 23 minutes).
 const PREPARATION: u64 = 1800;
-static SIGNAL: AtomicI32 = AtomicI32::new(0);
-
-extern "C" fn cancel(signal: libc::c_int) {
-    SIGNAL.store(signal, Ordering::Relaxed);
-}
-
-struct Signals(Vec<(i32, libc::sighandler_t)>);
-
-impl Signals {
-    fn install() -> Self {
-        SIGNAL.store(0, Ordering::Relaxed);
-        Self(
-            [libc::SIGINT, libc::SIGTERM, libc::SIGHUP]
-                .into_iter()
-                .map(|signal| {
-                    // The handler only writes an atomic integer.
-                    (signal, unsafe {
-                        libc::signal(signal, cancel as *const () as libc::sighandler_t)
-                    })
-                })
-                .collect(),
-        )
-    }
-}
-
-impl Drop for Signals {
-    fn drop(&mut self) {
-        for (signal, previous) in &self.0 {
-            unsafe {
-                libc::signal(*signal, *previous);
-            }
-        }
-    }
-}
-
 pub(super) fn private_directory(path: &Path) -> Result<(), String> {
     ensure_parent(&path.join("entry")).map_err(|_| "boat-state-directory")?;
     let metadata = fs::symlink_metadata(path).map_err(|_| "boat-state-directory")?;
     if !metadata.is_dir()
-        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.mode() & 0o077 != 0
     {
         return Err("unsafe-boat-state-directory".into());
@@ -76,7 +42,7 @@ pub(super) fn read_private<T: serde::de::DeserializeOwned>(
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Ok(meta)
             if meta.is_file()
-                && meta.uid() == unsafe { libc::geteuid() }
+                && meta.uid() == rustix::process::geteuid().as_raw()
                 && meta.mode() & 0o077 == 0
                 && meta.len() <= 65536 => {}
         _ => return Err("unsafe-or-unreadable-boat-record".into()),
@@ -137,7 +103,10 @@ impl Lease {
             .open(directory.join("lease.lock"))
             .map_err(|_| "boat-lease-open")?;
         let meta = lock.metadata().map_err(|_| "boat-lease-metadata")?;
-        if !meta.is_file() || meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
+        if !meta.is_file()
+            || meta.uid() != rustix::process::geteuid().as_raw()
+            || meta.mode() & 0o077 != 0
+        {
             return Err("unsafe-boat-lease".into());
         }
         match lock.try_lock_exclusive() {
@@ -468,9 +437,10 @@ impl Client {
         };
         if result.is_err() {
             // This group belongs to our unreaped direct child, not a process-name match.
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
-            }
+            let _ = rustix::process::kill_process_group(
+                rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
+                rustix::process::Signal::KILL,
+            );
             let _ = child.wait();
         }
         let stdout = readers.remove(0).join().map_err(|_| "boat-client-output")?;
@@ -1290,14 +1260,16 @@ fn timestamp(value: &Value) -> Option<u64> {
     if text.len() < 20 || text.len() > 30 || !text.ends_with('Z') {
         return None;
     }
-    let input = std::ffi::CString::new(text).ok()?;
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // Only UTC provider timestamps are accepted; no locale/time-zone configuration.
-    let tail = unsafe { libc::strptime(input.as_ptr(), c"%Y-%m-%dT%H:%M:%S".as_ptr(), &mut tm) };
-    if tail.is_null() {
+    let bytes = text.as_bytes();
+    if !bytes[..19].iter().enumerate().all(|(i, b)| match i {
+        4 | 7 => *b == b'-',
+        10 => *b == b'T',
+        13 | 16 => *b == b':',
+        _ => b.is_ascii_digit(),
+    }) {
         return None;
     }
-    let suffix = unsafe { std::ffi::CStr::from_ptr(tail) }.to_str().ok()?;
+    let suffix = &text[19..];
     if suffix != "Z"
         && !(suffix.starts_with('.')
             && suffix.ends_with('Z')
@@ -1308,17 +1280,40 @@ fn timestamp(value: &Value) -> Option<u64> {
     {
         return None;
     }
-    let epoch = u64::try_from(unsafe { libc::timegm(&mut tm) }).ok()?;
-    let canonical = format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec
-    );
-    text.starts_with(&canonical).then_some(epoch)
+    let field = |range: std::ops::Range<usize>| text[range].parse::<u64>().ok();
+    let (year, month, day) = (field(0..4)?, field(5..7)?, field(8..10)?);
+    let (hour, minute, second) = (field(11..13)?, field(14..16)?, field(17..19)?);
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let months = [
+        31,
+        28 + u64::from(leap),
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    if year < 1970
+        || !(1..=12).contains(&month)
+        || day == 0
+        || day > months[(month - 1) as usize]
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    let leaps = |year: u64| year / 4 - year / 100 + year / 400;
+    let days = (year - 1970) * 365 + leaps(year - 1) - leaps(1969)
+        + months[..(month - 1) as usize].iter().sum::<u64>()
+        + day
+        - 1;
+    Some(((days * 24 + hour) * 60 + minute) * 60 + second)
 }
 
 fn billing_policy(limits: &Value) -> Result<bool, String> {
@@ -1692,6 +1687,38 @@ mod tests {
             &["nix", "develop", "-c", "cargo", "clippy", "--"],
         ] {
             assert!(!remote(7200, argv), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn utc_timestamps_preserve_calendar_and_fraction_rules() {
+        for (text, seconds) in [
+            ("1970-01-01T00:00:00Z", 0),
+            ("1970-01-01T00:00:00.123Z", 0),
+            ("2000-02-29T00:00:00Z", 951_782_400),
+            ("2100-03-01T00:00:00Z", 4_107_542_400),
+            ("9999-12-31T23:59:59Z", 253_402_300_799),
+        ] {
+            assert_eq!(timestamp(&json!(text)), Some(seconds), "{text}");
+        }
+        for text in [
+            "1900-02-29T00:00:00Z",
+            "2100-02-29T00:00:00Z",
+            "2026-02-30T00:00:00Z",
+            "2026-01-01T00:00:60Z",
+            "1969-12-31T23:59:59Z",
+            "2026-1-01T00:00:00Z",
+            "2026-01-01T00:00:00.Z",
+            " 2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00.1234567890Z",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T00:60:00Z",
+            "2026-00-01T00:00:00Z",
+            "2026-01-00T00:00:00Z",
+            "2026-01-01T00:00:00.１２Z",
+        ] {
+            assert_eq!(timestamp(&json!(text)), None, "{text}");
         }
     }
 

@@ -44,9 +44,10 @@ pub fn reap_within(child: &mut Child, limit: Duration) -> bool {
 /// SIGKILLs the process group a check runs in.
 fn kill_group(child: &mut Child) {
     // The unreaped child's PID identifies only the process group we created.
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
+    let _ = rustix::process::kill_process_group(
+        rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
+        rustix::process::Signal::KILL,
+    );
     let _ = child.kill();
 }
 
@@ -181,7 +182,7 @@ fn split_null(bytes: &[u8]) -> Vec<String> {
 }
 
 pub fn running(cap: &Cap) -> Result<usize, String> {
-    running_in(Path::new("/proc"), unsafe { libc::geteuid() }, cap)
+    running_in(Path::new("/proc"), rustix::process::geteuid().as_raw(), cap)
 }
 
 fn owned_by(dir: &Path, uid: u32) -> bool {

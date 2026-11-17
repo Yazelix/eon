@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![cfg(target_os = "linux")]
 
 use std::fs;
@@ -139,7 +140,7 @@ fn failed_done_check_keeps_everything_and_emits_json_in_both_modes() {
 
 #[test]
 fn directory_scan_errors_exit_one_and_keep_the_target() {
-    if unsafe { libc::geteuid() } == 0 {
+    if rustix::process::geteuid().as_raw() == 0 {
         return;
     }
     let f = Fixture::new(PROJECT);

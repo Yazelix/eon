@@ -474,7 +474,11 @@ fn observed_flocks() -> io::Result<ObservedFlocks> {
 
 fn lock_id(metadata: &fs::Metadata) -> LockId {
     let dev = metadata.dev();
-    (libc::major(dev), libc::minor(dev), metadata.ino())
+    (
+        rustix::fs::major(dev),
+        rustix::fs::minor(dev),
+        metadata.ino(),
+    )
 }
 
 struct Pending {
@@ -759,15 +763,7 @@ fn command(config: &SlotConfig, options: &RunOptions<'_>, slot: u16, token: &str
     let increment = config.nice;
     if increment != 0 {
         // Apply nice in the child so the queue wrapper keeps its original priority.
-        unsafe {
-            command.pre_exec(move || {
-                *libc::__errno_location() = 0;
-                if libc::nice(increment) == -1 && *libc::__errno_location() != 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        crate::platform::nice_on_exec(&mut command, increment);
     }
     command
 }

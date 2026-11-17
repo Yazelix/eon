@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![cfg(target_os = "linux")]
 
 use std::io::{BufRead, BufReader, Write};
@@ -655,9 +656,10 @@ fn termination_signal_stops_the_run() {
         .unwrap();
     wait_for(&f.dir.join("state/sessions/t-1.json"));
     let pid = record(&f, "t-1")["pid"].to_string();
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGTERM);
-    }
+    let _ = rustix::process::kill_process(
+        rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
+        rustix::process::Signal::TERM,
+    );
     assert_eq!(child.wait().unwrap().code(), Some(130));
     assert_eq!(record(&f, "t-1")["outcome"], "interrupted");
     assert!(gone(&pid));
