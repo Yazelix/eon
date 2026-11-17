@@ -28,7 +28,7 @@ mod supervisor;
 mod windows;
 mod workspace;
 
-pub use cli::{Inputs, ReleaseStage, run, session_json};
+pub use cli::{Inputs, ReleaseStage, quota_facts_json, run};
 pub use control::Error;
 pub use generation::current_generation as build_identity;
 pub use launch_environment::{

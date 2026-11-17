@@ -23,7 +23,7 @@ fn main() -> ExitCode {
     }
     #[cfg(target_os = "linux")]
     if product_cli && arguments.get(1).is_some_and(|command| command == "agent") {
-        let session = |deadline| eon_runtime::session_json(&inputs, deadline);
+        let session = |deadline| eon_runtime::quota_facts_json(&inputs, deadline);
         let host = rota::cli::Host {
             program: "eon agent",
             reinvoke: &["agent"],

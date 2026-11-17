@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent` keeps reading quota when its terminal's window runs another
+  EONW, cannot be reached in time, or shows no chip for a provider: it reads
+  the quota store all Eon windows share, without calling the provider. A
+  recorded Claude failure still holds, an unreadable one refuses, and a stored
+  Codex reading counts only while at most 120 s old. Each reading names its
+  source (`reading.source.via` in `eon agent status --json`, `via window ID`
+  or `via store` on the launch line), and a provider no source has names each
+  source's reason (EON-C40 amendment, `eon-eon-agent-lr8sx.39.12`).
+
 - Google quota chips are as compact as the Claude and Codex chips: a blue
   Gemini spark and `<position>/<duration> <remaining>%`, without `Google` or
   the model group. A group other than `Gemini Models` leads with its initial,

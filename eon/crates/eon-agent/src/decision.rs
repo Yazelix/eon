@@ -15,7 +15,8 @@ pub struct Reading {
     /// Lead launches ignore it.
     pub quota_problem: Option<String>,
     pub detail: String,
-    /// Whose usage this is and when it was fetched; set on a successful quota reading.
+    /// Whose usage this is and when it was fetched; set on a successful quota reading, and on a
+    /// native one whose host names its source even when its facts cannot be used.
     pub source: Option<Source>,
 }
 
@@ -27,6 +28,10 @@ pub struct Source {
     /// None when the reader reports no time.
     #[serde(rename = "observed_at")]
     pub observed_at_ms: Option<u64>,
+    /// Where the host found the facts (`window ID` or `store`), when it says; Eon's native
+    /// readers do.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 pub fn availability(backend: &Backend, reading: &Reading, role: Role) -> Result<(), String> {
@@ -805,11 +810,17 @@ mod tests {
         reading.source = Some(Source {
             account: "acct".into(),
             observed_at_ms: Some(1000),
+            via: None,
         });
         let json = serde_json::to_value(&reading).unwrap();
         assert_eq!(
             json["source"],
             serde_json::json!({"account": "acct", "observed_at": 1000})
+        );
+        reading.source.as_mut().unwrap().via = Some("store".into());
+        assert_eq!(
+            serde_json::to_value(&reading).unwrap()["source"],
+            serde_json::json!({"account": "acct", "observed_at": 1000, "via": "store"})
         );
         assert!(json["quota_problem"].is_null());
     }

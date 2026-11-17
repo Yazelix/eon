@@ -474,8 +474,79 @@ fn workspace_pick_arguments(output: &str) -> Option<Vec<&str>> {
     }
 }
 
-/// The caller's session facts, using the same JSON projection as `eon session --json`.
-pub fn session_json(inputs: &Inputs, deadline: Instant) -> Result<String, String> {
+/// `eon agent`'s quota facts (EON-C40), in the session JSON's projection. Each provider's
+/// snapshot and failure come from the calling terminal's window, which gets at most half the
+/// time left; a provider that window does not supply, because it cannot answer or has neither
+/// for it, comes from the quota store windows share. `quota_source` names each provider's
+/// source (`window ID` or `store`) and `quota_unreadable` why no source has one.
+pub fn quota_facts_json(inputs: &Inputs, deadline: Instant) -> Result<String, String> {
+    let now = Instant::now();
+    let window = caller_window(
+        inputs,
+        now + (deadline.saturating_duration_since(now) / 2).min(super::control::CONTROL_TIMEOUT),
+    );
+    let store = super::quota::store_directory();
+    let mut sources = serde_json::Map::new();
+    let mut unreadable = serde_json::Map::new();
+    // A window that has a provider's snapshot or failure supplies it; the store fills the rest.
+    let mut fill = |provider: &str, supplied: fn(&Snapshot) -> bool| {
+        let from_window = match &window {
+            Ok((snapshot, label)) if supplied(snapshot) => {
+                sources.insert(provider.into(), format!("window {label}").into());
+                return None;
+            }
+            Ok((_, label)) => format!("Eon window {label} has no {provider} facts"),
+            Err(detail) => detail.clone(),
+        };
+        let stored = store
+            .as_deref()
+            .ok_or_else(|| "no Eon state directory (XDG_STATE_HOME or HOME)".to_owned())
+            .and_then(|store| super::quota::stored_facts(store, provider, deadline));
+        match stored {
+            Ok(stored) => {
+                sources.insert(provider.into(), "store".into());
+                Some(stored)
+            }
+            Err(from_store) => {
+                unreadable.insert(
+                    provider.into(),
+                    format!("window: {from_window}; store: {from_store}").into(),
+                );
+                None
+            }
+        }
+    };
+    let codex_stored = fill("codex", |snapshot| {
+        snapshot.codex_quota.is_some() || snapshot.codex_quota_failure.is_some()
+    });
+    let claude_stored = fill("claude", |snapshot| {
+        snapshot.claude_quota.is_some() || snapshot.claude_quota_failure.is_some()
+    });
+    let snapshot = window.as_ref().ok().map(|(snapshot, _)| snapshot);
+    let codex = match codex_stored {
+        Some((quota, failure)) => (Some(quota), failure),
+        None => (
+            snapshot.and_then(|snapshot| snapshot.codex_quota.clone()),
+            snapshot.and_then(|snapshot| snapshot.codex_quota_failure),
+        ),
+    };
+    let claude = match claude_stored {
+        Some((quota, failure)) => (Some(super::quota::claude_quota(quota)), failure),
+        None => (
+            snapshot.and_then(|snapshot| snapshot.claude_quota.clone()),
+            snapshot.and_then(|snapshot| snapshot.claude_quota_failure),
+        ),
+    };
+    Ok(super::workspace::quota_facts_json(
+        (codex.0.as_ref(), codex.1),
+        (claude.0.as_ref(), claude.1),
+        sources,
+        unreadable,
+    ))
+}
+
+/// The calling terminal's window's session snapshot and full ID, inspected by `deadline`.
+fn caller_window(inputs: &Inputs, deadline: Instant) -> Result<(Snapshot, String), String> {
     let caller = calling_terminal().map_err(|error| error.detail)?;
     let target = WorkspaceTarget {
         deadline: Some(deadline),
@@ -487,9 +558,11 @@ pub fn session_json(inputs: &Inputs, deadline: Instant) -> Result<String, String
         &resolved.socket,
         caller,
         Action::Workspace(WorkspaceAction::Inspect),
-        deadline.min(Instant::now() + super::control::CONTROL_TIMEOUT),
+        deadline,
     ) {
-        Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => Ok(json_output(&snapshot)),
+        Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => {
+            Ok((snapshot, resolved.label))
+        }
         Ok(ControlResponse::Workspace(Response::Failure(error))) => Err(error.detail),
         Ok(_) => Err("Eon returned the wrong result for session inspection".into()),
         Err(error) => Err(unreachable_supervisor(error, &resolved.label).detail),

@@ -247,8 +247,23 @@ Custom popup and headless argv remain your explicit command choices too.
   process, using the same projection as `eon session --json`. Their optional
   `command` is ignored by Eon and remains readable by rota in shared config.
   `timeout_seconds` (default 30) covers the whole native read, including
-  discovery and inspection. An incompatible supervisor generation is unavailable;
-  native readers never invoke its recorded launcher.
+  discovery and inspection; the caller's window gets at most half of it. A
+  provider that window does not supply (it runs another EONW, cannot be
+  reached or answer in time, or has no facts for that provider) is read from
+  the quota store Eon's windows share, without calling the provider: Claude's
+  recorded failure comes with it and an unreadable failure record refuses it,
+  and a stored Codex reading counts only while at most 120 s old. Native
+  readers never invoke an incompatible generation's recorded launcher. Each
+  native reading names its source as `reading.source.via` in `status --json`
+  (`"window ID"` or `"store"`) and as `via SOURCE` at the end of the launch
+  candidate line on stderr, also when that source's facts are stale or only a
+  failure; a failure without usable facts reads
+  `quota unreadable on account ACCOUNT: provider failure (REASON); PROBLEM`.
+  A provider no source has fails with
+  `quota unreadable on account ACCOUNT: window: REASON; store: REASON`. The
+  host's facts may carry `quota_source` (each provider's source) and
+  `quota_unreadable` (why no source has a provider); without them a reading
+  names no source.
   They require the `eon agent` entry point; the standalone test driver has no
   native source. Backend credential environment overrides do not change the
   supervisor's quota facts. Their snapshot's `observed_at` is the reading's

@@ -275,9 +275,14 @@ pub fn print_readings(
         let availability = decision::availability(b, r, role)
             .err()
             .unwrap_or_else(|| "available".into());
+        let via = r
+            .source
+            .as_ref()
+            .and_then(|source| source.via.as_deref())
+            .map_or_else(String::new, |via| format!(" via {via}"));
         match r.detail.as_str() {
-            "" => eprintln!("{program}: {} [{availability}]", b.name),
-            detail => eprintln!("{program}: {} [{availability}]: {detail}", b.name),
+            "" => eprintln!("{program}: {} [{availability}]{via}", b.name),
+            detail => eprintln!("{program}: {} [{availability}]: {detail}{via}", b.name),
         }
     }
 }

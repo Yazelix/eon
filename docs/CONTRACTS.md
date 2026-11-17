@@ -6996,7 +6996,15 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
      belongs to an account (`account`, by default its name); backends that
      draw on one subscription account declare the same one. Every quota
      reading reports its account and `observed_at`, when the provider data was
-     fetched, as its reader reports it.
+     fetched, as its reader reports it. Eon's quota facts come from the calling
+     terminal's window. For a provider that window does not supply, because it
+     cannot answer for any reason (it runs another EONW, cannot be reached, or
+     there is none) or has no facts for that provider, they come from the quota
+     store that window supervisors share, with the failure state kept beside
+     it, read without calling a provider (`.39.12`). Like the quota chips
+     (EON-C27), this assumes one account per provider for each Eon state
+     directory. Each reading names its source, and a provider is unreadable
+     only when no source has it.
   2. **Order** (`.39.2`). Admission picks the first eligible backend in
      configured order; nothing rotates. `--only` restricts candidates for an
      explicit single-backend run; fleet callers do not use it to choose

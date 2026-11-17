@@ -24522,6 +24522,21 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
             ] {
                 let expected = rota::decision::availability(backend, &expected, role);
                 assert_eq!(expected.is_ok(), available, "{case}/{}/{key}", backend.name);
+                // A window with no facts for a provider sends the reader to the store, which
+                // has nothing usable here either, so the reading names both reasons.
+                if matches!(case, "missing" | "expired") {
+                    let problem = actual[index][key].as_str().unwrap();
+                    let provider = &backend.name["eon_".len()..];
+                    assert!(
+                        problem.starts_with(&format!(
+                            "quota unreadable on account {}: window: Eon window ",
+                            backend.name
+                        )) && problem.contains(&format!(" has no {provider} facts; store: ")),
+                        "{case}/{}/{key}: {problem}",
+                        backend.name
+                    );
+                    continue;
+                }
                 assert_eq!(
                     actual[index][key],
                     expected.err().unwrap_or_else(|| "available".into()),
@@ -24529,6 +24544,51 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
                     backend.name
                 );
             }
+            if matches!(case, "missing" | "expired") {
+                continue;
+            }
+            // Whatever the window supplies names it, a stale snapshot or a bare failure too, and
+            // a failure without facts keeps its reason.
+            let source = &actual[index]["reading"]["source"];
+            assert!(
+                source["via"]
+                    .as_str()
+                    .is_some_and(|via| via.starts_with("window ")),
+                "{case}/{}: {source}",
+                backend.name
+            );
+            if case == "failed missing" {
+                let problem = actual[index]["implement"].as_str().unwrap();
+                assert!(
+                    problem.contains(": provider failure (exit_status); "),
+                    "{case}/{}: {problem}",
+                    backend.name
+                );
+            }
+        }
+        if !matches!(case, "missing" | "expired") {
+            // The first candidate is always read, and its launch line names the source too.
+            let prompt = window.root.join("prompt");
+            fs::write(&prompt, "work").unwrap();
+            let launch = eon_command(&window.binary)
+                .args([
+                    OsStr::new("agent"),
+                    OsStr::new("launch"),
+                    OsStr::new("--dry-run"),
+                ])
+                .arg(&prompt)
+                .env("EON_RUNTIME_DIR", &window.runtime)
+                .env("EON_CONFIG_HOME", &window.config)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&launch.stderr);
+            assert!(
+                stderr
+                    .lines()
+                    .find(|line| line.starts_with("eon agent: eon_codex ["))
+                    .is_some_and(|line| line.contains(" via window ")),
+                "{case}: {stderr}"
+            );
         }
         assert!(!marker.exists(), "{case}: spawned PATH eon");
         drop(supervisor);
@@ -24547,23 +24607,168 @@ fn write_native_quota_config(root: &Path) {
     )).unwrap();
 }
 
+/// A supervisor of this EONW for generation `id` that answers runtime inspection after
+/// `runtime_delay` and session inspection with `snapshot` after `inspect_delay`, until the
+/// returned flag is set.
+#[cfg(target_os = "linux")]
+fn native_quota_window(
+    runtime: &Path,
+    id: &str,
+    mut snapshot: Snapshot,
+    runtime_delay: Duration,
+    inspect_delay: Duration,
+) -> (Arc<std::sync::atomic::AtomicBool>, thread::JoinHandle<()>) {
+    let listener = generation_listener(runtime, id);
+    listener.set_nonblocking(true).unwrap();
+    snapshot.generation = id.to_owned();
+    snapshot.created_build = id.to_owned();
+    snapshot.active_build = id.to_owned();
+    snapshot.running = None;
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = done.clone();
+    let id = id.to_owned();
+    let server = thread::spawn(move || {
+        while !stop.load(Ordering::SeqCst) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(peer) => peer,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let request = decode_request(&read_request(&mut stream)).unwrap();
+            let response = match request.action {
+                ProtocolAction::Workspace(Action::InspectRuntime | Action::InspectPresentation) => {
+                    thread::sleep(runtime_delay);
+                    encode_lifecycle_response(&LifecycleResponse::Runtime(previous_runtime(&id)))
+                        .unwrap()
+                }
+                ProtocolAction::Workspace(Action::Inspect) => {
+                    thread::sleep(inspect_delay);
+                    encode_response(&Response::Snapshot(snapshot.clone())).unwrap()
+                }
+                other => panic!("{other:?}"),
+            };
+            let _ = stream.write_all(&response);
+        }
+    });
+    (done, server)
+}
+
+#[cfg(target_os = "linux")]
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// A one-window reading observed at `observed_at`, as a window's poller stores it for
+/// `provider` under the Eon state directory in `state`.
+#[cfg(target_os = "linux")]
+fn stored_quota_reading(state: &Path, provider: &str, observed_at: u64, remaining: u8) {
+    let store = state.join("eon/quota");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(
+        store.join(format!("{provider}.json")),
+        serde_json::json!({"version":1,"observed_at":observed_at,
+            "windows":[{"duration_minutes":300,"remaining_percent":remaining,"resets_at":null}]})
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// Claude's shared schedule as a window leaves it, with `failure` as the last read's reason.
+#[cfg(target_os = "linux")]
+fn stored_claude_schedule(state: &Path, failure: Option<&str>) {
+    let store = state.join("eon/quota");
+    fs::create_dir_all(&store).unwrap();
+    let now = unix_seconds();
+    fs::write(
+        store.join("claude.schedule"),
+        serde_json::json!({"version":1,"next_at":now * 1000,"failures":u32::from(failure.is_some()),
+            "failure":failure.map(|reason| serde_json::json!({"at":now,"reason":reason}))})
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// Every path under `roots`, with each regular file's length and modification time.
+#[cfg(target_os = "linux")]
+fn tree_listing(roots: &[&Path]) -> Vec<(PathBuf, Option<(u64, std::time::SystemTime)>)> {
+    let mut listing = Vec::new();
+    let mut pending: Vec<PathBuf> = roots.iter().map(|root| root.to_path_buf()).collect();
+    while let Some(path) = pending.pop() {
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.is_dir() {
+            pending.extend(
+                fs::read_dir(&path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        }
+        let file = metadata
+            .is_file()
+            .then(|| (metadata.len(), metadata.modified().unwrap()));
+        listing.push((path, file));
+    }
+    listing.sort();
+    listing
+}
+
+/// `eon agent` backends reading Codex, then Claude, natively, each its own account with limits.
+#[cfg(target_os = "linux")]
+fn write_native_quota_backends(root: &Path, timeout_seconds: u64) {
+    fs::create_dir_all(root.join("config")).unwrap();
+    let text = ["codex", "claude"].iter().fold(
+        format!(
+            "state_file = '{}'\nlog_file = '{}'\n",
+            root.join("agent-state").display(),
+            root.join("agent-log").display()
+        ),
+        |text, provider| {
+            format!(
+                "{text}\n[[backends]]\nname = '{provider}'\naccount = '{provider}'\n\
+                 roles = ['implement','review']\nguard = ['true']\n\
+                 commands = {{medium = ['never-start', '{{prompt}}'], high = ['never-start', '{{prompt}}']}}\n\
+                 [backends.quota]\nparser = 'eon_{provider}'\ntimeout_seconds = {timeout_seconds}\n\
+                 [backends.limits.implement.min_remaining]\n'*' = 20\n"
+            )
+        },
+    );
+    fs::write(root.join("config/agent.toml"), text).unwrap();
+}
+
+/// `eon agent status --json` for the backends beside `runtime`, with the Eon state in `state`.
+#[cfg(target_os = "linux")]
+fn native_quota_status(runtime: &Path, state: &Path) -> serde_json::Value {
+    let output = routed_eon(
+        runtime,
+        state,
+        &["agent", "status", "--json"],
+        None,
+        None,
+        b"",
+    );
+    assert!(output.status.success(), "{output:?}");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 #[cfg(target_os = "linux")]
 #[test]
-fn native_quota_deadline_bounds_discovery_and_inspection_like_the_old_probe() {
-    use std::sync::atomic::AtomicBool;
-
+fn native_quota_deadline_bounds_the_window_and_leaves_time_for_the_store() {
     for (runtime_delay, inspect_delay) in [(1500, 0), (0, 1500), (400, 400)] {
         let root = temporary_directory();
         let runtime = root.join("r");
         let id = format!("g1-{:032x}", 151);
-        let listener = generation_listener(&runtime, &id);
-        listener.set_nonblocking(true).unwrap();
         write_native_quota_config(&root);
         let mut snapshot = inspected_snapshot();
-        snapshot.generation = id.clone();
-        snapshot.created_build = id.clone();
-        snapshot.active_build = id.clone();
-        snapshot.running = None;
         snapshot.codex_quota = Some(eon_workspace_protocol::v47::CodexQuota {
             state: eon_workspace_protocol::v47::CodexQuotaState::Fresh,
             observed_at: 1,
@@ -24574,77 +24779,35 @@ fn native_quota_deadline_bounds_discovery_and_inspection_like_the_old_probe() {
                 scope: None,
             }],
         });
-        let done = Arc::new(AtomicBool::new(false));
-        let stop = done.clone();
-        let server = thread::spawn(move || {
-            while !stop.load(Ordering::SeqCst) {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(peer) => peer,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(5));
-                        continue;
-                    }
-                    Err(error) => panic!("{error}"),
-                };
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .unwrap();
-                let request = decode_request(&read_request(&mut stream)).unwrap();
-                let response = match request.action {
-                    ProtocolAction::Workspace(
-                        Action::InspectRuntime | Action::InspectPresentation,
-                    ) => {
-                        thread::sleep(Duration::from_millis(runtime_delay));
-                        encode_lifecycle_response(&LifecycleResponse::Runtime(previous_runtime(
-                            &id,
-                        )))
-                        .unwrap()
-                    }
-                    ProtocolAction::Workspace(Action::Inspect) => {
-                        thread::sleep(Duration::from_millis(inspect_delay));
-                        encode_response(&Response::Snapshot(snapshot.clone())).unwrap()
-                    }
-                    other => panic!("{other:?}"),
-                };
-                let _ = stream.write_all(&response);
-            }
-        });
-        let started = Instant::now();
-        let output = routed_eon(
+        let (done, server) = native_quota_window(
             &runtime,
-            &root.join("state"),
-            &["agent", "status", "--json"],
-            None,
-            None,
-            b"",
+            &id,
+            snapshot,
+            Duration::from_millis(runtime_delay),
+            Duration::from_millis(inspect_delay),
         );
+        let started = Instant::now();
+        let actual = native_quota_status(&runtime, &root.join("state"));
         let elapsed = started.elapsed();
         done.store(true, Ordering::SeqCst);
         server.join().unwrap();
-        assert!(output.status.success(), "{output:?}");
         assert!(
             elapsed < Duration::from_secs(2),
             "native read took {elapsed:?}"
         );
-        let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        let config = rota::config::Config::parse(
-            &fs::read_to_string(root.join("config/agent.toml")).unwrap(),
-            "rota",
-        )
-        .unwrap();
-        let old = rota::readings::probe(
-            &config.backends[0],
-            &["sleep".into(), "1.5".into()],
-            1,
-            &root,
-        )
-        .unwrap_err();
-        assert_eq!(old, "check timed out");
-        assert_eq!(
-            actual[0]["implement"],
-            format!("quota unreadable on account native: {old}")
+        // The window gets half the 1 s reader deadline, so the store, absent here, still answers
+        // inside it: the reading names both reasons rather than `check timed out`.
+        let problem = actual[0]["implement"].as_str().unwrap();
+        let store = root.join("state/eon/quota/codex.json");
+        assert!(
+            problem.starts_with("quota unreadable on account native: window: ")
+                && problem.ends_with(&format!(
+                    "; store: no stored reading at {}",
+                    store.display()
+                )),
+            "{problem}"
         );
-        assert_eq!(actual[0]["review"], actual[0]["implement"]);
+        assert_eq!(actual[0]["review"], problem);
         fs::remove_dir_all(root).unwrap();
     }
 }
@@ -24662,29 +24825,273 @@ fn native_quota_refuses_another_eonw_without_running_its_recorded_launcher() {
     recording_eon(&launcher, &marker);
     symlink(&launcher, runtime.join("generations").join(&id).join("eon")).unwrap();
     write_native_quota_config(&root);
-    let output = routed_eon(
-        &runtime,
-        &root.join("state"),
-        &["agent", "status", "--json"],
-        None,
-        None,
-        b"",
-    );
-    assert!(output.status.success(), "{output:?}");
-    let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let actual = native_quota_status(&runtime, &root.join("state"));
     let problem = actual[0]["implement"].as_str().unwrap();
+    // Without a stored reading, the message names both sources' reasons.
     assert!(
-        problem.starts_with("quota unreadable on account native:"),
+        problem.starts_with("quota unreadable on account native: window: "),
         "{problem}"
     );
     assert!(problem.contains("EONW"), "{problem}");
     assert!(problem.contains(&(VERSION - 1).to_string()), "{problem}");
+    assert!(
+        problem.contains("; store: no stored reading at"),
+        "{problem}"
+    );
     assert_eq!(actual[0]["review"], problem);
     assert!(!marker.exists());
     end_older_supervisors(
         &done,
         &[runtime.join("generations").join(&id).join("eon.sock")],
         vec![server],
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Bead acceptance: a caller whose window runs another EONW reads the quota store, admits from
+/// it and says so, changing nothing on disk and never running the window's recorded `eon`.
+#[cfg(target_os = "linux")]
+#[test]
+fn native_quota_reads_the_store_when_the_callers_window_runs_another_eonw() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let state = root.join("state");
+    let done = root.join("done");
+    let id = format!("g1-{:032x}", 153);
+    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION - 1);
+    let launcher = root.join("recorded-eon");
+    let marker = root.join("recorded-eon-ran");
+    recording_eon(&launcher, &marker);
+    symlink(&launcher, runtime.join("generations").join(&id).join("eon")).unwrap();
+    write_native_quota_backends(&root, 5);
+    let observed = unix_seconds() - 10;
+    stored_quota_reading(&state, "codex", observed, 80);
+    stored_quota_reading(&state, "claude", observed, 70);
+    stored_claude_schedule(&state, None);
+    let before = tree_listing(&[&runtime, &state]);
+
+    let actual = native_quota_status(&runtime, &state);
+    for (index, provider) in ["codex", "claude"].into_iter().enumerate() {
+        assert_eq!(actual[index]["implement"], "available", "{actual}");
+        assert_eq!(
+            actual[index]["reading"]["source"],
+            serde_json::json!({"account": provider, "observed_at": observed * 1000, "via": "store"}),
+            "{actual}"
+        );
+    }
+    let prompt = root.join("prompt");
+    fs::write(&prompt, "work").unwrap();
+    let launch = routed_eon(
+        &runtime,
+        &state,
+        &[
+            OsStr::new("agent"),
+            OsStr::new("launch"),
+            OsStr::new("--dry-run"),
+            prompt.as_os_str(),
+        ],
+        None,
+        None,
+        b"",
+    );
+    assert!(launch.status.success(), "{launch:?}");
+    assert!(stdout(&launch).starts_with("pick: codex\n"), "{launch:?}");
+    assert!(
+        String::from_utf8_lossy(&launch.stderr)
+            .contains("eon agent: codex [available]: 300m/0_left=80% via store\n"),
+        "{launch:?}"
+    );
+    assert_eq!(tree_listing(&[&runtime, &state]), before);
+    assert!(!marker.exists());
+    end_older_supervisors(
+        &done,
+        &[runtime.join("generations").join(&id).join("eon.sock")],
+        vec![server],
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The store stands in only for what a window would report: Claude's recorded failure holds,
+/// and a reading it cannot vouch for is refused with both sources' reasons.
+#[cfg(target_os = "linux")]
+#[test]
+fn native_quota_store_refuses_what_a_window_would_not_admit() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let done = root.join("done");
+    let id = format!("g1-{:032x}", 154);
+    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION - 1);
+    write_native_quota_backends(&root, 5);
+    let now = unix_seconds();
+    let invalid = "is unreadable, malformed, of another version or from the future";
+    let held = "quota unreadable on account claude: provider failure (provider_error)";
+    // Each case: its name, how it fills the state directory, and what Codex and Claude show
+    // (None: available).
+    type Case<'a> = (&'a str, &'a dyn Fn(&Path), Option<&'a str>, Option<&'a str>);
+    let cases: [Case; 7] = [
+        (
+            "claude failure",
+            &|state| {
+                stored_quota_reading(state, "codex", now - 10, 80);
+                stored_quota_reading(state, "claude", now - 10, 70);
+                stored_claude_schedule(state, Some("provider_error"));
+            },
+            None,
+            Some(held),
+        ),
+        (
+            "no claude schedule",
+            &|state| stored_quota_reading(state, "claude", now - 10, 70),
+            Some("no stored reading at"),
+            Some("failure state unknown: "),
+        ),
+        (
+            "unparseable claude schedule",
+            &|state| {
+                stored_quota_reading(state, "codex", now - 10, 80);
+                stored_quota_reading(state, "claude", now - 10, 70);
+                stored_claude_schedule(state, None);
+                fs::write(state.join("eon/quota/claude.schedule"), "{").unwrap();
+            },
+            None,
+            Some("failure state unknown: unreadable or invalid"),
+        ),
+        (
+            "old codex",
+            &|state| stored_quota_reading(state, "codex", now - 300, 80),
+            Some("s old; Codex records no failure, so only one at most 120 s old is used"),
+            Some("no stored reading at"),
+        ),
+        (
+            "another version",
+            &|state| {
+                stored_quota_reading(state, "codex", now - 10, 80);
+                let path = state.join("eon/quota/codex.json");
+                let text = fs::read_to_string(&path).unwrap();
+                fs::write(&path, text.replace("\"version\":1", "\"version\":2")).unwrap();
+            },
+            Some(invalid),
+            Some("no stored reading at"),
+        ),
+        (
+            "future",
+            &|state| stored_quota_reading(state, "codex", now + 3600, 80),
+            Some(invalid),
+            Some("no stored reading at"),
+        ),
+        (
+            "malformed",
+            &|state| {
+                stored_quota_reading(state, "codex", now - 10, 80);
+                fs::write(state.join("eon/quota/codex.json"), "not json").unwrap();
+            },
+            Some(invalid),
+            Some("no stored reading at"),
+        ),
+    ];
+    for (case, prepare, codex, claude) in cases {
+        let state = root.join(format!("state-{}", case.replace(' ', "-")));
+        prepare(&state);
+        let actual = native_quota_status(&runtime, &state);
+        for (index, expected) in [codex, claude].into_iter().enumerate() {
+            let problem = actual[index]["implement"].as_str().unwrap();
+            match expected {
+                None => assert_eq!(problem, "available", "{case}"),
+                // Claude's recorded failure holds its reading, as through a window.
+                Some(expected) if expected == held => {
+                    assert_eq!(problem, expected, "{case}");
+                    assert_eq!(actual[index]["reading"]["source"]["via"], "store", "{case}");
+                }
+                // Anything the store cannot vouch for names both sources' reasons.
+                Some(expected) => {
+                    assert!(
+                        problem.contains(": window: ")
+                            && problem.contains("EONW")
+                            && problem.contains("; store: ")
+                            && problem.contains(expected),
+                        "{case}: {problem}"
+                    );
+                    assert!(actual[index]["reading"]["source"].is_null(), "{case}");
+                }
+            }
+        }
+    }
+    end_older_supervisors(
+        &done,
+        &[runtime.join("generations").join(&id).join("eon.sock")],
+        vec![server],
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A window that accepts but never answers costs at most half the reader's deadline; the store
+/// answers in the rest.
+#[cfg(target_os = "linux")]
+#[test]
+fn native_quota_reads_the_store_inside_the_deadline_when_the_window_never_answers() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let state = root.join("state");
+    let id = format!("g1-{:032x}", 155);
+    let listener = generation_listener(&runtime, &id);
+    write_native_quota_backends(&root, 2);
+    let observed = unix_seconds() - 10;
+    stored_quota_reading(&state, "codex", observed, 80);
+    stored_quota_reading(&state, "claude", observed, 70);
+    stored_claude_schedule(&state, None);
+    let actual = native_quota_status(&runtime, &state);
+    // Each backend's 2 s deadline holds: a reading past it would say `check timed out`.
+    for index in 0..2 {
+        assert_eq!(actual[index]["implement"], "available", "{actual}");
+        assert_eq!(actual[index]["reading"]["source"]["via"], "store");
+    }
+    drop(listener);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A window without a provider's chip supplies the providers it has; the store fills the rest,
+/// and each reading names its own source.
+#[cfg(target_os = "linux")]
+#[test]
+fn native_quota_fills_only_the_providers_the_window_lacks_from_the_store() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let state = root.join("state");
+    let id = format!("g1-{:032x}", 156);
+    let now = unix_seconds();
+    let mut snapshot = inspected_snapshot();
+    snapshot.codex_quota = Some(eon_workspace_protocol::v47::CodexQuota {
+        state: eon_workspace_protocol::v47::CodexQuotaState::Fresh,
+        observed_at: now - 5,
+        windows: vec![eon_workspace_protocol::v47::QuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: 90,
+            resets_at: None,
+            scope: None,
+        }],
+    });
+    snapshot.codex_quota_failure = None;
+    snapshot.claude_quota = None;
+    snapshot.claude_quota_failure = None;
+    let (done, server) =
+        native_quota_window(&runtime, &id, snapshot, Duration::ZERO, Duration::ZERO);
+    write_native_quota_backends(&root, 5);
+    stored_quota_reading(&state, "codex", now - 20, 50);
+    stored_quota_reading(&state, "claude", now - 20, 70);
+    stored_claude_schedule(&state, None);
+    let actual = native_quota_status(&runtime, &state);
+    done.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+    assert_eq!(actual[0]["implement"], "available", "{actual}");
+    assert_eq!(
+        actual[0]["reading"]["source"],
+        serde_json::json!({"account": "codex", "observed_at": (now - 5) * 1000, "via": "window default"}),
+    );
+    assert_eq!(actual[0]["reading"]["remaining"]["300m/0"], 90.0);
+    assert_eq!(actual[1]["implement"], "available", "{actual}");
+    assert_eq!(
+        actual[1]["reading"]["source"],
+        serde_json::json!({"account": "claude", "observed_at": (now - 20) * 1000, "via": "store"}),
     );
     fs::remove_dir_all(root).unwrap();
 }

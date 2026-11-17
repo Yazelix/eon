@@ -115,9 +115,18 @@ Native quota readers use `parser = "eon_codex"` or `"eon_claude"` and read
 Runtime's session facts in process. Native readers ignore optional `command`;
 rota still reads that field when both tools share a configuration. Custom
 parsers require `command`. All readers use `timeout_seconds` (default 30): a
-native read shares one deadline across discovery, connection and inspection.
-An incompatible supervisor generation reports unavailable quota; the native
-reader never invokes its recorded launcher. Native readers
+native read shares one deadline across discovery, connection and inspection,
+and the caller's window gets at most half of it. A provider that window does
+not supply (it runs another EONW, cannot be reached or answer in time, or has
+no facts for that provider) is read from the quota store in
+`$XDG_STATE_HOME/eon/quota` without calling the provider: a recorded Claude
+failure still holds, an unreadable failure record refuses the reading, and a
+stored Codex reading counts only while at most 120 s old. The store assumes one
+account per provider for each Eon state directory, as the quota chips do. The
+native reader never invokes an incompatible generation's recorded launcher.
+Each native reading names its source (`reading.source.via` in
+`eon agent status --json`: `window ID` or `store`), and a provider no source
+has names both reasons. Native readers
 keep the same fresh-only admission, role thresholds and optional refresh retry;
 collection and `eon session --json` quota output are unchanged. Backend provider
 credentials do not change the supervisor's selected quota account.

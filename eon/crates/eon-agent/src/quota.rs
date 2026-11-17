@@ -14,6 +14,8 @@ pub struct Quota {
     pub observed_at_ms: Option<u64>,
     /// The reason the host's last poll of this provider failed, while it keeps older facts.
     pub failure: Option<String>,
+    /// Where the host found these facts, when it says.
+    pub via: Option<String>,
 }
 
 /// The value of a JSON reading's reserved `observed_at` key: Unix milliseconds, an unsigned
@@ -80,6 +82,56 @@ fn rfc3339(text: &str) -> bool {
     }
 }
 
+/// What the host's facts say about a native parser's provider besides its windows: where they
+/// came from, the failure beside them and the snapshot's time.
+#[derive(Debug, Default, PartialEq)]
+pub struct Origin {
+    pub via: Option<String>,
+    pub failure: Option<String>,
+    pub observed_at_ms: Option<u64>,
+}
+
+fn native_provider(parser: Parser) -> Option<&'static str> {
+    match parser {
+        Parser::EonCodex => Some("codex"),
+        Parser::EonClaude => Some("claude"),
+        _ => None,
+    }
+}
+
+fn native_origin(json: &serde_json::Value, provider: &str) -> Origin {
+    let key = format!("{provider}_quota");
+    Origin {
+        via: json
+            .get("quota_source")
+            .and_then(|sources| sources.get(provider))
+            .and_then(|source| source.as_str())
+            .map(Into::into),
+        failure: json
+            .get(format!("{key}_failure"))
+            .filter(|f| !f.is_null())
+            .map(|f| {
+                f.get("reason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("unknown")
+                    .to_string()
+            }),
+        observed_at_ms: json
+            .get(&key)
+            .and_then(|snapshot| snapshot.get("observed_at"))
+            .and_then(|at| at.as_u64()),
+    }
+}
+
+/// For a native reading the host attributes to a source (`quota_source`), that source and what
+/// it says, whether or not [`parse`] can use its facts; None for other readings.
+pub fn origin(parser: Parser, text: &str) -> Option<Origin> {
+    let provider = native_provider(parser)?;
+    let json: serde_json::Value = serde_json::from_str(text).ok()?;
+    let origin = native_origin(&json, provider);
+    origin.via.is_some().then_some(origin)
+}
+
 /// Parses one reading. Every format but `agy` may carry `observed_at`, when the provider data
 /// was fetched, in Unix milliseconds: `claude_text` as an `observed_at=MS` token after its two
 /// fields, `claude_json` and `remaining_json` as a top-level `"observed_at"`, and the host's
@@ -90,6 +142,7 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
     let mut resets = Resets::new();
     let mut observed_at_ms = None;
     let mut failure = None;
+    let mut via = None;
     match parser {
         Parser::Agy => {
             let group = agy_group.unwrap_or(DEFAULT_AGY_GROUP);
@@ -172,23 +225,28 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
         Parser::EonCodex | Parser::EonClaude => {
             let json: serde_json::Value =
                 serde_json::from_str(text).map_err(|_| "invalid workspace JSON")?;
-            let key = if matches!(parser, Parser::EonCodex) {
-                "codex_quota"
-            } else {
-                "claude_quota"
+            let provider = native_provider(parser).expect("a native parser");
+            let key = format!("{provider}_quota");
+            if let Some(reason) = json
+                .get("quota_unreadable")
+                .and_then(|reasons| reasons.get(provider))
+                .and_then(|reason| reason.as_str())
+            {
+                return Err(reason.into());
+            }
+            let origin = native_origin(&json, provider);
+            via = origin.via;
+            failure = origin.failure;
+            // A failure beside facts that cannot be read is the reason they are missing.
+            let unusable = |problem: &str| match &failure {
+                Some(reason) => format!("provider failure ({reason}); {problem}"),
+                None => problem.to_owned(),
             };
-            failure = json
-                .get(format!("{key}_failure"))
-                .filter(|f| !f.is_null())
-                .map(|f| {
-                    f.get("reason")
-                        .and_then(|r| r.as_str())
-                        .unwrap_or("unknown")
-                        .to_string()
-                });
-            let snapshot = json.get(key).ok_or("quota snapshot unavailable")?;
+            let snapshot = json
+                .get(&key)
+                .ok_or_else(|| unusable("quota snapshot unavailable"))?;
             if snapshot.get("state").and_then(|s| s.as_str()) != Some("fresh") {
-                return Err("quota snapshot is not fresh".into());
+                return Err(unusable("quota snapshot is not fresh"));
             }
             observed_at_ms = json_time(snapshot.get("observed_at"))?;
             let items = snapshot
@@ -231,6 +289,7 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
         resets,
         observed_at_ms,
         failure,
+        via,
     })
 }
 

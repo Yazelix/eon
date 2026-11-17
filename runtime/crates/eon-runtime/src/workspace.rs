@@ -6,13 +6,13 @@ use eon_workspace_protocol::shortcuts::{
     EffectiveBinding, EffectiveKeymap, EffectivePopup, ReservedChord,
 };
 use eon_workspace_protocol::v47::{
-    Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
-    CodexQuotaState, Column as SnapshotColumn, Direction, Editing, FILES_ENTRY, Failure,
-    GoogleQuotaState, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS,
-    PROJECT_ENTRY, Pane as SnapshotPane, Popup as SnapshotPopup, PopupEntry as SnapshotEntry,
-    PopupKey, PopupTarget, QuotaFailure, QuotaWindow, Screen, Sent, Side, Sidebar, Snapshot,
-    Tab as SnapshotTab, TargetId, TerminalHistory, TerminalTarget, TerminalText, WorkspaceAction,
-    WorkspaceTarget, check_popup_action,
+    Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuota, ClaudeQuotaState,
+    CloseEnd, CodexQuota, CodexQuotaState, Column as SnapshotColumn, Direction, Editing,
+    FILES_ENTRY, Failure, GoogleQuotaState, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES,
+    MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY, Pane as SnapshotPane, Popup as SnapshotPopup,
+    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaFailure, QuotaWindow, Screen, Sent,
+    Side, Sidebar, Snapshot, Tab as SnapshotTab, TargetId, TerminalHistory, TerminalTarget,
+    TerminalText, WorkspaceAction, WorkspaceTarget, check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -3810,29 +3810,9 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         "],\"sidebar\":\"{}\",\"codex_quota\":",
         sidebar_name(snapshot.sidebar)
     ));
-    json_quota(
-        &mut output,
-        snapshot.codex_quota.as_ref().map(|quota| {
-            let state = match quota.state {
-                CodexQuotaState::Fresh => "fresh",
-                CodexQuotaState::Stale => "stale",
-                CodexQuotaState::Blocked => "blocked",
-                CodexQuotaState::Unknown => "unknown",
-            };
-            (state, quota.observed_at, quota.windows.as_slice())
-        }),
-    );
+    json_codex_quota(&mut output, snapshot.codex_quota.as_ref());
     output.push_str(",\"claude_quota\":");
-    json_quota(
-        &mut output,
-        snapshot.claude_quota.as_ref().map(|quota| {
-            let state = match quota.state {
-                ClaudeQuotaState::Fresh => "fresh",
-                ClaudeQuotaState::Stale => "stale",
-            };
-            (state, quota.observed_at, quota.windows.as_slice())
-        }),
-    );
+    json_claude_quota(&mut output, snapshot.claude_quota.as_ref());
     output.push_str(",\"google_quota\":");
     json_quota(
         &mut output,
@@ -3967,6 +3947,58 @@ pub(crate) fn json_attention(output: &mut String, attention: Option<&Attention>)
         output.push_str(",\"kind\":null,\"progress\":null,\"title\":null,\"message\":null,\"changed_at\":null,\"stale\":null,\"others\":null");
     }
     output.push('}');
+}
+
+/// `eon agent`'s quota facts (EON-C40): the session JSON's Codex and Claude keys, then where
+/// each provider's facts came from and why no source has a provider.
+pub(crate) fn quota_facts_json(
+    codex: (Option<&CodexQuota>, Option<QuotaFailure>),
+    claude: (Option<&ClaudeQuota>, Option<QuotaFailure>),
+    sources: serde_json::Map<String, serde_json::Value>,
+    unreadable: serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let mut output = String::from("{\"codex_quota\":");
+    json_codex_quota(&mut output, codex.0);
+    output.push_str(",\"claude_quota\":");
+    json_claude_quota(&mut output, claude.0);
+    output.push_str(",\"codex_quota_failure\":");
+    json_quota_failure(&mut output, codex.1);
+    output.push_str(",\"claude_quota_failure\":");
+    json_quota_failure(&mut output, claude.1);
+    output.push_str(&format!(
+        ",\"quota_source\":{},\"quota_unreadable\":{}}}",
+        serde_json::Value::Object(sources),
+        serde_json::Value::Object(unreadable)
+    ));
+    output
+}
+
+fn json_codex_quota(output: &mut String, quota: Option<&CodexQuota>) {
+    json_quota(
+        output,
+        quota.map(|quota| {
+            let state = match quota.state {
+                CodexQuotaState::Fresh => "fresh",
+                CodexQuotaState::Stale => "stale",
+                CodexQuotaState::Blocked => "blocked",
+                CodexQuotaState::Unknown => "unknown",
+            };
+            (state, quota.observed_at, quota.windows.as_slice())
+        }),
+    );
+}
+
+fn json_claude_quota(output: &mut String, quota: Option<&ClaudeQuota>) {
+    json_quota(
+        output,
+        quota.map(|quota| {
+            let state = match quota.state {
+                ClaudeQuotaState::Fresh => "fresh",
+                ClaudeQuotaState::Stale => "stale",
+            };
+            (state, quota.observed_at, quota.windows.as_slice())
+        }),
+    );
 }
 
 fn quota_milliseconds(seconds: u64) -> u128 {

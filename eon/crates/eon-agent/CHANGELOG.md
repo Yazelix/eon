@@ -5,6 +5,12 @@ see.
 
 ## Unreleased
 
+- Native quota sources: a host reading may report where each provider's facts
+  came from (`quota_source`) and why none has a provider (`quota_unreadable`).
+  The source shows as `reading.source.via` in `status --json` and as
+  `via SOURCE` at the end of the launch candidate line on stderr, also when
+  the source's facts cannot be used; a reading without one keeps the previous
+  shape. A native provider failure without usable facts names its reason.
 - Ordered admission: `launch` and `run` take the first available backend in
   configured order and read candidates one at a time, stopping at the first
   that admits; unread ones show `not checked`. Nothing rotates and nothing is

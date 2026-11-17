@@ -26,6 +26,13 @@ const MAX_BYTES: usize = 64 * 1024;
 const STALE_AFTER: u64 = 3600;
 const EXPIRE_AFTER: u64 = 24 * 3600;
 const STORE_VERSION: u32 = 1;
+/// Codex is read every 60 units, Claude and Google every 300; a unit is a second (EON-C27).
+const UNIT: Duration = Duration::from_secs(1);
+const CODEX_UNITS: u32 = 60;
+const SHARED_UNITS: u32 = 300;
+/// Codex keeps no failure record, so its stored reading stands in for a window only while it is
+/// at most two reads old (EON-C40).
+const STORED_CODEX_MAX_AGE: u64 = 2 * CODEX_UNITS as u64;
 /// CodexBar names Claude's model-scoped weekly windows `claude-weekly-scoped-<model>`.
 const CLAUDE_SCOPED: &str = "claude-weekly-scoped-";
 
@@ -442,6 +449,11 @@ fn backoff(failures: u32) -> u32 {
     }
 }
 
+/// The longest backoff; a schedule further ahead is ignored (EON-C27).
+fn longest_wait(interval: Duration) -> Duration {
+    interval * backoff(u32::MAX)
+}
+
 fn open_schedule(path: &Path) -> io::Result<fs::File> {
     fs::DirBuilder::new().recursive(true).mode(0o700).create(
         path.parent()
@@ -571,8 +583,7 @@ impl Provider {
                     .filter(|_| shared_schedule)
                     .and_then(Path::parent)
                     .map(|dir| dir.join(format!("{provider}.schedule")));
-                // The longest backoff; a schedule further ahead is ignored (EON-C27).
-                let maximum = interval * backoff(u32::MAX);
+                let maximum = longest_wait(interval);
                 loop {
                     let mut wait = Duration::ZERO;
                     let (schedule, schedule_usable) = update_schedule(
@@ -760,8 +771,7 @@ pub(crate) struct Quotas {
 
 impl Quotas {
     pub(crate) fn start(program: &Path, widgets: &[String]) -> Self {
-        let store = super::diagnostics::state_directory().map(|state| state.join("quota"));
-        Self::start_every(program, Duration::from_secs(1), store, widgets)
+        Self::start_every(program, UNIT, store_directory(), widgets)
     }
 
     /// Reads Codex every 60 units and Claude/Google every 300 (EON-C27).
@@ -793,14 +803,19 @@ impl Quotas {
             program: program.to_path_buf(),
             google_program: google_program.to_path_buf(),
             store,
-            codex: slot("codex", &["codex_quota_5h", "codex_quota_7d"], 60, false),
+            codex: slot(
+                "codex",
+                &["codex_quota_5h", "codex_quota_7d"],
+                CODEX_UNITS,
+                false,
+            ),
             claude: slot(
                 "claude",
                 &["claude_quota_5h", "claude_quota_7d", "claude_quota_scoped"],
-                300,
+                SHARED_UNITS,
                 true,
             ),
-            google: slot("google", &[], 300, true),
+            google: slot("google", &[], SHARED_UNITS, true),
         };
         quotas.show(widgets);
         quotas
@@ -849,16 +864,107 @@ impl Quotas {
         snapshot.codex_quota = self.codex.snapshot();
         snapshot.codex_quota_failure = self.codex.failure();
         snapshot.claude_quota_failure = self.claude.failure();
-        snapshot.claude_quota = self.claude.snapshot().map(|quota| ClaudeQuota {
-            state: if quota.state == CodexQuotaState::Stale {
-                ClaudeQuotaState::Stale
-            } else {
-                ClaudeQuotaState::Fresh
-            },
-            observed_at: quota.observed_at,
-            windows: quota.windows,
-        });
+        snapshot.claude_quota = self.claude.snapshot().map(claude_quota);
     }
+}
+
+/// Where each provider's last good reading is kept, shared by every window (EON-C27).
+pub(crate) fn store_directory() -> Option<PathBuf> {
+    super::diagnostics::state_directory().map(|state| state.join("quota"))
+}
+
+/// A Claude reading as windows present it.
+pub(crate) fn claude_quota(quota: CodexQuota) -> ClaudeQuota {
+    ClaudeQuota {
+        state: if quota.state == CodexQuotaState::Stale {
+            ClaudeQuotaState::Stale
+        } else {
+            ClaudeQuotaState::Fresh
+        },
+        observed_at: quota.observed_at,
+        windows: quota.windows,
+    }
+}
+
+/// One provider's facts from the store in `store`, for an `eon agent` caller whose window does
+/// not supply them (EON-C40): the stored reading as a window presents it and the failure a
+/// window would report beside it. Claude's failure comes from its shared schedule; Codex keeps
+/// none, so its reading is used only while at most two reads old. Nothing is created, written,
+/// locked exclusively or removed, and no provider is called; any doubt refuses.
+pub(crate) fn stored_facts(
+    store: &Path,
+    provider: &str,
+    deadline: Instant,
+) -> Result<(CodexQuota, Option<QuotaFailure>), String> {
+    let now = epoch_seconds().ok_or("the system clock is before 1970")?;
+    let path = store.join(format!("{provider}.json"));
+    let stored = load(&path, provider, now).ok_or_else(|| {
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                format!("no stored reading at {}", path.display())
+            }
+            _ => format!(
+                "the stored reading at {} is unreadable, malformed, of another version or from the future",
+                path.display()
+            ),
+        }
+    })?;
+    let age = now - stored.observed_at;
+    let quota = present_at(stored, now)
+        .ok_or_else(|| format!("the stored reading at {} has expired", path.display()))?;
+    if provider == "claude" {
+        return Ok((
+            quota,
+            schedule_failure(&store.join("claude.schedule"), deadline)?,
+        ));
+    }
+    if age > STORED_CODEX_MAX_AGE {
+        return Err(format!(
+            "the stored reading is {age} s old; Codex records no failure, so only one at most {STORED_CODEX_MAX_AGE} s old is used"
+        ));
+    }
+    Ok((quota, None))
+}
+
+/// The failure a shared schedule records, read under a shared lock without creating or
+/// rewriting the file; a file that cannot be locked, read or validated leaves it unknown.
+fn schedule_failure(path: &Path, deadline: Instant) -> Result<Option<QuotaFailure>, String> {
+    let unknown = |why: String| format!("failure state unknown: {why} ({})", path.display());
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| unknown(error.to_string()))?;
+    if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return Err(unknown("not a schedule file".into()));
+    }
+    // A peer holds the lock only to rewrite the file (EON-C27): retry briefly, never past the
+    // reader's deadline.
+    let pause = Duration::from_millis(20);
+    let mut retries = 3;
+    loop {
+        match file.try_lock_shared() {
+            Ok(()) => break,
+            Err(fs::TryLockError::WouldBlock)
+                if retries > 0 && Instant::now() + pause < deadline =>
+            {
+                retries -= 1;
+                thread::sleep(pause);
+            }
+            Err(fs::TryLockError::WouldBlock) => {
+                return Err(unknown("a window is rewriting it".into()));
+            }
+            Err(fs::TryLockError::Error(error)) => return Err(unknown(error.to_string())),
+        }
+    }
+    let now = milliseconds(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default(),
+    );
+    load_schedule(&mut file, now, longest_wait(UNIT * SHARED_UNITS))
+        .map(|schedule| schedule.failure)
+        .ok_or_else(|| unknown("unreadable or invalid".into()))
 }
 
 fn quota_command(program: &Path, provider: &str) -> Command {
@@ -2067,6 +2173,165 @@ mod tests {
         });
         save(&path, Some(&scoped));
         assert_eq!(load(&path, "claude", now).unwrap().windows, scoped.windows);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Every entry in `directory` with its length and modification time.
+    fn listing(directory: &Path) -> Vec<(std::ffi::OsString, u64, SystemTime)> {
+        let mut entries: Vec<_> = fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let metadata = entry.metadata().unwrap();
+                (
+                    entry.file_name(),
+                    metadata.len(),
+                    metadata.modified().unwrap(),
+                )
+            })
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    #[test]
+    fn stored_facts_stand_in_for_a_window_only_when_certain() {
+        let root = super::super::supervisor::temporary_directory();
+        let store = root.join("quota");
+        let soon = || Instant::now() + Duration::from_secs(2);
+        // Without a store nothing is read and nothing is created.
+        assert_eq!(
+            stored_facts(&store, "codex", soon()).unwrap_err(),
+            format!(
+                "no stored reading at {}",
+                store.join("codex.json").display()
+            )
+        );
+        assert!(stored_facts(&store, "claude", soon()).is_err());
+        assert!(!store.exists());
+
+        // A window's poller leaves both readings and Claude's schedule; they stand in as the
+        // window presents them, and reading them changes nothing.
+        let (codex, now) = fresh("codex");
+        let (claude, _) = fresh("claude");
+        let reads = root.join("reads");
+        script(
+            &reads,
+            &format!(
+                "if [ \"$3\" = codex ]; then printf '%s' '{}'; else printf '%s' '{}'; fi",
+                serde_json::to_string(&codex).unwrap(),
+                serde_json::to_string(&claude).unwrap()
+            ),
+        );
+        let quotas = Quotas::start_every(
+            &reads,
+            UNIT,
+            Some(store.clone()),
+            &["codex_quota_5h", "claude_quota_5h"].map(String::from),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !(quotas.codex.snapshot().is_some()
+            && quotas.claude.snapshot().is_some()
+            && stored_facts(&store, "codex", soon()).is_ok()
+            && stored_facts(&store, "claude", soon()).is_ok())
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let window = (quotas.codex.snapshot(), quotas.claude.snapshot());
+        drop(quotas);
+        let before = listing(&store);
+        let (codex, failure) = stored_facts(&store, "codex", soon()).unwrap();
+        assert_eq!((Some(codex), failure), (window.0, None));
+        let (claude, failure) = stored_facts(&store, "claude", soon()).unwrap();
+        assert_eq!((Some(claude), failure), (window.1, None));
+        assert_eq!(listing(&store), before);
+
+        // Claude's recorded failure comes with its reading, as a window reports it.
+        let schedule = store.join("claude.schedule");
+        let failed = QuotaFailure {
+            at: now,
+            reason: Failure::ProviderError,
+        };
+        let recorded = Schedule {
+            next_at: now * 1000,
+            failures: 1,
+            failure: Some(failed),
+            ..Schedule::default()
+        };
+        fs::write(&schedule, serde_json::to_vec(&recorded).unwrap()).unwrap();
+        assert_eq!(
+            stored_facts(&store, "claude", soon()).unwrap().1,
+            Some(failed)
+        );
+        // A schedule a window is rewriting, or one that cannot be read, leaves the failure
+        // unknown: the reading is refused, inside the deadline.
+        let unknown = |why: &str| {
+            Err(format!(
+                "failure state unknown: {why} ({})",
+                schedule.display()
+            ))
+        };
+        let writer = fs::File::open(&schedule).unwrap();
+        writer.lock().unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            stored_facts(&store, "claude", soon()),
+            unknown("a window is rewriting it")
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(writer);
+        fs::write(&schedule, "{").unwrap();
+        assert_eq!(
+            stored_facts(&store, "claude", soon()),
+            unknown("unreadable or invalid")
+        );
+        fs::remove_file(&schedule).unwrap();
+        assert!(
+            stored_facts(&store, "claude", soon())
+                .unwrap_err()
+                .starts_with("failure state unknown: ")
+        );
+        assert!(!schedule.exists());
+
+        // Codex records no failure: its reading stands in only while at most two reads old.
+        let path = store.join("codex.json");
+        let mut reading = load(&path, "codex", now).unwrap();
+        reading.observed_at = epoch_seconds().unwrap() - 60;
+        save(&path, Some(&reading));
+        assert!(stored_facts(&store, "codex", soon()).is_ok());
+        reading.observed_at = epoch_seconds().unwrap() - 300;
+        save(&path, Some(&reading));
+        assert!(
+            stored_facts(&store, "codex", soon())
+                .unwrap_err()
+                .ends_with(
+                    " s old; Codex records no failure, so only one at most 120 s old is used"
+                )
+        );
+        // An expired reading, and one a window would not load, are refused.
+        reading.observed_at = epoch_seconds().unwrap() - EXPIRE_AFTER - 1;
+        save(&path, Some(&reading));
+        assert_eq!(
+            stored_facts(&store, "codex", soon()).unwrap_err(),
+            format!("the stored reading at {} has expired", path.display())
+        );
+        let invalid = format!(
+            "the stored reading at {} is unreadable, malformed, of another version or from the future",
+            path.display()
+        );
+        let window = json!({"duration_minutes":300,"remaining_percent":76,"resets_at":null});
+        let now = epoch_seconds().unwrap();
+        for bad in [
+            json!({"version":2,"observed_at":now,"windows":[window]}),
+            json!({"version":1,"observed_at":now + 3600,"windows":[window]}),
+            json!({"version":1,"observed_at":now,"windows":[window],"account":"x"}),
+        ] {
+            fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert_eq!(stored_facts(&store, "codex", soon()), Err(invalid.clone()));
+        }
+        fs::write(&path, "not json").unwrap();
+        assert_eq!(stored_facts(&store, "codex", soon()), Err(invalid));
         fs::remove_dir_all(root).unwrap();
     }
 }
