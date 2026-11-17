@@ -299,6 +299,31 @@ pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
     }))
 }
 
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn test_children(pid: i32) -> Vec<i32> {
+    let mut children = [0; 64];
+    // SAFETY: no std/rustix API lists Darwin child PIDs; libproc writes only into
+    // this live PID buffer, bounded by its byte size.
+    let count = unsafe {
+        libc::proc_listchildpids(
+            pid,
+            children.as_mut_ptr().cast(),
+            std::mem::size_of_val(&children) as libc::c_int,
+        )
+    };
+    children[..usize::try_from(count).unwrap()].to_vec()
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn test_program(pid: i32) -> Vec<u8> {
+    let mut path = vec![0; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: no std/rustix API reads another Darwin process's executable path;
+    // libproc writes at most the length of this live buffer.
+    let length = unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
+    path.truncate(usize::try_from(length).unwrap_or(0));
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SOCKET_PATH_BYTES, read_available, socket_path_fits};
@@ -307,17 +332,13 @@ mod tests {
         fs,
         io::{self, Write},
         net::Shutdown,
-        os::{
-            fd::AsRawFd,
-            unix::net::{UnixListener, UnixStream},
-        },
+        os::unix::net::{UnixListener, UnixStream},
     };
 
     #[test]
     fn read_available_does_not_change_socket_mode() {
         let (stream, mut peer) = UnixStream::pair().unwrap();
-        // SAFETY: F_GETFL only reads the open file's status flags.
-        let flags = || unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
+        let flags = || rustix::fs::fcntl_getfl(&stream).unwrap();
         let blocking = flags();
         let mut buffer = [0; 8];
         assert_eq!(

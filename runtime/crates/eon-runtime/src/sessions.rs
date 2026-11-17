@@ -2638,17 +2638,15 @@ pub(crate) mod tests {
         },
         session as orbs,
     };
+    use rustix::process::{Pid, Signal, kill_process};
     use std::{
         ffi::{OsStr, OsString},
         fs,
         io::{self, Read, Write},
-        os::{
-            fd::AsRawFd,
-            unix::{
-                ffi::OsStrExt,
-                fs::{OpenOptionsExt, PermissionsExt},
-                net::{UnixListener, UnixStream},
-            },
+        os::unix::{
+            ffi::OsStrExt,
+            fs::{OpenOptionsExt, PermissionsExt},
+            net::{UnixListener, UnixStream},
         },
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
@@ -2785,24 +2783,23 @@ pub(crate) mod tests {
         let worker = thread::spawn(move || {
             let mut events = Vec::new();
             let accept = || {
+                use rustix::event::{PollFd, PollFlags, Timespec};
                 let mut ready = [
-                    libc::pollfd {
-                        fd: listener.as_raw_fd(),
-                        events: libc::POLLIN,
-                        revents: 0,
-                    },
-                    libc::pollfd {
-                        fd: peer.as_raw_fd(),
-                        events: libc::POLLIN,
-                        revents: 0,
-                    },
+                    PollFd::new(&listener, PollFlags::IN),
+                    PollFd::new(&peer, PollFlags::IN),
                 ];
-                // SAFETY: both descriptors belong to this test fixture for the whole call.
+                let timeout = Timespec {
+                    tv_sec: 5,
+                    tv_nsec: 0,
+                };
                 assert!(
-                    unsafe { libc::poll(ready.as_mut_ptr(), 2, 5000) } > 0,
+                    rustix::event::poll(&mut ready, Some(&timeout)).unwrap() > 0,
                     "no acquisition"
                 );
-                assert_ne!(ready[0].revents & libc::POLLIN, 0, "fixture cancelled");
+                assert!(
+                    ready[0].revents().contains(PollFlags::IN),
+                    "fixture cancelled"
+                );
                 let (stream, _) = listener.accept().unwrap();
                 stream
                     .set_read_timeout(Some(SESSION_CLEANUP_TIMEOUT))
@@ -3564,23 +3561,14 @@ pub(crate) mod tests {
 
     fn end_unreaped(child: &mut Child) {
         child.kill().unwrap();
-        // SAFETY: zero is a valid initial value for the waitid output buffer.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         loop {
-            // SAFETY: the PID names our child and info is writable. WNOWAIT leaves it unreaped.
-            if unsafe {
-                libc::waitid(
-                    libc::P_PID,
-                    child.id() as libc::id_t,
-                    &mut info,
-                    libc::WEXITED | libc::WNOWAIT,
-                )
-            } == 0
-            {
-                break;
+            match rustix::process::waitid(
+                rustix::process::WaitId::Pid(Pid::from_child(child)),
+                rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOWAIT,
+            ) {
+                Ok(_) => break,
+                Err(error) => assert_eq!(error, rustix::io::Errno::INTR, "{error}"),
             }
-            let error = io::Error::last_os_error();
-            assert_eq!(error.kind(), io::ErrorKind::Interrupted, "{error}");
         }
     }
 
@@ -3969,9 +3957,8 @@ pub(crate) mod tests {
         for session in &sessions {
             assert_eq!(session.lease.read_timeout().unwrap(), None);
             assert_eq!(session.lease.write_timeout().unwrap(), None);
-            // SAFETY: F_GETFL only reads flags from this test-owned descriptor.
-            let flags = unsafe { libc::fcntl(session.lease.as_raw_fd(), libc::F_GETFL) };
-            assert_ne!(flags & libc::O_NONBLOCK, 0);
+            let flags = rustix::fs::fcntl_getfl(&session.lease).unwrap();
+            assert!(flags.contains(rustix::fs::OFlags::NONBLOCK));
         }
         assert!(
             !super::send_program_status(&mut sessions[0], Instant::now()).unwrap(),
@@ -4004,6 +3991,7 @@ pub(crate) mod tests {
         leased_orbit_with_program(root, script, &orbit)
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn lease_diagnostics(session: &RunningSession) -> String {
         let request = session.request.as_ref().map(|request| {
             let kind = match request.kind {
@@ -4287,18 +4275,15 @@ pub(crate) mod tests {
     /// Leaves a run that looks ended but cannot be reconciled: its Orbit is
     /// stopped with its record Live, and its lease reads end of file.
     pub(crate) fn stall(session: &RunningSession) {
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(orbit_pid(session), libc::SIGSTOP) }, 0);
+        kill_process(Pid::from_raw(orbit_pid(session)).unwrap(), Signal::STOP).unwrap();
         session.lease.shutdown(std::net::Shutdown::Read).unwrap();
     }
 
     /// Ends a stalled run's Orbit, which stops its terminal (ORB-C12).
     pub(crate) fn end_stalled(session: &mut RunningSession) {
         let orbit = orbit_pid(session);
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(orbit, libc::SIGTERM) }, 0);
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(orbit, libc::SIGCONT) }, 0);
+        kill_process(Pid::from_raw(orbit).unwrap(), Signal::TERM).unwrap();
+        kill_process(Pid::from_raw(orbit).unwrap(), Signal::CONT).unwrap();
         session.child.as_mut().unwrap().wait().unwrap();
     }
 
@@ -4359,13 +4344,18 @@ pub(crate) mod tests {
             deadline: Instant::now() + Duration::from_secs(2),
             drainer: None,
         });
-        let mut readable = libc::pollfd {
-            fd: session.lease.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
+        let mut readable = [rustix::event::PollFd::new(
+            &session.lease,
+            rustix::event::PollFlags::IN,
+        )];
+        let timeout = rustix::event::Timespec {
+            tv_sec: 2,
+            tv_nsec: 0,
         };
-        // SAFETY: readable is one valid pollfd for this test-owned lease.
-        assert_eq!(unsafe { libc::poll(&mut readable, 1, 2000) }, 1);
+        assert_eq!(
+            rustix::event::poll(&mut readable, Some(&timeout)).unwrap(),
+            1
+        );
         assert_eq!(super::session_finished(&mut session).unwrap(), None);
         let ProgramStatusRead::Reply(status) = super::read_program_status(&mut session).unwrap()
         else {
@@ -4853,8 +4843,7 @@ pub(crate) mod tests {
             .map(|root| leased_orbit(root, "exec sleep 30"))
             .collect::<Vec<_>>();
         let silent = orbit_pid(&sessions[0]);
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(silent, libc::SIGSTOP) }, 0);
+        kill_process(Pid::from_raw(silent).unwrap(), Signal::STOP).unwrap();
         assert!(super::send_program_status(&mut sessions[0], Instant::now()).unwrap());
         assert!(stop_managed_sessions(&mut sessions, Duration::from_secs(1)).is_err());
         assert!(
@@ -4864,8 +4853,7 @@ pub(crate) mod tests {
         assert!(!sessions[0].is_finished());
 
         // Its lease survived the missed reply and still stops it.
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(silent, libc::SIGCONT) }, 0);
+        kill_process(Pid::from_raw(silent).unwrap(), Signal::CONT).unwrap();
         assert_eq!(
             stop_managed_sessions(&mut sessions[..1], Duration::from_secs(5)).unwrap(),
             ["terminal-1"]
@@ -4884,11 +4872,11 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         // Orbit answers its lease Stopped, unasked, and records the stop
         // (ORB-C12).
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(
-            unsafe { libc::kill(orbit_pid(&sessions[0]), libc::SIGTERM) },
-            0
-        );
+        kill_process(
+            Pid::from_raw(orbit_pid(&sessions[0])).unwrap(),
+            Signal::TERM,
+        )
+        .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while super::session_finished(&mut sessions[0]).unwrap().is_none() {
             assert!(

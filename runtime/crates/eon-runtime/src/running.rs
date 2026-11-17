@@ -340,12 +340,9 @@ mod tests {
 
     #[test]
     fn fifo_lifecycle_lock_does_not_block_inspection() {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
         let base = temporary_directory();
         let fifo = base.join("lock");
-        let path = CString::new(fifo.as_os_str().as_bytes()).unwrap();
-        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        crate::fixtures::make_fifo(&fifo);
         let (sender, receiver) = mpsc::channel();
         let probe_path = fifo.clone();
         let probe = thread::spawn(move || sender.send(supervisor_held(&probe_path)).unwrap());

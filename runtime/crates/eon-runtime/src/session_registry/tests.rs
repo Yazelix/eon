@@ -453,9 +453,7 @@ fn c38_unsafe_files_fail_without_repair_or_following_links() {
                         "symlink" => symlink(&outside, &path).unwrap(),
                         "dangling" => symlink(fixture.0.join("missing"), &path).unwrap(),
                         "fifo" => {
-                            let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-                            // SAFETY: path is a live NUL-terminated filename owned by this fixture.
-                            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+                            crate::fixtures::make_fifo(&path);
                         }
                         _ => unreachable!(),
                     }

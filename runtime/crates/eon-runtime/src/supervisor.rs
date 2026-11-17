@@ -4812,6 +4812,9 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use crate::platform::{test_children as children, test_program as program};
+    use rustix::process::{Pid, Signal, kill_process};
     fn focus_frame(window_focused: bool) -> Vec<u8> {
         eon_workspace_protocol::v47::encode_focus_report(
             &eon_workspace_protocol::v47::FocusReport {
@@ -5655,12 +5658,10 @@ mod tests {
                 deadline,
             )
             .unwrap_or_else(|error| panic!("{context}: discover and acquire before Stop: {error}"));
-            // SAFETY: freezes only the test-owned host after acquiring its lease.
-            assert_eq!(unsafe { libc::kill(extra_pid, libc::SIGSTOP) }, 0);
+            kill_process(Pid::from_raw(extra_pid).unwrap(), Signal::STOP).unwrap();
             let pane_pid = sessions::tests::orbit_pid(&state.sessions[0]);
             if keep_pane {
-                // SAFETY: freezes the other host started by this test.
-                assert_eq!(unsafe { libc::kill(pane_pid, libc::SIGSTOP) }, 0);
+                kill_process(Pid::from_raw(pane_pid).unwrap(), Signal::STOP).unwrap();
                 // An unanswered poll prevents sending Stop to the surviving pane.
                 assert!(sessions::send_program_status(&mut state.sessions[0], deadline).unwrap());
             }
@@ -5691,8 +5692,7 @@ mod tests {
                     retry.untracked, scope.untracked,
                     "{context}: retry must still list the live run"
                 );
-                // SAFETY: resumes the test-owned host frozen above.
-                assert_eq!(unsafe { libc::kill(pane_pid, libc::SIGCONT) }, 0);
+                kill_process(Pid::from_raw(pane_pid).unwrap(), Signal::CONT).unwrap();
             } else {
                 assert!(
                     state.stopping.is_some(),
@@ -5707,13 +5707,8 @@ mod tests {
                     "a retry cannot answer Ended while the run lives"
                 );
             }
-            // SAFETY: resumes the test-owned host frozen above.
-            assert_eq!(
-                unsafe { libc::kill(extra_pid, libc::SIGCONT) },
-                0,
-                "{context}: resume failed: {}",
-                std::io::Error::last_os_error()
-            );
+            kill_process(Pid::from_raw(extra_pid).unwrap(), Signal::CONT)
+                .unwrap_or_else(|error| panic!("{context}: resume failed: {error}"));
             let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
             // Wait for Orbit to finish changing its record and sockets, leaving discovery to reap it.
             let exited_start = loop {
@@ -6212,11 +6207,10 @@ mod tests {
                 if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
                     let _ = child.kill();
                     let output = child.wait_with_output().unwrap();
-                    // SAFETY: this is the exact Orbit PID started by this test.
-                    unsafe {
-                        libc::kill(pid, libc::SIGKILL);
-                        libc::waitpid(pid, std::ptr::null_mut(), 0);
-                    }
+                    let pid = Pid::from_raw(pid).unwrap();
+                    let _ = kill_process(pid, Signal::KILL);
+                    let _ =
+                        rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty());
                     panic!(
                         "{case}: recovery unavailable: {} {}",
                         String::from_utf8_lossy(&output.stdout),
@@ -6286,10 +6280,10 @@ mod tests {
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            // SAFETY: reap the exact child started here, after the supervisor confirmed Stop.
-            unsafe {
-                libc::waitpid(pid, std::ptr::null_mut(), 0);
-            }
+            let _ = rustix::process::waitpid(
+                Some(Pid::from_raw(pid).unwrap()),
+                rustix::process::WaitOptions::empty(),
+            );
             drop(held);
             if case == "corrupt" {
                 assert_eq!(
@@ -9164,8 +9158,7 @@ mod tests {
             .into_iter()
             .find(|pid| program(*pid).ends_with(b"yazelix-orbit-worker"))
             .expect("Orbit runs its worker");
-        // SAFETY: signals the test-owned Orbit's worker process.
-        assert_eq!(unsafe { libc::kill(worker, libc::SIGKILL) }, 0);
+        kill_process(Pid::from_raw(worker).unwrap(), Signal::KILL).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -9177,36 +9170,12 @@ mod tests {
             .collect()
     }
 
-    #[cfg(target_os = "macos")]
-    fn children(pid: i32) -> Vec<i32> {
-        let mut children = [0; 64];
-        // SAFETY: proc_listchildpids writes at most the buffer's byte size of pids.
-        let count = unsafe {
-            libc::proc_listchildpids(
-                pid,
-                children.as_mut_ptr().cast(),
-                std::mem::size_of_val(&children) as libc::c_int,
-            )
-        };
-        children[..usize::try_from(count).unwrap()].to_vec()
-    }
-
     /// The program `pid` runs: its first argument on Linux, its executable
     /// path on macOS. Empty once the process is gone.
     #[cfg(target_os = "linux")]
     fn program(pid: i32) -> Vec<u8> {
         let arguments = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
         arguments.split(|byte| *byte == 0).next().unwrap().to_vec()
-    }
-
-    #[cfg(target_os = "macos")]
-    fn program(pid: i32) -> Vec<u8> {
-        let mut path = vec![0; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-        // SAFETY: proc_pidpath writes at most the buffer's length.
-        let length =
-            unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
-        path.truncate(usize::try_from(length).unwrap_or(0));
-        path
     }
 
     #[test]
@@ -11352,8 +11321,7 @@ rows = 30
         let session = leased_orbit(&root, "exec sleep 30");
         let orbit_log = session.orbit_log.clone().unwrap();
         let orbit = orbit_pid(&session);
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(orbit, libc::SIGKILL) }, 0);
+        kill_process(Pid::from_raw(orbit).unwrap(), Signal::KILL).unwrap();
 
         let log_root = root.join("logs");
         let mut state = end_status_test_state(vec![session], &log_root);

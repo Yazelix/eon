@@ -403,9 +403,7 @@ fn identity_record_unsafe_files_never_fall_through_to_link() {
     fs::create_dir(&path).unwrap();
     check_rejection("directory");
     fs::remove_dir(&path).unwrap();
-    let fifo = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-    // SAFETY: the CString is a live NUL-terminated path in this isolated root.
-    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    crate::fixtures::make_fifo(&path);
     check_rejection("fifo");
     fs::remove_file(&path).unwrap();
     let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();

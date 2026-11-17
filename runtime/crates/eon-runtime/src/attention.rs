@@ -925,7 +925,7 @@ impl Attention {
         self.sidebar
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(super) fn diagnostics(&self) -> String {
         let terminals = self
             .terminals
@@ -973,6 +973,7 @@ mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
     use eon_workspace_protocol::v47::{Column, Pane, Popup, PopupGeometry, Tab};
+    use rustix::process::{Pid, Signal, kill_process};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -3027,8 +3028,7 @@ mod tests {
         // A silent peer only goes stale, keeping its state, while the other
         // is still polled at no more than 2 Hz.
         let silent = crate::sessions::tests::orbit_pid(&sessions[1]);
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(silent, libc::SIGSTOP) }, 0);
+        kill_process(Pid::from_raw(silent).unwrap(), Signal::STOP).unwrap();
         let start = Instant::now();
         let mut replies = Vec::new();
         poll_until(&mut attention, &targets, &mut sessions, |attention| {
@@ -3081,8 +3081,7 @@ mod tests {
         });
 
         // Ended runs and removed targets drop theirs.
-        // SAFETY: signals the test-owned Orbit process.
-        assert_eq!(unsafe { libc::kill(silent, libc::SIGCONT) }, 0);
+        kill_process(Pid::from_raw(silent).unwrap(), Signal::CONT).unwrap();
         crate::sessions::stop_managed_sessions(&mut sessions[..1], Duration::from_secs(5)).unwrap();
         attention.retain(&targets, &sessions);
         assert_eq!(current(&attention, "terminal-1"), None);
@@ -3351,8 +3350,7 @@ mod tests {
         let Some(script) = std::env::var_os("EON_TEST_AGENT_MONITOR_SCRIPT") else {
             return;
         };
-        // SAFETY: this guarded helper runs in a test-owned child process.
-        assert!(unsafe { libc::setsid() } > 0);
+        rustix::process::setsid().unwrap();
         panic!(
             "monitor exec failed: {}",
             Command::new("bash").arg(script).exec()

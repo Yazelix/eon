@@ -7,6 +7,32 @@ use crate::{
 };
 use eon_workspace_protocol::v47::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
+pub(crate) fn make_fifo(path: &std::path::Path) {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    #[cfg(target_os = "linux")]
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        path,
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        0,
+    )
+    .unwrap();
+    #[cfg(target_os = "macos")]
+    assert!(
+        std::process::Command::new("mkfifo")
+            .args(["-m", "600"])
+            .arg(path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    assert!(metadata.file_type().is_fifo());
+    assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+}
+
 pub(crate) fn inputs() -> Inputs {
     Inputs {
         launch: Err("unwrapped fixture".into()),
