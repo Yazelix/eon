@@ -220,7 +220,7 @@
           # Generation identity digests every component, so Eon retains the full source set.
           workspaceSource = lib.fileset.toSource {
             root = ./.;
-            fileset = lib.fileset.unions [
+            fileset = lib.fileset.unions ([
               crateFiles
               ./LICENSE
               ./flake.nix
@@ -233,7 +233,9 @@
               ./nix/shell-environment.nix
               ./nix/macos-app.nix
               ./launcher
-            ];
+            ]
+            # Darwin's eonRust check runs nextest, which reads its test groups here.
+            ++ lib.optional pkgs.stdenv.isDarwin ./.config/nextest.toml);
           };
           workspaceCargoLock = {
             lockFile = ./Cargo.lock;
@@ -1084,20 +1086,34 @@
                 # postCheck's cleanup, so failureHooks runs it instead.
                 failureHooks+=(eonTestCleanup)
               '';
-              # The hook runs the tests in parallel. The ignored tests measure timing,
-              # so they run afterwards one at a time, with the hook's profile, target
-              # and environment so nothing recompiles.
+              # A process per test, as on Linux: libtest's shared process lets one
+              # test's process-wide state reach another's. The tests run in parallel;
+              # the ignored ones measure timing or load the machine, so they run
+              # afterwards one at a time; then the doctests, which nextest cannot run.
+              # All three use the build's profile, target and environment (setEnv),
+              # as cargoCheckHook did, so nothing recompiles.
+              checkPhase = ''
+                runHook preCheck
+                eonTestFlags=(--target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} --offline)
+                concatTo eonTestFlags cargoTestFlags
+                # Nextest's -j is --test-threads; its build jobs have their own flag.
+                eonNextestFlags=(--cargo-profile release --build-jobs "$NIX_BUILD_CORES"
+                  "''${eonTestFlags[@]}" --show-progress=none --no-fail-fast)
+                ${pkgs.rust.envVars.setEnv} cargo nextest run "''${eonNextestFlags[@]}" \
+                  --test-threads "$NIX_BUILD_CORES"
+                ${pkgs.rust.envVars.setEnv} cargo nextest run "''${eonNextestFlags[@]}" \
+                  --run-ignored only --test-threads 1
+                ${pkgs.rust.envVars.setEnv} cargo test --profile release -j "$NIX_BUILD_CORES" \
+                  "''${eonTestFlags[@]}" --doc
+                runHook postCheck
+              '';
               postCheck = ''
-                eonIgnoredTestFlags=(-j "$NIX_BUILD_CORES" --profile release
-                  --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} --offline)
-                concatTo eonIgnoredTestFlags cargoTestFlags
-                ${pkgs.rust.envVars.setEnv} cargo test "''${eonIgnoredTestFlags[@]}" -- --ignored --test-threads=1
                 eonTestCleanup
                 eonTestTmpdir=
                 export TMPDIR="$eonTestBuildTmpdir"
               '';
               # Runtime tests paste printed commands into Eon's Nushell.
-              nativeCheckInputs = [ nushellPackage ];
+              nativeCheckInputs = [ nushellPackage pkgs.cargo-nextest ];
             }));
           eonHelix =
             assert helix.rev == helixIdentity.revision;

@@ -427,8 +427,11 @@ impl Drop for Load {
 /// Alt+Shift+Y right after quick search is asked for, in a pair that starts
 /// on it and then 200 times under load, always reaches Files, with Yazi's
 /// own reader stopping as fzf takes the terminal: the key never reaches Yazi
-/// for anything to change, and Files is as it was each time.
+/// for anything to change, and Files is as it was each time. Its busy threads
+/// would starve the parallel suites' timed tests, so the ignored pass runs it
+/// alone.
 #[test]
+#[ignore = "loads the machine, so it runs alone"]
 fn a_leave_right_after_open_reaches_files_every_time_under_load() {
     let mut pair = Pair::start(
         "immediate",
