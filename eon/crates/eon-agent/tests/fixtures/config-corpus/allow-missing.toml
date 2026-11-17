@@ -1,0 +1,22 @@
+# Corpus: a backend that still sets the removed `allow_missing` key. The file loads, every
+# command warns that the key is ignored, and the window it used to excuse holds. `<ROOT>` is
+# replaced with a scratch directory.
+state_file = '<ROOT>/state/anchor'
+log_file = '<ROOT>/log/decisions.jsonl'
+
+[[backends]]
+name = 'sclaude'
+account = 'sclaude'
+roles = ['implement']
+guard = ['true']
+[backends.commands]
+medium = ['true', '{prompt}']
+high = ['true', '{prompt}']
+[backends.quota]
+command = ['sh', '-c', 'printf "None 20 observed_at=%s" "$(date +%s%3N)"']
+parser = 'claude_text'
+[backends.limits.implement]
+allow_missing = true
+[backends.limits.implement.max_used]
+five_hour = 30
+seven_day = 40

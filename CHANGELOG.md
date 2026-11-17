@@ -10,6 +10,21 @@ installation, and proven contract changes.
   changes nothing (EON-C10 amendment, `eon-260mh.2.2`). Owner and native
   authority, and every failure they see, are unchanged.
 
+- `eon agent launch` and `run` take the first available backend in configured
+  order instead of rotating. A backend that sets limits admits one launch or
+  run per quota observation of its account: its reader must report
+  `observed_at`, a repeat runs the configured refresh and reads again, and an
+  unchanged reading holds, naming the account. A reading older than
+  `[backends.quota] max_age_seconds` (default 600) also holds. Every quota hold
+  names the account, and a limit hold names the window, its value, the rule
+  and its threshold. Limited backends must declare
+  `account` and may not set `allow_unknown_quota`. `[backends.quota]
+  absent_windows` declares windows an account lacks; a limit naming any other
+  missing window holds, and `DURATIONm` keys cover every Eon window of that
+  duration. `allow_missing` is ignored with a warning. `launch --role lead`
+  skips the quota gate for backends that list the `lead` role; `status` gains
+  `lead` and `warnings` fields (`eon-eon-agent-lr8sx.39.2`).
+
 - `eon agent` names itself in its messages: decision, error and slot lines
   start with `eon agent:` instead of `rota:`, including the lines the Agent
   popup shows before the agent starts, and a run-only backend's status reads

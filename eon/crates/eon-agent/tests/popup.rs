@@ -104,7 +104,7 @@ fn popup_mode_validates_custom_commands_and_preserves_ordinary_launch() {
     ] {
         assert_eq!(run(root, &args).status.code(), Some(2), "{args:?}");
     }
-    // Real exec gets only the configured argument, while recording admission.
+    // Real exec gets only the configured argument, while recording the decision.
     let output = run(root, &["launch", "--popup"]);
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
@@ -114,10 +114,8 @@ fn popup_mode_validates_custom_commands_and_preserves_ordinary_launch() {
             fs::canonicalize(root).unwrap().display()
         )
     );
-    assert_eq!(
-        fs::read_to_string(root.join("state")).unwrap(),
-        "provider\n"
-    );
+    // No cursor is written at state_file.
+    assert!(!root.join("state").exists());
     let decision: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root.join("decisions")).unwrap()).unwrap();
     assert_eq!(decision["decision"], "pick");
@@ -128,7 +126,7 @@ fn popup_mode_validates_custom_commands_and_preserves_ordinary_launch() {
 }
 
 #[test]
-fn popup_refusal_and_busy_lock_preserve_exit_codes_and_rotation() {
+fn popup_refusal_and_busy_lock_preserve_exit_codes() {
     use fs2::FileExt;
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
@@ -203,7 +201,7 @@ fn pinned_config(root: &Path) -> String {
 }
 
 #[test]
-fn popup_pin_keeps_the_main_resume_store_and_existing_rotation() {
+fn popup_pin_keeps_the_main_resume_store_and_ordinary_order() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
@@ -243,7 +241,7 @@ fn popup_pin_keeps_the_main_resume_store_and_existing_rotation() {
             .unwrap()
             .contains("FALLBACK main")
     );
-    assert_eq!(fs::read_to_string(root.join("state")).unwrap(), "main\n");
+    assert!(!root.join("state").exists());
     assert!(root.join("main-prepared").exists());
     assert!(!root.join("secondary-checked").exists());
     assert!(!root.join("secondary-prepared").exists());
@@ -262,10 +260,7 @@ fn popup_pin_keeps_the_main_resume_store_and_existing_rotation() {
             root.display()
         )
     );
-    assert_eq!(
-        fs::read_to_string(root.join("state")).unwrap(),
-        "secondary\n"
-    );
+    assert!(!root.join("state").exists());
     let explicit = run(
         root,
         &["launch", "--popup", "--only", "secondary", "--dry-run"],

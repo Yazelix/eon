@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 
+pub mod admissions;
 pub mod cleanup;
 pub mod cli;
 pub mod config;

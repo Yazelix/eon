@@ -1,6 +1,6 @@
 //! rota ps: the sessions in the registry, read-only.
 
-use crate::config::{Config, Role};
+use crate::config::Config;
 use crate::launch::{Failure, io_failure};
 use crate::run::now;
 use crate::session::{self, Session};
@@ -61,10 +61,7 @@ pub fn view(session: &Session, alive: bool, now: u64) -> serde_json::Value {
 
 /// One line of `rota ps` text output.
 pub fn line(session: &Session, alive: bool, now: u64) -> String {
-    let role = match session.role {
-        Role::Implement => "implement",
-        Role::Review => "review",
-    };
+    let role = session.role.name();
     let log = session
         .paths
         .get("log")

@@ -1,4 +1,4 @@
-Usage: eon agent launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+Usage: eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
        eon agent launch --popup [--only BACKEND] [--dry-run]
        eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
        eon agent ps [--json] [--all]

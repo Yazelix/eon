@@ -92,7 +92,7 @@ running Eon window. Configure its separate
 [agent.toml](CONFIGURATION.md#agent-commands) first.
 
 ```text
-eon agent launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
 eon agent launch --popup [--only BACKEND] [--dry-run]
 eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
 eon agent ps [--json] [--all]
@@ -103,8 +103,14 @@ eon agent status [--json]
 ```
 
 Launch defaults to implement/high and execs the selected CLI in the current
-terminal. Dry-run prints its decision and command without changing rotation,
-logs, locks or trust settings. Status runs read-only checks without refresh.
+terminal. It takes the first available backend in configured order; nothing
+rotates. A backend that sets limits admits one launch or run per quota
+observation of its account, so a second launch on the same reading holds until
+the reader reports a later `observed_at`. `--role lead` skips the quota gate for
+backends that opt in with `roles = ["lead"]`; `run` refuses it. Dry-run prints
+its decision and command without spending an observation or writing logs, locks
+or trust settings. Status runs read-only checks without refresh and adds a
+`lead` column.
 JSON status includes the config file used. Exit codes retain rota's meanings:
 2 for invalid input/config, 3 for admission refusal and 1 for operational error.
 Headless run passes through the agent's status after cleanup, with 124 for a
@@ -126,7 +132,7 @@ unchanged behavior; replace its `rota` invocation with `eon agent`.
 Diagnostic text, session/unit names and ROTA_* variables keep rota's spellings.
 
 On Linux with an agent configuration file, the Agent popup uses
-`eon agent launch --popup`: the same admission and rotation, with popup resume
+`eon agent launch --popup`: the same admission and order, with popup resume
 commands and no prompt argument, in its own terminal and tab directory.
 Optional `popup_backend` in agent.toml pins it to the configured backend
 owning the desired resume store; omission keeps dynamic selection. For

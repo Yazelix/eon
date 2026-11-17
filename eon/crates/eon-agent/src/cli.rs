@@ -40,7 +40,7 @@ impl<'a> Host<'a> {
 }
 
 const COMMANDS: [&str; 8] = [
-    "launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>",
+    "launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>",
     "launch --popup [--only BACKEND] [--dry-run]",
     "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...",
     "ps [--json] [--all]",
@@ -108,11 +108,20 @@ fn load_config(primary: Option<&Path>, program: &str) -> Result<(Config, PathBuf
         Some(path) => path,
         None => fallback_config_path()?,
     };
-    let config = Config::parse(
+    let config = parse_config(
         &fs::read_to_string(&path).map_err(|e| format!("cannot read config: {e}"))?,
         program,
     )?;
     Ok((config, path))
+}
+
+/// Parses a configuration and prints its warnings on stderr.
+fn parse_config(text: &str, program: &str) -> Result<Config, String> {
+    let config = Config::parse(text, program)?;
+    for warning in &config.warnings {
+        let _ = writeln!(std::io::stderr(), "{program}: warning: {}", warning.text);
+    }
+    Ok(config)
 }
 
 fn run(
@@ -189,7 +198,7 @@ fn run(
                     .ok_or_else(|| (2, "slot --config needs a file".into()))?;
                 let text = fs::read_to_string(path).map_err(|e| (2, e.to_string()))?;
                 (
-                    Config::parse(&text, host.program).map_err(|e| (2, e))?,
+                    parse_config(&text, host.program).map_err(|e| (2, e))?,
                     &args[3..],
                 )
             } else {
@@ -204,11 +213,21 @@ fn run(
     let (config, config_path) = load().map_err(|e| (2, e))?;
     let cwd = env::current_dir().map_err(|e| (1, e.to_string()))?;
     let indices: Vec<_> = (0..config.backends.len()).collect();
-    let readings = readings::collect(&config, &indices, &cwd, false, host.session);
+    let ledger = crate::admissions::Ledger::load(&config.state_file);
+    let readings = readings::collect(
+        &config,
+        &indices,
+        &cwd,
+        readings::QuotaMode::Read,
+        &ledger,
+        host.session,
+    );
     if args.len() == 2 {
         let status: Vec<_> = config.backends.iter().zip(&readings).map(|(b,r)| {
+            let warnings: Vec<_> = config.warnings.iter().filter(|w| w.backend == b.name).map(|w| &w.text).collect();
             let mut value = serde_json::json!({ "backend": b.name, "enabled": b.enabled, "reading": r,
-                "implement": status_for(&config, b, r, Role::Implement, host.program), "review": status_for(&config, b, r, Role::Review, host.program) });
+                "implement": status_for(&config, b, r, Role::Implement, host.program), "review": status_for(&config, b, r, Role::Review, host.program),
+                "lead": status_for(&config, b, r, Role::Lead, host.program), "warnings": warnings });
             if host.report_config_file {
                 value["config_file"] = match config_path.to_str() {
                     Some(path) => serde_json::json!(path),
@@ -224,10 +243,11 @@ fn run(
         }
         for (b, r) in config.backends.iter().zip(&readings) {
             println!(
-                "{}: implement={} review={} running={} {}",
+                "{}: implement={} review={} lead={} running={} {}",
                 b.name,
                 status_for(&config, b, r, Role::Implement, host.program),
                 status_for(&config, b, r, Role::Review, host.program),
+                status_for(&config, b, r, Role::Lead, host.program),
                 r.running,
                 r.detail
             );

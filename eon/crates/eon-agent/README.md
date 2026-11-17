@@ -14,7 +14,7 @@ Build with `cargo build --release` (Linux, Rust 1.96 or later). Copy
 paths, commands, models and example percentages.
 
 ```text
-rota launch [--role implement|review] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
 rota launch --popup [--only BACKEND] [--dry-run]
 rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
 rota ps [--json] [--all]
@@ -25,8 +25,10 @@ rota status [--json]
 ```
 
 Launch defaults to `implement` and `high`, runs from the current folder and
-replaces itself with the selected CLI. It checks backend guards, account checks,
-quota limits and running processes before rotating to the next available backend.
+replaces itself with the selected CLI. It tries backends in configured order and
+takes the first one whose guard, account check, quota limits and running processes
+admit it; nothing rotates. It reads candidates one at a time and stops at the
+first available one, so later backends show `not checked`.
 `launch --popup` shares that admission but takes no prompt file. It uses an
 optional backend `popup_command` argv (whole `{cwd}` substitution, no `{prompt}`)
 or the configured high executable with its built-in popup arguments: Codex
@@ -45,6 +47,34 @@ runs only through `rota run` shows as `available for rota run`.
 It does not write the state, log, lock or trusted settings, run preparation hooks,
 or refresh an account. Quota and guard commands must themselves be read-only.
 Status also skips refresh and writes no rota files.
+
+A backend that sets `limits` admits one launch per quota observation. Every
+reading reports its account and `observed_at`, when the provider data was
+fetched. An admission records that time for the account in `admissions.json`
+beside `state_file`; a later admission on the same account needs a later
+`observed_at`, and a reading older than `[backends.quota] max_age_seconds`
+(default 600) holds even when unspent. On a repeat or a reading too old, a real
+launch runs the reader's `refresh` (when configured and below the cap), reads
+once more, and holds with
+`reading observed at T already admitted a launch on account ACCOUNT; hold for a fresh reading`
+or `quota reading on account ACCOUNT is N s old (max_age_seconds 600)`
+when no later time arrives. `launch` and `run` share the record, so an
+observation spent by one holds the other. A reading without `observed_at`
+(`quota reading on account ACCOUNT has no observed_at`), one observed in the
+future, a provider failure reported beside retained facts
+(`quota unreadable on account ACCOUNT: provider failure (REASON)`), and an
+unreadable ledger all hold a limited backend. Dry-run and status show these
+holds but never write the ledger or refresh. If `admissions.json` is ever
+corrupt, delete it: each account's last observation may then admit once more.
+Backends without limits keep their previous behavior and record nothing.
+
+`--role lead` marks a lead launch, by convention rather than as a security
+boundary. Backends opt in with `roles = ["lead"]` and are tried in configured
+order, with no fallback. A lead launch reads no quota (the reader never runs),
+consumes no observation and checks no limits; enabled state, guard, account
+check and cap still apply, and the decision log records `"role": "lead"`.
+`rota run` refuses `--role lead` (exit 2). Status shows a `lead` column computed
+from those access checks alone.
 
 `rota run` runs one headless agent session (a plan, review or investigation)
 and waits for it. It checks guards, account checks, quota limits and caps like
@@ -176,12 +206,14 @@ Inspect the choice with `rota status --json` and
 `rota launch --only code-bypass --dry-run task.md` before launching.
 Human status prints the configured name, JSON status exposes it as `backend`,
 and dry-run prints it as `pick`. Names describe your choice; Eon does not infer
-or enforce permissions from them. A backend enabled for rotation, fallback or a
-popup pin can also be selected without `--only`; those are configuration choices.
+or enforce permissions from them. A backend enabled for normal selection, fallback
+or a popup pin can also be selected without `--only`; those are configuration choices.
 Custom popup and headless argv remain your explicit command choices too.
 
-- `backends` array order is round-robin order. `roles` controls eligibility;
-  the fallback backend has an empty role list. Disabled backends never run checks.
+- `backends` array order is admission order: the first available backend is
+  picked every time, and nothing rotates. `roles` (`implement`, `review`,
+  `lead`) controls eligibility; the fallback backend has an empty role list.
+  Disabled backends never run checks.
 - Optional top-level `popup_backend = "main"` pins `launch --popup` to an
   implement backend or the configured fallback. Omission keeps dynamic
   selection; explicit `--only` overrides it with its existing role restrictions.
@@ -189,8 +221,7 @@ Custom popup and headless argv remain your explicit command choices too.
   selects another backend. Claude resume reads `CLAUDE_CONFIG_DIR`, defaulting
   to `~/.claude` under its effective home. Pin that store's backend to resume
   there; its `unset_env` can clear an inherited alternate store. Histories are
-  never merged. Ordinary launch/run selection is unchanged. Successful pinned
-  launches update the shared rotation cursor as usual.
+  never merged. Ordinary launch/run selection is unchanged.
 - `commands.medium` and `commands.high` are argv arrays, with one whole argument
   `{prompt}` and optional `{cwd}` arguments. They run directly, without a shell.
   OpenCode uses `opencode mini -m MODEL#VARIANT --prompt {prompt}`.
@@ -200,13 +231,17 @@ Custom popup and headless argv remain your explicit command choices too.
   installed **and hooked into that backend**. `required_files`, `account_check`
   and `excluded_roots` support credential/account checks.
 - Custom `quota.command` returns data for `quota.parser`: `agy` (tab-separated usage),
-  `claude_text` (five-hour/seven-day used percentages, with `None` for missing),
-  `claude_json` (usage endpoint JSON), or `remaining_json` (object mapping
-  window names to remaining percentages).
+  `claude_text` (five-hour/seven-day used percentages, with `None` for missing,
+  then an optional `observed_at=MS` token), `claude_json` (usage endpoint JSON),
+  or `remaining_json` (object mapping window names to remaining percentages).
+  `claude_json` and `remaining_json` take an optional top-level
+  `"observed_at": MS`; in `remaining_json` that key is reserved, never a window.
+  `MS` is Unix milliseconds, an unsigned integer; anything else fails the read.
+  `agy` output carries no time, so an `agy` backend with limits always holds.
   `agy` reads the rows of one model group: `agy_group` names it and defaults to
   `Claude and GPT models`. The group needs a weekly row; its five-hour row is
   optional. A limit that names `five_hour` still refuses a group without that
-  row unless `allow_missing` is set. A `disabled` value reads as 0% remaining,
+  row unless `absent_windows` declares it. A `disabled` value reads as 0% remaining,
   and each row's RFC 3339 reset time is kept when present.
   `eon_codex` / `eon_claude` read the invoking Eon caller's Runtime facts in
   process, using the same projection as `eon session --json`. Their optional
@@ -216,23 +251,49 @@ Custom popup and headless argv remain your explicit command choices too.
   native readers never invoke its recorded launcher.
   They require the `eon agent` entry point; the standalone test driver has no
   native source. Backend credential environment overrides do not change the
-  supervisor's quota facts.
+  supervisor's quota facts. Their snapshot's `observed_at` is the reading's
+  time. While Eon reports `codex_quota_failure` / `claude_quota_failure`, a
+  backend with limits holds with
+  `quota unreadable on account ACCOUNT: provider failure (REASON)`.
   Custom reader commands have a configurable timeout covering output collection,
-  and a 1 MiB output limit. Optional `refresh` runs only after a failed real-launch read,
-  below the backend's cap, then retries once.
+  and a 1 MiB output limit. Optional `refresh` runs only during a real launch or
+  run, below the backend's cap: after a failed read, or when a limited backend's
+  reading is spent or older than `max_age_seconds`; then it reads once more.
 - `limits.implement` / `limits.review` compare `min_remaining` inclusively and
-  `max_used` exclusively. `strictly_above_min` makes the minimum exclusive;
-  `allow_missing` permits absent windows in an otherwise valid reading. `"*"`
+  `max_used` exclusively. `strictly_above_min` makes the minimum exclusive.
+  A window a limit names must be in the reading, or the role holds
+  (`missing quota window W`), unless `[backends.quota] absent_windows` declares
+  it; a declared-absent window that does appear is checked normally. `"*"`
   checks every returned window. Eon window keys are `DURATIONm/INDEX` to preserve
-  scoped windows with the same duration. Eon snapshots must report `state = "fresh"`;
-  missing, stale, error and unknown snapshots refuse. A refused role lists every
-  window under its limit as `NAME_left=N%`, adding `(resets TIME)` when the reader
-  reports a reset time, for example
-  `quota limit: weekly_left=0% (resets 2030-01-08T14:00:00Z)`.
+  scoped windows with the same duration; a key `DURATIONm` without an index,
+  in limits or `absent_windows`, matches every window of that duration, so
+  `min_remaining."10080m" = 3` covers every weekly window in any order.
+  `absent_windows` entries are nonempty, unique and not `"*"`. Lead launches
+  check no limits, and `limits.lead` is a configuration error.
+  `allow_missing` is removed: it still loads, is ignored, and every command
+  warns `backends.NAME.limits.ROLE.allow_missing is removed and ignored;
+  declare the account's missing windows in [backends.quota] absent_windows`
+  (on stderr, and in each backend's `warnings` in `status --json`).
+  Eon snapshots must report `state = "fresh"`;
+  missing, stale, error and unknown snapshots refuse. Every quota hold names the
+  account. A refused role lists every window under its limit with its value, the
+  rule and the threshold the rule needs (`max_used < N%` admits strictly below,
+  `min_remaining >= N%` is the inclusive floor, `min_remaining > N%` the strict
+  one), adding the reset time when the reader reports one, for example
+  `quota limit on account sclaude: five_hour used 55% (max_used < 50%, resets 2026-11-17T08:00:00Z)`
+  or `quota limit on account uclaude: 10080m/1 left 2.9% (min_remaining >= 3%)`;
+  a missing window reads `missing quota window seven_day on account sclaude`.
+- `[backends.quota] max_age_seconds` (a positive integer, default 600 on a
+  backend that sets limits) bounds how old a reading may be: an older one holds
+  as unreadable, even when its observation was never spent, so a reader that
+  replays a stale cached line cannot admit. Backends without limits have no
+  bound.
 - `account = "NAME"` names the subscription account a backend draws on; it
   defaults to the backend's `name`. Backends sharing one account declare the same
-  `account`.
+  `account`, and so share its spent observations. A backend that sets limits
+  must declare `account`.
 - A backend without a quota reader requires explicit `allow_unknown_quota = true`.
+  `allow_unknown_quota` is invalid on a backend that sets limits.
   An unsuccessful configured reader always refuses. The example disables OpenCode
   until a model and guard are chosen.
 - `cap` scans Linux `/proc` for an executable basename and optional environment
@@ -247,14 +308,20 @@ Custom popup and headless argv remain your explicit command choices too.
   Set `runtime_executables` to the actual binary paths behind wrappers that change
   argv[0]. For an interpreted CLI, set the executable to its interpreter basename
   and `script` to the absolute CLI script path to distinguish other interpreter jobs.
-- `state_file` is written atomically. `log_file` receives JSON lines with time,
+- `state_file` anchors the state directory: its lock is `state_file.lock`, and
+  `admissions.json`, `runs/`, `sessions/` and `slots/` sit beside it. Nothing is
+  written at `state_file` itself. `admissions.json` is
+  `{"version": 1, "accounts": {"ACCOUNT": {"observed_at": MS}}}`, written
+  atomically under the lock; a failed write refuses the launch (exit 1) before
+  its command runs. `log_file` receives JSON lines with time,
   folder, role, level, decision and readings, without prompt contents. Fallback and
   refusal are explicit log decisions. `trusted_settings` atomically appends the
   folder to `trustedWorkspaces`, preserving other JSON keys and the file mode.
   `prepare` is an optional list of checked commands run just before exec.
 - `[backends.run]` makes a backend usable by `rota run`. `commands.implement`
   and `commands.review` are argv arrays; a role with a command can run headless
-  even when `roles` leaves it out, and its quota limits apply. `{brief}`,
+  even when `roles` leaves it out, and its quota limits apply. There is no
+  `commands.lead`. `{brief}`,
   `{cwd}`, `{report}` and `{effort}` are replaced inside any argument;
   `{add_dirs}` is a whole argument, never the first, that repeats `add_dir` (an
   argv fragment with one `{dir}` argument) once per `--add-dir`. `stdin` is `"brief"` or `"null"`;

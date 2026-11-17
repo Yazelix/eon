@@ -194,10 +194,7 @@ fn records_the_session_and_mirrors_the_exit_status() {
     let decisions = fs::read_to_string(f.dir.join("state/decisions.jsonl")).unwrap();
     assert!(decisions.contains(r#""decision":"pick""#));
     assert!(decisions.contains(r#""level":null"#));
-    assert_eq!(
-        fs::read_to_string(f.dir.join("state/last-pick")).unwrap(),
-        "fake\n"
-    );
+    assert!(!f.dir.join("state/last-pick").exists());
     let text_config = fs::read_to_string(&f.config).unwrap();
     fs::write(&f.config, text_config.replace("exit 0", "exit 7")).unwrap();
     let output = rota(&f, &["--name", "t", "--timeout", "30"]);
@@ -732,10 +729,21 @@ fn guard_and_quota_refusals_start_nothing() {
     )
     .unwrap();
     assert_refused(&f, "command guard missing or failed");
-    let quota = "[backends.quota]\ncommand = ['printf', '{\"week\":5}']\nparser = 'remaining_json'\n\
-                 [backends.limits.review.min_remaining]\nweek = 10\n";
+    let quota = "[backends.quota]\ncommand = ['sh', '-c', \
+                 'printf \"{\\\"week\\\":5,\\\"observed_at\\\":%s}\" $(date +%s%3N)']\n\
+                 parser = 'remaining_json'\n[backends.limits.review.min_remaining]\nweek = 10\n";
     let f = fixture("", quota, &run_table("brief", marker));
-    assert_refused(&f, "quota limit: week_left=5%");
+    // A backend that sets limits declares its account and cannot allow unknown quota.
+    let config = fs::read_to_string(&f.config).unwrap();
+    fs::write(
+        &f.config,
+        config.replace("allow_unknown_quota = true", "account = 'fake'"),
+    )
+    .unwrap();
+    assert_refused(
+        &f,
+        "quota limit on account fake: week left 5% (min_remaining >= 10%)",
+    );
 }
 
 #[test]

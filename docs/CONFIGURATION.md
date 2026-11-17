@@ -85,8 +85,10 @@ even when ROTA_CONFIG points to the fallback file.
 Start from the [example](../eon/crates/eon-agent/config.example.toml), replacing
 its placeholder paths and commands. Paths are literal; `~` and environment
 variables inside TOML are not expanded. `state_file` and `log_file` are required
-distinct paths; keep them outside repositories. Backend array order is rotation
-order. Each backend specifies roles, a guard and argv commands; quota, account
+distinct paths; keep them outside repositories. Backend array order is
+admission order: each launch takes the first available backend. Each backend
+specifies roles (`implement`, `review`, and `lead` to accept lead launches), a
+guard and argv commands; quota, account
 checks, caps, preparation, trust settings and headless run commands retain
 rota's schema. No backend or provider is configured implicitly.
 
@@ -137,12 +139,26 @@ Optional top-level `popup_backend = "main"` pins popup starts to a configured
 implement backend or the configured fallback. Omit it to keep dynamic
 implement/high selection. `--only BACKEND` overrides the pin with its existing
 role restrictions. A refused pin never selects another backend. Ordinary
-launch and run selection are unchanged. A successful pinned launch updates
-the shared rotation cursor as usual; the next ordinary launch rotates after it.
+launch and run selection are unchanged.
 
 Each backend may set `account = "NAME"`, the subscription account it draws
 on; it defaults to the backend's `name`. Backends that use one account under
-different models or wrappers declare the same `account`.
+different models or wrappers declare the same `account`. A backend that sets
+`limits` must declare `account`, may not set `allow_unknown_quota`, and admits
+one launch or run per quota observation of that account: its reader must
+report `observed_at` (`claude_text`'s `observed_at=MS` token, a top-level
+`"observed_at"` in `claude_json` or `remaining_json`, or the native snapshot's
+time). Spent observations are kept in `admissions.json` beside `state_file`.
+`[backends.quota] max_age_seconds` (a positive integer, default 600 on a
+backend that sets limits) holds a reading older than that many seconds, even
+an unspent one. Each quota hold names the account and, for a limit, the
+window, its value, the rule and its threshold.
+`[backends.quota] absent_windows` (default empty) lists windows the account
+does not have: a limit naming a missing window holds unless it is listed. A
+key `DURATIONm` without an index, in limits or `absent_windows`, covers every
+native window of that duration. `limits.lead` and `run.commands.lead` are
+errors. The removed `limits.ROLE.allow_missing` still loads, is ignored, and
+every command warns about it on stderr.
 
 Resume reads the admitted backend's native store. Claude uses
 `CLAUDE_CONFIG_DIR`, or `~/.claude` under its effective home when that variable

@@ -1,5 +1,5 @@
 use crate::config::{Backend, Config, Role, Run, RunEnv, Stdin};
-use crate::launch::{Failure, atomic_write, io_failure, lock, log, print_readings};
+use crate::launch::{Failure, io_failure, lock, log, print_readings, record_admission};
 use crate::session::{self, SCHEMA, Session};
 use crate::{decision, readings};
 use std::fs::{self, File, OpenOptions};
@@ -99,6 +99,11 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
                 role = match value.as_str() {
                     "implement" => Role::Implement,
                     "review" => Role::Review,
+                    "lead" => {
+                        return Err(bad(
+                            "run does not take --role lead: lead launches use launch",
+                        ));
+                    }
                     _ => return Err(bad("bad --role")),
                 }
             }
@@ -186,10 +191,7 @@ pub fn unsupported(backend: &Backend, options: &RunOptions) -> Option<String> {
     let Some(run) = &backend.run else {
         return Some("no [backends.run] table".into());
     };
-    let role = match options.role {
-        Role::Implement => "implement",
-        Role::Review => "review",
-    };
+    let role = options.role.name();
     let Some(command) = run.commands.get(&options.role) else {
         return Some(format!("no headless command for role {role}"));
     };
@@ -603,24 +605,31 @@ pub fn run(
     }
     // Wait for other rota selections instead of failing a batch of runs.
     let lock = lock(config, true, host.program)?;
-    let last = match fs::read_to_string(&config.state_file) {
-        Ok(last) => Some(last),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(io_failure(e)),
+    let mut ledger = crate::admissions::Ledger::load(&config.state_file);
+    // Candidates are read in configured order until one admits; the rest are not checked.
+    let mut readings: Vec<_> = config
+        .backends
+        .iter()
+        .map(|_| readings::not_checked())
+        .collect();
+    let candidates = decision::Candidates {
+        normal: indices.clone(),
+        fallback: None,
     };
-    let last = last.as_deref().map(str::trim);
-    let mut readings = readings::collect(config, &indices, &cwd, true, host.session);
-    let pick = decision::rotate(config, &indices, &readings, options.role, last).map(|index| {
-        decision::Pick {
-            index,
-            fallback: false,
-        }
+    let pick = decision::select(config, &candidates, options.role, &mut readings, |index| {
+        let mode = readings::QuotaMode::Admit;
+        readings::check(&config.backends[index], &cwd, mode, &ledger, host.session)
     });
-    log(config, options.role, None, &cwd, &readings, pick.as_ref())?;
+    log(
+        config,
+        options.role,
+        None,
+        &cwd,
+        &readings,
+        pick.as_ref().ok(),
+    )?;
     print_readings(config, &indices, &readings, options.role, host.program);
-    let Some(pick) = pick else {
-        return Err((3, "no backend available, refusing".into()));
-    };
+    let pick = pick.map_err(|e| (e.code, e.message))?;
     let backend = &config.backends[pick.index];
     let run = backend.run.as_ref().expect("candidates have a run table");
     println!("pick: {}", backend.name);
@@ -652,8 +661,7 @@ pub fn run(
         );
         return Err((1, message));
     }
-    atomic_write(&config.state_file, format!("{}\n", backend.name).as_bytes())
-        .map_err(io_failure)?;
+    record_admission(&mut ledger, backend, options.role, &readings[pick.index])?;
     let (id, run_dir) = session::claim(&config.state_file, &options.name).map_err(io_failure)?;
     let run_dir = fs::canonicalize(&run_dir).map_err(io_failure)?;
     let log_path = run_dir.join("log");
@@ -830,6 +838,7 @@ mod tests {
             "--brief b --name -n --timeout 5",
             "--brief b --name a/b --timeout 5",
             "--brief b --name n --timeout 5 --role plan",
+            "--brief b --name n --timeout 5 --role lead",
             "--brief b --name n --timeout 5 --sandbox read-only",
             "--brief b --name n --timeout 5 extra",
             "--brief b --name n --timeout",

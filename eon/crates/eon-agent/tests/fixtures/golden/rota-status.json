@@ -3,39 +3,54 @@
     "backend": "limited",
     "enabled": true,
     "implement": "available",
+    "lead": "not allowed for role",
     "reading": {
       "detail": "five_hour_left=80% week_left=45%",
       "problem": null,
+      "quota_problem": null,
       "remaining": {
         "five_hour": 80.0,
         "week": 45.0
       },
-      "running": 0
+      "running": 0,
+      "source": {
+        "account": "limited",
+        "observed_at": 1700000000000
+      }
     },
-    "review": "available"
+    "review": "available",
+    "warnings": []
   },
   {
     "backend": "runonly",
     "enabled": true,
     "implement": "not allowed for role",
+    "lead": "not allowed for role",
     "reading": {
       "detail": "quota unknown",
       "problem": null,
+      "quota_problem": null,
       "remaining": null,
-      "running": 0
+      "running": 0,
+      "source": null
     },
-    "review": "available for rota run"
+    "review": "available for rota run",
+    "warnings": []
   },
   {
     "backend": "fallback",
     "enabled": true,
     "implement": "fallback available",
+    "lead": "not allowed for role",
     "reading": {
       "detail": "quota unknown",
       "problem": null,
+      "quota_problem": null,
       "remaining": null,
-      "running": 0
+      "running": 0,
+      "source": null
     },
-    "review": "not allowed for role"
+    "review": "not allowed for role",
+    "warnings": []
   }
 ]

@@ -205,7 +205,7 @@ fn exec_wait_needs_the_executable_argv_and_environment() {
 }
 
 #[test]
-fn dry_run_rotates_renders_and_changes_nothing() {
+fn dry_run_picks_in_order_renders_and_changes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let dir = fs::canonicalize(dir.path()).unwrap();
     let config_path = dir.join("config.toml");
@@ -252,7 +252,8 @@ high = ['never-start-this', '--model', 'high', '{{prompt}}']
     let output = run(&["launch", "--dry-run"]);
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("pick: second"));
+    // A leftover cursor from an older build changes nothing: the first backend wins.
+    assert!(stdout.contains("pick: first"));
     assert!(stdout.contains("--model high"));
     assert!(stdout.contains("$(cat "));
     assert!(!stdout.contains("SECRET"));
@@ -366,9 +367,14 @@ fn refresh_rechecks_cap_after_a_slow_failed_probe() {
     ]);
     reader.refresh = Some(vec!["touch".into(), refreshed.to_str().unwrap().into()]);
     let probe = thread::spawn(move || {
-        rota::readings::read(&backend, std::path::Path::new("."), true, &|_| {
-            panic!("custom reader called Runtime")
-        })
+        let ledger = rota::admissions::Ledger::load(std::path::Path::new("/nonexistent/anchor"));
+        rota::readings::read(
+            &backend,
+            std::path::Path::new("."),
+            rota::readings::QuotaMode::Admit,
+            &ledger,
+            &|_| panic!("custom reader called Runtime"),
+        )
     });
     let deadline = Instant::now() + Duration::from_secs(3);
     while !started.exists() && Instant::now() < deadline {

@@ -1,8 +1,12 @@
 # Replace all /PATH/TO values; percentages below are invented examples.
 # Commands are argv arrays, never shell strings. Only whole arguments {prompt}
-# and {cwd} are substituted. Backend order is rotation order.
+# and {cwd} are substituted. Backend order is admission order: each launch takes
+# the first available backend, so list the account to use first at the top.
+# A backend that sets limits declares its account and admits one launch per
+# quota observation (its reader's observed_at).
 # These commands do not request permission bypass. Custom bypass choices and their
 # status labels are described in README.md#configuration.
+# Anchors the state directory (its lock, admissions.json, runs, sessions, slots).
 state_file = "/PATH/TO/state/last-pick"
 log_file = "/PATH/TO/state/decisions.jsonl"
 fallback = "main"
@@ -59,20 +63,18 @@ parser = "agy"
 # Row group read from /usage (default below); a Gemini backend sets e.g. "Gemini Models".
 # agy_group = "Claude and GPT models"
 timeout_seconds = 60
+# agy's usage output carries no observed_at, so this backend sets no limits:
+# limits would hold every launch. The reading must still succeed.
 [backends.cap]
 max = 1
 executable = "agy"
 exclude_args = ["/usage"]
-[backends.limits.implement.min_remaining]
-five_hour = 30
-weekly = 15
-[backends.limits.review.min_remaining]
-five_hour = 15
-weekly = 15
 
 [[backends]]
 name = "secondary"
-roles = ["implement", "review"]
+account = "secondary"
+# "lead" opts this account in to `launch --role lead`, which skips the quota gate.
+roles = ["implement", "review", "lead"]
 guard = ["test", "-f", "/PATH/TO/guard"]
 required_files = ["/PATH/TO/secondary/.credentials.json"]
 [backends.env]
@@ -83,7 +85,14 @@ high = ["claude", "{prompt}"]
 [backends.quota]
 command = ["python3", "-I", "/PATH/TO/usage.py", "/PATH/TO/secondary"]
 parser = "claude_text"
-# Optional refresh runs only during a real launch, and only below the cap.
+# The reader prints e.g. "12 34 observed_at=1720000001000". An idle account
+# reports None for its five-hour window: declare it absent so the week decides.
+absent_windows = ["five_hour"]
+# A backend with limits holds a reading older than max_age_seconds (default 600).
+# max_age_seconds = 600
+# Optional refresh runs only during a real launch, and only below the cap: after
+# a failed read, or when the reading's observation already admitted a launch or
+# is older than max_age_seconds.
 # refresh = ["claude", "-p", "Reply with ok."]
 [backends.cap]
 max = 1
@@ -93,19 +102,16 @@ executable = "claude"
 # For an interpreted CLI, use executable = "node" and script = "/PATH/TO/cli.js"
 [backends.cap.env]
 CLAUDE_CONFIG_DIR = "/PATH/TO/secondary"
-[backends.limits.implement]
-allow_missing = true
 [backends.limits.implement.max_used]
 five_hour = 60
 seven_day = 75
-[backends.limits.review]
-allow_missing = true
 [backends.limits.review.max_used]
 five_hour = 85
 seven_day = 90
 
 [[backends]]
 name = "code"
+account = "code"
 roles = ["implement"]
 guard = ["test", "-f", "/PATH/TO/guard"]
 account_check = ["/PATH/TO/account-check"]
@@ -122,6 +128,7 @@ high = ["codex", "--no-daemon", "-m", "MODEL", "-c", "model_reasoning_effort=xhi
 parser = "eon_codex"
 [backends.limits.implement]
 strictly_above_min = true
+# Eon windows are DURATIONm/INDEX; a key "10080m" covers every weekly window.
 [backends.limits.implement.min_remaining]
 "*" = 0
 # Headless runs. {brief} {cwd} {report} {effort} may sit inside an argument;

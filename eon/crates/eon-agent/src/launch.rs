@@ -1,5 +1,6 @@
 use crate::config::{Backend, Config, Level, Role};
-use crate::{decision, readings};
+use crate::readings::QuotaMode;
+use crate::{admissions, decision, readings};
 use fs2::FileExt;
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::Write;
@@ -43,6 +44,7 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
                         options.role = match value.as_str() {
                             "implement" => Role::Implement,
                             "review" => Role::Review,
+                            "lead" => Role::Lead,
                             _ => return Err(bad("bad --role")),
                         }
                     }
@@ -232,6 +234,34 @@ pub fn lock(config: &Config, wait: bool, program: &str) -> Result<File, Failure>
     Ok(lock)
 }
 
+/// Spends the admitted reading's observation on its account, for a backend that sets limits.
+/// A failed write refuses the admission before anything runs.
+pub fn record_admission(
+    ledger: &mut admissions::Ledger,
+    backend: &Backend,
+    role: Role,
+    reading: &decision::Reading,
+) -> Result<(), Failure> {
+    if role == Role::Lead || !backend.limited() {
+        return Ok(());
+    }
+    // A limited backend admits only a timed reading; refuse rather than record nothing.
+    let observed_at = reading
+        .source
+        .as_ref()
+        .and_then(|source| source.observed_at_ms)
+        .ok_or_else(|| (1, format!("{}: admitted without observed_at", backend.name)))?;
+    ledger.record(backend.account(), observed_at).map_err(|e| {
+        (
+            1,
+            format!(
+                "cannot record the admission in {}: {e}",
+                ledger.path().display()
+            ),
+        )
+    })
+}
+
 pub fn print_readings(
     config: &Config,
     indices: &[usize],
@@ -242,14 +272,13 @@ pub fn print_readings(
     for index in indices {
         let b = &config.backends[*index];
         let r = &readings[*index];
-        eprintln!(
-            "{program}: {} [{}]: {}",
-            b.name,
-            decision::availability(b, r, role)
-                .err()
-                .unwrap_or_else(|| "available".into()),
-            r.detail
-        );
+        let availability = decision::availability(b, r, role)
+            .err()
+            .unwrap_or_else(|| "available".into());
+        match r.detail.as_str() {
+            "" => eprintln!("{program}: {} [{availability}]", b.name),
+            detail => eprintln!("{program}: {} [{availability}]: {detail}", b.name),
+        }
     }
 }
 
@@ -290,7 +319,8 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
             .map_err(|e| (e.code, e.message))?;
     let indices: Vec<_> = candidates
         .normal
-        .into_iter()
+        .iter()
+        .copied()
         .chain(candidates.fallback)
         .collect();
     // Serialize rota launches from scan through exec.
@@ -299,32 +329,29 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
     } else {
         Some(lock(config, false, host.program)?)
     };
-    let last = match fs::read_to_string(&config.state_file) {
-        Ok(last) => Some(last),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(io_failure(e)),
+    let mut ledger = admissions::Ledger::load(&config.state_file);
+    let mode = match (options.role, options.dry_run) {
+        (Role::Lead, _) => QuotaMode::Skip,
+        (_, true) => QuotaMode::Read,
+        (_, false) => QuotaMode::Admit,
     };
-    let checked = indices
+    // Candidates are read in configured order until one admits; the rest are not checked.
+    let mut readings: Vec<_> = config
+        .backends
         .iter()
-        .copied()
-        .filter(|index| !options.popup || config.backends[*index].popup_command().is_some())
-        .collect::<Vec<_>>();
-    let mut readings = readings::collect(config, &checked, &cwd, !options.dry_run, host.session);
-    if options.popup {
-        for index in &indices {
-            if config.backends[*index].popup_command().is_none() {
-                readings[*index].problem = Some("no popup_command for this executable".into());
+        .map(|_| readings::not_checked())
+        .collect();
+    let result = decision::select(config, &candidates, options.role, &mut readings, |index| {
+        let backend = &config.backends[index];
+        if options.popup && backend.popup_command().is_none() {
+            decision::Reading {
+                problem: Some("no popup_command for this executable".into()),
+                ..decision::Reading::default()
             }
+        } else {
+            readings::check(backend, &cwd, mode, &ledger, host.session)
         }
-    }
-    let result = decision::choose(
-        config,
-        &readings,
-        options.role,
-        options.only.as_deref(),
-        last.as_deref().map(str::trim),
-        popup_backend,
-    );
+    });
     if !options.dry_run {
         let level = Some(options.level);
         log(
@@ -389,8 +416,7 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         )?;
         return Err((3, problem));
     }
-    atomic_write(&config.state_file, format!("{}\n", backend.name).as_bytes())
-        .map_err(io_failure)?;
+    record_admission(&mut ledger, backend, options.role, &readings[pick.index])?;
     let error = readings::command(backend, &argv).current_dir(&cwd).exec();
     Err(io_failure(format!(
         "could not exec {}: {error}",
@@ -419,6 +445,8 @@ mod tests {
         assert_eq!(parsed.role, Role::Review);
         assert_eq!(parsed.level, Level::Medium);
         assert!(parsed.dry_run);
+        let lead = parse(&["--role".to_string(), "lead".into(), "task".into()]).unwrap();
+        assert_eq!(lead.role, Role::Lead);
         for args in [
             vec![],
             vec!["--role"],

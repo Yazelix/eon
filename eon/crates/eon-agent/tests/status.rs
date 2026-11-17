@@ -71,7 +71,7 @@ high = ['fake-agent', '{{prompt}}']
 }
 
 #[test]
-fn exhausted_agy_names_window_and_reset() {
+fn a_limited_agy_backend_keeps_its_resets_but_holds_without_a_time() {
     let dir = tempfile::tempdir().unwrap();
     let dir = fs::canonicalize(dir.path()).unwrap();
     let config = dir.join("config.toml");
@@ -89,6 +89,7 @@ state_file = 'unused-state'
 log_file = 'unused-log'
 [[backends]]
 name = 'agy'
+account = 'agy'
 roles = ['implement', 'review']
 guard = ['true']
 [backends.commands]
@@ -112,22 +113,26 @@ weekly = 10
             .output()
             .unwrap()
     };
-    let expected = "quota limit: five_hour_left=0%, weekly_left=0% (resets 2030-01-08T14:00:00Z)";
+    // agy output carries no observed_at, so a backend that sets limits holds for every role.
+    let expected = "quota reading on account agy has no observed_at";
     let output = rota(&["status", "--json"]);
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json[0]["implement"], expected);
-    assert_eq!(json[0]["review"], "available");
+    assert_eq!(json[0]["review"], expected);
+    assert_eq!(json[0]["reading"]["quota_problem"], expected);
+    assert_eq!(json[0]["reading"]["source"]["account"], "agy");
+    assert!(json[0]["reading"]["source"]["observed_at"].is_null());
     assert_eq!(
         json[0]["reading"]["resets"]["weekly"],
         "2030-01-08T14:00:00Z"
     );
     let text = String::from_utf8(rota(&["status"]).stdout).unwrap();
     assert!(
-        text.contains(&format!("implement={expected} review=available")),
+        text.contains(&format!("implement={expected} review={expected}")),
         "{text}"
     );
-    assert!(!text.contains("quota unreadable"), "{text}");
+    assert!(text.contains("weekly_left=0%"), "{text}");
     let output = rota(&[
         "launch",
         "--dry-run",

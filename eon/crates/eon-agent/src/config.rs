@@ -7,6 +7,18 @@ use std::path::{Path, PathBuf};
 pub enum Role {
     Implement,
     Review,
+    /// A lead launch: exempt from the quota gate, admitted only by `launch`.
+    Lead,
+}
+
+impl Role {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Implement => "implement",
+            Self::Review => "review",
+            Self::Lead => "lead",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -32,6 +44,17 @@ pub struct Config {
     pub projects: BTreeMap<String, crate::cleanup::Project>,
     #[serde(default)]
     pub cleanup: crate::cleanup::Cleanup,
+    /// Non-fatal findings of validation, such as removed keys; callers print them.
+    #[serde(skip)]
+    pub warnings: Vec<Warning>,
+}
+
+/// A configuration key that loads but has no effect.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Warning {
+    /// The backend the key belongs to.
+    pub backend: String,
+    pub text: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,7 +269,16 @@ pub struct Reader {
     pub refresh: Option<Vec<String>>,
     #[serde(default = "refresh_timeout")]
     pub refresh_timeout_seconds: u64,
+    /// Windows this account does not have: a limit naming one does not hold when it is missing.
+    #[serde(default)]
+    pub absent_windows: Vec<String>,
+    /// The oldest reading, in seconds since its `observed_at`, that a backend with limits admits;
+    /// [`DEFAULT_MAX_AGE_SECONDS`] when unset.
+    pub max_age_seconds: Option<u64>,
 }
+
+/// The default `max_age_seconds` of a backend that sets limits.
+pub const DEFAULT_MAX_AGE_SECONDS: u64 = 600;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -278,8 +310,9 @@ pub struct Limits {
     pub min_remaining: BTreeMap<String, f64>,
     #[serde(default)]
     pub max_used: BTreeMap<String, f64>,
+    /// Removed: parsed so older files load, ignored, and reported as a [`Warning`].
     #[serde(default)]
-    pub allow_missing: bool,
+    pub allow_missing: Option<bool>,
     #[serde(default)]
     pub strictly_above_min: bool,
 }
@@ -316,6 +349,29 @@ impl Backend {
     /// The account this backend's quota describes.
     pub fn account(&self) -> &str {
         self.account.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Whether this backend sets limits, so its admissions consume quota observations.
+    pub fn limited(&self) -> bool {
+        !self.limits.is_empty()
+    }
+
+    /// How old, in seconds, a reading may be and still admit: only backends that set limits
+    /// have a bound.
+    pub fn max_age_seconds(&self) -> Option<u64> {
+        self.limited().then(|| {
+            self.quota
+                .as_ref()
+                .and_then(|reader| reader.max_age_seconds)
+                .unwrap_or(DEFAULT_MAX_AGE_SECONDS)
+        })
+    }
+
+    /// The windows its reader declares absent.
+    pub fn absent_windows(&self) -> &[String] {
+        self.quota
+            .as_ref()
+            .map_or(&[], |reader| reader.absent_windows.as_slice())
     }
 
     pub fn popup_command(&self) -> Option<Vec<String>> {
@@ -363,12 +419,13 @@ fn run_valid(run: &Run) -> bool {
 impl Config {
     /// Parses and validates a configuration; `program` names the host in error messages.
     pub fn parse(text: &str, program: &str) -> Result<Self, String> {
-        let config: Self = toml::from_str(text).map_err(|e| e.to_string())?;
-        config.validate(program)?;
+        let mut config: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        config.warnings = config.validate(program)?;
         Ok(config)
     }
 
-    fn validate(&self, program: &str) -> Result<(), String> {
+    fn validate(&self, program: &str) -> Result<Vec<Warning>, String> {
+        let mut warnings = Vec::new();
         self.slots.validate()?;
         crate::cleanup::validate(self)?;
         if self.state_file.as_os_str().is_empty()
@@ -416,11 +473,14 @@ impl Config {
                 || b.quota.as_ref().is_some_and(|q| {
                     (!q.parser.native() && q.command.as_ref().is_none_or(|c| !command_valid(c)))
                         || q.timeout_seconds == Some(0)
+                        || q.max_age_seconds == Some(0)
                         || q.refresh_timeout_seconds == 0
                         || q.refresh.as_ref().is_some_and(|c| !command_valid(c))
                 })
             {
-                return fail("invalid check, preparation or reader command/timeout");
+                return fail(
+                    "invalid check, preparation or reader command/timeout/max_age_seconds",
+                );
             }
             if b.quota.as_ref().is_some_and(|q| {
                 q.agy_group.as_ref().is_some_and(|g| {
@@ -465,7 +525,7 @@ impl Config {
                     "run needs commands, efforts containing default_effort, the brief on stdin or as {brief}, and add_dir with one {dir} for a whole {add_dirs} argument",
                 );
             }
-            for limit in b.limits.values() {
+            for (role, limit) in &b.limits {
                 if limit
                     .min_remaining
                     .values()
@@ -474,6 +534,42 @@ impl Config {
                 {
                     return fail("quota limits must be finite percentages");
                 }
+                if limit.allow_missing.is_some() {
+                    warnings.push(Warning {
+                        backend: b.name.clone(),
+                        text: format!(
+                            "backends.{}.limits.{}.allow_missing is removed and ignored; \
+                             declare the account's missing windows in [backends.quota] absent_windows",
+                            b.name,
+                            role.name()
+                        ),
+                    });
+                }
+            }
+            if b.limits.contains_key(&Role::Lead) {
+                return fail("limits.lead is invalid: lead launches check no limits");
+            }
+            if b.limited() && b.allow_unknown_quota {
+                return fail("allow_unknown_quota is invalid on a backend that sets limits");
+            }
+            if b.limited() && b.account.is_none() {
+                return fail("a backend that sets limits must declare account");
+            }
+            if b.run
+                .as_ref()
+                .is_some_and(|r| r.commands.contains_key(&Role::Lead))
+            {
+                return fail("run.commands.lead is invalid: lead launches run only through launch");
+            }
+            let absent = b.absent_windows();
+            if absent
+                .iter()
+                .any(|w| w.is_empty() || w == "*" || w.contains('\0'))
+                || absent.iter().collect::<BTreeSet<_>>().len() != absent.len()
+            {
+                return fail(
+                    "absent_windows entries must be unique window names, not empty or \"*\"",
+                );
             }
         }
         if self.run.unset_env.iter().any(|p| {
@@ -517,7 +613,7 @@ impl Config {
                 "popup_backend must name an implement backend or the configured fallback".into(),
             );
         }
-        Ok(())
+        Ok(warnings)
     }
 }
 
@@ -555,6 +651,7 @@ mod tests {
             "",
             "command = []",
             "command = ['printf', '{}']\ntimeout_seconds = 0",
+            "command = ['printf', '{}']\nmax_age_seconds = 0",
         ] {
             let text = EXAMPLE.replace(
                 "parser = \"eon_codex\"",
@@ -605,7 +702,7 @@ mod tests {
             ),
             ("max = 1", "max = 0"),
             ("max = 1", "max = 1\nruntime_executables = ['relative']"),
-            ("five_hour = 30", "five_hour = 101"),
+            ("five_hour = 60", "five_hour = 101"),
             ("fallback = \"main\"", "fallback = \"absent\""),
             ("roles = []", "roles = [\"implement\"]"),
             ("{prompt}", "missing-prompt"),
@@ -690,6 +787,86 @@ mod tests {
             "rota",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn the_quota_gate_rejects_contradictory_settings() {
+        let limited = "name = \"secondary\"\naccount = \"secondary\"\n";
+        assert_eq!(EXAMPLE.matches(limited).count(), 1);
+        for (from, to, error) in [
+            (
+                limited,
+                "name = \"secondary\"\n",
+                "secondary: a backend that sets limits must declare account",
+            ),
+            (
+                limited,
+                "name = \"secondary\"\naccount = \"secondary\"\nallow_unknown_quota = true\n",
+                "secondary: allow_unknown_quota is invalid on a backend that sets limits",
+            ),
+            (
+                "[backends.limits.review.max_used]\n",
+                "[backends.limits.lead.max_used]\nfive_hour = 1\n[backends.limits.review.max_used]\n",
+                "secondary: limits.lead is invalid: lead launches check no limits",
+            ),
+            (
+                "[backends.run.commands]\n",
+                "[backends.run.commands]\nlead = [\"codex\", \"exec\", \"-\"]\n",
+                "code: run.commands.lead is invalid: lead launches run only through launch",
+            ),
+        ] {
+            assert_eq!(EXAMPLE.matches(from).count(), 1, "{from}");
+            assert_eq!(
+                Config::parse(&EXAMPLE.replace(from, to), "rota").unwrap_err(),
+                error
+            );
+        }
+        let absent = "absent_windows = [\"five_hour\"]";
+        assert_eq!(EXAMPLE.matches(absent).count(), 1);
+        for bad in ["[\"\"]", "[\"*\"]", "[\"five_hour\", \"five_hour\"]"] {
+            let error = Config::parse(
+                &EXAMPLE.replace(absent, &format!("absent_windows = {bad}")),
+                "rota",
+            )
+            .unwrap_err();
+            assert!(error.contains("absent_windows entries"), "{bad}: {error}");
+        }
+        // Backends without limits keep allow_unknown_quota and need no account.
+        let config = Config::parse(EXAMPLE, "rota").unwrap();
+        assert!(config.warnings.is_empty());
+        assert!(config.backends[4].allow_unknown_quota && !config.backends[4].limited());
+        assert_eq!(config.backends[1].absent_windows(), ["five_hour"]);
+        assert!(config.backends[1].roles.contains(&Role::Lead));
+        // Only a backend that sets limits has a reading age bound, 600 s unless configured.
+        assert_eq!(config.backends[1].max_age_seconds(), Some(600));
+        assert_eq!(config.backends[4].max_age_seconds(), None);
+        let text = EXAMPLE.replace(absent, &format!("{absent}\nmax_age_seconds = 2000"));
+        let config = Config::parse(&text, "rota").unwrap();
+        assert_eq!(config.backends[1].max_age_seconds(), Some(2000));
+        let error = Config::parse(
+            &EXAMPLE.replace(absent, &format!("{absent}\nmax_age_seconds = 0")),
+            "rota",
+        )
+        .unwrap_err();
+        assert!(error.contains("max_age_seconds"), "{error}");
+    }
+
+    #[test]
+    fn allow_missing_is_a_warned_tombstone() {
+        let text = EXAMPLE.replace(
+            "[backends.limits.review.max_used]\n",
+            "[backends.limits.review]\nallow_missing = false\n[backends.limits.review.max_used]\n",
+        );
+        let config = Config::parse(&text, "rota").unwrap();
+        assert_eq!(
+            config.warnings,
+            [Warning {
+                backend: "secondary".into(),
+                text: "backends.secondary.limits.review.allow_missing is removed and ignored; \
+                       declare the account's missing windows in [backends.quota] absent_windows"
+                    .into(),
+            }]
+        );
     }
 
     #[test]

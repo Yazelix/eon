@@ -7050,15 +7050,16 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
      asks for it (`trusted_settings`), as `launch` already does; Eon never
      answers a prompt by sending keys. A hold creates no pane.
 
-  **Fleet profile** (Lucca, 2026-11-16; configuration, not code). Claude
-  accounts are tried in configured order, sclaude then uclaude, never pinned.
-  Every Claude launch takes a fresh reading and is admitted only under 50%
-  use of the account's five-hour window and under 40% use of its week, as
-  ceilings: a role's configured limits may be stricter (the fleet runs
-  sclaude implement at 30% of five hours); an unreadable window counts as
-  over; an account with no five-hour window (uclaude) is gated on its week
-  alone. Lead launches are exempt. The core keeps these limits configurable;
-  changing this profile is Lucca's call.
+  **Fleet profile** (Lucca, 2026-11-16 and 2026-11-17; configuration, not
+  code). Claude accounts are tried in configured order, sclaude then uclaude,
+  never pinned. Every Claude launch takes a fresh reading, and an unreadable
+  window counts as over. sclaude is admitted only under 50% use of its
+  five-hour window and under 40% use of its week, as ceilings: a role's
+  configured limits may be stricter (the fleet runs sclaude implement at 30%
+  of five hours). uclaude, tried second, has no five-hour window and is gated
+  on its week alone: it launches while at least 3% of its week remains, a
+  floor rather than a pacing target. Lead launches are exempt. The core keeps
+  these limits configurable; changing this profile is Lucca's call.
 
   Amended on 2026-11-17, **Standalone rota distribution**
   (`eon-eon-agent-lr8sx.40`; approved by eon-lead under Lucca's delegation;

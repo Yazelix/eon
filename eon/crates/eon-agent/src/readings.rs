@@ -1,4 +1,5 @@
-use crate::config::{Backend, Cap, Config};
+use crate::admissions::Ledger;
+use crate::config::{Backend, Cap, Config, Reader};
 use crate::decision::Reading;
 use crate::quota;
 use std::collections::BTreeMap;
@@ -256,12 +257,16 @@ fn running_in(proc: &Path, uid: u32, cap: &Cap) -> Result<usize, String> {
 /// ```text
 /// {
 ///   "codex_quota":  SNAPSHOT,   // read by parser "eon_codex"
-///   "claude_quota": SNAPSHOT    // read by parser "eon_claude"
+///   "claude_quota": SNAPSHOT,   // read by parser "eon_claude"
+///   "codex_quota_failure":  FAILURE,   // optional; present while the last poll failed
+///   "claude_quota_failure": FAILURE
 /// }
+/// FAILURE = { "at": 123, "reason": "deadline" }   // only `reason` is read
 /// SNAPSHOT = {
 ///   "state": "fresh",           // any other value ("stale", ...) fails the reading
 ///   "observed_at": 1720000001000,  // Unix milliseconds when the provider data was fetched;
-///                               // optional; reported as Source::observed_at_ms
+///                               // reported as Source::observed_at_ms; an unsigned
+///                               // integer; required by backends that set limits
 ///   "windows": [                // nonempty; in the provider's order
 ///     { "duration_minutes": 300,      // unsigned integer
 ///       "remaining_percent": 25 }     // number, 0 to 100
@@ -271,17 +276,96 @@ fn running_in(proc: &Path, uid: u32, cap: &Cap) -> Result<usize, String> {
 ///
 /// A missing snapshot, a missing or empty `windows`, or a window without both fields fails the
 /// reading. Window `i` is named `DURATIONm/i` (for example `300m/0`) in limits and output, so
-/// windows sharing a duration stay distinct. Eon supplies this object from `eon session --json`.
+/// windows sharing a duration stay distinct; a limit key `DURATIONm` covers all of them. A
+/// present FAILURE holds a backend that sets limits, whatever its snapshot says, since the facts
+/// beside it are retained from an earlier poll. Eon supplies this object from
+/// `eon session --json`.
 pub type SessionReader<'a> = dyn Fn(Instant) -> Result<String, String> + 'a;
 
+/// How much of a backend's quota a check reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuotaMode {
+    /// Lead launches: the quota reader never runs.
+    Skip,
+    /// Status and dry runs: read, never refresh.
+    Read,
+    /// Real admissions: read, and run a configured refresh (below the cap) after a failed read
+    /// or when the observation was already spent or is too old.
+    Admit,
+}
+
+/// Why a reading cannot admit: an access problem (which also holds leads) or a quota problem.
+enum Hold {
+    Access(String),
+    Quota(String),
+}
+
+/// What freshness says about a limited backend's reading.
+enum Stale {
+    /// Spent on its account, or older than its bound: a refresh may bring a later observation.
+    Retry(String),
+    Hold(String),
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Whether a limited backend's reading may admit: it must carry a time that is not in the
+/// future, no older than the backend's `max_age_seconds` and not yet spent on its account, with
+/// no provider failure beside it. Each hold names the account.
+fn freshness(quota: &quota::Quota, backend: &Backend, ledger: &Ledger) -> Result<(), Stale> {
+    let account = backend.account();
+    if let Some(reason) = &quota.failure {
+        return Err(Stale::Hold(format!(
+            "quota unreadable on account {account}: provider failure ({reason})"
+        )));
+    }
+    let at = quota.observed_at_ms.ok_or_else(|| {
+        Stale::Hold(format!(
+            "quota reading on account {account} has no observed_at"
+        ))
+    })?;
+    let now = now_ms();
+    if at > now {
+        return Err(Stale::Hold(format!(
+            "quota reading on account {account} observed in the future (observed_at {at})"
+        )));
+    }
+    let age = now.saturating_sub(at);
+    if let Some(max) = backend.max_age_seconds()
+        && age > max.saturating_mul(1000)
+    {
+        return Err(Stale::Retry(format!(
+            "quota reading on account {account} is {} s old (max_age_seconds {max})",
+            age / 1000
+        )));
+    }
+    let spent = ledger
+        .spent(account)
+        .map_err(|e| Stale::Hold(format!("quota hold on account {account}: {e}")))?;
+    match spent {
+        Some(spent) if spent >= at => Err(Stale::Retry(format!(
+            "reading observed at {at} already admitted a launch on account {account}; \
+             hold for a fresh reading"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Reads one backend: access checks, then its quota as `mode` allows. A backend that sets limits
+/// also needs a fresh observation (see [`freshness`]); `ledger` says which ones are spent.
 pub fn read(
     backend: &Backend,
     cwd: &Path,
-    allow_refresh: bool,
+    mode: QuotaMode,
+    ledger: &Ledger,
     session: &SessionReader<'_>,
 ) -> Reading {
     let mut reading = Reading::default();
-    let result = (|| -> Result<(), String> {
+    let access = (|| -> Result<(), String> {
         if !backend.enabled {
             return Err("disabled".into());
         }
@@ -301,60 +385,101 @@ pub fn read(
         if let Some(check) = &backend.account_check {
             probe(backend, check, 20, cwd).map_err(|_| "account check failed")?;
         }
-        if let Some(reader) = &backend.quota {
-            let get = || -> Result<(crate::quota::Quota, Option<u64>), String> {
-                let text = if reader.parser.native() {
-                    let deadline = Instant::now()
-                        .checked_add(Duration::from_secs(reader.timeout_seconds()))
-                        .ok_or("check timeout too large")?;
-                    let result = session(deadline);
-                    if Instant::now() >= deadline {
-                        Err("check timed out".into())
-                    } else {
-                        result
-                    }
-                } else {
-                    reader
-                        .command
-                        .as_ref()
-                        .ok_or_else(|| "reader command missing".into())
-                        .and_then(|command| probe(backend, command, reader.timeout_seconds(), cwd))
-                };
-                let text = text?;
-                let quota = quota::parse(reader.parser, reader.agy_group.as_deref(), &text)?;
-                Ok((quota, quota::observed_at_ms(reader.parser, &text)))
-            };
-            let mut quota = get();
-            if quota.is_err()
-                && allow_refresh
-                && let Some(refresh) = &reader.refresh
-            {
-                recheck_cap(backend, &mut reading)?;
-                let _ = probe(backend, refresh, reader.refresh_timeout_seconds, cwd);
-                quota = get();
-            }
-            let (quota, observed_at_ms) = quota.map_err(|e| format!("quota unreadable: {e}"))?;
-            reading.source = Some(crate::decision::Source {
-                account: backend.account().into(),
-                observed_at_ms,
-            });
-            reading.detail = quota
-                .remaining
-                .iter()
-                .map(|(k, v)| format!("{k}_left={v}%"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            reading.resets = quota.resets;
-            reading.remaining = Some(quota.remaining);
-        } else {
-            reading.detail = "quota unknown".into();
-        }
         Ok(())
     })();
-    if let Err(problem) = result {
+    if let Err(problem) = access {
         reading.problem = Some(problem);
+        return reading;
+    }
+    match (&backend.quota, mode) {
+        (_, QuotaMode::Skip) => reading.detail = "quota not read for a lead launch".into(),
+        (None, _) => reading.detail = "quota unknown".into(),
+        (Some(reader), _) => {
+            match read_quota(backend, reader, cwd, mode, ledger, session, &mut reading) {
+                Ok(()) => (),
+                Err(Hold::Access(problem)) => reading.problem = Some(problem),
+                Err(Hold::Quota(problem)) => reading.quota_problem = Some(problem),
+            }
+        }
     }
     reading
+}
+
+fn read_quota(
+    backend: &Backend,
+    reader: &Reader,
+    cwd: &Path,
+    mode: QuotaMode,
+    ledger: &Ledger,
+    session: &SessionReader<'_>,
+    reading: &mut Reading,
+) -> Result<(), Hold> {
+    let get = || -> Result<quota::Quota, String> {
+        let text = if reader.parser.native() {
+            let deadline = Instant::now()
+                .checked_add(Duration::from_secs(reader.timeout_seconds()))
+                .ok_or("check timeout too large")?;
+            let result = session(deadline);
+            if Instant::now() >= deadline {
+                Err("check timed out".into())
+            } else {
+                result
+            }
+        } else {
+            reader
+                .command
+                .as_ref()
+                .ok_or_else(|| "reader command missing".into())
+                .and_then(|command| probe(backend, command, reader.timeout_seconds(), cwd))
+        };
+        quota::parse(reader.parser, reader.agy_group.as_deref(), &text?)
+    };
+    let account = backend.account();
+    let unreadable = |e: String| Hold::Quota(format!("quota unreadable on account {account}: {e}"));
+    let refresh = reader.refresh.as_ref().filter(|_| mode == QuotaMode::Admit);
+    let mut refreshed = false;
+    let mut run_refresh = |reading: &mut Reading| -> Result<(), Hold> {
+        if let Some(refresh) = refresh
+            && !refreshed
+        {
+            refreshed = true;
+            recheck_cap(backend, reading).map_err(Hold::Access)?;
+            let _ = probe(backend, refresh, reader.refresh_timeout_seconds, cwd);
+        }
+        Ok(())
+    };
+    let mut quota = get();
+    if quota.is_err() && refresh.is_some() {
+        run_refresh(reading)?;
+        quota = get();
+    }
+    let mut quota = quota.map_err(unreadable)?;
+    let mut fresh = backend
+        .limited()
+        .then(|| freshness(&quota, backend, ledger));
+    // A spent or too old observation: a real admission reads once more, after a refresh where
+    // configured.
+    if mode == QuotaMode::Admit && matches!(fresh, Some(Err(Stale::Retry(_)))) {
+        run_refresh(reading)?;
+        quota = get().map_err(unreadable)?;
+        fresh = Some(freshness(&quota, backend, ledger));
+    }
+    reading.source = Some(crate::decision::Source {
+        account: account.into(),
+        observed_at_ms: quota.observed_at_ms,
+    });
+    reading.detail = quota
+        .remaining
+        .iter()
+        .map(|(k, v)| format!("{k}_left={v}%"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    reading.resets = quota.resets;
+    reading.remaining = Some(quota.remaining);
+    match fresh {
+        Some(Err(Stale::Retry(problem) | Stale::Hold(problem))) => Err(Hold::Quota(problem)),
+        _ => Ok(()),
+    }
 }
 
 pub fn recheck_cap(backend: &Backend, reading: &mut Reading) -> Result<(), String> {
@@ -367,37 +492,53 @@ pub fn recheck_cap(backend: &Backend, reading: &mut Reading) -> Result<(), Strin
     Ok(())
 }
 
+/// [`read`], then the backend's cap, as an admission sees it.
+pub fn check(
+    backend: &Backend,
+    cwd: &Path,
+    mode: QuotaMode,
+    ledger: &Ledger,
+    session: &SessionReader<'_>,
+) -> Reading {
+    let mut reading = read(backend, cwd, mode, ledger, session);
+    if backend.enabled
+        && let Err(problem) = recheck_cap(backend, &mut reading)
+        && reading.problem.is_none()
+    {
+        reading.problem = Some(problem);
+    }
+    reading
+}
+
+/// A reading for a backend that was not read.
+pub fn not_checked() -> Reading {
+    Reading {
+        problem: Some("not checked".into()),
+        ..Reading::default()
+    }
+}
+
+/// Checks every backend in `indices`; the others are not checked.
 pub fn collect(
     config: &Config,
     indices: &[usize],
     cwd: &Path,
-    allow_refresh: bool,
+    mode: QuotaMode,
+    ledger: &Ledger,
     session: &SessionReader<'_>,
 ) -> Vec<Reading> {
-    let mut readings: Vec<_> = config
+    config
         .backends
         .iter()
         .enumerate()
         .map(|(i, b)| {
             if indices.contains(&i) {
-                read(b, cwd, allow_refresh, session)
+                check(b, cwd, mode, ledger, session)
             } else {
-                Reading {
-                    problem: Some("not checked".into()),
-                    ..Reading::default()
-                }
+                not_checked()
             }
         })
-        .collect();
-    for index in indices {
-        if config.backends[*index].enabled
-            && let Err(problem) = recheck_cap(&config.backends[*index], &mut readings[*index])
-            && readings[*index].problem.is_none()
-        {
-            readings[*index].problem = Some(problem);
-        }
-    }
-    readings
+        .collect()
 }
 
 #[cfg(test)]
@@ -411,28 +552,53 @@ mod tests {
         .unwrap()
     }
 
+    /// An empty ledger: no observation is spent.
+    fn empty() -> Ledger {
+        Ledger::load(Path::new("/nonexistent/rota-test/anchor"))
+    }
+
     #[test]
     fn readings_report_the_configured_account_and_the_reader_reported_time() {
         let no_host = |_: Instant| Err("no host".to_string());
         let command = "[quota]\ncommand = ['printf', '{\"week\":45}']\nparser = 'remaining_json'\n";
         // Without an `account` key, a backend is its own account; command readers report no time.
-        let reading = read(&backend(command), Path::new("."), false, &no_host);
+        let ledger = empty();
+        let reading = read(
+            &backend(command),
+            Path::new("."),
+            QuotaMode::Read,
+            &ledger,
+            &no_host,
+        );
         let source = reading.source.expect("a successful reading has a source");
         assert_eq!(source.account, "b");
         assert_eq!(source.observed_at_ms, None);
         // Backends that declare one account share it, whatever their reader.
         let shared = format!("account = 'acct'\n{command}");
         assert_eq!(
-            read(&backend(&shared), Path::new("."), false, &no_host)
-                .source
-                .unwrap()
-                .account,
+            read(
+                &backend(&shared),
+                Path::new("."),
+                QuotaMode::Read,
+                &ledger,
+                &no_host
+            )
+            .source
+            .unwrap()
+            .account,
             "acct"
         );
         // A failed reading has no source.
         let failed = "[quota]\ncommand = ['printf', 'not-json']\nparser = 'remaining_json'\n";
         assert_eq!(
-            read(&backend(failed), Path::new("."), false, &no_host).source,
+            read(
+                &backend(failed),
+                Path::new("."),
+                QuotaMode::Read,
+                &ledger,
+                &no_host
+            )
+            .source,
             None
         );
         // Host facts report their snapshot's own `observed_at`, in milliseconds, as Eon
@@ -445,9 +611,15 @@ mod tests {
             );
             let host = |_: Instant| Ok(facts.clone());
             for _ in 0..2 {
-                let source = read(&backend(native), Path::new("."), false, &host)
-                    .source
-                    .unwrap();
+                let source = read(
+                    &backend(native),
+                    Path::new("."),
+                    QuotaMode::Read,
+                    &ledger,
+                    &host,
+                )
+                .source
+                .unwrap();
                 assert_eq!(
                     source,
                     crate::decision::Source {
@@ -463,11 +635,12 @@ mod tests {
     fn native_quota_matches_session_reader_admission_table() {
         use crate::{config::Role, decision};
         use serde_json::json;
+        let at = now_ms() - 60_000;
 
         for (parser, key) in [("eon_codex", "codex_quota"), ("eon_claude", "claude_quota")] {
             let backend: Backend = toml::from_str(&format!(
-                "name = 'native'\nroles = ['implement', 'review']\nguard = ['true']\ncommands = {{}}\n\
-                 allow_unknown_quota = true\n[quota]\nparser = '{parser}'\n\
+                "name = 'native'\naccount = 'native'\nroles = ['implement', 'review']\n\
+                 guard = ['true']\ncommands = {{}}\n[quota]\nparser = '{parser}'\n\
                  [limits.implement]\nstrictly_above_min = true\n\
                  [limits.implement.min_remaining]\n'*' = 20\n"
             ))
@@ -476,87 +649,95 @@ mod tests {
             for (name, snapshot, failure, implement, review) in [
                 (
                     "fresh",
-                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":21}]}),
+                    json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":21}]}),
                     false,
                     None,
                     None,
                 ),
                 (
                     "threshold",
-                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":20}]}),
+                    json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":20}]}),
                     false,
-                    Some("quota limit: 300m/0_left=20%"),
+                    Some("quota limit on account native: 300m/0 left 20% (min_remaining > 20%)"),
                     None,
                 ),
                 (
                     "empty quota",
-                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":0}]}),
+                    json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":0}]}),
                     false,
-                    Some("quota limit: 300m/0_left=0%"),
+                    Some("quota limit on account native: 300m/0 left 0% (min_remaining > 20%)"),
                     None,
                 ),
                 (
+                    // Facts retained from an earlier poll never admit while the last one failed.
                     "retained after failure",
-                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":21}]}),
+                    json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":21}]}),
                     true,
-                    None,
-                    None,
+                    Some("quota unreadable on account native: provider failure (provider_error)"),
+                    Some("quota unreadable on account native: provider failure (provider_error)"),
+                ),
+                (
+                    "untimed",
+                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
+                    false,
+                    Some("quota reading on account native has no observed_at"),
+                    Some("quota reading on account native has no observed_at"),
                 ),
                 (
                     "scoped",
-                    json!({"state":"fresh","windows":[{"duration_minutes":10080,"remaining_percent":80},{"duration_minutes":10080,"remaining_percent":19,"scope":"Fable"}]}),
+                    json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":10080,"remaining_percent":80},{"duration_minutes":10080,"remaining_percent":19,"scope":"Fable"}]}),
                     false,
-                    Some("quota limit: 10080m/1_left=19%"),
+                    Some("quota limit on account native: 10080m/1 left 19% (min_remaining > 20%)"),
                     None,
                 ),
                 (
                     "old",
                     json!({"state":"stale","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
                     false,
-                    Some("quota unreadable: quota snapshot is not fresh"),
-                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "missing",
                     json!(null),
                     false,
-                    Some("quota unreadable: quota snapshot is not fresh"),
-                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "failed without retained facts",
                     json!(null),
                     true,
-                    Some("quota unreadable: quota snapshot is not fresh"),
-                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "blocked",
                     json!({"state":"blocked","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
                     false,
-                    Some("quota unreadable: quota snapshot is not fresh"),
-                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "unknown",
                     json!({"state":"unknown","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
                     false,
-                    Some("quota unreadable: quota snapshot is not fresh"),
-                    Some("quota unreadable: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
+                    Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "empty windows",
-                    json!({"state":"fresh","windows":[]}),
+                    json!({"state":"fresh","observed_at":at,"windows":[]}),
                     false,
-                    Some("quota unreadable: quota windows unavailable"),
-                    Some("quota unreadable: quota windows unavailable"),
+                    Some("quota unreadable on account native: quota windows unavailable"),
+                    Some("quota unreadable on account native: quota windows unavailable"),
                 ),
                 (
                     "invalid percent",
-                    json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":101}]}),
+                    json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":101}]}),
                     false,
-                    Some("quota unreadable: invalid percentage"),
-                    Some("quota unreadable: invalid percentage"),
+                    Some("quota unreadable on account native: invalid percentage"),
+                    Some("quota unreadable on account native: invalid percentage"),
                 ),
             ] {
                 let mut facts = json!({key: snapshot});
@@ -580,20 +761,25 @@ mod tests {
                         ..Reading::default()
                     },
                     Err(error) => Reading {
-                        problem: Some(format!("quota unreadable: {error}")),
+                        problem: Some(format!("quota unreadable on account native: {error}")),
                         ..Reading::default()
                     },
                 };
-                let new = read(&backend, Path::new("."), false, &|_| Ok(text.clone()));
+                let new = read(&backend, Path::new("."), QuotaMode::Read, &empty(), &|_| {
+                    Ok(text.clone())
+                });
                 assert_eq!(new.remaining, old.remaining, "{parser}/{name}");
                 assert_eq!(new.resets, old.resets, "{parser}/{name}");
                 for (role, expected) in [(Role::Implement, implement), (Role::Review, review)] {
                     let result = decision::availability(&backend, &new, role);
-                    assert_eq!(
-                        result,
-                        decision::availability(&backend, &old, role),
-                        "{parser}/{name}/{role:?}"
-                    );
+                    // The old reader ignored provider failures and observation times.
+                    if !failure && name != "untimed" {
+                        assert_eq!(
+                            result,
+                            decision::availability(&backend, &old, role),
+                            "{parser}/{name}/{role:?}"
+                        );
+                    }
                     assert_eq!(
                         result.err().as_deref(),
                         expected,
@@ -623,18 +809,214 @@ mod tests {
                 Err("supervisor unavailable".into())
             }
         };
-        let status = read(&backend, root.path(), false, &source);
+        let status = read(&backend, root.path(), QuotaMode::Read, &empty(), &source);
         assert_eq!(
-            status.problem.as_deref(),
-            Some("quota unreadable: supervisor unavailable")
+            status.quota_problem.as_deref(),
+            Some("quota unreadable on account native: supervisor unavailable")
         );
         assert_eq!(calls.get(), 1);
         assert!(!marker.exists());
-        let launch = read(&backend, root.path(), true, &source);
-        assert_eq!(launch.problem, None);
+        let launch = read(&backend, root.path(), QuotaMode::Admit, &empty(), &source);
+        assert_eq!((launch.problem, launch.quota_problem), (None, None));
         assert_eq!(launch.remaining.unwrap()["300m/0"], 80.0);
         assert_eq!(calls.get(), 3);
     }
+    #[test]
+    fn a_provider_failure_beside_fresh_unspent_facts_holds_only_a_limited_backend() {
+        let at = now_ms() - 60_000;
+        let facts = format!(
+            r#"{{"claude_quota":{{"state":"fresh","observed_at":{at},
+            "windows":[{{"duration_minutes":10080,"remaining_percent":80}}]}},
+            "claude_quota_failure":{{"at":3,"reason":"deadline"}}}}"#
+        );
+        let host = |_: Instant| Ok(facts.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("anchor");
+        let mut ledger = Ledger::load(&state);
+        ledger.record("acct", at - 1).unwrap();
+        let limited = backend(
+            "account = 'acct'\n[quota]\nparser = 'eon_claude'\n\
+             [limits.implement.min_remaining]\n'10080m' = 3\n",
+        );
+        let reading = read(&limited, Path::new("."), QuotaMode::Admit, &ledger, &host);
+        assert_eq!(
+            reading.quota_problem.as_deref(),
+            Some("quota unreadable on account acct: provider failure (deadline)")
+        );
+        assert_eq!(reading.problem, None);
+        // Backends without limits keep today's behaviour: the retained facts admit.
+        let unlimited = backend("[quota]\nparser = 'eon_claude'\n");
+        let reading = read(&unlimited, Path::new("."), QuotaMode::Admit, &ledger, &host);
+        assert_eq!((reading.problem, reading.quota_problem), (None, None));
+        assert_eq!(reading.remaining.unwrap()["10080m/0"], 80.0);
+    }
+
+    #[test]
+    fn a_spent_observation_reads_again_after_refresh_only_when_admitting() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let reading = root.join("reading");
+        let refreshed = root.join("refreshed");
+        let (first, later) = (now_ms() - 60_000, now_ms() - 30_000);
+        fs::write(&reading, format!(r#"{{"week":80,"observed_at":{first}}}"#)).unwrap();
+        let limited = backend(&format!(
+            "account = 'acct'\n[quota]\ncommand = ['cat', '{reading}']\nparser = 'remaining_json'\n\
+             refresh = ['sh', '-c', 'touch \"$0\"; printf \"{{\\\"week\\\":70,\\\"observed_at\\\":{later}}}\" > \"$1\"', '{refreshed}', '{reading}']\n\
+             [limits.implement.min_remaining]\nweek = 10\n",
+            reading = reading.display(),
+            refreshed = refreshed.display(),
+        ));
+        let mut ledger = Ledger::load(&root.join("state/anchor"));
+        ledger.record("acct", first).unwrap();
+        let repeat = |at: u64| {
+            format!(
+                "reading observed at {at} already admitted a launch on account acct; \
+                 hold for a fresh reading"
+            )
+        };
+        // Status and dry runs show the hold, with the reading, and never refresh.
+        let shown = read(
+            &limited,
+            root,
+            QuotaMode::Read,
+            &ledger,
+            &|_| unreachable!(),
+        );
+        assert_eq!(shown.quota_problem, Some(repeat(first)));
+        assert_eq!(shown.remaining.unwrap()["week"], 80.0);
+        assert_eq!(
+            shown.source,
+            Some(crate::decision::Source {
+                account: "acct".into(),
+                observed_at_ms: Some(first)
+            })
+        );
+        assert!(!refreshed.exists());
+        // A real admission refreshes once, reads again, and admits the later observation.
+        let admitted = read(
+            &limited,
+            root,
+            QuotaMode::Admit,
+            &ledger,
+            &|_| unreachable!(),
+        );
+        assert!(refreshed.exists());
+        assert_eq!(admitted.quota_problem, None);
+        assert_eq!(admitted.source.unwrap().observed_at_ms, Some(later));
+        assert_eq!(admitted.remaining.unwrap()["week"], 70.0);
+        // A refresh that brings nothing later still holds, naming the account.
+        ledger.record("acct", later).unwrap();
+        let held = read(
+            &limited,
+            root,
+            QuotaMode::Admit,
+            &ledger,
+            &|_| unreachable!(),
+        );
+        assert_eq!(held.quota_problem, Some(repeat(later)));
+    }
+
+    #[test]
+    fn a_reading_older_than_its_bound_holds_until_a_refresh_brings_a_newer_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // The reader stamps its time when it runs, 1805 s back, so the age it reports is exact.
+        let old = "['sh', '-c', 'printf \"{\\\"week\\\":80,\\\"observed_at\\\":%s}\" \
+                   $(( $(date +%s%3N) - 1805000 ))']";
+        let limited = |extra: &str| {
+            backend(&format!(
+                "account = 'acct'\n[quota]\ncommand = {old}\nparser = 'remaining_json'\n{extra}\n\
+                 [limits.implement.min_remaining]\nweek = 10\n"
+            ))
+        };
+        let held = read(
+            &limited(""),
+            root,
+            QuotaMode::Admit,
+            &empty(),
+            &|_| unreachable!(),
+        );
+        assert_eq!(
+            held.quota_problem.as_deref(),
+            Some("quota reading on account acct is 1805 s old (max_age_seconds 600)")
+        );
+        // A wider bound admits it, and a backend without limits has no bound.
+        let wide = read(
+            &limited("max_age_seconds = 2000"),
+            root,
+            QuotaMode::Admit,
+            &empty(),
+            &|_| unreachable!(),
+        );
+        assert_eq!((wide.problem, wide.quota_problem), (None, None));
+        let unlimited = backend(&format!(
+            "[quota]\ncommand = {old}\nparser = 'remaining_json'\n"
+        ));
+        let reading = read(
+            &unlimited,
+            root,
+            QuotaMode::Admit,
+            &empty(),
+            &|_| unreachable!(),
+        );
+        assert_eq!((reading.problem, reading.quota_problem), (None, None));
+        // A real admission refreshes an old reading once and admits the newer one; status never
+        // refreshes.
+        let reading = root.join("reading");
+        fs::write(&reading, "{\"week\":80,\"observed_at\":1}").unwrap();
+        let refreshing = backend(&format!(
+            "account = 'acct'\n[quota]\ncommand = ['cat', '{reading}']\nparser = 'remaining_json'\n\
+             refresh = ['sh', '-c', 'printf \"{{\\\"week\\\":80,\\\"observed_at\\\":%s}}\" \
+             $(date +%s%3N) > \"$0\"', '{reading}']\n\
+             [limits.implement.min_remaining]\nweek = 10\n",
+            reading = reading.display(),
+        ));
+        let shown = read(
+            &refreshing,
+            root,
+            QuotaMode::Read,
+            &empty(),
+            &|_| unreachable!(),
+        );
+        assert!(
+            shown
+                .quota_problem
+                .as_deref()
+                .is_some_and(|p| p.ends_with(" s old (max_age_seconds 600)")),
+            "{shown:?}"
+        );
+        let admitted = read(
+            &refreshing,
+            root,
+            QuotaMode::Admit,
+            &empty(),
+            &|_| unreachable!(),
+        );
+        assert_eq!((admitted.problem, admitted.quota_problem), (None, None));
+    }
+
+    #[test]
+    fn a_lead_check_never_runs_the_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("reader-ran");
+        let limited = backend(&format!(
+            "account = 'acct'\n[quota]\ncommand = ['touch', '{}']\nparser = 'remaining_json'\n\
+             refresh = ['touch', '{}']\n",
+            marker.display(),
+            marker.display(),
+        ));
+        let native = backend("account = 'acct'\n[quota]\nparser = 'eon_claude'\n");
+        for backend in [&limited, &native] {
+            let reading = read(backend, dir.path(), QuotaMode::Skip, &empty(), &|_| {
+                panic!("a lead launch read quota")
+            });
+            assert_eq!((reading.problem, reading.quota_problem), (None, None));
+            assert_eq!(reading.remaining, None);
+            assert_eq!(reading.source, None);
+        }
+        assert!(!marker.exists());
+    }
+
     #[test]
     fn a_check_that_outlives_sigkill_is_given_up_on() {
         // A kill that does nothing stands in for a check stuck in uninterruptible I/O.
@@ -694,9 +1076,13 @@ mod tests {
     fn disabled_backend_never_runs_checks() {
         let config = Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
         assert_eq!(
-            read(&config.backends[3], Path::new("."), false, &|_| panic!(
-                "disabled backend read quota"
-            ))
+            read(
+                &config.backends[3],
+                Path::new("."),
+                QuotaMode::Read,
+                &empty(),
+                &|_| panic!("disabled backend read quota")
+            )
             .problem
             .as_deref(),
             Some("disabled")

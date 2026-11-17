@@ -4,14 +4,16 @@ log_file = '<ROOT>/state/decisions.jsonl'
 
 [[backends]]
 name = 'limited'
+account = 'limited'
 roles = ['implement', 'review']
 guard = ['true']
 [backends.commands]
 medium = ['true', '{prompt}']
 high = ['true', '{prompt}']
 [backends.quota]
-command = ['printf', '{"week":45,"five_hour":80}']
+command = ['printf', '{"week":45,"five_hour":80,"observed_at":1700000000000}']
 parser = 'remaining_json'
+max_age_seconds = 4000000000
 [backends.limits.implement.min_remaining]
 week = 10
 [backends.limits.review.max_used]

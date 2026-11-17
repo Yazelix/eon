@@ -13466,7 +13466,8 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>, pin: boo
     assert!(window.eon(&["popup", "hide", &popup.id]).status.success());
     assert!(window.eon(&["focus", &popup.id]).status.success());
     assert_eq!(log_lines(&decisions).len(), 1);
-    fs::remove_file(&state).unwrap(); // Restore the popup's original rotation cursor.
+    // Ordered selection keeps no cursor: the popup's admission left the state file unwritten.
+    assert!(!state.exists());
     let direct = eon_command(&window.binary)
         .env("HOME", &window.home)
         .env("XDG_CONFIG_HOME", window.root.join("other-config"))
@@ -24408,14 +24409,14 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
 #[cfg(target_os = "linux")]
 #[test]
 fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon() {
-    use rota::{config::Parser, decision::Reading};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    // Facts retained beside a failed poll never admit a backend that sets limits.
     for (case, age, failed, available) in [
         ("fresh", Some(10), false, true),
         ("old", Some(7200), false, false),
         ("missing", None, false, false),
-        ("failed retained", Some(10), true, true),
+        ("failed retained", Some(10), true, false),
         ("failed missing", None, true, false),
         ("expired", Some(86401), false, false),
     ] {
@@ -24475,7 +24476,7 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
             .iter()
             .fold(text, |text, parser| {
                 format!(
-                    "{text}\n[[backends]]\nname = '{parser}'\nroles = ['implement','review']\n\
+                    "{text}\n[[backends]]\nname = '{parser}'\naccount = '{parser}'\nroles = ['implement','review']\n\
                 guard = ['true']\ncommands = {{medium = ['never-start', '{{prompt}}'], high = ['never-start', '{{prompt}}']}}\n\
                 [backends.quota]\nparser = '{parser}'\ncommand = ['eon', 'session', '--json']\ntimeout_seconds = 30\n\
                 [backends.limits.implement.min_remaining]\n'*' = 20\n"
@@ -24504,31 +24505,28 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
         let session = window.eon(&["session", "--json"]);
         assert!(session.status.success(), "{case}: {session:?}");
         let config = rota::config::Config::parse(&text, "rota").unwrap();
-        for (index, parser) in [Parser::EonCodex, Parser::EonClaude]
-            .into_iter()
-            .enumerate()
-        {
-            let old = match rota::quota::parse(parser, None, stdout(&session)) {
-                Ok(quota) => Reading {
-                    remaining: Some(quota.remaining),
-                    resets: quota.resets,
-                    ..Reading::default()
-                },
-                Err(error) => Reading {
-                    problem: Some(format!("quota unreadable: {error}")),
-                    ..Reading::default()
-                },
-            };
+        let ledger = rota::admissions::Ledger::load(&config.state_file);
+        let facts = stdout(&session).to_string();
+        for (index, backend) in config.backends.iter().enumerate() {
+            // The core reading `eon session --json` as a host reader gives the same answer.
+            let expected = rota::readings::read(
+                backend,
+                &window.root,
+                rota::readings::QuotaMode::Read,
+                &ledger,
+                &|_| Ok(facts.clone()),
+            );
             for (role, key) in [
                 (rota::config::Role::Implement, "implement"),
                 (rota::config::Role::Review, "review"),
             ] {
-                let old = rota::decision::availability(&config.backends[index], &old, role);
-                assert_eq!(old.is_ok(), available, "{case}/{parser:?}/{key}");
+                let expected = rota::decision::availability(backend, &expected, role);
+                assert_eq!(expected.is_ok(), available, "{case}/{}/{key}", backend.name);
                 assert_eq!(
                     actual[index][key],
-                    old.err().unwrap_or_else(|| "available".into()),
-                    "{case}/{parser:?}/{key}"
+                    expected.err().unwrap_or_else(|| "available".into()),
+                    "{case}/{}/{key}",
+                    backend.name
                 );
             }
         }
@@ -24642,7 +24640,10 @@ fn native_quota_deadline_bounds_discovery_and_inspection_like_the_old_probe() {
         )
         .unwrap_err();
         assert_eq!(old, "check timed out");
-        assert_eq!(actual[0]["implement"], format!("quota unreadable: {old}"));
+        assert_eq!(
+            actual[0]["implement"],
+            format!("quota unreadable on account native: {old}")
+        );
         assert_eq!(actual[0]["review"], actual[0]["implement"]);
         fs::remove_dir_all(root).unwrap();
     }
@@ -24672,7 +24673,10 @@ fn native_quota_refuses_another_eonw_without_running_its_recorded_launcher() {
     assert!(output.status.success(), "{output:?}");
     let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let problem = actual[0]["implement"].as_str().unwrap();
-    assert!(problem.starts_with("quota unreadable:"), "{problem}");
+    assert!(
+        problem.starts_with("quota unreadable on account native:"),
+        "{problem}"
+    );
     assert!(problem.contains("EONW"), "{problem}");
     assert!(problem.contains(&(VERSION - 1).to_string()), "{problem}");
     assert_eq!(actual[0]["review"], problem);

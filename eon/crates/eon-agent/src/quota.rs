@@ -10,6 +10,18 @@ pub const DEFAULT_AGY_GROUP: &str = "Claude and GPT models";
 pub struct Quota {
     pub remaining: Windows,
     pub resets: Resets,
+    /// When the provider data was fetched, in Unix milliseconds, as the reader reports it.
+    pub observed_at_ms: Option<u64>,
+    /// The reason the host's last poll of this provider failed, while it keeps older facts.
+    pub failure: Option<String>,
+}
+
+/// The value of a JSON reading's reserved `observed_at` key: Unix milliseconds, an unsigned
+/// integer.
+fn json_time(value: Option<&serde_json::Value>) -> Result<Option<u64>, String> {
+    value
+        .map(|v| v.as_u64().ok_or_else(|| "invalid observed_at".to_string()))
+        .transpose()
 }
 
 fn percent(value: f64) -> Result<f64, String> {
@@ -68,25 +80,16 @@ fn rfc3339(text: &str) -> bool {
     }
 }
 
-/// When the reader says its usage data was fetched, in Unix milliseconds. Only the host's
-/// quota facts carry a time today: their snapshot's `observed_at`, which is milliseconds (see
-/// [`crate::readings::SessionReader`]). Command readers report none.
-pub fn observed_at_ms(parser: Parser, text: &str) -> Option<u64> {
-    let key = match parser {
-        Parser::EonCodex => "codex_quota",
-        Parser::EonClaude => "claude_quota",
-        _ => return None,
-    };
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()?
-        .get(key)?
-        .get("observed_at")?
-        .as_u64()
-}
-
+/// Parses one reading. Every format but `agy` may carry `observed_at`, when the provider data
+/// was fetched, in Unix milliseconds: `claude_text` as an `observed_at=MS` token after its two
+/// fields, `claude_json` and `remaining_json` as a top-level `"observed_at"`, and the host's
+/// facts in their snapshot (see [`crate::readings::SessionReader`]). An invalid time fails the
+/// reading.
 pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quota, String> {
     let mut windows = Windows::new();
     let mut resets = Resets::new();
+    let mut observed_at_ms = None;
+    let mut failure = None;
     match parser {
         Parser::Agy => {
             let group = agy_group.unwrap_or(DEFAULT_AGY_GROUP);
@@ -127,10 +130,19 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
             if fields.len() < 2 {
                 return Err("Claude usage needs two fields".into());
             }
-            for (key, value) in ["five_hour", "seven_day"].into_iter().zip(fields) {
-                if value != "None" {
+            for (key, value) in ["five_hour", "seven_day"].into_iter().zip(&fields) {
+                if *value != "None" {
                     let used = percent(value.parse().map_err(|_| "invalid Claude percentage")?)?;
                     windows.insert(key.into(), 100.0 - used);
+                }
+            }
+            // Later fields are ignored, except one `observed_at=MS` token.
+            for field in &fields[2..] {
+                if let Some(time) = field.strip_prefix("observed_at=") {
+                    if observed_at_ms.is_some() {
+                        return Err("duplicate observed_at".into());
+                    }
+                    observed_at_ms = Some(time.parse().map_err(|_| "invalid observed_at")?);
                 }
             }
         }
@@ -144,6 +156,7 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
             {
                 return Err("not a Claude usage response".into());
             }
+            observed_at_ms = json_time(json.get("observed_at"))?;
             for key in ["five_hour", "seven_day"] {
                 if let Some(window) = json.get(key).filter(|v| !v.is_null()) {
                     let value = window.get("utilization").ok_or("missing utilization")?;
@@ -164,10 +177,20 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
             } else {
                 "claude_quota"
             };
+            failure = json
+                .get(format!("{key}_failure"))
+                .filter(|f| !f.is_null())
+                .map(|f| {
+                    f.get("reason")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("unknown")
+                        .to_string()
+                });
             let snapshot = json.get(key).ok_or("quota snapshot unavailable")?;
             if snapshot.get("state").and_then(|s| s.as_str()) != Some("fresh") {
                 return Err("quota snapshot is not fresh".into());
             }
+            observed_at_ms = json_time(snapshot.get("observed_at"))?;
             let items = snapshot
                 .get("windows")
                 .and_then(|v| v.as_array())
@@ -189,8 +212,12 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
             }
         }
         Parser::RemainingJson => {
-            let values: BTreeMap<String, f64> = serde_json::from_str(text)
+            let mut values: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)
                 .map_err(|_| "expected JSON object of remaining percentages")?;
+            observed_at_ms = json_time(values.remove("observed_at").as_ref())?;
+            let values: BTreeMap<String, f64> =
+                serde_json::from_value(serde_json::Value::Object(values))
+                    .map_err(|_| "expected JSON object of remaining percentages")?;
             if values.is_empty() {
                 return Err("no quota windows".into());
             }
@@ -202,6 +229,8 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
     Ok(Quota {
         remaining: windows,
         resets,
+        observed_at_ms,
+        failure,
     })
 }
 
@@ -341,6 +370,87 @@ mod tests {
         .unwrap();
         assert_eq!(quota.remaining, Windows::from([("weekly".into(), 40.0)]));
         assert!(quota.resets.is_empty());
+    }
+
+    #[test]
+    fn every_timed_format_reports_observed_at() {
+        let text = parse(Parser::ClaudeText, None, "12 34 observed_at=1720000001000").unwrap();
+        assert_eq!(text.observed_at_ms, Some(1_720_000_001_000));
+        assert_eq!(text.remaining["five_hour"], 88.0);
+        // The fleet script's third field (a reset time) is still ignored, before or after it.
+        for line in [
+            "12 34 2030-01-08T14:00:00Z observed_at=5",
+            "12 34 observed_at=5 2030-01-08T14:00:00Z",
+        ] {
+            assert_eq!(
+                parse(Parser::ClaudeText, None, line)
+                    .unwrap()
+                    .observed_at_ms,
+                Some(5)
+            );
+        }
+        assert_eq!(
+            parse(Parser::ClaudeText, None, "12 34")
+                .unwrap()
+                .observed_at_ms,
+            None
+        );
+        let json = parse(
+            Parser::ClaudeJson,
+            None,
+            r#"{"five_hour":{"utilization":10},"observed_at":7}"#,
+        )
+        .unwrap();
+        assert_eq!(json.observed_at_ms, Some(7));
+        let remaining = parse(
+            Parser::RemainingJson,
+            None,
+            r#"{"week":43,"observed_at":8}"#,
+        )
+        .unwrap();
+        assert_eq!(remaining.observed_at_ms, Some(8));
+        // Reserved, never a window.
+        assert_eq!(remaining.remaining, Windows::from([("week".into(), 43.0)]));
+        assert!(parse(Parser::RemainingJson, None, r#"{"observed_at":8}"#).is_err());
+        let native = parse(
+            Parser::EonCodex,
+            None,
+            r#"{"codex_quota":{"state":"fresh","observed_at":9,
+                "windows":[{"duration_minutes":300,"remaining_percent":50}]},
+                "codex_quota_failure":{"at":1,"reason":"deadline"}}"#,
+        )
+        .unwrap();
+        assert_eq!(native.observed_at_ms, Some(9));
+        assert_eq!(native.failure.as_deref(), Some("deadline"));
+        assert_eq!(
+            parse(Parser::Agy, None, include_str!("../tests/fixtures/agy.tsv"))
+                .unwrap()
+                .observed_at_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn an_invalid_observed_at_fails_the_reading() {
+        for (parser, text) in [
+            (Parser::ClaudeText, "12 34 observed_at=soon"),
+            (Parser::ClaudeText, "12 34 observed_at=-1"),
+            (Parser::ClaudeText, "12 34 observed_at=1 observed_at=2"),
+            (
+                Parser::ClaudeJson,
+                r#"{"five_hour":{"utilization":10},"observed_at":"7"}"#,
+            ),
+            (Parser::RemainingJson, r#"{"week":43,"observed_at":1.5}"#),
+            (Parser::RemainingJson, r#"{"week":43,"observed_at":-1}"#),
+            (
+                Parser::EonClaude,
+                r#"{"claude_quota":{"state":"fresh","observed_at":null,
+                    "windows":[{"duration_minutes":300,"remaining_percent":50}]}}"#,
+            ),
+        ] {
+            let error = parse(parser, None, text).unwrap_err();
+            assert!(error.ends_with(" observed_at"), "{text}: {error}");
+        }
     }
 
     #[test]
