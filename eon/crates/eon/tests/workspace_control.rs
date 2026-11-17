@@ -201,6 +201,13 @@ fn executable(path: &Path, source: impl AsRef<[u8]>) {
     assert!(writer.wait().unwrap().success());
 }
 
+fn persistent_venus_executable(path: &Path) {
+    executable(
+        path,
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+}
+
 fn configure_mock_desktop(config: &Path) {
     fs::create_dir_all(config).unwrap();
     // These lifecycle mocks do not implement native font admission.
@@ -2886,6 +2893,7 @@ fn wait_for_pid(path: &Path) -> u32 {
     fs::read_to_string(path).unwrap().parse().unwrap()
 }
 
+// For a fixture whose Venus started, the ready reply follows presentation startup.
 fn wait_for_ready(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -6080,10 +6088,7 @@ impl WindowWithoutHelix {
         let orbit = root.join("orbit");
         let venus = root.join("venus");
         managed_orbit_executable(&orbit);
-        executable(
-            &venus,
-            "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
-        );
+        persistent_venus_executable(&venus);
         let editor = root.join("editor");
         fs::create_dir(&editor).unwrap();
 
@@ -9698,7 +9703,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
-    executable(&venus, "#!/bin/sh\nexit 0\n");
+    persistent_venus_executable(&venus);
     // A stand-in Helix for `eon edit`, first on the supervisor's PATH.
     let editor = root.join("editor");
     fs::create_dir(&editor).unwrap();
@@ -9915,6 +9920,7 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     assert!(launched.status.success(), "{launched:?}");
     let other = listed_window(without_helix(), &runtime, &config);
     assert_eq!(other["attach"]["available"], true, "{other}");
+    assert!(other["venus"].is_string(), "{other}");
     assert_eq!(
         other,
         listed_window(eon_command(&binary), &runtime, &config)
