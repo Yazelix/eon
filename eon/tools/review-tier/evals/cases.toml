@@ -222,3 +222,22 @@ mechanism = [["status", "governance", "contract index"], ["prose", "approval", "
 [[case.expect]]
 file = "orbit/docs/CONTRACTS.md"
 lines = [792, 795]
+
+[[case]]
+id = "R20"
+kind = "fix-forward"
+commit = "c6989c11055e2e5d1096a926ddd447fc14c4976e"
+fixed_by = "770d426b9a50d14792325e0322cef7ade2c27921"
+class = "racy-test"
+tier = "medium"
+summary = "Running Eon without a packaged Helix added a sequential comparison of full and no-Helix window listings while the fixture's mock Venus still exited at once, so a respawned mock reaped between the two reads turned only the venus field into null and native Darwin package tests failed with product behaviour unchanged."
+evidence = "c6989c11 (eon-igae.17.1) adds the bare launch and equality at workspace_control.rs:8709-8714 without changing the exit-0 mock at :8494; native run 43979641032 on 01ec42d2 showed identical objects except venus path versus null; 770d426b (eon-mac-launch-kz4p.76) keeps one held mock alive through each comparison and two owned-PID exit faults turn the equality red."
+mechanism = [["venus", "mock", "fixture", "presentation"], ["exit", "reaping", "reaped", "lifetime"], ["listing", "json", "equality", "race", "snapshot", "null"]]
+
+[[case.expect]]
+file = "eon/crates/eon/tests/workspace_control.rs"
+lines = [8709, 8714]
+
+[[case.expect]]
+file = "eon/crates/eon/tests/workspace_control.rs"
+lines = [8494, 8494]
