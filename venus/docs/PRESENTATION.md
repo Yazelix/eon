@@ -117,9 +117,13 @@ those integrations.
   minutes, such as `90m`. A stale chip that cannot fit its label with `old`
   disappears rather than drop `old`. Hover and accessibility never show raw
   epoch timestamps.
-- Google quota uses one read-only text chip for each selected active model-group
-  window. Its label is `Google <scope> <position>/<duration> <remaining>%`;
-  without a reset it omits the position and slash. A stale chip retains `old`.
+- Google quota uses one read-only chip for each selected active model-group
+  window, shaped like the Claude and Codex chips: the Gemini mark, then
+  `<position>/<duration> <remaining>%`; without a reset it omits the position
+  and slash. The `Gemini Models` group's chips carry the bare mark. Every other
+  selected group's chips lead with the group's initial; when selected groups
+  share an initial, each gets that initial numbered by its order among them in
+  the configured widgets (`G1`, `G2`), so every selected group stays distinct. A stale chip retains `old`.
   Hover and accessibility identify Google's model group, period, remaining
   allowance, reset availability, local read time and freshness. Read time means
   the successful reader's completion, shown as a local date/time and UTC offset;
@@ -127,8 +131,8 @@ those integrations.
   windows have no chip. Chips follow the configured order and existing whole-chip
   hiding, window-menu room and tab/control priority. Google-only updates preserve
   navigation and coherent workspace notices. Workspace transport loss clears
-  Google presentation with the other quota facts. No Google bitmap slot is
-  reserved; text uses the existing horizontal padding and shared chip styling.
+  Google presentation with the other quota facts. The Gemini mark takes the
+  same icon slot, padding and shared chip styling as the other provider marks.
 - Quota, CPU, RAM, disk and GPU chip text stays neutral, at least 4.5:1 on the
   chip fill. System icons are neutral; provider marks keep their brand colours.
   A filled level dot sits at the right, centred on the shaped text ink. Its

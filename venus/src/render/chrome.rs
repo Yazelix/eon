@@ -32,6 +32,7 @@ const CLAUDE_SPLAT_ID: u16 = 2;
 const EON_ICON_ID: u16 = 3;
 const CLAUDE_CODE_ID: u16 = 4;
 const CODEX_SYMBOL_ID: u16 = 5;
+const GEMINI_SPARK_ID: u16 = 6;
 const QUOTA_ICON_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
@@ -334,6 +335,8 @@ const OPENAI_BLOSSOM_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/openai-blossom-104.alpha");
 const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/claude-splat-104.alpha");
+const GEMINI_SPARK_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
+    include_bytes!("../../assets/gemini-spark-104.alpha");
 const CLAUDE_CODE_RGBA_22: &[u8; 22 * 22 * 4] =
     include_bytes!("../../assets/claude-code-clawd-22.rgba");
 const CLAUDE_CODE_RGBA_33: &[u8; 33 * 33 * 4] =
@@ -688,6 +691,7 @@ pub(super) fn rasterize_bar_icon(
     let (source, channels, content_type): (&[u8], usize, _) = match request.id {
         OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
+        GEMINI_SPARK_ID => (GEMINI_SPARK_ALPHA, 1, ContentType::Mask),
         CLAUDE_CODE_ID => (
             match (request.width, request.height) {
                 (22, 22) => CLAUDE_CODE_RGBA_22,
@@ -2885,12 +2889,8 @@ impl Renderer {
                 ),
                 self.metrics,
             );
-            let label_left = if quota.provider == QuotaProvider::Google {
-                quota.rect.left + self.metrics.padding
-            } else {
-                self.push_quota_icon(quota.provider, quota.logo, None);
-                quota.logo.right() + tokens::icon_gap(self.metrics)
-            };
+            self.push_quota_icon(quota.provider, quota.logo, None);
+            let label_left = quota.logo.right() + tokens::icon_gap(self.metrics);
             let label_width = (quota.rect.right()
                 - self.metrics.padding
                 - tokens::chip_dot_reserve(self.metrics)
@@ -3535,7 +3535,7 @@ impl Renderer {
         let (id, color) = match provider {
             QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, palette::DARK.quota_icon_codex),
             QuotaProvider::Claude => (CLAUDE_SPLAT_ID, palette::DARK.quota_icon_claude),
-            QuotaProvider::Google => return,
+            QuotaProvider::Google => (GEMINI_SPARK_ID, palette::DARK.quota_icon_google),
         };
         self.text.extend(bar_icon(id, color, rect, clip));
     }
@@ -7378,6 +7378,11 @@ mod tests {
                 OPENAI_BLOSSOM_ID,
                 palette::DARK.quota_icon_codex,
             ),
+            (
+                QuotaProvider::Google,
+                GEMINI_SPARK_ID,
+                palette::DARK.quota_icon_google,
+            ),
         ] {
             renderer.text.clear();
             renderer.push_quota_icon(provider, rect, None);
@@ -7408,6 +7413,7 @@ mod tests {
         for (id, original) in [
             (OPENAI_BLOSSOM_ID, OPENAI_BLOSSOM_ALPHA),
             (CLAUDE_SPLAT_ID, CLAUDE_SPLAT_ALPHA),
+            (GEMINI_SPARK_ID, GEMINI_SPARK_ALPHA),
         ] {
             for size in [16, 20, 32, 104] {
                 let image = rasterize_bar_icon(
@@ -7523,7 +7529,7 @@ mod tests {
         }
         assert!(rasterize_bar_icon(request(11, 11), None).is_none());
         // The provider marks keep their ids beside the Eon icon.
-        for id in [OPENAI_BLOSSOM_ID, CLAUDE_SPLAT_ID] {
+        for id in [OPENAI_BLOSSOM_ID, CLAUDE_SPLAT_ID, GEMINI_SPARK_ID] {
             let quota = |eon_icon| {
                 let glyph = rasterize_bar_icon(
                     RasterizeCustomGlyphRequest {

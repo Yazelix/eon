@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Google quota chips are as compact as the Claude and Codex chips: a blue
+  Gemini spark and `<position>/<duration> <remaining>%`, without `Google` or
+  the model group. A group other than `Gemini Models` leads with its initial,
+  such as `C 2d15h/7d 0%`, numbered when selected groups share one (`G1`,
+  `G2`). Hover and accessibility still name Google and the group
+  (`eon-o9f3h.7`).
+
 - Runtime admits every workspace request, subscription and Stop by who asks
   and every effect it may have, before any effect, and a refused request
   changes nothing (EON-C10 amendment, `eon-260mh.2.2`). Owner and native

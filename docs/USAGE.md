@@ -574,14 +574,17 @@ name is shortened while the position stays whole; quota chips hide before the
 label, and the label hides before the tabs would lose their room.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
 authentication. Codex also needs a compatible `codex` executable on `PATH`.
-Codex chips show its white mark and Claude chips its orange splat.
+Codex chips show its white mark, Claude chips its orange splat and Google
+chips the blue Gemini spark.
 Both providers show one chip per available window, five-hour then seven-day,
 then one Claude chip for each model-scoped weekly window, such as `Fable`.
 Opt-in Google chips use your already signed-in agy 1.4.1 and show one selected
-active model-group window each, as text:
-`Google <group> <position>/<duration> <remaining>%`. Without a reset they omit
-the elapsed position and slash. Hover and accessibility include the group,
-reset availability, local read time and freshness. Unselected groups remain
+active model-group window each, as the Gemini spark and
+`<position>/<duration> <remaining>%`; a group other than `Gemini Models` leads
+with its initial, numbered when selected groups share one (`G1`, `G2`).
+Without a reset they omit the elapsed position and slash. Hover and
+accessibility include Google, the group, reset availability, local read time
+and freshness. Unselected groups remain
 in `eon session --json` while Google collection is enabled.
 Each Codex or Claude window shows its remaining percentage; hover lists when
 it resets, in local time, the pace, and whether the reading is old. Missing
@@ -1260,7 +1263,7 @@ or `stale` states. Any valid exact Google selector in `[bar] widgets` enables
 collection with the already signed-in agy 1.4.1 on absolute PATH entries.
 Every active reported group remains in JSON, including unselected groups.
 Failed reads keep last-good facts; successful empty reports clear them.
-Selected active Google windows show text chips in the Eon Bar; hiding a chip
+Selected active Google windows show chips in the Eon Bar; hiding a chip
 does not filter its JSON fact. See [Agent quota](CONFIGURATION.md#agent-quota)
 for source support, scheduling, process bounds and retention.
 

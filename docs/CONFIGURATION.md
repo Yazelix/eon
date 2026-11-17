@@ -417,7 +417,7 @@ gpu_interval_seconds = 30 # Minimum seconds between NVIDIA GPU queries; a larger
 ram_critical_percent = 90 # RAM use from which the RAM chip turns red.
 ram_notice_percent = 60 # RAM use from which the RAM chip turns yellow.
 ram_warning_percent = 75 # RAM use from which the RAM chip turns orange.
-widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google windows show text chips when reported.
+widgets = ["codex_quota_5h", "codex_quota_7d", "claude_quota_5h", "claude_quota_7d", "claude_quota_scoped", "cpu", "ram", "disk", "clock", "version"] # Eon Bar widgets: header widgets in display order; the clock sits at the bottom bar's left end and the version at its right end, wherever they are listed. Each quota widget selects a window; claude_quota_scoped selects all model-scoped Claude windows. Exact google_quota:<scope>:5h or :7d selectors are opt-in; Google windows show chips when reported.
 
 [terminal]
 background_blur = true # Request compositor background blur.
@@ -565,7 +565,7 @@ bar's left end is not a widget and shows whatever the list holds. Each name
 appears at most once. A widget left out doesn't show, `widgets = []` leaves
 only the logo, the tabs and the buttons, and omitting the key uses the built-in
 list above. The list applies when a window next opens, reopens or reloads.
-It also accepts opt-in exact Google scope/window selectors for text chips.
+It also accepts opt-in exact Google scope/window selectors for Google chips.
 See [Agent quota](#agent-quota) for grammar and examples.
 Unknown names are ignored with a warning; repeated known names are a
 configuration error. Narrow windows hide GPU, disk, RAM and CPU, whatever the order,
@@ -1089,19 +1089,21 @@ ID dims only when the resolved fill and configured opacity permit readable contr
 Google selection is opt-in through exact `google_quota:<scope>:5h` and
 `google_quota:<scope>:7d` entries in `[bar] widgets`. These selectors
 enable Google collection and its CLI JSON facts. Each selected active Google
-window shows a text chip; unselected or missing windows show nothing. The ten
+window shows a chip; unselected or missing windows show nothing. The ten
 existing defaults above include no Google entries.
 
-Google chips read `Google <group> <position>/<duration> <remaining>%`, with
-`old` when stale. Without a reset they omit the elapsed position and slash.
-Hover and accessibility name the model group, period, remaining allowance,
-reset availability, local read time and freshness. Disabled windows have no
-chip; weekly-only groups get no invented five-hour chip. Hide Argon by leaving
-out `google_quota:Gemini 4 Argon:7d`; all its active facts remain in
-`eon session --json` while any Google selector is enabled. Google text uses the
-existing chip typography, padding and status dots without a provider bitmap.
-The fixed Google label identifies the subscription owner; source group names
-keep independent allowances distinct.
+Google chips show the Gemini spark and `<position>/<duration> <remaining>%`, with
+`old` when stale, the same shape as the Claude and Codex chips. Without a reset
+they omit the elapsed position and slash. The `Gemini Models` group's chip
+shows the bare spark; any other group's chip leads with its name's initial,
+such as `C 2d15h/7d 0%` for `Claude and GPT models`. Selected groups that share
+an initial are numbered in widget order (`G1`, `G2`), so every selected group's
+chips stay apart. Hover and accessibility name Google, the model group, period,
+remaining allowance, reset availability, local read time and freshness.
+Disabled windows have no chip; weekly-only groups get no invented five-hour
+chip. Hide Argon by leaving out `google_quota:Gemini 4 Argon:7d`; all its
+active facts remain in `eon session --json` while any Google selector is
+enabled.
 
 Scope is the exact reported model-group name: nonempty, control-free and at
 most 32 UTF-8 bytes. The last colon separates `5h` (five hours) or `7d`

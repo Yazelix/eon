@@ -137,6 +137,8 @@ palette_fields! {
     quota_icon_codex: QuotaIconCodex = QuotaIconCodex;
     /// Claude quota-provider icon tint.
     quota_icon_claude: QuotaIconClaude = QuotaIconClaude;
+    /// Google quota-provider Gemini spark tint.
+    quota_icon_google: QuotaIconGoogle = QuotaIconGoogle;
     /// Notice-level resource dots and first quota pace anchor.
     load_notice: LoadNotice = AttentionNeedsInput;
     /// High-level resource dots and middle quota pace anchor.
@@ -183,6 +185,7 @@ calibrated_stops! {
     NoticeBackground => (0.234223970319, 0.021760661227, 82.323047940345, 0.95, false);
     QuotaIconCodex => (0.999999993474, 0.000000000000, 0.000000000000, 0.15, false);
     QuotaIconClaude => (0.672419625905, 0.130840179137, 38.755907245756, 0.4, false);
+    QuotaIconGoogle => (0.658687209572, 0.138921358493, 250.246720859154, 0.4, false);
     LoadHigh => (0.770159108622, 0.156375850831, 54.819708389055, 0.43, false);
     LoadCritical => (0.670782258360, 0.216543682367, 25.192635240386, 0.43, false);
 }
@@ -263,6 +266,7 @@ const PAIRS: &[Pair] = pairs! {
     Raw, 3.0, HyperlinkOutline => [TerminalFallback];
     Raw, 3.0, QuotaIconCodex => [TabIdle];
     Raw, 3.0, QuotaIconClaude => [TabIdle];
+    Raw, 3.0, QuotaIconGoogle => [TabIdle];
     Raw, 3.0, TabSelected => [BarBackground];
     BarPill, 3.0, AttentionNeedsInput => [BarBackground, TabIdle, TabHover, TabSelected, SessionPressed];
     Surface, 3.0, AttentionNeedsInput => [TerminalFallback, ChromeHighlight, DialogBackground];
@@ -810,6 +814,7 @@ mod generated_tests {
             ("notice_background", (35, 29, 18)),
             ("quota_icon_codex", (255, 255, 255)),
             ("quota_icon_claude", (217, 119, 87)),
+            ("quota_icon_google", (71, 150, 227)),
             ("load_notice", (255, 196, 87)),
             ("load_high", (255, 150, 70)),
             ("load_critical", (255, 75, 75)),

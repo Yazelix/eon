@@ -272,6 +272,7 @@ import ./default.nix {
       "system-linker-runtime" "rust-standard-library" "venus-shaders" "openai-logomark" "claude-logomark" "accesskit-chromium"
       "claude-code-mark"
       "codex-symbol"
+      "gemini-mark"
     ];
     ${pkgs.ncurses.name}.source = "${pkgs.ncurses.src} rebuilt with ${../../nix/ncurses-termios-speed.h}";
     ${pkgs.keyutils.name} = {
@@ -519,6 +520,19 @@ import ./default.nix {
         {
           file = ../../venus/assets/claude-splat-104.alpha;
           hash = "74e02f5b35b30449941a759acb6d0872aa3d3bda0bdb78760ee0eb8893479e7f";
+        }
+      ];
+    }
+    {
+      id = "gemini-mark";
+      version = codexbarIdentity.revision;
+      source = "${codexbarIdentity.source.url}, rasterized mask ${../../venus/assets/gemini-spark-104.alpha}";
+      licenses = [ "MIT" ];
+      notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/gemini-spark-104.alpha;
+          hash = "cc2c2e82d6cc9d4fba14a8f64b02632ae1d652d8ad839db1278650bf25404524";
         }
       ];
     }

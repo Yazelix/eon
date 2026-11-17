@@ -3981,31 +3981,80 @@ fn google_chips_follow_exact_selectors_and_source_windows() {
             .iter()
             .map(|q| q.label.as_str())
             .collect::<Vec<_>>(),
+        // The primary group carries the bare sparkle; another group leads with its initial.
+        ["C 2d15h/7d 0%", "2h30m/5h 74%", "2d15h/7d 42%"]
+    );
+    assert_eq!(
+        scene
+            .quotas
+            .iter()
+            .map(|q| q.accessible_label.as_str())
+            .collect::<Vec<_>>(),
         [
             "Google Claude and GPT models 2d15h/7d 0%",
             "Google Gemini Models 2h30m/5h 74%",
             "Google Gemini Models 2d15h/7d 42%",
         ]
     );
+    let metrics = CellMetrics::for_scale(1.0);
     for q in &scene.quotas {
         assert_eq!(q.provider.name(), "Google");
-        assert_eq!(q.accessible_label, q.label);
-        assert_eq!(
-            q.logo,
-            SceneRect::default(),
-            "text-only Google has no logo geometry"
-        );
+        // The same icon geometry as the Claude and Codex chips.
+        assert_eq!(q.logo.left, q.rect.left + metrics.padding);
+        assert_eq!(q.logo.width, metrics.font_size);
+        assert!(q.logo.right() < q.rect.right());
         assert_eq!(
             q.rect.width,
             q.label.chars().count() as f32 * 10.0
-                + 2.0 * CellMetrics::for_scale(1.0).padding
+                + 2.0 * metrics.padding
                 + 10.0
+                + metrics.font_size
+                + icon_gap(metrics)
         );
     }
     assert!(
         google_scene(&snapshot, &BarItem::DEFAULT, 3000, 1.0)
             .quotas
             .is_empty()
+    );
+}
+
+#[test]
+fn google_group_markers_stay_distinct_when_initials_collide() {
+    let mut snapshot = google_snapshot();
+    let windows = &mut snapshot.google_quota.as_mut().unwrap().windows;
+    windows[2].scope = Some("group 0".into());
+    windows[3].scope = Some("group 1".into());
+    windows[3].remaining_percent = 0; // Same values as group 0: only the marker tells them apart.
+    let items = [
+        ("group 1", 10080),
+        ("Gemini Models", 300),
+        ("group 0", 10080),
+        ("Unreported group", 10080),
+    ]
+    .map(|(scope, duration_minutes)| BarItem::GoogleQuota {
+        scope: scope.into(),
+        duration_minutes,
+    });
+    let scene = google_scene(&snapshot, &items, 3000, 1.0);
+    // Numbered in the bar's order among the selected groups sharing an initial; an
+    // unreported selected group still counts, so markers do not shift as reports change.
+    assert_eq!(
+        scene
+            .quotas
+            .iter()
+            .map(|q| (q.label.as_str(), q.accessible_label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("G1 2d15h/7d 0%", "Google group 1 2d15h/7d 0%"),
+            ("2h30m/5h 74%", "Google Gemini Models 2h30m/5h 74%"),
+            ("G2 2d15h/7d 0%", "Google group 0 2d15h/7d 0%"),
+        ]
+    );
+    let lone = google_scene(&snapshot, &items[..2], 3000, 1.0);
+    assert_eq!(
+        lone.quotas[0].label, "G 2d15h/7d 0%",
+        "a lone initial stays bare"
     );
 }
 
@@ -4092,12 +4141,11 @@ fn google_chip_truth_includes_old_reset_and_read_time() {
             assert_eq!(scene.quotas.len(), 1);
             let q = &scene.quotas[0];
             let position = if reset { "2h30m/5h" } else { "5h" };
+            let old = if stale { " old" } else { "" };
+            assert_eq!(q.label, format!("{position} 74%{old}"));
             assert_eq!(
-                q.label,
-                format!(
-                    "Google Gemini Models {position} 74%{}",
-                    if stale { " old" } else { "" }
-                )
+                q.accessible_label,
+                format!("Google Gemini Models {position} 74%{old}")
             );
             for text in [&q.tooltip, &q.description] {
                 for expected in [

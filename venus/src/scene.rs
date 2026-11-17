@@ -2964,21 +2964,66 @@ fn quota_shortfall(window: &QuotaWindow, observed_at: u64) -> Option<f32> {
     }
 }
 
+/// The window's position, duration and remaining share, as every chip shows them.
 fn quota_window_text(window: &QuotaWindow, observed_at: u64) -> String {
     let duration = quota_duration(window.duration_minutes);
     let label = match quota_window_position(window, observed_at) {
         Some(position) => format!("{position}/{duration}"),
         None => duration,
     };
-    match &window.scope {
-        Some(scope) => format!("{scope} {label} {}%", window.remaining_percent),
-        None => format!("{label} {}%", window.remaining_percent),
-    }
+    format!("{label} {}%", window.remaining_percent)
 }
 
-/// One provider chip's label with its pace, its hover list, and its accessible description.
+/// The Google model group whose chip carries the bare mark.
+const GOOGLE_PRIMARY_SCOPE: &str = "Gemini Models";
+
+/// Each selected Google group's chip marker, in the bar's order: none for the primary group,
+/// else the group's initial, numbered by order among the selected groups that share it, so
+/// that every selected group's chips stay apart (`C`, `G1`, `G2`).
+fn google_scope_markers(items: &[BarItem]) -> Vec<(&str, String)> {
+    let mut scopes = Vec::new();
+    for item in items {
+        if let BarItem::GoogleQuota { scope, .. } = item
+            && scope != GOOGLE_PRIMARY_SCOPE
+            && !scopes.contains(&scope.as_str())
+        {
+            scopes.push(scope.as_str());
+        }
+    }
+    let initial = |scope: &str| -> String {
+        scope
+            .chars()
+            .find(|c| c.is_alphanumeric())
+            .map_or_else(|| "?".into(), |c| c.to_uppercase().collect())
+    };
+    scopes
+        .iter()
+        .map(|&scope| {
+            let mark = initial(scope);
+            let sharing: Vec<_> = scopes
+                .iter()
+                .filter(|other| initial(other) == mark)
+                .collect();
+            let marker = if sharing.len() > 1 {
+                let order = sharing
+                    .iter()
+                    .position(|other| **other == scope)
+                    .unwrap_or(0)
+                    + 1;
+                format!("{mark}{order}")
+            } else {
+                mark
+            };
+            (scope, marker)
+        })
+        .collect()
+}
+
+/// One provider chip's label with its pace, its hover list, and its accessible text.
 struct QuotaText {
     label: String,
+    /// The chip's name for assistive technology: the provider, the full scope and the label.
+    accessible_label: String,
     remaining_percent: Option<u8>,
     pace: Option<f32>,
     tooltip: String,
@@ -3016,7 +3061,7 @@ fn quota_text(
     window: Option<&QuotaWindow>,
     now: Option<&jiff::Zoned>,
 ) -> QuotaText {
-    let (mut label, remaining_percent) = match state {
+    let (mut text, remaining_percent) = match state {
         CodexQuotaState::Fresh | CodexQuotaState::Stale => {
             let window = window.expect("EONW requires a quota window for fresh and stale states");
             (
@@ -3027,12 +3072,19 @@ fn quota_text(
         CodexQuotaState::Blocked => ("blocked".into(), None),
         CodexQuotaState::Unknown => ("unknown".into(), None),
     };
-    if provider == QuotaProvider::Google {
-        label.insert_str(0, "Google ");
-    }
     if state == CodexQuotaState::Stale {
-        label.push_str(" old");
+        text.push_str(" old");
     }
+    let scope = window.and_then(|window| window.scope.as_deref());
+    // A Google group is marked by the bar, which knows every selected group.
+    let label = match scope.filter(|_| provider != QuotaProvider::Google) {
+        Some(scope) => format!("{scope} {text}"),
+        None => text.clone(),
+    };
+    let accessible_label = match scope {
+        Some(scope) => format!("{} {scope} {text}", provider.name()),
+        None => format!("{} {text}", provider.name()),
+    };
     // Only fresh facts are judged; stale, blocked and unknown keep the neutral color.
     let pace = if state == CodexQuotaState::Fresh {
         window.and_then(|window| quota_shortfall(window, observed_at))
@@ -3165,6 +3217,7 @@ fn quota_text(
     });
     QuotaText {
         label,
+        accessible_label,
         remaining_percent,
         pace,
         tooltip,
@@ -3419,6 +3472,8 @@ impl WorkspaceScene {
             || eon_icon.map_or(0.0, |_| start),
             |label| label.rect.right() + gap,
         );
+        let google_markers = google_scope_markers(bar.items);
+        let google_markers = &google_markers;
         let quota_texts = bar
             .items
             .iter()
@@ -3538,17 +3593,24 @@ impl WorkspaceScene {
                                 item.selects(window.scope.as_deref(), window.duration_minutes)
                             })
                             .map(move |(index, window)| {
+                                let mut text = quota_text(
+                                    QuotaProvider::Google,
+                                    state,
+                                    quota.observed_at,
+                                    Some(window),
+                                    bar.now,
+                                );
+                                if let Some((_, marker)) = google_markers
+                                    .iter()
+                                    .find(|(scope, _)| window.scope.as_deref() == Some(*scope))
+                                {
+                                    text.label = format!("{marker} {}", text.label);
+                                }
                                 (
                                     item.clone(),
                                     QuotaProvider::Google,
                                     Some(QuotaWindowIdentity::Google(index as u8)),
-                                    quota_text(
-                                        QuotaProvider::Google,
-                                        state,
-                                        quota.observed_at,
-                                        Some(window),
-                                        bar.now,
-                                    ),
+                                    text,
                                 )
                             })
                     })
@@ -3562,16 +3624,8 @@ impl WorkspaceScene {
                 let (label, width) = header_text(HeaderText::Fact, &text.label);
                 let quota_padding = metrics.padding * 2.0
                     + tokens::chip_dot_reserve(metrics)
-                    + if provider == QuotaProvider::Google {
-                        0.0
-                    } else {
-                        metrics.font_size + icon_gap(metrics)
-                    };
-                let accessible_label = if provider == QuotaProvider::Google {
-                    label.clone()
-                } else {
-                    format!("{} {label}", provider.name())
-                };
+                    + metrics.font_size
+                    + icon_gap(metrics);
                 WorkspaceQuota {
                     item,
                     provider,
@@ -3581,7 +3635,7 @@ impl WorkspaceScene {
                         ..SceneRect::default()
                     },
                     logo: SceneRect::default(),
-                    accessible_label,
+                    accessible_label: text.accessible_label,
                     label,
                     remaining_percent: text.remaining_percent,
                     pace: text.pace,
@@ -3647,14 +3701,12 @@ impl WorkspaceScene {
         for quota in &mut quotas {
             quota.rect.left = left;
             quota.rect.height = tab_height;
-            if quota.provider != QuotaProvider::Google {
-                quota.logo = SceneRect {
-                    left: left + metrics.padding,
-                    top: (tab_height - metrics.font_size) / 2.0,
-                    width: metrics.font_size,
-                    height: metrics.font_size,
-                };
-            }
+            quota.logo = SceneRect {
+                left: left + metrics.padding,
+                top: (tab_height - metrics.font_size) / 2.0,
+                width: metrics.font_size,
+                height: metrics.font_size,
+            };
             left = quota.rect.right();
         }
         let max_tab_width = tab_max_width(metrics, tab_viewport.width);
@@ -3682,10 +3734,7 @@ impl WorkspaceScene {
                 rect,
             });
         }
-        for quota in quotas
-            .iter_mut()
-            .filter(|quota| quota.provider != QuotaProvider::Google)
-        {
+        for quota in &mut quotas {
             quota.logo.top =
                 pill_band.start + (pill_band.end - pill_band.start - quota.logo.height) / 2.0;
         }
@@ -3871,9 +3920,7 @@ impl WorkspaceScene {
             } else {
                 for quota in quotas.iter_mut().filter(|quota| quota.item == *item) {
                     quota.rect.left = left;
-                    if quota.provider != QuotaProvider::Google {
-                        quota.logo.left = left + metrics.padding;
-                    }
+                    quota.logo.left = left + metrics.padding;
                     left = quota.rect.right();
                 }
             }
