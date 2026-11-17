@@ -140,6 +140,11 @@ runtime root, and skips the Linux-only installer suite.
 
 On Linux, `eon-test` also mounts private passwd/NSS files: the effective user's
 OS account home is `/tmp/eon-slot-account`, distinct from `HOME=/tmp/home`.
+A private read-only `/etc` preserves the host's other entries and symlinks,
+but replaces `passwd` and `nsswitch.conf` with ordinary read-only files. This
+also handles NixOS links through `/etc/static` without masking their store
+targets or exposing the hidden `/run`. The startup probe checks OS account
+lookup as well as canonical-home mount isolation before starting tests.
 Existing canonical-account `.config/eon` and `.local/state/eon` directories are
 hidden with private mounts. Writable checkout, Cargo cache and target paths
 inside those directories or containing them are refused before directory

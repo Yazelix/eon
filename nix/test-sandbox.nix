@@ -266,12 +266,34 @@ pkgs.writeShellApplication {
 
     probe_mounts=()
     sandbox() {
+      # Bind destinations must not traverse host symlinks. NixOS /etc files
+      # commonly point through /etc/static into the store. Reconstruct /etc
+      # in this mount namespace instead of mounting over those store targets:
+      # aliases such as /etc/static/nsswitch.conf must still see the host's
+      # files. Refresh each launch: transient entries (for example
+      # ldconfig's ld.so.cache~) can disappear while a suite is running.
+      local entry target etc_mounts=(--tmpfs /etc)
+      shopt -s nullglob dotglob
+      for entry in /etc/*; do
+        case $entry in /etc/passwd | /etc/nsswitch.conf) continue ;; esac
+        if [ -L "$entry" ]; then
+          target=$(readlink -- "$entry") || continue
+          etc_mounts+=(--symlink "$target" "$entry")
+        else
+          etc_mounts+=(--ro-bind-try "$entry" "$entry")
+        fi
+      done
+      shopt -u nullglob dotglob
+      etc_mounts+=(
+        --ro-bind "$sandbox_private/passwd" /etc/passwd
+        --ro-bind "$sandbox_private/nsswitch.conf" /etc/nsswitch.conf
+        --remount-ro /etc
+      )
       bwrap --die-with-parent --new-session --unshare-all \
         --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run \
         "''${writable[@]}" --dir /tmp/home \
         --perms 0700 --dir /tmp/run --perms 0700 --dir /tmp/eon-slot-account \
-        --ro-bind "$sandbox_private/passwd" /etc/passwd \
-        --ro-bind "$sandbox_private/nsswitch.conf" /etc/nsswitch.conf \
+        "''${etc_mounts[@]}" \
         "''${probe_mounts[@]}" "''${hidden[@]}" \
         "''${environment[@]}" --setenv HOME /tmp/home --setenv XDG_RUNTIME_DIR /tmp/run \
         --chdir "$root" -- "$@"
@@ -287,12 +309,22 @@ pkgs.writeShellApplication {
     hidden+=(--tmpfs /tmp/eon-test-hidden/.config/eon --tmpfs /tmp/eon-test-hidden/.local/state/eon)
     # shellcheck disable=SC2016 # Variables below belong to the isolated child.
     sandbox bash -c '
+      account=$(getent passwd "$(id -u)") || exit 2
+      IFS=: read -r _ _ _ _ _ home _ <<< "$account"
+      test "$home" = /tmp/eon-slot-account || exit 2
+      test ! -L /etc/passwd && test ! -L /etc/nsswitch.conf || exit 2
       for suffix in .config/eon .local/state/eon; do
         path=/tmp/eon-test-hidden/$suffix/sentinel
         test ! -e "$path" || exit 1
         printf "inside\n" > "$path" || exit 1
       done
-    ' || { echo "eon-test: canonical-home mount isolation failed" >&2; exit 1; }
+    ' || {
+      case $? in
+        2) echo "eon-test: private OS account isolation failed" >&2 ;;
+        *) echo "eon-test: canonical-home mount isolation failed" >&2 ;;
+      esac
+      exit 1
+    }
     for suffix in .config/eon .local/state/eon; do
       test "$(cat "$sandbox_private/probe/$suffix/sentinel")" = outside || exit 1
     done
