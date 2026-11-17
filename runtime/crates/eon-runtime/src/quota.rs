@@ -908,13 +908,20 @@ fn fetch(
         .transpose()
 }
 
+type CommandResult = Result<Option<(Vec<u8>, process::ExitStatus)>, Failure>;
+
+fn consume_output(remaining: &mut usize, count: usize) -> Result<(), Failure> {
+    *remaining = remaining.checked_sub(count).ok_or(Failure::OutputLimit)?;
+    Ok(())
+}
+
 /// Drains bounded output and always cleans up the command's process group.
 fn run_command(
     mut command: Command,
     deadline: Instant,
     remaining: &mut usize,
     stop: &mpsc::Receiver<()>,
-) -> Result<Option<(Vec<u8>, process::ExitStatus)>, Failure> {
+) -> CommandResult {
     if !matches!(stop.try_recv(), Err(mpsc::TryRecvError::Empty)) {
         return Ok(None);
     }
@@ -940,10 +947,7 @@ fn run_command(
             match output.read(&mut chunk) {
                 Ok(0) => eof = true,
                 Ok(count) => {
-                    if count > *remaining {
-                        return Err(Failure::OutputLimit);
-                    }
-                    *remaining -= count;
+                    consume_output(remaining, count)?;
                     bytes.extend_from_slice(&chunk[..count]);
                 }
                 Err(e)

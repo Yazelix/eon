@@ -69,6 +69,15 @@ pub(super) fn fetch(
     stop: &mpsc::Receiver<()>,
 ) -> Result<Option<Vec<u8>>, Failure> {
     let deadline = Instant::now() + timeout;
+    fetch_with(program, move |command, remaining| {
+        super::run_command(command, deadline, remaining, stop)
+    })
+}
+
+fn fetch_with(
+    program: &Path,
+    mut run: impl FnMut(Command, &mut usize) -> super::CommandResult,
+) -> Result<Option<Vec<u8>>, Failure> {
     let program = if program == Path::new("agy") {
         resolve(std::env::var_os("PATH").as_deref())?
     } else {
@@ -85,11 +94,9 @@ pub(super) fn fetch(
         .map_err(|_| Failure::Start)?;
     let result = (|| {
         let mut remaining = MAX_BYTES;
-        let Some((version, status)) = super::run_command(
+        let Some((version, status)) = run(
             command(&program, &directory, &["--version"]),
-            deadline,
             &mut remaining,
-            stop,
         )?
         else {
             return Ok(None);
@@ -98,15 +105,13 @@ pub(super) fn fetch(
             return Err(Failure::Start);
         }
         check_version(&version)?;
-        let Some((bytes, status)) = super::run_command(
+        let Some((bytes, status)) = run(
             command(
                 &program,
                 &directory,
                 &["-p", "/usage", "--output-format", "json"],
             ),
-            deadline,
             &mut remaining,
-            stop,
         )?
         else {
             return Ok(None);
@@ -345,6 +350,86 @@ mod tests {
             )
             .into(),
         }
+    }
+
+    #[test]
+    fn collection_budget_is_inclusive_and_shared_across_phases() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let root = crate::supervisor::temporary_directory();
+        let program = root.join("agy");
+        super::super::tests::script(&program, "exit 91");
+        let mut failures = Vec::new();
+        for (label, padding, usage, expected, expected_calls) in [
+            ("exact cap", 0, MAX_BYTES - 5, Ok(Some(MAX_BYTES - 5)), 2),
+            (
+                "padded exact cap",
+                100,
+                MAX_BYTES - 105,
+                Ok(Some(MAX_BYTES - 105)),
+                2,
+            ),
+            (
+                "aggregate overflow",
+                100,
+                MAX_BYTES - 100,
+                Err(Failure::OutputLimit),
+                2,
+            ),
+            (
+                "version overflow",
+                MAX_BYTES - 4,
+                0,
+                Err(Failure::OutputLimit),
+                1,
+            ),
+            ("version exact cap", MAX_BYTES - 5, 0, Ok(Some(0)), 2),
+            (
+                "usage after exact version",
+                MAX_BYTES - 5,
+                1,
+                Err(Failure::OutputLimit),
+                2,
+            ),
+        ] {
+            let mut calls = 0;
+            let result = fetch_with(&program, |command, remaining| {
+                let arguments = command
+                    .get_args()
+                    .map(|argument| argument.to_str().unwrap())
+                    .collect::<Vec<_>>();
+                let bytes = match calls {
+                    0 => {
+                        assert_eq!(arguments, ["--version"]);
+                        let mut version = b"1.4.1".to_vec();
+                        version.resize(5 + padding, b' ');
+                        version
+                    }
+                    1 => {
+                        assert_eq!(arguments, ["-p", "/usage", "--output-format", "json"]);
+                        vec![b'0'; usage]
+                    }
+                    _ => panic!("unexpected third collection phase"),
+                };
+                calls += 1;
+                super::super::consume_output(remaining, bytes.len())?;
+                Ok(Some((bytes, std::process::ExitStatus::from_raw(0))))
+            });
+            check(
+                &mut failures,
+                label,
+                result.map(|bytes| bytes.map(|bytes| bytes.len())),
+                expected,
+            );
+            check(
+                &mut failures,
+                &format!("{label} calls"),
+                calls,
+                expected_calls,
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]
