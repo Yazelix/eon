@@ -232,13 +232,28 @@ Accepted flags are `-L`, `--print-build-logs`, `--keep-going`, `--no-link`,
 `--max-jobs 1|2` and `--cores 1..6`. Unknown arguments, shell commands, profile
 operations, Update and desktop/GPU/benchmark commands run through the local
 queue instead. A configured class does not make an unsafe command remote.
+`--out-link` stays local because Boat outputs never become host paths; keep host
+GC roots in a separate local step.
 
-The other supported `allow_shapes` values are `cargo-build` and `eon-test`.
-They permit `nix develop -c cargo build` (workspace/locked/offline/release/
-all-targets and `-p NAME`) and the pinned `nix develop -c eon-test` harness
-(ordinary subsets, `-p NAME`, doctests and 1–4 test threads). Ignored, live,
-visual and benchmark selectors stay local; direct Cargo test/nextest commands
-do not bypass Eon's test sandbox.
+The other supported `allow_shapes` values are `cargo-build`, `cargo-clippy` and
+`eon-test`. They permit `nix develop -c cargo build` (workspace/locked/offline/
+release/all-targets and `-p NAME`), `nix develop -c cargo clippy` with the same
+flags and an optional trailing `-- -D warnings`, and the pinned
+`nix develop -c eon-test` harness (ordinary subsets, `-p NAME`, doctests and 1–4
+test threads). Ignored, live, visual and benchmark selectors stay local; direct
+Cargo test/nextest commands do not bypass Eon's test sandbox.
+
+A permitted command may be wrapped in one `timeout DURATION`, where DURATION is
+a positive integer with an `s`, `m` or `h` suffix and no leading zero. The
+original argv, `timeout` included, runs unchanged. Boat's own deadline of
+`timeout_seconds` minus one minute starts before recovery, upload, Nix
+bootstrap and warmup, so the envelope may be at most `timeout_seconds` minus
+31 minutes: 89 minutes at 7200 and 29 minutes at 3600. A longer envelope,
+`timeout` options, `infinity`, fractions, other units and nested envelopes run
+locally. If preparation still overruns, Boat's deadline ends the run as an
+uncertain 125 with no local replay. A run stopped on the VM is cleaned up by
+deleting the VM, because `timeout` keeps its command in a separate process
+group.
 
 `environment` must be a named builds-only environment other than `base`.
 Create it with `boat env new eon-builds`, then set all passing controls off

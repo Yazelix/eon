@@ -1446,6 +1446,46 @@ fn asynchronous_boat_stop_is_confirmed_without_discarding_the_warm_vm() {
 }
 
 #[test]
+fn timeout_wrapped_gate_warms_publishes_and_runs_its_original_argv_on_boat() {
+    let f = Fixture::boat_fixture();
+    let config = f.dir.path().join("config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config).unwrap().replace(
+            "allow_shapes = ['nix-gate']",
+            "allow_shapes = ['nix-gate', 'cargo-clippy']\ntimeout_seconds = 7200",
+        ),
+    )
+    .unwrap();
+    fs::write(f.dir.path().join("provider/mode"), "paid").unwrap();
+    let argv = ["timeout", "85m", "nix", "build", ".#default"];
+    let mut args = vec!["slot", "run", "--"];
+    args.extend(argv);
+    let result = f.boat_command(&args).output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    // The envelope reached Boat rather than the local queue.
+    assert!(!f.dir.path().join("local-ran").exists());
+    let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
+    assert!(calls.lines().any(|line| matches!(line, "new" | "resume")));
+    let detached = fs::read(f.dir.path().join("provider/detached")).unwrap();
+    let words: Vec<_> = detached
+        .split(|byte| *byte == 0)
+        .filter(|word| !word.is_empty())
+        .map(|word| String::from_utf8_lossy(word).into_owned())
+        .collect();
+    assert_eq!(words[0], "1", "a wrapped gate still warms the gate inputs");
+    assert_eq!(words[1..], argv, "the VM runs the original argv");
+    assert_eq!(calls.lines().filter(|line| *line == "snapshot").count(), 1);
+    let warm: Value =
+        serde_json::from_slice(&fs::read(f.root().join("boat/warm.json")).unwrap()).unwrap();
+    assert_eq!(warm["snapshot"]["name"], "eon-warm");
+}
+
+#[test]
 fn named_warm_snapshot_uses_only_included_capacity_and_is_refreshed_for_locks() {
     let f = Fixture::boat_fixture();
     let args = ["slot", "run", "--", "nix", "build", ".#default"];

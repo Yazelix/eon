@@ -42,7 +42,7 @@ slots = [1, 2]
 # Optional Boat build route; empty means every command stays local.
 # The named environment must pass no credentials, variables, secret files or repos.
 [slots.boat]
-allow_shapes = [] # ["nix-gate"] enables Eon's headless Nix landing targets.
+allow_shapes = [] # "nix-gate", "cargo-build", "cargo-clippy" and "eon-test" may run on Boat.
 environment = "eon-builds"
 reserve_hours = 2
 timeout_seconds = 3600 # 120..7200; use 7200 for a cold bootstrap.

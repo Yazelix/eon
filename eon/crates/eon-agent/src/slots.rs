@@ -783,6 +783,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
         .map_err(io_failure)?
         .ok_or_else(|| io_failure(format!("cannot read {} process identity", slots.program)))?;
     let nesting_token = random()?;
+    let shape = boat::shape(&slots.config.boat, options.argv);
     let (mut ticket, pending) = {
         let _queue = slots.queue_lock(true).map_err(|e| slots.refuse_queue(e))?;
         let ticket = Ticket {
@@ -793,10 +794,9 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             argv: options.argv.to_vec(),
             front: options.front,
             quiet_exempt: options.quiet_exempt,
-            remote: boat::allowed(&slots.config.boat, options.argv),
-            fallback_reason: (!slots.config.boat.allow_shapes.is_empty()
-                && !boat::allowed(&slots.config.boat, options.argv))
-            .then(|| "policy-local".into()),
+            remote: shape.is_some(),
+            fallback_reason: (!slots.config.boat.allow_shapes.is_empty() && shape.is_none())
+                .then(|| "policy-local".into()),
             legacy: false,
             malformed: false,
         };
@@ -858,6 +858,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 let quiet = now / SECOND < policy.quiet_until && !ticket.quiet_exempt;
                 if !quiet
                     && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket))
+                    && let Some(shape) = shape
                     && slots.remote_enabled()
                     && let Some(lease) =
                         boat::Lease::claim(&slots.root).map_err(|e| slots.failure(&ticket, e))?
@@ -869,6 +870,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                         lease,
                         &slots.config.boat,
                         options.argv,
+                        shape,
                         &mut source,
                         slots.program,
                     ) {

@@ -94,6 +94,7 @@ exec)
       [[ " $* " == *' -- env -i HOME=/home/user USER=user LOGNAME=user PATH=/usr/local/bin:/usr/bin:/bin bash --noprofile --norc -c '* ]]
       until [ "$1" = eon-build ]; do shift; done
       shift; tree=$1; shift 3; run_id=$1
+      shift; printf '%s\0' "$1" "${@:3}" > "$root/detached"
       git -C "$root/upload" init -q
       git -C "$root/upload" add -f --all
       [ "$(git -C "$root/upload" write-tree)" = "$tree" ]

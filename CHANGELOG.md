@@ -45,6 +45,12 @@ installation, and proven contract changes.
   `/tmp` to `/private/tmp`. A runtime directory that is still too long reports
   its length and the limit and asks for a shorter `EON_RUNTIME_DIR`
   (`eon-mac-launch-kz4p.71`).
+
+- `slots.boat.allow_shapes` accepts `cargo-clippy` for workspace Clippy runs,
+  and a permitted command may run inside one bounded `timeout` that fits Boat's
+  deadline, so the landing lint and package gate can use Boat. `--out-link`
+  builds stay local (`eon-eon-agent-lr8sx.35`).
+
 - Heavy-slot callers can select a dedicated Eon slot configuration and delegate
   queued local admission while retaining captured-source checks. Boat admission
   requires verified trial or standard-plan included credit; interrupted results

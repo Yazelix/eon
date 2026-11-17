@@ -2,7 +2,7 @@
 pub(super) mod local;
 pub(super) mod tree;
 
-use crate::config::BoatConfig;
+use crate::config::{BoatConfig, Shape};
 use crate::launch::{atomic_write, ensure_parent};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,9 @@ use std::time::{Duration, Instant};
 
 const CONTROL: u64 = 30;
 const CLEANUP: u64 = 60;
+/// Boat's deadline starts before recovery, upload, Nix bootstrap and warmup; a `timeout`
+/// envelope must leave this much of it for them (a cold warmup measured about 23 minutes).
+const PREPARATION: u64 = 1800;
 static SIGNAL: AtomicI32 = AtomicI32::new(0);
 
 extern "C" fn cancel(signal: libc::c_int) {
@@ -674,6 +677,7 @@ pub(super) fn run(
     lease: Lease,
     config: &BoatConfig,
     argv: &[String],
+    shape: Shape,
     identity: &mut Option<tree::Identity>,
     program: &str,
 ) -> Result<Outcome, String> {
@@ -906,7 +910,7 @@ pub(super) fn run(
             Some(&live),
         )?;
         let jobs = config.jobs.to_string();
-        let gate_warm = if nix_gate(argv) { "1" } else { "0" };
+        let gate_warm = if shape == Shape::NixGate { "1" } else { "0" };
         let mut args = vec![
             "exec",
             &id,
@@ -1114,7 +1118,7 @@ pub(super) fn run(
             lock_key,
             snapshot: warm.take().and_then(|warm| warm.snapshot),
         };
-        if let Err(reason) = if nix_gate(argv) {
+        if let Err(reason) = if shape == Shape::NixGate {
             publish_snapshot(&cleanup, config, &mut next)
         } else {
             Ok(())
@@ -1140,18 +1144,49 @@ pub(super) fn run(
     Ok(Outcome::Complete(execution?))
 }
 
-pub(super) fn allowed(config: &BoatConfig, argv: &[String]) -> bool {
-    let shape = if nix_gate(argv) {
-        "nix-gate"
-    } else if let Some(shape) = dev_command(argv) {
-        shape
-    } else {
-        return false;
+/// The Boat shape `argv` is permitted as, or `None` when it must run locally. One
+/// `timeout DURATION` envelope may wrap a shape; the original argv still runs as given.
+pub(super) fn shape(config: &BoatConfig, argv: &[String]) -> Option<Shape> {
+    let command = match argv {
+        [program, duration, command @ ..] if program == "timeout" => {
+            // Boat's deadline also covers preparation, so the envelope must fit inside it.
+            let limit = config.timeout_seconds.saturating_sub(CLEANUP + PREPARATION);
+            (!command.is_empty() && seconds(duration)? <= limit).then_some(command)?
+        }
+        _ => argv,
     };
-    config.allow_shapes.iter().any(|entry| entry == shape)
+    let shape = if nix_gate(command) {
+        Shape::NixGate
+    } else {
+        dev_command(command)?
+    };
+    config.allow_shapes.contains(&shape).then_some(shape)
 }
 
-fn dev_command(argv: &[String]) -> Option<&'static str> {
+/// A `timeout` duration: a positive integer, without leading zeros, of seconds, minutes or
+/// hours. Options, fractions, other units and `infinity` are not durations here.
+fn seconds(duration: &str) -> Option<u64> {
+    let (unit, digits) = duration.as_bytes().split_last()?;
+    let scale = match unit {
+        b's' => 1,
+        b'm' => 60,
+        b'h' => 3600,
+        _ => return None,
+    };
+    if !(1..=6).contains(&digits.len())
+        || digits[0] == b'0'
+        || !digits.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    std::str::from_utf8(digits)
+        .ok()?
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(scale)
+}
+
+fn dev_command(argv: &[String]) -> Option<Shape> {
     let [nix, develop, command, program, tail @ ..] = argv else {
         return None;
     };
@@ -1159,16 +1194,29 @@ fn dev_command(argv: &[String]) -> Option<&'static str> {
         return None;
     }
     let (shape, rest) = match (program.as_str(), tail) {
-        ("cargo", [verb, rest @ ..]) if verb == "build" => ("cargo-build", rest),
-        ("eon-test", rest) if rest.first().is_none_or(|arg| arg != "list") => ("eon-test", rest),
+        ("cargo", [verb, rest @ ..]) if verb == "build" => (Shape::CargoBuild, rest),
+        ("cargo", [verb, rest @ ..]) if verb == "clippy" => {
+            // Only the landing lint level may follow `--`.
+            match rest.iter().position(|word| word == "--") {
+                Some(at) if rest[at + 1..] == ["-D", "warnings"] => {
+                    (Shape::CargoClippy, &rest[..at])
+                }
+                Some(_) => return None,
+                None => (Shape::CargoClippy, rest),
+            }
+        }
+        ("eon-test", rest) if rest.first().is_none_or(|arg| arg != "list") => {
+            (Shape::EonTest, rest)
+        }
         _ => return None,
     };
+    let cargo = matches!(shape, Shape::CargoBuild | Shape::CargoClippy);
     let mut words = rest.iter();
     while let Some(word) = words.next() {
         match word.as_str() {
-            "--workspace" | "--locked" | "--offline" if shape == "cargo-build" => (),
-            "--release" | "--all-targets" if shape == "cargo-build" => (),
-            "--no-capture" | "--no-fail-fast" | "--doc" if shape == "eon-test" => (),
+            "--workspace" | "--locked" | "--offline" if cargo => (),
+            "--release" | "--all-targets" if cargo => (),
+            "--no-capture" | "--no-fail-fast" | "--doc" if shape == Shape::EonTest => (),
             "-p" => {
                 let package = words.next()?;
                 if package.is_empty()
@@ -1179,13 +1227,13 @@ fn dev_command(argv: &[String]) -> Option<&'static str> {
                     return None;
                 }
             }
-            "--test-threads" if shape == "eon-test" => {
+            "--test-threads" if shape == Shape::EonTest => {
                 if !matches!(words.next()?.as_str(), "1" | "2" | "3" | "4") {
                     return None;
                 }
             }
             filter
-                if shape == "eon-test"
+                if shape == Shape::EonTest
                     && !filter.starts_with('-')
                     && !filter.is_empty()
                     && filter
@@ -1355,6 +1403,10 @@ mod tests {
         text.iter().map(|s| (*s).into()).collect()
     }
 
+    fn allowed(config: &BoatConfig, argv: &[String]) -> bool {
+        shape(config, argv).is_some()
+    }
+
     #[test]
     fn creation_jsonl_selects_identity_and_never_ignores_an_error_frame() {
         let bytes = b"{\"event\":\"creating\"}\n{\"sandbox\":{\"id\":\"bx_test\"}}\n{\"event\":\"ready\"}\n";
@@ -1387,7 +1439,7 @@ mod tests {
     #[test]
     fn policy_checks_the_entire_command_before_any_provider_call() {
         let config = BoatConfig {
-            allow_shapes: vec!["nix-gate".into(), "cargo-build".into(), "eon-test".into()],
+            allow_shapes: vec![Shape::NixGate, Shape::CargoBuild, Shape::EonTest],
             ..BoatConfig::default()
         };
         assert!(allowed(
@@ -1458,6 +1510,189 @@ mod tests {
             &BoatConfig::default(),
             &words(&["nix", "build", ".#default"])
         ));
+    }
+
+    #[test]
+    fn landing_clippy_and_timeout_envelopes_qualify_only_within_boat_budget() {
+        let config = |timeout_seconds| BoatConfig {
+            allow_shapes: vec![
+                Shape::NixGate,
+                Shape::CargoBuild,
+                Shape::CargoClippy,
+                Shape::EonTest,
+            ],
+            timeout_seconds,
+            ..BoatConfig::default()
+        };
+        let remote =
+            |timeout_seconds, argv: &[&str]| allowed(&config(timeout_seconds), &words(argv));
+        let gate = |duration| {
+            vec![
+                "timeout",
+                duration,
+                "nix",
+                "build",
+                "-L",
+                "--keep-going",
+                ".#default",
+                ".#bench",
+                ".#no-helix",
+                "--max-jobs",
+                "2",
+                "--cores",
+                "6",
+                "--no-link",
+            ]
+        };
+        let clippy = [
+            "nix",
+            "develop",
+            "-c",
+            "cargo",
+            "clippy",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ];
+        assert!(remote(7200, &clippy));
+        assert!(remote(
+            7200,
+            &["nix", "develop", "-c", "cargo", "clippy", "-p", "rota-cli"]
+        ));
+        assert!(!allowed(
+            &BoatConfig {
+                allow_shapes: vec![Shape::CargoBuild],
+                ..BoatConfig::default()
+            },
+            &words(&clippy)
+        ));
+        for duration in ["85m", "89m", "5340s", "1h"] {
+            let argv = words(&gate(duration));
+            assert_eq!(
+                shape(&config(7200), &argv),
+                Some(Shape::NixGate),
+                "{duration}"
+            );
+        }
+        assert!(remote(
+            7200,
+            &[
+                "timeout", "30s", "nix", "develop", "-c", "eon-test", "-p", "rota-cli"
+            ]
+        ));
+        assert!(remote(3600, &gate("29m")));
+        for (limit, duration) in [
+            (7200, "90m"),
+            (7200, "5341s"),
+            (7200, "120m"),
+            (3600, "30m"),
+            (1860, "1s"),
+        ] {
+            assert!(!remote(limit, &gate(duration)), "{limit} {duration}");
+        }
+        for duration in [
+            "0", "0m", "012m", "1.5h", "2d", "120", "inf", "infinity", "9999999h", "m", "1M",
+            "1m\u{e9}", "\u{e9}",
+        ] {
+            assert!(!remote(7200, &gate(duration)), "{duration:?}");
+        }
+        let landing_out_link = [
+            "nix",
+            "build",
+            "-L",
+            "--keep-going",
+            ".#default",
+            "--max-jobs",
+            "2",
+            "--cores",
+            "6",
+            "--out-link",
+            "/host/lead/land-x-built",
+        ];
+        let mut wrapped_out_link = vec!["timeout", "85m"];
+        wrapped_out_link.extend(landing_out_link);
+        for argv in [
+            &landing_out_link[..],
+            &wrapped_out_link,
+            &["timeout", "--", "1m", "nix", "build", ".#default"],
+            &["timeout", "-s", "KILL", "1m", "nix", "build", ".#default"],
+            &["timeout", "-k", "5", "1m", "nix", "build", ".#default"],
+            &["timeout", "--foreground", "1m", "nix", "build", ".#default"],
+            &[
+                "timeout",
+                "--preserve-status",
+                "1m",
+                "nix",
+                "build",
+                ".#default",
+            ],
+            &[
+                "timeout",
+                "1m",
+                "timeout",
+                "1m",
+                "nix",
+                "build",
+                ".#default",
+            ],
+            &["timeout", "1m"],
+            &["timeout", "1m", "bash", "-c", "nix build .#default"],
+            &[
+                "timeout",
+                "1m",
+                "env",
+                "CARGO_TARGET_DIR=/x",
+                "nix",
+                "develop",
+                "-c",
+                "cargo",
+                "build",
+            ],
+            &["env", "X=1", "nix", "build", ".#default"],
+            &["nix", "develop", "-c", "cargo", "clippy", "--fix"],
+            &[
+                "nix",
+                "develop",
+                "-c",
+                "cargo",
+                "clippy",
+                "--manifest-path",
+                "/x/Cargo.toml",
+            ],
+            &[
+                "nix", "develop", "-c", "cargo", "clippy", "--", "-A", "warnings",
+            ],
+            &[
+                "nix",
+                "develop",
+                "-c",
+                "cargo",
+                "clippy",
+                "--",
+                "-D",
+                "warnings",
+                "--cap-lints",
+                "allow",
+            ],
+            &[
+                "nix",
+                "develop",
+                "-c",
+                "cargo",
+                "clippy",
+                "--",
+                "-D",
+                "warnings",
+                "-D",
+                "clippy::all",
+            ],
+            &["nix", "develop", "-c", "cargo", "clippy", "--"],
+        ] {
+            assert!(!remote(7200, argv), "{argv:?}");
+        }
     }
 
     #[test]

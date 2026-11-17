@@ -85,10 +85,21 @@ impl Default for SlotConfig {
     }
 }
 
+/// A command shape that `slots.boat.allow_shapes` can permit on Boat. The slot route
+/// classifies each request's argv into at most one shape.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum Shape {
+    NixGate,
+    CargoBuild,
+    CargoClippy,
+    EonTest,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BoatConfig {
-    pub allow_shapes: Vec<String>,
+    pub allow_shapes: Vec<Shape>,
     pub environment: String,
     pub reserve_hours: f64,
     pub timeout_seconds: u64,
@@ -121,11 +132,7 @@ pub struct SlotClass {
 impl SlotConfig {
     fn validate(&self) -> Result<(), String> {
         let boat = &self.boat;
-        if boat
-            .allow_shapes
-            .iter()
-            .any(|shape| !matches!(shape.as_str(), "nix-gate" | "cargo-build" | "eon-test"))
-            || boat.allow_shapes.iter().collect::<BTreeSet<_>>().len() != boat.allow_shapes.len()
+        if boat.allow_shapes.iter().collect::<BTreeSet<_>>().len() != boat.allow_shapes.len()
             || boat.environment.is_empty()
             || boat.environment == "base"
             || boat.environment.len() > 63
@@ -144,7 +151,7 @@ impl SlotConfig {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         {
-            return Err("invalid slots.boat policy: use supported build shapes, a non-base environment, finite reserve, timeout 120..7200 and jobs 1..4".into());
+            return Err("invalid slots.boat policy: use unique build shapes, a non-base environment, finite reserve, timeout 120..7200 and jobs 1..4".into());
         }
         if self.count == 0 || self.count == u16::MAX || !(0..=19).contains(&self.nice) {
             return Err("slots need a positive count below 65535 and nice from 0 to 19".into());
@@ -744,6 +751,31 @@ mod tests {
             );
         }
         assert!(Config::parse(&format!("typo = true\n{EXAMPLE}"), "rota").is_err());
+    }
+
+    #[test]
+    fn boat_shapes_accept_each_known_name_once_and_refuse_unknown_or_repeated_names() {
+        let with = |shapes: &str| {
+            EXAMPLE.replace("allow_shapes = []", &format!("allow_shapes = {shapes}"))
+        };
+        let config = Config::parse(
+            &with("['nix-gate', 'cargo-build', 'cargo-clippy', 'eon-test']"),
+            "rota",
+        )
+        .unwrap();
+        assert_eq!(
+            config.slots.boat.allow_shapes,
+            [
+                Shape::NixGate,
+                Shape::CargoBuild,
+                Shape::CargoClippy,
+                Shape::EonTest
+            ]
+        );
+        let error = Config::parse(&with("['bogus']"), "rota").unwrap_err();
+        assert!(error.contains("unknown variant `bogus`"), "{error}");
+        let error = Config::parse(&with("['cargo-clippy', 'cargo-clippy']"), "rota").unwrap_err();
+        assert!(error.contains("invalid slots.boat policy"), "{error}");
     }
 
     #[test]
