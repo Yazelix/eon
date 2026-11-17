@@ -241,3 +241,26 @@ lines = [8709, 8714]
 [[case.expect]]
 file = "eon/crates/eon/tests/workspace_control.rs"
 lines = [8494, 8494]
+
+[[case]]
+id = "R29"
+kind = "fix-forward"
+commit = "fdba6bfc5aa531943bfd56b32119acbc50ee60cb"
+fixed_by = "dbe8c6cb74c93fc38436002a2deaa19660b29480"
+class = "racy-test"
+tier = "high"
+summary = "retain_leaves prunes the process-global PAIRS map using only one caller's live markers, so the unit test's empty sweep or a supervisor test's sweep can delete another parallel libtest's pending real-PTY leave before its first Send; Pair::leave then returns zero copies and Darwin CI fails."
+evidence = "fdba6bfc adds the unscoped retain at pair.rs:382-383, the empty unit-test sweep at :655 and the supervisor caller at supervisor.rs:2068. Darwin run 44029329574 on 3adf43ea failed at iteration 5 with 'no key written', 95 ms after the sweeping unit test finished. eon-xzxn6's gated unit and supervisor sweeps each reproduce that assertion before the fix and pass all 200 iterations after; dbe8c6cb scopes pruning to the allocator runtime directory. Nextest process isolation hid the shared-process interference locally."
+mechanism = [["global", "shared", "static", "process-wide"], ["retain_leaves", "prun", "sweep", "retain"], ["another test", "other test", "parallel", "libtest", "cross-test", "unrelated", "other runtime", "another runtime", "other supervisor", "concurrent"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/pair.rs"
+lines = [382, 383]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/pair.rs"
+lines = [654, 656]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/supervisor.rs"
+lines = [2068, 2068]
