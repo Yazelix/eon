@@ -1,3 +1,5 @@
+#![deny(unsafe_code, clippy::undocumented_unsafe_blocks)]
+
 //! The real-PTY checks: each starts the Orbit at `ORBIT_BIN` on
 //! Orbit's command line, drives it through ORBS v14 and management
 //! messages encoded and decoded by the canonical `orbit-protocol` codec, and
@@ -7,6 +9,11 @@
 //! runs each as its own check, `real-pty --ignored --exact NAME`. A check's
 //! child script, tests/NAME-shell.sh, comes from the variable nix/orbit-checks.nix sets,
 //! or from the source tree.
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+#[path = "../support/process.rs"]
+mod native_process;
 
 mod kitty;
 mod support;

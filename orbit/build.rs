@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Builds the Bend worker (docs/HOST.md): bun runs the pinned Bend compiler
 //! from `BEND_SOURCE_DIR`, which turns src/main.bend into C, and the clang
 //! at `BEND_CLANG` compiles that C. The host runs the worker from its package's libexec, or

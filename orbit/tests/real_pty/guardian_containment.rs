@@ -30,20 +30,58 @@ impl Drop for Leftovers {
     fn drop(&mut self) {
         for &pid in &self.0 {
             if alive(pid) {
-                let target = if field("pgid", pid) == pid.to_string() {
-                    -pid
+                let group = rustix::process::Pid::from_raw(pid)
+                    .and_then(|pid| rustix::process::getpgid(Some(pid)).ok());
+                if group.is_some_and(|group| group.as_raw_pid() == pid) {
+                    let _ = try_signal_group(pid, libc::SIGKILL);
                 } else {
-                    pid
-                };
-                // SAFETY: sending a signal has no memory effects.
-                unsafe { libc::kill(target, libc::SIGKILL) };
+                    let _ = try_signal(pid, libc::SIGKILL);
+                }
             }
         }
     }
 }
 
+#[test]
+fn cleanup_ends_the_owned_group_not_only_its_leader() {
+    use std::{os::unix::process::CommandExt, process::Command};
+
+    struct Children(Vec<std::process::Child>);
+    impl Drop for Children {
+        fn drop(&mut self) {
+            for child in &mut self.0 {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+    let leader = Command::new("sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = i32::try_from(leader.id()).unwrap();
+    let mut children = Children(vec![leader]);
+    children.0.push(
+        Command::new("sleep")
+            .arg("30")
+            .process_group(pid)
+            .spawn()
+            .unwrap(),
+    );
+    drop(Leftovers(vec![pid]));
+    within_two_seconds(|| {
+        children
+            .0
+            .iter_mut()
+            .all(|child| matches!(child.try_wait(), Ok(Some(_))))
+    })
+    .then_some(())
+    .expect("cleanup left an owned group member running");
+}
+
 /// Waits up to two seconds for a condition to hold.
-fn within_two_seconds(holds: impl Fn() -> bool) -> bool {
+fn within_two_seconds(mut holds: impl FnMut() -> bool) -> bool {
     (0..200).any(|_| {
         if holds() {
             return true;

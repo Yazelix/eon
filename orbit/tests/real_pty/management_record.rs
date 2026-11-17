@@ -47,8 +47,7 @@ fn private_file(path: &Path, socket: bool) {
     } else {
         metadata.file_type().is_file()
     };
-    // SAFETY: geteuid has no preconditions.
-    let euid = unsafe { libc::geteuid() };
+    let euid = rustix::process::geteuid().as_raw();
     assert!(
         kind && metadata.mode() & 0o7777 == 0o600 && metadata.uid() == euid,
         "{} is not a private {}",
@@ -62,15 +61,17 @@ fn child_script(directory: &Path, text: &str) -> PathBuf {
 }
 
 pub fn run() {
-    // SAFETY: geteuid has no preconditions.
-    let euid = unsafe { libc::geteuid() };
+    let euid = rustix::process::geteuid().as_raw();
 
     // A managed run publishes its live record at Ready and a tombstone with
     // the child's exact code when the child exits.
     {
         let directory = TempDir::new();
         let gate = Gate::new(&directory, "exit-gate");
-        let shell = child_script(&directory, "#!/bin/sh\nread -r _ < \"$ORBIT_GATE\"\nexit 7\n");
+        let shell = child_script(
+            &directory,
+            "#!/bin/sh\nread -r _ < \"$ORBIT_GATE\"\nexit 7\n",
+        );
         let mut server = Server::launch(
             &directory,
             &[shell.as_os_str()],
@@ -130,7 +131,10 @@ pub fn run() {
     {
         let directory = TempDir::new();
         let gate = Gate::new(&directory, "exit-gate");
-        let shell = child_script(&directory, "#!/bin/sh\nread -r _ < \"$ORBIT_GATE\"\nexit 5\n");
+        let shell = child_script(
+            &directory,
+            "#!/bin/sh\nread -r _ < \"$ORBIT_GATE\"\nexit 5\n",
+        );
         let mut server = Server::launch(
             &directory,
             &[shell.as_os_str()],
@@ -213,7 +217,11 @@ pub fn run() {
         run_command(
             &server_command(
                 &path,
-                &[OsStr::new("/bin/sh"), OsStr::new("-c"), OsStr::new("exit 3")],
+                &[
+                    OsStr::new("/bin/sh"),
+                    OsStr::new("-c"),
+                    OsStr::new("exit 3"),
+                ],
                 &MANAGED,
             ),
             &[],

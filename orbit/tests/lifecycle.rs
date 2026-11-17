@@ -1,3 +1,12 @@
+#![deny(unsafe_code, clippy::undocumented_unsafe_blocks)]
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+#[path = "support/process.rs"]
+mod native_process;
+
+use rustix::process::{Pid, Signal};
+
 use std::{
     fs::{self, OpenOptions},
     io::{BufReader, Read, Write},
@@ -94,13 +103,9 @@ impl Drop for ProcessCleanup {
         if !process_identity_matches(pid, start) {
             return;
         }
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
-        }
+        let _ = send_signal(pid, Signal::TERM);
         if wait_process_gone(pid).is_err() && process_identity_matches(pid, start) {
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGKILL);
-            }
+            let _ = send_signal(pid, Signal::KILL);
             let _ = wait_process_gone(pid);
         }
     }
@@ -676,11 +681,27 @@ fn wait_bounded(server: &mut Server) -> TestResult<ExitStatus> {
     }
 }
 
+fn positive_pid(pid: u32) -> Option<Pid> {
+    i32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid > 0)
+        .and_then(Pid::from_raw)
+}
+
+fn send_signal(pid: u32, signal: Signal) -> std::io::Result<()> {
+    match positive_pid(pid) {
+        Some(pid) => rustix::process::kill_process(pid, signal).map_err(Into::into),
+        None => Ok(()),
+    }
+}
+
 fn wait_process_gone(pid: u32) -> TestResult {
+    let Some(process) = positive_pid(pid) else {
+        return Ok(());
+    };
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        if rustix::process::test_kill_process(process) == Err(rustix::io::Errno::SRCH) {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -688,6 +709,21 @@ fn wait_process_gone(pid: u32) -> TestResult {
         }
         thread::yield_now();
     }
+}
+
+#[test]
+fn invalid_process_ids_are_gone_and_cleanup_does_not_panic() {
+    for pid in [0, i32::MAX as u32 + 1, u32::MAX] {
+        // Check the selector before any syscall, including in sensitivity runs.
+        assert!(positive_pid(pid).is_none());
+        assert!(wait_process_gone(pid).is_ok());
+        assert!(!process_identity_matches(pid, 1));
+        drop(ProcessCleanup(Some((pid, 1))));
+    }
+    assert_eq!(
+        positive_pid(i32::MAX as u32).unwrap().as_raw_pid(),
+        i32::MAX
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -703,18 +739,8 @@ fn process_start_identity(pid: u32) -> TestResult<u64> {
 
 #[cfg(target_os = "macos")]
 fn process_start_identity(pid: u32) -> TestResult<u64> {
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of_val(&info) as libc::c_int;
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid as libc::c_int,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&raw mut info).cast(),
-            size,
-        )
-    };
-    if read != size || info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
+    let info = native_process::bsd_info(pid.try_into()?, false)?;
+    if info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
         return Err("invalid macOS process start identity".into());
     }
     info.pbi_start_tvsec
@@ -725,7 +751,7 @@ fn process_start_identity(pid: u32) -> TestResult<u64> {
 }
 
 fn process_identity_matches(pid: u32, start: u64) -> bool {
-    process_start_identity(pid).is_ok_and(|current| current == start)
+    positive_pid(pid).is_some() && process_start_identity(pid).is_ok_and(|current| current == start)
 }
 
 #[cfg(target_os = "linux")]
@@ -760,10 +786,7 @@ fn process_cpu_ticks(pid: u32) -> TestResult<u64> {
 }
 
 fn terminate(server: &Server) -> std::io::Result<()> {
-    match unsafe { libc::kill(server.0.id() as libc::pid_t, libc::SIGTERM) } {
-        0 => Ok(()),
-        _ => Err(std::io::Error::last_os_error()),
-    }
+    rustix::process::kill_process(Pid::from_child(&server.0), Signal::TERM).map_err(Into::into)
 }
 
 fn frame_text(frame: &Frame) -> String {
@@ -958,20 +981,25 @@ const SLOW_TITLES: u32 = 1000;
 /// three-CPU macOS runner, where a fixed five seconds for the phase ran out.
 const SLOW_TITLE_ALLOWANCE: Duration = Duration::from_millis(30);
 
-/// CPU seconds of the children this process has reaped. Under nextest, which
-/// runs one test per process, those are the test's own Orbit with its worker
-/// and shell.
-fn reaped_children_cpu() -> f64 {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    // SAFETY: usage is a valid rusage for getrusage to fill, and stays zeroed
-    // if it fails.
-    let usage = unsafe {
-        libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr());
-        usage.assume_init()
-    };
-    let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1e6;
-    seconds(usage.ru_utime) + seconds(usage.ru_stime)
+#[allow(unsafe_code)]
+mod usage {
+    /// CPU seconds of the children this process has reaped. Under nextest, which
+    /// runs one test per process, those are the test's own Orbit with its worker
+    /// and shell.
+    pub(super) fn reaped_children_cpu() -> f64 {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        // SAFETY: usage is a valid rusage for getrusage to fill, and stays zeroed
+        // if it fails.
+        let usage = unsafe {
+            libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr());
+            usage.assume_init()
+        };
+        let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1e6;
+        seconds(usage.ru_utime) + seconds(usage.ru_stime)
+    }
 }
+
+use usage::reaped_children_cpu;
 
 #[test]
 fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> TestResult {
@@ -1226,8 +1254,7 @@ fn transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal() -> Test
     );
     if let Some(cpu_before) = cpu_before {
         let cpu_ticks = process_cpu_ticks(server.0.id())? - cpu_before;
-        let clock_ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-        assert!(clock_ticks > 0, "sysconf(_SC_CLK_TCK) failed");
+        let clock_ticks = rustix::param::clock_ticks_per_second();
         assert!(
             cpu_ticks.saturating_mul(5) < clock_ticks as u64,
             "Orbit consumed {cpu_ticks}/{clock_ticks} CPU ticks during a one-second PTY slave gap"
@@ -1936,7 +1963,7 @@ fn stale_socket_and_safe_signal_shutdown() -> TestResult {
     assert!(server.shutdown()?.success());
     assert!(!socket.exists());
     wait_process_gone(shell_pid)?;
-    assert_eq!(unsafe { libc::kill(foreground_pid as libc::pid_t, 0) }, 0);
+    assert!(rustix::process::test_kill_process(positive_pid(foreground_pid).unwrap()).is_ok());
     wait_process_gone(foreground_pid)?;
 
     fs::write(&socket, b"do not remove")?;
@@ -2219,10 +2246,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     allow_this_process(&mut initial_manager)?;
     let initial_revision = Client::attach(&socket)?.frame.revision;
 
-    assert_eq!(
-        unsafe { libc::kill(launcher.id() as libc::pid_t, libc::SIGKILL) },
-        0
-    );
+    rustix::process::kill_process(Pid::from_child(&launcher), Signal::KILL)?;
     assert!(!launcher.wait()?.success());
     drop(initial_manager);
     thread::sleep(Duration::from_millis(150));
@@ -2269,7 +2293,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     assert!(presentation.frame.revision > initial_revision);
     assert_eq!(identity.process_id, orbit_pid);
     assert!(process_identity_matches(orbit_pid, identity.process_start));
-    assert_eq!(unsafe { libc::kill(pty_pid as libc::pid_t, 0) }, 0);
+    assert!(rustix::process::test_kill_process(positive_pid(pty_pid).unwrap()).is_ok());
 
     let stop = management::encode_client_message(&ManagementClientMessage::Stop)?;
     winner.reader.get_mut().write_all(&stop)?;

@@ -1,3 +1,5 @@
+#![deny(unsafe_code, clippy::undocumented_unsafe_blocks)]
+
 use std::{
     io,
     os::fd::RawFd,
@@ -11,6 +13,7 @@ mod history;
 pub mod host;
 mod input;
 mod management;
+#[allow(unsafe_code)]
 mod platform;
 mod pointer;
 mod pty;

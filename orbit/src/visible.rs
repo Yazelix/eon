@@ -51,36 +51,47 @@ pub(crate) fn read(terminal: &Terminal<'static, '_>, revision: u64) -> Option<Vi
     })
 }
 
-/// One row of the active area as plain trimmed text.
-fn row_text(terminal: &Terminal<'static, '_>, y: u16, columns: u16) -> Option<String> {
-    if columns == 0 {
-        return Some(String::new());
+#[allow(unsafe_code)]
+mod row {
+    use super::*;
+
+    /// One row of the active area as plain trimmed text.
+    pub(super) fn row_text(
+        terminal: &Terminal<'static, '_>,
+        y: u16,
+        columns: u16,
+    ) -> Option<String> {
+        if columns == 0 {
+            return Some(String::new());
+        }
+        let at = |x: u16| {
+            terminal
+                .grid_ref(Point::Active(PointCoordinate { x, y: y.into() }))
+                .ok()
+        };
+        let selection = Selection::new(at(0)?, at(columns - 1)?, false);
+        let mut formatter = Formatter::new(terminal).ok()?;
+        formatter
+            .set_format(Format::Plain)
+            .ok()?
+            .set_unwrap(false)
+            .ok()?
+            // The formatter's own trim drops a combining mark on a blank cell, so
+            // only real spaces are trimmed below.
+            .set_trim(false)
+            .ok()?;
+        // SAFETY: Both endpoints came from this terminal's active screen; its
+        // shared borrow prevents mutation until formatting finishes.
+        unsafe { formatter.set_selection(Some(&selection)) }.ok()?;
+        let bytes = formatter.format_alloc(None).ok()?;
+        let text = std::str::from_utf8(&bytes).ok()?;
+        Some(sanitized(
+            text.trim_end_matches(['\n', '\r']).trim_end_matches(' '),
+        ))
     }
-    let at = |x: u16| {
-        terminal
-            .grid_ref(Point::Active(PointCoordinate { x, y: y.into() }))
-            .ok()
-    };
-    let selection = Selection::new(at(0)?, at(columns - 1)?, false);
-    let mut formatter = Formatter::new(terminal).ok()?;
-    formatter
-        .set_format(Format::Plain)
-        .ok()?
-        .set_unwrap(false)
-        .ok()?
-        // The formatter's own trim drops a combining mark on a blank cell, so
-        // only real spaces are trimmed below.
-        .set_trim(false)
-        .ok()?;
-    // SAFETY: Both endpoints came from this terminal's active screen; its
-    // shared borrow prevents mutation until formatting finishes.
-    unsafe { formatter.set_selection(Some(&selection)) }.ok()?;
-    let bytes = formatter.format_alloc(None).ok()?;
-    let text = std::str::from_utf8(&bytes).ok()?;
-    Some(sanitized(
-        text.trim_end_matches(['\n', '\r']).trim_end_matches(' '),
-    ))
 }
+
+use row::row_text;
 
 /// The row with every control character, line feeds included, as U+FFFD, so
 /// the row stays one line.

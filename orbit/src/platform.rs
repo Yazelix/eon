@@ -11,8 +11,9 @@ use std::{
     io,
     os::{
         fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
-        unix::net::UnixStream,
+        unix::{net::UnixStream, process::CommandExt},
     },
+    process::{Child, Command},
     ptr,
 };
 
@@ -41,7 +42,8 @@ pub(crate) fn pipe(nonblocking: bool) -> io::Result<(File, File)> {
 
 /// Writes one byte to `fd`; async-signal-safe, for a signal handler's wake.
 pub(crate) fn wake(fd: RawFd) {
-    // SAFETY: write is async-signal-safe; a full pipe already wakes the wait.
+    // SAFETY: write is async-signal-safe and reads one byte of static storage;
+    // it retains no pointer, and an invalid/full pipe can only fail the write.
     unsafe { libc::write(fd, b"x".as_ptr().cast(), 1) };
 }
 
@@ -105,6 +107,29 @@ pub(crate) fn poll<'fd>(
         .collect())
 }
 
+/// Spawns while the worker's borrowed pipe ends remain owned by the caller.
+pub(crate) fn spawn_worker(
+    mut command: Command,
+    reader: &File,
+    writer: &File,
+) -> io::Result<Child> {
+    let (reader, writer) = (reader.as_raw_fd(), writer.as_raw_fd());
+    // SAFETY: the borrowed Files keep both descriptors live through spawn;
+    // configure_worker runs only async-signal-safe calls in the forked child.
+    // Descriptors 3/4 are reserved for its protocol; replaced owners are not
+    // used again in the child before exec.
+    unsafe { command.pre_exec(move || configure_worker(reader, writer)) };
+    command.spawn()
+}
+
+/// Spawns the PTY child with its already-owned stdin as controlling terminal.
+pub(crate) fn spawn_child(mut command: Command, parent: pid_t) -> io::Result<Child> {
+    // SAFETY: configure_child runs only async-signal-safe calls after fork;
+    // this owned Command is dropped after spawn, so its hook cannot be reused.
+    unsafe { command.pre_exec(move || configure_child(parent)) };
+    command.spawn()
+}
+
 /// Moves the fact pipe's reader to descriptor 3 and the decision pipe's
 /// writer to 4 in the Bend worker. Only async-signal-safe calls run.
 ///
@@ -112,7 +137,7 @@ pub(crate) fn poll<'fd>(
 ///
 /// Call it only between fork and exec of the worker, where nothing else owns
 /// descriptors 3 and 4.
-pub(crate) unsafe fn configure_worker(reader: RawFd, writer: RawFd) -> io::Result<()> {
+unsafe fn configure_worker(reader: RawFd, writer: RawFd) -> io::Result<()> {
     // SAFETY: Only async-signal-safe prctl, fcntl and dup2 run, in the
     // forked worker the caller guarantees.
     unsafe {
@@ -391,9 +416,11 @@ fn children(pid: pid_t, limit: usize) -> Vec<pid_t> {
 /// The BSD record of `pid`, if libproc returns all of it for that process.
 #[cfg(target_os = "macos")]
 fn bsd_info(pid: pid_t) -> Option<libc::proc_bsdinfo> {
-    // SAFETY: proc_pidinfo fills the zeroed record for `pid`.
+    // SAFETY: proc_bsdinfo contains only integers and byte arrays, all valid at zero.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of_val(&info) as libc::c_int;
+    // SAFETY: info is writable for exactly size bytes and remains live for the call;
+    // the result is used only after the complete record and matching PID are checked.
     let read =
         unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
     (read == size && u32::try_from(pid) == Ok(info.pbi_pid)).then_some(info)
@@ -429,8 +456,9 @@ fn process(pid: pid_t, clock: &Clock) -> Option<Process> {
 /// # Safety
 ///
 /// Call it only between fork and exec of the PTY child.
-pub(crate) unsafe fn configure_child(parent: pid_t) -> io::Result<()> {
-    // SAFETY: These process-control calls have no Rust alias.
+unsafe fn configure_child(parent: pid_t) -> io::Result<()> {
+    // SAFETY: the caller confines these async-signal-safe syscalls to the forked
+    // child; ioctl receives scalar arguments and rejects an invalid stdin.
     unsafe {
         // On Linux the child hears SIGHUP if the host dies; elsewhere the
         // closed PTY master hangs it up.
@@ -528,29 +556,22 @@ pub(crate) fn send_bench_trace(
 
 /// Shrinks the socket's send buffer, so a test can fill it.
 #[cfg(test)]
-pub(crate) fn set_send_buffer(stream: &UnixStream, size: c_int) -> io::Result<()> {
-    // SAFETY: setsockopt reads one integer and changes only the owned socket.
-    if unsafe {
-        libc::setsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_SNDBUF,
-            (&raw const size).cast(),
-            std::mem::size_of_val(&size) as libc::socklen_t,
-        )
-    } == -1
-    {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
+pub(crate) fn set_send_buffer(stream: &UnixStream, size: usize) -> io::Result<()> {
+    rustix::net::sockopt::set_socket_send_buffer_size(stream, size).map_err(Into::into)
 }
 
-/// The effective user ID of the socket's peer.
+// A raw PID remains representable until peer_pid validates it; rustix's
+// UCred contains a NonZero PID and cannot preserve that validation order.
 #[cfg(target_os = "linux")]
-pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
-    // SAFETY: getsockopt fills the zeroed credentials of the owned socket.
-    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+fn peer_credentials(stream: &UnixStream) -> io::Result<libc::ucred> {
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut length = std::mem::size_of_val(&credentials) as libc::socklen_t;
+    // SAFETY: getsockopt writes at most length bytes to the live integer-only
+    // credentials record; the borrowed stream keeps the descriptor open.
     if unsafe {
         libc::getsockopt(
             stream.as_raw_fd(),
@@ -563,7 +584,13 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
     {
         return Err(io::Error::last_os_error());
     }
-    Ok(credentials.uid)
+    Ok(credentials)
+}
+
+/// The effective user ID of the socket's peer.
+#[cfg(target_os = "linux")]
+pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
+    Ok(peer_credentials(stream)?.uid)
 }
 
 /// The effective user ID of the socket's peer.
@@ -581,25 +608,7 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
 /// peer connected (ORB-C3).
 #[cfg(target_os = "linux")]
 pub(crate) fn peer_pid(stream: &UnixStream) -> io::Result<u32> {
-    // SAFETY: getsockopt fills the zeroed credentials of the owned socket.
-    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    if unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut credentials).cast(),
-            &raw mut length,
-        )
-    } == -1
-    {
-        return Err(io::Error::last_os_error());
-    }
-    u32::try_from(credentials.pid)
-        .ok()
-        .filter(|pid| *pid != 0)
-        .ok_or_else(|| errno(libc::EPROTO))
+    peer_pid_value(peer_credentials(stream)?.pid)
 }
 
 /// The process ID of the socket's peer, as the kernel recorded it when the
@@ -621,6 +630,10 @@ pub(crate) fn peer_pid(stream: &UnixStream) -> io::Result<u32> {
     {
         return Err(io::Error::last_os_error());
     }
+    peer_pid_value(pid)
+}
+
+fn peer_pid_value(pid: pid_t) -> io::Result<u32> {
     u32::try_from(pid)
         .ok()
         .filter(|pid| *pid != 0)
@@ -652,6 +665,22 @@ pub(crate) fn process_start_identity(pid: u32) -> io::Result<u64> {
 mod descriptor_tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn socket_credentials_preserve_identity_and_reject_invalid_pids() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        assert_eq!(peer_uid(&stream).unwrap(), effective_uid());
+        assert_eq!(peer_pid(&stream).unwrap(), std::process::id());
+        for pid in [0, -1, i32::MIN] {
+            assert_eq!(
+                peer_pid_value(pid).unwrap_err().raw_os_error(),
+                Some(libc::EPROTO)
+            );
+        }
+        for pid in [1, i32::MAX] {
+            assert_eq!(peer_pid_value(pid).unwrap(), pid as u32);
+        }
+    }
 
     #[test]
     fn a_fresh_pty_has_no_foreground_group() {

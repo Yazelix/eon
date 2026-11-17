@@ -44,13 +44,13 @@ pub fn run() {
         peer.frame_with("FOCUS OUT READY");
         // Both requests and the full close must precede Orbit's first reply attempt.
         signal(server.pid(), libc::SIGSTOP);
-        let mut status = 0;
-        // SAFETY: this is our child; the status pointer is valid and WUNTRACED waits for its stop.
-        assert_eq!(
-            unsafe { libc::waitpid(server.pid(), &mut status, libc::WUNTRACED) },
-            server.pid()
-        );
-        assert!(libc::WIFSTOPPED(status));
+        let pid = rustix::process::Pid::from_raw(server.pid()).expect("PID");
+        let (waited, status) =
+            rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::UNTRACED)
+                .expect("waitpid")
+                .expect("stopped child");
+        assert_eq!(waited, pid);
+        assert!(status.stopped());
         peer.send(&ClientMessage::ReturnToLive);
         peer.send(&ClientMessage::Focus(FocusEvent::Lost));
         peer.stream.shutdown(Shutdown::Both).unwrap();
@@ -81,7 +81,11 @@ pub fn run() {
         padding_right: 0,
     });
     let cases = [
-        ("FOCUS", ClientMessage::Focus(FocusEvent::Gained), FOCUS_SCRIPT),
+        (
+            "FOCUS",
+            ClientMessage::Focus(FocusEvent::Gained),
+            FOCUS_SCRIPT,
+        ),
         ("RESIZE", resize, RESIZE_SCRIPT),
     ];
     for (name, request, text) in cases {

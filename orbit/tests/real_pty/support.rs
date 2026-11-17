@@ -1,6 +1,8 @@
 //! The ORBS v14 client and server harness the real-PTY checks share, on the
 //! canonical `orbit-protocol` codec.
 
+use rustix::process::{Pid, Signal};
+
 use orbit_protocol::{
     Frame,
     session::{
@@ -16,9 +18,7 @@ use std::{
     fs,
     io::{self, Read, Write},
     os::unix::{
-        ffi::OsStrExt,
         fs::{DirBuilderExt, PermissionsExt, symlink},
-        io::{AsRawFd, FromRawFd},
         net::UnixStream,
     },
     path::{Path, PathBuf},
@@ -61,8 +61,7 @@ pub fn serial(name: &'static str, check: fn()) {
         if watched.recv_timeout(WATCHDOG) == Err(mpsc::RecvTimeoutError::Timeout) {
             eprintln!("{name} did not finish within {} s", WATCHDOG.as_secs());
             for &pid in running().iter() {
-                // SAFETY: sending a signal has no memory effects.
-                unsafe { libc::kill(pid, libc::SIGTERM) };
+                let _ = try_signal(pid, libc::SIGTERM);
             }
             std::process::exit(124);
         }
@@ -230,16 +229,44 @@ pub fn read_pid(path: &Path) -> i32 {
     text.trim().parse().expect("a PID")
 }
 
+#[cfg(target_os = "linux")]
+fn make_fifo(path: &Path) -> io::Result<()> {
+    rustix::fs::mkfifoat(
+        rustix::fs::CWD,
+        path,
+        rustix::fs::Mode::from_raw_mode(0o600),
+    )
+    .map_err(Into::into)
+}
+
+#[cfg(target_os = "macos")]
+use native_fifo::make_fifo;
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+mod native_fifo {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    pub(super) fn make_fifo(path: &Path) -> io::Result<()> {
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+        // SAFETY: path is NUL-terminated and remains live throughout mkfifo;
+        // no pointer is retained, and the mode contains only permission bits.
+        if unsafe { libc::mkfifo(path.as_ptr(), 0o600) } == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// A FIFO the child blocks on until the check releases it.
 pub struct Gate(PathBuf);
 
 impl Gate {
     pub fn new(directory: &Path, name: &str) -> Self {
         let path = directory.join(name);
-        let raw = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("path");
-        // SAFETY: `raw` is a NUL-terminated path that outlives the call.
-        let made = unsafe { libc::mkfifo(raw.as_ptr(), 0o600) };
-        assert_eq!(made, 0, "mkfifo {}", path.display());
+        make_fifo(&path).unwrap_or_else(|error| panic!("mkfifo {}: {error}", path.display()));
         Self(path)
     }
 
@@ -433,35 +460,13 @@ impl Peer {
     /// Connects with this receive buffer, set before the connection as a
     /// client that sizes its socket does.
     pub fn connect_with_receive_buffer(path: &Path, bytes: libc::c_int, timeout: f64) -> Self {
-        // SAFETY: the descriptor is fresh and owned by the stream from here on;
-        // the address is zeroed and filled within its bounds.
-        unsafe {
-            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-            assert!(fd >= 0, "socket: {}", io::Error::last_os_error());
-            let stream = UnixStream::from_raw_fd(fd);
-            let set = libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVBUF,
-                (&bytes as *const libc::c_int).cast(),
-                size_of::<libc::c_int>() as libc::socklen_t,
-            );
-            assert_eq!(set, 0, "SO_RCVBUF: {}", io::Error::last_os_error());
-            let mut address: libc::sockaddr_un = std::mem::zeroed();
-            address.sun_family = libc::AF_UNIX as libc::sa_family_t;
-            let raw = path.as_os_str().as_bytes();
-            assert!(raw.len() < address.sun_path.len(), "socket path too long");
-            for (slot, byte) in address.sun_path.iter_mut().zip(raw) {
-                *slot = *byte as libc::c_char;
-            }
-            let connected = libc::connect(
-                fd,
-                (&address as *const libc::sockaddr_un).cast(),
-                size_of::<libc::sockaddr_un>() as libc::socklen_t,
-            );
-            assert_eq!(connected, 0, "connect: {}", io::Error::last_os_error());
-            Self::new(stream, timeout)
-        }
+        use rustix::net::{self, AddressFamily, SocketAddrUnix, SocketType};
+        let fd = net::socket(AddressFamily::UNIX, SocketType::STREAM, None).expect("socket");
+        net::sockopt::set_socket_recv_buffer_size(&fd, bytes.try_into().expect("buffer size"))
+            .expect("SO_RCVBUF");
+        let address = SocketAddrUnix::new(path).expect("socket path");
+        net::connect(&fd, &address).expect("connect");
+        Self::new(UnixStream::from(fd), timeout)
     }
 
     /// Connects and negotiates the interactive role; the initial frame is unread.
@@ -697,23 +702,16 @@ impl Peer {
     /// Peeks at the socket for one byte without waiting: 1, or 0 at the end
     /// of the stream.
     fn peek(&self) -> io::Result<usize> {
-        let mut byte = 0u8;
+        let mut byte = [0u8];
         loop {
-            // SAFETY: the buffer is one writable byte that outlives the call.
-            let read = unsafe {
-                libc::recv(
-                    self.stream.as_raw_fd(),
-                    (&mut byte as *mut u8).cast(),
-                    1,
-                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
-                )
-            };
-            if read >= 0 {
-                return Ok(read as usize);
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::Interrupted {
-                return Err(error);
+            match rustix::net::recv(
+                &self.stream,
+                &mut byte[..],
+                rustix::net::RecvFlags::PEEK | rustix::net::RecvFlags::DONTWAIT,
+            ) {
+                Ok((_, read)) => return Ok(read),
+                Err(rustix::io::Errno::INTR) => (),
+                Err(error) => return Err(error.into()),
             }
         }
     }
@@ -726,20 +724,17 @@ impl Peer {
         if !self.pending().is_empty() {
             return;
         }
-        let mut ready = libc::pollfd {
-            fd: self.stream.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: one valid pollfd for the duration of the call.
-        match unsafe { libc::poll(&mut ready, 1, (timeout * 1000.0) as libc::c_int) } {
-            0 => {}
-            1 => match self.peek() {
+        match poll_readable(
+            &self.stream,
+            Duration::from_millis((timeout * 1000.0) as u64),
+        ) {
+            Ok(false) => {}
+            Ok(true) => match self.peek() {
                 Ok(0) => panic!("{what}"),
                 Ok(_) => {}
                 Err(error) => panic!("{what}: {error}"),
             },
-            _ => panic!("poll: {}", io::Error::last_os_error()),
+            Err(error) => panic!("poll: {error}"),
         }
     }
 
@@ -762,13 +757,30 @@ fn timed_out(error: &io::Error) -> bool {
     )
 }
 
+pub fn poll_readable(stream: &UnixStream, timeout: Duration) -> io::Result<bool> {
+    let mut ready = [rustix::event::PollFd::new(
+        stream,
+        rustix::event::PollFlags::IN,
+    )];
+    let timeout = rustix::event::Timespec::try_from(timeout)
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    rustix::event::poll(&mut ready, Some(&timeout))
+        .map(|count| count != 0)
+        .map_err(Into::into)
+}
+
+fn positive_pid(pid: i32) -> Option<Pid> {
+    if pid > 0 { Pid::from_raw(pid) } else { None }
+}
+
 /// Whether a process exists, a zombie included.
 pub fn alive(pid: i32) -> bool {
-    // SAFETY: signal 0 only checks that the process exists.
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return true;
-    }
-    io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    positive_pid(pid).is_some_and(|pid| {
+        matches!(
+            rustix::process::test_kill_process(pid),
+            Ok(()) | Err(rustix::io::Errno::PERM)
+        )
+    })
 }
 
 /// A process's start identity as Orbit reads it: the kernel's start time in
@@ -789,25 +801,27 @@ pub fn process_start(pid: u32) -> u64 {
 /// microseconds on macOS.
 #[cfg(target_os = "macos")]
 pub fn process_start(pid: u32) -> u64 {
-    // SAFETY: proc_pidinfo fills the zeroed record within its size.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid as libc::c_int,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&raw mut info).cast(),
-            size,
-        )
-    };
-    assert_eq!(read, size, "proc_pidinfo {pid}");
+    let info =
+        crate::native_process::bsd_info(pid.try_into().expect("PID"), false).expect("proc_pidinfo");
     info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec
 }
 
+pub fn try_signal(pid: i32, signal: libc::c_int) -> io::Result<()> {
+    let pid = positive_pid(pid).ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+    let signal =
+        Signal::from_named_raw(signal).ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+    rustix::process::kill_process(pid, signal).map_err(Into::into)
+}
+
+pub fn try_signal_group(group: i32, signal: libc::c_int) -> io::Result<()> {
+    let group = positive_pid(group).ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+    let signal =
+        Signal::from_named_raw(signal).ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+    rustix::process::kill_process_group(group, signal).map_err(Into::into)
+}
+
 pub fn signal(pid: i32, signal: libc::c_int) {
-    // SAFETY: sending a signal has no memory effects.
-    assert_eq!(unsafe { libc::kill(pid, signal) }, 0, "kill {pid}");
+    try_signal(pid, signal).unwrap_or_else(|error| panic!("kill {pid}: {error}"));
 }
 
 /// The process IDs of a process's children.
@@ -967,8 +981,7 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         if self.output.is_some() && self.running() {
-            // SAFETY: the child is ours and not yet reaped.
-            unsafe { libc::kill(self.pid(), libc::SIGTERM) };
+            let _ = try_signal(self.pid(), libc::SIGTERM);
             if self.wait_until(Instant::now() + seconds(10.0)).is_none() {
                 let _ = self.child.kill();
             }

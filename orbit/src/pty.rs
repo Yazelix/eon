@@ -33,10 +33,7 @@ use std::{
     ffi::OsString,
     fs::File,
     io::{self, Read, Write},
-    os::{
-        fd::{AsRawFd, RawFd},
-        unix::process::CommandExt,
-    },
+    os::fd::{AsRawFd, RawFd},
     process::{Child, Command, ExitStatus, Stdio},
     rc::Rc,
     thread,
@@ -914,11 +911,7 @@ fn spawn_pty_child(command: &[OsString], cols: u16, rows: u16) -> io::Result<(Fi
         .env_remove("EON_BENCH_TRACE")
         .env("TERM", "eon")
         .env("COLORTERM", "truecolor");
-    // SAFETY: Only async-signal-safe syscalls execute between fork and exec.
-    unsafe {
-        command.pre_exec(move || platform::configure_child(parent));
-    }
-    let child = command.spawn()?;
+    let child = platform::spawn_child(command, parent)?;
     Ok((master, child))
 }
 
@@ -1019,11 +1012,11 @@ mod tests {
             Some(libc::ENOENT)
         );
 
-        let mut command = Command::new("/bin/true");
-        // SAFETY: The hook exercises only the child-side setup path.
-        unsafe { command.pre_exec(|| platform::configure_child(platform::pid_t::MAX)) };
+        let command = Command::new("/bin/true");
         assert_eq!(
-            command.spawn().unwrap_err().raw_os_error(),
+            platform::spawn_child(command, platform::pid_t::MAX)
+                .unwrap_err()
+                .raw_os_error(),
             Some(libc::ESRCH)
         );
     }

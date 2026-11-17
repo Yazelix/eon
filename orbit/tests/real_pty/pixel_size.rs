@@ -1,10 +1,6 @@
 use crate::support::*;
 use orbit_protocol::session::{ClientMessage, ServerMessage, SurfaceSize};
-use std::{
-    fs,
-    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
-    path::Path,
-};
+use std::{fs, os::unix::fs::OpenOptionsExt, path::Path};
 
 // The child names its terminal, then asks for the text area, cell and
 // character sizes (CSI 14t, 16t, 18t and 19t) and turns on in-band size
@@ -48,15 +44,7 @@ fn window_size(terminal: &Path) -> [u16; 4] {
         .custom_flags(libc::O_NOCTTY)
         .open(terminal)
         .expect("open the child's terminal");
-    let mut size = libc::winsize {
-        ws_row: 0,
-        ws_col: 0,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    // SAFETY: TIOCGWINSZ writes one winsize into `size`.
-    let read = unsafe { libc::ioctl(opened.as_raw_fd(), libc::TIOCGWINSZ, &mut size) };
-    assert_eq!(read, 0, "TIOCGWINSZ");
+    let size = rustix::termios::tcgetwinsize(&opened).expect("TIOCGWINSZ");
     [size.ws_row, size.ws_col, size.ws_xpixel, size.ws_ypixel]
 }
 

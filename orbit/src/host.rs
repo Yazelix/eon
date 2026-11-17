@@ -42,7 +42,7 @@ use std::{
     io::{self, Read, Write},
     os::{
         fd::{AsFd, AsRawFd, BorrowedFd},
-        unix::{net::UnixStream, process::CommandExt},
+        unix::net::UnixStream,
     },
     path::Path,
     process::{Child, Command, ExitStatus},
@@ -67,19 +67,26 @@ extern "C" fn note_termination(number: c_int) {
     platform::wake(SIGNAL_WRITE.load(Ordering::Relaxed));
 }
 
-/// A terminated host contains the child and removes the socket pathname.
-fn install_termination_handlers() -> io::Result<()> {
-    if SIGNAL_PIPE.get().is_none() {
-        let _ = SIGNAL_PIPE.set(platform::pipe(true)?);
+#[allow(unsafe_code)]
+mod termination {
+    use super::*;
+
+    /// A terminated host contains the child and removes the socket pathname.
+    pub(super) fn install_termination_handlers() -> io::Result<()> {
+        if SIGNAL_PIPE.get().is_none() {
+            let _ = SIGNAL_PIPE.set(platform::pipe(true)?);
+        }
+        let (read, write) = SIGNAL_PIPE.get().unwrap();
+        SIGNAL_WRITE.store(write.as_raw_fd(), Ordering::Relaxed);
+        // A session starts with no termination pending.
+        platform::drain(read);
+        // SAFETY: The handler only writes an atomic integer and one byte to a
+        // pipe.
+        unsafe { platform::on_termination(note_termination) }
     }
-    let (read, write) = SIGNAL_PIPE.get().unwrap();
-    SIGNAL_WRITE.store(write.as_raw_fd(), Ordering::Relaxed);
-    // A session starts with no termination pending.
-    platform::drain(read);
-    // SAFETY: The handler only writes an atomic integer and one byte to a
-    // pipe.
-    unsafe { platform::on_termination(note_termination) }
 }
+
+use termination::install_termination_handlers;
 
 /// The worker's Bend runtime options, which Bend reads only between `+RTS`
 /// and `-RTS`: Bend's policy is sequential, so one runtime thread serves it.
@@ -229,16 +236,11 @@ impl Bend {
     fn spawn(worker: &Path, args: &[impl AsRef<OsStr>]) -> io::Result<Self> {
         let (fact_reader, facts) = platform::pipe(false)?;
         let (decisions, decision_writer) = platform::pipe(false)?;
-        let (reader, writer) = (fact_reader.as_raw_fd(), decision_writer.as_raw_fd());
         let mut command = Command::new(worker);
         // Bend also reads runtime options from BENDRTS, so one in Orbit's
         // environment could change the worker's threads or end it.
         command.args(args).env_remove("BENDRTS");
-        // SAFETY: Only async-signal-safe calls run between fork and exec.
-        unsafe {
-            command.pre_exec(move || platform::configure_worker(reader, writer));
-        }
-        let worker = command.spawn()?;
+        let worker = platform::spawn_worker(command, &fact_reader, &decision_writer)?;
         Ok(Self {
             worker,
             facts,

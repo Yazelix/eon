@@ -94,6 +94,42 @@ jobs:
         if: ${{ !cancelled() && matrix.check == 'workspace-tests' && steps.release_orbit.outcome == 'success' }}
         run: nix develop -c eon-test -p eon -p eon-runtime --cargo-profile release --run-ignored only --test-threads 1
 
+      - name: Check Orbit unsafe owners on Darwin
+        if: ${{ !cancelled() && matrix.check == 'workspace-tests' }}
+        run: nix develop -c cargo clippy --locked -p yazelix-orbit --all-targets -- -D warnings
+
+      - name: Prepare Orbit real-PTY fixtures
+        id: orbit_fixtures
+        if: ${{ !cancelled() && matrix.check == 'workspace-tests' && steps.release_orbit.outcome == 'success' }}
+        run: |
+          nix develop -c bash -euo pipefail <<'FIXTURES'
+          fixture_dir="$RUNNER_TEMP/orbit-proof-fixtures"
+          mkdir -p "$fixture_dir/src"
+          cp -R orbit/src/. "$fixture_dir/src"
+          rustc --edition 2024 orbit/tools/boundary.rs -o "$fixture_dir/generate"
+          { cat orbit/src/boundary.schema; echo 'flag 31 spare'; } > "$fixture_dir/spare.schema"
+          "$fixture_dir/generate" "$fixture_dir/spare.schema" "$fixture_dir/src"
+          (cd "$fixture_dir/src" && bun "$BEND_SOURCE_DIR/bend2/main.ts" main.bend -o "$fixture_dir/worker.c")
+          "$BEND_CLANG" -std=c11 -O2 "$fixture_dir/worker.c" -lpthread -lm -o "$fixture_dir/mismatched-worker"
+
+          # Match the package's legacy ncurses entry and hexadecimal directory alias.
+          sed 's/use=xterm-256color,/pairs#0x7fff, use=xterm-256color,/' \
+            orbit/terminfo/eon-darwin.terminfo > "$fixture_dir/eon.terminfo"
+          tic -x -o "$fixture_dir/terminfo" "$fixture_dir/eon.terminfo"
+          set -- "$fixture_dir"/terminfo/*/eon
+          test "$#" = 1 && test -f "$1"
+          mkdir -p "$CARGO_TARGET_DIR/share/terminfo/e"
+          cp "$1" "$CARGO_TARGET_DIR/share/terminfo/e/eon"
+          ln -sfn e "$CARGO_TARGET_DIR/share/terminfo/65"
+          test "${BASH_VERSINFO[0]}" -ge 4
+          printf 'MISMATCHED_WORKER=%s\nORBIT_BASH=%s\n' \
+            "$fixture_dir/mismatched-worker" "$(command -v bash)" >> "$GITHUB_ENV"
+          FIXTURES
+
+      - name: Collect ignored Orbit real-PTY test failures
+        if: ${{ !cancelled() && matrix.check == 'workspace-tests' && steps.release_orbit.outcome == 'success' && steps.orbit_fixtures.outcome == 'success' }}
+        run: nix develop -c eon-test -p yazelix-orbit --test real_pty --cargo-profile release --run-ignored only --test-threads 1
+
       - name: Report remaining disk
         if: always()
         run: df -h / /nix

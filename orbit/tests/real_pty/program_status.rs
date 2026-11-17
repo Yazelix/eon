@@ -207,17 +207,8 @@ fn is_zombie(pid: i32) -> bool {
 #[cfg(target_os = "linux")]
 fn age(pid: i32) -> Duration {
     let started: f64 = stat_fields(pid)[19].parse().expect("a start time");
-    // SAFETY: sysconf has no preconditions.
-    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
-    let mut now = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: clock_gettime fills the owned time.
-    assert_eq!(
-        unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut now) },
-        0
-    );
+    let ticks = rustix::param::clock_ticks_per_second() as f64;
+    let now = rustix::time::clock_gettime(rustix::time::ClockId::Boottime);
     let now = now.tv_sec as f64 + now.tv_nsec as f64 / 1e9;
     Duration::from_secs_f64((now - started / ticks).max(0.0))
 }
@@ -226,18 +217,7 @@ fn age(pid: i32) -> Duration {
 /// a zombie's record too.
 #[cfg(target_os = "macos")]
 fn bsd_info(pid: i32) -> libc::proc_bsdinfo {
-    // SAFETY: proc_pidinfo fills the zeroed record for `pid`.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of_val(&info) as libc::c_int;
-    let read =
-        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 1, (&raw mut info).cast(), size) };
-    assert_eq!(
-        read,
-        size,
-        "proc_pidinfo {pid}: {}",
-        std::io::Error::last_os_error()
-    );
-    info
+    crate::native_process::bsd_info(pid, true).expect("proc_pidinfo")
 }
 
 #[cfg(target_os = "macos")]
@@ -297,8 +277,7 @@ impl Drop for Leftovers {
     fn drop(&mut self) {
         for &pid in &self.0 {
             if alive(pid) {
-                // SAFETY: sending a signal has no memory effects.
-                unsafe { libc::kill(pid, libc::SIGKILL) };
+                let _ = try_signal(pid, libc::SIGKILL);
             }
         }
     }

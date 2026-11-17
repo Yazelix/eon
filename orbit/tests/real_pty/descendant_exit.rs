@@ -11,8 +11,7 @@ struct Descendant(i32);
 impl Drop for Descendant {
     fn drop(&mut self) {
         if alive(self.0) {
-            // SAFETY: sending a signal has no memory effects.
-            unsafe { libc::kill(self.0, libc::SIGKILL) };
+            let _ = try_signal(self.0, libc::SIGKILL);
         }
     }
 }
