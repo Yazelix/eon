@@ -120,33 +120,77 @@ crate.
   naming the source commit. Edit a contract index only when a contract, its
   checks, status, or gap changes. Existing indexed proofs stay valid as
   written.
-- **Review.** Code, test and script changes finish through the `converge`
-  skill (`AP-PROOF-001`). After the first round, each reviewer re-checks only
-  fixes to its own findings and the author's rebuttals; text-only fixes need
-  no re-check. A full re-review is required only when a fix changes behavior
-  beyond its finding or crosses a trust boundary. A docs-only slice gets one
-  Codex review. A planning-only slice gets one fresh read-only review.
-- **Codex coverage.** Codex (`gpt-6.1-sol`, `xhigh`) reviews every change to
-  code, tests or scripts (Nix, Cargo manifests and lockfiles, Bend sources,
-  and CI files included), including pure test moves and behavior-preserving
-  refactors, and every change to an `EON-C`, `ORB-C` or `VEN-C` contract's
-  text, status or proof record. This replaces converge's own Codex round.
-- **Checks.** The author runs the checks on the exact staged tree and records
-  the tree, commands, environment and results in the owning bead. Reviewers
-  do not build or run suites; they confirm the candidate tree is the one
-  recorded. Docs, metadata and planning follow-ups reuse suite proof under
-  `AP-PROOF-001`.
-- **Running Codex.** Keep the brief, report and log outside the repository,
-  under `~/.cache/eon-agents/<session>/` (the scratchpad may be wiped), and
-  run, in the background, `timeout 40m codex exec -m gpt-6.1-sol -c
-  model_reasoning_effort=xhigh -s read-only -C <repo> -o <report> - <
+- **Tier.** The reviewer, not the author, runs `nix develop -c cargo run -q
+  -p review-tier -- classify <edge> <candidate>` from a checkout of the
+  landing target, the current edge commit, so Cargo builds the tool from
+  that source; the candidate's copy of the tool never judges. The tool refuses to
+  run when its own source differs from that edge commit's. It classifies the
+  diff from the merge base of edge and the candidate to the candidate's
+  tree, and the tier is the highest that any changed path, mode or line
+  reaches; `review-tier rules` lists the rules, and a path they do not name
+  is High. A `classify` error counts as High. The review ledger records the
+  whole output: the edge commit, the classifier's tree hash, and the base
+  and candidate trees; that run is the one that counts. When fixes raise the
+  tier, the candidate gets the higher tier's full review. At landing the
+  lead re-runs `classify` against the edge it lands on; a different
+  candidate tree or a higher tier sends the slice back. A change to the
+  rules that lowers any tier needs Lucca's approval, as a contract change
+  does.
+- **High** (the default: contracts, wire and protocol code, Bend, lifecycle
+  and trust-boundary code, Rust lines with `unsafe`, signal, exec,
+  permission or socket-bind calls, mode and type changes, dependencies, Nix,
+  CI and component manifests, gate and validator code, agent policy including
+  `REVIEW.md`, and any path the rules do not name): the `converge` skill
+  (`AP-PROOF-001`) with a fresh Opus reviewer and Codex at `xhigh`.
+- **Medium** (ordinary product code, tests, assets, and Markdown that a build
+  or test reads): the `converge` skill with a fresh Opus reviewer and Codex
+  at `high`.
+- **Low** (other Markdown, and Beads planning): one fresh read-only Codex
+  review at `high`; a fresh Claude review replaces it when Codex refuses or
+  is unavailable.
+- **Re-checks.** After the first round, each reviewer re-checks only fixes to
+  its own findings and the author's rebuttals; text-only fixes need no
+  re-check. A full re-review is required only when a fix changes behavior
+  beyond its finding or crosses a trust boundary. Codex (`gpt-6.1-sol`)
+  runs at the tier's effort and replaces converge's own Codex round.
+- **Checks.** The author runs the checks on the exact staged tree. The
+  bead's proof record leads with evidence: the tree, and for each check its
+  command, environment, exit status and summary line (nextest's `Summary`
+  line), the 1280×800 capture for a visible change, and each check
+  `REVIEW.md` requires for the paths touched, with its result or "lead at
+  landing". Lucca and the lead read that record, not the diff. Missing
+  required evidence blocks landing. Reviewers do not build or run suites;
+  they confirm the candidate tree is the one recorded. Docs, metadata and
+  planning follow-ups reuse suite proof under `AP-PROOF-001`.
+- **Running Codex.** Every review brief names `REVIEW.md` and the tier. Keep
+  the brief, report and log outside the repository, under
+  `~/.cache/eon-agents/<session>/` (the scratchpad may be wiped), and run,
+  in the background, `timeout 40m codex exec -m gpt-6.1-sol -c
+  model_reasoning_effort=<effort> -s read-only -C <repo> -o <report> - <
   <brief> > <log> 2>&1`, so stdin is the brief and ends; check `<log>` for
   progress within a few minutes. For gate or validator code, every Codex
   brief carries a scope line: corner cases that no supported closure
   produces are nits unless they let a real defect pass.
+- **Reviewer evals.** `eon/tools/review-tier/evals/cases.toml` holds the
+  reverts and regressions since 2026-10-14 whose bad commit is known and
+  whose defect shows in the diff: the commit, the file and lines, and the
+  words that name the failure mechanism. The change that fixes a revert,
+  regression or failed landing adds its case. A change to `REVIEW.md`, to a
+  review brief, or to a tier's reviewers or effort re-runs those reviewers
+  on every case (`review-tier eval prepare` and `eval score`); a change to
+  the tier rules runs `review-tier eval check` and re-runs every case whose
+  tier changes. The bead records caught cases beside the previous run's,
+  and a drop goes to the lead before the change lands.
+- **Guardrail.** The lead checks each tier on its own after every 50 slices
+  at that tier, against the per-tier baseline recorded on `eon-uxgal`, and
+  records the counts there. Any revert, regression or failed landing from a
+  Low slice moves Low to Medium review; two or more regressions from Medium
+  slices move Medium to Codex `xhigh`. A rolled-back tier returns only when each
+  cause has an eval case that the reduced review catches, 50 slices under
+  the stricter review are recorded, and Lucca approves.
 
-Record one ledger line per slice in its bead: pass count and findings,
-including Codex's.
+Record one ledger line per slice in its bead: the `classify` output's tier
+and trees, pass count and findings, including Codex's.
 
 ## Testing Discipline
 

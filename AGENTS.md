@@ -94,9 +94,13 @@ Eon composes these and keeps their ownership intact.
    per change: run checks on the exact tree you commit and record the proof
    (check, environment, result) in the owning bead within that commit, so the
    commit is the proof's revision.
-3. **Review before landing.** Every slice ends with the review loop, and
-   code, test, script and contract changes also get Codex. Proof and Review
-   says exactly which, and how.
+3. **Review by risk tier.** Every slice ends with a review at the tier that
+   the reviewer's `review-tier` run assigns from what the change touches,
+   never a tier its author picks. High and Medium finish through converge
+   with Codex; Low gets one fresh Codex review. Reviewers follow
+   [`REVIEW.md`](REVIEW.md), the proof record leads with evidence, and
+   missing required evidence blocks landing. Proof and Review says exactly
+   which, and how.
 4. **Keep live terminals alive.** After an accepted runtime, package, or
    product-configuration change, refresh the active `eon` Nix profile element
    from the current working tree before handoff. Never stop or restart a

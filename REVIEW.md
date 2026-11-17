@@ -13,14 +13,16 @@ does not override them.
 2. The proof record. It must name the exact candidate tree. Read its
    evidence (commands, exit status, summary lines, captures) before the
    diff, and check it against the required evidence below.
-3. The tier output from `review-tier classify`, as the lead ran it from a
-   checkout of edge (the author's own run does not count). Its path lines
-   show why the slice has its tier; review those paths hardest.
+3. The tier output from `review-tier classify`, as the reviewer of record
+   (the lead, who starts this review) ran it from a checkout of edge; the
+   author's own run does not count. Its path lines show why the slice has
+   its tier; review those paths hardest.
 4. The diff.
 
-Do not build or run anything, `review-tier` included. The author's recorded
-checks and the lead's tier output are the evidence; your job is to find what
-they do not cover.
+As a reviewing agent, do not build or run anything, `review-tier` included:
+the tier run belongs to the reviewer of record. The author's recorded checks
+and that tier output are the evidence; your job is to find what they do not
+cover.
 
 ## How to report
 
