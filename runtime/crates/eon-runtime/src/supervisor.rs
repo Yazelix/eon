@@ -2103,7 +2103,7 @@ impl SupervisorState {
                             live.push(marker);
                         }
                     }
-                    pair::retain_leaves(&live);
+                    pair::retain_leaves(workspaces.runtime_directory(), &live);
                 }
             }
         } else {

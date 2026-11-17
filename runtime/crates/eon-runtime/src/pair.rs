@@ -377,10 +377,12 @@ pub(crate) fn forget_leave(marker: &Path) {
     pairs().leaving.remove(marker);
 }
 
-/// Forgets the leaves of pairs whose markers `live` does not name: their
-/// terminals ended.
-pub(crate) fn retain_leaves(live: &[PathBuf]) {
-    pairs().leaving.retain(|marker, _| live.contains(marker));
+/// Forgets ended pairs in `runtime`; owned endpoints, including recovered
+/// ones, are direct children of this generation directory.
+pub(crate) fn retain_leaves(runtime: &Path, live: &[PathBuf]) {
+    pairs()
+        .leaving
+        .retain(|marker, _| marker.parent() != Some(runtime) || live.contains(marker));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -652,11 +654,43 @@ mod tests {
         quick_search_settled(&path);
 
         leave_requested(&path);
-        retain_leaves(&[]);
+        retain_leaves(&root, &[]);
         assert_eq!(advance_leave(&path, true, now), None);
         leave_requested(&path);
         forget_leave(&path);
         assert_eq!(advance_leave(&path, true, now), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A supervisor prunes only its runtime, even with no live pairs; another
+    /// runtime with the same path prefix keeps its pending leave unchanged.
+    #[test]
+    fn pruning_ended_pairs_preserves_other_runtimes_leaves() {
+        let root = scratch("prune");
+        let runtime = root.join("runtime");
+        let live = runtime.join("terminal-2.quick");
+        let ended = runtime.join("terminal-3.quick");
+        let other = root.join("runtime-other/terminal-2.quick");
+        for marker in [&live, &ended, &other] {
+            leave_requested(marker);
+        }
+        let live_leave = pairs().leaving[&live];
+        let other_leave = pairs().leaving[&other];
+
+        retain_leaves(&runtime, std::slice::from_ref(&live));
+        {
+            let pairs = pairs();
+            assert_eq!(pairs.leaving.get(&live), Some(&live_leave));
+            assert!(!pairs.leaving.contains_key(&ended));
+            assert_eq!(pairs.leaving.get(&other), Some(&other_leave));
+        }
+        retain_leaves(&runtime, &[]);
+        {
+            let pairs = pairs();
+            assert!(!pairs.leaving.contains_key(&live));
+            assert_eq!(pairs.leaving.get(&other), Some(&other_leave));
+        }
+        forget_leave(&other);
         std::fs::remove_dir_all(root).unwrap();
     }
 

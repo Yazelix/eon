@@ -651,6 +651,10 @@ impl WorkspaceSet {
             .collect()
     }
 
+    pub(crate) fn runtime_directory(&self) -> &Path {
+        &self.ids.runtime
+    }
+
     /// Each tab's Files pair terminal, and whether its tab shows it (EON-C18).
     pub(crate) fn pairs(&self) -> impl Iterator<Item = (&str, bool)> {
         self.workspaces
