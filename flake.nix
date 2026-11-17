@@ -745,7 +745,8 @@
           };
 
           # The real fzf, Yazi, Zoxide and Files configuration that Eon Runtime's quick
-          # search tests compose under a real Orbit (EON-C18); eon-test passes them through.
+          # search tests compose under a real Orbit (EON-C18): the Linux eon-tests check and
+          # Darwin's eonRust check set them, and eon-test passes the dev shell's through.
           quickSearchTestEnvironment = {
             EON_TEST_QUICK_FZF = "${fzfPackage}/bin/fzf";
             EON_TEST_QUICK_YAZI = "${yaziPackage}/bin/yazi";
@@ -1050,7 +1051,7 @@
               ];
               doCheck = !pkgs.stdenv.isLinux;
               meta = eonMeta;
-            } // lib.optionalAttrs pkgs.stdenv.isDarwin {
+            } // lib.optionalAttrs pkgs.stdenv.isDarwin (quickSearchTestEnvironment // {
               cargoTestFlags = [
                 "--package"
                 "eon"
@@ -1097,7 +1098,7 @@
               '';
               # Runtime tests paste printed commands into Eon's Nushell.
               nativeCheckInputs = [ nushellPackage ];
-            });
+            }));
           eonHelix =
             assert helix.rev == helixIdentity.revision;
             assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)

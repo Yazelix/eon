@@ -182,11 +182,21 @@ impl Pair {
         text
     }
 
+    /// Files settled in the fixture's folder. Yazi draws the parent column,
+    /// the listing and the hovered folder's preview on turns of their own, so
+    /// all three must be on the first entry row (alpha, previewing
+    /// a-inside), and no plugin task may still count as running ("1 left").
     fn files_shown(&mut self) -> String {
-        // Settled: listed, and no plugin task still counted as running
-        // ("1 left").
         self.until("Files", |text| {
-            text.contains("Tab Search")
+            text.lines()
+                .find(|line| line.matches('│').count() == 2)
+                .is_some_and(|row| {
+                    let columns: Vec<&str> = row.split('│').collect();
+                    columns[0].contains("files")
+                        && columns[1].contains("alpha")
+                        && columns[2].contains("a-inside")
+                })
+                && text.contains("Tab Search")
                 && text.contains("note.txt")
                 && !text.contains("Loading...")
                 && !text.contains("Quick search >")
@@ -484,6 +494,9 @@ fn a_stray_leave_key_keeps_a_filters_text() {
     let mut pair = Pair::start("filter", Start::default());
     pair.files_shown();
     pair.emit(&["filter"]);
+    // `ya emit-to` returns once Yazi has the command, not once it has opened
+    // the input; pasted earlier, the text can reach Yazi first and be lost.
+    pair.until("the filter input", |text| text.contains("Filter:"));
     assert!(
         sessions::send_input(
             &mut pair.session,
