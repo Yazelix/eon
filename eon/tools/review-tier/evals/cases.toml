@@ -264,3 +264,37 @@ lines = [654, 656]
 [[case.expect]]
 file = "runtime/crates/eon-runtime/src/supervisor.rs"
 lines = [2068, 2068]
+
+[[case]]
+id = "R30"
+kind = "fix-forward"
+commit = "fdba6bfc5aa531943bfd56b32119acbc50ee60cb"
+fixed_by = "15d692adb6d41d7f112c0351f3ad2309102f87fd"
+class = "racy-test"
+tier = "high"
+summary = "a_leave_right_after_open_reaches_files_every_time_under_load runs Load::start(2), two busy-spinning threads, through 200 real-PTY iterations in the parallel test phase; on Darwin's three-core runner they likely starve concurrently running timed tests (the slow-fzf leave's 2 s startup grace, the quota backoff test's three reads in 600 ms), which failed inside its run under libtest and nextest alike. A test that spins CPU threads for minutes belongs in the serial pass whatever the measured cause."
+evidence = "fdba6bfc adds struct Load and its spinning start at real_pty.rs:385-406 and Load::start(2) in a non-ignored test at :421-433. Darwin runs 44043522698 and 44055514274 (nextest) and 44067467252 (libtest) failed quota.rs:1932 'codex reads: 2' and real_pty.rs:247 'quick search never started' inside the loaded test's 200-215 s run. 15d692ad moves it to the serial ignored pass, and Darwin 44084918481 on that commit is green (loaded test 128.7 s alone). Starvation remains a strong hypothesis: Linux never reproduced it, even with both tests on one CPU beside the spinners, so the cause is inferred from the Darwin timing and that green run."
+mechanism = [["busy", "spin", "cpu", "core", "loads the machine", "machine load", "steal", "hog", "saturat"], ["starv", "other test", "alongside", "timing", "timed", "deadline", "timeout", "serial", "ignore", "flaky", "suite", "slow"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/pair/real_pty.rs"
+lines = [385, 406]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/pair/real_pty.rs"
+lines = [421, 433]
+
+[[case]]
+id = "R31"
+kind = "fix-forward"
+commit = "4763d2951cf0e54269b88bef950cf464b9884564"
+fixed_by = "92d6c2c931e21aed62bdfdd19a357563a56b0576"
+class = "macos-portability"
+tier = "high"
+summary = "The lease-race fixture's busy closure writes Busy and then calls shutdown(Write).unwrap(), but the client reads Busy and drops its stream before retrying; when the drop wins, Darwin returns ENOTCONN from shutdown on the disconnected Unix socket (Linux returns success), the fixture thread panics, its listener closes, and the client's queued retry reads EOF instead of a second Busy."
+evidence = "4763d295 adds the busy closure at sessions.rs:2692-2695 with an unconditional shutdown(Write).unwrap() and the client's drop-then-retry at :553-554. Darwin runs 44055514274 and 44084924115 failed lease_retry_preserves_busy_and_revalidates_the_record: the fixture panicked at the shutdown with os error 57 and the test saw 'unexpected end of file'. 92d6c2c9's close_writes treats NotConnected as done; its red control (no NotConnected arm) failed close_writes_accepts_a_peer_that_closed_first on Darwin and the candidate was green."
+mechanism = [["enotconn", "notconnected", "not connected", "os error 57", "unwrap", "panic"], ["already closed", "closed first", "closes first", "close first", "peer closed", "client closed", "already gone", "dropped", "drops", "hung up", "hangs up", "race", "disconnect"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/sessions.rs"
+lines = [2692, 2695]
