@@ -2691,6 +2691,28 @@ pub(crate) mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Ends a fixture's writes. A peer that has already closed, as a client
+    /// that read Busy may have, needs nothing more; Darwin reports it as
+    /// ENOTCONN where Linux succeeds.
+    fn close_writes(stream: &UnixStream) {
+        match stream.shutdown(std::net::Shutdown::Write) {
+            Err(error) if error.kind() != io::ErrorKind::NotConnected => {
+                panic!("cannot close fixture writes: {error}")
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn close_writes_accepts_a_peer_that_closed_first() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        close_writes(&stream);
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        close_writes(&stream);
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0, "peer saw no end of writes");
+    }
+
     pub(crate) struct LeaseRaceHost {
         control: UnixStream,
         worker: Option<thread::JoinHandle<Vec<&'static str>>>,
@@ -2803,7 +2825,7 @@ pub(crate) mod tests {
             let busy = |stream: &mut UnixStream| {
                 acquire(stream);
                 reply(stream, ManagementServerMessage::Busy);
-                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                close_writes(stream);
             };
             let mut lease = accept();
             if case == "busy-twice" || case == "record-replaced" {
