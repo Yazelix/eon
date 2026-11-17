@@ -4,6 +4,7 @@ use orbit_protocol::management::{
     ProgramState, ProgramStatus, Record, Refusal, Screen, ServerMessage, TerminationReason,
     Tombstone, VisibleText,
 };
+use orbit_protocol::session::{Modifiers, PhysicalKey};
 
 fn program_record(id: &str, state: ProgramState) -> ProgramRecord {
     ProgramRecord {
@@ -114,6 +115,15 @@ fn management_messages_and_records_round_trip_canonically() {
         ClientMessage::Input {
             input: LeaseInput::Paste("x".into()),
             quiet_ms: u16::MAX,
+        },
+        ClientMessage::Input {
+            input: LeaseInput::key(
+                PhysicalKey::PAGE_DOWN,
+                Modifiers::CTRL
+                    .union(Modifiers::ALT)
+                    .union(Modifiers::SHIFT),
+            ),
+            quiet_ms: 0,
         },
         ClientMessage::AttachAllow {
             process_id: 4242,
@@ -384,15 +394,16 @@ fn program_status_replies_keep_their_bounds() {
     ));
 }
 
-/// Management v4's new messages keep their exact bytes under generation 8,
+/// Management v4's new messages keep their exact bytes under generation 9,
 /// except lease input, which carries its quiet window after its kind (since
-/// v6); v7 added ReadHistory and History; v8 adds the process census: the header's generation, each
-/// kind's tag, and its payload.
+/// v6); v7 added ReadHistory and History; v8 adds the process census; v9
+/// adds the lease key (kind 3: quiet window, key, modifiers): the header's
+/// generation, each kind's tag, and its payload.
 #[test]
-fn management_v8_messages_have_canonical_bytes() {
-    assert_eq!(management::VERSION, 8);
+fn management_v9_messages_have_canonical_bytes() {
+    assert_eq!(management::VERSION, 9);
     let framed = |kind: u8, payload: &[u8]| {
-        let mut bytes = b"ORBM\x08\x00".to_vec();
+        let mut bytes = b"ORBM\x09\x00".to_vec();
         bytes.extend([kind, 0]);
         bytes.extend((payload.len() as u32).to_le_bytes());
         bytes.extend(payload);
@@ -415,6 +426,19 @@ fn management_v8_messages_have_canonical_bytes() {
             quiet_ms: 2000,
         }),
         framed(6, b"\x01\xd0\x07ls")
+    );
+    // Ctrl+Alt+Shift+PageDown: physical key 73, modifiers 7.
+    assert_eq!(
+        client(ClientMessage::Input {
+            input: LeaseInput::key(
+                PhysicalKey::PAGE_DOWN,
+                Modifiers::CTRL
+                    .union(Modifiers::ALT)
+                    .union(Modifiers::SHIFT),
+            ),
+            quiet_ms: 0,
+        }),
+        framed(6, &[3, 0, 0, 73, 0, 7, 0])
     );
     let mut allow = 7u32.to_le_bytes().to_vec();
     allow.extend(9u64.to_le_bytes());
@@ -591,7 +615,7 @@ fn program_status_carries_the_foreground() {
     payload.push(b't');
     payload.extend(1u16.to_le_bytes());
     payload.extend(4u64.to_le_bytes());
-    let mut golden = b"ORBM\x08\x00".to_vec();
+    let mut golden = b"ORBM\x09\x00".to_vec();
     golden.extend([71, 0]);
     golden.extend((payload.len() as u32).to_le_bytes());
     golden.extend(&payload);
@@ -957,7 +981,7 @@ fn management_v4_decoders_reject_invalid_values() {
         })
     ));
     let mut tag = paste.clone();
-    tag[management::HEADER_BYTES] = 3;
+    tag[management::HEADER_BYTES] = 4;
     assert!(matches!(
         management::decode_client_message(&tag),
         Err(Error::InvalidTag {
@@ -980,6 +1004,70 @@ fn management_v4_decoders_reject_invalid_values() {
         management::decode_client_message(&enter_with_text),
         Err(Error::TrailingBytes { count: 1 })
     ));
+    // A lease key carries the wire's key and modifier values as sent, even
+    // ones that name no key or modifier, so Orbit refuses them as input
+    // (`invalid-input`) rather than as a malformed request; and it carries
+    // nothing more: no text travels with it.
+    let key = |raw: u16, bits: u16| {
+        let mut bytes =
+            client(input(LeaseInput::key(PhysicalKey::F1, Modifiers::empty()))).unwrap();
+        let at = management::HEADER_BYTES + 3;
+        bytes[at..at + 2].copy_from_slice(&raw.to_le_bytes());
+        bytes[at + 2..at + 4].copy_from_slice(&bits.to_le_bytes());
+        bytes
+    };
+    for (raw, bits) in [
+        (PhysicalKey::MAX_RAW + 1, 0),
+        (73, Modifiers::MASK + 1),
+        (u16::MAX, u16::MAX),
+    ] {
+        assert_eq!(
+            management::decode_client_message(&key(raw, bits)).unwrap(),
+            ClientMessage::Input {
+                input: LeaseInput::Key {
+                    key: raw,
+                    modifiers: bits
+                },
+                quiet_ms: 0
+            }
+        );
+        assert_eq!(LeaseInput::allowed_key(raw, bits), None, "{raw} {bits}");
+    }
+    let mut key_with_text = key(73, 7);
+    key_with_text[8..12].copy_from_slice(&8u32.to_le_bytes());
+    key_with_text.push(b'x');
+    assert!(matches!(
+        management::decode_client_message(&key_with_text),
+        Err(Error::TrailingBytes { count: 1 })
+    ));
+    // Only keys that produce no text, with Shift, Ctrl, Alt and Super.
+    for key in LeaseInput::KEYS {
+        let modifiers = LeaseInput::KEY_MODIFIERS;
+        assert_eq!(
+            LeaseInput::allowed_key(key.raw(), modifiers.bits()),
+            Some((key, modifiers))
+        );
+    }
+    for (key, modifiers) in [
+        (PhysicalKey::ENTER, Modifiers::empty()),
+        (PhysicalKey::TAB, Modifiers::empty()),
+        (PhysicalKey::ESCAPE, Modifiers::empty()),
+        (PhysicalKey::BACKSPACE, Modifiers::empty()),
+        (PhysicalKey::SPACE, Modifiers::empty()),
+        (PhysicalKey::A, Modifiers::CTRL),
+        (PhysicalKey::PAGE_DOWN, Modifiers::CAPS_LOCK),
+        (PhysicalKey::PAGE_DOWN, Modifiers::NUM_LOCK),
+        (
+            PhysicalKey::PAGE_DOWN,
+            Modifiers::SHIFT.union(Modifiers::SHIFT_SIDE),
+        ),
+    ] {
+        assert_eq!(
+            LeaseInput::allowed_key(key.raw(), modifiers.bits()),
+            None,
+            "{key:?} {modifiers:?}"
+        );
+    }
     let mut no_window = client(input(LeaseInput::Enter)).unwrap();
     no_window.pop();
     no_window[8..12].copy_from_slice(&2u32.to_le_bytes());

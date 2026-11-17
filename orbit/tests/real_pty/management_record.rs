@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MANAGED: [&str; 4] = ["--management-v8", "session-1", "run-1", "component-1"];
+const MANAGED: [&str; 4] = ["--management-v9", "session-1", "run-1", "component-1"];
 
 /// The record at a path, decoded canonically.
 pub fn record(path: &Path) -> Record {
@@ -231,9 +231,9 @@ pub fn run() {
         let path = directory.join("orbit.sock");
         let long = "s".repeat(129);
         for options in [
-            &["--management-v8", "", "run", "component"][..],
-            &["--management-v8", &long, "run", "component"],
-            &["--management-v8", "session", "run"],
+            &["--management-v9", "", "run", "component"][..],
+            &["--management-v9", &long, "run", "component"],
+            &["--management-v9", "session", "run"],
         ] {
             run_command(
                 &server_command(&path, &[OsStr::new("/bin/true")], options),

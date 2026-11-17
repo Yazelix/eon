@@ -1,30 +1,43 @@
 //! The Files pair's two screens (EON-C18). Each pair Yazi gets a DDS client
-//! ID from its terminal's endpoint, and its quick search's fzf listens on a
-//! socket beside that endpoint that answers only while quick search is shown.
-//! Alt+Z and Alt+Shift+Y switch screens through them: `ya emit-to` shows quick
-//! search, and a `become(exit 11)` POST to fzf leaves it for Files.
+//! ID from its terminal's endpoint, and its quick search's fzf marks that it
+//! holds the terminal by creating a marker file beside that endpoint, which
+//! the plugin removes once fzf ends. Alt+Z and Alt+Shift+Y switch screens: `ya
+//! emit-to` shows quick search, and a reserved key that produces no text,
+//! written through Orbit's lease input, leaves it for Files. Quick search runs
+//! no listener (EON-C10).
 
-use super::diagnostics::DiagnosticLog;
+use super::{
+    diagnostics::DiagnosticLog,
+    sessions::{self, RunningSession},
+};
 use eon_workspace_protocol::v47::{InvokeIntent, PROJECT_ENTRY};
+use orbit_protocol::{
+    management::LeaseInput,
+    session::{Modifiers, PhysicalKey},
+};
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
-    io::{Read, Write},
-    os::unix::{ffi::OsStrExt, net::UnixStream},
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     thread,
     time::{Duration, Instant},
 };
 
-/// How long a switch waits on fzf's socket.
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(1);
-
 /// How long after it can start quick search counts as shown before its fzf
-/// listens. fzf takes about 0.6 s to start; a key in that time acts on the
+/// marks it up. fzf takes about 0.6 s to start; a key in that time acts on the
 /// screen that is coming, not on Files. Not user-visible, so fixed.
 const STARTUP_GRACE: Duration = Duration::from_secs(2);
+
+/// How often a leave writes its key again while fzf has not ended: about ten
+/// times fzf's own leave (become, `sh`, exit). Internal recovery timing.
+const RESEND: Duration = Duration::from_millis(250);
+
+/// How long a leave keeps writing its key before it gives up and says so.
+/// Internal recovery timing.
+const LEAVE_BOUND: Duration = Duration::from_secs(2);
 
 /// The longest the window's first pair waits for the other-windows notice
 /// before its Yazi starts (cli.rs `startup_notice`).
@@ -34,6 +47,32 @@ const NOTICE_WAIT: Duration = Duration::from_secs(1);
 /// duration: eon-files stops it 2 s late and waits 0.25 s more for it to end
 /// (cli.rs `play_startup_anima`).
 const ANIMA_OVERRUN: Duration = Duration::from_millis(2250);
+
+/// The key that leaves quick search for Files: Ctrl+Alt+Shift+PageDown. It
+/// produces no text and no packaged Yazi binding uses it, so a copy that
+/// reaches Yazi instead of fzf changes nothing there.
+const LEAVE_KEY: (PhysicalKey, Modifiers) = (
+    PhysicalKey::PAGE_DOWN,
+    Modifiers::CTRL
+        .union(Modifiers::ALT)
+        .union(Modifiers::SHIFT),
+);
+
+/// The lease input that leaves quick search.
+pub(crate) fn leave_input() -> LeaseInput {
+    LeaseInput::key(LEAVE_KEY.0, LEAVE_KEY.1)
+}
+
+/// The fzf arguments quick search adds, one per line in
+/// `EON_QUICK_FZF_ARGS`: fzf's start action, which runs once fzf holds the
+/// terminal in raw mode and before it reads input, creates the marker at
+/// `$EON_QUICK_MARKER`, and the leave key ends fzf with status 11. Both run
+/// under `/bin/sh`, whatever the person's shell.
+pub(crate) const FZF_ARGUMENTS: [&str; 3] = [
+    "--with-shell=/bin/sh -c",
+    "--bind=start:execute-silent(: > \"$EON_QUICK_MARKER\")",
+    "--bind=ctrl-alt-shift-page-down:become(exit 11)",
+];
 
 /// The Yazi DDS client ID of the pair whose terminal listens at `endpoint`.
 /// The endpoint names the window, generation and terminal, so pairs of
@@ -50,40 +89,67 @@ pub(crate) fn client_id(endpoint: &Path) -> u64 {
     1 << 62 | hash & ((1 << 62) - 1)
 }
 
-/// The socket the quick search of the pair at `endpoint` listens on: beside
-/// that endpoint, in the window's own runtime directory, and never longer than
-/// its `.management` socket, whose length the window's runtime root is bounded
-/// by. fzf takes a `--listen` address as a Unix socket only when it ends in
-/// `.sock` (else it reads a port and exits), so `terminal-N.sock` pairs with
-/// `terminal-N.quick.sock`.
-pub(crate) fn socket(endpoint: &Path) -> PathBuf {
+/// The marker the quick search of the pair at `endpoint` creates while its
+/// fzf runs: a regular file beside that endpoint, in the window's own runtime
+/// directory, so `terminal-N.sock` pairs with `terminal-N.quick`.
+pub(crate) fn marker(endpoint: &Path) -> PathBuf {
     let bytes = endpoint.as_os_str().as_bytes();
     let mut path = OsString::from(OsStr::from_bytes(
         bytes.strip_suffix(b".sock").unwrap_or(bytes),
     ));
-    path.push(".quick.sock");
+    path.push(".quick");
     path.into()
 }
 
-/// The terminal endpoint whose pair socket is at `path`, if `path` names one;
+/// The terminal endpoint whose pair marker is at `path`, if `path` names one;
 /// never a terminal endpoint itself.
-pub(crate) fn socket_endpoint(path: &Path) -> Option<PathBuf> {
-    let stem = path.as_os_str().as_bytes().strip_suffix(b".quick.sock")?;
+pub(crate) fn marker_endpoint(path: &Path) -> Option<PathBuf> {
+    let stem = path.as_os_str().as_bytes().strip_suffix(b".quick")?;
     Some(PathBuf::from(OsStr::from_bytes(&[stem, b".sock"].concat())))
 }
 
-/// When the startup grace of each pair's requested quick search ends, by
-/// socket, until its fzf listens, the pair is hidden or picks, or it ends.
-static REQUESTS: Mutex<Option<HashMap<PathBuf, Instant>>> = Mutex::new(None);
+/// The marker's file identity, while it exists.
+fn marker_identity(marker: &Path) -> Option<(u64, u64)> {
+    let metadata = std::fs::symlink_metadata(marker).ok()?;
+    metadata
+        .file_type()
+        .is_file()
+        .then(|| (metadata.dev(), metadata.ino()))
+}
 
-fn requests<T>(use_them: impl FnOnce(&mut HashMap<PathBuf, Instant>) -> T) -> T {
-    let mut requests = REQUESTS
+/// Per pair, by marker: when the startup grace of a requested quick search
+/// ends, until its fzf marks it up, the pair is hidden or picks, or it ends;
+/// and its leave, until fzf has ended or the leave gives up.
+#[derive(Default)]
+struct Pairs {
+    starting: HashMap<PathBuf, Instant>,
+    leaving: HashMap<PathBuf, Leave>,
+}
+
+static PAIRS: Mutex<Option<Pairs>> = Mutex::new(None);
+
+fn pairs() -> impl std::ops::DerefMut<Target = Pairs> {
+    struct Guard(MutexGuard<'static, Option<Pairs>>);
+    impl std::ops::Deref for Guard {
+        type Target = Pairs;
+        fn deref(&self) -> &Pairs {
+            self.0.as_ref().expect("initialized")
+        }
+    }
+    impl std::ops::DerefMut for Guard {
+        fn deref_mut(&mut self) -> &mut Pairs {
+            self.0.as_mut().expect("initialized")
+        }
+    }
+    let mut guard = PAIRS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let requests = requests.get_or_insert_with(HashMap::new);
     let now = Instant::now();
-    requests.retain(|_, end| now < *end);
-    use_them(requests)
+    guard
+        .get_or_insert_with(Pairs::default)
+        .starting
+        .retain(|_, end| now < *end);
+    Guard(guard)
 }
 
 /// How long the window's first pair takes before its quick search can start:
@@ -95,50 +161,226 @@ pub(crate) fn fresh_start(anima_seconds: Option<u64>) -> Duration {
         })
 }
 
-/// Records that the pair at `socket` was asked for quick search, which can
-/// start after `delay`: started on it, or sent a switch to it.
-pub(crate) fn quick_search_requested(socket: &Path, delay: Duration) {
-    requests(|requests| {
-        requests.insert(socket.to_path_buf(), Instant::now() + delay + STARTUP_GRACE)
-    });
+/// Records that the pair at `marker` was asked for quick search, which can
+/// start after `delay`: started on it, or sent a switch to it. A leave still
+/// pending for it is over.
+pub(crate) fn quick_search_requested(marker: &Path, delay: Duration) {
+    let mut pairs = pairs();
+    pairs.leaving.remove(marker);
+    pairs
+        .starting
+        .insert(marker.to_path_buf(), Instant::now() + delay + STARTUP_GRACE);
 }
 
-/// Ends the startup grace of the pair at `socket`: its quick search is up and
-/// answers, or it has ended.
-pub(crate) fn quick_search_settled(socket: &Path) {
-    requests(|requests| requests.remove(socket));
+/// Ends the startup grace of the pair at `marker`: its quick search is up,
+/// or it has ended.
+pub(crate) fn quick_search_settled(marker: &Path) {
+    pairs().starting.remove(marker);
 }
 
-/// Whether any pair's quick search is starting.
-pub(crate) fn any_starting() -> bool {
-    requests(|requests| !requests.is_empty())
+/// Whether any pair's quick search is starting or leaving.
+pub(crate) fn any_pending() -> bool {
+    let pairs = pairs();
+    !pairs.starting.is_empty() || !pairs.leaving.is_empty()
 }
 
-/// Ends the startup grace of the pair at `socket` once its fzf listens or the
-/// pair is not `shown`: a key can then no longer act on a quick search still
-/// to come.
-pub(crate) fn settle_starting(socket: &Path, shown: bool) {
-    requests(|requests| {
-        if requests.contains_key(socket) && (!shown || socket.exists()) {
-            requests.remove(socket);
-        }
-    });
+/// Ends the startup grace of the pair at `marker` once its fzf has marked it
+/// up or the pair is not `shown`: a key can then no longer act on a quick
+/// search still to come.
+pub(crate) fn settle_starting(marker: &Path, shown: bool) {
+    let mut pairs = pairs();
+    if pairs.starting.contains_key(marker) && (!shown || marker_identity(marker).is_some()) {
+        pairs.starting.remove(marker);
+    }
 }
 
-/// The end of the startup grace of a quick search requested of `socket` whose
-/// fzf has not answered yet.
-pub(crate) fn starting(socket: &Path) -> Option<Instant> {
-    requests(|requests| requests.get(socket).copied())
+/// The end of the startup grace of a quick search requested of `marker` whose
+/// fzf has not marked it up yet.
+pub(crate) fn starting(marker: &Path) -> Option<Instant> {
+    pairs().starting.get(marker).copied()
 }
 
-/// Whether quick search is shown: its fzf accepts on the socket, or it was
+/// Whether quick search is shown: its fzf has marked it up, or it was
 /// requested within the startup grace and is still starting.
-pub(crate) fn quick_search_shown(socket: &Path) -> bool {
-    if UnixStream::connect(socket).is_ok() {
-        quick_search_settled(socket);
+pub(crate) fn quick_search_shown(marker: &Path) -> bool {
+    if marker_identity(marker).is_some() {
+        quick_search_settled(marker);
         return true;
     }
-    starting(socket).is_some()
+    starting(marker).is_some()
+}
+
+/// A leave of quick search, until fzf has ended. It waits, while quick search
+/// starts, for fzf to mark itself up, so a marker not there yet never reads as
+/// fzf having ended; once it has seen the marker, it writes the key, and
+/// again every `RESEND`, until that marker is gone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Leave {
+    Waiting {
+        deadline: Instant,
+    },
+    Sending {
+        marker: (u64, u64),
+        first: Instant,
+        last: Instant,
+        /// Times the key was asked to be written.
+        attempts: u32,
+        /// Times Orbit wrote it.
+        written: u32,
+    },
+}
+
+/// What a pair's leave asks of the supervisor this turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LeaveStep {
+    /// Nothing yet.
+    Wait,
+    /// Write the leave key into the pair's terminal.
+    Send,
+    /// fzf has ended; the leave is over.
+    Done,
+    /// The leave gave up; the detail says why.
+    Expired(String),
+}
+
+impl Leave {
+    /// One turn of the leave, with the marker's identity as it is now.
+    fn step(&mut self, marker: Option<(u64, u64)>, now: Instant) -> LeaveStep {
+        match *self {
+            Self::Waiting { deadline } => match marker {
+                Some(marker) => {
+                    *self = Self::Sending {
+                        marker,
+                        first: now,
+                        last: now,
+                        attempts: 1,
+                        written: 0,
+                    };
+                    LeaveStep::Send
+                }
+                None if now >= deadline => LeaveStep::Expired("quick search never started".into()),
+                None => LeaveStep::Wait,
+            },
+            Self::Sending {
+                marker: seen,
+                first,
+                last,
+                attempts,
+                written,
+            } => {
+                if marker != Some(seen) {
+                    LeaveStep::Done
+                } else if now.duration_since(first) >= LEAVE_BOUND {
+                    LeaveStep::Expired(format!(
+                        "quick search did not leave within {} s; Orbit wrote its key {written} of {attempts} times",
+                        LEAVE_BOUND.as_secs()
+                    ))
+                } else if now.duration_since(last) >= RESEND {
+                    *self = Self::Sending {
+                        marker: seen,
+                        first,
+                        last: now,
+                        attempts: attempts + 1,
+                        written,
+                    };
+                    LeaveStep::Send
+                } else {
+                    LeaveStep::Wait
+                }
+            }
+        }
+    }
+}
+
+impl Leave {
+    /// Orbit wrote the key this turn's `Send` asked for.
+    fn wrote(&mut self) {
+        if let Self::Sending { written, .. } = self {
+            *written += 1;
+        }
+    }
+}
+
+/// Records that Orbit wrote the leave key of the pair at `marker`.
+fn leave_written(marker: &Path) {
+    if let Some(leave) = pairs().leaving.get_mut(marker) {
+        leave.wrote();
+    }
+}
+
+/// Asks the pair at `marker` to leave quick search for Files. A leave already
+/// pending stays as it is; one for a quick search still starting waits until
+/// the end of its startup grace for fzf to mark it up.
+pub(crate) fn leave_requested(marker: &Path) {
+    let mut pairs = pairs();
+    let deadline = pairs
+        .starting
+        .get(marker)
+        .copied()
+        .unwrap_or_else(Instant::now);
+    pairs
+        .leaving
+        .entry(marker.to_path_buf())
+        .or_insert(Leave::Waiting { deadline });
+}
+
+/// Advances the leave of the pair at `marker`, if it has one, this turn. A
+/// pair no longer `shown` has nothing to leave. A finished or expired leave
+/// is forgotten.
+pub(crate) fn advance_leave(marker: &Path, shown: bool, now: Instant) -> Option<LeaveStep> {
+    let mut pairs = pairs();
+    let leave = pairs.leaving.get_mut(marker)?;
+    let step = if shown {
+        leave.step(marker_identity(marker), now)
+    } else {
+        LeaveStep::Done
+    };
+    if matches!(step, LeaveStep::Done | LeaveStep::Expired(_)) {
+        pairs.leaving.remove(marker);
+    }
+    Some(step)
+}
+
+/// One turn of the pending leave of the pair in `session` (EON-C18): writes
+/// the leave key through the lease, with no quiet window, while fzf has not
+/// ended. A person typing or a full input queue keeps the leave for its next
+/// copy; any other failure ends it. A leave that ends without fzf ending is
+/// logged. Returns the turn's step, or none when no leave is pending.
+pub(crate) fn drive_leave(
+    session: &mut RunningSession,
+    shown: bool,
+    now: Instant,
+    log: &DiagnosticLog,
+) -> Option<LeaveStep> {
+    let marker = marker(&session.endpoint);
+    let step = advance_leave(&marker, shown, now)?;
+    match &step {
+        LeaveStep::Send => match sessions::send_input(session, leave_input(), 0, log) {
+            Ok(_) => leave_written(&marker),
+            Err(failure) if sessions::input_refused_for_now(&failure) => {}
+            Err(failure) => {
+                forget_leave(&marker);
+                log.record(&format!(
+                    "pair {} did not take its quick search leave key: {}",
+                    session.id, failure.detail
+                ));
+            }
+        },
+        LeaveStep::Expired(detail) => log.record(&format!("pair {}: {detail}", session.id)),
+        LeaveStep::Wait | LeaveStep::Done => {}
+    }
+    Some(step)
+}
+
+/// Forgets the leave of the pair at `marker`: writing its key failed for good.
+pub(crate) fn forget_leave(marker: &Path) {
+    pairs().leaving.remove(marker);
+}
+
+/// Forgets the leaves of pairs whose markers `live` does not name: their
+/// terminals ended.
+pub(crate) fn retain_leaves(live: &[PathBuf]) {
+    pairs().leaving.retain(|marker, _| live.contains(marker));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,24 +419,25 @@ pub(crate) fn plan(
     }
 }
 
-/// Runs `switch` for the pair with client `id` beside the supervisor; a
-/// failure is logged and changes nothing else.
+/// Runs `switch` for the pair with client `id` and quick search `marker`
+/// beside the supervisor; a failure is logged and changes nothing else. A
+/// leave is written by the supervisor's turns (`advance_leave`).
 pub(crate) fn run(
     switch: Switch,
     ya: Option<&Path>,
     id: u64,
-    socket: PathBuf,
+    marker: PathBuf,
     log: &Arc<DiagnosticLog>,
 ) {
-    let worker = Arc::clone(log);
-    let started = match switch {
-        Switch::None => return,
+    match switch {
+        Switch::None => {}
+        Switch::LeaveQuickSearch => leave_requested(&marker),
         Switch::ShowQuickSearch => {
             // A second quick search would wait behind the shown one (EON-C18).
-            if quick_search_shown(&socket) {
+            if quick_search_shown(&marker) {
                 return;
             }
-            quick_search_requested(&socket, Duration::ZERO);
+            quick_search_requested(&marker, Duration::ZERO);
             let Some(ya) = ya else {
                 return log.record("pair switch skipped: this Eon has no packaged ya");
             };
@@ -204,99 +447,24 @@ pub(crate) fn run(
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
-            thread::Builder::new().spawn(move || {
+            let worker = Arc::clone(log);
+            if let Err(error) = thread::Builder::new().spawn(move || {
                 let failure = match command.status() {
                     Ok(status) if status.success() => return,
                     Ok(status) => format!("ya emit-to {status}"),
                     Err(error) => error.to_string(),
                 };
                 worker.record(&format!("pair switch to quick search failed: {failure}"));
-            })
-        }
-        Switch::LeaveQuickSearch => thread::Builder::new().spawn(move || {
-            if let Err(error) = leave_quick_search(&socket) {
-                worker.record(&format!("pair switch to Files failed: {error}"));
+            }) {
+                log.record(&format!("pair switch failed: {error}"));
             }
-        }),
-    };
-    if let Err(error) = started {
-        log.record(&format!("pair switch failed: {error}"));
-    }
-}
-
-/// Asks the shown quick search to end with status 11, which returns its pair
-/// to Files without moving it. A quick search still starting gets until the
-/// end of its startup grace to listen.
-fn leave_quick_search(socket: &Path) -> Result<(), String> {
-    const ACTION: &str = "become(exit 11)";
-    let deadline = starting(socket);
-    let mut stream = loop {
-        match UnixStream::connect(socket) {
-            Ok(stream) => break stream,
-            Err(_) if deadline.is_some_and(|deadline| Instant::now() < deadline) => {
-                thread::sleep(Duration::from_millis(50));
-            }
-            Err(error) => return Err(error.to_string()),
         }
-    };
-    quick_search_settled(socket);
-    stream
-        .set_read_timeout(Some(SOCKET_TIMEOUT))
-        .and_then(|()| stream.set_write_timeout(Some(SOCKET_TIMEOUT)))
-        .map_err(|error| error.to_string())?;
-    stream
-        .write_all(
-            format!(
-                "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{ACTION}",
-                ACTION.len()
-            )
-            .as_bytes(),
-        )
-        .map_err(|error| error.to_string())?;
-    let mut reply = [0; 12];
-    let mut read = 0;
-    while read < reply.len() {
-        match stream.read(&mut reply[read..]) {
-            Ok(0) => break,
-            Ok(count) => read += count,
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    if reply[..read].starts_with(b"HTTP/1.1 200") {
-        Ok(())
-    } else {
-        Err(format!(
-            "fzf answered {:?}",
-            String::from_utf8_lossy(&reply[..read])
-        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// fzf 0.73 reads a `--listen` address as a Unix socket only when it ends
-    /// in `.sock`; any other name is taken for a port and fzf exits 2. The
-    /// recovery sweep maps the socket back to its terminal and never takes a
-    /// terminal endpoint, record or marker for a pair socket.
-    #[test]
-    fn a_pair_socket_ends_in_sock_and_maps_back_to_its_terminal_only() {
-        let endpoint = Path::new("/run/eon/w/0000000a/generations/g1/terminal-2.sock");
-        let pair = socket(endpoint);
-        assert!(pair.as_os_str().as_bytes().ends_with(b".sock"));
-        assert_eq!(pair.file_name().unwrap(), "terminal-2.quick.sock");
-        assert_eq!(socket_endpoint(&pair).as_deref(), Some(endpoint));
-        for other in [
-            "terminal-2.sock",
-            "orbit.sock",
-            "terminal-2.sock.pending",
-            "terminal-2.sock.record",
-            "terminal-2.sock.management",
-        ] {
-            assert_eq!(socket_endpoint(&endpoint.with_file_name(other)), None);
-        }
-    }
 
     #[test]
     fn client_ids_are_stable_distinct_and_outside_timestamps() {
@@ -322,7 +490,7 @@ mod tests {
 
     /// Two windows of one build share the generation name, terminal numbering
     /// and runtime base; their pairs still get their own client IDs and
-    /// sockets, each in its own window's directory.
+    /// markers, each in its own window's directory.
     #[test]
     fn pairs_of_two_windows_sharing_a_runtime_base_do_not_collide() {
         let base = Path::new("/run/user/1000/eon");
@@ -330,95 +498,52 @@ mod tests {
         let first = generation(&base.join("w/0000000a"), "g1").join("terminal-2.sock");
         let second = generation(&base.join("w/0000000b"), "g1").join("terminal-2.sock");
         assert_ne!(client_id(&first), client_id(&second));
-        assert_ne!(socket(&first), socket(&second));
+        assert_ne!(marker(&first), marker(&second));
         for endpoint in [&first, &second] {
-            assert_eq!(socket(endpoint).parent(), endpoint.parent());
+            assert_eq!(marker(endpoint).parent(), endpoint.parent());
         }
-        assert_eq!(socket(&first).file_name().unwrap(), "terminal-2.quick.sock");
+        assert_eq!(marker(&first).file_name().unwrap(), "terminal-2.quick");
     }
 
-    /// A window is admitted only if its `.management` sockets fit (new_window),
-    /// so a pair socket must fit for the longest root admitted: on macOS that
-    /// root is under `/tmp/eon-UID/w`, and `sun_path` holds 103 bytes.
-    #[test]
-    fn a_pair_socket_fits_for_the_longest_admitted_window_root() {
-        use crate::platform::socket_path_fits;
-        let generation = format!("g1-{}", "f".repeat(32));
-        let management = |root: &Path| {
-            crate::generation::generation_directory(root, &generation)
-                .join("terminal-9999.sock.management")
-        };
-        let mut root = PathBuf::from("/tmp/eon-501/w/");
-        while socket_path_fits(&management(&root.join("x"))) {
-            root.as_mut_os_string().push("x");
-        }
-        assert!(socket_path_fits(&management(&root)));
-        let endpoint =
-            crate::generation::generation_directory(&root, &generation).join("terminal-9999.sock");
-        let pair = socket(&endpoint);
-        assert!(
-            socket_path_fits(&pair),
-            "{} is {} bytes",
-            pair.display(),
-            pair.as_os_str().len()
-        );
-    }
-
-    /// A key pressed while a requested quick search starts acts on quick
-    /// search: it counts as shown until its fzf listens or the grace ends,
-    /// and a switch to Files waits for it to listen.
-    #[test]
-    fn a_starting_quick_search_counts_as_shown_and_waits_for_a_switch_to_files() {
-        let root = std::env::temp_dir().join(format!("eon-pair-start-{}", std::process::id()));
+    /// A test's own directory, empty.
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("eon-pair-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("terminal-2.quick.sock");
-        let _ = std::fs::remove_file(&path);
-        assert!(!quick_search_shown(&path));
-        quick_search_requested(&path, Duration::ZERO);
-        assert!(quick_search_shown(&path));
-        assert_eq!(
-            plan(
-                "files",
-                InvokeIntent::Toggle,
-                true,
-                quick_search_shown(&path),
-                true
-            ),
-            (InvokeIntent::Focus, Switch::LeaveQuickSearch)
-        );
-        // fzf starts listening only after the switch was sent.
-        let listening = path.clone();
-        let fzf = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
-            let listener = std::os::unix::net::UnixListener::bind(&listening).unwrap();
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0; 256];
-            while !request.ends_with(b"become(exit 11)") {
-                let count = stream.read(&mut buffer).unwrap();
-                assert_ne!(count, 0);
-                request.extend_from_slice(&buffer[..count]);
-            }
-            stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").unwrap();
-        });
-        assert_eq!(leave_quick_search(&path), Ok(()));
-        fzf.join().unwrap();
-        // Once fzf has answered, only the socket says whether it is shown.
-        std::fs::remove_file(&path).unwrap();
-        assert!(!quick_search_shown(&path));
-        std::fs::remove_dir_all(root).unwrap();
+        root
+    }
+
+    /// The recovery sweep maps a marker back to its terminal and never takes
+    /// a terminal endpoint, record or management socket for a marker.
+    #[test]
+    fn a_marker_maps_back_to_its_terminal_only() {
+        let endpoint = Path::new("/run/eon/w/0000000a/generations/g1/terminal-2.sock");
+        let pair = marker(endpoint);
+        assert_eq!(pair.file_name().unwrap(), "terminal-2.quick");
+        assert_eq!(marker_endpoint(&pair).as_deref(), Some(endpoint));
+        for other in [
+            "terminal-2.sock",
+            "orbit.sock",
+            "terminal-2.sock.pending",
+            "terminal-2.sock.record",
+            "terminal-2.sock.management",
+            "terminal-2.quick.sock",
+        ] {
+            assert_eq!(marker_endpoint(&endpoint.with_file_name(other)), None);
+        }
     }
 
     /// A starting quick search stops counting as shown once its pair is
     /// hidden, so Alt+Z, Esc, Alt+Z asks for quick search again, or once its
-    /// fzf listens, so a quick search left with Tab is not taken for starting.
+    /// fzf marks it up, so a quick search left with Tab is not taken for
+    /// starting. Only a regular file is a marker.
     #[test]
-    fn hiding_the_pair_or_its_fzf_listening_ends_the_startup_grace() {
-        let root = std::env::temp_dir().join(format!("eon-pair-settle-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("terminal-2.quick.sock");
-        let _ = std::fs::remove_file(&path);
+    fn hiding_the_pair_or_its_fzf_marking_it_up_ends_the_startup_grace() {
+        let root = scratch("settle");
+        let path = root.join("terminal-2.quick");
+        assert!(!quick_search_shown(&path));
         quick_search_requested(&path, Duration::ZERO);
+        assert!(quick_search_shown(&path));
         settle_starting(&path, true);
         assert!(quick_search_shown(&path));
         settle_starting(&path, false);
@@ -428,12 +553,140 @@ mod tests {
             (InvokeIntent::Toggle, Switch::ShowQuickSearch)
         );
         quick_search_requested(&path, Duration::ZERO);
-        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
         settle_starting(&path, true);
-        drop(listener);
-        std::fs::remove_file(&path).unwrap();
+        assert!(starting(&path).is_some(), "a directory marked it up");
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, b"").unwrap();
+        settle_starting(&path, true);
         assert!(starting(&path).is_none());
+        assert!(quick_search_shown(&path));
+        std::fs::remove_file(&path).unwrap();
+        assert!(!quick_search_shown(&path));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A leave waits for fzf to mark itself up, then writes its key at once
+    /// and every `RESEND` until that marker is gone; a marker removed and
+    /// made again is a later quick search, which the leave does not touch.
+    #[test]
+    fn a_leave_sends_until_fzf_ends_and_never_reads_a_missing_marker_as_ended() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let up = Some((1, 7));
+        let mut leave = Leave::Waiting { deadline: at(2000) };
+        assert_eq!(leave.step(None, at(0)), LeaveStep::Wait);
+        assert_eq!(leave.step(None, at(1999)), LeaveStep::Wait);
+        assert_eq!(leave.step(up, at(1999)), LeaveStep::Send);
+        assert_eq!(leave.step(up, at(2100)), LeaveStep::Wait);
+        assert_eq!(leave.step(up, at(2249)), LeaveStep::Send);
+        assert_eq!(leave.step(up, at(2300)), LeaveStep::Wait);
+        assert_eq!(leave.step(None, at(2300)), LeaveStep::Done);
+
+        let mut leave = Leave::Waiting { deadline: at(0) };
+        assert_eq!(leave.step(up, at(5)), LeaveStep::Send);
+        assert_eq!(leave.step(Some((1, 8)), at(10)), LeaveStep::Done);
+
+        let mut never = Leave::Waiting { deadline: at(100) };
+        assert_eq!(
+            never.step(None, at(100)),
+            LeaveStep::Expired("quick search never started".into())
+        );
+    }
+
+    /// A leave that never sees fzf end gives up after `LEAVE_BOUND`, having
+    /// asked for its key every `RESEND`, and says how often Orbit wrote it:
+    /// here every other time, the rest refused for now.
+    #[test]
+    fn a_leave_gives_up_after_its_bound_and_says_so() {
+        let start = Instant::now();
+        let up = Some((1, 7));
+        let mut leave = Leave::Waiting { deadline: start };
+        let mut sent = 0;
+        let mut now = start;
+        let expired = loop {
+            match leave.step(up, now) {
+                LeaveStep::Send => {
+                    sent += 1;
+                    if sent % 2 == 0 {
+                        leave.wrote();
+                    }
+                }
+                LeaveStep::Wait => {}
+                LeaveStep::Expired(detail) => break detail,
+                LeaveStep::Done => panic!("done with the marker still there"),
+            }
+            now += Duration::from_millis(25);
+        };
+        assert_eq!(now - start, LEAVE_BOUND);
+        assert_eq!(sent, 8);
+        assert_eq!(
+            expired,
+            "quick search did not leave within 2 s; Orbit wrote its key 4 of 8 times"
+        );
+    }
+
+    /// A leave asked for twice keeps its first state; one asked for while
+    /// quick search starts waits until its grace ends; asking for quick search
+    /// again, the pair hiding, or its terminal ending are each the end of it.
+    #[test]
+    fn a_pending_leave_is_kept_once_and_ended_by_hiding_or_a_new_quick_search() {
+        let root = scratch("leave");
+        let path = root.join("terminal-2.quick");
+        let now = Instant::now();
+        assert_eq!(advance_leave(&path, true, now), None);
+        quick_search_requested(&path, Duration::from_secs(1));
+        leave_requested(&path);
+        assert_eq!(advance_leave(&path, true, now), Some(LeaveStep::Wait));
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(advance_leave(&path, true, now), Some(LeaveStep::Send));
+        leave_requested(&path);
+        assert_eq!(advance_leave(&path, true, now), Some(LeaveStep::Wait));
+        assert!(any_pending());
+        assert_eq!(advance_leave(&path, false, now), Some(LeaveStep::Done));
+        assert_eq!(advance_leave(&path, true, now), None);
+
+        leave_requested(&path);
+        quick_search_requested(&path, Duration::ZERO);
+        assert_eq!(advance_leave(&path, true, now), None);
+        quick_search_settled(&path);
+
+        leave_requested(&path);
+        retain_leaves(&[]);
+        assert_eq!(advance_leave(&path, true, now), None);
+        leave_requested(&path);
+        forget_leave(&path);
+        assert_eq!(advance_leave(&path, true, now), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The fzf arguments quick search adds: its start marks it up and the
+    /// reserved key ends it with status 11, both under `/bin/sh`; and the key
+    /// Runtime writes is the one fzf binds, which Orbit's lease takes.
+    #[test]
+    fn the_leave_key_is_the_one_fzf_binds_and_the_lease_takes() {
+        assert_eq!(FZF_ARGUMENTS[0], "--with-shell=/bin/sh -c");
+        assert!(FZF_ARGUMENTS[1].starts_with("--bind=start:execute-silent("));
+        assert!(FZF_ARGUMENTS[1].contains("\"$EON_QUICK_MARKER\""));
+        assert_eq!(
+            FZF_ARGUMENTS[2],
+            "--bind=ctrl-alt-shift-page-down:become(exit 11)"
+        );
+        let LeaseInput::Key { key, modifiers } = leave_input() else {
+            panic!("the leave is a key");
+        };
+        assert_eq!(
+            LeaseInput::allowed_key(key, modifiers),
+            Some((
+                PhysicalKey::PAGE_DOWN,
+                Modifiers::CTRL
+                    .union(Modifiers::ALT)
+                    .union(Modifiers::SHIFT)
+            ))
+        );
+        for argument in FZF_ARGUMENTS {
+            assert!(!argument.contains('\n'));
+        }
     }
 
     #[test]
@@ -460,7 +713,7 @@ mod tests {
             ("files", Toggle, true, false, false, Toggle, None),
             ("files", Toggle, true, true, false, Focus, Leave),
             ("files", Focus, true, false, false, Focus, None),
-            // A starting quick search is left once it listens.
+            // A starting quick search is left once fzf marks it up.
             ("files", Toggle, false, true, true, Toggle, Leave),
             ("files", Toggle, true, true, true, Focus, Leave),
         ];
@@ -472,34 +725,7 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn leaving_quick_search_posts_become_exit_11_to_fzf() {
-        let root = std::env::temp_dir().join(format!("eon-pair-test-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("fzf.sock");
-        let _ = std::fs::remove_file(&path);
-        assert!(!quick_search_shown(&path));
-        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
-        assert!(quick_search_shown(&path));
-        let server = thread::spawn(move || {
-            // The probe's connection, then the POST's.
-            drop(listener.accept().unwrap());
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0; 256];
-            while !request.ends_with(b"become(exit 11)") {
-                let count = stream.read(&mut buffer).unwrap();
-                assert_ne!(count, 0, "{}", String::from_utf8_lossy(&request));
-                request.extend_from_slice(&buffer[..count]);
-            }
-            stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").unwrap();
-            String::from_utf8(request).unwrap()
-        });
-        assert_eq!(leave_quick_search(&path), Ok(()));
-        let request = server.join().unwrap();
-        assert!(request.starts_with("POST / HTTP/1.1\r\n"), "{request}");
-        assert!(request.contains("Content-Length: 15\r\n"), "{request}");
-        std::fs::remove_dir_all(root).unwrap();
-    }
 }
+
+#[cfg(test)]
+mod real_pty;

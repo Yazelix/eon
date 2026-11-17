@@ -656,7 +656,7 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
     // after a cleanup failure never loses a known terminal outcome.
     if let Some(endpoint) = path.as_os_str().as_bytes().strip_suffix(b".record") {
         let endpoint = Path::new(OsStr::from_bytes(endpoint));
-        remove_pair_socket(endpoint)?;
+        remove_pair_marker(endpoint)?;
         settle_pending_pair(endpoint)?;
     }
     fs::remove_file(path).map_err(|error| {
@@ -667,14 +667,14 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
     })
 }
 
-/// Removes the quick search socket a pair's fzf leaves behind when it ends
-/// without unlinking it (EON-C18).
-fn remove_pair_socket(endpoint: &Path) -> Result<(), String> {
-    let socket = super::pair::socket(endpoint);
-    match fs::remove_file(&socket) {
+/// Removes the quick search marker a pair leaves behind when its terminal
+/// ends while fzf runs (EON-C18).
+fn remove_pair_marker(endpoint: &Path) -> Result<(), String> {
+    let marker = super::pair::marker(endpoint);
+    match fs::remove_file(&marker) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(format!(
-            "cannot remove quick search socket {}: {error}",
-            socket.display()
+            "cannot remove quick search marker {}: {error}",
+            marker.display()
         )),
         _ => Ok(()),
     }
@@ -793,10 +793,10 @@ pub(super) fn recover_sessions(
                 )
             })?;
         }
-        if let Some(endpoint) = crate::pair::socket_endpoint(&path)
+        if let Some(endpoint) = crate::pair::marker_endpoint(&path)
             && !live.contains(&endpoint)
         {
-            remove_pair_socket(&endpoint)?;
+            remove_pair_marker(&endpoint)?;
         }
     }
     Ok((sessions, recovered_pair))
@@ -1541,8 +1541,8 @@ pub(super) fn read_history(
     }
 }
 
-/// Writes one paste or Enter through ORB-C5's lease input (EON-C36). Returns
-/// whether Orbit bracketed the paste.
+/// Writes one paste, Enter or non-text key through ORB-C5's lease input
+/// (EON-C36). Returns whether Orbit bracketed the paste.
 pub(super) fn send_input(
     session: &mut RunningSession,
     input: LeaseInput,
@@ -1662,10 +1662,24 @@ fn terminal_request(
             "person-typing",
             "a person is typing in the target terminal; wait for a quiet interval or use --force",
         )),
-        Ok(ManagementServerMessage::Refused(Refusal::InvalidInput)) => Err(failure(
-            "invalid-text",
-            "the text holds a control character other than tab, line feed and carriage return",
-        )),
+        // Only a paste reaches the CLI; a key is Runtime's own (EON-C36).
+        Ok(ManagementServerMessage::Refused(Refusal::InvalidInput)) => Err(match message {
+            ManagementClientMessage::Input {
+                input: LeaseInput::Key { .. },
+                ..
+            } => failure(
+                "invalid-key",
+                "Orbit refused the key: a lease sends only a key that produces no text, \
+                 with no modifier but Shift, Ctrl, Alt and Super",
+            ),
+            _ => failure(
+                "invalid-text",
+                "the text holds a control character other than tab, line feed and carriage return",
+            ),
+        }),
+        Ok(ManagementServerMessage::Refused(Refusal::InputFull)) => {
+            Err(unavailable(session, INPUT_FULL))
+        }
         Ok(ManagementServerMessage::Refused(refusal)) => Err(unavailable(
             session,
             &format!("Orbit refused it: {refusal:?}"),
@@ -1682,6 +1696,15 @@ fn ended(session: &RunningSession) -> Failure {
         format!("terminal {} has ended", session.id),
     )
 }
+
+/// Whether `send_input` failed only for now: a person is typing in the
+/// terminal, or its input queue is full. Nothing was written.
+pub(super) fn input_refused_for_now(failure: &Failure) -> bool {
+    failure.code == "person-typing" || failure.detail.ends_with(INPUT_FULL)
+}
+
+/// How a failure says Orbit refused input because the PTY input queue is full.
+const INPUT_FULL: &str = "Orbit refused it: InputFull";
 
 fn unavailable(session: &RunningSession, detail: &str) -> Failure {
     failure(
@@ -2159,7 +2182,7 @@ fn orbit_command(
     managed_environment::remove_agent_session(&mut orbit_command)
         .arg("serve")
         .arg(socket)
-        .arg("--management-v8")
+        .arg("--management-v9")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -3248,6 +3271,48 @@ pub(crate) mod tests {
         assert_start_checked();
         child.wait().unwrap();
         assert!(super::recorded_process_is_dead(&identity).unwrap());
+    }
+
+    /// After a profile refresh, a terminal whose Orbit runs management v8 is
+    /// never driven: its record is refused, so no v9 lease key can reach a
+    /// host that would not know it (eon-260mh.2.4). That host would refuse
+    /// the key as an invalid request anyway, writing nothing.
+    #[test]
+    fn a_record_of_another_management_generation_is_refused() {
+        let endpoint = |path: &str| EndpointIdentity {
+            path: path.as_bytes().to_vec(),
+            object: ObjectIdentity {
+                device: 1,
+                inode: 1,
+            },
+        };
+        let identity = |management_generation| LiveIdentity {
+            session_id: "terminal-1".into(),
+            run_id: "run".into(),
+            component_generation: "g1-00000000000000000000000000000001".into(),
+            record_generation: management::RECORD_GENERATION,
+            management_generation,
+            process_id: std::process::id(),
+            process_start: 1,
+            uid: super::effective_uid(),
+            presentation: endpoint("/run/g1/orbit.sock"),
+            management: endpoint("/run/g1/orbit.sock.management"),
+        };
+        let validate = |identity: &LiveIdentity| {
+            super::validate_management_identity(
+                identity,
+                "g1-00000000000000000000000000000001",
+                None,
+                false,
+            )
+        };
+        assert!(validate(&identity(management::VERSION)).is_ok());
+        for generation in [management::VERSION - 1, management::VERSION + 1] {
+            assert_eq!(
+                validate(&identity(generation)).unwrap_err(),
+                "terminal record reports an unsupported management generation"
+            );
+        }
     }
 
     #[test]
@@ -4425,41 +4490,75 @@ pub(crate) mod tests {
             ]
         );
 
-        for (reply, expected) in [
+        for (reply, expected, for_now) in [
             (
                 ManagementServerMessage::Refused(Refusal::Typing),
                 "person-typing",
+                true,
             ),
             (
                 ManagementServerMessage::Refused(Refusal::UnbracketedNewline),
                 "unbracketed-newline",
+                false,
             ),
             (
                 ManagementServerMessage::Refused(Refusal::InvalidInput),
                 "invalid-text",
+                false,
             ),
             (
                 ManagementServerMessage::Refused(Refusal::Closed),
                 "terminal-ended",
+                false,
             ),
             (
                 ManagementServerMessage::Refused(Refusal::InputFull),
                 "terminal-unavailable",
+                true,
             ),
-            (ManagementServerMessage::Busy, "terminal-unavailable"),
+            (
+                ManagementServerMessage::Refused(Refusal::InvalidRequest),
+                "terminal-unavailable",
+                false,
+            ),
+            (ManagementServerMessage::Busy, "terminal-unavailable", false),
             (
                 ManagementServerMessage::Stopped(tombstone.clone()),
                 "terminal-ended",
+                false,
             ),
-            (ManagementServerMessage::Allowed, "terminal-unavailable"),
+            (
+                ManagementServerMessage::Allowed,
+                "terminal-unavailable",
+                false,
+            ),
         ] {
             let orbit = answer(&peer, vec![reply]);
             let failure = super::send_input(&mut session, paste(), 2000, &log).unwrap_err();
             assert_eq!(failure.code, expected);
+            assert_eq!(
+                super::input_refused_for_now(&failure),
+                for_now,
+                "{failure:?}"
+            );
             assert!(!failure.detail.contains("hi"), "{failure:?}");
             orbit.join().unwrap();
             assert!(session.request.is_none());
         }
+        // A refused lease key is named as a key, not as text.
+        let orbit = answer(
+            &peer,
+            vec![ManagementServerMessage::Refused(Refusal::InvalidInput)],
+        );
+        let failure =
+            super::send_input(&mut session, crate::pair::leave_input(), 0, &log).unwrap_err();
+        assert_eq!(failure.code, "invalid-key");
+        assert!(
+            failure.detail.starts_with("Orbit refused the key"),
+            "{failure:?}"
+        );
+        assert!(!super::input_refused_for_now(&failure));
+        orbit.join().unwrap();
         let orbit = answer(&peer, vec![ManagementServerMessage::Allowed]);
         assert_eq!(
             super::read_visible(&mut session, &log).unwrap_err().code,
@@ -5093,7 +5192,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v8",
+                "--management-v9",
                 "terminal-1",
                 "run-1",
                 "g1-00000000000000000000000000000001",
@@ -5190,7 +5289,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v8",
+                "--management-v9",
                 "terminal-2",
                 "run-2",
                 "component-2",
@@ -5264,8 +5363,8 @@ pub(crate) mod tests {
             thread::sleep(Duration::from_millis(10));
         }
 
-        let quick_socket = crate::pair::socket(&session.endpoint);
-        fs::create_dir(&quick_socket).unwrap();
+        let quick_marker = crate::pair::marker(&session.endpoint);
+        fs::create_dir(&quick_marker).unwrap();
         assert!(super::session_finished(&mut session).is_err());
         assert!(
             session.record.exists(),
@@ -5273,7 +5372,7 @@ pub(crate) mod tests {
         );
         assert!(!session.is_finished());
 
-        fs::remove_dir(&quick_socket).unwrap();
+        fs::remove_dir(&quick_marker).unwrap();
         assert_eq!(
             super::session_finished(&mut session),
             Ok(Some(128 + libc::SIGTERM))

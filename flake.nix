@@ -744,10 +744,20 @@
             ];
           };
 
+          # The real fzf, Yazi, Zoxide and Files configuration that Eon Runtime's quick
+          # search tests compose under a real Orbit (EON-C18); eon-test passes them through.
+          quickSearchTestEnvironment = {
+            EON_TEST_QUICK_FZF = "${fzfPackage}/bin/fzf";
+            EON_TEST_QUICK_YAZI = "${yaziPackage}/bin/yazi";
+            EON_TEST_QUICK_ZOXIDE = "${zoxidePackage}/bin/zoxide";
+            EON_TEST_QUICK_FILES_CONFIG = "${filesPopupConfig}";
+          };
+
           # The Files popup's Yazi and its quick search: the EON-C18 pair, which a pending tab
           # opens on quick search, with files opening in a new editor pane. Nothing writes
           # Zoxide history; Eon records a pick. The runtime switches screens through
-          # `ya emit-to` and the fzf socket in $EON_PAIR_SOCKET.
+          # `ya emit-to`, the marker fzf creates at $EON_QUICK_MARKER, and a reserved key
+          # bound in $EON_QUICK_FZF_ARGS; quick search runs no listener (EON-C10).
           filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
             mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi" "$out/plugins/smart-enter.yazi" "$out/plugins/close.yazi"
             cat > "$out/yazi.toml" <<'EOF'
@@ -825,6 +835,12 @@
             local release = ya.sync(function(state) state.searching = nil end)
 
             local function search()
+              -- A marker an earlier fzf left says nothing: it goes before anything here can
+              -- fail, so a failed search never leaves the runtime taking Files for quick
+              -- search.
+              local marker = os.getenv("EON_QUICK_MARKER")
+              if marker == "" then marker = nil end
+              if marker then os.remove(marker) end
               local history, err = Command("zoxide")
                 :arg({ "query", "--list", "--exclude", cwd() })
                 :stdout(Command.PIPED)
@@ -832,11 +848,15 @@
                 :spawn()
               if not history then return fail(err) end
 
-              -- The runtime finds a shown quick search at this socket, and asks it to end
-              -- with status 11 to switch to Files.
+              -- The runtime's fzf arguments, one per line: fzf's start action creates the
+              -- marker that tells the runtime quick search is up, and its reserved key ends
+              -- fzf with status 11 to switch to Files.
               local arguments = {}
-              local socket = os.getenv("EON_PAIR_SOCKET")
-              if socket and socket ~= "" then arguments[#arguments + 1] = "--listen=" .. socket end
+              if marker then
+                for argument in (os.getenv("EON_QUICK_FZF_ARGS") or ""):gmatch("[^\n]+") do
+                  arguments[#arguments + 1] = argument
+                end
+              end
               local header = notice()
               if header then arguments[#arguments + 1] = "--header=" .. header end
               local permit = ui.hide()
@@ -855,8 +875,8 @@
                 :spawn()
               local output, wait_err
               if child then output, wait_err = child:wait_with_output() end
-              -- fzf leaves its socket behind when it ends.
-              if socket and socket ~= "" then os.remove(socket) end
+              -- fzf has ended: quick search is no longer up.
+              if marker then os.remove(marker) end
               -- A query that already ended on its own and failed left fzf an empty list.
               local ended = history:try_wait()
               -- No exit needs the rest of the history, so stop and reap the query.
@@ -895,6 +915,9 @@
             function M:entry()
               if not claim() then return end
               local ok, err = pcall(search)
+              -- A search that raised still leaves quick search not up.
+              local marker = os.getenv("EON_QUICK_MARKER")
+              if not ok and marker and marker ~= "" then os.remove(marker) end
               release()
               if not ok then fail(err) end
             end
@@ -1256,6 +1279,7 @@
             doInstallCargoArtifacts = false;
             allowedReferences = [ ];
             ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
+          } // quickSearchTestEnvironment // {
             # Build sandboxes without unprivileged user namespaces (GitHub's Ubuntu runners) skip
             # the bwrap PID-namespace test with a diagnostic; hosts that have them still run it, and
             # eon-test does not set this, so it fails there when bwrap cannot start (eon-w5udv).
@@ -1662,13 +1686,16 @@
             eonbase-closure = eonbaseClosureCheck;
             no-helix-closure = noHelixClosureCheck;
             managed-command-path = managedCommandPathCheck;
-            # The pair's quick search against a slow stand-in fzf (EON-C18), and a pick or
-            # Esc reported while Yazi is still hidden.
+            # The pair's quick search against a slow stand-in fzf (EON-C18), its marker
+            # removed before fzf starts and after it ends, a pick or Esc reported while
+            # Yazi is still hidden, and the leave key bound in neither Eon's Files keymap
+            # nor Yazi's preset.
             quick-search-guard = pkgs.runCommand "eon-quick-search-guard" {
               nativeBuildInputs = [ pkgs.lua5_4 ];
             } ''
               lua ${./nix/quick-search-guard.lua} \
-                ${filesPopupConfig}/plugins/quick-search.yazi/main.lua "$TMPDIR/terminal-2.quick.sock"
+                ${filesPopupConfig}/plugins/quick-search.yazi/main.lua "$TMPDIR/terminal-2.quick" \
+                ${filesPopupConfig}/keymap.toml ${yazi}/yazi-config/preset/keymap-default.toml
               touch "$out"
             '';
           } // lib.optionalAttrs pkgs.stdenv.isLinux {
@@ -1697,7 +1724,7 @@
             inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
             inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
             CARGO_PROFILE_DEV_DEBUG = "line-tables-only";
-          } // venusFontEnvironment // venusTestEnvironment);
+          } // venusFontEnvironment // venusTestEnvironment // quickSearchTestEnvironment);
         };
     in
     lib.foldl' lib.recursiveUpdate { } (map (system: perSystem system { }) manifest.product.targets);

@@ -109,7 +109,7 @@ let
           OBJCOPY | OBJDUMP | RANLIB | READELF | SIZE | STRINGS | STRIP | \
           GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | EON_VENUS_FONT_DIRS | EON_VENUS_TEST_* | \
           SDKROOT* | DEVELOPER_DIR* | MACOSX_DEPLOYMENT_TARGET* | \
-          ORBIT_* | MISMATCHED_WORKER | \
+          ORBIT_* | MISMATCHED_WORKER | EON_TEST_QUICK_* | \
           LANG | LC_ALL | USER | LOGNAME | SOURCE_DATE_EPOCH)
           environment+=("$entry")
           ;;
@@ -257,7 +257,7 @@ pkgs.writeShellApplication {
         CARGO_* | RUST* | NIX_* | PKG_CONFIG* | CC | CXX | AR | AS | LD | NM | \
           OBJCOPY | OBJDUMP | RANLIB | READELF | SIZE | STRINGS | STRIP | \
           GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | FONTCONFIG_FILE | EON_VENUS_TEST_* | \
-          ORBIT_* | MISMATCHED_WORKER | \
+          ORBIT_* | MISMATCHED_WORKER | EON_TEST_QUICK_* | \
           LANG | LC_ALL | USER | LOGNAME | SOURCE_DATE_EPOCH)
           environment+=(--setenv "$name" "''${entry#*=}")
           ;;

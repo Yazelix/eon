@@ -2050,14 +2050,22 @@ impl SupervisorState {
             if let Some(workspaces) = &self.workspaces {
                 self.pane_labels.reconcile(&workspaces.pane_sessions());
                 // A starting quick search stops counting as shown once its fzf
-                // listens or its pair is hidden (EON-C18).
-                if pair::any_starting() {
+                // marks it up or its pair is hidden, and a pending leave writes
+                // its key until fzf ends (EON-C18). A leave whose terminal
+                // ended is forgotten.
+                if pair::any_pending() {
+                    let mut live = Vec::new();
                     for (session, shown) in workspaces.pairs() {
-                        if let Some(running) = self.sessions.iter().find(|item| item.id == session)
+                        if let Some(running) =
+                            self.sessions.iter_mut().find(|item| item.id == session)
                         {
-                            pair::settle_starting(&pair::socket(&running.endpoint), shown);
+                            let marker = pair::marker(&running.endpoint);
+                            pair::settle_starting(&marker, shown);
+                            pair::drive_leave(running, shown, now, &self.log);
+                            live.push(marker);
                         }
                     }
+                    pair::retain_leaves(&live);
                 }
             }
         } else {
@@ -2831,15 +2839,15 @@ fn pair_command(
             runtime.join("eon.sock").into_os_string(),
         ]);
     }
-    let socket = pair::socket(&session.endpoint);
+    let marker = pair::marker(&session.endpoint);
     if quick {
         command.push("--eon-quick".into());
-        pair::quick_search_requested(&socket, delay);
+        pair::quick_search_requested(&marker, delay);
     }
     let id = pair::client_id(&session.endpoint);
     command.extend([
-        OsString::from("--eon-pair-socket"),
-        socket.into_os_string(),
+        OsString::from("--eon-quick-marker"),
+        marker.into_os_string(),
         OsString::from("--client-id"),
         id.to_string().into(),
     ]);
@@ -4044,7 +4052,7 @@ fn dispatch_registered_request(
                         .and_then(|(session, _)| {
                             state.sessions.iter().find(|running| running.id == session)
                         })
-                        .map(|running| pair::socket(&running.endpoint));
+                        .map(|running| pair::marker(&running.endpoint));
                     Some((directory.clone(), pair))
                 }
                 _ => None,
@@ -4064,14 +4072,14 @@ fn dispatch_registered_request(
                             .find(|running| running.id == session)?
                             .endpoint;
                         let id = pair::client_id(endpoint);
-                        let socket = pair::socket(endpoint);
-                        let quick = pair::quick_search_shown(&socket);
-                        // Only a quick search whose fzf has not answered yet.
-                        let starting = quick && pair::starting(&socket).is_some();
+                        let marker = pair::marker(endpoint);
+                        let quick = pair::quick_search_shown(&marker);
+                        // Only a quick search whose fzf has not marked it up yet.
+                        let starting = quick && pair::starting(&marker).is_some();
                         let (dispatched, switch) =
                             pair::plan(entry, *intent, shown, quick, starting);
                         *intent = dispatched;
-                        Some((switch, id, socket))
+                        Some((switch, id, session.to_owned(), marker))
                     }),
                 _ => None,
             };
@@ -4222,16 +4230,24 @@ fn dispatch_registered_request(
             if result.is_ok()
                 && let Some((directory, pair)) = visit
             {
-                if let Some(socket) = pair {
-                    pair::quick_search_settled(&socket);
+                if let Some(marker) = pair {
+                    pair::quick_search_settled(&marker);
                 }
                 record_visit(inputs, config, log, &directory);
             }
             if result.is_ok()
-                && let Some((switch, id, socket)) = pair_switch
+                && let Some((switch, id, session, marker)) = pair_switch
             {
                 let ya = inputs.managed.shell_bin.as_ref().map(|bin| bin.join("ya"));
-                pair::run(switch, ya.as_deref(), id, socket, log);
+                pair::run(switch, ya.as_deref(), id, marker, log);
+                // A quick search already up is left in this turn, as the
+                // picker's Enter is pressed in it; one still starting waits
+                // for later turns.
+                if switch == pair::Switch::LeaveQuickSearch
+                    && let Some(running) = sessions.iter_mut().find(|running| running.id == session)
+                {
+                    pair::drive_leave(running, true, Instant::now(), log);
+                }
             }
             if result.is_ok()
                 && let Some(picker) = picker_confirm
@@ -9105,14 +9121,14 @@ mod tests {
     /// the packaged Files, the startup flags only for the window's first pair,
     /// and the DDS client ID its screen switches use (EON-C18).
     #[test]
-    fn pair_commands_carry_quick_start_socket_and_client_id_only_for_packaged_files() {
+    fn pair_commands_carry_quick_start_marker_and_client_id_only_for_packaged_files() {
         let session = crate::workspace::Session {
             id: "terminal-2".into(),
             endpoint: "/runtime/g1/terminal-2.sock".into(),
         };
         let id = crate::pair::client_id(&session.endpoint);
-        let socket = crate::pair::socket(&session.endpoint);
-        assert_eq!(socket, Path::new("/runtime/g1/terminal-2.quick.sock"));
+        let marker = crate::pair::marker(&session.endpoint);
+        assert_eq!(marker, Path::new("/runtime/g1/terminal-2.quick"));
         let animation = crate::managed_environment::StartupAnimation {
             enabled: true,
             style: "wave".into(),
@@ -9124,8 +9140,8 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let tail = [
-            "--eon-pair-socket".to_owned(),
-            socket.to_str().unwrap().to_owned(),
+            "--eon-quick-marker".to_owned(),
+            marker.to_str().unwrap().to_owned(),
             "--client-id".to_owned(),
             id.to_string(),
         ];
@@ -9194,7 +9210,7 @@ mod tests {
         };
         let files = || vec![OsString::from("eon-files")];
         let grace = |session: &crate::workspace::Session| {
-            crate::pair::starting(&crate::pair::socket(&session.endpoint))
+            crate::pair::starting(&crate::pair::marker(&session.endpoint))
                 .unwrap()
                 .saturating_duration_since(Instant::now())
         };

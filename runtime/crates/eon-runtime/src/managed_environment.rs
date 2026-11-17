@@ -2724,8 +2724,12 @@ pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
 
 /// `quick` when the Files pair starts on quick search (EON-C18).
 pub(crate) const FILES_START_VARIABLE: &str = "EON_FILES_START";
-/// The socket the pair's quick search listens on, for the runtime's screen switches.
-pub(crate) const PAIR_SOCKET_VARIABLE: &str = "EON_PAIR_SOCKET";
+/// The marker the pair's quick search creates while its fzf runs, which tells
+/// the runtime's screen switches that quick search is up.
+pub(crate) const QUICK_MARKER_VARIABLE: &str = "EON_QUICK_MARKER";
+/// The fzf arguments the pair's quick search adds, one per line: the start
+/// action that creates the marker and the binding of the key that leaves.
+pub(crate) const QUICK_FZF_ARGS_VARIABLE: &str = "EON_QUICK_FZF_ARGS";
 /// The startup pair's "other windows" notice, its first quick search's header.
 pub(crate) const FILES_NOTICE_VARIABLE: &str = "EON_FILES_NOTICE";
 
@@ -2734,7 +2738,8 @@ pub(crate) const FILES_NOTICE_VARIABLE: &str = "EON_FILES_NOTICE";
 fn pair_launch_flags<'a>(command: &mut Command, mut arguments: &'a [OsString]) -> &'a [OsString] {
     command
         .env_remove(FILES_START_VARIABLE)
-        .env_remove(PAIR_SOCKET_VARIABLE)
+        .env_remove(QUICK_MARKER_VARIABLE)
+        .env_remove(QUICK_FZF_ARGS_VARIABLE)
         .env_remove(FILES_NOTICE_VARIABLE);
     loop {
         match arguments {
@@ -2742,8 +2747,11 @@ fn pair_launch_flags<'a>(command: &mut Command, mut arguments: &'a [OsString]) -
                 command.env(FILES_START_VARIABLE, "quick");
                 arguments = rest;
             }
-            [flag, socket, rest @ ..] if flag == "--eon-pair-socket" => {
-                command.env(PAIR_SOCKET_VARIABLE, socket);
+            [flag, marker, rest @ ..] if flag == "--eon-quick-marker" => {
+                command.env(QUICK_MARKER_VARIABLE, marker).env(
+                    QUICK_FZF_ARGS_VARIABLE,
+                    crate::pair::FZF_ARGUMENTS.join("\n"),
+                );
                 arguments = rest;
             }
             _ => return arguments,
@@ -5891,8 +5899,8 @@ label = "Browse"
     fn pair_launch_flags_set_the_pair_environment_and_pass_the_rest_to_yazi() {
         let arguments = [
             "--eon-quick",
-            "--eon-pair-socket",
-            "/run/eon-pair-1.sock",
+            "--eon-quick-marker",
+            "/run/terminal-1.quick",
             "--client-id",
             "4611686018427387905",
         ]
@@ -5905,8 +5913,16 @@ label = "Browse"
             Some(Some(OsStr::new("quick")))
         );
         assert_eq!(
-            command_environment(&command, "EON_PAIR_SOCKET"),
-            Some(Some(OsStr::new("/run/eon-pair-1.sock")))
+            command_environment(&command, "EON_QUICK_MARKER"),
+            Some(Some(OsStr::new("/run/terminal-1.quick")))
+        );
+        assert_eq!(
+            command_environment(&command, "EON_QUICK_FZF_ARGS"),
+            Some(Some(OsStr::new(
+                "--with-shell=/bin/sh -c\n\
+                 --bind=start:execute-silent(: > \"$EON_QUICK_MARKER\")\n\
+                 --bind=ctrl-alt-shift-page-down:become(exit 11)"
+            )))
         );
         assert_eq!(
             command_environment(&command, "EON_FILES_NOTICE"),
@@ -5917,7 +5933,12 @@ label = "Browse"
         let plain = [OsString::from("dir")];
         let mut command = Command::new("yazi");
         assert_eq!(pair_launch_flags(&mut command, &plain), &plain[..]);
-        for variable in ["EON_FILES_START", "EON_PAIR_SOCKET", "EON_FILES_NOTICE"] {
+        for variable in [
+            "EON_FILES_START",
+            "EON_QUICK_MARKER",
+            "EON_QUICK_FZF_ARGS",
+            "EON_FILES_NOTICE",
+        ] {
             assert_eq!(command_environment(&command, variable), Some(None));
         }
     }

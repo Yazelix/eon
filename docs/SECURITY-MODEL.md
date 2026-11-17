@@ -15,7 +15,8 @@ launcher's credentials as beta risks. Agent authority across EONW and helper
 IPC remains tracked for work after the beta (`eon-260mh.2`, `.3`, `.10`).
 Sandboxed agents must not reach Eon's socket or helper sockets: a client that
 can reach them can run commands on the host even under `none`. Helpers include
-Editor RPC (such as a Neovim server) and the Quick-search listener.
+Editor RPC (such as a Neovim server); Quick search runs no listener
+(`eon-260mh.2.4`, finding 18).
 These restrictions must be enforced by the agent's sandbox; the content
 setting does not establish isolation. See the [public security policy](../SECURITY.md)
 for private reporting and beta guidance, and the
@@ -148,23 +149,21 @@ risk when a Neovim listener is running. Exploitability of this source-inferred
 path remains unverified. The packaged default editor is Helix
 (`eon/crates/eon/src/product.rs:224`).
 
-Quick search starts the pinned fzf 0.73.1 with `--listen` on a Unix socket
-beside its terminal endpoint. Runtime sends an unauthenticated HTTP POST action,
-`become(exit 11)`, to leave Quick search (`components/eon-v5.json:216`,
-`flake.nix:839`, `runtime/crates/eon-runtime/src/pair.rs:231`). In that pin,
-fzf treats a Unix listener as local, accepts execution actions from it, and
-implements `become` by executing a shell command. See the pinned
-[listener and authentication code](https://github.com/junegunn/fzf/blob/ce4bef75954bebd87e0886435bcf8c6904328ab0/src/server.go#L52),
-[action dispatch](https://github.com/junegunn/fzf/blob/ce4bef75954bebd87e0886435bcf8c6904328ab0/src/terminal.go#L6511),
-and [shell execution](https://github.com/junegunn/fzf/blob/ce4bef75954bebd87e0886435bcf8c6904328ab0/src/util/util_unix.go#L61).
-Eon provisions no API key in this launch. An inherited `FZF_API_KEY`, if set,
-makes fzf require a matching request header; Runtime's POST supplies none.
-With a running listener, socket access and no required key (or possession of
-that key), a client can send shell-execution actions outside its sandbox.
-Finding 18 is therefore an established high conditional route to the same host
-execution as finding 5, outside the terminal-content switch. The socket's
-private directory and mode restrict other users, not permitted same-user
-sandbox connections.
+Quick search runs no listener (`eon-260mh.2.4`, EON-C10). Until that bead,
+the pinned fzf 0.73.1 ran with `--listen` on a Unix socket beside its terminal
+endpoint, and Runtime left Quick search with an unauthenticated HTTP POST of
+`become(exit 11)`. fzf accepts execution actions from a Unix listener and runs
+`become` through a shell, so any client that reached the socket could run host
+commands outside its sandbox: finding 18, a route to finding 5's host
+execution outside the terminal-content switch. Now fzf binds the reserved key
+Ctrl+Alt+Shift+PageDown to `become(exit 11)`, and Runtime writes that key
+through Orbit's management lease (ORB-C5's non-text key input), which only the
+supervisor holds. fzf's start action creates a marker file beside the terminal
+endpoint so Runtime knows Quick search is up; the marker grants nothing. The
+key produces no text, and no packaged Files binding uses it, so a copy that
+reaches Yazi after fzf has ended changes nothing there beyond dismissing a
+pending chord's hint (`runtime/crates/eon-runtime/src/pair.rs`,
+`flake.nix` quick-search plugin).
 
 ## Agent launch, credentials and context
 
@@ -427,7 +426,7 @@ finding across follow-up work; the referenced sections above supply evidence.
 | 15 | Low, source-supported | Signer-file validation lacks an owner/mode policy. | Define a safe trust-anchor ownership and writability policy. |
 | 16 | Medium, configuration-dependent | Example Codex commands omit the default popup's daemon isolation flag; shared routing can target another window. | Align examples with `--no-daemon` and verify the supported backend version. |
 | 17 | Medium, source-inferred | Callerless Scrollback `Toggle` bypasses the `none` guard under the eligibility conditions above. | Distinguish native-window authority from unauthenticated EONW requests and cover the bypass. |
-| 18 | High, conditional | A reachable Quick-search fzf listener accepts shell-execution actions when its API-key check permits the request; an additional route to 5. | Constrain auxiliary IPC actions/access together with the agent authority design. |
+| 18 | Resolved (`eon-260mh.2.4`) | A reachable Quick-search fzf listener accepted shell-execution actions when its API-key check permitted the request; an additional route to 5. | Done: Quick search runs no listener; Runtime leaves it with a non-text key through Orbit's management lease. |
 
 ### Current recommended use
 

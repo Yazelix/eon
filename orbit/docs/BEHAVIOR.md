@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v8 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v9 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -147,7 +147,7 @@ same way.
 
 ## Management record
 
-`--management-v8` makes the run managed (ORB-C13).
+`--management-v9` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -401,12 +401,15 @@ such typing still waits, or less than the window after it was written, is
 refused first (`Refused(Typing)`), in the same owner-loop step that would
 write it, so no client input lands between the test and the write; a zero
 window never refuses for typing. The host refuses a paste that holds a control
-character other than tab, line feed and carriage return
-(`Refused(InvalidInput)`), and one that holds a line feed or carriage return
-while the program has not enabled bracketed paste
+character other than tab, line feed and carriage return, and a lease key
+other than one that produces no text with no modifier but Shift, Ctrl, Alt
+and Super, a value that names no key or modifier included
+(`Refused(InvalidInput)`), and a paste that holds a line feed or carriage
+return while the program has not enabled bracketed paste
 (`Refused(UnbracketedNewline)`). Otherwise it encodes the paste as an attached
-client's `Paste`, bracketed when the program enabled bracketed paste, or Enter
-as an unmodified Enter press and its release, which the keyboard mode encodes
+client's `Paste`, bracketed when the program enabled bracketed paste, Enter
+as an unmodified Enter press and its release, or the lease key as an attached
+client's press and release of it with no text, which the keyboard mode encodes
 or drops, and queues the bytes whole for the PTY, answering `Input` with
 whether the paste was bracketed; input the queue cannot take whole is refused
 with `Refused(InputFull)`, and input after the PTY closed while the child runs
@@ -1229,7 +1232,7 @@ byte after the process census (the foreground tag dates to management v5).
 it and refuses any other tag. Orbit gives the foreground no status meaning.
 
 The real-PTY program-status check reads the records through a
-`--management-v8` lease:
+`--management-v9` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
   and a `working` report leaves the `done` record and the last report. The

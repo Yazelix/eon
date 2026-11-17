@@ -1423,6 +1423,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment (2026-11-17):** `eon-260mh.2.4`, approved by eon-lead under
+  Lucca's delegation (`eon-260mh.2.1`): Quick search runs no listener; Runtime
+  leaves it through terminal input.
+
 - **Amendment (2026-11-16):** `eon-89ho`, approved by eon-lead under Lucca's
   delegation (bead decision D1, 2026-11-12): `eon pane create --tab TAB`
   adds the pane to an explicit tab of the addressed session without
@@ -2326,7 +2330,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   The Unix permissions admit any same-user process, including agents with
   agents.terminal_access = "none". Eon exports the path to no unrelated terminal;
   Neovim may expose its own server identity to processes it starts. The argv
-  and socket path are runtime policy.
+  and socket path are runtime policy. Quick search runs no listener.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
@@ -3350,7 +3354,7 @@ popup or automatic tutorial launch.
 - **Owner:** Eon Runtime generation identity/selection, namespaces, discovery,
   Present, explicit Stop and exact owned residue; Eon supplies immutable
   assembly/default/validator/graph/Cargo/Nix-generated inputs.
-- **Consumes:** Orbit management v8 (`ORB-C15` foreground), `ORB-C3`
+- **Consumes:** Orbit management v9 (`ORB-C15` foreground), `ORB-C3`
   admission, EON-C31 polling, and Venus `VEN-C14`.
 - **Boundary:** No manager daemon, persisted topology, machine-restart recovery,
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
@@ -3683,7 +3687,7 @@ popup or automatic tutorial launch.
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
-- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v8, and Venus `VEN-C14`.
+- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v9, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and

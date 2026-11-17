@@ -2266,7 +2266,7 @@ fn managed_orbit_helper() {
     let presentation = PathBuf::from(&arguments[serve + 1]);
     let management_argument = arguments
         .iter()
-        .position(|argument| argument == OsStr::new("--management-v8"))
+        .position(|argument| argument == OsStr::new("--management-v9"))
         .unwrap();
     let session_id = arguments[management_argument + 1]
         .to_str()
@@ -2438,7 +2438,8 @@ fn managed_orbit_helper() {
                         }
                         // A test scripts how Orbit refuses a read or an input
                         // by writing `busy`, `closed`, `unbracketed` (pastes
-                        // only) or `busy-enter` (Enter only) to the file
+                        // only), `busy-enter` (Enter only), or `input-full` or
+                        // `invalid-request` (keys only) to the file
                         // EON_TEST_ORBIT_REPLY names.
                         let reply = std::env::var_os("EON_TEST_ORBIT_REPLY")
                             .and_then(|path| fs::read_to_string(path).ok())
@@ -2493,6 +2494,20 @@ fn managed_orbit_helper() {
                             ) => Some(ManagementServerMessage::Refused(
                                 Refusal::UnbracketedNewline,
                             )),
+                            (
+                                "input-full",
+                                ManagementClientMessage::Input {
+                                    input: LeaseInput::Key { .. },
+                                    ..
+                                },
+                            ) => Some(ManagementServerMessage::Refused(Refusal::InputFull)),
+                            (
+                                "invalid-request",
+                                ManagementClientMessage::Input {
+                                    input: LeaseInput::Key { .. },
+                                    ..
+                                },
+                            ) => Some(ManagementServerMessage::Refused(Refusal::InvalidRequest)),
                             _ => None,
                         };
                         let foreground = matches!(request, ManagementClientMessage::ProgramStatus)
@@ -3323,6 +3338,8 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
             .env("EON_TEST_YA_LOG", &self.ya_log)
             .env("EON_TEST_ZOXIDE_LOG", &self.zoxide_log)
             .env("EON_TEST_PANES_LOG", &self.panes_log)
+            .env("EON_TEST_ORBIT_REPLY", self.root.join("orbit-reply"))
+            .env("EON_TEST_INPUT_LOG", self.root.join("input.log"))
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         command
@@ -3493,16 +3510,17 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
     assert_eq!(first.directory, window.launch);
     let id = first.client_id();
     assert!((1 << 62..1 << 63).contains(&id), "{id}");
-    // fzf listens beside the pair's endpoint, in the window's own runtime.
-    let socket = generation.join("terminal-2.quick.sock");
+    // fzf marks quick search up beside the pair's endpoint, in the window's
+    // own runtime; nothing listens there.
+    let marker = generation.join("terminal-2.quick");
     assert_eq!(
         first.arguments,
         [
             "--eon-notice",
             control.to_str().unwrap(),
             "--eon-quick",
-            "--eon-pair-socket",
-            socket.to_str().unwrap(),
+            "--eon-quick-marker",
+            marker.to_str().unwrap(),
             "--client-id",
             &id.to_string(),
         ]
@@ -3554,8 +3572,8 @@ fn pending_tabs_host_the_files_pair_on_quick_search() {
         second.arguments,
         [
             "--eon-quick",
-            "--eon-pair-socket",
-            generation.join("terminal-3.quick.sock").to_str().unwrap(),
+            "--eon-quick-marker",
+            generation.join("terminal-3.quick").to_str().unwrap(),
             "--client-id",
             &second_id.to_string(),
         ]
@@ -3932,84 +3950,61 @@ fn wait_for_process_removal_of(path: &Path) {
     }
 }
 
-/// A stand-in for a shown quick search's fzf: it accepts on the pair socket
-/// and answers each POST, keeping its body.
+/// A stand-in for a shown quick search's fzf: it creates the pair's marker,
+/// as fzf's start action does, and counts the leave keys the mock Orbit takes
+/// for its terminal. Ending it removes the marker, as the plugin does once
+/// fzf has ended.
 struct QuickSearch {
-    path: PathBuf,
-    posts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    server: Option<thread::JoinHandle<()>>,
+    marker: PathBuf,
+    input_log: PathBuf,
+    terminal: String,
+    before: usize,
+}
+
+/// The leave keys the mock Orbit has taken for `terminal`.
+fn leave_keys(input_log: &Path, terminal: &str) -> usize {
+    log_lines(input_log)
+        .iter()
+        .filter(|line| line.starts_with(&format!("{terminal} Key {{")))
+        .count()
 }
 
 impl QuickSearch {
-    fn listen(path: &Path) -> Self {
-        let listener = UnixListener::bind(path).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let posts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let server = {
-            let (posts, done) = (posts.clone(), done.clone());
-            thread::spawn(move || {
-                while !done.load(Ordering::Relaxed) {
-                    let Ok((mut stream, _)) = listener.accept() else {
-                        thread::sleep(Duration::from_millis(5));
-                        continue;
-                    };
-                    stream.set_nonblocking(false).unwrap();
-                    // macOS refuses the timeout on a connection whose peer
-                    // already closed, as a probe's may have.
-                    if stream
-                        .set_read_timeout(Some(Duration::from_millis(500)))
-                        .is_err()
-                    {
-                        continue;
-                    }
-                    let mut request = Vec::new();
-                    let mut buffer = [0; 256];
-                    // A probe connects and closes without a request.
-                    while let Ok(count @ 1..) = stream.read(&mut buffer) {
-                        request.extend_from_slice(&buffer[..count]);
-                        if request.ends_with(b"become(exit 11)") {
-                            let _ =
-                                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-                            posts
-                                .lock()
-                                .unwrap()
-                                .push(String::from_utf8_lossy(&request).into_owned());
-                            break;
-                        }
-                    }
-                }
-            })
-        };
+    fn up(window: &PairWindow, terminal: &str) -> Self {
+        let marker = window.generation().join(format!("{terminal}.quick"));
+        fs::write(&marker, b"").unwrap();
+        let input_log = window.root.join("input.log");
         Self {
-            path: path.to_path_buf(),
-            posts,
-            done,
-            server: Some(server),
+            before: leave_keys(&input_log, terminal),
+            marker,
+            input_log,
+            terminal: terminal.into(),
         }
     }
 
-    fn wait_for_posts(&self, count: usize) -> Vec<String> {
+    fn leaves(&self) -> usize {
+        leave_keys(&self.input_log, &self.terminal) - self.before
+    }
+
+    fn wait_for_leaves(&self, count: usize) -> usize {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let posts = self.posts.lock().unwrap().clone();
-            if posts.len() >= count {
-                return posts;
+            let leaves = self.leaves();
+            if leaves >= count {
+                return leaves;
             }
-            assert!(Instant::now() < deadline, "posts: {posts:?}");
+            assert!(Instant::now() < deadline, "leave keys: {leaves}");
             thread::sleep(Duration::from_millis(10));
         }
     }
+
+    /// fzf ends, on the leave key or otherwise.
+    fn end(self) {}
 }
 
 impl Drop for QuickSearch {
     fn drop(&mut self) {
-        self.done.store(true, Ordering::Relaxed);
-        if let Some(server) = self.server.take() {
-            let _ = server.join();
-        }
-        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(&self.marker);
     }
 }
 
@@ -4019,7 +4014,6 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     let mut supervisor = window.spawn(&[]);
     let launch = window.pair_launch("terminal-2");
     let id = launch.client_id();
-    let socket = window.generation().join("terminal-2.quick.sock");
     let emit = format!("emit-to {id} plugin quick-search");
     assert!(
         window
@@ -4051,19 +4045,31 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     );
 
     // While quick search is up, Alt+Z hides the pair and never emits again.
-    let quick = QuickSearch::listen(&socket);
+    let quick = QuickSearch::up(&window, "terminal-2");
     assert!(!shown(&window.invoke_popup(
         "z-hide",
         "project",
         Some("u1")
     )));
-    // Alt+Shift+Y shows the hidden pair on Files, leaving quick search.
+    // Alt+Shift+Y shows the hidden pair on Files, leaving quick search with
+    // its key through the lease, which stops once fzf ends.
     assert!(shown(&window.invoke_popup("y-show", "files", Some("u1"))));
-    assert!(quick.wait_for_posts(1)[0].starts_with("POST / HTTP/1.1\r\n"));
+    quick.wait_for_leaves(1);
+    quick.end();
     // On quick search, Alt+Shift+Y switches to Files and keeps the pair shown.
+    let quick = QuickSearch::up(&window, "terminal-2");
     assert!(shown(&window.invoke_popup("y-switch", "files", Some("u1"))));
-    assert_eq!(quick.wait_for_posts(2).len(), 2);
-    drop(quick);
+    // The pair's first copy goes in the same turn, before the reply.
+    assert!(quick.leaves() >= 1, "no key with the reply");
+    let leaves = quick.leaves();
+    quick.end();
+    thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        leave_keys(&window.root.join("input.log"), "terminal-2"),
+        1 + leaves
+    );
+    // Quick search runs no listener.
+    assert!(!window.generation().join("terminal-2.quick.sock").exists());
 
     // On Files, Alt+Shift+Y hides the pair; on a hidden Files it shows it as is.
     assert!(!shown(&window.invoke_popup("y-hide", "files", Some("u1"))));
@@ -4090,7 +4096,6 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     // still starting: Alt+Shift+Y waits for it and switches to Files.
     assert!(window.eon(&["tab", "create"]).status.success());
     let pending = window.pair_launch("terminal-3");
-    let pending_socket = window.generation().join("terminal-3.quick.sock");
     let still_pending = |snapshot: &Response| match snapshot {
         Response::Snapshot(snapshot) => {
             snapshot.tabs[1].pending && snapshot.tabs[1].selected_popup.as_deref() == Some("u2")
@@ -4103,9 +4108,9 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
         Some("u2")
     )));
     thread::sleep(Duration::from_millis(300));
-    let starting = QuickSearch::listen(&pending_socket);
-    assert!(starting.wait_for_posts(1)[0].starts_with("POST / HTTP/1.1\r\n"));
-    drop(starting);
+    let starting = QuickSearch::up(&window, "terminal-3");
+    starting.wait_for_leaves(1);
+    starting.end();
     assert_eq!(log_lines(&window.ya_log).len(), 2);
     // On Files, Alt+Z asks for quick search; while it starts, Alt+Z keeps
     // the pair shown and asks for nothing more; once it is up, it dismisses.
@@ -4123,7 +4128,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
         "project",
         Some("u2")
     )));
-    let up = QuickSearch::listen(&pending_socket);
+    let up = QuickSearch::up(&window, "terminal-3");
     assert!(matches!(
         window.invoke_popup("pending-z-dismiss", "project", Some("u2")),
         Response::Snapshot(snapshot)
@@ -4145,7 +4150,6 @@ fn hiding_a_starting_quick_search_lets_the_next_key_ask_again() {
     let mut supervisor = window.spawn(&[]);
     let launch = window.pair_launch("terminal-2");
     let emit = format!("emit-to {} plugin quick-search", launch.client_id());
-    let socket = window.generation().join("terminal-2.quick.sock");
     assert!(
         window
             .eon(&[
@@ -4178,21 +4182,85 @@ fn hiding_a_starting_quick_search_lets_the_next_key_ask_again() {
     // Esc, then Alt+Shift+Y: Files shows and no fzf is asked to leave.
     assert!(window.eon(&["popup", "hide", "u1"]).status.success());
     assert!(shown(&window.invoke_popup("y-show", "files", Some("u1"))));
-    let quick = QuickSearch::listen(&socket);
+    let quick = QuickSearch::up(&window, "terminal-2");
     thread::sleep(Duration::from_millis(500));
-    assert_eq!(quick.posts.lock().unwrap().len(), 0);
-    drop(quick);
+    assert_eq!(quick.leaves(), 0);
+    quick.end();
+    window.stop_generation(&mut supervisor);
+}
+
+/// A leave writes its key through the lease until fzf ends: a person typing
+/// or a full input queue keeps it for the next copy; one Orbit refuses as
+/// invalid, as a host of an older management generation would, ends it at
+/// once with nothing written; and one fzf never answers stops after 2 s
+/// (EON-C18).
+#[test]
+fn a_leave_retries_a_full_queue_stops_on_a_refusal_and_gives_up_after_its_bound() {
+    let window = PairWindow::new();
+    let mut supervisor = window.spawn(&[]);
+    window.pair_launch("terminal-2");
+    assert!(
+        window
+            .eon(&[
+                "tab",
+                "directory",
+                "t1",
+                "--",
+                window.launch.to_str().unwrap()
+            ])
+            .status
+            .success()
+    );
+    let reply = window.root.join("orbit-reply");
+    let switch = |id: &str| {
+        // Files, then quick search up, then Alt+Shift+Y on it.
+        assert!(matches!(
+            window.invoke_popup(id, "files", Some("u1")),
+            Response::Snapshot(_)
+        ));
+    };
+
+    // A full queue: the leave waits, and its key goes in once there is room.
+    fs::write(&reply, "input-full").unwrap();
+    let quick = QuickSearch::up(&window, "terminal-2");
+    switch("full");
+    thread::sleep(Duration::from_millis(600));
+    assert_eq!(quick.leaves(), 0);
+    fs::remove_file(&reply).unwrap();
+    quick.wait_for_leaves(1);
+    quick.end();
+    window.eon(&["popup", "hide", "u1"]);
+
+    // Refused as invalid: nothing is written, and it is not tried again.
+    fs::write(&reply, "invalid-request").unwrap();
+    let quick = QuickSearch::up(&window, "terminal-2");
+    switch("invalid");
+    thread::sleep(Duration::from_millis(300));
+    fs::remove_file(&reply).unwrap();
+    thread::sleep(Duration::from_millis(800));
+    assert_eq!(quick.leaves(), 0);
+    quick.end();
+    window.eon(&["popup", "hide", "u1"]);
+
+    // fzf never ends: a copy every 250 ms for 2 s, then no more.
+    let quick = QuickSearch::up(&window, "terminal-2");
+    switch("bound");
+    thread::sleep(Duration::from_millis(2600));
+    let sent = quick.leaves();
+    assert!((2..=9).contains(&sent), "{sent} copies");
+    thread::sleep(Duration::from_millis(600));
+    assert_eq!(quick.leaves(), sent);
+    quick.end();
     window.stop_generation(&mut supervisor);
 }
 
 /// The window's first pair plays the startup Anima before its Yazi starts,
-/// so its quick search can listen more than 2 s after launch. Alt+Shift+Y
+/// so its quick search can be up more than 2 s after launch. Alt+Shift+Y
 /// meanwhile keeps the pending tab and its pair shown, then switches the pair
-/// to Files once quick search listens (EON-C18).
+/// to Files once fzf marks quick search up (EON-C18).
 #[test]
 fn alt_shift_y_during_the_startup_anima_waits_for_quick_search() {
     let (window, mut supervisor) = anima_window();
-    let socket = window.generation().join("terminal-2.quick.sock");
 
     // The 3 s Anima is still playing.
     thread::sleep(Duration::from_millis(2300));
@@ -4202,9 +4270,9 @@ fn alt_shift_y_during_the_startup_anima_waits_for_quick_search() {
         Some("u1")
     )));
     thread::sleep(Duration::from_millis(1000));
-    let quick = QuickSearch::listen(&socket);
-    assert!(quick.wait_for_posts(1)[0].starts_with("POST / HTTP/1.1\r\n"));
-    drop(quick);
+    let quick = QuickSearch::up(&window, "terminal-2");
+    quick.wait_for_leaves(1);
+    quick.end();
     assert!(pending_pair(&window.inspect("after-anima")).is_some());
     window.stop_generation(&mut supervisor);
 }
@@ -4216,7 +4284,6 @@ fn alt_shift_y_during_the_startup_anima_waits_for_quick_search() {
 #[test]
 fn alt_z_during_the_startup_anima_keeps_the_pending_tab_on_quick_search() {
     let (window, mut supervisor) = anima_window();
-    let socket = window.generation().join("terminal-2.quick.sock");
     for (id, wait) in [("anima-z-early", 300), ("anima-z-late", 2000)] {
         thread::sleep(Duration::from_millis(wait));
         assert!(
@@ -4224,7 +4291,7 @@ fn alt_z_during_the_startup_anima_keeps_the_pending_tab_on_quick_search() {
             "{id}"
         );
     }
-    let quick = QuickSearch::listen(&socket);
+    let quick = QuickSearch::up(&window, "terminal-2");
     assert!(matches!(
         window.invoke_popup("anima-z-dismiss", "project", Some("u1")),
         Response::Snapshot(snapshot)
@@ -11821,9 +11888,18 @@ fn pre_s2b_store_supervisors_remain_attachable_beside_fresh_lifetimes() {
             eprintln!("SKIP pre-S2b input missing: {}", package.display());
             continue;
         }
-        // Immutable production CLI/runtime; the existing fixture supplies Orbit and Venus mocks.
+        // Immutable production CLI/runtime, with the Orbit its package pins: an
+        // older management generation than the fixture's Orbit mock speaks,
+        // as after a profile refresh. The fixture supplies the Venus mock.
         let old_binary = package.join("bin/.eon-wrapped");
         assert!(old_binary.is_file(), "{}", old_binary.display());
+        let wrapper = fs::read_to_string(package.join("bin/eon")).unwrap();
+        let old_orbit = wrapper
+            .split("EON_ORBIT='")
+            .nth(1)
+            .and_then(|rest| rest.split('\'').next())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("{} names no Orbit", package.display()));
         let mut window = PairWindow::new();
         let candidate = std::mem::replace(&mut window.binary, old_binary.clone());
         let versions = window
@@ -11855,7 +11931,7 @@ fn pre_s2b_store_supervisors_remain_attachable_beside_fresh_lifetimes() {
             format!(
                 "#!/bin/sh\nexport EON_SESSION_BIN='{}' EON_ORBIT='{}' EON_VENUS='{}'\nprintf '%s|%s\\n' \"${{EON_ATTACH_DELEGATED-unset}}\" \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
                 bin.display(),
-                window.root.join("orbit").display(),
+                old_orbit.display(),
                 window.root.join("venus").display(),
                 hops.display(),
                 old_binary.display()
@@ -11867,6 +11943,7 @@ fn pre_s2b_store_supervisors_remain_attachable_beside_fresh_lifetimes() {
             .arg("--dir")
             .arg(&window.launch)
             .env("EON_SESSION_BIN", &bin)
+            .env("EON_ORBIT", &old_orbit)
             .stderr(fs::File::create(&startup_log).unwrap());
         let mut old = window.start(command);
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -11892,7 +11969,12 @@ fn pre_s2b_store_supervisors_remain_attachable_beside_fresh_lifetimes() {
             thread::sleep(Duration::from_millis(25));
         }
         let old_runtime = window.runtime.join("generations").join(&build);
-        let host = live_identity(&old_runtime.join("orbit.sock"));
+        // The old host's record is of its own management generation, which
+        // this build's codec refuses; its bytes still say whether it is the
+        // same host.
+        let old_record = artifact_path(&old_runtime.join("orbit.sock"), ".record");
+        let host = fs::read(&old_record).unwrap();
+        assert!(!host.is_empty());
         window.binary = candidate;
         let list = window.eon(&["window", "ls", "--json"]);
         assert!(list.status.success(), "{list:?}");
@@ -11939,7 +12021,7 @@ fn pre_s2b_store_supervisors_remain_attachable_beside_fresh_lifetimes() {
             .unwrap();
         window.binary = candidate;
         assert!(delegated.status.success(), "{delegated:?}");
-        assert_eq!(live_identity(&old_runtime.join("orbit.sock")), host);
+        assert_eq!(fs::read(&old_record).unwrap(), host);
         assert!(old.child.try_wait().unwrap().is_none());
         for id in [&current_id[3..], &build[3..]] {
             let stopped = window.eon(&["window", "stop", id, "--json"]);
@@ -18701,13 +18783,11 @@ impl PairWindow {
     fn scrollback_command(&self) -> Command {
         let mut command = self.command(&[]);
         command
-            .env("EON_TEST_ORBIT_REPLY", self.root.join("orbit-reply"))
             .env("EON_TEST_PRESENTATION_SOCKET", self.root.join("v.sock"))
             .env("EON_TEST_EDITOR_LOG", self.root.join("editor.log"))
             .env("EON_TEST_EDITOR_RELEASE", self.root.join("editor-release"))
             .env("EON_TEST_SNAPSHOT_LOG", self.root.join("snapshot.log"))
             .env("EON_TEST_HISTORY_LOG", self.root.join("history.log"))
-            .env("EON_TEST_INPUT_LOG", self.root.join("input.log"))
             .env(
                 "EON_TEST_EDITOR_READY_DELAY",
                 self.root.join("editor-ready-delay"),

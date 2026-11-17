@@ -42,7 +42,7 @@ Scrollback shortcut remains available.
 
 Sandboxed agents must not reach Eon's socket or helper sockets: a client that
 can reach them can run commands on the host, even with `terminal_access = "none"`.
-Helper sockets include Editor RPC (such as a Neovim server) and the Quick-search listener.
+Helper sockets include Editor RPC (such as a Neovim server); Quick search runs no listener.
 Verify these restrictions in the agent's sandbox. Eon does not isolate unrestricted
 programs running as the same user.
 

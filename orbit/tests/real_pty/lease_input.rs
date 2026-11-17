@@ -6,7 +6,7 @@ use orbit_protocol::{
     management::{
         self, ClientMessage, FailureCode, LeaseInput, MAX_INPUT_PASTE_BYTES, Refusal, ServerMessage,
     },
-    session::{self, KeyAction},
+    session::{self, KeyAction, KeyEvent, Modifiers, PhysicalKey},
 };
 use std::{thread, time::Instant};
 
@@ -64,8 +64,22 @@ fn press_enter(client: &mut Peer) {
     client.send(&enter(KeyAction::Release));
 }
 
+/// An attached client's press or release of a key with no text.
+fn bare_key(key: PhysicalKey, modifiers: Modifiers, action: KeyAction) -> session::ClientMessage {
+    session::ClientMessage::Key(KeyEvent {
+        action,
+        key,
+        modifiers,
+        consumed_modifiers: Modifiers::empty(),
+        composing: false,
+        text: None,
+        unshifted_codepoint: None,
+    })
+}
+
 pub fn run() {
     input_is_encoded_as_a_client_would_send_it();
+    a_lease_key_is_a_client_key_without_text();
     a_lease_paste_is_never_interleaved();
     refused_requests_keep_the_lease();
     input_waits_out_a_clients_typing();
@@ -155,6 +169,69 @@ fn input_is_encoded_as_a_client_would_send_it() {
     assert!(
         leased.windows(3).any(|bytes| bytes == b":3u"),
         "no release: {leased:?}"
+    );
+    drop(client);
+    run.stop();
+}
+
+/// A lease key (management v9) reaches the PTY exactly as an attached
+/// client's press of that key with no text would, in the legacy keyboard
+/// mode and with every kitty flag on, including associated text: it carries
+/// none. A key that produces text, a lock or side modifier bit, or a value
+/// that names no key or modifier, is refused as `InvalidInput` and writes
+/// nothing.
+fn a_lease_key_is_a_client_key_without_text() {
+    let mut run = Driven::start();
+    let mut client = run.attach();
+    let reserved = Modifiers::CTRL
+        .union(Modifiers::ALT)
+        .union(Modifiers::SHIFT);
+    let lease_key = LeaseInput::key(PhysicalKey::PAGE_DOWN, reserved);
+    for (key, modifiers) in [
+        (PhysicalKey::A.raw(), 0),
+        (PhysicalKey::ENTER.raw(), 0),
+        (PhysicalKey::TAB.raw(), 0),
+        (PhysicalKey::ESCAPE.raw(), 0),
+        (PhysicalKey::PAGE_DOWN.raw(), Modifiers::CAPS_LOCK.bits()),
+        (PhysicalKey::MAX_RAW + 1, 0),
+        (PhysicalKey::PAGE_DOWN.raw(), Modifiers::MASK + 1),
+    ] {
+        assert_eq!(
+            input(&mut run, LeaseInput::Key { key, modifiers }),
+            refused(Refusal::InvalidInput),
+            "{key} {modifiers}"
+        );
+    }
+    let press = |client: &mut Peer| {
+        client.send(&bare_key(PhysicalKey::PAGE_DOWN, reserved, KeyAction::Press));
+        client.send(&bare_key(PhysicalKey::PAGE_DOWN, reserved, KeyAction::Release));
+    };
+    assert_eq!(input(&mut run, lease_key.clone()), written(false));
+    let leased = run.settled_input(0, 1);
+    assert_eq!(leased, b"\x1b[6;8~", "legacy Ctrl+Alt+Shift+PageDown");
+    let from = run.input().len();
+    press(&mut client);
+    assert_eq!(run.settled_input(from, leased.len()), leased, "a client's key differs");
+
+    // Every kitty flag on: disambiguate, events, alternates, all keys as
+    // escapes, and associated text. The lease key still carries no text.
+    run.command("printf '\\033[>31u\\033]0;kitty\\007'");
+    until_titled(&mut client, "kitty");
+    let from = run.input().len();
+    assert_eq!(input(&mut run, lease_key), written(false));
+    let leased = run.settled_input(from, 1);
+    let from = run.input().len();
+    press(&mut client);
+    assert_eq!(run.settled_input(from, leased.len()), leased, "a client's key differs");
+    assert!(
+        leased.windows(3).any(|bytes| bytes == b":3~"),
+        "no release: {leased:?}"
+    );
+    // Each event is CSI 6;mods[:event]~, with no third (text) field.
+    assert_eq!(
+        leased.iter().filter(|byte| **byte == b';').count(),
+        2,
+        "associated text: {leased:?}"
     );
     drop(client);
     run.stop();
@@ -251,6 +328,14 @@ fn refused_requests_keep_the_lease() {
     assert_eq!(run.lease.send_bytes(&reframed(&allow, &[0; 12])), invalid);
     let tag = encoded(&paste)[management::HEADER_BYTES];
     assert_eq!(run.lease.send_bytes(&reframed(&paste, &[tag, 0, 0])), invalid);
+    // An input kind this host does not know, as a v8 host takes the v9 lease
+    // key: refused, nothing written, and the lease stays.
+    let written = run.input().len();
+    assert_eq!(
+        run.lease.send_bytes(&reframed(&paste, &[4, 0, 0, 73, 0, 7, 0])),
+        invalid
+    );
+    assert_eq!(run.input().len(), written, "an unknown kind wrote");
     let read = encoded(&ClientMessage::ReadVisible);
     let history = encoded(&ClientMessage::ReadHistory);
     let status = encoded(&ClientMessage::Status);

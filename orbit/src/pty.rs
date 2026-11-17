@@ -772,13 +772,15 @@ impl Orbit {
     }
 
     /// Writes one lease input request whole, encoded as an attached client's
-    /// paste or unmodified Enter press (and its release, when the keyboard
-    /// mode reports releases) would be, and reports whether a paste was
-    /// bracketed (ORB-C5). It refuses input less than `quiet_ms` after an
-    /// attached client typed, a paste holding a control character other than
-    /// tab, line feed and carriage return, one holding a line feed or
-    /// carriage return while the program has not enabled bracketed paste,
-    /// and input the PTY queue cannot take whole; a refusal writes nothing.
+    /// paste, unmodified Enter press or non-text key press (each key with its
+    /// release, when the keyboard mode reports releases) would be, and
+    /// reports whether a paste was bracketed (ORB-C5). It refuses input less
+    /// than `quiet_ms` after an attached client typed, a paste holding a
+    /// control character other than tab, line feed and carriage return, one
+    /// holding a line feed or carriage return while the program has not
+    /// enabled bracketed paste, a key that produces text or carries a
+    /// modifier other than Shift, Ctrl, Alt and Super, and input the PTY
+    /// queue cannot take whole; a refusal writes nothing.
     pub(crate) fn lease_input(
         &mut self,
         input: LeaseInput,
@@ -811,26 +813,15 @@ impl Orbit {
                     bracketed,
                 )
             }
-            LeaseInput::Enter => {
-                let key = |action| {
-                    ClientMessage::Key(session::KeyEvent {
-                        action,
-                        key: session::PhysicalKey::ENTER,
-                        modifiers: session::Modifiers::empty(),
-                        consumed_modifiers: session::Modifiers::empty(),
-                        composing: false,
-                        text: None,
-                        unshifted_codepoint: None,
-                    })
+            LeaseInput::Enter => (
+                self.encode_lease_key(session::PhysicalKey::ENTER, session::Modifiers::empty())?,
+                false,
+            ),
+            LeaseInput::Key { key, modifiers } => {
+                let Some((key, modifiers)) = LeaseInput::allowed_key(key, modifiers) else {
+                    return Ok(Err(Refusal::InvalidInput));
                 };
-                let mut bytes =
-                    encode_input(&self.terminal, self.surface, key(session::KeyAction::Press))?;
-                bytes.extend(encode_input(
-                    &self.terminal,
-                    self.surface,
-                    key(session::KeyAction::Release),
-                )?);
-                (bytes, false)
+                (self.encode_lease_key(key, modifiers)?, false)
             }
         };
         if !self.writes.push(&bytes) {
@@ -838,6 +829,38 @@ impl Orbit {
         }
         self.flush_writes()?;
         Ok(Ok(bracketed))
+    }
+
+    /// One lease key encoded as an attached client's press of it would be,
+    /// plus its release when the keyboard mode reports releases; it carries
+    /// no text, so it types none in any keyboard mode (ORB-C5).
+    fn encode_lease_key(
+        &self,
+        key: session::PhysicalKey,
+        modifiers: session::Modifiers,
+    ) -> io::Result<Vec<u8>> {
+        let event = |action| {
+            ClientMessage::Key(session::KeyEvent {
+                action,
+                key,
+                modifiers,
+                consumed_modifiers: session::Modifiers::empty(),
+                composing: false,
+                text: None,
+                unshifted_codepoint: None,
+            })
+        };
+        let mut bytes = encode_input(
+            &self.terminal,
+            self.surface,
+            event(session::KeyAction::Press),
+        )?;
+        bytes.extend(encode_input(
+            &self.terminal,
+            self.surface,
+            event(session::KeyAction::Release),
+        )?);
+        Ok(bytes)
     }
 
     /// The terminal's foreground process group, if it has one.

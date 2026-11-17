@@ -1071,12 +1071,7 @@ mod tests {
             prepare_runtime(old_editor.parent().unwrap()).unwrap();
             assert!(UnixListener::bind(&old_editor).is_err());
             fs::remove_dir(old_editor.parent().unwrap()).unwrap();
-            for address in [
-                endpoint.clone(),
-                management.clone(),
-                alias.join("eon.sock"),
-                alias.join("terminal-9999.quick.sock"),
-            ] {
+            for address in [endpoint.clone(), management.clone(), alias.join("eon.sock")] {
                 let listener = UnixListener::bind(&address).unwrap();
                 drop(listener);
                 fs::remove_file(address).unwrap();

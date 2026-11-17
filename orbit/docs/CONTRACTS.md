@@ -152,7 +152,7 @@ PTY pixel size rule needs no wire change.
 - **Boundary:** Visible text over ORBS, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
   excluded. The management lease holder reads visible text and history
-  through ORB-C17 and sends paste and Enter input through ORB-C5, without either ORBS role.
+  through ORB-C17 and sends paste, Enter and non-text key input through ORB-C5, without either ORBS role.
   Admission tells processes apart, not people or agents: same-user code that
   controls the named process or the lease holder is out of scope, since no
   same-UID sandbox is promised (ORB-C13).
@@ -247,12 +247,12 @@ PTY pixel size rule needs no wire change.
 
 - **Status:** Proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
-  interaction, and the management lease holder (ORB-C13) sending paste or Enter
-  input with a quiet window.
+  interaction, and the management lease holder (ORB-C13) sending paste, Enter
+  or non-text key input with a quiet window.
 - **Trigger:** Orbit accepts one canonical semantic input message or begins one
   revision-bound left-pointer sequence, or Orbit accepts one management lease
-  input request: a paste of up to 64 KiB, or one Enter key, each with a quiet
-  window of 0 to 65,535 ms.
+  input request: a paste of up to 64 KiB, one Enter key, or one non-text key,
+  each with a quiet window of 0 to 65,535 ms.
 - **Result:**
   - Orbit encodes terminal interaction against its authoritative terminal
     state.
@@ -265,7 +265,9 @@ PTY pixel size rule needs no wire change.
     - a lease paste as an attached client's `Paste`, bracketed when the
       program enabled bracketed paste;
     - a lease Enter as an unmodified Enter press, plus its release when the
-      terminal's keyboard mode reports releases.
+      terminal's keyboard mode reports releases;
+    - a lease key as that key's press with its modifiers and no text, plus
+      its release when the keyboard mode reports releases.
   - Each lease paste is written whole, in owner-loop order with the attached
     client's input, never interleaved with it.
   - Lease input needs no attachment, works whether or not a client is
@@ -293,17 +295,26 @@ PTY pixel size rule needs no wire change.
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14,
-  and management v8 lease input; Venus and Eon consume it in this repository.
+  and management v9 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
-  Lease input carries no other keys, chords, mouse, focus or resize; raw bytes
-  are never written. Orbit tells an attached client's input from lease input,
+  Lease input carries no text-producing keys other than Enter, and no
+  multi-key sequences, mouse, focus or resize; raw bytes are never written. Orbit tells an attached client's input from lease input,
   not a person from a program. Whatever drives the attached client, such as a
   synthetic keystroke from code running as the same user, counts as typing.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
   for the Kitty release and the `eon-agent-parity-a9g0.15` commit
   (`9c90032`) for lease input, proved installed by the
   `eon-agent-parity-a9g0.19` commit, and the `eon-buys1.1` commit for the
-  quiet window
+  quiet window. Amended on 2026-11-17 (approved by eon-lead under Lucca's
+  delegation, 2026-11-17) by `eon-260mh.2.4`: the lease holder may also send
+  one key that produces no text (F1-F12, the arrows, Home, End, PageUp,
+  PageDown, Insert, Delete) with any of the Shift, Ctrl, Alt and Super
+  modifiers. The wire carries only the key and its modifiers; Orbit builds
+  the key event with no text, no unshifted codepoint and not composing, and
+  encodes it as an attached client's press and release would be. Any other
+  key or modifier bit is refused (`invalid-input`). Management v9. The lease
+  key's proof is the `eon-260mh.2.4` commit's `orbit-lease-input` check
+  (`a_lease_key_is_a_client_key_without_text`); the rest keeps its proof
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
@@ -897,7 +908,7 @@ PTY pixel size rule needs no wire change.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v8, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
+- **Consumes:** Canonical management v9, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -1615,7 +1626,7 @@ PTY pixel size rule needs no wire change.
     reply;
   - its Rust host, which extracts the text with libghostty's plain-text
     formatter;
-  - canonical `orbit-protocol` management v8.
+  - canonical `orbit-protocol` management v9.
 - **Consumes:** ORB-C13 (lease, validation, slow-peer rule), ORB-C4 (held
   updates), ORB-C3 (title and directory values).
 - **Boundary:**

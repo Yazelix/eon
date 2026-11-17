@@ -1,12 +1,12 @@
 //! Private bounded lifecycle management values for one Orbit run.
 
-use crate::session::MAX_METADATA_BYTES;
+use crate::session::{MAX_METADATA_BYTES, Modifiers, PhysicalKey};
 use std::fmt;
 
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 8;
+pub const VERSION: u16 = 9;
 pub const RECORD_GENERATION: u16 = 1;
 pub const HEADER_BYTES: usize = 12;
 /// Every message's bound, except a `Visible` or `History` reply's and an
@@ -317,6 +317,67 @@ pub enum LeaseInput {
     /// Nonempty UTF-8 text of at most [`MAX_INPUT_PASTE_BYTES`].
     Paste(String),
     Enter,
+    /// One key that produces no text, with only Shift, Ctrl, Alt and Super
+    /// among its modifiers (management v9), as the wire's raw key and
+    /// modifier values. The wire carries no text, so Orbit builds the key
+    /// with none; it refuses any key [`LeaseInput::allowed_key`] does not
+    /// name, a value that names no key or modifier included
+    /// (`invalid-input`).
+    Key {
+        key: u16,
+        modifiers: u16,
+    },
+}
+
+impl LeaseInput {
+    /// The keys a lease may send: those that produce no text.
+    pub const KEYS: [PhysicalKey; 22] = [
+        PhysicalKey::F1,
+        PhysicalKey::F2,
+        PhysicalKey::F3,
+        PhysicalKey::F4,
+        PhysicalKey::F5,
+        PhysicalKey::F6,
+        PhysicalKey::F7,
+        PhysicalKey::F8,
+        PhysicalKey::F9,
+        PhysicalKey::F10,
+        PhysicalKey::F11,
+        PhysicalKey::F12,
+        PhysicalKey::ARROW_UP,
+        PhysicalKey::ARROW_DOWN,
+        PhysicalKey::ARROW_LEFT,
+        PhysicalKey::ARROW_RIGHT,
+        PhysicalKey::HOME,
+        PhysicalKey::END,
+        PhysicalKey::PAGE_UP,
+        PhysicalKey::PAGE_DOWN,
+        PhysicalKey::INSERT,
+        PhysicalKey::DELETE,
+    ];
+
+    /// The modifiers a lease key may carry.
+    pub const KEY_MODIFIERS: Modifiers = Modifiers::SHIFT
+        .union(Modifiers::CTRL)
+        .union(Modifiers::ALT)
+        .union(Modifiers::SUPER);
+
+    /// The lease key input for `key` with `modifiers`.
+    pub fn key(key: PhysicalKey, modifiers: Modifiers) -> Self {
+        Self::Key {
+            key: key.raw(),
+            modifiers: modifiers.bits(),
+        }
+    }
+
+    /// The key and modifiers a lease may send for these raw values, or
+    /// `None` for any other key or modifier bit (ORB-C5).
+    pub fn allowed_key(key: u16, modifiers: u16) -> Option<(PhysicalKey, Modifiers)> {
+        let key = PhysicalKey::from_raw(key).filter(|key| Self::KEYS.contains(key))?;
+        let modifiers =
+            Modifiers::from_bits(modifiers).filter(|bits| Self::KEY_MODIFIERS.contains(*bits))?;
+        Some((key, modifiers))
+    }
 }
 
 /// Why Orbit refused a request under the lease, which stays.
@@ -329,7 +390,7 @@ pub enum Refusal {
     /// enabled bracketed paste.
     UnbracketedNewline,
     /// A paste holds a control character other than tab, line feed and
-    /// carriage return.
+    /// carriage return, or a lease key is one a lease may not send.
     InvalidInput,
     /// The PTY input queue cannot take the input whole.
     InputFull,
@@ -519,6 +580,12 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
                     out.u8(2);
                     out.u16(*quiet_ms);
                 }
+                LeaseInput::Key { key, modifiers } => {
+                    out.u8(3);
+                    out.u16(*quiet_ms);
+                    out.u16(*key);
+                    out.u16(*modifiers);
+                }
             }
             Ok(())
         }),
@@ -560,6 +627,10 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
                     })?)
                 }
                 2 => LeaseInput::Enter,
+                3 => LeaseInput::Key {
+                    key: input.u16()?,
+                    modifiers: input.u16()?,
+                },
                 value => {
                     return Err(Error::InvalidTag {
                         field: "lease input",

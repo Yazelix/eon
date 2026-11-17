@@ -145,6 +145,9 @@ hidden with private mounts. Writable checkout, Cargo cache and target paths
 inside those directories or containing them are refused before directory
 creation or fetching, even when the canonical Eon directory does not exist yet.
 Other caller-supplied paths, including `ORBIT_BIN`, remain visible read-only.
+The runner also passes the dev shell's `EON_TEST_QUICK_FZF`, `_YAZI`, `_ZOXIDE`
+and `_FILES_CONFIG`: Eon Runtime's quick search tests compose those real tools
+under a real Orbit and fail when they are unset.
 A synthetic sentinel check verifies mount ordering and write isolation before
 any test executable runs; it never places a sentinel in the real account home.
 This protects EON-C43's internal host-policy tests; `eon slot` remains Planned.

@@ -6,6 +6,14 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Management generation 9 adds a lease key input (kind 3: quiet window,
+  physical key, modifiers): one key that produces no text (F1-F12, arrows,
+  Home, End, PageUp, PageDown, Insert, Delete) with only Shift, Ctrl, Alt and
+  Super, encoded as an attached client's press and release with no text;
+  other keys and modifier bits are refused as `invalid-input` (ORB-C5).
+  `--management-v9` replaces v8 without an alias; Runtime and test consumers
+  move together. ORBS, ORBF and EONW stay unchanged (`eon-260mh.2.4`).
+
 - Linux's `eon` terminfo advertises `Smulx` underline styles 0–5 and `Setulc`
   packed RGB underline colours (ORB-C10). Orbit's existing rich frames keep
   both independently from the foreground. Darwin keeps its existing entry
