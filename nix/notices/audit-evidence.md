@@ -12,7 +12,8 @@ feature or build-context changes require explicit inspection and reviewed renewa
 unused exceptions and missing evidence anchors fail. The full native-binding
 graph remains intact. See the checked-in [inspection and renewal recipe](../../eon/tools/archive-notices/README.md).
 The binary SHA-256 values below identify observations, not acceptance keys.
-The Eon, Orbit and Venus sections record the 2026-11-17 renewal for
+The Venus section also records the later `eon-tulof.4` feature-context renewal.
+The Eon, Orbit and Venus sections retain the 2026-11-17 renewal for
 `eon-eon-agent-lr8sx.40.1`, observed on that bead's staged tree over edge
 `c901a60f`. Their earlier observations remain labelled historical. The owning
 bead records the final staged-tree gates and artifact identities after the
@@ -49,7 +50,8 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
-The current three contexts differ from the accepted 2026-11-16 contexts only
+The three `eon-eon-agent-lr8sx.40.1` contexts differ from the accepted
+2026-11-16 contexts only
 by two local-package changes in normalized Cargo.lock, compared field by field
 with the accepted observations named below. Commit
 `c3d73feea3d0efa9d39a570756e2322d1541361f` adds the local `review-tier`
@@ -285,6 +287,45 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-17 for `eon-tulof.4` to context
+`f03069b4636ff3169fb1f2e9257a80eff45da65adf635eec5ba94ab3796a83b3`.
+Full and without-Accelerando observations independently have this same context.
+Compared with accepted context
+`79f8d05538d07a968347a93ce2f0ca35ebe149b6f36abc223db694cf3ea9335b`,
+the canonical graphs differ only by `param` in rustix 1.1.4's selected native
+features. Context fields, normalized Cargo.lock, runtime identities and audited
+package sets are unchanged. The added `NSProcessInfo` feature is macOS-only
+and is not selected in these Linux graphs. No registry/git package or version
+changes, license decision or target-runtime dependency waiver is introduced.
+
+Independent `inspect-audit` runs on each actual binary reproduce the saved
+canonical graph byte-for-byte. Offline trees from the exact vendor/source and
+pinned Rust 1.96.1 toolchain reproduce each candidate's runtime and normal/build
+feature trees after translating only `/build/source`. All 15 host-only and 4
+unselected exception identities retain their classifications. In particular,
+`async-recursion 1.1.1` occurs in the normal/build graph and not the runtime
+graph. The four unselected identities (`bitflags 1.3.2`, `defmt 1.2.0`,
+`defmt-macros 1.2.0`, `defmt-parser 1.1.0`) are absent from both selected trees
+and have no compile line in either actual producer log. These builds reuse
+Cargo artifacts; tree membership, rather than log absence alone, establishes
+non-selection. The strict renewal proposal across both variants changes only
+the two Venus fingerprint fields, preserving every producer, exception identity,
+reason and evidence anchor. The owning bead records the runtime-dependency
+omission falsifier and final full/fallback build results.
+
+- Source: `/nix/store/jrpra68sxw44yp17p75ggr5piagsinyc-source`.
+- Vendor: `/nix/store/d5bys2iry7p84jnbaj30yhcl3xsj78y3-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `venus/Cargo.toml`;
+  root: `yazelix-venus`; default features, no added root features.
+- Full observation: `/nix/store/h2xyb708lm56x7sapsirisrj2xfxcg9a-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/wdih4ixzz5nlzhnbg497pr34k513r38h-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Without-Accelerando observation: `/nix/store/c2y91h95x4kl7kjiazac5qj4j4a4l1pm-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/rbl1ydpsxm44732rkc34n5ff3sycikd9-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Both binaries' SHA-256: `c519ac8268d5837b3deee41aa7d8aab9c6448bcf90e4b0513b850dcdfc16f74f`.
+- Actual flags in both producer logs: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (2026-11-17, `eon-eon-agent-lr8sx.40.1`):
 
 Renewed on 2026-11-17 for `eon-eon-agent-lr8sx.40.1` to context
 `79f8d05538d07a968347a93ce2f0ca35ebe149b6f36abc223db694cf3ea9335b`.

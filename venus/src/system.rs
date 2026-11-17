@@ -330,7 +330,7 @@ impl GpuUse {
     }
 
     #[cfg_attr(
-        not(target_os = "linux"),
+        all(not(target_os = "linux"), not(test)),
         expect(dead_code, reason = "GPU sampling is Linux-only")
     )]
     pub(crate) fn of(devices: Vec<GpuDevice>) -> Option<Self> {
@@ -1225,29 +1225,31 @@ fn mount_point(path: &Path) -> Option<std::path::PathBuf> {
     Some(mount.to_path_buf())
 }
 
-/// The macOS host calls, the only unsafe code in Venus (`docs/CRATES.md`); `eon-b4vh` tracks
-/// removing it.
+/// The macOS host calls: only port, CPU, load and memory readers allow unsafe code;
+/// `eon-b4vh` tracks removing these native seams (`docs/CRATES.md`).
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code)]
 mod host {
     use std::mem::{offset_of, size_of};
     use std::sync::OnceLock;
 
     /// One send right to the host port for the life of the process, so repeated readings do not
     /// add references to it. libc points Mach calls at the mach2 crate, which Venus does not use.
+    #[allow(unsafe_code)]
     #[allow(deprecated)]
     fn port() -> libc::host_t {
         static PORT: OnceLock<libc::host_t> = OnceLock::new();
-        // SAFETY: `mach_host_self` takes no arguments and returns a port name.
+        // SAFETY: no safe std/rustix Mach port API exists; this argument-free call returns a
+        // send right deliberately retained, never released, for the process lifetime.
         *PORT.get_or_init(|| unsafe { libc::mach_host_self() })
     }
 
     /// Whole-machine ticks per CPU state and the logical CPUs online.
+    #[allow(unsafe_code)]
     pub(super) fn cpu_load() -> Option<([u32; 4], usize)> {
         let mut info = libc::host_cpu_load_info { cpu_ticks: [0; 4] };
         let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
-        // SAFETY: `info` is a writable `host_cpu_load_info` and `count` holds its length in
-        // `integer_t` units, which bounds what the call writes.
+        // SAFETY: no safe std/rustix Mach CPU API exists. info is writable and count bounds
+        // its length in integer_t units.
         let status = unsafe {
             libc::host_statistics(
                 port(),
@@ -1263,10 +1265,12 @@ mod host {
         Some((info.cpu_ticks, cpus))
     }
 
+    #[allow(unsafe_code)]
     pub(super) fn cpu_name() -> Option<String> {
         let mut name = [0_u8; 256];
         let mut len = name.len();
-        // SAFETY: name is NUL-terminated, output has len writable bytes, and no value is set.
+        // SAFETY: no safe existing CPU-brand API exists. The key is NUL-terminated, the
+        // output has len writable bytes, and no value is set.
         let status = unsafe {
             libc::sysctlbyname(
                 c"machdep.cpu.brand_string".as_ptr(),
@@ -1287,18 +1291,21 @@ mod host {
         std::str::from_utf8(&bytes[..end]).ok().map(str::to_owned)
     }
 
+    #[allow(unsafe_code)]
     pub(super) fn load_average() -> Option<f64> {
         let mut load = 0.0;
-        // SAFETY: load is writable for the one requested double.
+        // SAFETY: std/rustix have no Darwin load API; load is writable for one requested double.
         (unsafe { libc::getloadavg(&raw mut load, 1) } == 1).then_some(load)
     }
 
+    #[allow(unsafe_code)]
     #[allow(deprecated)]
     pub(super) fn per_cpu_load() -> Option<Vec<[u32; 4]>> {
         let mut cpus = 0;
         let mut info = std::ptr::null_mut();
         let mut count = 0;
-        // SAFETY: all output pointers are writable; Mach allocates the returned count integers.
+        // SAFETY: no safe existing Mach processor API exists. All output pointers are writable;
+        // Mach allocates and initializes the returned count integers.
         let status = unsafe {
             libc::host_processor_info(
                 port(),
@@ -1315,7 +1322,10 @@ mod host {
         let bytes = count as usize * size_of::<libc::integer_t>();
         let valid = !info.is_null() && cpus > 0 && cpus as usize * 4 == count as usize;
         let result = if valid {
-            // SAFETY: the successful call returned count integers, checked as four per CPU.
+            // SAFETY: no safe slice API borrows this Mach-owned allocation. The successful call
+            // initialized count integers in page-aligned storage; valid checks non-null and four
+            // integers per CPU. A u32 count fits isize bytes on 64-bit Darwin. The slice is copied
+            // into a Vec before the allocation is released.
             let ticks = unsafe { std::slice::from_raw_parts(info, count as usize) };
             Some(
                 ticks
@@ -1334,7 +1344,8 @@ mod host {
             None
         };
         if !info.is_null() {
-            // SAFETY: return this Mach allocation, in bytes, to the task that received it.
+            // SAFETY: no safe existing API frees Mach allocations. Return the non-null allocation,
+            // in bytes, to the receiving task, after its borrowed slice has been copied and dropped.
             let released = unsafe {
                 libc::vm_deallocate(
                     libc::mach_task_self(),
@@ -1351,16 +1362,74 @@ mod host {
 
     /// Internal, purgeable, wired and compressed page counts, the page size in bytes and the
     /// physical memory in bytes.
+    #[allow(unsafe_code)]
     pub(super) fn memory() -> Option<([u64; 4], u64, u64)> {
-        // SAFETY: `vm_statistics64` is plain integers, for which all zeroes is a valid value.
-        let mut stats: libc::vm_statistics64 = unsafe { std::mem::zeroed() };
+        let mut stats = libc::vm_statistics64 {
+            free_count: 0,
+            active_count: 0,
+            inactive_count: 0,
+            wire_count: 0,
+            zero_fill_count: 0,
+            reactivations: 0,
+            pageins: 0,
+            pageouts: 0,
+            faults: 0,
+            cow_faults: 0,
+            lookups: 0,
+            hits: 0,
+            purges: 0,
+            purgeable_count: 0,
+            speculative_count: 0,
+            decompressions: 0,
+            compressions: 0,
+            swapins: 0,
+            swapouts: 0,
+            compressor_page_count: 0,
+            throttled_count: 0,
+            external_page_count: 0,
+            internal_page_count: 0,
+            total_uncompressed_pages_in_compressor: 0,
+            swapped_count: 0,
+            total_tag_storage_pages: 0,
+            nontag_pageable_tag_storage_pages: 0,
+            nontag_wired_tag_storage_pages: 0,
+            free_tag_storage_pages: 0,
+            tag_storing_tag_storage_pages: 0,
+            total_tagged_pages: 0,
+            resident_tagged_pages: 0,
+            compressed_tagged_pages: 0,
+            tagged_compressions: 0,
+            tagged_decompressions: 0,
+            compressed_tag_storage_bytes: 0,
+            speculative_pages_created: 0,
+            speculative_pages_activated: 0,
+            swap_count: 0,
+            empty_tag_storing_tag_storage_pages: 0,
+            executable_count: 0,
+            shared_region_count: 0,
+            boot_stolen_count: 0,
+            secluded_count: 0,
+            active_internal_count: 0,
+            inactive_internal_count: 0,
+            active_external_count: 0,
+            inactive_external_count: 0,
+            purgeable_pageable_count: 0,
+            purgeable_wired_count: 0,
+            background_internal_count: 0,
+            background_external_count: 0,
+            donated_count: 0,
+            realtime_count: 0,
+            max_mem_count: 0,
+            phantom_ghosts_found: 0,
+            phantom_ghosts_added: 0,
+        };
         // Revision 1, the first with the internal and compressor counts. libc's struct can be
         // newer than the running kernel's, and a count above the kernel's makes it log an error.
         let rev1 = (offset_of!(libc::vm_statistics64, swapped_count) / size_of::<libc::integer_t>())
             as libc::mach_msg_type_number_t;
         let mut count = rev1;
-        // SAFETY: `stats` is a writable `vm_statistics64` and `count` holds its length in
-        // `integer_t` units, which bounds what the call writes.
+        // SAFETY: no safe existing Mach VM API exists. stats is writable and count bounds
+        // the initialized record's revision-1 prefix in integer_t units.
         let status = unsafe {
             libc::host_statistics64(
                 port(),
@@ -1379,22 +1448,12 @@ mod host {
             stats.compressor_page_count,
         ]
         .map(u64::from);
-        // SAFETY: `_SC_PAGESIZE` is a valid `sysconf` name.
-        let page_size = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
-        let mut memsize = 0_u64;
-        let mut len = size_of::<u64>();
-        // SAFETY: the name is NUL-terminated, `memsize` is writable for `len` bytes, and no new
-        // value is set.
-        let status = unsafe {
-            libc::sysctlbyname(
-                c"hw.memsize".as_ptr(),
-                (&raw mut memsize).cast(),
-                &raw mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        (status == 0 && len == size_of::<u64>()).then_some((pages, page_size, memsize))
+        // rustix casts sysconf's signed result to usize; reject a negative return as before.
+        let page_size = isize::try_from(rustix::param::page_size()).ok()? as u64;
+        let memsize = objc2::rc::autoreleasepool(|_| {
+            objc2_foundation::NSProcessInfo::processInfo().physicalMemory()
+        });
+        (memsize != 0).then_some((pages, page_size, memsize))
     }
 }
 
@@ -2178,6 +2237,33 @@ mod tests {
         ] {
             assert_eq!(CpuUse::between(&base, &times(later)), None, "{later:?}");
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn host_readers_return_native_cpu_load_and_physical_memory() {
+        let (_, cpus) = host::cpu_load().expect("aggregate CPU statistics");
+        assert!(cpus > 0);
+        let per_cpu = host::per_cpu_load().expect("per-CPU statistics and allocation cleanup");
+        assert_eq!(per_cpu.len(), cpus);
+        assert!(!host::cpu_name().expect("CPU brand").trim().is_empty());
+        let load = host::load_average().expect("load average");
+        assert!(load.is_finite() && load >= 0.0);
+        let (_, page_size, memsize) = host::memory().expect("VM statistics and physical memory");
+        assert!(page_size > 0 && memsize > 0);
+        let expected = std::process::Command::new("/usr/sbin/sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .expect("native physical-memory comparison");
+        assert!(expected.status.success(), "{expected:?}");
+        assert_eq!(
+            memsize,
+            std::str::from_utf8(&expected.stdout)
+                .unwrap()
+                .trim()
+                .parse::<u64>()
+                .unwrap()
+        );
     }
 
     #[test]

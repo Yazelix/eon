@@ -56,7 +56,7 @@
   "venus": [
     {
       "root": "yazelix-venus",
-      "graph_sha256": "79f8d05538d07a968347a93ce2f0ca35ebe149b6f36abc223db694cf3ea9335b",
+      "graph_sha256": "f03069b4636ff3169fb1f2e9257a80eff45da65adf635eec5ba94ab3796a83b3",
       "reason": "Only host proc-macro/build dependency paths in the exact producer graph; no target runtime dependency path.",
       "evidence": "nix/notices/audit-evidence.md#venus",
       "packages": [
@@ -79,7 +79,7 @@
     },
     {
       "root": "yazelix-venus",
-      "graph_sha256": "79f8d05538d07a968347a93ce2f0ca35ebe149b6f36abc223db694cf3ea9335b",
+      "graph_sha256": "f03069b4636ff3169fb1f2e9257a80eff45da65adf635eec5ba94ab3796a83b3",
       "reason": "Conservative audit over-report: not selected in the exact producer normal/build graph and not compiled during its build.",
       "evidence": "nix/notices/audit-evidence.md#venus",
       "packages": [
