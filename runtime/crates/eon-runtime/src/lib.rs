@@ -1,5 +1,6 @@
 //! Eon's runtime mechanisms, invoked with assembly-owned product inputs.
 
+mod admission;
 mod attention;
 mod checkpoint;
 mod cli;

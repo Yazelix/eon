@@ -1,3 +1,4 @@
+use super::admission::{Effect, Effects, Required};
 use super::cli::WORKSPACE_PICKER;
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition, PreparedCommand};
 use super::session_registry::{Completion, Operation, Registration, Registry};
@@ -2092,15 +2093,7 @@ impl Workspace {
             .position(|popup| popup.entry == shown_entry)
         {
             let popup = self.tabs[tab_index].popups[index].clone();
-            // Retargeting preserves Files' location and Editor's buffers.
-            // A Scrollback snapshot belongs to no directory.
-            if popup.entry != "files"
-                && !matches!(
-                    definition.command,
-                    PopupCommand::Editor | PopupCommand::Scrollback
-                )
-                && popup.launch_directory != self.tabs[tab_index].directory
-            {
+            if self.retargets(tab_index, &popup, &definition) {
                 let candidate =
                     self.popup_candidate(ids, allowance, tab_index, &definition, true)?;
                 let launch =
@@ -2212,6 +2205,80 @@ impl Workspace {
             .expect("selected popup is live");
         let popup = &tab.popups[index];
         Ok((!self.definition(&popup.entry)?.keep_alive).then_some(index))
+    }
+
+    /// Whether invoking `popup`'s entry stops it and starts a fresh one at
+    /// the tab's directory. Retargeting preserves Files' location and
+    /// Editor's buffers; a Scrollback snapshot belongs to no directory.
+    fn retargets(&self, tab_index: usize, popup: &Popup, definition: &PopupDefinition) -> bool {
+        popup.entry != FILES_ENTRY
+            && !matches!(
+                definition.command,
+                PopupCommand::Editor | PopupCommand::Scrollback
+            )
+            && popup.launch_directory != self.tabs[tab_index].directory
+    }
+
+    /// Whether the tab's shown popup is one that showing another stops. An
+    /// unknown definition counts as transient, so admission never under-counts.
+    fn shows_transient(&self, tab_index: usize) -> bool {
+        self.displaced_transient(tab_index, None)
+            .map_or(true, |index| index.is_some())
+    }
+
+    /// What a pane action's dismissal of the tab's shown popup may do
+    /// (`dismiss_for_pane_action`): hide it, stop it when transient, and on a
+    /// pending tab start the first pane, whose failed start stops the pair.
+    fn dismissal_effects(&self, tab_index: usize) -> Effects {
+        let tab = &self.tabs[tab_index];
+        if tab.selected_popup.is_none() {
+            return Effects::NONE;
+        }
+        Effects::of(Effect::Arrange)
+            .with_if(
+                self.shows_transient(tab_index) || tab.pending,
+                Effect::Close,
+            )
+            .with_if(tab.pending, Effect::Run)
+    }
+
+    /// Whether invoking `entry` in the tab may stop a terminal: dismissing or
+    /// displacing a shown transient popup, retargeting the entry's popup, or
+    /// dismissing a pending tab's pair, whose first pane's failed start stops
+    /// the pair.
+    fn invocation_stops(&self, tab_index: usize, entry: &str) -> bool {
+        let shown_entry = if matches!(entry, PROJECT_ENTRY | FILES_ENTRY) {
+            FILES_ENTRY
+        } else {
+            entry
+        };
+        let tab = &self.tabs[tab_index];
+        let retargets = tab
+            .popups
+            .iter()
+            .find(|popup| popup.entry == shown_entry)
+            .is_some_and(|popup| {
+                self.definition(shown_entry).map_or(true, |definition| {
+                    self.retargets(tab_index, popup, definition)
+                })
+            });
+        tab.pending || self.shows_transient(tab_index) || retargets
+    }
+
+    /// What dismissing popup `instance` of the tab may do (`dismiss_popup`).
+    fn popup_dismissal_effects(&self, tab_index: usize, instance: &str) -> Effects {
+        let tab = &self.tabs[tab_index];
+        let transient = tab
+            .popups
+            .iter()
+            .find(|popup| popup.id == instance)
+            .is_some_and(|popup| {
+                self.definition(&popup.entry)
+                    .map_or(true, |definition| !definition.keep_alive)
+            });
+        Effects::NONE
+            .with_if(transient || tab.pending, Effect::Close)
+            .with_if(tab.pending, Effect::Run)
     }
 
     fn popup_candidate(
@@ -4020,6 +4087,158 @@ pub(crate) fn list_json(snapshot: &Snapshot) -> String {
     }
     output.push_str("]}\n");
     output
+}
+
+/// Every effect `action` may have in the current state (EON-C10 Control
+/// authority), so admission sees it before any effect. `routed` is the
+/// window's workspaces with the request's caller, or `None` when there is no
+/// workspace owner or the caller cannot be routed: every arm that depends on
+/// state routes its caller first and refuses before any effect, so an
+/// unroutable request has only its unconditional effects.
+///
+/// There is no wildcard arm: a new action does not compile until it is
+/// classified here.
+pub(crate) fn required_effects(
+    action: &Action,
+    routed: Option<(&WorkspaceSet, Option<&str>)>,
+) -> Required {
+    use Effect::{Arrange, Close, Inspect, Lifecycle, Read, Run, Send};
+    let of = Effects::of;
+    // The caller's workspace, where every state-dependent effect happens.
+    let routed = routed.and_then(|(set, caller)| {
+        let index = set.caller_workspace(caller).ok()?;
+        Some((set, &set.workspaces[index], caller))
+    });
+    let in_state = |effects: &dyn Fn(&WorkspaceSet, &Workspace, Option<&str>) -> Effects| {
+        routed.map_or(Effects::NONE, |(set, workspace, caller)| {
+            effects(set, workspace, caller)
+        })
+    };
+    let tab_state = |tab: &str, effects: &dyn Fn(&Workspace, usize) -> Effects| {
+        in_state(&|_, workspace, _| {
+            workspace
+                .tab_index(tab)
+                .map_or(Effects::NONE, |index| effects(workspace, index))
+        })
+    };
+    // Every start or stop also changes the layout or the selection: a tab,
+    // workspace, column or pane appears or goes, and focus may move to it.
+    let starts = of(Run).with(Arrange);
+    let stops = of(Close).with(Arrange);
+    match action {
+        Action::Workspace(action) => match action {
+            WorkspaceAction::Inspect
+            | WorkspaceAction::InspectWorkspace { .. }
+            | WorkspaceAction::InspectRuntime
+            | WorkspaceAction::InspectPresentation => Required::new(of(Inspect)),
+            WorkspaceAction::Present { .. } | WorkspaceAction::ReloadPresentation { .. } => {
+                Required::new(of(Lifecycle))
+            }
+            WorkspaceAction::CreateTab | WorkspaceAction::NewWorkspace { .. } => {
+                Required::new(starts)
+            }
+            WorkspaceAction::SwitchWorkspace { .. }
+            | WorkspaceAction::RenameWorkspace { .. }
+            | WorkspaceAction::Move(_)
+            | WorkspaceAction::Focus(Direction::Left | Direction::Right) => {
+                Required::new(of(Arrange))
+            }
+            WorkspaceAction::CloseWorkspace { .. } | WorkspaceAction::CloseTab { .. } => {
+                Required::new(stops)
+            }
+            // Focusing a pane dismisses its tab's popup (`focus_id`).
+            WorkspaceAction::FocusId(id) => {
+                let effects = of(Arrange).union(in_state(&|_, workspace, _| {
+                    workspace
+                        .tabs
+                        .iter()
+                        .position(|tab| tab.find_pane(|pane| &pane.id == id).is_some())
+                        .map_or(Effects::NONE, |index| workspace.dismissal_effects(index))
+                }));
+                let scrollback =
+                    routed.is_some_and(|(set, _, caller)| set.is_scrollback_popup(caller, id));
+                if scrollback {
+                    Required::governed(effects.with(Read))
+                } else {
+                    Required::new(effects)
+                }
+            }
+            WorkspaceAction::Focus(Direction::Up | Direction::Down) => {
+                Required::new(of(Arrange).union(in_state(&|_, workspace, _| {
+                    workspace.dismissal_effects(workspace.active)
+                })))
+            }
+            // A pending tab starts its first pane, and every accepted pick
+            // records a Zoxide visit.
+            WorkspaceAction::SetTabDirectory { .. } => Required::new(starts),
+        },
+        // Every intent may start an entry or run the pair's switch.
+        Action::InvokePopup {
+            tab, entry, intent, ..
+        } => {
+            let effects = starts.union(tab_state(tab, &|workspace, index| {
+                Effects::NONE.with_if(workspace.invocation_stops(index, entry), Close)
+            }));
+            // A fixed key into Eon's own pair (leaving quick search) or
+            // Workspaces picker (Enter); not a content command.
+            let sends = routed.is_some_and(|(set, _, caller)| {
+                set.pair(caller, tab, entry).is_some()
+                    || (*intent == InvokeIntent::Toggle
+                        && set.shown_picker(caller, tab, entry).is_some())
+            });
+            let effects = effects.with_if(sends, Send);
+            if routed.is_some_and(|(set, _, caller)| set.is_scrollback(caller, entry)) {
+                Required::governed(effects.with(Read))
+            } else {
+                Required::new(effects)
+            }
+        }
+        Action::DismissPopup(target) => Required::new(
+            of(Arrange).union(tab_state(&target.tab, &|workspace, index| {
+                workspace.popup_dismissal_effects(index, &target.instance)
+            })),
+        ),
+        Action::CreateColumn => Required::new(starts.union(in_state(&|_, workspace, _| {
+            workspace.dismissal_effects(workspace.active)
+        }))),
+        Action::CreatePane { tab, focus, .. } => {
+            Required::new(starts.union(in_state(&|_, workspace, caller| {
+                if !*focus {
+                    return Effects::NONE;
+                }
+                workspace
+                    .target_tab(caller, tab.as_deref())
+                    .map_or(Effects::NONE, |(index, _)| {
+                        workspace.dismissal_effects(index)
+                    })
+            })))
+        }
+        Action::LaunchTab { .. } => Required::new(starts),
+        // The Editor popup's reuse, popup and pane routes.
+        Action::Edit { .. } => Required::new(starts.union(in_state(&|_, workspace, caller| {
+            workspace
+                .caller_tab(caller)
+                .map_or(Effects::NONE, |(index, _)| {
+                    workspace.dismissal_effects(index)
+                })
+        }))),
+        Action::ClosePane { .. } | Action::CloseColumn { .. } => Required::new(stops),
+        Action::RenamePane { .. }
+        | Action::MovePaneSideways(_)
+        | Action::ToggleSidebar
+        | Action::SetSidebar { .. }
+        | Action::FocusAttention { .. }
+        | Action::NextAttention
+        | Action::PreviousAttention => Required::new(of(Arrange)),
+        Action::ReadTerminal { .. } | Action::ReadTerminalHistory { .. } => {
+            Required::governed(of(Read))
+        }
+        // Opening it over the tab stops nothing: displacing a transient popup
+        // is refused first, and covering a keep-alive one is Arrange.
+        Action::EditTerminalHistory { .. } => Required::governed(starts.with(Read)),
+        Action::SendTerminal { .. } => Required::governed(of(Send)),
+        Action::Subscribe { .. } => Required::new(of(Inspect)),
+    }
 }
 
 pub(crate) fn failure_human(failure: &Failure) -> String {
@@ -7299,6 +7518,753 @@ mod tests {
                 target
             );
         }
+    }
+
+    /// The position of every EONW action in the classification table, so
+    /// a new action fails to compile here as it does in `required_effects`.
+    fn action_index(action: &Action) -> usize {
+        match action {
+            Action::Workspace(action) => match action {
+                WorkspaceAction::Inspect => 0,
+                WorkspaceAction::InspectWorkspace { .. } => 1,
+                WorkspaceAction::InspectRuntime => 2,
+                WorkspaceAction::InspectPresentation => 3,
+                WorkspaceAction::Present { .. } => 4,
+                WorkspaceAction::ReloadPresentation { .. } => 5,
+                WorkspaceAction::CreateTab => 6,
+                WorkspaceAction::NewWorkspace { .. } => 7,
+                WorkspaceAction::SwitchWorkspace { .. } => 8,
+                WorkspaceAction::RenameWorkspace { .. } => 9,
+                WorkspaceAction::CloseWorkspace { .. } => 10,
+                WorkspaceAction::FocusId(_) => 11,
+                WorkspaceAction::Focus(_) => 12,
+                WorkspaceAction::Move(_) => 13,
+                WorkspaceAction::CloseTab { .. } => 14,
+                WorkspaceAction::SetTabDirectory { .. } => 15,
+            },
+            Action::InvokePopup { .. } => 16,
+            Action::DismissPopup(_) => 17,
+            Action::CreateColumn => 18,
+            Action::ClosePane { .. } => 19,
+            Action::CloseColumn { .. } => 20,
+            Action::RenamePane { .. } => 21,
+            Action::MovePaneSideways(_) => 22,
+            Action::Edit { .. } => 23,
+            Action::CreatePane { .. } => 24,
+            Action::LaunchTab { .. } => 25,
+            Action::ToggleSidebar => 26,
+            Action::SetSidebar { .. } => 27,
+            Action::FocusAttention { .. } => 28,
+            Action::NextAttention => 29,
+            Action::PreviousAttention => 30,
+            Action::ReadTerminal { .. } => 31,
+            Action::ReadTerminalHistory { .. } => 32,
+            Action::EditTerminalHistory { .. } => 33,
+            Action::SendTerminal { .. } => 34,
+            Action::Subscribe { .. } => 35,
+        }
+    }
+
+    fn record(observed: &mut Effects, operation: &SessionOperation) {
+        use crate::admission::Effect::{Close, Run};
+        *observed = match operation {
+            SessionOperation::Start { .. } => observed.with(Run),
+            SessionOperation::Stop(_) => observed.with(Close),
+            SessionOperation::SettlePair(_) => *observed,
+        };
+    }
+
+    /// The drift check: an observed start was classified Run, a stop Close,
+    /// and any change to a workspace's tabs, panes, popups or selection, or
+    /// to which workspace is shown, Arrange.
+    fn assert_classified(
+        before: &WorkspaceSet,
+        after: &WorkspaceSet,
+        mut observed: Effects,
+        expected: crate::admission::Required,
+        what: &str,
+    ) {
+        use crate::admission::Effect::{Arrange, Close, Run};
+        if before.workspaces != after.workspaces || before.shown != after.shown {
+            observed = observed.with(Arrange);
+        }
+        for effect in [Run, Close, Arrange] {
+            assert!(
+                !observed.contains(effect) || expected.effects.contains(effect),
+                "{what} did {effect:?} unclassified"
+            );
+        }
+    }
+
+    /// EON-C10 Control authority: every action, in each state that adds an
+    /// effect, requires exactly the effects of design §4 (Close = may stop a
+    /// terminal, Run = may start a process, Arrange = changes layout or
+    /// selection, which every start or stop also does). The drift check
+    /// applies each workspace-owned action and `eon edit`'s three routes, and
+    /// asserts that every observed start, stop and change of layout or
+    /// selection was classified, so a new effect path the classifier misses
+    /// fails here.
+    #[test]
+    fn required_effects_classify_every_action_in_each_triggering_state() {
+        use crate::admission::{Effect::*, Effects, Required};
+        let effects = |list: &[crate::admission::Effect]| {
+            list.iter()
+                .fold(Effects::NONE, |effects, effect| effects.with(*effect))
+        };
+        let new = |list: &[crate::admission::Effect]| Required::new(effects(list));
+        let governed = |list: &[crate::admission::Effect]| Required::governed(effects(list));
+        let mut picker_catalog = catalog();
+        let mut picker = picker_catalog
+            .entries
+            .iter()
+            .find(|entry| entry.id == "agent")
+            .unwrap()
+            .clone();
+        picker.id = "workspaces".into();
+        picker.command = PopupCommand::Argv(vec![WORKSPACE_PICKER.into()]);
+        picker_catalog.entries.push(picker.clone());
+        // The built-in Editor popup, kept alive as Eon's is.
+        let mut editor = picker;
+        editor.id = "editor".into();
+        editor.command = PopupCommand::Editor;
+        editor.keep_alive = true;
+        picker_catalog.entries.push(editor);
+
+        // States. Workspace 0 is shown; workspace 1 holds the routed caller.
+        let base = || {
+            let mut set = two_workspace_set(|_| Ok(()));
+            for workspace in &mut set.workspaces {
+                workspace.catalog = picker_catalog.clone();
+            }
+            set
+        };
+        let tab = |set: &WorkspaceSet| set.workspaces[0].tabs[0].id.clone();
+        let pane = |set: &WorkspaceSet| set.workspaces[0].tabs[0].columns[0].panes[0].id.clone();
+        let with = |entry: &str| {
+            let mut set = base();
+            set.dispatch(
+                "show",
+                None,
+                invoke(&tab(&set), entry),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+            set
+        };
+        let plain = base();
+        let transient = with("commands");
+        let keep_alive = with("agent");
+        let pair = with(FILES_ENTRY);
+        let picker = with("workspaces");
+        let scrollback = with("scrollback");
+        let scrollback_popup = scrollback.workspaces[0].tabs[0].popups[0].id.clone();
+        let mut pending = base();
+        pending
+            .dispatch(
+                "tab",
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let pending_tab = pending.workspaces[0].tabs[1].id.clone();
+        let pending_pair = pending.workspaces[0].tabs[1].popups[0].id.clone();
+        // Git launched at `/`, hidden, then the tab moves to `/tmp`.
+        let mut retarget = with("git");
+        let retarget_tab = tab(&retarget);
+        let git = retarget.workspaces[0].tabs[0].popups[0].id.clone();
+        retarget
+            .dispatch(
+                "hide",
+                None,
+                Action::InvokePopup {
+                    tab: retarget_tab.clone(),
+                    entry: "git".into(),
+                    expected_instance: Some(git),
+                    intent: InvokeIntent::Toggle,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        retarget
+            .dispatch(
+                "move",
+                None,
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: retarget_tab.clone(),
+                    directory: b"/tmp".to_vec(),
+                }),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        // A caller in workspace 1, whose active tab shows no popup.
+        let caller = plain.workspaces[1].tabs[0].columns[0].panes[0]
+            .session
+            .id
+            .clone();
+
+        let t = tab(&plain);
+        let p = pane(&plain);
+        let focus = |id: &str| Action::Workspace(WorkspaceAction::FocusId(id.into()));
+        let toggle = |tab: &str, entry: &str| invoke(tab, entry);
+        let dismiss = |tab: &str, instance: &str| {
+            Action::DismissPopup(PopupTarget {
+                tab: tab.into(),
+                instance: instance.into(),
+            })
+        };
+        let shown = |set: &WorkspaceSet| {
+            set.workspaces[0].tabs[0]
+                .selected_popup
+                .clone()
+                .expect("a popup is shown")
+        };
+        let down = Action::Workspace(WorkspaceAction::Focus(Direction::Down));
+        let edit = || Action::Edit {
+            file: b"/tmp/f".to_vec(),
+        };
+        // The shown workspace's first pane, as `eon edit` names its caller.
+        let local = plain.workspaces[0].tabs[0].columns[0].panes[0]
+            .session
+            .id
+            .clone();
+        let ghost = Some("terminal-999");
+        // (state, caller, action, required, apply through the workspace owner)
+        let cases: Vec<(&WorkspaceSet, Option<&str>, Action, Required, bool)> = vec![
+            (&plain, None, inspect(), new(&[Inspect]), true),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::InspectWorkspace {
+                    workspace: WorkspaceTarget::Selector("1".into()),
+                }),
+                new(&[Inspect]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::InspectRuntime),
+                new(&[Inspect]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::InspectPresentation),
+                new(&[Inspect]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::Present { workspace: true }),
+                new(&[Lifecycle]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::ReloadPresentation {
+                    venus: "/nix/store/venus".into(),
+                    eonw: 47,
+                    orbs: 1,
+                    orbf: 1,
+                }),
+                new(&[Lifecycle]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                new(&[Run, Arrange]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::NewWorkspace {
+                    name: None,
+                    focus: true,
+                }),
+                new(&[Run, Arrange]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::SwitchWorkspace {
+                    workspace: WorkspaceTarget::Selector("2".into()),
+                }),
+                new(&[Arrange]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::RenameWorkspace {
+                    workspace: None,
+                    name: "x".into(),
+                }),
+                new(&[Arrange]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::CloseWorkspace {
+                    workspace: WorkspaceTarget::Selector("2".into()),
+                }),
+                new(&[Close, Arrange]),
+                false,
+            ),
+            // Focusing a pane dismisses its tab's popup.
+            (&plain, None, focus(&p), new(&[Arrange]), true),
+            (&transient, None, focus(&p), new(&[Arrange, Close]), true),
+            (&keep_alive, None, focus(&p), new(&[Arrange]), true),
+            (&plain, None, focus(&t), new(&[Arrange]), true),
+            (
+                &scrollback,
+                None,
+                focus(&scrollback_popup),
+                governed(&[Arrange, Read]),
+                true,
+            ),
+            (&transient, ghost, focus(&p), new(&[Arrange]), false),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::Focus(Direction::Left)),
+                new(&[Arrange]),
+                true,
+            ),
+            (&plain, None, down.clone(), new(&[Arrange]), true),
+            (&transient, None, down.clone(), new(&[Arrange, Close]), true),
+            (&keep_alive, None, down.clone(), new(&[Arrange]), true),
+            // The caller's workspace shows no popup.
+            (
+                &transient,
+                Some(&caller),
+                down.clone(),
+                new(&[Arrange]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::Move(Direction::Right)),
+                new(&[Arrange]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::CloseTab { tab: t.clone() }),
+                new(&[Close, Arrange]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: t.clone(),
+                    directory: b"/tmp".to_vec(),
+                }),
+                new(&[Arrange, Run]),
+                true,
+            ),
+            (
+                &pending,
+                None,
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: pending_tab.clone(),
+                    directory: b"/tmp".to_vec(),
+                }),
+                new(&[Arrange, Run]),
+                true,
+            ),
+            // Every intent may start an entry.
+            (
+                &plain,
+                None,
+                toggle(&t, "commands"),
+                new(&[Run, Arrange]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                toggle(&t, "commands"),
+                new(&[Run, Arrange, Close]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                toggle(&t, "agent"),
+                new(&[Run, Arrange, Close]),
+                true,
+            ),
+            (
+                &keep_alive,
+                None,
+                toggle(&t, "agent"),
+                new(&[Run, Arrange]),
+                true,
+            ),
+            (
+                &keep_alive,
+                None,
+                toggle(&t, "commands"),
+                new(&[Run, Arrange]),
+                true,
+            ),
+            (
+                &retarget,
+                None,
+                toggle(&retarget_tab, "git"),
+                new(&[Run, Arrange, Close]),
+                true,
+            ),
+            (
+                &pending,
+                None,
+                toggle(&pending_tab, FILES_ENTRY),
+                new(&[Run, Arrange, Close, Send]),
+                true,
+            ),
+            // A live pair takes Runtime's own key; so does a shown picker.
+            (
+                &pair,
+                None,
+                toggle(&t, FILES_ENTRY),
+                new(&[Run, Arrange, Send]),
+                true,
+            ),
+            (
+                &pair,
+                None,
+                toggle(&t, PROJECT_ENTRY),
+                new(&[Run, Arrange, Send]),
+                true,
+            ),
+            (
+                &picker,
+                None,
+                toggle(&t, "workspaces"),
+                new(&[Run, Arrange, Send]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                toggle(&t, "scrollback"),
+                governed(&[Run, Arrange, Read]),
+                true,
+            ),
+            (
+                &transient,
+                ghost,
+                toggle(&t, "scrollback"),
+                new(&[Run, Arrange]),
+                false,
+            ),
+            (
+                &keep_alive,
+                None,
+                dismiss(&t, &shown(&keep_alive)),
+                new(&[Arrange]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                dismiss(&t, &shown(&transient)),
+                new(&[Arrange, Close]),
+                true,
+            ),
+            (
+                &pending,
+                None,
+                dismiss(&pending_tab, &pending_pair),
+                new(&[Arrange, Close, Run]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::CreateColumn,
+                new(&[Run, Arrange]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                Action::CreateColumn,
+                new(&[Run, Arrange, Close]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::ClosePane { pane: p.clone() },
+                new(&[Close, Arrange]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::CloseColumn {
+                    pane: p.clone(),
+                    consent: None,
+                },
+                new(&[Close, Arrange]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::RenamePane {
+                    pane: p.clone(),
+                    name: Some("n".into()),
+                    tag: None,
+                },
+                new(&[Arrange]),
+                true,
+            ),
+            (
+                &plain,
+                None,
+                Action::MovePaneSideways(Side::Right),
+                new(&[Arrange]),
+                true,
+            ),
+            (&plain, Some(&local), edit(), new(&[Run, Arrange]), false),
+            (
+                &transient,
+                Some(&local),
+                edit(),
+                new(&[Run, Arrange, Close]),
+                false,
+            ),
+            (&plain, None, new_pane(true), new(&[Run, Arrange]), true),
+            (
+                &transient,
+                None,
+                new_pane(true),
+                new(&[Run, Arrange, Close]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                new_pane(false),
+                new(&[Run, Arrange]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                pane_in(&t, true),
+                new(&[Run, Arrange, Close]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: true,
+                },
+                new(&[Run, Arrange]),
+                true,
+            ),
+            (&plain, None, Action::ToggleSidebar, new(&[Arrange]), true),
+            (
+                &plain,
+                None,
+                Action::SetSidebar { open: true },
+                new(&[Arrange]),
+                true,
+            ),
+            (
+                &transient,
+                None,
+                Action::FocusAttention {
+                    tab: t.clone(),
+                    target: p.clone(),
+                },
+                new(&[Arrange]),
+                true,
+            ),
+            (&plain, None, Action::NextAttention, new(&[Arrange]), false),
+            (
+                &plain,
+                None,
+                Action::PreviousAttention,
+                new(&[Arrange]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::ReadTerminal { target: p.clone() },
+                governed(&[Read]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::ReadTerminalHistory { target: p.clone() },
+                governed(&[Read]),
+                false,
+            ),
+            (
+                &keep_alive,
+                None,
+                Action::EditTerminalHistory { target: p.clone() },
+                governed(&[Read, Run, Arrange]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::SendTerminal {
+                    target: eon_workspace_protocol::v47::SendTarget::Id(p.clone()),
+                    input: eon_workspace_protocol::v47::TerminalInput::Enter,
+                    force: false,
+                },
+                governed(&[Send]),
+                false,
+            ),
+            (
+                &plain,
+                None,
+                Action::Subscribe {
+                    filter: Default::default(),
+                    after: None,
+                },
+                new(&[Inspect]),
+                false,
+            ),
+        ];
+
+        let mut covered = [false; 36];
+        for (state, caller, action, expected, apply) in &cases {
+            covered[action_index(action)] = true;
+            assert_eq!(
+                required_effects(action, Some((state, *caller))),
+                *expected,
+                "{action:?} from {caller:?}"
+            );
+            if !apply {
+                continue;
+            }
+            let mut set = (*state).clone();
+            let mut observed = Effects::NONE;
+            let _ = set.dispatch("drift", *caller, action.clone(), prepared, |operation| {
+                record(&mut observed, &operation);
+                Ok(())
+            });
+            assert_classified(state, &set, observed, *expected, &format!("{action:?}"));
+        }
+
+        // `eon edit`'s three routes, each from a plain tab, a transient popup
+        // and a keep-alive one; reuse also with a transient over the Editor.
+        let editor = |set: &WorkspaceSet| {
+            let mut set = set.clone();
+            set.dispatch(
+                "editor",
+                None,
+                invoke(&tab(&set), "editor"),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+            set
+        };
+        let editor_shown = editor(&plain);
+        let mut editor_covered = editor_shown.clone();
+        editor_covered
+            .dispatch(
+                "cover",
+                None,
+                invoke(&tab(&editor_covered), "commands"),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        type Route = fn() -> crate::editor::EditCommand;
+        let routes: [(&str, Route); 3] = [
+            ("pane", || {
+                crate::editor::EditCommand::Pane(PreparedCommand {
+                    argv: vec!["editor".into()],
+                    listener: None,
+                })
+            }),
+            ("popup", || {
+                crate::editor::EditCommand::Popup(PreparedCommand {
+                    argv: vec!["editor".into()],
+                    listener: None,
+                })
+            }),
+            ("reuse", || {
+                crate::editor::EditCommand::Reuse(crate::editor::ListenerKind::Helix)
+            }),
+        ];
+        let mut applied = 0;
+        for state in [
+            &plain,
+            &transient,
+            &keep_alive,
+            &editor_shown,
+            &editor_covered,
+        ] {
+            let expected = required_effects(&edit(), Some((state, Some(&local))));
+            for (route, command) in routes {
+                let mut set = state.clone();
+                let mut observed = Effects::NONE;
+                let mut reused = false;
+                let result = set.edit(
+                    "drift",
+                    Some(&local),
+                    b"/tmp/f".to_vec(),
+                    |_, _, _, _| Ok(command()),
+                    |_, _, _, _| {
+                        reused = true;
+                        Ok(())
+                    },
+                    |operation| {
+                        record(&mut observed, &operation);
+                        Ok(())
+                    },
+                );
+                applied += usize::from(result.is_ok());
+                // Opening a file in Eon's own running Editor is the same act
+                // as starting one on it (ledger, Opus nit 3).
+                assert!(
+                    !reused || expected.effects.contains(Run),
+                    "{route} reused the Editor unclassified"
+                );
+                assert_classified(state, &set, observed, expected, route);
+            }
+        }
+        assert!(applied >= 7, "the edit routes ran: {applied}");
+        assert_eq!(covered, [true; 36], "every action has a case");
+        // Without a workspace owner or a routable caller, only the
+        // unconditional effects apply.
+        assert_eq!(
+            required_effects(&down, None),
+            new(&[Arrange]),
+            "eonbase has no state effects"
+        );
+        assert_eq!(crate::admission::STOP, new(&[Lifecycle]));
     }
 
     #[test]

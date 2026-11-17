@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Runtime admits every workspace request, subscription and Stop by who asks
+  and every effect it may have, before any effect, and a refused request
+  changes nothing (EON-C10 amendment, `eon-260mh.2.2`). Owner and native
+  authority, and every failure they see, are unchanged.
+
 - `eon agent` names itself in its messages: decision, error and slot lines
   start with `eon agent:` instead of `rota:`, including the lines the Agent
   popup shows before the agent starts, and a run-only backend's status reads

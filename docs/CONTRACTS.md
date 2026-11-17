@@ -1423,6 +1423,14 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment (2026-11-17):** `eon-260mh.2.1`, approved by eon-lead under
+  Lucca's delegation: control authority. The supervisor admits every EONW
+  request by principal and by the effects it may have, before any effect.
+  The workspace socket is the owner endpoint: its clients, with or without
+  a calling terminal, hold the person's authority. The supervised
+  presentation process is the native principal. `EON_TERMINAL` remains
+  routing and never changes authority.
+
 - **Amendment (2026-11-17):** `eon-260mh.2.4`, approved by eon-lead under
   Lucca's delegation (`eon-260mh.2.1`): Quick search runs no listener; Runtime
   leaves it through terminal input.
@@ -2454,6 +2462,32 @@ names its socket. CLI JSON names a session `session` and a terminal
   name and runs `eon session rename` for the popup's session (an empty
   name clears it), and Close this session runs `eon session close` for the
   popup's own `sN`, keeping its confirmation. None adds an EONW action.
+- **Control authority:** The supervisor admits each request, including
+  subscriptions, the Reserved Stop and requests it defers to the session
+  registry, by its principal before any terminal read, process start or
+  stop, selection change or registry change. A refused request changes
+  nothing. Admission considers every effect a request may have in the
+  current state: reading or sending terminal content, starting a process
+  (including a pending tab's first pane), stopping a terminal (including a
+  popup dismissed or displaced as a side effect), changing selection or
+  layout, and presentation or window lifecycle.
+  - The **owner endpoint** is the window's workspace socket. Any client of
+    it holds the person's authority, with or without `EON_TERMINAL`.
+    `[agents] terminal_access` limits its content commands as a
+    preference that binds well-behaved clients; it binds no client that
+    uses its other owner authority to work around it. A missing caller
+    routes to the shown session and active tab and does not reduce
+    authority. A present caller routes and is validated as above; it never
+    grants authority.
+  - The **native principal** is an owner-endpoint client whose
+    operating-system peer identity, including its process start identity,
+    is the current supervised presentation process. An absent or
+    unreadable peer identity, or a reused process ID with a different
+    start identity, is not native. It holds owner authority and the
+    native-key exemptions named in this contract. Any owner client may
+    present or reload a compatible Venus (EON-C11), so those exemptions
+    never exceed owner authority. Any process that can inject input into
+    the presentation, or control it, holds the same authority.
 - **Configuration:** Eon fixes popup margins at 8 side and 4 vertical logical
   pixels; a `[popup]` table is an unknown key and warns as described in EON-C9.
   `[popups.<id>]` owns direct argv, physical shortcut,

@@ -1809,7 +1809,7 @@ pub(super) const CONFIG_WARNED_VARIABLE: &str = "EON_CONFIG_WARNED";
 
 /// The `EON_TERMINAL` value of one exact Orbit run, unique across generations
 /// and windows; callers treat it as opaque.
-fn terminal_identity(session_id: &str, run_id: &str) -> String {
+pub(super) fn terminal_identity(session_id: &str, run_id: &str) -> String {
     format!("{session_id}.{run_id}")
 }
 
@@ -4407,7 +4407,7 @@ pub(crate) mod tests {
     }
 
     /// Reads one whole management request from the Runtime's side of a lease.
-    fn read_request(peer: &mut UnixStream) -> ManagementClientMessage {
+    pub(crate) fn read_request(peer: &mut UnixStream) -> ManagementClientMessage {
         let mut request = Vec::new();
         let mut byte = [0];
         loop {

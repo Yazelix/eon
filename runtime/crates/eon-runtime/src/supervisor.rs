@@ -1,4 +1,5 @@
 use super::{
+    admission::{self, Principal},
     attention::{self, Attention},
     cli::Inputs,
     control::{
@@ -1522,6 +1523,7 @@ fn supervise(
         initial_child,
         initial_status: startup_failed.then_some(1),
         stopping: startup_failed.then_some(StopReason::BootstrapFailure),
+        reconciliation: None,
         quotas: (mode == LaunchMode::Workspace)
             .then(|| quota::Quotas::start(&inputs.codexbar, &bar.widgets)),
         attention,
@@ -1595,7 +1597,8 @@ fn supervise(
             loop {
                 state.poll_registry(inputs, config, runtime, generation);
                 if state.stopping.is_none() {
-                    reap_finished_sessions(&mut state, inputs, config)?;
+                    reconcile(&mut state, inputs, config);
+                    reconciled(&mut state)?;
                 }
 
                 // An incomplete Stop keeps its owner for a retry, even with no
@@ -1680,38 +1683,60 @@ fn await_initial_registration(
     starting: &Runtime,
 ) -> Result<Option<Registration>, String> {
     loop {
-        let accepted = listener.accept(|incoming, _peer| match incoming {
-            Incoming::Stop(target) if target == starting.generation => Dispatched::Stop(
-                eon_workspace_protocol::stop::Reply::Stopped {
-                    generation: target,
-                    terminals: Vec::new(),
-                },
-                true,
-            ),
-            Incoming::Stop(_) => Dispatched::Stop(
-                stop_failure(failure(
-                    "generation-mismatch",
-                    "supervisor owns another generation",
-                )),
-                false,
-            ),
-            Incoming::Request(Request {
-                action:
-                    Action::Workspace(
-                        WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation,
-                    ),
-                ..
-            }) => Dispatched::Reply(
-                ControlResponse::Lifecycle(LifecycleResponse::Runtime(starting.clone())),
-                false,
-            ),
-            Incoming::Request(_) => Dispatched::Reply(
-                ControlResponse::Workspace(Response::Failure(failure(
-                    "registry-busy",
-                    "initial session registration is pending; no terminal has started",
-                ))),
-                false,
-            ),
+        let accepted = listener.accept(|incoming, _peer| {
+            // No Venus runs yet, so every client is the owner, admitted before
+            // its frame is answered. The owner under "window" is never refused
+            // here: this is the place a grant's admission (N1) will refuse.
+            let (request, required) = match &incoming {
+                Incoming::Stop(_) => (None, admission::STOP),
+                Incoming::Request(request) => (
+                    Some(request),
+                    workspace::required_effects(&request.action, None),
+                ),
+            };
+            if let Err(error) =
+                admission::admit(Principal::Owner, request, required, TerminalAccess::Window)
+            {
+                return match &incoming {
+                    Incoming::Stop(_) => Dispatched::Stop(stop_failure(error), false),
+                    Incoming::Request(request) => {
+                        Dispatched::Reply(refused(&request.action, error), false)
+                    }
+                };
+            }
+            match incoming {
+                Incoming::Stop(target) if target == starting.generation => Dispatched::Stop(
+                    eon_workspace_protocol::stop::Reply::Stopped {
+                        generation: target,
+                        terminals: Vec::new(),
+                    },
+                    true,
+                ),
+                Incoming::Stop(_) => Dispatched::Stop(
+                    stop_failure(failure(
+                        "generation-mismatch",
+                        "supervisor owns another generation",
+                    )),
+                    false,
+                ),
+                Incoming::Request(Request {
+                    action:
+                        Action::Workspace(
+                            WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation,
+                        ),
+                    ..
+                }) => Dispatched::Reply(
+                    ControlResponse::Lifecycle(LifecycleResponse::Runtime(starting.clone())),
+                    false,
+                ),
+                Incoming::Request(_) => Dispatched::Reply(
+                    ControlResponse::Workspace(Response::Failure(failure(
+                        "registry-busy",
+                        "initial session registration is pending; no terminal has started",
+                    ))),
+                    false,
+                ),
+            }
         })?;
         if matches!(accepted, Accepted::Replied { shutdown: true }) {
             return Ok(None);
@@ -1749,6 +1774,9 @@ struct SupervisorState {
     initial_child: Vec<OsString>,
     initial_status: Option<i32>,
     stopping: Option<StopReason>,
+    /// An error the turn's reconciliation met that no request path or loop
+    /// has reported yet (`reconciled`).
+    reconciliation: Option<String>,
     quotas: Option<quota::Quotas>,
     /// Full Eon only; eonbase has no poller (EON-C31).
     attention: Option<Attention>,
@@ -1770,6 +1798,13 @@ enum RegistryPending {
     Action {
         request: Request,
         stream: Option<UnixStream>,
+        /// Admitted once, before the registry saw the request. Completion
+        /// does not admit again; a grant's completion (N1) will.
+        #[cfg_attr(
+            not(test),
+            expect(dead_code, reason = "N1 re-admits a grant's completion with it")
+        )]
+        principal: Principal,
     },
 }
 
@@ -1797,12 +1832,16 @@ impl SupervisorState {
                     workspaces.registered_recovery(&target, result);
                 }
             }
-            Some(RegistryPending::Action { request, stream }) => {
+            Some(RegistryPending::Action {
+                request, stream, ..
+            }) => {
                 if let Some(workspaces) = &mut self.workspaces {
                     workspaces.release_registration(&request.id);
                 }
                 let reply = match result {
                     Ok(Some(registration)) if self.stopping.is_none() => {
+                        // A completion is a turn of its own.
+                        reconcile(self, inputs, config);
                         let reply = dispatch_registered_request(
                             request.clone(),
                             self,
@@ -1811,7 +1850,6 @@ impl SupervisorState {
                             runtime,
                             generation,
                             Some(registration),
-                            RequestOrigin::Control,
                         );
                         if let Some(workspaces) = &mut self.workspaces {
                             workspaces.remember_registration(&request.id);
@@ -2242,16 +2280,13 @@ fn close_workspace_tab(
     request: &Request,
     tab: &str,
     state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
     runtime: &Path,
     generation: &str,
 ) -> Result<Response, Failure> {
     let started = Instant::now();
     let result: Result<Option<String>, Failure> = (|| {
-        reap_finished_sessions(state, inputs, config)
-            .map_err(|detail| failure("tab-close-failed", detail))?;
-        let caller = caller_session(state, inputs, config, request)?;
+        reconciled(state).map_err(|detail| failure("tab-close-failed", detail))?;
+        let caller = caller_session(state, request)?;
         let workspace = state
             .workspaces
             .as_mut()
@@ -2288,14 +2323,11 @@ fn close_workspace_pane(
     request: &Request,
     pane: &str,
     state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
     runtime: &Path,
     generation: &str,
 ) -> Result<Response, Failure> {
-    reap_finished_sessions(state, inputs, config)
-        .map_err(|detail| failure("pane-close-failed", detail))?;
-    let caller = caller_session(state, inputs, config, request)?;
+    reconciled(state).map_err(|detail| failure("pane-close-failed", detail))?;
+    let caller = caller_session(state, request)?;
     let workspace = state
         .workspaces
         .as_mut()
@@ -2318,13 +2350,10 @@ fn close_workspace_column(
     pane: &str,
     consent: Option<&CloseConsent>,
     state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
     runtime: &Path,
     generation: &str,
 ) -> Result<Response, Failure> {
-    let (scope, candidates) =
-        column_close_scope(request, pane, state, inputs, config, runtime, generation)?;
+    let (scope, candidates) = column_close_scope(request, pane, state, runtime, generation)?;
     if !consent.is_some_and(|consent| consent_matches(consent, &scope, generation)) {
         return Ok(Response::Confirm(scope));
     }
@@ -2339,14 +2368,11 @@ fn column_close_scope(
     request: &Request,
     pane: &str,
     state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
     runtime: &Path,
     generation: &str,
 ) -> Result<(CloseScope, Vec<ManagedCandidate>), Failure> {
-    reap_finished_sessions(state, inputs, config)
-        .map_err(|detail| failure("column-close-failed", detail))?;
-    let caller = caller_session(state, inputs, config, request)?;
+    reconciled(state).map_err(|detail| failure("column-close-failed", detail))?;
+    let caller = caller_session(state, request)?;
     let workspace = state
         .workspaces
         .as_mut()
@@ -2571,14 +2597,11 @@ fn close_workspace(
     request: &Request,
     target: &WorkspaceTarget,
     state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
     runtime: &Path,
     generation: &str,
 ) -> Result<Response, Failure> {
-    reap_finished_sessions(state, inputs, config)
-        .map_err(|detail| failure("session-close-failed", detail))?;
-    let caller = caller_session(state, inputs, config, request)?;
+    reconciled(state).map_err(|detail| failure("session-close-failed", detail))?;
+    let caller = caller_session(state, request)?;
     let workspace = state
         .workspaces
         .as_mut()
@@ -2769,15 +2792,23 @@ fn stop_generation_sessions_until(
 /// terminal that has ended since the last reconciliation names none.
 fn caller_session(
     state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
     request: &Request,
 ) -> Result<Option<String>, Failure> {
     let Some(caller) = &request.caller else {
         return Ok(None);
     };
-    reap_finished_sessions(state, inputs, config)
-        .map_err(|detail| failure("unavailable", detail))?;
+    reconciled(state).map_err(|detail| failure("unavailable", detail))?;
+    live_caller(state, caller).map(Some).ok_or_else(|| {
+        failure(
+            "unknown-caller",
+            "the calling terminal is not live in this Eon session",
+        )
+    })
+}
+
+/// The live terminal of this session that `caller` (an `EON_TERMINAL`)
+/// names, as the turn's reconciliation left the terminals; it changes nothing.
+fn live_caller(state: &SupervisorState, caller: &str) -> Option<String> {
     state
         .sessions
         .iter()
@@ -2790,13 +2821,23 @@ fn caller_session(
                     })
                 })
         })
-        .map(|session| Some(session.id.clone()))
-        .ok_or_else(|| {
-            failure(
-                "unknown-caller",
-                "the calling terminal is not live in this Eon session",
-            )
-        })
+        .map(|session| session.id.clone())
+}
+
+/// Records the terminals that have exited, once per turn and before any
+/// request is admitted. This is the exits' work, which the supervisor's loop
+/// does before every accept whether or not a request arrives, so no request
+/// path reconciles after admission. An error waits for [`reconciled`].
+fn reconcile(state: &mut SupervisorState, inputs: &Inputs, config: &Path) {
+    if let Err(error) = reap_finished_sessions(state, inputs, config) {
+        state.reconciliation.get_or_insert(error);
+    }
+}
+
+/// Reports the turn's reconciliation error, once, where a request path or
+/// the loop met it when they reconciled themselves.
+fn reconciled(state: &mut SupervisorState) -> Result<(), String> {
+    state.reconciliation.take().map_or(Ok(()), Err)
 }
 
 /// Whether a pair starts the window: then its terminal plays the startup
@@ -3444,10 +3485,19 @@ pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<Lifecy
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RequestOrigin {
-    Control,
-    Presentation,
+/// Who asks over the workspace socket: the supervised presentation process
+/// by its peer identity, including its process start identity, and every
+/// other client, with or without a caller or peer identity, the owner
+/// (EON-C10 Control authority).
+fn principal(
+    venus: Option<&PresentationProcess>,
+    peer: Option<(libc::pid_t, libc::uid_t)>,
+) -> Principal {
+    if venus.is_some_and(|venus| venus.is_native_peer(peer)) {
+        Principal::Native
+    } else {
+        Principal::Owner
+    }
 }
 
 /// Serves one control request: a `Subscribe` keeps its connection for the
@@ -3463,18 +3513,52 @@ fn dispatch(
     generation: &str,
     peer: Option<(libc::pid_t, libc::uid_t)>,
 ) -> Dispatched {
+    let principal = principal(state.venus.as_ref(), peer);
+    dispatch_as(
+        incoming, principal, state, inputs, config, runtime, generation,
+    )
+}
+
+/// [`dispatch`] for an established principal. Admission runs once, after the
+/// turn's reconciliation and the refusals that precede it today, and before
+/// any effect: a refused request changes nothing.
+fn dispatch_as(
+    incoming: Incoming,
+    principal: Principal,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    runtime: &Path,
+    generation: &str,
+) -> Dispatched {
     super::diagnostics::bench_trace("dispatch_begin", "");
     let request = match incoming {
         Incoming::Stop(target) => {
-            let reply = stop_window(&target, state, runtime, generation);
+            let reply = match admission::admit(
+                principal,
+                None,
+                admission::STOP,
+                state.agents.terminal_access,
+            ) {
+                Ok(()) => stop_window(&target, state, runtime, generation),
+                Err(error) => Dispatched::Stop(stop_failure(error), false),
+            };
             super::diagnostics::bench_trace("dispatch_end", "");
             state.serve_subscribers(Instant::now());
             return reply;
         }
         Incoming::Request(request) => request,
     };
+    if state.stopping.is_none() {
+        reconcile(state, inputs, config);
+    }
+    if let Err(error) = admit_request(principal, &request, state, generation) {
+        super::diagnostics::bench_trace("dispatch_end", "");
+        state.serve_subscribers(Instant::now());
+        return Dispatched::Reply(refused(&request.action, error), false);
+    }
     if matches!(request.action, Action::Subscribe { .. }) && state.stopping.is_none() {
-        let reply = match subscribe(state, inputs, config, &request, generation) {
+        let reply = match subscribe(state, &request, generation) {
             Ok(subscriber) => Dispatched::Subscribe(Box::new(subscriber)),
             Err(error) => {
                 Dispatched::Reply(ControlResponse::Workspace(Response::Failure(error)), false)
@@ -3493,7 +3577,7 @@ fn dispatch(
         )
     {
         let accepted = (|| {
-            let caller = caller_session(state, inputs, config, &request)?;
+            let caller = caller_session(state, &request)?;
             if matches!(
                 request.action,
                 Action::Workspace(WorkspaceAction::NewWorkspace { .. })
@@ -3532,6 +3616,7 @@ fn dispatch(
             state.registry_pending = Some(RegistryPending::Action {
                 request,
                 stream: None,
+                principal,
             });
             Ok(())
         })();
@@ -3542,28 +3627,82 @@ fn dispatch(
             }
         };
     }
-    let origin = if state
-        .venus
-        .as_ref()
-        .is_some_and(|venus| venus.is_native_peer(peer))
-    {
-        RequestOrigin::Presentation
-    } else {
-        RequestOrigin::Control
-    };
-    let reply =
-        dispatch_control_request(request, state, inputs, config, runtime, generation, origin);
+    let reply = dispatch_control_request(request, state, inputs, config, runtime, generation);
     super::diagnostics::bench_trace("dispatch_end", "");
     state.serve_subscribers(Instant::now());
     reply.into()
+}
+
+/// Refuses `request` before any effect, with the refusals that precede
+/// admission today first, so every observable failure stays as it was:
+/// while a Stop is incomplete only runtime inspection is answered (EON-C11),
+/// and a terminal-content command without a workspace owner is
+/// `session-unavailable`. Neither changes anything.
+fn admit_request(
+    principal: Principal,
+    request: &Request,
+    state: &SupervisorState,
+    generation: &str,
+) -> Result<(), Failure> {
+    let action = &request.action;
+    if state.stopping.is_some()
+        && !matches!(
+            action,
+            Action::Workspace(
+                WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation
+            )
+        )
+    {
+        let code = if matches!(
+            action,
+            Action::Workspace(WorkspaceAction::ReloadPresentation { .. })
+        ) {
+            "reload-refused"
+        } else {
+            "stop-incomplete"
+        };
+        let detail = stop_incomplete(launch_mode(state), state.window.as_deref(), generation);
+        return Err(failure(code, detail));
+    }
+    // The caller as routing will resolve it. A reconciliation error not yet
+    // reported refuses a caller-bearing request at routing, before any effect.
+    let caller = match &request.caller {
+        None => Some(None),
+        Some(_) if state.reconciliation.is_some() => None,
+        Some(caller) => live_caller(state, caller).map(Some),
+    };
+    let routed = caller
+        .as_ref()
+        .and_then(|caller| Some((state.workspaces.as_ref()?, caller.as_deref())));
+    let required = workspace::required_effects(action, routed);
+    if required.governed && state.workspaces.is_none() {
+        return Err(failure("session-unavailable", "eonbase has no Eon session"));
+    }
+    admission::admit(
+        principal,
+        Some(request),
+        required,
+        state.agents.terminal_access,
+    )
+}
+
+/// A refusal in the response kind `action` expects.
+fn refused(action: &Action, error: Failure) -> ControlResponse {
+    match action {
+        Action::Workspace(
+            WorkspaceAction::Present { .. }
+            | WorkspaceAction::ReloadPresentation { .. }
+            | WorkspaceAction::InspectRuntime
+            | WorkspaceAction::InspectPresentation,
+        ) => ControlResponse::Lifecycle(LifecycleResponse::Failure(error)),
+        _ => ControlResponse::Workspace(Response::Failure(error)),
+    }
 }
 
 /// Accepts a subscription, which changes no selection, shown workspace or
 /// popup and never counts as an attached Venus (EON-C39).
 fn subscribe(
     state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
     request: &Request,
     generation: &str,
 ) -> Result<Subscriber, Failure> {
@@ -3572,7 +3711,7 @@ fn subscribe(
     };
     // Before the work below; the subscribers' own check follows their turn.
     state.subscribers.room()?;
-    let caller = caller_session(state, inputs, config, request)?;
+    let caller = caller_session(state, request)?;
     let projection = state
         .projection()
         .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
@@ -3646,11 +3785,8 @@ fn dispatch_control_request(
     config: &Path,
     runtime: &Path,
     generation: &str,
-    origin: RequestOrigin,
 ) -> (ControlResponse, bool) {
-    dispatch_registered_request(
-        request, state, inputs, config, runtime, generation, None, origin,
-    )
+    dispatch_registered_request(request, state, inputs, config, runtime, generation, None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3662,38 +3798,8 @@ fn dispatch_registered_request(
     runtime: &Path,
     generation: &str,
     registration: Option<Registration>,
-    origin: RequestOrigin,
 ) -> (ControlResponse, bool) {
     let mode = launch_mode(state);
-    if state.stopping.is_some()
-        && !matches!(
-            request.action,
-            Action::Workspace(
-                WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation
-            )
-        )
-    {
-        let error = failure(
-            if matches!(
-                request.action,
-                Action::Workspace(WorkspaceAction::ReloadPresentation { .. })
-            ) {
-                "reload-refused"
-            } else {
-                "stop-incomplete"
-            },
-            stop_incomplete(mode, state.window.as_deref(), generation),
-        );
-        return (
-            match request.action {
-                Action::Workspace(
-                    WorkspaceAction::Present { .. } | WorkspaceAction::ReloadPresentation { .. },
-                ) => ControlResponse::Lifecycle(LifecycleResponse::Failure(error)),
-                _ => ControlResponse::Workspace(Response::Failure(error)),
-            },
-            false,
-        );
-    }
     match request {
         Request {
             action:
@@ -3781,7 +3887,7 @@ fn dispatch_registered_request(
                     false,
                 );
             }
-            if let Err(detail) = reap_finished_sessions(state, inputs, config) {
+            if let Err(detail) = reconciled(state) {
                 return (
                     ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
                         "presentation-unavailable",
@@ -3878,13 +3984,13 @@ fn dispatch_registered_request(
             action: Action::Workspace(WorkspaceAction::CloseWorkspace { ref workspace }),
             ..
         } => closed(close_workspace(
-            &request, workspace, state, inputs, config, runtime, generation,
+            &request, workspace, state, runtime, generation,
         )),
         Request {
             action: Action::Workspace(WorkspaceAction::CloseTab { ref tab }),
             ..
         } => closed(close_workspace_tab(
-            &request, tab, state, inputs, config, runtime, generation,
+            &request, tab, state, runtime, generation,
         )),
         Request {
             action:
@@ -3898,8 +4004,6 @@ fn dispatch_registered_request(
             pane,
             consent.as_ref(),
             state,
-            inputs,
-            config,
             runtime,
             generation,
         )),
@@ -3907,7 +4011,7 @@ fn dispatch_registered_request(
             action: Action::ClosePane { ref pane },
             ..
         } => closed(close_workspace_pane(
-            &request, pane, state, inputs, config, runtime, generation,
+            &request, pane, state, runtime, generation,
         )),
         Request {
             action:
@@ -3917,7 +4021,7 @@ fn dispatch_registered_request(
             ..
         } => (
             ControlResponse::Workspace(
-                terminal_access(request, state, inputs, config).unwrap_or_else(Response::Failure),
+                terminal_access(request, state).unwrap_or_else(Response::Failure),
             ),
             false,
         ),
@@ -3941,7 +4045,7 @@ fn dispatch_registered_request(
                     false,
                 );
             }
-            let caller = match caller_session(state, inputs, config, &request) {
+            let caller = match caller_session(state, &request) {
                 Ok(caller) => caller,
                 Err(error) => return (ControlResponse::Workspace(Response::Failure(error)), false),
             };
@@ -4012,23 +4116,6 @@ fn dispatch_registered_request(
                     ))),
                     false,
                 );
-            }
-            let scrollback_read = match &action {
-                Action::InvokePopup { entry, intent, .. } => {
-                    let native_key = origin == RequestOrigin::Presentation
-                        && caller.is_none()
-                        && matches!(intent, InvokeIntent::Toggle | InvokeIntent::Focus);
-                    !native_key && workspace.is_scrollback(caller.as_deref(), entry)
-                }
-                Action::Workspace(WorkspaceAction::FocusId(id)) => {
-                    workspace.is_scrollback_popup(caller.as_deref(), id)
-                }
-                _ => false,
-            };
-            if scrollback_read
-                && let Err(error) = require_terminal_access(state.agents.terminal_access)
-            {
-                return (ControlResponse::Workspace(Response::Failure(error)), false);
             }
             if let Err(error) =
                 workspace.preflight_popup_show(&request.id, caller.as_deref(), &action)
@@ -4318,8 +4405,7 @@ fn edit_terminal_history(
     if state.workspaces.is_none() {
         return Err(failure("session-unavailable", "eonbase has no Eon session"));
     }
-    require_terminal_access(state.agents.terminal_access)?;
-    let caller = caller_session(state, inputs, config, &request)?;
+    let caller = caller_session(state, &request)?;
     let Some(workspace) = &mut state.workspaces else {
         unreachable!("reconciliation keeps the workspace owner");
     };
@@ -4505,16 +4591,6 @@ fn scrollback_snapshot(
     store.write(target, &history)
 }
 
-fn require_terminal_access(access: TerminalAccess) -> Result<(), Failure> {
-    if access == TerminalAccess::None {
-        return Err(failure(
-            "terminal-access-off",
-            "terminal content access is off; a person can set [agents] terminal_access = \"window\" in Eon's config.toml and open a new window; this lets any same-user client with socket access read and send across all sessions in that window",
-        ));
-    }
-    Ok(())
-}
-
 /// What a terminal request does to its target.
 enum Operation {
     Read,
@@ -4526,17 +4602,11 @@ enum Operation {
 /// any workspace of the window, shown or hidden, without changing any
 /// workspace, selection or focus (EON-C35, EON-C36). Blocks the supervisor
 /// until Orbit answers or the lease's deadline passes.
-fn terminal_access(
-    request: Request,
-    state: &mut SupervisorState,
-    inputs: &Inputs,
-    config: &Path,
-) -> Result<Response, Failure> {
+fn terminal_access(request: Request, state: &mut SupervisorState) -> Result<Response, Failure> {
     if state.workspaces.is_none() {
         return Err(failure("session-unavailable", "eonbase has no Eon session"));
     }
-    require_terminal_access(state.agents.terminal_access)?;
-    let caller = caller_session(state, inputs, config, &request)?;
+    let caller = caller_session(state, &request)?;
     if matches!(
         &request.action,
         Action::SendTerminal {
@@ -4762,6 +4832,7 @@ mod tests {
         reap_finished_sessions, settle_snapshot, stop_generation_sessions, stop_owned_session,
         stop_owned_sessions, temporary_directory, venus_command, window_bar, xdg_path,
     };
+    use crate::admission::Principal;
     use crate::editor::Sockets;
     use crate::scrollback::{Snapshots, tests::history};
     use crate::sessions::{
@@ -4874,6 +4945,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -5034,16 +5106,7 @@ mod tests {
                 consent: consent.cloned(),
             },
         };
-        super::close_workspace_column(
-            &request,
-            pane,
-            consent,
-            state,
-            &crate::fixtures::inputs(),
-            root,
-            root,
-            "g1-test",
-        )
+        super::close_workspace_column(&request, pane, consent, state, root, "g1-test")
     }
 
     #[cfg(target_os = "linux")]
@@ -5286,16 +5349,7 @@ mod tests {
             caller: None,
             action: Action::Workspace(WorkspaceAction::CloseTab { tab: tab.clone() }),
         };
-        super::close_workspace_tab(
-            &request,
-            &tab,
-            &mut state,
-            &crate::fixtures::inputs(),
-            &root,
-            &root,
-            "g1-test",
-        )
-        .unwrap();
+        super::close_workspace_tab(&request, &tab, &mut state, &root, "g1-test").unwrap();
         assert!(
             matches!(column_request(&mut state, &root, &anchor, Some(&consent_of(&nonfinal))).unwrap(),
             super::Response::Confirm(scope) if scope.end == CloseEnd::Window)
@@ -5469,16 +5523,8 @@ mod tests {
                 consent: Some(consent_of(&scope)),
             },
         };
-        let (scope, candidates) = super::column_close_scope(
-            &request,
-            "p1",
-            &mut state,
-            &crate::fixtures::inputs(),
-            &root,
-            &root,
-            "g1-test",
-        )
-        .unwrap();
+        let (scope, candidates) =
+            super::column_close_scope(&request, "p1", &mut state, &root, "g1-test").unwrap();
         super::stop_consented(&mut state, &scope, candidates).unwrap();
         assert!(state.sessions.is_empty());
         let mut late =
@@ -5730,7 +5776,6 @@ mod tests {
                     &root,
                     &root,
                     "g1-test",
-                    super::RequestOrigin::Control,
                 );
                 assert!(!ended);
                 assert!(matches!(
@@ -5810,7 +5855,6 @@ mod tests {
                 &root,
                 &root,
                 "g1-test",
-                super::RequestOrigin::Control,
             );
             match (code, response) {
                 (
@@ -5842,7 +5886,6 @@ mod tests {
                 &root,
                 &root,
                 "g1-test",
-                super::RequestOrigin::Control,
             );
             assert!(
                 matches!(response, crate::control::ControlResponse::Workspace(super::Response::Failure(error)) if error.code == "session-unavailable")
@@ -6646,6 +6689,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -6864,6 +6908,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -7075,6 +7120,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: Some(crate::attention::Attention::new(true)),
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -7203,6 +7249,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: Some(crate::attention::Attention::new(true)),
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -7533,7 +7580,6 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
-            super::RequestOrigin::Control,
         );
         assert!(!ended);
         assert!(
@@ -7720,7 +7766,6 @@ mod tests {
                     &root,
                     &root,
                     "g1-00000000000000000000000000000001",
-                    super::RequestOrigin::Control,
                 )
             };
             if outcome == 0 {
@@ -8069,7 +8114,6 @@ mod tests {
             Path::new("/unused"),
             Path::new("/unused"),
             "g1-00000000000000000000000000000001",
-            super::RequestOrigin::Control,
         );
         assert!(!ended);
         let snapshot = match response {
@@ -8192,7 +8236,6 @@ mod tests {
             &root,
             &root,
             "g1-00000000000000000000000000000001",
-            super::RequestOrigin::Control,
         );
         assert!(!ended);
         assert_eq!(queued(&mut state), (Some(Finished), 1), "focused by CLI");
@@ -8274,7 +8317,13 @@ mod tests {
         let mut first = start();
         let second = start();
         let peer = Some((first.child.id() as libc::pid_t, effective_uid()));
+        // EON-C10 Control authority: only the live Venus is native; every
+        // other client of the socket is the owner.
+        let principal =
+            |venus: &super::PresentationProcess, peer| super::principal(Some(venus), peer);
         assert!(first.is_native_peer(peer));
+        assert_eq!(principal(&first, peer), Principal::Native);
+        assert_eq!(super::principal(None, peer), Principal::Owner);
         for peer in [
             None,
             Some((0, effective_uid())),
@@ -8286,12 +8335,19 @@ mod tests {
             Some((second.child.id() as libc::pid_t, effective_uid())),
         ] {
             assert!(!first.is_native_peer(peer));
+            assert_eq!(principal(&first, peer), Principal::Owner);
         }
         let recorded = first.name;
         first.name = None;
         assert!(!first.is_native_peer(peer));
+        assert_eq!(principal(&first, peer), Principal::Owner);
         first.name = second.name;
         assert!(!first.is_native_peer(peer));
+        assert_eq!(
+            principal(&first, peer),
+            Principal::Owner,
+            "a stale start identity"
+        );
         first.name = recorded;
         assert!(
             !second.is_native_peer(peer),
@@ -8300,7 +8356,565 @@ mod tests {
         first.child.kill().unwrap();
         first.child.wait().unwrap();
         assert!(!first.is_native_peer(peer));
+        assert_eq!(principal(&first, peer), Principal::Owner, "an exited Venus");
         drop((first, second));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    const ADMISSION_GENERATION: &str = "g1-00000000000000000000000000000001";
+
+    /// A supervisor state over `workspaces` and `sessions`, with no Venus,
+    /// registry worker or subscriber, whose snapshots live under `root`.
+    fn admission_state(
+        root: &Path,
+        workspaces: Option<WorkspaceSet>,
+        sessions: Vec<sessions::RunningSession>,
+    ) -> SupervisorState {
+        SupervisorState {
+            created_build: ADMISSION_GENERATION.into(),
+            active_build: ADMISSION_GENERATION.into(),
+            failed_starts: sessions::FailedStarts::default(),
+            registry_worker: None,
+            registry_pending: None,
+            started_at: 1,
+            window: None,
+            running: None,
+            component_generation: ADMISSION_GENERATION.into(),
+            application_id: String::new(),
+            decorations: false,
+            workspaces,
+            sessions,
+            venus: None,
+            venus_path: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: None,
+            reconciliation: None,
+            quotas: None,
+            attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
+            agents: window_agents(),
+            notices: crate::notification::Notices::default(),
+            subscribers: crate::subscriptions::Subscribers::new("g1-test"),
+            scrollback: Snapshots::new(&root.join("scrollback")),
+            editor_sockets: Sockets::default(),
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
+        }
+    }
+
+    /// A window whose one pane is the live `terminal-1`, and the Orbit end of
+    /// that terminal's lease, through which every read and send passes.
+    fn leased_window(root: &Path) -> (SupervisorState, UnixStream, String) {
+        let (session, peer, _) = sessions::tests::tombstoned_session(
+            root,
+            1,
+            orbit_protocol::management::TerminationReason::NaturalExit,
+        );
+        let workspace = WorkspaceSet::with_recovered_sessions(
+            root.to_owned(),
+            root.to_owned(),
+            None,
+            vec![(
+                1,
+                Session {
+                    id: session.id.clone(),
+                    endpoint: session.endpoint.clone(),
+                },
+            )],
+            scrollback_catalog(),
+        )
+        .unwrap();
+        let pane = workspace.snapshot().tabs[0].columns[0].panes[0].id.clone();
+        (
+            admission_state(root, Some(workspace), vec![session]),
+            peer,
+            pane,
+        )
+    }
+
+    /// The fixture popups and a Scrollback entry, `scrollback`.
+    fn scrollback_catalog() -> crate::managed_environment::PopupCatalog {
+        let mut catalog = crate::fixtures::inputs().defaults.popups;
+        let mut scrollback = catalog.entries[0].clone();
+        scrollback.id = "scrollback".into();
+        scrollback.command = crate::managed_environment::PopupCommand::Scrollback;
+        scrollback.keep_alive = false;
+        catalog.entries.push(scrollback);
+        catalog
+    }
+
+    fn admitted_as(
+        principal: Principal,
+        state: &mut SupervisorState,
+        root: &Path,
+        caller: Option<&str>,
+        action: Action,
+    ) -> Dispatched {
+        super::dispatch_as(
+            super::Incoming::Request(super::Request {
+                id: "admission".into(),
+                caller: caller.map(str::to_owned),
+                action,
+            }),
+            principal,
+            state,
+            &crate::fixtures::inputs(),
+            root,
+            root,
+            ADMISSION_GENERATION,
+        )
+    }
+
+    /// The failure code of a refused reply, in whichever framing it came.
+    fn refusal(reply: &Dispatched) -> Option<&str> {
+        use super::{ControlResponse, LifecycleResponse};
+        use eon_workspace_protocol::v47::Response;
+        match reply {
+            Dispatched::Reply(ControlResponse::Workspace(Response::Failure(failure)), false)
+            | Dispatched::Reply(
+                ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)),
+                false,
+            ) => Some(&failure.code),
+            Dispatched::Stop(eon_workspace_protocol::stop::Reply::Failure { code, .. }, false) => {
+                Some(code)
+            }
+            _ => None,
+        }
+    }
+
+    /// What a refused request could have changed: the workspaces, the
+    /// terminals, Stop, the subscribers and the registry.
+    fn observable(state: &SupervisorState) -> String {
+        format!(
+            "{:?}|{:?}|{}|{}|{}",
+            state.workspaces,
+            state
+                .sessions
+                .iter()
+                .map(|session| (&session.id, session.stop_failed()))
+                .collect::<Vec<_>>(),
+            state.stopping.is_some(),
+            state.subscribers.len(),
+            state.registry_pending.is_some(),
+        )
+    }
+
+    /// Nothing reached the terminal's lease: no read, send or stop.
+    fn lease_untouched(peer: &UnixStream) -> bool {
+        peer.set_nonblocking(true).unwrap();
+        let mut byte = [0];
+        let untouched = matches!(
+            (&*peer).read(&mut byte),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        );
+        peer.set_nonblocking(false).unwrap();
+        untouched
+    }
+
+    /// EON-C10 Control authority: a principal denied one effect is refused
+    /// every request that may have it, with `not-granted`, before the
+    /// request reads, sends, starts, stops, arranges or registers anything.
+    /// The lease is where every terminal read, send and stop goes, and the
+    /// positive controls show the same requests from the owner reach it.
+    #[test]
+    fn denying_principal_is_refused_before_any_effect() {
+        use crate::admission::Effect::{Arrange, Close, Inspect, Lifecycle, Read, Run, Send};
+        use eon_workspace_protocol::v47::{SendTarget, TerminalInput};
+        let inputs = crate::fixtures::inputs();
+        let scrollback = "scrollback".to_owned();
+        let send = |pane: &str| Action::SendTerminal {
+            target: SendTarget::Id(pane.into()),
+            input: TerminalInput::Enter,
+            force: false,
+        };
+        type Case = (crate::admission::Effect, fn(&str, &str, &str) -> Action);
+        let cases: [Case; 25] = [
+            (Inspect, |_, _, _| {
+                Action::Workspace(WorkspaceAction::Inspect)
+            }),
+            (Inspect, |_, _, _| Action::Subscribe {
+                filter: Default::default(),
+                after: None,
+            }),
+            (Arrange, |_, _, _| Action::ToggleSidebar),
+            (Arrange, |pane, _, _| Action::RenamePane {
+                pane: pane.into(),
+                name: Some("renamed".into()),
+                tag: None,
+            }),
+            // Both show a popup over the tab (lead ruling 6).
+            (Arrange, |_, tab, _| Action::InvokePopup {
+                tab: tab.into(),
+                entry: "agent".into(),
+                expected_instance: None,
+                intent: eon_workspace_protocol::v47::InvokeIntent::Toggle,
+            }),
+            (Arrange, |pane, _, _| Action::EditTerminalHistory {
+                target: pane.into(),
+            }),
+            // Every start or stop also changes the layout (Codex review 0440).
+            (Arrange, |_, _, _| {
+                Action::Workspace(WorkspaceAction::CreateTab)
+            }),
+            (Arrange, |_, _, _| {
+                Action::Workspace(WorkspaceAction::NewWorkspace {
+                    name: None,
+                    focus: false,
+                })
+            }),
+            (Arrange, |_, _, _| Action::CreateColumn),
+            (Arrange, |_, _, _| Action::CreatePane {
+                tab: None,
+                argv: Vec::new(),
+                focus: false,
+            }),
+            (Arrange, |_, _, _| Action::LaunchTab {
+                directory: b"/".to_vec(),
+                argv: Vec::new(),
+                focus: false,
+            }),
+            (Arrange, |pane, _, _| Action::ClosePane {
+                pane: pane.into(),
+            }),
+            (Arrange, |_, tab, _| {
+                Action::Workspace(WorkspaceAction::CloseTab { tab: tab.into() })
+            }),
+            (Close, |pane, _, _| Action::ClosePane { pane: pane.into() }),
+            (Close, |_, tab, _| {
+                Action::Workspace(WorkspaceAction::CloseTab { tab: tab.into() })
+            }),
+            (Run, |_, _, _| Action::Workspace(WorkspaceAction::CreateTab)),
+            (Run, |_, _, _| Action::CreateColumn),
+            (Run, |_, _, _| {
+                Action::Workspace(WorkspaceAction::NewWorkspace {
+                    name: None,
+                    focus: true,
+                })
+            }),
+            (Read, |pane, _, _| Action::ReadTerminal {
+                target: pane.into(),
+            }),
+            (Read, |pane, _, _| Action::ReadTerminalHistory {
+                target: pane.into(),
+            }),
+            (Read, |_, tab, scrollback| Action::InvokePopup {
+                tab: tab.into(),
+                entry: scrollback.into(),
+                expected_instance: None,
+                intent: eon_workspace_protocol::v47::InvokeIntent::Toggle,
+            }),
+            (Read, |pane, _, _| Action::EditTerminalHistory {
+                target: pane.into(),
+            }),
+            (Send, |pane, _, _| Action::SendTerminal {
+                target: SendTarget::Id(pane.into()),
+                input: TerminalInput::Enter,
+                force: false,
+            }),
+            (Lifecycle, |_, _, _| {
+                Action::Workspace(WorkspaceAction::Present { workspace: true })
+            }),
+            (Lifecycle, |_, _, _| {
+                Action::Workspace(WorkspaceAction::ReloadPresentation {
+                    venus: "/nonexistent/venus".into(),
+                    eonw: 0,
+                    orbs: 0,
+                    orbf: 0,
+                })
+            }),
+        ];
+        for (effect, action) in cases {
+            let root = temporary_directory();
+            let (mut state, peer, pane) = leased_window(&root);
+            let tab = state.workspaces.as_ref().unwrap().snapshot().tabs[0]
+                .id
+                .clone();
+            let action = action(&pane, &tab, &scrollback);
+            let before = observable(&state);
+            let reply = admitted_as(
+                Principal::Denying(effect),
+                &mut state,
+                &root,
+                None,
+                action.clone(),
+            );
+            assert_eq!(refusal(&reply), Some("not-granted"), "{action:?}");
+            assert_eq!(observable(&state), before, "{action:?} changed state");
+            assert!(lease_untouched(&peer), "{action:?} reached the lease");
+            assert!(
+                !root.join("scrollback").exists(),
+                "{action:?} wrote a snapshot"
+            );
+            drop((state, peer));
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        // The Reserved Stop.
+        let root = temporary_directory();
+        let (mut state, peer, _) = leased_window(&root);
+        let before = observable(&state);
+        let reply = super::dispatch_as(
+            super::Incoming::Stop(ADMISSION_GENERATION.into()),
+            Principal::Denying(Lifecycle),
+            &mut state,
+            &inputs,
+            &root,
+            &root,
+            ADMISSION_GENERATION,
+        );
+        assert_eq!(refusal(&reply), Some("not-granted"));
+        assert_eq!(observable(&state), before);
+        assert!(lease_untouched(&peer));
+        drop((state, peer));
+        fs::remove_dir_all(root).unwrap();
+
+        // Positive controls: the owner's same reads and sends reach the
+        // lease, so an untouched lease above means nothing was read or sent.
+        use orbit_protocol::management::ClientMessage;
+        for (action, expected) in [
+            (
+                Action::ReadTerminal {
+                    target: String::new(),
+                },
+                (|message| matches!(message, ClientMessage::ReadVisible))
+                    as fn(&ClientMessage) -> bool,
+            ),
+            (
+                Action::ReadTerminalHistory {
+                    target: String::new(),
+                },
+                |message| matches!(message, ClientMessage::ReadHistory),
+            ),
+            (send(""), |message| {
+                matches!(
+                    message,
+                    ClientMessage::Input {
+                        input: orbit_protocol::management::LeaseInput::Enter,
+                        ..
+                    }
+                )
+            }),
+        ] {
+            let root = temporary_directory();
+            let (mut state, mut peer, pane) = leased_window(&root);
+            let action = match action {
+                Action::ReadTerminal { .. } => Action::ReadTerminal { target: pane },
+                Action::ReadTerminalHistory { .. } => Action::ReadTerminalHistory { target: pane },
+                _ => send(&pane),
+            };
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            // Orbit reads the request and hangs up, so the call ends at once.
+            let orbit = std::thread::spawn(move || sessions::tests::read_request(&mut peer));
+            let _ = admitted_as(Principal::Owner, &mut state, &root, None, action.clone());
+            let request = orbit.join().unwrap();
+            assert!(expected(&request), "{action:?} sent {request:?}");
+            drop(state);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    /// Codex 3: exits are reconciled as a turn step, so a request-free turn
+    /// and a turn carrying a request leave the same terminals and topology,
+    /// and no request path records an exit itself.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_request_turn_reconciles_exactly_as_a_request_free_turn() {
+        use crate::admission::Effect::Run;
+        // A pending tab whose pair has exited: reconciliation finishes the
+        // tab and starts its first pane, which is the exit's work, not the
+        // request's.
+        let exited_pair = |root: &Path| {
+            let mut inputs = crate::fixtures::inputs();
+            inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
+            let workspace = WorkspaceSet::pending(
+                root.to_owned(),
+                root.to_owned(),
+                Some(root.to_owned()),
+                inputs.defaults.popups.clone(),
+                |_, _| Ok(Default::default()),
+                |_| Ok(()),
+            )
+            .unwrap();
+            let (pair, peer, _) = sessions::tests::tombstoned_session(
+                root,
+                2,
+                orbit_protocol::management::TerminationReason::NaturalExit,
+            );
+            drop(peer);
+            let mut state = admission_state(root, Some(workspace), vec![pair]);
+            state.initial_child = ["/bin/sh", "-c", "exec sleep 30"]
+                .into_iter()
+                .map(OsString::from)
+                .collect();
+            (state, inputs)
+        };
+        let shape = |state: &SupervisorState| {
+            let tabs = state.workspaces.as_ref().unwrap().snapshot().tabs;
+            (
+                tabs.iter()
+                    .map(|tab| {
+                        (
+                            tab.pending,
+                            tab.columns
+                                .iter()
+                                .map(|column| column.panes.len())
+                                .sum::<usize>(),
+                            tab.popups.len(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                state
+                    .sessions
+                    .iter()
+                    .map(|session| session.id.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        let free_root = temporary_directory();
+        let (mut free, inputs) = exited_pair(&free_root);
+        assert_eq!(shape(&free).0, [(true, 0, 1)], "a pending tab and its pair");
+        super::reconcile(&mut free, &inputs, &free_root);
+        super::reconciled(&mut free).unwrap();
+
+        let request_root = temporary_directory();
+        let (mut request, inputs) = exited_pair(&request_root);
+        let reply = super::dispatch_as(
+            super::Incoming::Request(super::Request {
+                id: "inspect".into(),
+                caller: Some("terminal-2".into()),
+                action: Action::Workspace(WorkspaceAction::Inspect),
+            }),
+            Principal::Denying(Run),
+            &mut request,
+            &inputs,
+            &request_root,
+            &request_root,
+            ADMISSION_GENERATION,
+        );
+        assert_ne!(refusal(&reply), Some("not-granted"), "Inspect needs no Run");
+        assert_eq!(shape(&request), shape(&free));
+        // The pair is dismissed and the tab finished by the turn, before
+        // the request: no longer pending, whatever its first pane's start did.
+        assert!(
+            matches!(shape(&free).0[..], [(false, _, 0)]),
+            "the exit finished the pending tab: {:?}",
+            shape(&free)
+        );
+        for (mut state, root) in [(free, free_root), (request, request_root)] {
+            stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+            drop(state);
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        // A request path reports reconciliation and records no exit itself.
+        let root = temporary_directory();
+        let (mut state, peer, _) = leased_window(&root);
+        drop(peer);
+        let request = super::Request {
+            id: "caller".into(),
+            caller: Some(sessions::terminal_identity(
+                &state.sessions[0].id,
+                state.sessions[0].run_id(),
+            )),
+            action: Action::Workspace(WorkspaceAction::Inspect),
+        };
+        let before = observable(&state);
+        assert_eq!(
+            super::caller_session(&mut state, &request),
+            Ok(Some("terminal-1".into()))
+        );
+        assert_eq!(observable(&state), before, "routing recorded the exit");
+        super::reconcile(&mut state, &inputs, &root);
+        assert!(state.sessions.is_empty(), "the turn records the exit");
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Codex 5: the refusals that precede admission keep their failures.
+    #[test]
+    fn failures_before_admission_are_unchanged() {
+        use crate::managed_environment::TerminalAccess;
+        let root = temporary_directory();
+        let read = Action::ReadTerminal {
+            target: "pane-1".into(),
+        };
+
+        let mut eonbase = admission_state(&root, None, Vec::new());
+        eonbase.agents.terminal_access = TerminalAccess::None;
+        let reply = admitted_as(Principal::Owner, &mut eonbase, &root, None, read.clone());
+        assert_eq!(refusal(&reply), Some("session-unavailable"));
+        drop(eonbase);
+
+        // Under "none" admission would refuse these with terminal-access-off,
+        // so each failure shows its refusal still comes first.
+        let (mut stopping, peer, pane) = leased_window(&root);
+        stopping.agents.terminal_access = TerminalAccess::None;
+        stopping.stopping = Some(StopReason::StopRequired);
+        let reply = admitted_as(
+            Principal::Owner,
+            &mut stopping,
+            &root,
+            None,
+            Action::ReadTerminal { target: pane },
+        );
+        assert_eq!(refusal(&reply), Some("stop-incomplete"));
+        stopping.stopping = None;
+
+        let tab = stopping.workspaces.as_ref().unwrap().snapshot().tabs[0]
+            .id
+            .clone();
+        let scrollback = "scrollback".to_owned();
+        let caller =
+            sessions::terminal_identity(&stopping.sessions[0].id, stopping.sessions[0].run_id());
+        stopping.reconciliation = Some("the terminal record is unreadable".into());
+        let reply = admitted_as(
+            Principal::Owner,
+            &mut stopping,
+            &root,
+            Some(&caller),
+            Action::InvokePopup {
+                tab,
+                entry: scrollback,
+                expected_instance: None,
+                intent: eon_workspace_protocol::v47::InvokeIntent::Toggle,
+            },
+        );
+        assert_eq!(refusal(&reply), Some("unavailable"));
+        assert!(lease_untouched(&peer));
+        drop((stopping, peer));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Codex 8: the registry carries the principal admitted at dispatch.
+    #[test]
+    fn native_new_workspace_stays_native_through_the_registry() {
+        let (root, inputs, mut state, _subscriber) = subscribed_window();
+        let reply = super::dispatch_as(
+            super::Incoming::Request(super::Request {
+                id: "new".into(),
+                caller: None,
+                action: Action::Workspace(WorkspaceAction::NewWorkspace {
+                    name: None,
+                    focus: true,
+                }),
+            }),
+            Principal::Native,
+            &mut state,
+            &inputs,
+            &root,
+            &root,
+            ADMISSION_GENERATION,
+        );
+        assert!(matches!(reply, Dispatched::Deferred));
+        assert!(matches!(
+            state.registry_pending,
+            Some(super::RegistryPending::Action {
+                principal: Principal::Native,
+                ..
+            })
+        ));
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -8415,6 +9029,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -8438,7 +9053,6 @@ mod tests {
                     &root,
                     &root,
                     "g1-00000000000000000000000000000001",
-                    super::RequestOrigin::Control,
                 );
                 assert!(!ended);
                 assert!(matches!(
@@ -8510,6 +9124,7 @@ mod tests {
                 .collect(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -8660,6 +9275,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -8873,6 +9489,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -8994,6 +9611,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -9058,6 +9676,7 @@ mod tests {
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
@@ -10647,6 +11266,7 @@ rows = 30
             initial_child: Vec::new(),
             initial_status: None,
             stopping: None,
+            reconciliation: None,
             quotas: None,
             attention: None,
             pane_labels: super::super::pane_labels::Labels::default(),
