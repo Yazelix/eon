@@ -1050,7 +1050,7 @@
               ];
               doCheck = !pkgs.stdenv.isLinux;
               meta = eonMeta;
-            } // lib.optionalAttrs pkgs.stdenv.isDarwin {
+            } // lib.optionalAttrs pkgs.stdenv.isDarwin (quickSearchTestEnvironment // {
               cargoTestFlags = [
                 "--package"
                 "eon"
@@ -1097,7 +1097,7 @@
               '';
               # Runtime tests paste printed commands into Eon's Nushell.
               nativeCheckInputs = [ nushellPackage ];
-            });
+            }));
           eonHelix =
             assert helix.rev == helixIdentity.revision;
             assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
