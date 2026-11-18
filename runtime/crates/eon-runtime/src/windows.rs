@@ -24,10 +24,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs::{self, DirBuilder, OpenOptions},
     hash::BuildHasher,
-    os::unix::{
-        fs::{DirBuilderExt, OpenOptionsExt},
-        process::CommandExt,
-    },
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -795,16 +792,7 @@ pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr);
-    // SAFETY: setsid is async-signal-safe and has no parent-process side effects.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                Err(std::io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        });
-    }
+    crate::platform::detach_session(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("cannot start Eon window {id}: {error}"))?;

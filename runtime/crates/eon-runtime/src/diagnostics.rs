@@ -392,30 +392,9 @@ fn timestamp() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     let seconds = now.as_secs() as libc::time_t;
-    // SAFETY: tm is plain data that localtime_r fills; it reports failure as null.
-    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
-    if unsafe { libc::localtime_r(&seconds, &mut tm) }.is_null() {
-        return format!("@{seconds}");
-    }
-    let format = |pattern: &std::ffi::CStr| {
-        let mut buffer = [0u8; 32];
-        // SAFETY: strftime writes at most buffer.len() bytes and returns how many.
-        let length = unsafe {
-            libc::strftime(
-                buffer.as_mut_ptr().cast(),
-                buffer.len(),
-                pattern.as_ptr(),
-                &tm,
-            )
-        };
-        String::from_utf8_lossy(&buffer[..length]).into_owned()
-    };
-    format!(
-        "{}.{:03}{}",
-        format(c"%Y-%m-%dT%H:%M:%S"),
-        now.subsec_millis(),
-        format(c"%z")
-    )
+    crate::platform::LocalTime::from_seconds(seconds)
+        .map(|time| time.timestamp(now.subsec_millis()))
+        .unwrap_or_else(|| format!("@{seconds}"))
 }
 
 /// Opt-in benchmark diagnostics; never waits for a reader or writes the pressured disk.

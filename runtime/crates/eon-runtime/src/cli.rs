@@ -305,29 +305,7 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         arguments.push(name.into());
     }
     let status = if arguments[0] == "update" {
-        // A caught no-op resets on exec, letting the product handle terminal
-        // interrupts while the runner survives to retain its result.
-        extern "C" fn interrupt(_: libc::c_int) {}
-        let handler = interrupt as *const () as libc::sighandler_t;
-        let previous_int = unsafe { libc::signal(libc::SIGINT, handler) };
-        if previous_int == libc::SIG_ERR {
-            return Err(format!(
-                "cannot retain update results: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        let previous_quit = unsafe { libc::signal(libc::SIGQUIT, handler) };
-        let status = if previous_quit == libc::SIG_ERR {
-            Err(std::io::Error::last_os_error())
-        } else {
-            // Use the popup's PATH and inherit its terminal for product-owned consent.
-            let status = Command::new("eon").args(arguments).status();
-            unsafe { libc::signal(libc::SIGQUIT, previous_quit) };
-            status
-        };
-        unsafe { libc::signal(libc::SIGINT, previous_int) };
-        status
-            .map_err(|error| format!("cannot run eon update: {error}"))?
+        crate::platform::update_status(Command::new("eon").args(arguments))?
             .code()
             .unwrap_or(1)
     } else if arguments[0] == "report" {

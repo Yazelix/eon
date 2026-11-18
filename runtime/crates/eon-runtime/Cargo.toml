@@ -20,3 +20,9 @@ time = { version = "=0.3.55", default-features = false, features = ["parsing"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

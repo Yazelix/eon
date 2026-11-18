@@ -1600,25 +1600,9 @@ fn local_minute(unix_ms: u64) -> String {
     let Ok(seconds) = libc::time_t::try_from(unix_ms / 1000) else {
         return "-".into();
     };
-    // SAFETY: tm is plain data that localtime_r fills; it reports failure as null.
-    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
-    if unsafe { libc::localtime_r(&seconds, &mut tm) }.is_null() {
-        return "-".into();
-    }
-    let mut buffer = [0u8; 32];
-    // SAFETY: strftime writes at most buffer.len() bytes and returns how many.
-    let length = unsafe {
-        libc::strftime(
-            buffer.as_mut_ptr().cast(),
-            buffer.len(),
-            c"%Y-%m-%d %H:%M".as_ptr(),
-            &tm,
-        )
-    };
-    if length == 0 {
-        return "-".into();
-    }
-    String::from_utf8_lossy(&buffer[..length]).into_owned()
+    crate::platform::LocalTime::from_seconds(seconds)
+        .map(|time| time.minute())
+        .unwrap_or_else(|| "-".into())
 }
 
 /// Presents generation `target`, the current one without it. Messages name
@@ -2199,6 +2183,86 @@ fn stopped_json(generation: &str, terminals: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_minute_keeps_numeric_timezone_layouts() {
+        for (zone, milliseconds, expected, timestamp) in [
+            (
+                "UTC0",
+                0_u64,
+                "1970-01-01 00:00",
+                "1970-01-01T00:00:00.007+0000",
+            ),
+            (
+                "UTC0",
+                253_402_300_800_000,
+                "10000-01-01 00:00",
+                "10000-01-01T00:00:00.007+0000",
+            ),
+            (
+                "NST3:30",
+                0,
+                "1969-12-31 20:30",
+                "1969-12-31T20:30:00.007-0330",
+            ),
+            (
+                "NPT-5:45",
+                0,
+                "1970-01-01 05:45",
+                "1970-01-01T05:45:00.007+0545",
+            ),
+            (
+                "XST0:00:30",
+                0,
+                "1969-12-31 23:59",
+                "1969-12-31T23:59:30.007-0000",
+            ),
+            (
+                "EST5EDT,M3.2.0/2,M11.1.0/2",
+                1_710_053_999_000,
+                "2024-03-10 01:59",
+                "2024-03-10T01:59:59.007-0500",
+            ),
+            (
+                "EST5EDT,M3.2.0/2,M11.1.0/2",
+                1_710_054_000_000,
+                "2024-03-10 03:00",
+                "2024-03-10T03:00:00.007-0400",
+            ),
+        ] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "generation::tests::local_minute_child",
+                    "--nocapture",
+                ])
+                .env("TZ", zone)
+                .env("EON_TEST_LOCAL_MS", milliseconds.to_string())
+                .env("EON_TEST_LOCAL_MINUTE", expected)
+                .env("EON_TEST_LOCAL_TIMESTAMP", timestamp)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{zone}: {output:?}");
+        }
+    }
+
+    #[test]
+    fn local_minute_child() {
+        let Ok(expected) = std::env::var("EON_TEST_LOCAL_MINUTE") else {
+            return;
+        };
+        let milliseconds = std::env::var("EON_TEST_LOCAL_MS").unwrap().parse().unwrap();
+        assert_eq!(super::local_minute(milliseconds), expected);
+        let time = crate::platform::LocalTime::from_seconds(
+            libc::time_t::try_from(milliseconds / 1000).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            time.timestamp(7),
+            std::env::var("EON_TEST_LOCAL_TIMESTAMP").unwrap()
+        );
+        assert!(crate::platform::LocalTime::from_seconds(libc::time_t::MAX).is_none());
+    }
+
     use super::{
         BusyTerminals, Confirmation, confirmation_status, current_generation, discover_generations,
         generation_directory, generation_id, valid_generation,

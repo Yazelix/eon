@@ -450,64 +450,8 @@ impl HostPaths {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn account_home() -> io::Result<PathBuf> {
-    use std::ffi::CStr;
-    let uid = rustix::process::geteuid().as_raw();
-    let mut bytes = vec![0u8; 1024];
-    loop {
-        let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
-        let mut result = std::ptr::null_mut();
-        // SAFETY: the output pointers and buffer are valid for this call. Strings
-        // are copied before the buffer drops; a null result is never dereferenced.
-        let status = unsafe {
-            libc::getpwuid_r(
-                uid,
-                entry.as_mut_ptr(),
-                bytes.as_mut_ptr().cast(),
-                bytes.len(),
-                &mut result,
-            )
-        };
-        if status == libc::ERANGE {
-            // Bound malformed NSS records as well as normal buffer growth.
-            if bytes.len() >= 1024 * 1024 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "OS account record exceeds 1 MiB",
-                ));
-            }
-            bytes.resize(bytes.len() * 2, 0);
-            continue;
-        }
-        if status != 0 {
-            return Err(io::Error::from_raw_os_error(status));
-        }
-        if result.is_null() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("OS account for effective UID {uid} not found"),
-            ));
-        }
-        // SAFETY: successful getpwuid_r initialized entry and its buffer-backed strings.
-        let entry = unsafe { entry.assume_init() };
-        if entry.pw_dir.is_null() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "OS account has no home",
-            ));
-        }
-        // SAFETY: pw_dir is a non-null, NUL-terminated string in the live buffer.
-        return validated_home(unsafe { CStr::from_ptr(entry.pw_dir) }.to_bytes());
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn account_home() -> io::Result<PathBuf> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "EON-C43 canonical account resolution is supported only on Linux",
-    ))
+    validated_home(&crate::platform::account_home_bytes()?)
 }
 
 fn validated_home(bytes: &[u8]) -> io::Result<PathBuf> {

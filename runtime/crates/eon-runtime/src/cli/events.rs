@@ -113,15 +113,7 @@ fn usage() -> Error {
 }
 
 pub(super) fn execute(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, Error> {
-    // _exit is async-signal-safe, including during startup or a blocked stdout write.
-    extern "C" fn interrupt(_: libc::c_int) {
-        unsafe { libc::_exit(130) }
-    }
-    let previous =
-        unsafe { libc::signal(libc::SIGINT, interrupt as *const () as libc::sighandler_t) };
-    if previous == libc::SIG_ERR {
-        return Err(lost(std::io::Error::last_os_error()));
-    }
+    let previous = crate::platform::events_interrupt().map_err(lost)?;
     let output = std::io::stdout();
     let stdout = Output::watch(output.as_fd()).map_err(lost)?;
     let result = if stdout.closed().map_err(lost)? {
@@ -129,9 +121,7 @@ pub(super) fn execute(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, Er
     } else {
         execute_inner(inputs, arguments, &stdout)
     };
-    unsafe {
-        libc::signal(libc::SIGINT, previous);
-    }
+    previous.restore();
     if stdout.closed().map_err(lost)? {
         Ok(0)
     } else {

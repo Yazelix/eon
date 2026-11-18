@@ -10,8 +10,6 @@ use eon_workspace_protocol::v47::{
     SubscriptionMessage, Tabs, WindowSnapshot, WorkspaceEntry, WorkspaceInfo,
     encode_subscription_message,
 };
-#[cfg(target_os = "linux")]
-use std::os::fd::AsRawFd;
 use std::{
     collections::VecDeque,
     io::{ErrorKind, Read, Write},
@@ -395,7 +393,7 @@ impl Subscriber {
         // while its gap waits for it with nothing queued; with frames
         // queued, writes of at most `WRITE_CHUNK` move as it reads.
         let unread = (self.gap_due && self.frames.is_empty())
-            .then(|| unread(stream))
+            .then(|| crate::platform::socket_unread(stream))
             .flatten();
         if let (Some(unread), Some(before)) = (unread, self.unread)
             && unread < before
@@ -475,26 +473,6 @@ fn write_pending(
         }
     }
     Ok(())
-}
-
-/// The bytes `stream` holds that its reader has not read yet, from Linux's
-/// `TIOCOUTQ` (`SIOCOUTQ`).
-#[cfg(target_os = "linux")]
-fn unread(stream: &UnixStream) -> Option<usize> {
-    let mut unread: libc::c_int = 0;
-    // SAFETY: asks about one descriptor this subscriber owns, into a c_int.
-    let asked = unsafe { libc::ioctl(stream.as_raw_fd(), libc::TIOCOUTQ, &mut unread) };
-    (asked == 0).then_some(unread as usize)
-}
-
-/// Elsewhere the connection turning writable is the measure of progress.
-/// By XNU's source, a macOS Unix stream holds no unsent bytes of its own
-/// (`SO_NWRITE` stays 0); its reader's reads give back send space, and it
-/// polls writable at the 2 KiB low-water mark, so `reads` sees a reader
-/// that drains it. eon-ciwn.8's Mac run proves this.
-#[cfg(not(target_os = "linux"))]
-fn unread(_stream: &UnixStream) -> Option<usize> {
-    None
 }
 
 /// Whether the subscriber closed its end; it sends nothing after

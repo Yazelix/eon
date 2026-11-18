@@ -1,5 +1,7 @@
 //! Eon's runtime mechanisms, invoked with assembly-owned product inputs.
 
+#![deny(unsafe_code)]
+
 mod admission;
 mod attention;
 mod checkpoint;
@@ -14,6 +16,7 @@ mod managed_environment;
 mod notification;
 mod pair;
 mod pane_labels;
+#[allow(unsafe_code)]
 mod platform;
 mod private_file;
 mod quota;

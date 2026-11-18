@@ -1,5 +1,4 @@
-//! Platform mechanisms behind Runtime's terminal identity checks and runtime
-//! paths. The policy that uses them stays in `sessions` and `supervisor`.
+//! Runtime's sole unsafe platform seam; policy remains with its callers.
 
 use std::{
     io,
@@ -18,7 +17,8 @@ pub(crate) fn boot_time() -> io::Result<Duration> {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        // SAFETY: writable timespec; rustix 1.1.4 lacks Darwin's suspend-inclusive raw clock.
+        // SAFETY: rustix lacks this Darwin raw clock; retain its clock domain across
+        // replacement processes. clock_gettime writes only this live timespec.
         if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &raw mut time) } != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -201,7 +201,8 @@ pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, lib
 pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
     let mut pid: libc::pid_t = 0;
     let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-    // SAFETY: pid points to writable pid_t storage of the declared length.
+    // SAFETY: no supported safe API reads Darwin LOCAL_PEERPID; pid points to
+    // writable pid_t storage of the declared length.
     if unsafe {
         libc::getsockopt(
             stream.as_raw_fd(),
@@ -221,7 +222,8 @@ pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, lib
         ));
     }
     let (mut uid, mut gid) = (0, 0);
-    // SAFETY: getpeereid fills both identities of the stream's peer.
+    // SAFETY: std peer_cred is unstable and rustix has no getpeereid wrapper;
+    // the live stream and writable UID/GID storage remain valid for this call.
     if unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) } == -1 {
         return Err(io::Error::last_os_error());
     }
@@ -262,19 +264,21 @@ pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
     let Ok(pid_value) = libc::pid_t::try_from(pid) else {
         return Ok(None);
     };
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     // A nonzero argument makes libproc report zombies too, so their start
     // identity is still checked.
-    // SAFETY: proc_pidinfo fills at most `size` bytes of the zeroed record.
-    let read = unsafe {
-        libc::proc_pidinfo(
+    // SAFETY: no std/rustix libproc API exists; zero is valid for this integer
+    // record, and proc_pidinfo writes at most size bytes into its live storage.
+    let (read, info) = unsafe {
+        let mut info = std::mem::zeroed::<libc::proc_bsdinfo>();
+        let read = libc::proc_pidinfo(
             pid_value,
             libc::PROC_PIDTBSDINFO,
             1,
             (&raw mut info).cast(),
             size,
-        )
+        );
+        (read, info)
     };
     if read <= 0 {
         let error = io::Error::last_os_error();
@@ -297,6 +301,208 @@ pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
         start,
         ended: info.pbi_status == libc::SZOMB,
     }))
+}
+
+/// Runs the prepared update command while retaining terminal interrupts in its runner.
+pub(crate) fn update_status(
+    command: &mut std::process::Command,
+) -> Result<std::process::ExitStatus, String> {
+    // A caught no-op resets on exec, letting the product handle terminal
+    // interrupts while the runner survives to retain its result.
+    extern "C" fn interrupt(_: libc::c_int) {}
+    let handler = interrupt as *const () as libc::sighandler_t;
+    // SAFETY: no supported safe signal API; this fixed C-ABI no-op does nothing.
+    let previous_int = unsafe { libc::signal(libc::SIGINT, handler) };
+    if previous_int == libc::SIG_ERR {
+        return Err(format!(
+            "cannot retain update results: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: no supported safe signal API; the same fixed no-op is valid for SIGQUIT.
+    let previous_quit = unsafe { libc::signal(libc::SIGQUIT, handler) };
+    let status = if previous_quit == libc::SIG_ERR {
+        Err(std::io::Error::last_os_error())
+    } else {
+        // Use the popup's PATH and inherit its terminal for product-owned consent.
+        let status = command.status();
+        // SAFETY: no supported safe restoration API; signal returned this valid handler.
+        unsafe { libc::signal(libc::SIGQUIT, previous_quit) };
+        status
+    };
+    // SAFETY: no supported safe restoration API; signal returned this valid handler.
+    unsafe { libc::signal(libc::SIGINT, previous_int) };
+    status.map_err(|error| format!("cannot run eon update: {error}"))
+}
+
+pub(crate) struct EventsInterrupt(libc::sighandler_t);
+
+pub(crate) fn events_interrupt() -> io::Result<EventsInterrupt> {
+    extern "C" fn interrupt(_: libc::c_int) {
+        // SAFETY: no supported safe immediate-exit API; _exit is async-signal-safe,
+        // exits this process without destructors, and never returns.
+        unsafe { libc::_exit(130) }
+    }
+    // SAFETY: no supported safe signal API; the fixed C-ABI handler only calls _exit.
+    let previous =
+        unsafe { libc::signal(libc::SIGINT, interrupt as *const () as libc::sighandler_t) };
+    if previous == libc::SIG_ERR {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(EventsInterrupt(previous))
+}
+
+impl EventsInterrupt {
+    pub(crate) fn restore(self) {
+        // SAFETY: no supported safe restoration API; the opaque token contains
+        // only a valid previous handler returned by successful signal installation.
+        unsafe { libc::signal(libc::SIGINT, self.0) };
+    }
+}
+
+pub(crate) fn detach_session(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: stable std has no safe setsid registration API; this fixed hook
+    // only invokes async-signal-safe setsid and converts its errno without allocation.
+    unsafe {
+        command.pre_exec(|| rustix::process::setsid().map(|_| ()).map_err(Into::into));
+    }
+}
+
+/// One local calendar conversion shared by Runtime's two fixed numeric layouts.
+pub(crate) struct LocalTime(libc::tm);
+
+impl LocalTime {
+    pub(crate) fn from_seconds(seconds: libc::time_t) -> Option<Self> {
+        // SAFETY: std/rustix lack this local calendar conversion and time's range
+        // and leap-second representation differ. localtime_r writes a live tm;
+        // only successful initialization is read, and tm_zone is never dereferenced.
+        let time = unsafe {
+            let mut time = std::mem::MaybeUninit::uninit();
+            if libc::localtime_r(&seconds, time.as_mut_ptr()).is_null() {
+                return None;
+            }
+            time.assume_init()
+        };
+        Some(Self(time))
+    }
+
+    pub(crate) fn minute(&self) -> String {
+        format!(
+            "{}-{:02}-{:02} {:02}:{:02}",
+            i64::from(self.0.tm_year) + 1900,
+            self.0.tm_mon + 1,
+            self.0.tm_mday,
+            self.0.tm_hour,
+            self.0.tm_min
+        )
+    }
+
+    pub(crate) fn timestamp(&self, milliseconds: u32) -> String {
+        let offset = if self.0.tm_isdst < 0 {
+            String::new()
+        } else {
+            let seconds = self.0.tm_gmtoff.unsigned_abs();
+            format!(
+                "{}{:02}{:02}",
+                if self.0.tm_gmtoff < 0 { '-' } else { '+' },
+                seconds / 3600,
+                seconds / 60 % 60
+            )
+        };
+        format!(
+            "{}-{:02}-{:02}T{:02}:{:02}:{:02}.{milliseconds:03}{offset}",
+            i64::from(self.0.tm_year) + 1900,
+            self.0.tm_mon + 1,
+            self.0.tm_mday,
+            self.0.tm_hour,
+            self.0.tm_min,
+            self.0.tm_sec
+        )
+    }
+}
+
+/// The bytes `stream` holds that its reader has not read yet, from Linux's
+/// `TIOCOUTQ` (`SIOCOUTQ`).
+#[cfg(target_os = "linux")]
+pub(crate) fn socket_unread(stream: &UnixStream) -> Option<usize> {
+    let mut unread: libc::c_int = 0;
+    // SAFETY: no typed safe std/rustix/socket2 API queries TIOCOUTQ; the live
+    // stream owns this descriptor, and ioctl writes only into this c_int.
+    let asked = unsafe { libc::ioctl(stream.as_raw_fd(), libc::TIOCOUTQ, &mut unread) };
+    (asked == 0).then_some(unread as usize)
+}
+
+/// Elsewhere the connection turning writable is the measure of progress.
+/// By XNU's source, a macOS Unix stream holds no unsent bytes of its own
+/// (`SO_NWRITE` stays 0); its reader's reads give back send space, and it
+/// polls writable at the 2 KiB low-water mark, so `reads` sees a reader
+/// that drains it. eon-ciwn.8's Mac run proves this.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn socket_unread(_stream: &UnixStream) -> Option<usize> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn account_home_bytes() -> io::Result<Vec<u8>> {
+    use std::ffi::CStr;
+    let uid = rustix::process::geteuid().as_raw();
+    let mut bytes = vec![0u8; 1024];
+    loop {
+        let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        // SAFETY: no std/rustix NSS lookup API; the output pointers and buffer are valid. Strings
+        // are copied before the buffer drops; a null result is never dereferenced.
+        let status = unsafe {
+            libc::getpwuid_r(
+                uid,
+                entry.as_mut_ptr(),
+                bytes.as_mut_ptr().cast(),
+                bytes.len(),
+                &mut result,
+            )
+        };
+        if status == libc::ERANGE {
+            // Bound malformed NSS records as well as normal buffer growth.
+            if bytes.len() >= 1024 * 1024 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "OS account record exceeds 1 MiB",
+                ));
+            }
+            bytes.resize(bytes.len() * 2, 0);
+            continue;
+        }
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status));
+        }
+        if result.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("OS account for effective UID {uid} not found"),
+            ));
+        }
+        // SAFETY: the NSS API has no safe equivalent; successful getpwuid_r initialized
+        // entry and its buffer-backed strings, which remain live here.
+        let entry = unsafe { entry.assume_init() };
+        if entry.pw_dir.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "OS account has no home",
+            ));
+        }
+        // SAFETY: no safe NSS API supplies these bytes; pw_dir is non-null and
+        // NUL-terminated in the live buffer, and the bytes are copied before it drops.
+        return Ok(unsafe { CStr::from_ptr(entry.pw_dir) }.to_bytes().to_vec());
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn account_home_bytes() -> io::Result<Vec<u8>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "EON-C43 canonical account resolution is supported only on Linux",
+    ))
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -326,6 +532,91 @@ pub(crate) fn test_program(pid: i32) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn timestamp_preserves_leap_seconds_and_unknown_offset() {
+        let mut time = super::LocalTime::from_seconds(0).unwrap();
+        time.0.tm_sec = 60;
+        time.0.tm_isdst = -1;
+        assert!(time.timestamp(7).ends_with(":60.007"));
+    }
+
+    fn child(mode: &str) -> std::process::Command {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "platform::tests::platform_child", "--nocapture"])
+            .env("EON_TEST_PLATFORM_MODE", mode);
+        command
+    }
+
+    #[cfg(target_os = "linux")]
+    fn signal_masks(pid: u32) -> (u64, u64) {
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+        let mask = (1 << (libc::SIGINT - 1)) | (1 << (libc::SIGQUIT - 1));
+        let read = |key: &str| {
+            u64::from_str_radix(
+                status
+                    .lines()
+                    .find_map(|line| line.strip_prefix(key))
+                    .unwrap()
+                    .trim(),
+                16,
+            )
+            .unwrap()
+                & mask
+        };
+        (read("SigCgt:"), read("SigIgn:"))
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn update_signals_are_restored_and_reset_on_exec() {
+        let output = child("signals").output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    fn detached_process_is_its_session_and_group_leader() {
+        let mut command = child("session");
+        super::detach_session(&mut command);
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    fn platform_child() {
+        let Ok(mode) = std::env::var("EON_TEST_PLATFORM_MODE") else {
+            return;
+        };
+        match mode.as_str() {
+            "session" => {
+                let pid = rustix::process::getpid();
+                assert_eq!(rustix::process::getsid(None).unwrap(), pid);
+                assert_eq!(rustix::process::getpgrp(), pid);
+            }
+            #[cfg(target_os = "linux")]
+            "signals" => {
+                let before = signal_masks(std::process::id());
+                assert!(super::update_status(&mut child("exec")).unwrap().success());
+                assert_eq!(signal_masks(std::process::id()), before);
+                let root = crate::supervisor::temporary_directory();
+                let error =
+                    super::update_status(&mut std::process::Command::new(root.join("missing")))
+                        .unwrap_err();
+                assert!(error.starts_with("cannot run eon update:"), "{error}");
+                assert_eq!(signal_masks(std::process::id()), before);
+                std::fs::remove_dir_all(root).unwrap();
+            }
+            #[cfg(target_os = "linux")]
+            "exec" => {
+                let mask = (1 << (libc::SIGINT - 1)) | (1 << (libc::SIGQUIT - 1));
+                let parent = rustix::process::getppid().unwrap().as_raw_pid() as u32;
+                assert_eq!(signal_masks(parent), (mask, 0));
+                assert_eq!(signal_masks(std::process::id()), (0, 0));
+            }
+            _ => panic!("unknown platform child mode: {mode}"),
+        }
+    }
+
     use super::{SOCKET_PATH_BYTES, read_available, socket_path_fits};
     use crate::supervisor::temporary_directory;
     use std::{
