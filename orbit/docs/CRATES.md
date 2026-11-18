@@ -63,12 +63,12 @@ dependency gate, and Beads retain the full candidate evidence.
 ### Platform-specific PTY and local-runtime mechanics
 
 - **Selected shape:** `rustix` 1.1.4, pinned `=1.1.4` with default features off
-  and `event`, `fs`, `net`, `param`, `process`, `std`, `termios` and `time`, plus
+  and `event`, `fs`, `net`, `param`, `process`, `pty`, `std`, `termios` and `time`, plus
   `std::io::pipe`, in the host's one platform seam,
-  [`src/platform.rs`](../src/platform.rs). `libc` 0.2.189 remains for PTY creation,
-  fork setup, signal handlers, peer credentials, Darwin foreground groups and
-  process information, and errno names; the host's opt-in trace uses rustix's
-  monotonic clock
+  [`src/platform.rs`](../src/platform.rs). `libc` 0.2.189 remains for fixed-fd
+  worker dup2, signal handlers/errno, peer credentials,
+  Darwin foreground groups and process information, and errno names; the host's opt-in trace uses rustix's
+  monotonic clock. Fork-hook registration uses std's `CommandExt::pre_exec`.
 - **Status:** Selected for ordinary and managed Sessions on x86_64 Linux,
   with the proof status of [ORB-C1](CONTRACTS.md) and [ORB-C13](CONTRACTS.md);
   the old Orbit's own `src/platform.rs` seam was also proved on Apple Silicon macOS,
@@ -97,7 +97,18 @@ dependency gate, and Beads retain the full candidate evidence.
   its existing dependencies. Build cost is unmeasured.
   Rustix is licensed MIT OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception. Exit is
   a per-call replacement; version changes require a bead and Linux/Darwin proof.
-  No signal-registration dependency or PTY abstraction is needed.
+  The `pty` feature uses the existing `fs` feature and adds no package. Safe
+  owned descriptors replace `openpty`: Linux opens `/dev/ptmx` through `fs::open`
+  to preserve ENOSPC (rustix 1.1.4 `openpt` translates it to EAGAIN), tries
+  TIOCGPTPEER and falls back to the slave path on failure; Darwin uses
+  openpt/grantpt/unlockpt/ptsname/open. Both preserve kernel termios, ignore
+  initial window-size ioctl failure as libc does, and apply the same descriptor
+  flags afterwards. Pinned rustix interprets Apple's `ptsname_r` failure (-1
+  with errno set) as OS error -1; `eon-c828u.10` records the accepted narrow
+  failure-detail difference, with startup failure and descriptor cleanup intact.
+  The test seam retains Darwin mkfifo because this pin exposes neither mknodat
+  nor mkfifoat on Apple. No signal-registration dependency or PTY abstraction
+  is needed.
   The earlier `orb-bi4.2` gate measured a separate Orbit lockfile: its rustix
   candidate also included rustix-openpty and new packages, while direct libc
   kept Cargo unchanged. Those historical package/LOC comparisons do not describe
@@ -109,7 +120,8 @@ dependency gate, and Beads retain the full candidate evidence.
   maps to `Closed`, with no second PTY implementation; its peer and process-start
   identity mechanisms retain their existing platform seam.
 - **Evidence:** Safe-wrapper gate and inventory in `eon-c828u.9`, parent approval
-  in `eon-c828u`; retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
+  in `eon-c828u`; safe PTY/fork/errno proof and feature approval in
+  `eon-c828u.10`; retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
   and libc sources plus the portability disposition are recorded in `orb-pmp`;
   post-candidate `pty-process` evidence is recorded there for a future decision. The
   old Orbit's native ORB-C14 run is recorded in `eon-orb-c14-mac-reproof-l8rz`, and the

@@ -37,7 +37,7 @@ use orbit_protocol::session::{
 };
 use std::{
     collections::VecDeque,
-    ffi::{OsStr, OsString, c_int},
+    ffi::{OsStr, OsString},
     fs::File,
     io::{self, Read, Write},
     os::{
@@ -47,46 +47,9 @@ use std::{
     path::Path,
     process::{Child, Command, ExitStatus},
     rc::Rc,
-    sync::{
-        OnceLock,
-        atomic::{AtomicI32, Ordering},
-    },
     thread,
     time::{Duration, Instant},
 };
-
-/// The termination signal the host received, or 0.
-static TERMINATION_SIGNAL: AtomicI32 = AtomicI32::new(0);
-/// Both ends of the pipe a termination signal writes to. Every wait watches
-/// the read end, so a signal that lands just before a wait still ends it.
-static SIGNAL_PIPE: OnceLock<(File, File)> = OnceLock::new();
-static SIGNAL_WRITE: AtomicI32 = AtomicI32::new(-1);
-
-extern "C" fn note_termination(number: c_int) {
-    TERMINATION_SIGNAL.store(number, Ordering::Relaxed);
-    platform::wake(SIGNAL_WRITE.load(Ordering::Relaxed));
-}
-
-#[allow(unsafe_code)]
-mod termination {
-    use super::*;
-
-    /// A terminated host contains the child and removes the socket pathname.
-    pub(super) fn install_termination_handlers() -> io::Result<()> {
-        if SIGNAL_PIPE.get().is_none() {
-            let _ = SIGNAL_PIPE.set(platform::pipe(true)?);
-        }
-        let (read, write) = SIGNAL_PIPE.get().unwrap();
-        SIGNAL_WRITE.store(write.as_raw_fd(), Ordering::Relaxed);
-        // A session starts with no termination pending.
-        platform::drain(read);
-        // SAFETY: The handler only writes an atomic integer and one byte to a
-        // pipe.
-        unsafe { platform::on_termination(note_termination) }
-    }
-}
-
-use termination::install_termination_handlers;
 
 /// The worker's Bend runtime options, which Bend reads only between `+RTS`
 /// and `-RTS`: Bend's policy is sequential, so one runtime thread serves it.
@@ -373,10 +336,7 @@ fn poll_fds(
     });
     let ready = platform::poll(
         fds.iter().copied().chain([
-            (
-                SIGNAL_PIPE.get().map(|(read, _)| read.as_fd()),
-                platform::POLLIN,
-            ),
+            (platform::termination_reader(), platform::POLLIN),
             (worker, platform::POLLIN),
         ]),
         timeout,
@@ -407,7 +367,7 @@ fn wait_fd(
 }
 
 fn terminated() -> io::Result<()> {
-    let number = TERMINATION_SIGNAL.load(Ordering::Relaxed);
+    let number = platform::termination_signal();
     if number == 0 {
         Ok(())
     } else {
@@ -1901,8 +1861,8 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
     let serve = cli::parse(arguments)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     let run = run_name(&serve);
-    TERMINATION_SIGNAL.store(0, Ordering::Relaxed);
-    install_termination_handlers()?;
+    platform::clear_termination();
+    platform::on_termination()?;
     bench_trace("worker_spawn_start", "");
     let mut bend = Bend::spawn(worker, &WORKER_ARGUMENTS)?;
     bench_trace("worker_spawned", "");
@@ -1917,7 +1877,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
             let _ = bend.worker.wait();
             // Before the child starts, a termination signal leaves nothing
             // to stop.
-            if TERMINATION_SIGNAL.load(Ordering::Relaxed) != 0 {
+            if platform::termination_signal() != 0 {
                 return Ok(0);
             }
             return Err(error);
@@ -1940,7 +1900,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
         // contain the child and remove the socket pathname before exiting.
         Err(error) => {
             let reaped = matches!(host.contain(), Ok(true));
-            let number = TERMINATION_SIGNAL.load(Ordering::Relaxed);
+            let number = platform::termination_signal();
             // A termination signal is an explicit stop: once the child is
             // reaped, a live observer hears its exit, and then a managed run's
             // tombstone records the stop. The interactive

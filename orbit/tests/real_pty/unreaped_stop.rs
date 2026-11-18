@@ -36,7 +36,7 @@ fn held() -> Held {
     let record = suffixed(&server.path, ".record");
     wait_for(&record);
     let identity = live(&record);
-    tracing::seize(server.child).expect("PTRACE_SEIZE");
+    crate::native_process::seize(server.child).expect("PTRACE_SEIZE");
     let mut lease = Manager::new(&record);
     assert_eq!(lease.acquire(), Reply::Message(ServerMessage::Lease(identity.clone())));
     assert_eq!(lease.send(&ClientMessage::Stop), Reply::Timeout);
@@ -102,25 +102,4 @@ pub fn run() {
     release(waiting.server.child);
     assert_eq!(finished.code(), Some(128 + libc::SIGTERM));
     assert!(!waiting.record.exists() && !waiting.server.path.exists());
-}
-
-#[allow(unsafe_code)]
-mod tracing {
-    pub(super) fn seize(child: i32) -> std::io::Result<()> {
-        // SAFETY: PTRACE_SEIZE targets only the test-owned child; address/data
-        // are pointer-typed nulls, no Rust memory is accessed or pointer retained.
-        let result = unsafe {
-            libc::ptrace(
-                libc::PTRACE_SEIZE,
-                child,
-                std::ptr::null_mut::<libc::c_void>(),
-                std::ptr::null_mut::<libc::c_void>(),
-            )
-        };
-        if result == -1 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
 }

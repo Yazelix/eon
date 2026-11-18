@@ -10,7 +10,6 @@
 //! child script, tests/NAME-shell.sh, comes from the variable nix/orbit-checks.nix sets,
 //! or from the source tree.
 
-#[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 #[path = "../support/process.rs"]
 mod native_process;

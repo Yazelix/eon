@@ -322,6 +322,41 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-18 for `eon-c828u.10` to context
+`0cc52b66ea290e19fc237d74b4f83bbc26fa8b7669c4db2769ecdf15a75b8ba1`.
+The full and without-Accelerando inputs independently resolve to the same
+Orbit observation and binary. Both `inspect-audit` runs reproduce its canonical
+graph byte for byte. Compared with accepted context
+`a5d21c843de07f8c04aeda59db92486270fdcef7af8ad1fdd56f1fba63b27ab3`,
+the only difference is rustix 1.1.4's selected native `pty` feature: removing
+that one feature from the new canonical graph reproduces the accepted hash.
+The historical graph is reconstructed for this comparison, rather than read
+from an unavailable historical store output. Lock text, runtime identities,
+all other native features, audited identities and build context are unchanged.
+
+The exact-vendor offline runtime and normal/build feature trees match the
+saved observation after translating only the source prefix to `/build/source`.
+The same six host-only identities remain absent from runtime; their inverted
+normal/build paths cross proc-macro boundaries. The sole unselected identity,
+`errno 0.3.14`, is absent from both selected trees and has no compile line in
+the actual Orbit producer log. Cached dependencies make log absence alone
+insufficient; the selected trees corroborate it. The strict renewal proposal
+changes only Orbit's two fingerprints, preserving every exception identity,
+reason and evidence anchor across all producers. No runtime omission is waived.
+
+- Source: `/nix/store/b459vd1wfpcisgmh0rqzgn5ddh8zsv1s-source`.
+- Vendor: `/nix/store/0p2h1fsr16lz6k70ha1q1c9grrman53d-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `orbit/Cargo.toml`;
+  root: `yazelix-orbit`; default features, no added root features.
+- Full input: `/nix/store/85q71cd8q1jdaxi6nhr6r6mcyglwzg77-eon-archive-notice-input.json`.
+- Without-Accelerando input: `/nix/store/44m789r4if1mpm2c7v29yvrkkdw134pa-eon-archive-notice-input.json`.
+- Both observations: `/nix/store/sdgf8fdv46yb683mf8m594rrfry29kfl-orbit-cargo-notices-0.1.0`.
+- Binary: `/nix/store/03sp0n2gv522i743k34snxphrdpccqbz-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+- SHA-256: `ab8db071d0749510f27bff3475d852e08a71a298394dda4dc9d6b3de84905acb`.
+- Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-c828u.7`):
+
 Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
 `a5d21c843de07f8c04aeda59db92486270fdcef7af8ad1fdd56f1fba63b27ab3`.
 Full and without-Accelerando contexts are identical. Compared with the

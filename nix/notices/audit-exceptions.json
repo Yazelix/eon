@@ -31,7 +31,7 @@
   "orbit": [
     {
       "root": "yazelix-orbit",
-      "graph_sha256": "a5d21c843de07f8c04aeda59db92486270fdcef7af8ad1fdd56f1fba63b27ab3",
+      "graph_sha256": "0cc52b66ea290e19fc237d74b4f83bbc26fa8b7669c4db2769ecdf15a75b8ba1",
       "reason": "Only host proc-macro/build dependency paths in the exact producer graph; no target runtime dependency path.",
       "evidence": "nix/notices/audit-evidence.md#orbit",
       "packages": [
@@ -45,7 +45,7 @@
     },
     {
       "root": "yazelix-orbit",
-      "graph_sha256": "a5d21c843de07f8c04aeda59db92486270fdcef7af8ad1fdd56f1fba63b27ab3",
+      "graph_sha256": "0cc52b66ea290e19fc237d74b4f83bbc26fa8b7669c4db2769ecdf15a75b8ba1",
       "reason": "Conservative audit over-report: not selected in the exact producer normal/build graph and not compiled during its build.",
       "evidence": "nix/notices/audit-evidence.md#orbit",
       "packages": [

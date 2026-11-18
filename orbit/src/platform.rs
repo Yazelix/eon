@@ -10,18 +10,19 @@ use std::{
     fs::File,
     io,
     os::{
-        fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
+        fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd, RawFd},
         unix::{net::UnixStream, process::CommandExt},
     },
     process::{Child, Command},
-    ptr,
+    sync::{
+        OnceLock,
+        atomic::{AtomicI32, Ordering},
+    },
 };
 
 pub(crate) use libc::pid_t;
 pub(crate) use libc::{O_CLOEXEC, O_NOFOLLOW, O_NONBLOCK, POLLERR, POLLHUP, POLLIN, POLLOUT};
 pub(crate) use rustix::process::Signal;
-
-const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY as libc::c_ulong;
 
 /// This process's effective user ID.
 pub(crate) fn effective_uid() -> u32 {
@@ -41,10 +42,15 @@ pub(crate) fn pipe(nonblocking: bool) -> io::Result<(File, File)> {
 }
 
 /// Writes one byte to `fd`; async-signal-safe, for a signal handler's wake.
-pub(crate) fn wake(fd: RawFd) {
-    // SAFETY: write is async-signal-safe and reads one byte of static storage;
-    // it retains no pointer, and an invalid/full pipe can only fail the write.
-    unsafe { libc::write(fd, b"x".as_ptr().cast(), 1) };
+fn wake(fd: RawFd) {
+    // SAFETY: errno is this thread's live storage. write is async-signal-safe,
+    // reads static storage and retains no pointer; invalid/full pipes only fail.
+    unsafe {
+        let location = errno_location();
+        let saved = *location;
+        libc::write(fd, b"x".as_ptr().cast(), 1);
+        *location = saved;
+    }
 }
 
 /// Reads the nonblocking `fd` until it is empty.
@@ -54,21 +60,63 @@ pub(crate) fn drain(fd: impl AsFd) {
     while matches!(rustix::io::read(fd, &mut drained), Ok(1..)) {}
 }
 
-/// Runs `handler` on SIGINT, SIGTERM and SIGHUP.
-///
-/// # Safety
-///
-/// `handler` must be async-signal-safe.
-pub(crate) unsafe fn on_termination(handler: extern "C" fn(c_int)) -> io::Result<()> {
+/// The termination signal the host received, or 0.
+static TERMINATION_SIGNAL: AtomicI32 = AtomicI32::new(0);
+static SIGNAL_WRITE: AtomicI32 = AtomicI32::new(-1);
+/// Both ends live for the process; only this module can access the writer.
+static SIGNAL_PIPE: OnceLock<(File, File)> = OnceLock::new();
+
+extern "C" fn note_termination(number: c_int) {
+    TERMINATION_SIGNAL.store(number, Ordering::Relaxed);
+    wake(SIGNAL_WRITE.load(Ordering::Relaxed));
+}
+
+pub(crate) fn termination_signal() -> c_int {
+    TERMINATION_SIGNAL.load(Ordering::Relaxed)
+}
+
+pub(crate) fn clear_termination() {
+    TERMINATION_SIGNAL.store(0, Ordering::Relaxed);
+}
+
+/// The permanent wake reader, absent before the handler is installed.
+pub(crate) fn termination_reader() -> Option<BorrowedFd<'static>> {
+    SIGNAL_PIPE.get().map(|(read, _)| read.as_fd())
+}
+
+/// Installs the audited handler with its own permanent nonblocking wake pipe.
+pub(crate) fn on_termination() -> io::Result<()> {
+    if SIGNAL_PIPE.get().is_none() {
+        let _ = SIGNAL_PIPE.set(pipe(true)?);
+    }
+    let (reader, writer) = SIGNAL_PIPE.get().unwrap();
+    drain(reader);
+    SIGNAL_WRITE.store(writer.as_raw_fd(), Ordering::Relaxed);
     for number in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-        // SAFETY: The caller guarantees the handler is async-signal-safe.
-        if unsafe { libc::signal(number, handler as *const () as libc::sighandler_t) }
+        // SAFETY: note_termination only stores lock-free atomics and writes a
+        // byte to the nonblocking pipe, preserving errno, without allocation.
+        if unsafe { libc::signal(number, note_termination as *const () as libc::sighandler_t) }
             == libc::SIG_ERR
         {
             return Err(io::Error::last_os_error());
         }
     }
     Ok(())
+}
+
+fn errno_location() -> *mut c_int {
+    // SAFETY: both accessors return this thread's live errno storage without
+    // allocation or locking, including when called in a signal handler.
+    unsafe {
+        #[cfg(target_os = "linux")]
+        {
+            libc::__errno_location()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            libc::__error()
+        }
+    }
 }
 
 /// Waits up to `timeout` milliseconds, or forever when it is -1, for one of
@@ -113,50 +161,51 @@ pub(crate) fn spawn_worker(
     reader: &File,
     writer: &File,
 ) -> io::Result<Child> {
-    let (reader, writer) = (reader.as_raw_fd(), writer.as_raw_fd());
     // SAFETY: the borrowed Files keep both descriptors live through spawn;
-    // configure_worker runs only async-signal-safe calls in the forked child.
-    // Descriptors 3/4 are reserved for its protocol; replaced owners are not
-    // used again in the child before exec.
-    unsafe { command.pre_exec(move || configure_worker(reader, writer)) };
+    // the owned Command cannot retain this hook afterwards. configure_worker
+    // only runs async-signal-safe calls in the child, where 3/4 are reserved.
+    unsafe {
+        let reader = BorrowedFd::borrow_raw(reader.as_raw_fd());
+        let writer = BorrowedFd::borrow_raw(writer.as_raw_fd());
+        command.pre_exec(move || configure_worker(reader, writer));
+    }
     command.spawn()
 }
 
 /// Spawns the PTY child with its already-owned stdin as controlling terminal.
 pub(crate) fn spawn_child(mut command: Command, parent: pid_t) -> io::Result<Child> {
-    // SAFETY: configure_child runs only async-signal-safe calls after fork;
-    // this owned Command is dropped after spawn, so its hook cannot be reused.
-    unsafe { command.pre_exec(move || configure_child(parent)) };
+    // SAFETY: the production Command owns PTY stdin through spawn and exec;
+    // the failure test returns on parent mismatch before accessing stdin.
+    // configure_child runs only async-signal-safe calls, and this owned
+    // Command is dropped after spawn, so its hook cannot be reused.
+    unsafe {
+        command.pre_exec(move || {
+            // Command has installed its owned PTY at fd 0; the constant borrow
+            // cannot trigger borrow_raw's invalid-minus-one assertion.
+            configure_child(parent, BorrowedFd::borrow_raw(libc::STDIN_FILENO))
+        });
+    }
     command.spawn()
 }
 
 /// Moves the fact pipe's reader to descriptor 3 and the decision pipe's
 /// writer to 4 in the Bend worker. Only async-signal-safe calls run.
-///
-/// # Safety
-///
-/// Call it only between fork and exec of the worker, where nothing else owns
-/// descriptors 3 and 4.
-unsafe fn configure_worker(reader: RawFd, writer: RawFd) -> io::Result<()> {
-    // SAFETY: Only async-signal-safe prctl, fcntl and dup2 run, in the
-    // forked worker the caller guarantees.
-    unsafe {
-        // On Linux the worker dies with the host; elsewhere it exits
-        // when the host's end of its fact pipe closes.
-        #[cfg(target_os = "linux")]
-        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        // Move both ends above 4 first, so neither dup2 overwrites the other.
-        let reader = libc::fcntl(reader, libc::F_DUPFD_CLOEXEC, 10);
-        let writer = libc::fcntl(writer, libc::F_DUPFD_CLOEXEC, 10);
-        if reader == -1
-            || writer == -1
-            || libc::dup2(reader, 3) == -1
-            || libc::dup2(writer, 4) == -1
-        {
-            return Err(io::Error::last_os_error());
-        }
+fn configure_worker(reader: BorrowedFd<'_>, writer: BorrowedFd<'_>) -> io::Result<()> {
+    // On Linux the worker dies with the host; elsewhere it exits when the
+    // host's end of its fact pipe closes.
+    #[cfg(target_os = "linux")]
+    rustix::process::set_parent_process_death_signal(Some(Signal::KILL))?;
+    // Move both ends above 4 first; keep both attempts and the old error order.
+    // Copies close on exec/child exit, including after a failed setup.
+    let reader = rustix::io::fcntl_dupfd_cloexec(reader, 10).map(IntoRawFd::into_raw_fd);
+    let writer = rustix::io::fcntl_dupfd_cloexec(writer, 10).map(IntoRawFd::into_raw_fd);
+    let writer = writer?;
+    let reader = reader?;
+    // SAFETY: spawn_worker confines this to the forked worker; 3/4 are its
+    // reserved protocol descriptors, and neither temporary can be overwritten.
+    // dup2 is async-signal-safe and clears CLOEXEC on both destinations.
+    if unsafe { libc::dup2(reader, 3) == -1 || libc::dup2(writer, 4) == -1 } {
+        return Err(io::Error::last_os_error());
     }
     Ok(())
 }
@@ -164,34 +213,41 @@ unsafe fn configure_worker(reader: RawFd, writer: RawFd) -> io::Result<()> {
 /// A PTY of this size: its nonblocking master and its blocking slave, both
 /// closed on exec.
 pub(crate) fn open_pty(cols: u16, rows: u16) -> io::Result<(File, File)> {
-    let mut master = -1;
-    let mut slave = -1;
-    let mut size = libc::winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
+    use rustix::{
+        fs::Mode,
+        pty::{self, OpenptFlags},
     };
-    // SAFETY: openpty initializes both descriptors on success.
-    if unsafe {
-        libc::openpty(
-            &raw mut master,
-            &raw mut slave,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &raw mut size,
-        )
-    } == -1
-    {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: Successful openpty transferred ownership of both descriptors.
-    let master = unsafe { File::from_raw_fd(master) };
-    // SAFETY: Successful openpty transferred ownership of both descriptors.
-    let slave = unsafe { File::from_raw_fd(slave) };
+    // openpt rewrites Linux ENOSPC to EAGAIN; glibc's getpt does not.
+    #[cfg(target_os = "linux")]
+    let master = rustix::fs::open(c"/dev/ptmx", OFlags::RDWR, Mode::empty())?;
+    #[cfg(target_os = "macos")]
+    let master = pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
+    pty::grantpt(&master)?;
+    pty::unlockpt(&master)?;
+    let open_slave = || {
+        // On Darwin, pinned rustix reports a ptsname_r failure as OS error -1
+        // rather than errno. Keep safe ownership and fail startup in that case.
+        let name = pty::ptsname(&master, Vec::new())?;
+        rustix::fs::open(&name, OFlags::RDWR | OFlags::NOCTTY, Mode::empty())
+    };
+    #[cfg(target_os = "linux")]
+    let slave = pty::ioctl_tiocgptpeer(&master, OpenptFlags::RDWR | OpenptFlags::NOCTTY)
+        .or_else(|_| open_slave())?;
+    #[cfg(target_os = "macos")]
+    let slave = open_slave()?;
+    // Both libc openpty implementations ignore the initial resize's error.
+    let _ = rustix::termios::tcsetwinsize(
+        &slave,
+        rustix::termios::Winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        },
+    );
     set_fd_flags(&master, OFlags::NONBLOCK)?;
     set_fd_flags(&slave, OFlags::empty())?;
-    Ok((master, slave))
+    Ok((File::from(master), File::from(slave)))
 }
 
 fn set_fd_flags(fd: impl AsFd, status: OFlags) -> io::Result<()> {
@@ -416,8 +472,30 @@ fn children(pid: pid_t, limit: usize) -> Vec<pid_t> {
 /// The BSD record of `pid`, if libproc returns all of it for that process.
 #[cfg(target_os = "macos")]
 fn bsd_info(pid: pid_t) -> Option<libc::proc_bsdinfo> {
-    // SAFETY: proc_bsdinfo contains only integers and byte arrays, all valid at zero.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let mut info = libc::proc_bsdinfo {
+        pbi_flags: 0,
+        pbi_status: 0,
+        pbi_xstatus: 0,
+        pbi_pid: 0,
+        pbi_ppid: 0,
+        pbi_uid: 0,
+        pbi_gid: 0,
+        pbi_ruid: 0,
+        pbi_rgid: 0,
+        pbi_svuid: 0,
+        pbi_svgid: 0,
+        rfu_1: 0,
+        pbi_comm: [0; libc::MAXCOMLEN],
+        pbi_name: [0; 32],
+        pbi_nfiles: 0,
+        pbi_pgid: 0,
+        pbi_pjobc: 0,
+        e_tdev: 0,
+        e_tpgid: 0,
+        pbi_nice: 0,
+        pbi_start_tvsec: 0,
+        pbi_start_tvusec: 0,
+    };
     let size = std::mem::size_of_val(&info) as libc::c_int;
     // SAFETY: info is writable for exactly size bytes and remains live for the call;
     // the result is used only after the complete record and matching PID are checked.
@@ -450,29 +528,17 @@ fn process(pid: pid_t, clock: &Clock) -> Option<Process> {
 }
 
 /// Fails unless `parent` still parents this process, then makes it a session
-/// leader with its standard input, the PTY slave, as its controlling
-/// terminal. Only async-signal-safe calls run.
-///
-/// # Safety
-///
-/// Call it only between fork and exec of the PTY child.
-unsafe fn configure_child(parent: pid_t) -> io::Result<()> {
-    // SAFETY: the caller confines these async-signal-safe syscalls to the forked
-    // child; ioctl receives scalar arguments and rejects an invalid stdin.
-    unsafe {
-        // On Linux the child hears SIGHUP if the host dies; elsewhere the
-        // closed PTY master hangs it up.
-        #[cfg(target_os = "linux")]
-        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGHUP) == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        if libc::getppid() != parent {
-            return Err(io::Error::from_raw_os_error(libc::ESRCH));
-        }
-        if libc::setsid() == -1 || libc::ioctl(libc::STDIN_FILENO, TIOCSCTTY_REQUEST, 0) == -1 {
-            return Err(io::Error::last_os_error());
-        }
+/// leader with stdin as controlling terminal. Only async-signal-safe calls run.
+fn configure_child(parent: pid_t, stdin: BorrowedFd<'_>) -> io::Result<()> {
+    // On Linux the child hears SIGHUP if the host dies; elsewhere the closed
+    // PTY master hangs it up.
+    #[cfg(target_os = "linux")]
+    rustix::process::set_parent_process_death_signal(Some(Signal::HUP))?;
+    if rustix::process::getppid().map_or(0, |pid| pid.as_raw_pid()) != parent {
+        return Err(errno(libc::ESRCH));
     }
+    rustix::process::setsid()?;
+    rustix::process::ioctl_tiocsctty(stdin)?;
     Ok(())
 }
 
@@ -682,10 +748,119 @@ mod descriptor_tests {
         }
     }
 
+    fn observe_errno(operation: impl FnOnce()) -> c_int {
+        // SAFETY: the pointer is this thread's errno. The supplied operation
+        // only invokes our non-panicking handler; restore errno before returning.
+        unsafe {
+            let location = errno_location();
+            let saved = *location;
+            *location = libc::EDOM;
+            operation();
+            let observed = *location;
+            *location = saved;
+            observed
+        }
+    }
+
+    #[test]
+    fn termination_installer_owns_and_reuses_a_nonblocking_pipe() {
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
+        // eon-test runs this signal-disposition test in its own nextest process.
+        on_termination().unwrap();
+        let (reader, writer) = SIGNAL_PIPE.get().unwrap();
+        let descriptors = (reader.as_raw_fd(), writer.as_raw_fd());
+        for fd in [reader, writer] {
+            assert!(
+                rustix::fs::fcntl_getfl(fd)
+                    .unwrap()
+                    .contains(OFlags::NONBLOCK)
+            );
+            assert!(
+                rustix::io::fcntl_getfd(fd)
+                    .unwrap()
+                    .contains(FdFlags::CLOEXEC)
+            );
+        }
+        let saved_signal = TERMINATION_SIGNAL.swap(0, Ordering::Relaxed);
+        note_termination(libc::SIGTERM);
+        let signal = termination_signal();
+        let ready = poll([(termination_reader(), POLLIN)], 0).unwrap();
+        on_termination().unwrap();
+        let drained = poll([(termination_reader(), POLLIN)], 0).unwrap();
+        let installed = SIGNAL_WRITE.load(Ordering::Relaxed);
+        note_termination(libc::SIGINT);
+        let mut byte = [0];
+        let read = rustix::io::read(termination_reader().unwrap(), &mut byte);
+        TERMINATION_SIGNAL.store(saved_signal, Ordering::Relaxed);
+        assert_eq!(signal, libc::SIGTERM);
+        assert_eq!(ready, [POLLIN]);
+        assert_eq!(drained, [0]);
+        assert_eq!(installed, descriptors.1);
+        let (reader, writer) = SIGNAL_PIPE.get().unwrap();
+        assert_eq!((reader.as_raw_fd(), writer.as_raw_fd()), descriptors);
+        assert_eq!(read.unwrap(), 1);
+        assert_eq!(&byte, b"x");
+    }
+
+    #[test]
+    fn termination_wake_preserves_errno_even_when_the_pipe_is_full() {
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
+        // eon-test also isolates each nextest test in its own process.
+        let (mut reader, writer) = pipe(true).unwrap();
+        let bytes = [0];
+        loop {
+            match rustix::io::write(&writer, &bytes) {
+                Ok(_) => {}
+                Err(rustix::io::Errno::AGAIN) => break,
+                result => panic!("fill wake pipe: {result:?}"),
+            }
+        }
+        let saved_write = SIGNAL_WRITE.swap(writer.as_raw_fd(), Ordering::Relaxed);
+        let saved_signal = TERMINATION_SIGNAL.swap(0, Ordering::Relaxed);
+        let full_errno = observe_errno(|| note_termination(libc::SIGTERM));
+        let full_signal = termination_signal();
+        drain(&reader);
+        let ready_errno = observe_errno(|| note_termination(libc::SIGINT));
+        let ready_signal = termination_signal();
+        SIGNAL_WRITE.store(saved_write, Ordering::Relaxed);
+        TERMINATION_SIGNAL.store(saved_signal, Ordering::Relaxed);
+        assert_eq!(full_errno, libc::EDOM);
+        assert_eq!(full_signal, libc::SIGTERM);
+        assert_eq!(ready_errno, libc::EDOM);
+        assert_eq!(ready_signal, libc::SIGINT);
+        let mut byte = [0];
+        reader.read_exact(&mut byte).unwrap();
+        assert_eq!(&byte, b"x");
+    }
+
     #[test]
     fn a_fresh_pty_has_no_foreground_group() {
-        let (master, _slave) = open_pty(80, 24).unwrap();
+        let (master, slave) = open_pty(80, 24).unwrap();
         assert_eq!(foreground_group(&master), None);
+        for (fd, nonblocking) in [(&master, true), (&slave, false)] {
+            assert!(
+                rustix::io::fcntl_getfd(fd)
+                    .unwrap()
+                    .contains(FdFlags::CLOEXEC)
+            );
+            assert_eq!(
+                rustix::fs::fcntl_getfl(fd)
+                    .unwrap()
+                    .contains(OFlags::NONBLOCK),
+                nonblocking
+            );
+        }
+        let size = rustix::termios::tcgetwinsize(&slave).unwrap();
+        assert_eq!(
+            (size.ws_col, size.ws_row, size.ws_xpixel, size.ws_ypixel),
+            (80, 24, 0, 0)
+        );
+        let settings = rustix::termios::tcgetattr(&slave).unwrap();
+        assert!(
+            settings
+                .local_modes
+                .contains(rustix::termios::LocalModes::ICANON | rustix::termios::LocalModes::ECHO)
+        );
     }
 
     #[test]

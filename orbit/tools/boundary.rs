@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Generates the boundary between the Rust host and the Bend worker
 //! (docs/HOST.md) from its schema: `boundary SCHEMA DIR` writes
 //! `DIR/boundary.rs` and `DIR/boundary.bend`. The schema's header describes

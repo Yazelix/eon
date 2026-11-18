@@ -240,25 +240,7 @@ fn make_fifo(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-use native_fifo::make_fifo;
-
-#[cfg(target_os = "macos")]
-#[allow(unsafe_code)]
-mod native_fifo {
-    use super::*;
-    use std::os::unix::ffi::OsStrExt;
-
-    pub(super) fn make_fifo(path: &Path) -> io::Result<()> {
-        let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
-        // SAFETY: path is NUL-terminated and remains live throughout mkfifo;
-        // no pointer is retained, and the mode contains only permission bits.
-        if unsafe { libc::mkfifo(path.as_ptr(), 0o600) } == -1 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-}
+use crate::native_process::make_fifo;
 
 /// A FIFO the child blocks on until the check releases it.
 pub struct Gate(PathBuf);

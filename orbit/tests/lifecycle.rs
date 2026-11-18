@@ -1,6 +1,5 @@
 #![deny(unsafe_code, clippy::undocumented_unsafe_blocks)]
 
-#[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 #[path = "support/process.rs"]
 mod native_process;
@@ -981,25 +980,7 @@ const SLOW_TITLES: u32 = 1000;
 /// three-CPU macOS runner, where a fixed five seconds for the phase ran out.
 const SLOW_TITLE_ALLOWANCE: Duration = Duration::from_millis(30);
 
-#[allow(unsafe_code)]
-mod usage {
-    /// CPU seconds of the children this process has reaped. Under nextest, which
-    /// runs one test per process, those are the test's own Orbit with its worker
-    /// and shell.
-    pub(super) fn reaped_children_cpu() -> f64 {
-        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-        // SAFETY: usage is a valid rusage for getrusage to fill, and stays zeroed
-        // if it fails.
-        let usage = unsafe {
-            libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr());
-            usage.assume_init()
-        };
-        let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1e6;
-        seconds(usage.ru_utime) + seconds(usage.ru_stime)
-    }
-}
-
-use usage::reaped_children_cpu;
+use native_process::reaped_children_cpu;
 
 #[test]
 fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> TestResult {

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Generates the per-fact lemmas behind the laws over the whole step in
 //! LAWS.bend: proof/step.bend for lifecycle_follows_its_contracts,
 //! proof/view.bend for scrolling_and_selection_follow_their_contracts, and
