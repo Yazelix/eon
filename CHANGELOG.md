@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- OpenCode panes show their official mark in the Agents sidebar and attention
+  inbox, with the label `OpenCode` and artwork suited to the row background
+  (`eon-m595b`).
+
 - `eon agent` keeps reading quota when its terminal's window runs another
   EONW, cannot be reached in time, or shows no chip for a provider: it reads
   the quota store all Eon windows share, without calling the provider. A

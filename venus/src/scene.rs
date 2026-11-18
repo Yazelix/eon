@@ -455,6 +455,7 @@ pub(crate) struct WorkspaceControl {
 pub(crate) enum AppMark {
     Codex,
     ClaudeCode,
+    OpenCode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2482,6 +2483,7 @@ fn attention_row(
     let (icon, app) = match record.map(|record| record.app.as_str()) {
         Some("claude-code") => (Some(AppMark::ClaudeCode), "Claude"),
         Some("codex") => (Some(AppMark::Codex), "Codex"),
+        Some("opencode") => (Some(AppMark::OpenCode), "OpenCode"),
         Some(app) => (None, app),
         None => (None, ""),
     };

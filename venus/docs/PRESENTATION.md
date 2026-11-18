@@ -569,9 +569,12 @@ request, and the window still opens.
 ## Agents sidebar
 
 Sidebar and attention inbox rows identify Claude Code with Anthropic's standalone
-Clawd symbol and Codex with a colour vector of Codex's symbol, without an app
-tile. Both complete canvases scale proportionally inside the row icon
-slot, retaining their colours and transparency even when the record is stale.
+Clawd symbol, Codex with a colour vector of Codex's symbol, and OpenCode
+(`app: "opencode"`) with its official transparent mark, without an app tile.
+The complete canvases scale proportionally inside the row icon slot, retaining
+their colours and transparency even when the record is stale. OpenCode uses
+the vendor's light or dark variant whose outer stroke contrasts best with the
+row background, including its hover or keyboard-focus fill.
 Codex's terminal prompt is transparent. The state glyph carries stale dimming.
 Eon Bar quota chips retain their provider marks: the Claude Spark and OpenAI
 Blossom. Other app identifiers retain their existing label behavior.
@@ -590,8 +593,8 @@ the inbox's scale-based dimensions and capsule shape and is an indicator.
 An agent row uses the pane's pinned name when it has one, ahead of the agent's
 own reported name. The app icon stays beside it. `eon pane rename` sets or clears
 that pin; without one, rows keep their existing fallback: Claude Code's reported
-session name, then the record title, then the app name (`Claude`, `Codex`, or the
-reported app verbatim), else `agent`. Other apps' terminal titles are not session
+session name, then the record title, then the app name (`Claude`, `Codex`,
+`OpenCode`, or the reported app verbatim), else `agent`. Other apps' terminal titles are not session
 names. With no record and no pin, the row says `status unavailable`.
 
 The attention inbox uses the same name for panes in the shown session. Rows of
@@ -640,12 +643,12 @@ identity: rounded font-sized boxes, bounded to 1–256px (16/20/24/32px by defau
 Each box centres independently across the complete row, including a needs-input
 message's third line, with its top floored to a whole physical pixel, including
 after scrolling. Row heights and text line positions stay fixed. Half a cell
-separates symbols and text. Both marks have exact 22/33/44px rasters, with no
+separates symbols and text. All three marks have exact 22/33/44px rasters, with no
 draw-time scaling; other sizes use the 256px source at glyph-cache time and
 can be softer. Clawd is proportionally pitch-scaled with whole-pixel column
 starts and art top, plus an approved sub-pixel right-edge trim; the supplied
 SVG's vertical pitch and overlapping cell edges retain fractional coverage.
-Codex's complete vector is rasterized directly at each box size. Quota marks
+Codex's and OpenCode's complete vectors are rasterized directly at each box size. Quota marks
 are unchanged. Tab, session-label and edge badges retain their independent
 0.75× font size and padding cap. Working's square spinner dots are 4px across
 in default 1x sidebar/inbox rows and retain their 2px size on the bar. Row dots
