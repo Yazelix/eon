@@ -7,11 +7,11 @@
 
 use std::{
     env,
-    ffi::{CString, OsStr, OsString},
+    ffi::{OsStr, OsString},
     fs,
     io::{IsTerminal, Read, Write},
     os::{
-        fd::AsRawFd,
+        fd::AsFd,
         unix::{
             ffi::OsStrExt,
             fs::{OpenOptionsExt, PermissionsExt},
@@ -20,12 +20,18 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::Ordering,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use rustix::{
+    event::{PollFd, PollFlags, Timespec},
+    process::{Pid, Signal, WaitId, WaitIdOptions},
+};
 use serde_json::{Value, json};
+
+use crate::platform::{INTERRUPTED, Signals, owned_child};
 
 mod direct;
 
@@ -61,7 +67,6 @@ const NIX_LIMIT: Duration = Duration::from_secs(30);
 const CURL_LIMIT: Duration = Duration::from_secs(45);
 /// Fixed cancellation safety budget before killing the helper-owned process group.
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
-static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 /// Whether this command line is a package mode of `eon update`, which the
 /// product answers before Runtime sees it. Help stays with Runtime.
@@ -704,49 +709,17 @@ pub(crate) fn bounded(mut command: Command, limit: Duration) -> Result<Output, B
     })
 }
 
-fn owned_child(command: &mut Command) -> &mut Command {
-    command.process_group(0);
-    #[cfg(target_os = "linux")]
-    unsafe {
-        let parent = libc::getpid();
-        command.pre_exec(move || {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            // Cover parent death between fork and installing the death signal.
-            if libc::getppid() != parent {
-                libc::raise(libc::SIGKILL);
-            }
-            Ok(())
-        });
-    }
-    command
-}
-
 /// Observe exit without releasing the process-group leader's PID.
 fn child_exited(child: &Child) -> std::io::Result<bool> {
     loop {
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        if unsafe {
-            libc::waitid(
-                libc::P_PID,
-                child.id() as libc::id_t,
-                &mut info,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        } != 0
-        {
-            let error = std::io::Error::last_os_error();
-            if error.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(error);
+        match rustix::process::waitid(
+            WaitId::Pid(Pid::from_child(child)),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(status) => return Ok(status.is_some()),
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
         }
-        #[cfg(target_os = "linux")]
-        let pid = unsafe { info.si_pid() };
-        #[cfg(target_os = "macos")]
-        let pid = info.si_pid;
-        return Ok(pid != 0);
     }
 }
 
@@ -767,10 +740,8 @@ fn wait_child(
         };
         if let Some(failure) = failure {
             // The child is a new process-group leader; never signal the shared Nix daemon.
-            let group = -(child.id() as i32);
-            unsafe {
-                libc::kill(group, libc::SIGTERM);
-            }
+            let group = Pid::from_child(child);
+            let _ = rustix::process::kill_process_group(group, Signal::TERM);
             let deadline = Instant::now() + TERMINATION_GRACE;
             while Instant::now() < deadline {
                 if child_exited(child).map_err(Bounded::Wait)? {
@@ -778,57 +749,17 @@ fn wait_child(
                 }
                 thread::sleep(Duration::from_millis(20));
             }
-            unsafe {
-                libc::kill(group, libc::SIGKILL);
-            }
+            let _ = rustix::process::kill_process_group(group, Signal::KILL);
             let _ = child.wait();
             return Err(failure);
         }
         if exited {
             if cleanup_group {
-                unsafe {
-                    libc::kill(-(child.id() as i32), libc::SIGKILL);
-                }
+                let _ = rustix::process::kill_process_group(Pid::from_child(child), Signal::KILL);
             }
             return child.wait().map_err(Bounded::Wait);
         }
         thread::sleep(Duration::from_millis(20));
-    }
-}
-
-extern "C" fn interrupt(_: libc::c_int) {
-    INTERRUPTED.store(true, Ordering::Relaxed);
-}
-
-struct Signals(Vec<(libc::c_int, libc::sigaction)>);
-
-impl Signals {
-    fn new() -> std::io::Result<Self> {
-        INTERRUPTED.store(false, Ordering::Relaxed);
-        let mut guard = Self(Vec::new());
-        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
-            let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-            let mut previous = action;
-            action.sa_sigaction = interrupt as *const () as usize;
-            unsafe {
-                libc::sigemptyset(&mut action.sa_mask);
-            }
-            if unsafe { libc::sigaction(signal, &action, &mut previous) } != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            guard.0.push((signal, previous));
-        }
-        Ok(guard)
-    }
-}
-
-impl Drop for Signals {
-    fn drop(&mut self) {
-        for (signal, previous) in &self.0 {
-            unsafe {
-                libc::sigaction(*signal, previous, std::ptr::null_mut());
-            }
-        }
     }
 }
 
@@ -2233,7 +2164,7 @@ fn consent(request: &Request, report: &mut Report) -> bool {
         }
     );
     let _ = std::io::stderr().flush();
-    match confirmation(terminal.as_raw_fd()) {
+    match confirmation(&terminal) {
         Ok(true) => true,
         Ok(false) => {
             report.outcome = "cancelled";
@@ -2259,17 +2190,12 @@ fn confirmation_terminal() -> std::io::Result<fs::File> {
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOCTTY)
         .open("/dev/tty")?;
-    let session = unsafe { libc::getsid(0) };
-    if session == -1 {
-        return Err(std::io::Error::last_os_error());
-    }
+    let session = rustix::process::getsid(None)?;
     // At most one controlling terminal per session (and one session per terminal)
     // makes these SID checks bind stdin to the terminal that /dev/tty opened.
-    for input in [libc::STDIN_FILENO, terminal.as_raw_fd()] {
-        let controlling = unsafe { libc::tcgetsid(input) };
-        if controlling == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
+    let stdin = std::io::stdin();
+    for input in [stdin.as_fd(), terminal.as_fd()] {
+        let controlling = rustix::termios::tcgetsid(input)?;
         if controlling != session {
             return Err(std::io::Error::other(
                 "stdin is not this session's controlling terminal",
@@ -2279,22 +2205,24 @@ fn confirmation_terminal() -> std::io::Result<fs::File> {
     Ok(terminal)
 }
 
-fn confirmation(input: libc::c_int) -> std::io::Result<bool> {
+fn confirmation(input: &impl AsFd) -> std::io::Result<bool> {
     // The independently opened terminal is nonblocking: a signal can flush a ready line.
     let mut answer = Vec::new();
     loop {
         if INTERRUPTED.load(Ordering::Relaxed) {
             return Err(std::io::ErrorKind::Interrupted.into());
         }
-        let mut input = libc::pollfd {
-            fd: input,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        match unsafe { libc::poll(&mut input, 1, 100) } {
-            0 => continue,
-            -1 => {
-                let error = std::io::Error::last_os_error();
+        let mut polled = [PollFd::new(input, PollFlags::IN)];
+        match rustix::event::poll(
+            &mut polled,
+            Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 100_000_000,
+            }),
+        ) {
+            Ok(0) => continue,
+            Err(error) => {
+                let error = std::io::Error::from(error);
                 if error.kind() == std::io::ErrorKind::Interrupted {
                     continue;
                 }
@@ -2302,20 +2230,23 @@ fn confirmation(input: libc::c_int) -> std::io::Result<bool> {
             }
             _ => {}
         }
-        let mut byte = 0u8;
-        let count = unsafe { libc::read(input.fd, (&mut byte as *mut u8).cast(), 1) };
+        let mut byte = [0u8];
+        let count = match rustix::io::read(input, &mut byte) {
+            Ok(count) => count,
+            Err(error) => {
+                let error = std::io::Error::from(error);
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                ) {
+                    continue;
+                }
+                return Err(error);
+            }
+        };
+        let byte = byte[0];
         if count == 0 || (count == 1 && byte == b'\n') {
             break;
-        }
-        if count < 0 {
-            let error = std::io::Error::last_os_error();
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
-            ) {
-                continue;
-            }
-            return Err(error);
         }
         // Bound terminal input; a long answer is a decline.
         if answer.len() < 64 {
@@ -2456,8 +2387,9 @@ fn writable(profile: &Path) -> bool {
     profile_location(profile)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf))
-        .and_then(|directory| CString::new(directory.as_os_str().as_bytes()).ok())
-        .is_some_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
+        .is_some_and(|directory| {
+            rustix::fs::access(directory, rustix::fs::Access::WRITE_OK).is_ok()
+        })
 }
 
 /// Resolve aliases up to the mutable profile link, not its selected generation.
@@ -2569,6 +2501,7 @@ mod tests {
     use std::{
         cell::RefCell,
         collections::HashMap,
+        os::fd::AsRawFd,
         os::unix::fs::symlink,
         sync::atomic::{AtomicUsize, Ordering},
     };
@@ -2934,7 +2867,7 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         INTERRUPTED.store(true, Ordering::Relaxed);
         let result = thread::scope(|scope| {
-            scope.spawn(|| sender.send(confirmation(input.as_raw_fd())).unwrap());
+            scope.spawn(|| sender.send(confirmation(&input)).unwrap());
             let result = receiver.recv_timeout(Duration::from_secs(10));
             INTERRUPTED.store(false, Ordering::Relaxed);
             output.shutdown(std::net::Shutdown::Both).unwrap();
@@ -2978,12 +2911,12 @@ mod tests {
         );
         output.write_all(b"n\n").unwrap();
         output.shutdown(std::net::Shutdown::Write).unwrap();
-        assert!(!confirmation(input.as_raw_fd()).unwrap());
+        assert!(!confirmation(&input).unwrap());
         assert_eq!(
             unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
             flags
         );
-        assert!(!confirmation(input.as_raw_fd()).unwrap());
+        assert!(!confirmation(&input).unwrap());
         assert_eq!(
             unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
             flags

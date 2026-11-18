@@ -178,8 +178,9 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
 `dceca7e518774ddfcd72ebebc66f097e051ae7592277eb133623c2499971f1e0`.
 Full and without-Accelerando contexts are identical. Compared with the
-preceding accepted observation below, only `lock` changes; the same 9 host-only and 2 unselected
-exceptions remain.
+preceding accepted context
+`97795ee94ac8866b88673065a797788eecadeff175ff655fe922085712d227d2`,
+only `lock` changes; the same 9 host-only and 2 unselected exceptions remain.
 
 - Source: `/nix/store/8zg7fabiqq48pr6sryxixm7a6ylnj33n-source`.
 - Vendor: `/nix/store/0p2h1fsr16lz6k70ha1q1c9grrman53d-cargo-vendor-dir`.
@@ -324,8 +325,9 @@ binaries, inventory and independent artwork obligations.
 Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
 `a5d21c843de07f8c04aeda59db92486270fdcef7af8ad1fdd56f1fba63b27ab3`.
 Full and without-Accelerando contexts are identical. Compared with the
-preceding accepted observation below, only `lock` changes; the same 6 host-only and 1 unselected
-exceptions remain.
+preceding accepted context
+`eef5792335ae9efa2b09be7acf49529b7ede0497d44a445393c158d2bf21b644`,
+only `lock` changes; the same 6 host-only and 1 unselected exceptions remain.
 
 - Source: `/nix/store/03y8jb2d9hnzvn114ydlfrj4wzs01zxs-source`.
 - Vendor: `/nix/store/0p2h1fsr16lz6k70ha1q1c9grrman53d-cargo-vendor-dir`.
@@ -434,8 +436,9 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
 `9a2afd2f38afe0655273d5c7c94984aa0534690fd8c339c9af4225417649c151`.
 Full and without-Accelerando contexts are identical. Compared with the
-preceding accepted observation below, only `lock` changes; the same 15 host-only and 4 unselected
-exceptions remain.
+preceding accepted context
+`00e8194e48dd891f6845f9934f3525603de09f2a518e1729e1e4c0153443f91f`,
+only `lock` changes; the same 15 host-only and 4 unselected exceptions remain.
 
 - Source: `/nix/store/pfzfn1ihxk5xzr9anlz4m8dd9yj9fq6q-source`.
 - Vendor: `/nix/store/0p2h1fsr16lz6k70ha1q1c9grrman53d-cargo-vendor-dir`.

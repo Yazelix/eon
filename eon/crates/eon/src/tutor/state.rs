@@ -1,14 +1,12 @@
 use super::{LESSONS, Operation};
+use rustix::fs::{AtFlags, Mode, OFlags};
 use serde_json::{Value, json};
 use std::{
     env,
     ffi::CStr,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
-    },
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -96,8 +94,7 @@ fn private(file: &File, directory: Option<&Path>) -> Result<(), String> {
     } else {
         metadata.is_file() && metadata.mode() & 0o7777 == 0o600 && metadata.nlink() == 1
     };
-    // SAFETY: geteuid has no arguments or side effects.
-    if metadata.uid() == unsafe { libc::geteuid() } && valid {
+    if metadata.uid() == rustix::process::geteuid().as_raw() && valid {
         return Ok(());
     }
     Err(match directory {
@@ -108,25 +105,17 @@ fn private(file: &File, directory: Option<&Path>) -> Result<(), String> {
     })
 }
 
-fn open_at(root: &File, name: &CStr, flags: i32) -> std::io::Result<File> {
-    // SAFETY: root is open; name is NUL-terminated. The returned descriptor is newly owned.
-    let fd = unsafe {
-        libc::openat(
-            root.as_raw_fd(),
-            name.as_ptr(),
-            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
-            0o600,
-        )
-    };
-    if fd < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(unsafe { File::from_raw_fd(fd) })
-    }
+fn open_at(root: &File, name: &CStr, flags: OFlags) -> std::io::Result<File> {
+    Ok(File::from(rustix::fs::openat(
+        root,
+        name,
+        flags | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::RUSR | Mode::WUSR,
+    )?))
 }
 
 fn identity(root: &File) -> Result<Option<(u64, u64)>, String> {
-    match open_at(root, c"tutor-v1.json", libc::O_RDONLY) {
+    match open_at(root, c"tutor-v1.json", OFlags::RDONLY) {
         Ok(file) => {
             private(&file, None)?;
             let metadata = file.metadata().map_err(|e| e.to_string())?;
@@ -168,18 +157,18 @@ pub(super) fn progress(operation: Operation) -> Result<Progress, String> {
     };
     private(&root, Some(&path))?;
     let _lock = if mutate {
-        let lock = open_at(&root, c"tutor-v1.lock", libc::O_RDWR | libc::O_CREAT)
+        let lock = open_at(&root, c"tutor-v1.lock", OFlags::RDWR | OFlags::CREATE)
             .map_err(|e| format!("Cannot lock tutor progress: {e}"))?;
         private(&lock, None)?;
-        // SAFETY: lock is a live owned descriptor. Refuse contention rather than hang a shell.
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        // Refuse contention rather than hang a shell.
+        if lock.try_lock().is_err() {
             return Err("Tutor progress is busy; try again".into());
         }
         Some(lock)
     } else {
         None
     };
-    let (mut progress, previous) = match open_at(&root, c"tutor-v1.json", libc::O_RDONLY) {
+    let (mut progress, previous) = match open_at(&root, c"tutor-v1.json", OFlags::RDONLY) {
         Ok(file) => {
             private(&file, None)?;
             let metadata = file.metadata().map_err(|e| e.to_string())?;
@@ -206,7 +195,7 @@ pub(super) fn progress(operation: Operation) -> Result<Progress, String> {
         .as_nanos();
     let name =
         std::ffi::CString::new(format!(".tutor-{}-{nonce}.tmp", std::process::id())).unwrap();
-    let mut temporary = open_at(&root, &name, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL)
+    let mut temporary = open_at(&root, &name, OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL)
         .map_err(|e| format!("Cannot prepare tutor progress: {e}"))?;
     let result = (|| {
         temporary
@@ -221,26 +210,13 @@ pub(super) fn progress(operation: Operation) -> Result<Progress, String> {
         {
             return Err("Tutor state changed before publication".into());
         }
-        // SAFETY: both paths are fixed/generated names relative to the same open private directory.
-        if unsafe {
-            libc::renameat(
-                root.as_raw_fd(),
-                name.as_ptr(),
-                root.as_raw_fd(),
-                c"tutor-v1.json".as_ptr(),
-            )
-        } != 0
-        {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
+        rustix::fs::renameat(&root, &name, &root, c"tutor-v1.json")
+            .map_err(|error| std::io::Error::from(error).to_string())?;
         root.sync_all()
             .map_err(|e| format!("Tutor progress published but directory sync failed: {e}"))
     })();
     if result.is_err() {
-        // SAFETY: only the unique temporary name created by this invocation is removed.
-        unsafe {
-            libc::unlinkat(root.as_raw_fd(), name.as_ptr(), 0);
-        }
+        let _ = rustix::fs::unlinkat(&root, &name, AtFlags::empty());
     }
     result?;
     Ok(progress)

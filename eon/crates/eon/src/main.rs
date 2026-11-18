@@ -1,4 +1,6 @@
 mod launch;
+#[allow(unsafe_code)]
+mod platform;
 mod product;
 mod report;
 mod tutor;
@@ -8,8 +10,12 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let launch = launch::capture();
-    // SAFETY: main is still single-threaded, before product initialization or any worker.
-    unsafe { launch::clear_capture() };
+    // SAFETY: no safe API clears the process environment; main is still single-threaded,
+    // before product initialization or any worker.
+    #[allow(unsafe_code)]
+    unsafe {
+        launch::clear_capture()
+    };
     let inputs = product::inputs(launch);
     let arguments: Vec<_> = std::env::args_os().collect();
     let product_cli = arguments.first().is_some_and(|program| {

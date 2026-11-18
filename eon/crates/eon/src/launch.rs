@@ -10,6 +10,7 @@ use std::{
 };
 
 /// Caller must still be single-threaded, before any other library can start workers.
+#[allow(unsafe_code)]
 pub(crate) unsafe fn clear_capture() {
     use std::os::unix::ffi::OsStrExt;
     for (name, _) in std::env::vars_os() {
@@ -17,7 +18,8 @@ pub(crate) unsafe fn clear_capture() {
             .as_bytes()
             .starts_with(eon_runtime::LAUNCH_CAPTURE_PREFIX.as_bytes())
         {
-            // SAFETY: the caller guarantees single-threaded startup.
+            // SAFETY: process-wide removal has no safe API; the caller guarantees
+            // single-threaded startup before any library can start workers.
             unsafe { std::env::remove_var(name) };
         }
     }

@@ -55,7 +55,9 @@ fn archive_version(url: &str) -> Option<&str> {
 
 fn private_directory(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| {
-        meta.is_dir() && meta.uid() == unsafe { libc::geteuid() } && meta.mode() & 0o077 == 0
+        meta.is_dir()
+            && meta.uid() == rustix::process::geteuid().as_raw()
+            && meta.mode() & 0o077 == 0
     })
 }
 
@@ -405,10 +407,7 @@ fn transact(
         &before.prefix.join("versions"),
     ]
     .iter()
-    .all(|path| {
-        CString::new(path.as_os_str().as_bytes())
-            .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
-    });
+    .all(|path| rustix::fs::access(*path, rustix::fs::Access::WRITE_OK).is_ok());
     if !writable {
         report.refuse(
             "target-unwritable",
@@ -765,7 +764,10 @@ fn refresh(report: &mut Report, host: &dyn Host) {
 mod tests {
     use super::super::tests::{BUILD, Fake, Tree, at, invoked};
     use super::*;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::{
+        ffi::CString,
+        os::unix::fs::{PermissionsExt, symlink},
+    };
 
     const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
