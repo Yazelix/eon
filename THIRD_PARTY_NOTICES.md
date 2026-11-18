@@ -161,3 +161,91 @@ with the art unaltered and no implied endorsement or affiliation:
 
 > "this is nothing for us to worry about, in practice, they add this to protect
 > from people trying to use the logo for bad practices"
+
+
+## OpenCode transparent mark
+
+`venus/assets/opencode-mark-dark.svg` and `venus/assets/opencode-mark-light.svg` are the
+unaltered transparent OpenCode logo variants from
+[anomalyco/opencode](https://github.com/anomalyco/opencode), version 2.3.0,
+commit `a6b15d33daf6ab7d35569f6d711fdb630b9f04e7`:
+
+- `services/site/public/brand/files/opencode-logo-transparent-dark.svg`
+- `services/site/public/brand/files/opencode-logo-transparent-light.svg`
+
+Retrieved 2026-11-18. The dark-background variant retains `#EEEEEE` with
+28% inner coverage; the light-background variant retains `#1F1F1F` with
+20% inner coverage. The row uses the variant whose outer stroke contrasts
+best with its background or highlight fill. No paths, colours or internal
+opacity are edited, and no backing tile is added.
+
+The complete 240×300 canvas is proportionally fitted into a transparent
+square. Its height fills the square; equal horizontal padding centres it.
+The 22/33/44px PNGs are rasterized directly at row size. Their RGBA files
+store 8-bit premultiplied alpha; the 256px RGBA source serves other requested
+sizes through the existing glyph-cache sampler.
+
+Preparation uses librsvg 2.62.1 (`rsvg-convert`, cairo 1.18.4) and
+ImageMagick 7.1.2-35 Q16-HDRI. For each MODE (`dark` or `light`):
+
+| SIDE | SCALE | LEFT | TOP |
+| --- | --- | --- | --- |
+| 22 | 0.073333333333333 | 2.200000000000000 | 0 |
+| 33 | 0.110000000000000 | 3.300000000000000 | 0 |
+| 44 | 0.146666666666667 | 4.400000000000000 | 0 |
+| 256 | 0.853333333333333 | 25.600000000000001 | 0 |
+
+```sh
+rsvg-convert --zoom=SCALE --page-width=SIDE --page-height=SIDE --left=LEFT --top=TOP --output=opencode-mark-MODE-SIDE.png opencode-mark-MODE.svg
+magick opencode-mark-MODE-SIDE.png -channel RGB -fx 'u*u.a' +channel -depth 8 rgba:opencode-mark-MODE-SIDE.rgba
+```
+
+The 256px intermediate PNG is not shipped. SHA-256 values relative to `venus/assets/`:
+
+| File | SHA-256 |
+| --- | --- |
+| `opencode-mark-dark-22.png` | `79b327245fb40f98a1afe94fa6fe78b10efffeba5d8da38ca13cfe0b8f7b2fc8` |
+| `opencode-mark-dark-22.rgba` | `b41492836b28f127f45ce399c8e2475c0521c13fd393b6bd70b83e4f09e1e965` |
+| `opencode-mark-dark-256.rgba` | `77ded00108cd93ac0c80705643f5301292b02b5322ce8ac82ae112517f74fe42` |
+| `opencode-mark-dark-33.png` | `551c9a4d42b66a4496d459f5cb58439d64d1c99ebe510bb8c748bb74de19e18e` |
+| `opencode-mark-dark-33.rgba` | `5c5de890baed3c5efc0b31f3921b7c2503aded97d27d3854c62ef4bf41cdf5b1` |
+| `opencode-mark-dark-44.png` | `d4e3d3e08e9f6083bea201f3817ec7091a6a2b06a4835f1ae3a6dfb7f7e535bf` |
+| `opencode-mark-dark-44.rgba` | `73109b07d19a0db5024f981a0b25d083af03f1c2d124d8e6e24cc91855626bab` |
+| `opencode-mark-dark.svg` | `502ff18efbef0432d8a702481669767c0738d744d18c45d6c3bd3b776d2d6a8e` |
+| `opencode-mark-light-22.png` | `ce44b030fa00100bb95ab7ba5b314b1598cce7f81c1eb1a2b6792dffb0a78e92` |
+| `opencode-mark-light-22.rgba` | `801a61405b0abd6195f323d771ffd7b118cf9d2f71598ade0ec79713344f3aa8` |
+| `opencode-mark-light-256.rgba` | `cfb7698c5bfdff524e73bc1e2c27bdc3aedc5327c79833583b32c73732427024` |
+| `opencode-mark-light-33.png` | `ef13165c815bf5e7af16f26f8f45f912134ddb4cc626cf4d9bbe18616f3b80c2` |
+| `opencode-mark-light-33.rgba` | `9091179b0a0e13939cb4940be47f51681eb4ec715bbc8ec4badfd21c05c54670` |
+| `opencode-mark-light-44.png` | `889caebbcbffef33f107fbd231e3ec8ebcdd9c679d8946793acaa5e02fb31041` |
+| `opencode-mark-light-44.rgba` | `7b87f3c78c9275cd6284d1b3f351b9762845bb4156727fcf83daae5b35c52b4f` |
+| `opencode-mark-light.svg` | `8fb1cffb7171c85d4c12a8219250f31a397e316b53e94ca14c171452eb3efed7` |
+
+The upstream root `LICENSE` at that same commit applies:
+
+```text
+MIT License
+
+Copyright (c) 2025 opencode
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+OpenCode retains its name and marks; this copyright licence does not imply
+affiliation or endorsement.
