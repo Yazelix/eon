@@ -272,6 +272,7 @@ import ./default.nix {
       "system-linker-runtime" "rust-standard-library" "venus-shaders" "openai-logomark" "claude-logomark" "accesskit-chromium"
       "claude-code-mark"
       "codex-symbol"
+      "opencode-mark"
       "gemini-mark"
     ];
     ${pkgs.ncurses.name}.source = "${pkgs.ncurses.src} rebuilt with ${../../nix/ncurses-termios-speed.h}";
@@ -507,6 +508,79 @@ import ./default.nix {
         {
           file = ../../venus/assets/codex-symbol-256.rgba;
           hash = "307c8d69585224de9e7d9a168916300d0ca648fece87ce74a416c419716e19e6";
+        }
+      ];
+    }
+    {
+      id = "opencode-mark";
+      version = "2.3.0";
+      source = "https://github.com/anomalyco/opencode@a6b15d33daf6ab7d35569f6d711fdb630b9f04e7";
+      licenses = [ "MIT" ];
+      notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/opencode-mark-dark-22.png;
+          hash = "79b327245fb40f98a1afe94fa6fe78b10efffeba5d8da38ca13cfe0b8f7b2fc8";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-dark-22.rgba;
+          hash = "b41492836b28f127f45ce399c8e2475c0521c13fd393b6bd70b83e4f09e1e965";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-dark-256.rgba;
+          hash = "77ded00108cd93ac0c80705643f5301292b02b5322ce8ac82ae112517f74fe42";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-dark-33.png;
+          hash = "551c9a4d42b66a4496d459f5cb58439d64d1c99ebe510bb8c748bb74de19e18e";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-dark-33.rgba;
+          hash = "5c5de890baed3c5efc0b31f3921b7c2503aded97d27d3854c62ef4bf41cdf5b1";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-dark-44.png;
+          hash = "d4e3d3e08e9f6083bea201f3817ec7091a6a2b06a4835f1ae3a6dfb7f7e535bf";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-dark-44.rgba;
+          hash = "73109b07d19a0db5024f981a0b25d083af03f1c2d124d8e6e24cc91855626bab";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-dark.svg;
+          hash = "502ff18efbef0432d8a702481669767c0738d744d18c45d6c3bd3b776d2d6a8e";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light-22.png;
+          hash = "ce44b030fa00100bb95ab7ba5b314b1598cce7f81c1eb1a2b6792dffb0a78e92";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light-22.rgba;
+          hash = "801a61405b0abd6195f323d771ffd7b118cf9d2f71598ade0ec79713344f3aa8";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light-256.rgba;
+          hash = "cfb7698c5bfdff524e73bc1e2c27bdc3aedc5327c79833583b32c73732427024";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light-33.png;
+          hash = "ef13165c815bf5e7af16f26f8f45f912134ddb4cc626cf4d9bbe18616f3b80c2";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light-33.rgba;
+          hash = "9091179b0a0e13939cb4940be47f51681eb4ec715bbc8ec4badfd21c05c54670";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light-44.png;
+          hash = "889caebbcbffef33f107fbd231e3ec8ebcdd9c679d8946793acaa5e02fb31041";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light-44.rgba;
+          hash = "7b87f3c78c9275cd6284d1b3f351b9762845bb4156727fcf83daae5b35c52b4f";
+        }
+        {
+          file = ../../venus/assets/opencode-mark-light.svg;
+          hash = "8fb1cffb7171c85d4c12a8219250f31a397e316b53e94ca14c171452eb3efed7";
         }
       ];
     }

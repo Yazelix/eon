@@ -479,6 +479,57 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
 }
 
 #[test]
+fn opencode_rows_use_the_product_name_and_mark_without_changing_unknown_apps() {
+    let metrics = CellMetrics::for_scale(1.0);
+    for (app, title) in [("opencode", "OpenCode"), ("other-agent", "other-agent")] {
+        let mut snapshot = sidebar_snapshot();
+        let attention = Attention {
+            state: AttentionState::Idle,
+            record: Some(eon_workspace_protocol::v47::AttentionRecord {
+                app: app.into(),
+                name: "not a session name".into(),
+                title: String::new(),
+                message: String::new(),
+                kind: None,
+                progress: None,
+                changed_at: 0,
+                stale: false,
+                others: 0,
+            }),
+        };
+        snapshot.tabs[0].columns[0].panes[0].attention = Some(attention.clone());
+        snapshot.tabs[0].attention_rollup = Some(attention.state);
+        snapshot.attention_queue = vec![eon_workspace_protocol::v47::QueueEntry {
+            workspace: snapshot.workspace.clone(),
+            tab: "t1".into(),
+            target: "p1".into(),
+            attention,
+        }];
+        let sidebar = scrolled_sidebar(&snapshot, metrics, 0.0, None);
+        let inbox = DialogScene::attention_inbox(
+            &snapshot,
+            AttentionFilter::All,
+            None,
+            PhysicalSize::new(1280, 800),
+            metrics,
+            0.0,
+            0,
+        );
+        for row in [sidebar.sidebar_row("p1").unwrap(), &inbox.attention_rows[0]] {
+            assert_eq!(row.title, title);
+            assert_eq!(
+                row.icon.map(|(mark, _)| mark),
+                (app == "opencode").then_some(AppMark::OpenCode),
+            );
+            assert!(
+                row.accessible_label
+                    .starts_with(&format!("Idle: {title} in "))
+            );
+        }
+    }
+}
+
+#[test]
 fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     use eon_workspace_protocol::v47::{
         Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
@@ -749,7 +800,14 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
             "events ciwn.8",
             AppMark::Codex,
         ),
-        ("codex", "", None, "Codex", AppMark::Codex),
+        ("opencode", "", None, "OpenCode", AppMark::OpenCode),
+        (
+            "opencode",
+            "not a session name",
+            Some("person's choice"),
+            "person's choice",
+            AppMark::OpenCode,
+        ),
         (
             "claude-code",
             "eon-overseer",
@@ -797,6 +855,10 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                     match provider {
                         AppMark::Codex =>
                             "Needs input (permission): Codex, events ciwn.8 \
+                            in tab 2, site, p2, changed 4 minutes ago, 2 more records: \
+                            Allow Bash: cargo test?",
+                        AppMark::OpenCode =>
+                            "Needs input (permission): OpenCode, person's choice \
                             in tab 2, site, p2, changed 4 minutes ago, 2 more records: \
                             Allow Bash: cargo test?",
                         AppMark::ClaudeCode =>

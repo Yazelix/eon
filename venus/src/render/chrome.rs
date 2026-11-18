@@ -33,6 +33,8 @@ const EON_ICON_ID: u16 = 3;
 const CLAUDE_CODE_ID: u16 = 4;
 const CODEX_SYMBOL_ID: u16 = 5;
 const GEMINI_SPARK_ID: u16 = 6;
+const OPENCODE_DARK_ID: u16 = 7;
+const OPENCODE_LIGHT_ID: u16 = 8;
 const QUOTA_ICON_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
@@ -353,6 +355,23 @@ const CODEX_SYMBOL_RGBA_44: &[u8; 44 * 44 * 4] =
     include_bytes!("../../assets/codex-symbol-44.rgba");
 const CODEX_SYMBOL_RGBA_256: &[u8; 256 * 256 * 4] =
     include_bytes!("../../assets/codex-symbol-256.rgba");
+
+const OPENCODE_DARK_RGBA_22: &[u8; 22 * 22 * 4] =
+    include_bytes!("../../assets/opencode-mark-dark-22.rgba");
+const OPENCODE_DARK_RGBA_33: &[u8; 33 * 33 * 4] =
+    include_bytes!("../../assets/opencode-mark-dark-33.rgba");
+const OPENCODE_DARK_RGBA_44: &[u8; 44 * 44 * 4] =
+    include_bytes!("../../assets/opencode-mark-dark-44.rgba");
+const OPENCODE_DARK_RGBA_256: &[u8; 256 * 256 * 4] =
+    include_bytes!("../../assets/opencode-mark-dark-256.rgba");
+const OPENCODE_LIGHT_RGBA_22: &[u8; 22 * 22 * 4] =
+    include_bytes!("../../assets/opencode-mark-light-22.rgba");
+const OPENCODE_LIGHT_RGBA_33: &[u8; 33 * 33 * 4] =
+    include_bytes!("../../assets/opencode-mark-light-33.rgba");
+const OPENCODE_LIGHT_RGBA_44: &[u8; 44 * 44 * 4] =
+    include_bytes!("../../assets/opencode-mark-light-44.rgba");
+const OPENCODE_LIGHT_RGBA_256: &[u8; 256 * 256 * 4] =
+    include_bytes!("../../assets/opencode-mark-light-256.rgba");
 
 /// Pointer hover and press state for the workspace chrome, part of the content cache key.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -682,6 +701,45 @@ fn chip_label_top(
     top + (centred.min(rows.bottom - ink_bottom) as f32 - baseline)
 }
 
+/// Direct row-size rasters preserve artwork edges; other sizes use the complete 256px source.
+fn product_mark_raster(id: u16, width: u16, height: u16) -> Option<&'static [u8]> {
+    let sources: [&[u8]; 4] = match id {
+        CLAUDE_CODE_ID => [
+            CLAUDE_CODE_RGBA_22,
+            CLAUDE_CODE_RGBA_33,
+            CLAUDE_CODE_RGBA_44,
+            CLAUDE_CODE_RGBA_256,
+        ],
+        CODEX_SYMBOL_ID => [
+            CODEX_SYMBOL_RGBA_22,
+            CODEX_SYMBOL_RGBA_33,
+            CODEX_SYMBOL_RGBA_44,
+            CODEX_SYMBOL_RGBA_256,
+        ],
+        OPENCODE_DARK_ID => [
+            OPENCODE_DARK_RGBA_22,
+            OPENCODE_DARK_RGBA_33,
+            OPENCODE_DARK_RGBA_44,
+            OPENCODE_DARK_RGBA_256,
+        ],
+        OPENCODE_LIGHT_ID => [
+            OPENCODE_LIGHT_RGBA_22,
+            OPENCODE_LIGHT_RGBA_33,
+            OPENCODE_LIGHT_RGBA_44,
+            OPENCODE_LIGHT_RGBA_256,
+        ],
+        _ => return None,
+    };
+    Some(
+        sources[match (width, height) {
+            (22, 22) => 0,
+            (33, 33) => 1,
+            (44, 44) => 2,
+            _ => 3,
+        }],
+    )
+}
+
 /// Area-averages a provider or app mark, or the Eon icon when Eon supplied one, to the
 /// requested physical pixels. Colour sources use premultiplied RGBA.
 pub(super) fn rasterize_bar_icon(
@@ -692,30 +750,13 @@ pub(super) fn rasterize_bar_icon(
         OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
         GEMINI_SPARK_ID => (GEMINI_SPARK_ALPHA, 1, ContentType::Mask),
-        CLAUDE_CODE_ID => (
-            match (request.width, request.height) {
-                (22, 22) => CLAUDE_CODE_RGBA_22,
-                (33, 33) => CLAUDE_CODE_RGBA_33,
-                (44, 44) => CLAUDE_CODE_RGBA_44,
-                _ => CLAUDE_CODE_RGBA_256,
-            },
-            4,
-            ContentType::Color,
-        ),
-        CODEX_SYMBOL_ID => (
-            // Rasterized directly at row size so the transparent prompt stays crisp.
-            match (request.width, request.height) {
-                (22, 22) => CODEX_SYMBOL_RGBA_22,
-                (33, 33) => CODEX_SYMBOL_RGBA_33,
-                (44, 44) => CODEX_SYMBOL_RGBA_44,
-                _ => CODEX_SYMBOL_RGBA_256,
-            },
-            4,
-            ContentType::Color,
-        ),
         // Premultiplied, so averaging never bleeds a clear pixel's colour into the mark.
         EON_ICON_ID => (eon_icon?, 4, ContentType::Color),
-        _ => return None,
+        id => (
+            product_mark_raster(id, request.width, request.height)?,
+            4,
+            ContentType::Color,
+        ),
     };
     let size = (source.len() / channels).isqrt();
     let width = usize::from(request.width);
@@ -977,7 +1018,7 @@ fn push_attention_row_surface(
     background: SceneColor,
     spinners: &mut Spinners,
     rectangles: &mut RectangleBatch,
-) -> (SceneColor, SceneColor) {
+) -> (SceneColor, SceneColor, SceneColor) {
     let fill = if row.focused || hovered {
         let hover = palette::DARK.chrome_highlight;
         Some(if contrast_ratio(hover, background) >= 1.5 {
@@ -1026,6 +1067,7 @@ fn push_attention_row_surface(
     (
         blend_to_contrast(title, background, 4.5),
         blend_to_contrast(detail, background, 4.5),
+        background,
     )
 }
 
@@ -1815,7 +1857,7 @@ impl Renderer {
         if row.rect.intersection(list).is_none() {
             return;
         }
-        let (title, detail) = push_attention_row_surface(
+        let (title, detail, fill) = push_attention_row_surface(
             row,
             hovered,
             tokens::inner_radius(self.metrics),
@@ -1824,7 +1866,7 @@ impl Renderer {
             &mut self.spinners,
             rectangles,
         );
-        self.text.extend(attention_row_icon(row, list));
+        self.text.extend(attention_row_icon(row, list, fill));
         if let Some(marker) = row.popup_marker {
             push_popup_marker(
                 rectangles,
@@ -3541,12 +3583,36 @@ impl Renderer {
     }
 }
 
-/// The product image is independent of the row's stale, focus and hover colours.
-fn attention_row_icon(row: &crate::SidebarRow, clip: SceneRect) -> Option<PlacedText> {
+/// Choose the vendor artwork with the more readable outer stroke on the painted row.
+fn opencode_mark_id(background: SceneColor) -> u16 {
+    let light_ink = SceneColor {
+        r: 238,
+        g: 238,
+        b: 238,
+    };
+    let dark_ink = SceneColor {
+        r: 31,
+        g: 31,
+        b: 31,
+    };
+    if contrast_ratio(light_ink, background) >= contrast_ratio(dark_ink, background) {
+        OPENCODE_DARK_ID
+    } else {
+        OPENCODE_LIGHT_ID
+    }
+}
+
+/// Product images retain their own colours; OpenCode follows the row's resolved backing.
+fn attention_row_icon(
+    row: &crate::SidebarRow,
+    clip: SceneRect,
+    background: SceneColor,
+) -> Option<PlacedText> {
     let (mark, rect) = row.icon?;
     let id = match mark {
         AppMark::Codex => CODEX_SYMBOL_ID,
         AppMark::ClaudeCode => CLAUDE_CODE_ID,
+        AppMark::OpenCode => opencode_mark_id(background),
     };
     bar_icon(
         id,
@@ -5767,7 +5833,7 @@ mod tests {
                     }
                     if current {
                         let primary = blend_to_contrast(palette::DARK.primary_text, fill, 4.5);
-                        assert_eq!(popup.0, (primary, primary));
+                        assert_eq!(popup.0, (primary, primary, fill));
                     }
                 }
             }
@@ -6862,10 +6928,36 @@ mod tests {
     }
 
     #[test]
+    fn product_mark_sources_are_premultiplied() {
+        for id in [
+            CLAUDE_CODE_ID,
+            CODEX_SYMBOL_ID,
+            OPENCODE_DARK_ID,
+            OPENCODE_LIGHT_ID,
+        ] {
+            for side in [22, 33, 44, 256] {
+                let source = product_mark_raster(id, side, side).unwrap();
+                assert_eq!(source.len(), usize::from(side).pow(2) * 4);
+                for (index, pixel) in source.chunks_exact(4).enumerate() {
+                    assert!(
+                        pixel[..3].iter().all(|channel| *channel <= pixel[3]),
+                        "mark {id}, {side}px source, pixel {index} must be premultiplied: {pixel:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn product_marks_keep_their_own_colours_and_alpha_at_row_scales() {
-        for (id, size) in [CLAUDE_CODE_ID, CODEX_SYMBOL_ID]
-            .into_iter()
-            .flat_map(|id| [11, 22, 33, 44, 253, 256].map(|size| (id, size)))
+        for (id, size) in [
+            CLAUDE_CODE_ID,
+            CODEX_SYMBOL_ID,
+            OPENCODE_DARK_ID,
+            OPENCODE_LIGHT_ID,
+        ]
+        .into_iter()
+        .flat_map(|id| [11, 22, 33, 44, 253, 256].map(|size| (id, size)))
         {
             let image = rasterize_bar_icon(
                 RasterizeCustomGlyphRequest {
@@ -6882,13 +6974,29 @@ mod tests {
             assert_eq!(image.content_type, ContentType::Color);
             assert_eq!(image.data.len(), usize::from(size) * usize::from(size) * 4);
             assert_eq!(image.data[3], 0, "the full canvas keeps its clear corner");
-            assert!(
-                image
-                    .data
-                    .chunks_exact(4)
-                    .any(|pixel| { pixel[3] > 200 && pixel[0].abs_diff(pixel[2]) > 30 }),
-                "the product's colour survives instead of a tinted silhouette"
-            );
+            if matches!(id, OPENCODE_DARK_ID | OPENCODE_LIGHT_ID) {
+                let ink = if id == OPENCODE_DARK_ID { 238 } else { 31 };
+                assert!(
+                    image
+                        .data
+                        .chunks_exact(4)
+                        .any(|p| p[3] == 255 && p[..3] == [ink; 3])
+                );
+                assert!(
+                    image
+                        .data
+                        .chunks_exact(4)
+                        .all(|p| p[0] == p[1] && p[1] == p[2])
+                );
+            } else {
+                assert!(
+                    image
+                        .data
+                        .chunks_exact(4)
+                        .any(|pixel| { pixel[3] > 200 && pixel[0].abs_diff(pixel[2]) > 30 }),
+                    "the product's colour survives instead of a tinted silhouette"
+                );
+            }
             let source = match (id, size) {
                 (CLAUDE_CODE_ID, 22) => Some(CLAUDE_CODE_RGBA_22.as_slice()),
                 (CLAUDE_CODE_ID, 33) => Some(CLAUDE_CODE_RGBA_33.as_slice()),
@@ -6896,6 +7004,12 @@ mod tests {
                 (CODEX_SYMBOL_ID, 22) => Some(CODEX_SYMBOL_RGBA_22.as_slice()),
                 (CODEX_SYMBOL_ID, 33) => Some(CODEX_SYMBOL_RGBA_33.as_slice()),
                 (CODEX_SYMBOL_ID, 44) => Some(CODEX_SYMBOL_RGBA_44.as_slice()),
+                (OPENCODE_DARK_ID, 22) => Some(OPENCODE_DARK_RGBA_22.as_slice()),
+                (OPENCODE_DARK_ID, 33) => Some(OPENCODE_DARK_RGBA_33.as_slice()),
+                (OPENCODE_DARK_ID, 44) => Some(OPENCODE_DARK_RGBA_44.as_slice()),
+                (OPENCODE_LIGHT_ID, 22) => Some(OPENCODE_LIGHT_RGBA_22.as_slice()),
+                (OPENCODE_LIGHT_ID, 33) => Some(OPENCODE_LIGHT_RGBA_33.as_slice()),
+                (OPENCODE_LIGHT_ID, 44) => Some(OPENCODE_LIGHT_RGBA_44.as_slice()),
                 _ => None,
             };
             if let Some(source) = source {
@@ -6915,7 +7029,7 @@ mod tests {
                         "prompt stays a cutout, with edge coverage at 22px"
                     );
                     assert_eq!(alpha(side / 2, side / 2), 255, "cloud surrounds the prompt");
-                } else {
+                } else if id == CLAUDE_CODE_ID {
                     let cell = side / 11;
                     let alpha = |x, y| image.data[(y * side + x) * 4 + 3];
                     assert_eq!(alpha(3 * cell, side / 3), 255, "column starts on the grid");
@@ -6944,6 +7058,13 @@ mod tests {
                 "claude-code",
                 AppMark::ClaudeCode,
                 CLAUDE_CODE_ID,
+                ContentType::Color,
+                Color::rgb(255, 255, 255),
+            ),
+            (
+                "opencode",
+                AppMark::OpenCode,
+                OPENCODE_DARK_ID,
                 ContentType::Color,
                 Color::rgb(255, 255, 255),
             ),
@@ -7019,7 +7140,9 @@ mod tests {
                                     _ => unreachable!(),
                                 }
                             );
-                            let icon = attention_row_icon(row, clip).unwrap();
+                            let icon =
+                                attention_row_icon(row, clip, palette::DARK.terminal_fallback)
+                                    .unwrap();
                             let glyph = icon.custom_glyph.as_ref().unwrap();
                             assert_eq!(glyph.id, id);
                             assert_eq!(icon.color, color);
@@ -7212,7 +7335,11 @@ mod tests {
             .unwrap();
             renderer.background_opacity = 1.0;
             let metrics = renderer.metrics();
-            for (app, id) in [("codex", CODEX_SYMBOL_ID), ("claude-code", CLAUDE_CODE_ID)] {
+            for (app, id) in [
+                ("codex", CODEX_SYMBOL_ID),
+                ("claude-code", CLAUDE_CODE_ID),
+                ("opencode", OPENCODE_DARK_ID),
+            ] {
                 for (state, message) in [
                     (AttentionState::Working, ""),
                     (AttentionState::Background, ""),
@@ -7265,6 +7392,51 @@ mod tests {
                             } else {
                                 scene.sidebar_row("p1").unwrap()
                             };
+                            if app == "opencode"
+                                && state == AttentionState::Idle
+                                && adapter == wgpu::DeviceType::Cpu
+                            {
+                                let white = SceneColor {
+                                    r: 255,
+                                    g: 255,
+                                    b: 255,
+                                };
+                                for (background, hovered, focused, expected) in [
+                                    (
+                                        palette::DARK.terminal_fallback,
+                                        false,
+                                        false,
+                                        OPENCODE_DARK_ID,
+                                    ),
+                                    (white, false, false, OPENCODE_LIGHT_ID),
+                                    (white, true, false, OPENCODE_DARK_ID),
+                                    (white, false, true, OPENCODE_DARK_ID),
+                                ] {
+                                    for stale in [false, true] {
+                                        let mut row = row.clone();
+                                        row.focused = focused;
+                                        row.glyph.dimmed = stale;
+                                        renderer.text.clear();
+                                        renderer.push_attention_row(
+                                            &row,
+                                            row.rect,
+                                            hovered,
+                                            Backing::Surface(background),
+                                            background,
+                                            &mut RectangleBatch::new(size.width, size.height),
+                                        );
+                                        let mark = renderer
+                                            .text
+                                            .iter()
+                                            .find_map(|text| text.custom_glyph.as_ref())
+                                            .unwrap();
+                                        assert_eq!(
+                                            mark.id, expected,
+                                            "{background:?}, hovered={hovered}, focused={focused}, stale={stale}"
+                                        );
+                                    }
+                                }
+                            }
                             renderer.text.clear();
                             renderer.spinners =
                                 Spinners::new(spinners_turn(adapter, animate), DEFAULT_FOCUS);
@@ -7288,7 +7460,13 @@ mod tests {
                                 .iter()
                                 .filter(|text| {
                                     text.custom_glyph.as_ref().is_some_and(|glyph| {
-                                        matches!(glyph.id, CODEX_SYMBOL_ID | CLAUDE_CODE_ID)
+                                        matches!(
+                                            glyph.id,
+                                            CODEX_SYMBOL_ID
+                                                | CLAUDE_CODE_ID
+                                                | OPENCODE_DARK_ID
+                                                | OPENCODE_LIGHT_ID
+                                        )
                                     })
                                 })
                                 .collect();
