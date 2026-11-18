@@ -314,3 +314,49 @@ mechanism = [["symlink", "symbolic link", "/etc/static", "nix store", "/nix/stor
 [[case.expect]]
 file = "nix/test-sandbox.nix"
 lines = [272, 273]
+
+[[case]]
+id = "R33"
+kind = "fix-forward"
+commit = "2a63b11c42a2cb0ba98354a605634e0434864bed"
+fixed_by = "b225f669a02d859ecb0c439a8dbca4866a06968e"
+class = "companion-code"
+tier = "high"
+summary = "Moving Linux-only rota into the workspace as package eon-agent left mac-proof running eon-test for every package without a checked platform exclusion. Its library and integration tests compile out on Darwin, so nextest finds no tests, exits 4, and test:eon-agent fails on every revision. 8dfaa0a5 later renamed the package rota-cli, so the step became test:rota-cli."
+evidence = "2a63b11c adds eon/crates/eon-agent (package eon-agent) to Cargo.toml:10 and gates its library at src/lib.rs:1 and each integration test on target_os = linux, but leaves mac-proof's all-package loop at run.rs:270-287 unchanged. After the 8dfaa0a5 rename, native mac-proof 44266869446 logs Starting 0 tests across 11 binaries, error: no tests to run, then exit status 4 for test:rota-cli. Its GUI skips separately come from a failed launcher package build, not this package-test failure."
+mechanism = [["tests compile out", "tests compiled out", "tests are compiled out", "no tests to run", "no tests run", "runs no tests", "run no tests", "finds no tests", "find no tests", "found no tests", "no tests discovered", "no tests on", "nothing to test", "nothing to run", "0 tests", "zero tests", "zero discovered", "no-tests", "exit 4", "exits 4", "exit code 4", "exit status 4"], ["mac-proof", "nextest", "eon-test", "test loop", "test:eon-agent", "per-package", "each package", "every package", "all-package"], ["darwin", "macos", "mac-proof", "linux-only", "linux only", "target_os", "non-linux", "off linux"]]
+
+[[case.expect]]
+file = "Cargo.toml"
+lines = [10, 10]
+
+[[case.expect]]
+file = "eon/crates/eon-agent/src/lib.rs"
+lines = [1, 1]
+
+[[case.expect]]
+file = "eon/tools/mac-proof/src/run.rs"
+lines = [270, 287]
+
+[[case]]
+id = "R34"
+kind = "fix-forward"
+commit = "825dd62908566665f6889b1ef3696992d0901beb"
+fixed_by = "b225f669a02d859ecb0c439a8dbca4866a06968e"
+class = "companion-code"
+tier = "high"
+summary = "Making the packaged Helix Editor popup the default target of eon edit left mac-proof's edit scenario expecting exactly one new pane after a sleep. A correct popup edit therefore fails the stale pane-count assertion, while the harness never proves the requested file was shown in Editor."
+evidence = "825dd629 makes Popup the product default for editor_open_in, has prepare_edit choose the popup for the packaged Helix with a listener at managed_environment.rs:1222-1234, and adds the command.popup branch at workspace.rs:903-931 that reuses or opens the Editor popup instead of creating a pane. It leaves mac-proof's Helix-pane proof at scenario.rs:212 and one-new-pane assertion at :2443-2463 unchanged; a7f48427 later only added the Neovim route. Native mac-proof 44276849333 reports eon edit added [], not one pane while focus goes to popup u3."
+mechanism = [["popup"], ["still expects", "expects one", "expects a new pane", "expects exactly", "exactly one pane", "assertion fails", "assert fails", "check fails", "stale assertion", "stale assert", "stale check", "added.len", "no longer creates", "adds no pane"]]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/workspace.rs"
+lines = [903, 931]
+
+[[case.expect]]
+file = "runtime/crates/eon-runtime/src/managed_environment.rs"
+lines = [1222, 1234]
+
+[[case.expect]]
+file = "eon/tools/mac-proof/src/scenario.rs"
+lines = [2443, 2463]
