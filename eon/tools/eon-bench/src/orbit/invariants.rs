@@ -198,9 +198,7 @@ pub fn check(exe: &Path, orbit: &Path, expected: &[(&str, &str)]) -> Result {
             .map_err(|e| e.to_string())?;
         let pid = child.id();
         let mut server = Server { child, log };
-        server.wait_for(SETUP_WAIT, "socket", || root.join("s").exists())?;
-        let mut client =
-            Client::new(UnixStream::connect(root.join("s")).map_err(|e| e.to_string())?)?;
+        let mut client = Client::new(server.connect(&root.join("s"))?)?;
         // A different first grid prevents the initial attachment frame from
         // masquerading as the resize completion when Orbit starts at 80x24.
         client.attach(25, 81)?;

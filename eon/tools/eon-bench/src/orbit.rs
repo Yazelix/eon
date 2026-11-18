@@ -541,6 +541,9 @@ struct Outcome {
 const SETUP_WAIT: Duration = Duration::from_secs(10);
 /// How long one handshake read blocks before it checks for an interrupt.
 const READ_POLL: Duration = Duration::from_millis(100);
+/// How often a connect to a just-started server retries: its bind-to-listen
+/// window is a few syscalls, so a longer pause only delays the setup.
+const CONNECT_RETRY: Duration = Duration::from_millis(1);
 const QUIET: Duration = Duration::from_millis(100);
 const QUIET_WAIT: Duration = Duration::from_secs(2);
 
@@ -588,6 +591,53 @@ impl Server {
             std::thread::sleep(Duration::from_millis(1));
         }
         Ok(())
+    }
+
+    /// A connection to this Orbit's socket once it listens, within `SETUP_WAIT`.
+    fn connect(&mut self, socket: &Path) -> Result<UnixStream, String> {
+        connect_new(socket, Instant::now() + SETUP_WAIT, || {
+            self.alive()?;
+            suite::interrupt::check()
+        })
+    }
+}
+
+/// Connects to the socket of a server that has just started. Its path is
+/// missing before bind() and refuses connections between bind() and
+/// listen(), so both errors retry every `CONNECT_RETRY` while `alive` agrees,
+/// until `deadline`; no attempt starts after it, and the last error is
+/// returned then. `alive` runs first, so a server that died reports its own
+/// error rather than the connect's. Callers connect before any timed span,
+/// so the retries are never measured.
+pub(crate) fn connect_new(
+    path: &Path,
+    deadline: Instant,
+    mut alive: impl FnMut() -> Result<(), String>,
+) -> Result<UnixStream, String> {
+    let start = Instant::now();
+    loop {
+        let error = match UnixStream::connect(path) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => error,
+        };
+        if matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+        ) {
+            alive()?;
+            let left = deadline.saturating_duration_since(Instant::now());
+            if !left.is_zero() {
+                std::thread::sleep(left.min(CONNECT_RETRY));
+                if Instant::now() < deadline {
+                    continue;
+                }
+            }
+        }
+        return Err(format!(
+            "connect {} after {:.1} s: {error}",
+            path.display(),
+            start.elapsed().as_secs_f64()
+        ));
     }
 }
 
@@ -656,9 +706,8 @@ fn sample(spec: &Spec) -> Result<Outcome, String> {
         .spawn()
         .map_err(|error| format!("{}: {error}", options.orbit.display()))?;
     let mut server = Server { child, log };
-    server.wait_for(SETUP_WAIT, "Orbit socket", || socket.exists())?;
+    let stream = server.connect(&socket)?;
     let attach_start = monotonic_ns();
-    let stream = UnixStream::connect(&socket).map_err(|error| format!("connect: {error}"))?;
     let mut client = Client::new(stream)?;
     client.attach(options.rows, options.cols)?;
     let attach_us = (monotonic_ns() - attach_start) / 1000;
@@ -1408,6 +1457,95 @@ mod tests {
     use orbit_protocol::session::ServerMessage;
 
     use super::Received;
+
+    /// A Unix stream socket bound at `path` that is not yet listening: the
+    /// window between Orbit's bind() and listen().
+    fn bound(path: &std::path::Path) -> rustix::fd::OwnedFd {
+        use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, bind, socket};
+        let fd = socket(AddressFamily::UNIX, SocketType::STREAM, None).unwrap();
+        bind(&fd, &SocketAddrUnix::new(path).unwrap()).unwrap();
+        fd
+    }
+
+    #[test]
+    fn connect_new_waits_through_a_missing_then_refusing_socket() {
+        use std::{os::unix::net::UnixStream, time::Instant};
+        let dir = super::run_dir(901).unwrap();
+        let path = dir.0.join("s");
+        // Each failed attempt advances the server one step, so the attempts
+        // meet a missing path, then a bound socket, then a listening one.
+        let mut fd = None;
+        let mut calls = 0;
+        let stream = super::connect_new(&path, Instant::now() + super::SETUP_WAIT, || {
+            calls += 1;
+            match calls {
+                1 => fd = Some(bound(&path)),
+                2 => {
+                    // The case this helper exists for, on this platform.
+                    let refused = UnixStream::connect(&path).unwrap_err();
+                    assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
+                    rustix::net::listen(fd.as_ref().unwrap(), 1).unwrap();
+                }
+                _ => panic!("connected only after attempt {calls}"),
+            }
+            Ok(())
+        });
+        stream.unwrap();
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn connect_new_keeps_the_last_error_once_its_deadline_passes() {
+        use std::time::{Duration, Instant};
+        let dir = super::run_dir(902).unwrap();
+        let path = dir.0.join("s");
+        // Missing on the first attempt, then bound and never listening: the
+        // error returned is the last one, the refusal.
+        let mut fd = None;
+        let limit = Duration::from_millis(200);
+        let start = Instant::now();
+        let error = super::connect_new(&path, start + limit, || {
+            fd.get_or_insert_with(|| bound(&path));
+            Ok(())
+        })
+        .unwrap_err();
+        let elapsed = start.elapsed();
+        assert!(error.to_lowercase().contains("refused"), "{error}");
+        // Bounded by its deadline, plus slack for a loaded machine.
+        assert!(
+            elapsed >= limit && elapsed < limit + Duration::from_secs(5),
+            "{elapsed:?}"
+        );
+        // No attempt starts once the deadline has passed, even when the
+        // server listens by then.
+        let late = dir.0.join("late");
+        let mut listener = None;
+        let error = super::connect_new(&late, Instant::now(), || {
+            listener = Some(std::os::unix::net::UnixListener::bind(&late).unwrap());
+            Ok(())
+        });
+        assert!(error.unwrap_err().contains("No such file"));
+        // A server that has died ends the wait at once with its own error.
+        let start = Instant::now();
+        let error = super::connect_new(&path, start + super::SETUP_WAIT, || Err("gone".into()));
+        assert_eq!(error.unwrap_err(), "gone");
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn connect_new_fails_at_once_on_an_error_a_starting_server_cannot_cause() {
+        use std::time::{Duration, Instant};
+        let dir = super::run_dir(903).unwrap();
+        let file = dir.0.join("file");
+        std::fs::write(&file, "").unwrap();
+        // A path through a regular file (ENOTDIR) never becomes a socket.
+        let start = Instant::now();
+        let error = super::connect_new(&file.join("s"), start + super::SETUP_WAIT, || {
+            panic!("retried a connect that cannot succeed")
+        });
+        assert!(error.unwrap_err().contains("Not a directory"));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
 
     #[test]
     fn a_frame_followed_by_eof_or_decode_failure_is_not_a_live_client() {
