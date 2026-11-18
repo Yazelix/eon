@@ -810,7 +810,7 @@ fn default_colors_follow_independent_osc_updates_resets_and_reattachment() -> Te
         server_command()
             .arg(&socket)
             .arg("--")
-            .arg("/bin/bash")
+            .arg("bash")
             .arg("-c")
             .arg(concat!(
                 "stty -echo -icanon; ",
@@ -1998,16 +1998,16 @@ fn shutdown_escalates_foreground_and_permits_a_detached_process() -> TestResult 
     let initial_pid_file = dir.0.join("initial.pid");
     let detached_pid_file = dir.0.join("detached.pid");
     let foreground_pid_file = dir.0.join("foreground.pid");
-    let mut unrelated = Server(Command::new("/bin/sleep").arg("60").spawn()?);
+    let mut unrelated = Server(Command::new("sleep").arg("60").spawn()?);
     let server = Server(
         server_command()
             .arg(&socket)
             .arg("--")
-            .arg("/bin/bash")
+            .arg("bash")
             .arg("-c")
             .arg(
                 "trap '' HUP; set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
-                 /usr/bin/setsid --fork /bin/sh -c 'printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
+                 setsid --fork /bin/sh -c 'printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
                  while [ ! -s \"$ORBIT_DETACHED_PID\" ]; do :; done; \
                  /bin/sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; exec sleep 60'",
             )

@@ -489,7 +489,7 @@
           # Orbit's host and its Bend worker (orbit/docs/HOST.md), which
           # orbit/build.rs compiles. The unit tests run here; the real-PTY test
           # binary, whose checks are ignored here, goes to the tests output for the
-          # real-PTY checks. tests/lifecycle.rs needs host /usr/bin/setsid, which
+          # real-PTY checks. tests/lifecycle.rs needs setsid from the test harness, which
           # the build sandbox lacks, so eon-test runs it.
           orbitPackage =
             assert ghostty.rev == "0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec";
