@@ -137,8 +137,19 @@ let
 in
 pkgs.writeShellApplication {
   name = "eon-test";
-  runtimeInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.getent ] ++ [
+  runtimeInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+    pkgs.bubblewrap
+    pkgs.getent
+    # Process evidence, slot admission and isolated compositor fixtures.
+    pkgs.procps
+    pkgs.util-linux
+    pkgs.dbus
+    # Installer signer fixtures invoke ssh-keygen before testing refusal.
+    pkgs.openssh
+  ] ++ [
     pkgs.cargo-nextest
+    pkgs.bash
+    pkgs.python3
     # Cap tests copy/rename sleep; multicall coreutils depends on argv[0].
     (pkgs.coreutils.override { singleBinary = false; })
     pkgs.git
