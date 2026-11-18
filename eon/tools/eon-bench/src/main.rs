@@ -79,6 +79,8 @@ Corpora:",
 }
 
 fn main() -> ExitCode {
+    // Before any subcommand records a monotonic stamp.
+    eon_bench::warm_clock();
     if std::env::args_os().next().is_some_and(|arg| {
         std::path::Path::new(&arg)
             .file_name()

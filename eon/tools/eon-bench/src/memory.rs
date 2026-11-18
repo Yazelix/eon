@@ -4,7 +4,7 @@
 use std::{
     fs::{self, File},
     io::{Read, Write},
-    os::unix::{fs::DirBuilderExt, net::UnixStream, process::CommandExt},
+    os::unix::{fs::DirBuilderExt, net::UnixStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant, SystemTime},
@@ -21,6 +21,7 @@ use crate::{
     stats::Summary,
     suite::{self, Settings},
 };
+use rustix::process::Signal;
 
 mod venus;
 pub(crate) mod window;
@@ -276,8 +277,7 @@ fn live_artifacts(options: &Options) -> Result {
     use std::os::unix::fs::MetadataExt;
     let mut candidates = Vec::new();
     let mut observed = Vec::new();
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = rustix::process::geteuid().as_raw();
     for (name, path) in [("orbit", &options.orbit), ("eonbase", &options.eonbase)] {
         if path.as_os_str().is_empty() {
             continue;
@@ -363,24 +363,9 @@ impl Process {
     fn alive(&self) -> bool {
         Self::at(self.pid).is_ok_and(|p| p.start == self.start)
     }
-    fn signal(&self, _signal: i32) {
-        #[cfg(target_os = "linux")]
-        // SAFETY: pidfd pins one process identity; only signal after checking start time.
-        unsafe {
-            let fd = libc::syscall(libc::SYS_pidfd_open, self.pid, 0);
-            if fd >= 0 {
-                if self.alive() {
-                    libc::syscall(
-                        libc::SYS_pidfd_send_signal,
-                        fd,
-                        _signal,
-                        std::ptr::null::<libc::siginfo_t>(),
-                        0,
-                    );
-                }
-                libc::close(fd as i32);
-            }
-        }
+    /// Signals this process only while its start time still matches.
+    fn signal(&self, signal: Signal) {
+        crate::launcher::signal_pinned(self.pid, || self.alive(), signal);
     }
 }
 
@@ -433,14 +418,14 @@ impl Drop for Session<'_> {
     fn drop(&mut self) {
         let owned = self.owned();
         for p in &owned {
-            p.signal(libc::SIGTERM);
+            p.signal(Signal::TERM);
         }
         let start = Instant::now();
         while start.elapsed() < Duration::from_millis(300) && owned.iter().any(Process::alive) {
             std::thread::sleep(Duration::from_millis(10));
         }
         for p in &owned {
-            p.signal(libc::SIGKILL);
+            p.signal(Signal::KILL);
         }
         for child in &mut self.children {
             let _ = child.wait();
@@ -531,7 +516,7 @@ impl<'a> Session<'a> {
         if let Some(v) = std::env::var_os("TERMINFO_DIRS") {
             c.env("TERMINFO_DIRS", v);
         }
-        environment::die_with_parent(&mut c);
+        crate::sys::die_with_parent(&mut c);
         c
     }
     fn owned(&self) -> Vec<Process> {
@@ -591,15 +576,7 @@ impl<'a> Session<'a> {
             c.stdin(slave.try_clone().map_err(error)?)
                 .stdout(slave.try_clone().map_err(error)?)
                 .stderr(slave);
-            // SAFETY: these async-signal-safe calls run only before exec.
-            unsafe {
-                c.pre_exec(|| {
-                    if libc::setsid() == -1 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
+            crate::sys::own_session_on_stdin(&mut c);
             let child = c.spawn().map_err(error)?;
             let pid = child.id();
             self.children.push(child);
@@ -796,7 +773,7 @@ impl<'a> Session<'a> {
     }
     fn stop_client(&mut self, pid: u32) -> Result {
         self.required.retain(|p| p.pid != pid);
-        Process::at(pid)?.signal(libc::SIGTERM);
+        Process::at(pid)?.signal(Signal::TERM);
         let child = self
             .children
             .iter_mut()

@@ -124,7 +124,7 @@ fn roundtrip(
     queue: &mut EventQueue<Registry>,
     state: &mut Registry,
 ) -> Result {
-    use std::os::fd::{AsFd, AsRawFd};
+    use std::os::fd::AsFd;
     state.synced = false;
     connection.display().sync(&queue.handle(), ());
     connection.flush().map_err(error)?;
@@ -141,20 +141,19 @@ fn roundtrip(
         let Some(guard) = queue.prepare_read() else {
             continue;
         };
-        let mut fd = libc::pollfd {
-            fd: connection.as_fd().as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
+        let mut fd = [rustix::event::PollFd::from_borrowed_fd(
+            connection.as_fd(),
+            rustix::event::PollFlags::IN,
+        )];
+        let timeout = rustix::event::Timespec {
+            tv_sec: 0,
+            tv_nsec: 100_000_000,
         };
-        // SAFETY: one initialized pollfd for this live connection.
-        let ready = unsafe { libc::poll(&mut fd, 1, 100) };
-        if ready < 0 {
-            let e = std::io::Error::last_os_error();
-            if e.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(error(e));
-        }
+        let ready = match rustix::event::poll(&mut fd, Some(&timeout)) {
+            Ok(ready) => ready,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(e) => return Err(error(std::io::Error::from(e))),
+        };
         if ready > 0 {
             guard.read().map_err(error)?;
         }

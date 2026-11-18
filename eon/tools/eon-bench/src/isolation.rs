@@ -55,10 +55,7 @@ pub(crate) fn command(out: &Path, tools: &[&Path]) -> Command {
 }
 
 pub(crate) fn display(command: &mut Command, render_node: Option<&Path>) {
-    command
-        .arg("--dir")
-        // SAFETY: geteuid has no arguments or side effects.
-        .arg(format!("/run/user/{}", unsafe { libc::geteuid() }));
+    command.arg("--dir").arg(environment::user_runtime_parent());
     if let Some(node) = render_node {
         command.arg("--dev-bind").arg(node).arg(node);
     }
@@ -67,7 +64,7 @@ pub(crate) fn display(command: &mut Command, render_node: Option<&Path>) {
 pub(crate) fn run(command: &mut Command) -> Result<(), String> {
     command.stdin(Stdio::null());
     suite::interrupt::install()?;
-    let mut child = environment::die_with_parent(command)
+    let mut child = crate::sys::die_with_parent(command)
         .spawn()
         .map_err(|e| e.to_string())?;
     loop {

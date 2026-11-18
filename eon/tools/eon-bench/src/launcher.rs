@@ -12,6 +12,8 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use rustix::process::Signal;
+
 type Result<T = ()> = std::result::Result<T, String>;
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -20,8 +22,7 @@ fn failure(error: impl std::fmt::Display) -> String {
 struct Roots(Vec<PathBuf>, bool);
 impl Roots {
     fn create() -> Result<Self> {
-        // SAFETY: geteuid has no side effects or arguments.
-        let parent = PathBuf::from(format!("/run/user/{}", unsafe { libc::geteuid() }));
+        let parent = crate::environment::user_runtime_parent();
         let mut roots = Self(Vec::new(), false);
         for index in 0..4096 {
             let path = parent.join(format!(
@@ -80,31 +81,24 @@ fn process_state(pid: u32) -> Option<(String, bool, u32)> {
 pub(crate) fn live_identity(pid: u32, identity: &str) -> bool {
     process_state(pid).is_some_and(|(now, running, _)| now == identity && running)
 }
+/// Sends `signal` to `pid` only if `still_same` holds once a pidfd pins the
+/// process, so a reused PID is never signalled; without pidfds (an old
+/// kernel, or not Linux) nothing is sent.
 #[cfg(target_os = "linux")]
-fn signal_owned(pid: u32, identity: &str, signal: i32) {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    // SAFETY: pidfd_open has no pointers and returns a new owned descriptor.
-    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-    if fd < 0 {
+pub(crate) fn signal_pinned(pid: u32, still_same: impl FnOnce() -> bool, signal: Signal) {
+    use rustix::process::{Pid, PidfdFlags, pidfd_open, pidfd_send_signal};
+    let Some(pid) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
         return;
-    }
-    // SAFETY: the successful syscall returned this fresh descriptor.
-    let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) };
-    if live_identity(pid, identity) {
-        // SAFETY: the pidfd pins this exact process even if its numeric PID is reused.
-        unsafe {
-            libc::syscall(
-                libc::SYS_pidfd_send_signal,
-                fd.as_raw_fd(),
-                signal,
-                std::ptr::null::<libc::siginfo_t>(),
-                0,
-            );
-        }
+    };
+    let Ok(pidfd) = pidfd_open(pid, PidfdFlags::empty()) else {
+        return;
+    };
+    if still_same() {
+        let _ = pidfd_send_signal(&pidfd, signal);
     }
 }
 #[cfg(not(target_os = "linux"))]
-fn signal_owned(_: u32, _: &str, _: i32) {}
+pub(crate) fn signal_pinned(_: u32, _: impl FnOnce() -> bool, _: Signal) {}
 impl Processes {
     pub(crate) fn remember(&mut self, pid: u32) -> Option<String> {
         let (identity, running, _) = process_state(pid)?;
@@ -157,9 +151,9 @@ impl Processes {
         for (pid, identity) in self.known.clone() {
             self.descendants(pid, &identity);
         }
-        for signal in [libc::SIGTERM, libc::SIGKILL] {
+        for signal in [Signal::TERM, Signal::KILL] {
             for (&pid, identity) in &self.known {
-                signal_owned(pid, identity, signal);
+                signal_pinned(pid, || live_identity(pid, identity), signal);
             }
             let deadline = Instant::now() + Duration::from_secs(1);
             while self

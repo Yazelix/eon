@@ -5,9 +5,13 @@
 use std::{
     fs::File,
     io::{ErrorKind, Read, Write},
-    os::fd::{AsRawFd, FromRawFd},
     path::Path,
     process::{Command, Stdio},
+};
+
+use rustix::{
+    event::{PollFd, PollFlags, Timespec},
+    io::Errno,
 };
 
 use crate::writer::{STATUS_OK, STATUS_QUERY};
@@ -18,7 +22,10 @@ pub const ROWS: u16 = 24;
 /// Orbit's PTY read size.
 const CHUNK: usize = 64 * 1024;
 /// How long the master may stay silent before the sample fails.
-const IDLE_TIMEOUT_MS: i32 = 60_000;
+const IDLE_TIMEOUT: Timespec = Timespec {
+    tv_sec: 60,
+    tv_nsec: 0,
+};
 
 pub struct Drained {
     /// The writer's time from its first write to the status reply.
@@ -182,25 +189,20 @@ fn duplicated_crs(corpus: &[u8], output: &[u8]) -> Result<u64, String> {
 }
 
 /// Waits until the master has data or its slave has closed, failing after
-/// `IDLE_TIMEOUT_MS` of silence.
+/// `IDLE_TIMEOUT` of silence.
 fn wait_readable(master: &File, bytes: u64) -> Result<(), String> {
     loop {
-        let mut poll = libc::pollfd {
-            fd: master.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: poll reads one valid pollfd.
-        match unsafe { libc::poll(&raw mut poll, 1, IDLE_TIMEOUT_MS) } {
-            -1 if std::io::Error::last_os_error().kind() == ErrorKind::Interrupted => {}
-            -1 => return Err(format!("poll: {}", std::io::Error::last_os_error())),
-            0 => {
+        let mut poll = [PollFd::new(master, PollFlags::IN)];
+        match rustix::event::poll(&mut poll, Some(&IDLE_TIMEOUT)) {
+            Err(Errno::INTR) => {}
+            Err(error) => return Err(format!("poll: {}", std::io::Error::from(error))),
+            Ok(0) => {
                 return Err(format!(
                     "the PTY was silent for {} s after {bytes} bytes",
-                    IDLE_TIMEOUT_MS / 1000
+                    IDLE_TIMEOUT.tv_sec
                 ));
             }
-            _ => return Ok(()),
+            Ok(_) => return Ok(()),
         }
     }
 }
@@ -226,44 +228,45 @@ impl QueryAtEnd {
 
 /// A PTY of `rows` x `cols` with both descriptors closed on exec and a
 /// nonblocking master; the kernel's default line discipline, so output gets
-/// ONLCR.
+/// ONLCR. The steps are the libc openpty ones (glibc's on Linux).
 pub fn open(rows: u16, cols: u16) -> std::io::Result<(File, File)> {
-    let (mut master, mut slave) = (-1, -1);
-    let mut size = libc::winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
+    use rustix::{
+        fs::{Mode, OFlags},
+        io::FdFlags,
+        pty::{self, OpenptFlags},
     };
-    // SAFETY: openpty initializes both descriptors on success.
-    if unsafe {
-        libc::openpty(
-            &raw mut master,
-            &raw mut slave,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &raw mut size,
-        )
-    } == -1
-    {
-        return Err(std::io::Error::last_os_error());
+    // As glibc's getpt; rustix's openpt would turn ENOSPC into EAGAIN.
+    #[cfg(target_os = "linux")]
+    let master = rustix::fs::open(c"/dev/ptmx", OFlags::RDWR | OFlags::NOCTTY, Mode::empty())?;
+    #[cfg(not(target_os = "linux"))]
+    let master = pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
+    pty::grantpt(&master)?;
+    pty::unlockpt(&master)?;
+    let open_slave = || {
+        let name = pty::ptsname(&master, Vec::new())?;
+        rustix::fs::open(&name, OFlags::RDWR | OFlags::NOCTTY, Mode::empty())
+    };
+    #[cfg(target_os = "linux")]
+    let slave = pty::ioctl_tiocgptpeer(&master, OpenptFlags::RDWR | OpenptFlags::NOCTTY)
+        .or_else(|_| open_slave())?;
+    #[cfg(not(target_os = "linux"))]
+    let slave = open_slave()?;
+    // Both libc openpty implementations ignore this resize's error.
+    let _ = rustix::termios::tcsetwinsize(
+        &slave,
+        rustix::termios::Winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        },
+    );
+    for fd in [&master, &slave] {
+        rustix::io::fcntl_setfd(fd, FdFlags::CLOEXEC)?;
     }
-    // SAFETY: a successful openpty transferred ownership of both descriptors.
-    let (master, slave) = unsafe { (File::from_raw_fd(master), File::from_raw_fd(slave)) };
-    for fd in [master.as_raw_fd(), slave.as_raw_fd()] {
-        // SAFETY: fd is a live descriptor owned above.
-        if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    let fd = master.as_raw_fd();
-    // SAFETY: fd is the live master owned above.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    // SAFETY: as above.
-    if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok((master, slave))
+    let flags = rustix::fs::fcntl_getfl(&master)?;
+    rustix::fs::fcntl_setfl(&master, flags | OFlags::NONBLOCK)?;
+    Ok((File::from(master), File::from(slave)))
 }
 
 /// The bytes a PTY with ONLCR delivers for `corpus` and the status query:
@@ -277,6 +280,52 @@ pub fn expected_bytes(corpus: &[u8]) -> u64 {
 mod tests {
     use super::{QueryAtEnd, duplicated_crs, expected_bytes};
     use crate::writer::STATUS_QUERY;
+
+    /// A wrong peer, flag or size here changes what every PTY suite measures.
+    #[test]
+    fn open_sets_size_flags_and_line_discipline() {
+        use rustix::{fs::OFlags, io::FdFlags};
+        use std::io::{Read, Write};
+        let (mut master, mut slave) = super::open(24, 80).unwrap();
+        let size = rustix::termios::tcgetwinsize(&slave).unwrap();
+        assert_eq!((size.ws_row, size.ws_col), (24, 80));
+        for end in [&master, &slave] {
+            assert!(
+                rustix::io::fcntl_getfd(end)
+                    .unwrap()
+                    .contains(FdFlags::CLOEXEC)
+            );
+        }
+        assert!(
+            rustix::fs::fcntl_getfl(&master)
+                .unwrap()
+                .contains(OFlags::NONBLOCK)
+        );
+        assert!(
+            !rustix::fs::fcntl_getfl(&slave)
+                .unwrap()
+                .contains(OFlags::NONBLOCK)
+        );
+        slave.write_all(b"a\n").unwrap();
+        let mut read = Vec::new();
+        let start = std::time::Instant::now();
+        while !read.ends_with(b"\n") {
+            assert!(start.elapsed().as_secs() < 5, "master read {read:?}");
+            let mut bytes = [0; 16];
+            match master.read(&mut bytes) {
+                Ok(count) => read.extend_from_slice(&bytes[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => panic!("master: {error}"),
+            }
+        }
+        // ONLCR; Apple may duplicate the CR.
+        assert!(
+            read == b"a\r\n" || (cfg!(target_os = "macos") && read == b"a\r\r\n"),
+            "{read:?}"
+        );
+    }
 
     #[test]
     fn apple_output_allows_only_extra_crs_before_lf() {

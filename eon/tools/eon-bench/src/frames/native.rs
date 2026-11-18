@@ -517,8 +517,7 @@ impl Session {
                 &[picture.to_str().ok_or("non-UTF8 capture")?],
             )?;
         }
-        // SAFETY: sysconf reads the process clock tick frequency.
-        let ticks = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).map_err(error)?;
+        let ticks = rustix::param::clock_ticks_per_second();
         let before = Cpu::at(pid)?;
         let begin = environment::monotonic_ns();
         child::publish(&dir.join("go"), "")?;

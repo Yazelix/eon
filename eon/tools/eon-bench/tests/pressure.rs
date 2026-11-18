@@ -14,10 +14,7 @@ use std::{
 };
 
 fn monotonic_ns() -> u64 {
-    // SAFETY: timespec is plain data that clock_gettime fills.
-    let mut time = unsafe { std::mem::zeroed::<libc::timespec>() };
-    // SAFETY: time is a valid timespec; CLOCK_MONOTONIC always exists.
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut time) };
+    let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
     time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
 }
 
@@ -42,8 +39,12 @@ fn workers_stop_on_sigterm_and_report_their_work() {
             .spawn()
             .unwrap();
         thread::sleep(Duration::from_millis(300));
-        // SAFETY: kill has no memory arguments; the child is not yet reaped.
-        unsafe { libc::kill(worker.id() as i32, libc::SIGTERM) };
+        // The child is not yet reaped, so its PID is still ours.
+        rustix::process::kill_process(
+            rustix::process::Pid::from_child(&worker),
+            rustix::process::Signal::TERM,
+        )
+        .unwrap();
         let stopping = Instant::now();
         let status = loop {
             if let Some(status) = worker.try_wait().unwrap() {

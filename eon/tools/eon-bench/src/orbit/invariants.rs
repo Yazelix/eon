@@ -193,7 +193,7 @@ pub fn check(exe: &Path, orbit: &Path, expected: &[(&str, &str)]) -> Result {
             .stdin(Stdio::null())
             .stdout(log_file.try_clone().map_err(|e| e.to_string())?)
             .stderr(log_file);
-        let child = environment::die_with_parent(&mut command)
+        let child = crate::sys::die_with_parent(&mut command)
             .spawn()
             .map_err(|e| e.to_string())?;
         let pid = child.id();

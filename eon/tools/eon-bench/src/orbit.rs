@@ -492,7 +492,7 @@ fn file_sha256(path: &Path) -> Result<String, String> {
 }
 
 fn kitten_version(path: &Path) -> Result<String, String> {
-    let output = environment::die_with_parent(Command::new(path).arg("--version"))
+    let output = crate::sys::die_with_parent(Command::new(path).arg("--version"))
         .output()
         .map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(format!(
@@ -648,7 +648,7 @@ fn sample(spec: &Spec) -> Result<Outcome, String> {
     let log_copy = log_file
         .try_clone()
         .map_err(|error| format!("{}: {error}", log.display()))?;
-    environment::die_with_parent(&mut command);
+    crate::sys::die_with_parent(&mut command);
     let child = command
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
@@ -1378,8 +1378,7 @@ pub(crate) mod procfs {
 
     #[cfg(target_os = "linux")]
     pub fn thread_id() -> Option<u32> {
-        // SAFETY: gettid has no preconditions.
-        u32::try_from(unsafe { libc::gettid() }).ok()
+        u32::try_from(rustix::thread::gettid().as_raw_nonzero().get()).ok()
     }
 
     #[cfg(not(target_os = "linux"))]

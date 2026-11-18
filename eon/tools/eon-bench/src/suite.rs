@@ -221,51 +221,28 @@ pub fn round_label(settings: &Settings, round: u64) -> (&'static str, u64, u64) 
 /// only records the signal, which the suite's waits check, so the suite
 /// cleans up and fails; a second takes the default action.
 pub mod interrupt {
-    use std::sync::atomic::{AtomicI32, Ordering};
-
-    static SIGNAL: AtomicI32 = AtomicI32::new(0);
-
-    extern "C" fn record(signal: libc::c_int) {
-        SIGNAL.store(signal, Ordering::SeqCst);
-    }
+    use crate::sys::signal::{self, Reset, Signal};
 
     pub fn install() -> Result<(), String> {
-        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-            // SAFETY: the handler only stores to an atomic, and the action is
-            // fully initialized before sigaction reads it.
-            let result = unsafe {
-                let mut action: libc::sigaction = std::mem::zeroed();
-                action.sa_sigaction = record as extern "C" fn(libc::c_int) as libc::sighandler_t;
-                action.sa_flags = libc::SA_RESETHAND | libc::SA_RESTART;
-                libc::sigemptyset(&raw mut action.sa_mask);
-                libc::sigaction(signal, &raw const action, std::ptr::null_mut())
-            };
-            if result != 0 {
-                return Err(format!("sigaction: {}", std::io::Error::last_os_error()));
-            }
-        }
+        signal::catch(&[Signal::INT, Signal::TERM, Signal::HUP], Reset::OnFirst)
+            .map_err(|error| format!("sigaction: {error}"))?
+            .forever();
         Ok(())
     }
 
     /// Fails once a signal has arrived.
     pub fn check() -> Result<(), String> {
-        match SIGNAL.load(Ordering::SeqCst) {
-            0 => Ok(()),
-            signal => Err(format!("interrupted by signal {signal}")),
+        match signal::received() {
+            None => Ok(()),
+            Some(signal) => Err(format!("interrupted by signal {}", signal.as_raw())),
         }
     }
 
     /// Ends the process by the signal that interrupted it, if one did, so
     /// its parent sees that signal.
     pub fn resend() {
-        let signal = SIGNAL.load(Ordering::SeqCst);
-        if signal != 0 {
-            // SAFETY: restoring the default action and raising a signal have
-            // no preconditions.
-            unsafe {
-                libc::signal(signal, libc::SIG_DFL);
-                libc::raise(signal);
-            }
+        if let Some(received) = signal::received() {
+            signal::reraise(received);
         }
     }
 }

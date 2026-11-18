@@ -50,7 +50,7 @@ pub(super) fn conditions(
     terminals::check_candidate_fontconfig(&eon, &terminals::tool("product_fontconfig")?)?;
     let adapter = options.out.join("preflight-adapter");
     let log = fs::File::create(options.out.join("preflight-adapter.log")).map_err(error)?;
-    let status = environment::die_with_parent(
+    let status = crate::sys::die_with_parent(
         Command::new(exe)
             .args(["headless", "--eon"])
             .arg(eon)

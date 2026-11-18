@@ -1,82 +1,91 @@
 //! What a result records about the machine it ran on, and CPU pinning.
 
-use std::{ffi::CStr, path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::{
     result::{Build, Source},
     sha256::Sha256,
+    sys::die_with_parent,
 };
-
-/// Has `command`'s process get SIGKILL when this process dies, however it
-/// dies, and refuse to start if this process died before it could ask
-/// (Linux; elsewhere a no-op). A spawn from a thread that ends first kills
-/// it too, so callers spawn from the main thread.
-pub fn die_with_parent(command: &mut Command) -> &mut Command {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt;
-        let parent = std::process::id();
-        // SAFETY: prctl and getppid are async-signal-safe, and the errors
-        // need no allocation.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if u32::try_from(libc::getppid()) != Ok(parent) {
-                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
-                }
-                Ok(())
-            });
-        }
-    }
-    command
-}
 
 /// Nanoseconds on the system's monotonic clock, which every process reads
 /// alike, so times taken in different processes compare.
 pub fn monotonic_ns() -> u64 {
-    // SAFETY: timespec is plain data that clock_gettime fills.
-    let mut time = unsafe { std::mem::zeroed::<libc::timespec>() };
-    // SAFETY: time is a valid timespec; CLOCK_MONOTONIC always exists.
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut time) };
+    let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
     time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+}
+
+/// `/run/user/<effective uid>`, the parent of private runtime roots.
+pub(crate) fn user_runtime_parent() -> PathBuf {
+    PathBuf::from(format!("/run/user/{}", rustix::process::geteuid().as_raw()))
 }
 
 /// The 1-minute load average.
 pub fn load() -> Result<f64, String> {
-    let mut loads = [0.0; 1];
-    // SAFETY: getloadavg writes at most one value into the array.
-    if unsafe { libc::getloadavg(loads.as_mut_ptr(), 1) } != 1 {
-        return Err("the load average is unavailable".into());
-    }
-    Ok(loads[0])
+    #[cfg(target_os = "linux")]
+    let load = Some(load_from_fixed(rustix::system::sysinfo().loads[0]));
+    #[cfg(not(target_os = "linux"))]
+    let load = crate::sys::load_average();
+    load.ok_or_else(|| "the load average is unavailable".into())
 }
 
+/// The kernel's fixed-point load (16 fraction bits), converted as glibc's
+/// getloadavg converts sysinfo's. `/proc/loadavg` rounds to two decimals,
+/// which would admit a load just above a `--max-load` ceiling.
+#[cfg(target_os = "linux")]
+fn load_from_fixed(raw: u64) -> f64 {
+    raw as f64 / f64::from(1 << 16)
+}
+
+/// The CPUs online on the machine, not only those this process may use
+/// (`cpus_allowed`), counted as glibc's `sysconf(_SC_NPROCESSORS_ONLN)`
+/// counts them on Linux; elsewhere std's count, which on Apple is that same
+/// sysconf (1 when unknown).
 pub fn cpus_online() -> u64 {
-    // SAFETY: sysconf only reads a configuration value.
-    u64::try_from(unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }).unwrap_or(1)
+    #[cfg(target_os = "linux")]
+    let count = online_count(
+        std::fs::read_to_string("/sys/devices/system/cpu/online")
+            .ok()
+            .as_deref(),
+        std::fs::read_to_string("/proc/stat").ok().as_deref(),
+        cpus_allowed().map(|cpus| cpus.len() as u64),
+    );
+    #[cfg(not(target_os = "linux"))]
+    let count = std::thread::available_parallelism().map_or(1, |count| count.get() as u64);
+    count
+}
+
+/// glibc's `get_nprocs` order: the sysfs online list, else the `cpuN` lines
+/// at the top of `/proc/stat`, else the affinity mask, else 2.
+#[cfg(target_os = "linux")]
+fn online_count(online: Option<&str>, stat: Option<&str>, allowed: Option<u64>) -> u64 {
+    let listed = online
+        .and_then(|list| parse_cpus(list.trim()).ok())
+        .map(|cpus| cpus.len() as u64);
+    let counted = stat.map(|text| {
+        text.lines()
+            .take_while(|line| line.starts_with("cpu"))
+            .filter(|line| line.as_bytes().get(3).is_some_and(u8::is_ascii_digit))
+            .count() as u64
+    });
+    [listed, counted, allowed]
+        .into_iter()
+        .flatten()
+        .find(|&count| count > 0)
+        .unwrap_or(2)
 }
 
 /// `sysname release machine`, from uname.
 pub fn kernel() -> String {
-    // SAFETY: utsname is plain data that uname fills on success.
-    let mut name = unsafe { std::mem::zeroed::<libc::utsname>() };
-    // SAFETY: name is a valid utsname.
-    if unsafe { libc::uname(&raw mut name) } == -1 {
-        return std::env::consts::OS.to_owned();
-    }
-    let text = |field: &[libc::c_char]| {
-        // SAFETY: uname writes NUL-terminated strings within each field.
-        unsafe { CStr::from_ptr(field.as_ptr()) }
-            .to_string_lossy()
-            .into_owned()
-    };
+    let name = rustix::system::uname();
     format!(
         "{} {} {}",
-        text(&name.sysname),
-        text(&name.release),
-        text(&name.machine)
+        name.sysname().to_string_lossy(),
+        name.release().to_string_lossy(),
+        name.machine().to_string_lossy()
     )
 }
 
@@ -144,41 +153,28 @@ pub use linux::{cpus_allowed, pin};
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use rustix::thread::{CpuSet, sched_getaffinity, sched_setaffinity};
+
     /// Pins this process, and the processes it starts, to `cpus`.
     pub fn pin(cpus: &[u64]) -> Result<(), String> {
-        // SAFETY: cpu_set_t is a plain bitmask; zero is the empty set.
-        let mut set = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+        let mut set = CpuSet::new();
         for &cpu in cpus {
             let cpu = usize::try_from(cpu)
                 .ok()
-                .filter(|&cpu| cpu < libc::CPU_SETSIZE as usize)
+                .filter(|&cpu| cpu < CpuSet::MAX_CPU)
                 .ok_or(format!("CPU {cpu} is out of range"))?;
-            // SAFETY: cpu is below CPU_SETSIZE, inside the set.
-            unsafe { libc::CPU_SET(cpu, &mut set) };
+            set.set(cpu);
         }
-        // SAFETY: set is a valid cpu_set_t of the size passed.
-        if unsafe { libc::sched_setaffinity(0, size_of::<libc::cpu_set_t>(), &raw const set) } == -1
-        {
-            return Err(format!(
-                "pinning to CPUs {cpus:?}: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        Ok(())
+        sched_setaffinity(None, &set)
+            .map_err(|error| format!("pinning to CPUs {cpus:?}: {}", std::io::Error::from(error)))
     }
 
     /// The CPUs this process may run on.
     pub fn cpus_allowed() -> Option<Vec<u64>> {
-        // SAFETY: cpu_set_t is a plain bitmask that sched_getaffinity fills.
-        let mut set = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
-        // SAFETY: set is a valid cpu_set_t of the size passed.
-        if unsafe { libc::sched_getaffinity(0, size_of::<libc::cpu_set_t>(), &raw mut set) } == -1 {
-            return None;
-        }
+        let set = sched_getaffinity(None).ok()?;
         Some(
-            (0..libc::CPU_SETSIZE as usize)
-                // SAFETY: cpu is below CPU_SETSIZE, inside the set.
-                .filter(|&cpu| unsafe { libc::CPU_ISSET(cpu, &set) })
+            (0..CpuSet::MAX_CPU)
+                .filter(|&cpu| set.is_set(cpu))
                 .map(|cpu| cpu as u64)
                 .collect(),
         )
@@ -263,7 +259,7 @@ fn checkout_source() -> Option<Source> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_cpus;
+    use super::*;
 
     #[test]
     fn cpu_lists_take_numbers_and_ranges() {
@@ -273,4 +269,44 @@ mod tests {
             assert!(parse_cpus(bad).is_err(), "accepted {bad:?}");
         }
     }
+
+    /// /proc/loadavg would print 1.00 here and pass a --max-load 1 ceiling.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn load_keeps_the_kernel_fixed_point_above_a_ceiling() {
+        assert_eq!(load_from_fixed(65_792), 1.003_906_25);
+        assert!(load_from_fixed(65_537) > 1.0);
+        assert_eq!(load_from_fixed(1 << 16), 1.0);
+        assert!(load().unwrap() >= 0.0);
+    }
+
+    /// Without sysfs, glibc counts /proc/stat; a fallback of 1 would lower the
+    /// default load ceiling and fail a gate baseline's fixed conditions.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn online_cpus_fall_back_as_glibc_does() {
+        let stat = "cpu  1 2 3\ncpu0 1 2\ncpu1 1 2\ncpu2 1\ncpu3 1\nintr 5\ncpu9 1\n";
+        assert_eq!(online_count(Some("0-7\n"), Some(stat), Some(3)), 8);
+        assert_eq!(online_count(None, Some(stat), Some(3)), 4);
+        assert_eq!(online_count(Some("garbage"), Some(stat), Some(3)), 4);
+        assert_eq!(online_count(None, None, Some(3)), 3);
+        assert_eq!(online_count(None, Some("intr 5\n"), None), 2);
+    }
+
+    /// A wrong CpuSet bit or size pins to, or reports, other CPUs.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pin_and_cpus_allowed_round_trip() {
+        let allowed = cpus_allowed().unwrap();
+        let last = *allowed.last().unwrap();
+        pin(&[last]).unwrap();
+        assert_eq!(cpus_allowed().unwrap(), [last]);
+        pin(&allowed).unwrap();
+        assert_eq!(cpus_allowed().unwrap(), allowed);
+        assert!(cpus_online() >= allowed.len() as u64);
+        assert!(pin(&[CPU_OUT_OF_RANGE]).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    const CPU_OUT_OF_RANGE: u64 = rustix::thread::CpuSet::MAX_CPU as u64;
 }

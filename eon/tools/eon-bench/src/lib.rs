@@ -21,6 +21,15 @@ mod result;
 mod sha256;
 mod stats;
 mod suite;
+#[allow(unsafe_code)]
+mod sys;
 pub mod terminals;
 mod vtebench;
 pub mod writer;
+
+/// Resolves the monotonic clock before anything is timed: rustix finds the
+/// vDSO clock on its first use, so the bench pays that once at startup
+/// rather than inside its first recorded stamp.
+pub fn warm_clock() {
+    environment::monotonic_ns();
+}

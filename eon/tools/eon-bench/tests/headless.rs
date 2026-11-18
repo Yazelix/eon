@@ -154,9 +154,8 @@ exit 17"#,
     );
     fixture.tool("timeout", &format!(r#"printf 'DISPLAY=%s\nWAYLAND_DISPLAY=%s\nBUS=%s\n' "${{DISPLAY-unset}}" "${{WAYLAND_DISPLAY-unset}}" "${{DBUS_SESSION_BUS_ADDRESS-unset}}" >> "${{0%/*}}/environment.log"
 exec {} "$@""#, executable("timeout").display()));
-    // eon-test owns /run; geteuid has no side effects and the host runtime is never involved.
-    // SAFETY: geteuid has no arguments or side effects.
-    fs::create_dir_all(format!("/run/user/{}", unsafe { libc::geteuid() })).unwrap();
+    // eon-test owns /run; the host runtime is never involved.
+    fs::create_dir_all(format!("/run/user/{}", rustix::process::geteuid().as_raw())).unwrap();
     let out = fixture.0[1].join("out");
     let output = fixture
         .command("response", &out)

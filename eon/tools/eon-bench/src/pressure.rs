@@ -8,13 +8,10 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    ffi::{CString, OsString},
+    ffi::OsString,
     fs::{self, File},
     io::{Seek, SeekFrom, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{DirBuilderExt, OpenOptionsExt},
-    },
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus},
     sync::{
@@ -26,8 +23,9 @@ use std::{
 };
 
 use crate::{
-    environment::{self, die_with_parent, monotonic_ns},
+    environment::{self, monotonic_ns},
     json::Value,
+    sys::die_with_parent,
 };
 
 type Result<T = ()> = std::result::Result<T, String>;
@@ -238,19 +236,9 @@ fn own_cgroup() -> Option<PathBuf> {
     cgroup_path(&fs::read_to_string("/proc/self/cgroup").ok()?)
 }
 
-fn statfs(path: &Path) -> Result<libc::statfs> {
-    let name = CString::new(path.as_os_str().as_bytes()).map_err(failure)?;
-    // SAFETY: statfs is plain data that the call fills.
-    let mut stat = unsafe { std::mem::zeroed::<libc::statfs>() };
-    // SAFETY: name is NUL-terminated and stat is a valid statfs.
-    if unsafe { libc::statfs(name.as_ptr(), &raw mut stat) } != 0 {
-        return Err(format!(
-            "{}: {}",
-            path.display(),
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(stat)
+fn statfs(path: &Path) -> Result<rustix::fs::StatFs> {
+    rustix::fs::statfs(path)
+        .map_err(|error| format!("{}: {}", path.display(), std::io::Error::from(error)))
 }
 
 fn free_bytes(path: &Path) -> Option<u64> {
@@ -852,8 +840,10 @@ impl Pressure {
             match worker.poll() {
                 Ok(None) => {
                     // Unreaped, and only this thread reaps it now: the PID is still ours.
-                    // SAFETY: kill has no memory arguments.
-                    unsafe { libc::kill(worker.child.id() as i32, libc::SIGTERM) };
+                    let _ = rustix::process::kill_process(
+                        rustix::process::Pid::from_child(&worker.child),
+                        rustix::process::Signal::TERM,
+                    );
                     signalled.push(true);
                 }
                 Ok(Some(status)) => {
@@ -1123,8 +1113,6 @@ fn attainment(
     ])
 }
 
-static STOP: AtomicBool = AtomicBool::new(false);
-
 /// `eon-bench pressure-worker KIND DEADLINE_NS AMOUNT DIR REPORT`: one bounded
 /// load until SIGTERM or the monotonic deadline, then a JSON report of its work.
 pub fn worker(arguments: &[String]) -> Result {
@@ -1134,12 +1122,13 @@ pub fn worker(arguments: &[String]) -> Result {
     let deadline: u64 = deadline.parse().map_err(failure)?;
     let amount: u64 = amount.parse().map_err(failure)?;
     let directory = Path::new(directory);
-    extern "C" fn stop(_: libc::c_int) {
-        STOP.store(true, Ordering::SeqCst);
+    {
+        use crate::sys::signal::{Reset, Signal, catch};
+        catch(&[Signal::TERM], Reset::Never)
+            .map_err(|error| format!("SIGTERM handler: {error}"))?
+            .forever();
     }
-    // SAFETY: the handler only stores an atomic, which is async-signal-safe.
-    unsafe { libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t) };
-    let running = || !STOP.load(Ordering::SeqCst) && monotonic_ns() < deadline;
+    let running = || crate::sys::signal::received().is_none() && monotonic_ns() < deadline;
     let (work, unit) = match kind.as_str() {
         "cpu" => (cpu(amount, &running), "spin batches"),
         "sequential" => (sequential(directory, amount, &running)?, "bytes written"),
@@ -1147,21 +1136,14 @@ pub fn worker(arguments: &[String]) -> Result {
         "memory" => (memory(amount, &running), "pages touched"),
         _ => return Err(format!("unknown pressure worker {kind}")),
     };
-    // SAFETY: rusage is plain data that getrusage fills.
-    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-    // SAFETY: usage is a valid rusage.
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &raw mut usage) };
-    let cpu_ms = |t: libc::timeval| t.tv_sec as u64 * 1000 + t.tv_usec as u64 / 1000;
+    let usage = crate::sys::self_usage();
     let value = object([
         ("kind", kind.as_str().into()),
         ("amount", amount.into()),
         ("work", work.into()),
         ("unit", unit.into()),
-        (
-            "cpu_ms",
-            (cpu_ms(usage.ru_utime) + cpu_ms(usage.ru_stime)).into(),
-        ),
-        ("major_faults", (usage.ru_majflt as u64).into()),
+        ("cpu_ms", usage.cpu_ms.into()),
+        ("major_faults", usage.major_faults.into()),
         ("stopped_ns", monotonic_ns().to_string().into()),
     ]);
     fs::write(report, value.to_pretty()).map_err(failure)

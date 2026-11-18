@@ -484,7 +484,7 @@ pub fn run(options: &Options) -> Result {
                         "eon-bench gate: run {round} {suite}; log {}",
                         options.out.display()
                     );
-                    let status = environment::die_with_parent(&mut command)
+                    let status = crate::sys::die_with_parent(&mut command)
                         .stdin(Stdio::null())
                         .stdout(log)
                         .stderr(log2)

@@ -13,9 +13,15 @@
 use std::{
     fs::File,
     io::{ErrorKind, Read, Write},
-    os::fd::{AsFd, AsRawFd},
+    os::fd::{AsFd, BorrowedFd},
     path::Path,
     time::{Duration, Instant},
+};
+
+use rustix::{
+    event::{PollFd, PollFlags, Timespec},
+    io::Errno,
+    termios::{LocalModes, OptionalActions, QueueSelector, SpecialCodeIndex, Termios},
 };
 
 use crate::{environment::monotonic_ns, json::Value};
@@ -33,7 +39,7 @@ pub fn run(file: &Path, report: &Path) -> Result<(), String> {
             .try_clone_to_owned()
             .map_err(|error| failure("stdout", error))?,
     );
-    let mut input = File::from(
+    let input = File::from(
         std::io::stdin()
             .as_fd()
             .try_clone_to_owned()
@@ -47,7 +53,8 @@ pub fn run(file: &Path, report: &Path) -> Result<(), String> {
         .write_all(&bytes)
         .and_then(|()| output.write_all(STATUS_QUERY))
         .map_err(|error| failure("stdout", error))?;
-    wait_for_reply(&mut input, REPLY_TIMEOUT)?;
+    // Read through a shared borrow: the mode guard holds one too.
+    wait_for_reply(&mut &input, REPLY_TIMEOUT)?;
     let seconds = start.elapsed().as_secs_f64();
     let replied_ns = monotonic_ns();
     drop(mode);
@@ -68,7 +75,7 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 /// such as a key pressed during the run, is skipped; a reply other than OK,
 /// or none within `timeout`, even while other input keeps arriving, fails the
 /// run.
-fn wait_for_reply(input: &mut (impl Read + AsRawFd), timeout: Duration) -> Result<(), String> {
+fn wait_for_reply(input: &mut (impl Read + AsFd), timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     let mut seen = Vec::new();
     let mut buffer = [0; 256];
@@ -80,20 +87,18 @@ fn wait_for_reply(input: &mut (impl Read + AsRawFd), timeout: Duration) -> Resul
                 timeout.as_secs_f64()
             ));
         }
-        let mut poll = libc::pollfd {
-            fd: input.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // Rounded up, so a wait under a millisecond still waits.
-        let millis = i32::try_from(left.as_micros().div_ceil(1000)).unwrap_or(i32::MAX);
-        // SAFETY: poll reads one valid pollfd.
-        match unsafe { libc::poll(&raw mut poll, 1, millis) } {
-            -1 if std::io::Error::last_os_error().kind() == ErrorKind::Interrupted => continue,
-            -1 => return Err(format!("stdin: {}", std::io::Error::last_os_error())),
+        let mut poll = [PollFd::new(&*input, PollFlags::IN)];
+        // The exact remainder, so a wait under a millisecond still waits.
+        let left = Timespec::try_from(left).unwrap_or(Timespec {
+            tv_sec: i64::MAX,
+            tv_nsec: 0,
+        });
+        match rustix::event::poll(&mut poll, Some(&left)) {
+            Err(Errno::INTR) => continue,
+            Err(error) => return Err(format!("stdin: {}", std::io::Error::from(error))),
             // The deadline check above reports the timeout.
-            0 => continue,
-            _ => {}
+            Ok(0) => continue,
+            Ok(_) => {}
         }
         let count = match input.read(&mut buffer) {
             Ok(count) => count,
@@ -121,43 +126,30 @@ fn wait_for_reply(input: &mut (impl Read + AsRawFd), timeout: Duration) -> Resul
 /// The terminal's input without line editing or echo, so the reply arrives
 /// unbuffered and is not echoed into the output being measured; output
 /// processing, such as ONLCR, stays as it was. Dropping it restores the mode.
-pub(crate) struct RawInput {
-    fd: std::os::fd::RawFd,
-    saved: libc::termios,
+pub(crate) struct RawInput<'a> {
+    fd: BorrowedFd<'a>,
+    saved: Termios,
 }
 
-impl RawInput {
-    pub(crate) fn enter(input: &File) -> std::io::Result<Self> {
-        let fd = input.as_raw_fd();
-        // SAFETY: termios is plain data that tcgetattr fills on success.
-        let mut saved = unsafe { std::mem::zeroed::<libc::termios>() };
-        // SAFETY: fd is an open descriptor and saved is a valid termios.
-        if unsafe { libc::tcgetattr(fd, &raw mut saved) } == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
-        let mut raw = saved;
-        raw.c_lflag &= !(libc::ICANON | libc::ECHO);
-        raw.c_cc[libc::VMIN] = 1;
-        raw.c_cc[libc::VTIME] = 0;
-        // SAFETY: fd is an open descriptor and raw is a valid termios.
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw const raw) } == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
+impl<'a> RawInput<'a> {
+    pub(crate) fn enter(input: &'a File) -> std::io::Result<Self> {
+        let fd = input.as_fd();
+        let saved = rustix::termios::tcgetattr(fd)?;
+        let mut raw = saved.clone();
+        raw.local_modes &= !(LocalModes::ICANON | LocalModes::ECHO);
+        raw.special_codes[SpecialCodeIndex::VMIN] = 1;
+        raw.special_codes[SpecialCodeIndex::VTIME] = 0;
+        rustix::termios::tcsetattr(fd, OptionalActions::Now, &raw)?;
         let mode = Self { fd, saved };
         // Input queued before the run, such as a stale reply, must not end it.
-        // SAFETY: fd is an open terminal descriptor.
-        if unsafe { libc::tcflush(fd, libc::TCIFLUSH) } == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
+        rustix::termios::tcflush(fd, QueueSelector::IFlush)?;
         Ok(mode)
     }
 }
 
-impl Drop for RawInput {
+impl Drop for RawInput<'_> {
     fn drop(&mut self) {
-        // SAFETY: the descriptor outlives this guard, and saved came from
-        // tcgetattr on it.
-        unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &raw const self.saved) };
+        let _ = rustix::termios::tcsetattr(self.fd, OptionalActions::Now, &self.saved);
     }
 }
 

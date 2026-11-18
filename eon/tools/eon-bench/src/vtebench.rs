@@ -11,12 +11,11 @@
 
 use std::{
     ffi::OsString,
-    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
-use crate::{environment, pty, sha256::Sha256};
+use crate::{pty, sha256::Sha256};
 
 /// The benchmarks of vtebench's `benchmarks/` directory at the pinned
 /// revision.
@@ -118,7 +117,7 @@ fn script_output(
     // writes only to its stdout.
     let (_master, slave) = pty::open(rows, cols).map_err(|error| failure(error.to_string()))?;
     let mut command = Command::new("sh");
-    environment::die_with_parent(&mut command);
+    crate::sys::die_with_parent(&mut command);
     command
         .arg(script)
         .stdin(Stdio::from(slave))
@@ -130,15 +129,7 @@ fn script_output(
     if let Some(path) = path {
         command.env("PATH", path);
     }
-    // SAFETY: only async-signal-safe calls between fork and exec.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    crate::sys::own_session_on_stdin(&mut command);
     let output = command
         .output()
         .map_err(|error| failure(format!("sh: {error}")))?;

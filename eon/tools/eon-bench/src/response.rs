@@ -17,7 +17,7 @@ use std::{
 };
 
 use crate::{
-    environment,
+    environment::{self, monotonic_ns},
     json::Value,
     launcher::{BusPolicy, Headless, WindowMode, live_identity},
     pressure::{self, Pressure, Settings},
@@ -126,18 +126,6 @@ fn object(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
             .map(|(key, value)| (key.into(), value))
             .collect(),
     )
-}
-fn nanos() -> u64 {
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: time is a writable timespec for the process-independent monotonic clock.
-    assert_eq!(
-        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut time) },
-        0
-    );
-    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
 }
 
 #[derive(Clone, Debug)]
@@ -525,7 +513,7 @@ impl Session {
         self.launch.command(program)
     }
     fn call(&mut self, program: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Result<String> {
-        if CANCELLED.load(Ordering::Relaxed) {
+        if crate::sys::signal::received().is_some() {
             return Err("response run cancelled".into());
         }
         if Instant::now() >= self.deadline {
@@ -771,9 +759,9 @@ impl Session {
             args.extend(["-g", geometry.as_str()]);
         }
         args.push(path.to_str().ok_or("non-UTF8 output path")?);
-        let begin = nanos();
+        let begin = monotonic_ns();
         self.call("grim", &args)?;
-        let end = nanos();
+        let end = monotonic_ns();
         let picture = Picture::read(&path)?;
         if rect.is_some_and(|r| picture.width != r.w as usize || picture.height != r.h as usize) {
             return Err("capture region dimensions changed".into());
@@ -987,7 +975,7 @@ fn measure(
         }
     }
     let first_event = session.events.len();
-    let begin = nanos();
+    let begin = monotonic_ns();
     let mut sent = Vec::new();
     let injected = !(options.sensitivity == "invalid" && case.name == "typing");
     match &case.stimulus {
@@ -1001,16 +989,16 @@ fn measure(
         }
         Stimulus::Burst(count) => {
             for _ in 0..*count {
-                let at = nanos();
+                let at = monotonic_ns();
                 session.key("x")?;
                 sent.push(object([
                     ("sent_ns", at.to_string().into()),
-                    ("send_completed_ns", nanos().to_string().into()),
+                    ("send_completed_ns", monotonic_ns().to_string().into()),
                 ]));
             }
         }
     }
-    let send_end = nanos();
+    let send_end = monotonic_ns();
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut lower = 0;
     let mut upper = None;
@@ -1049,7 +1037,7 @@ fn measure(
         }
     }
     session.pump()?;
-    let end = nanos();
+    let end = monotonic_ns();
     let events: Vec<_> = session.events[first_event..]
         .iter()
         .filter(|event| event.at >= begin && event.at <= end)
@@ -1178,7 +1166,7 @@ fn attempt(
     ordinal: usize,
     samples: &mut Vec<Value>,
 ) -> Result<Verdict> {
-    let attempted = nanos();
+    let attempted = monotonic_ns();
     match measure(session, options, case, ordinal) {
         Ok((sample, verdict)) => {
             samples.push(sample);
@@ -1302,7 +1290,7 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
         },
     ];
     session.focus("p1")?;
-    let cold_begin = nanos();
+    let cold_begin = monotonic_ns();
     let cold_event = session.events.len();
     session.key("alt+shift+j")?;
     session.wait(0, "popup=+")?;
@@ -1410,7 +1398,7 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
     for (name, primary) in [("key", "key Pressed"), ("inside-click", "pointer Pressed")] {
         session.pump()?;
         let first_event = session.events.len();
-        let begin = nanos();
+        let begin = monotonic_ns();
         if name == "key" {
             session.key("x")?;
         } else {
@@ -1682,42 +1670,13 @@ fn cases(session: &mut Session, options: &Options, samples: &mut Vec<Value>) -> 
     }
 }
 
-static CANCELLED: AtomicBool = AtomicBool::new(false);
+/// SIGINT and SIGTERM cancel a response run, which then cleans up and fails;
+/// the previous actions return when it ends.
 #[cfg(target_os = "linux")]
-struct Interrupts([libc::sighandler_t; 2]);
-#[cfg(target_os = "linux")]
-impl Interrupts {
-    fn enter() -> Result<Self> {
-        extern "C" fn cancel(_: libc::c_int) {
-            CANCELLED.store(true, Ordering::Relaxed);
-        }
-        CANCELLED.store(false, Ordering::Relaxed);
-        // SAFETY: the handler only stores a lock-free flag; the guard restores both handlers.
-        let previous = unsafe {
-            [
-                libc::signal(libc::SIGINT, cancel as *const () as libc::sighandler_t),
-                libc::signal(libc::SIGTERM, cancel as *const () as libc::sighandler_t),
-            ]
-        };
-        let guard = Self(previous);
-        if guard.0.contains(&libc::SIG_ERR) {
-            return Err("cannot install response cleanup handlers".into());
-        }
-        Ok(guard)
-    }
-}
-#[cfg(target_os = "linux")]
-impl Drop for Interrupts {
-    fn drop(&mut self) {
-        for (signal, handler) in [libc::SIGINT, libc::SIGTERM].into_iter().zip(self.0) {
-            if handler != libc::SIG_ERR {
-                // SAFETY: each successful handler came from signal for this exact signal.
-                unsafe {
-                    libc::signal(signal, handler);
-                }
-            }
-        }
-    }
+fn catch_interrupts() -> Result<crate::sys::signal::Caught> {
+    use crate::sys::signal::{Reset, Signal, catch};
+    catch(&[Signal::INT, Signal::TERM], Reset::Never)
+        .map_err(|_| "cannot install response cleanup handlers".into())
 }
 
 pub fn run(options: &Options) -> Result {
@@ -1725,7 +1684,7 @@ pub fn run(options: &Options) -> Result {
         return Err("response currently requires Linux/Wayland".into());
     }
     #[cfg(target_os = "linux")]
-    let _interrupts = Interrupts::enter()?;
+    let _interrupts = catch_interrupts()?;
     let eon = crate::launcher::candidate(&options.eon)?;
     fs::DirBuilder::new()
         .mode(0o700)
@@ -2013,7 +1972,7 @@ pub fn fixture(arguments: &[String]) -> Result {
         let packet = format!(
             "fixture\t{}\t{sequence}\t{}\t{lost}\t{stage}\t{detail}",
             std::process::id(),
-            nanos()
+            monotonic_ns()
         );
         sequence += 1;
         if socket.send(packet.as_bytes()).is_err() {
@@ -2049,27 +2008,21 @@ pub fn fixture(arguments: &[String]) -> Result {
     draw(&mut output, 0)?;
     let mut count = 0;
     loop {
-        use std::os::fd::AsRawFd;
+        use rustix::event::{PollFd, PollFlags, Timespec};
         let mut poll = [
-            libc::pollfd {
-                fd: input.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: control.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            },
+            PollFd::new(&input, PollFlags::IN),
+            PollFd::new(&control, PollFlags::IN),
         ];
-        // SAFETY: poll contains two valid descriptors and is writable for its full length.
-        if unsafe { libc::poll(poll.as_mut_ptr(), 2, 1000) } < 0 {
-            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(failure(std::io::Error::last_os_error()));
+        let second = Timespec {
+            tv_sec: 1,
+            tv_nsec: 0,
+        };
+        match rustix::event::poll(&mut poll, Some(&second)) {
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(failure(std::io::Error::from(error))),
+            Ok(_) => {}
         }
-        if poll[1].revents != 0 {
+        if !poll[1].revents().is_empty() {
             let mut bytes = [0; 32];
             let (length, peer) = control.recv_from(&mut bytes).map_err(failure)?;
             let peer = peer
@@ -2094,7 +2047,7 @@ pub fn fixture(arguments: &[String]) -> Result {
                 _ => return Err("invalid fixture command".into()),
             }
         }
-        if poll[0].revents != 0 {
+        if !poll[0].revents().is_empty() {
             let mut bytes = [0; 64];
             let length = (&input).read(&mut bytes).map_err(failure)?;
             if length == 0 {

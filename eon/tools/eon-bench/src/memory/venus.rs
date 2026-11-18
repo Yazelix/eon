@@ -1,10 +1,7 @@
 //! Native workspace client delta, using the shared display launcher and estimator.
 use super::*;
 use crate::launcher::{BusPolicy, Headless, WindowMode};
-use std::os::{
-    fd::AsRawFd,
-    unix::{ffi::OsStrExt, net::UnixDatagram},
-};
+use std::os::unix::{ffi::OsStrExt, net::UnixDatagram};
 
 struct Trace {
     receiver: std::sync::mpsc::Receiver<Result<String>>,
@@ -17,20 +14,8 @@ struct Trace {
 impl Trace {
     fn new(socket: UnixDatagram, log: File) -> Result<Self> {
         // Keep one-shot GPU records through workspace startup bursts.
-        let buffer: libc::c_int = 1024 * 1024;
-        // SAFETY: this live socket and initialized scalar have the stated size.
-        if unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_RCVBUF,
-                (&buffer as *const libc::c_int).cast(),
-                std::mem::size_of_val(&buffer) as libc::socklen_t,
-            )
-        } != 0
-        {
-            return Err(error(std::io::Error::last_os_error()));
-        }
+        rustix::net::sockopt::set_socket_recv_buffer_size(&socket, 1024 * 1024)
+            .map_err(|e| error(std::io::Error::from(e)))?;
         socket
             .set_read_timeout(Some(Duration::from_millis(100)))
             .map_err(error)?;
@@ -352,7 +337,7 @@ impl Session<'_> {
         if initial.parent != pid {
             return Err("initial Venus not owned by supervisor".into());
         }
-        initial.signal(libc::SIGTERM);
+        initial.signal(Signal::TERM);
         self.wait("startup presentation exited", || !initial.alive())?;
         trace.reset()?;
         self.display_call(&launch, &["window", "attach"])?;
@@ -383,7 +368,7 @@ impl Session<'_> {
         if setup.parent != pid {
             return Err("setup Venus not owned by supervisor".into());
         }
-        setup.signal(libc::SIGTERM);
+        setup.signal(Signal::TERM);
         self.wait("setup Venus detached", || !setup.alive())?;
         self.settle()?;
         let host_exe =

@@ -6,8 +6,9 @@ rust-version = "1.95"
 publish = false
 
 [dependencies]
-# PTYs, termios, poll, load, uname and CPU affinity with each platform's
-# layouts and constants; already locked, and pinned as Orbit and Eon pin it.
+# Signal actions, getrusage and Darwin's load average in src/sys.rs, plus a
+# few errno and open-flag constants; already locked, and pinned as Orbit and
+# Eon pin it.
 libc = "=0.2.189"
 # Safe syscall APIs for the benchmark's platform mechanisms.
 rustix = { version = "=1.1.4", default-features = false, features = ["event", "fs", "net", "param", "process", "pty", "std", "system", "termios", "thread", "time"] }
@@ -18,3 +19,9 @@ orbit-protocol = { path = "../../../orbit/crates/protocol" }
 # Benchmark-only virtual pointer; generated bindings own wheel/pixel/stop encoding.
 wayland-client = "=0.31.15"
 wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

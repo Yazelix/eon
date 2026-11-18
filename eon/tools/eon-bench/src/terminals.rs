@@ -2004,8 +2004,7 @@ mod tests {
     fn external_probes_use_the_remaining_sample_budget() {
         let dir = tempdir();
         // eon-test owns this empty /run; production display isolation creates the parent.
-        // SAFETY: geteuid has no side effects or arguments.
-        fs::create_dir_all(format!("/run/user/{}", unsafe { libc::geteuid() })).unwrap();
+        fs::create_dir_all(crate::environment::user_runtime_parent()).unwrap();
         let candidate = std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|p| p.join("true"))
             .find(|p| p.starts_with("/nix/store") && p.is_file())

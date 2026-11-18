@@ -96,6 +96,7 @@ fn orbit_runs_a_vtebench_sample_detached_and_attached() {
 /// signal).
 #[cfg(target_os = "linux")]
 mod stopped {
+    use rustix::process::{Pid, Signal, kill_process};
     use std::{
         os::unix::{fs::PermissionsExt, process::ExitStatusExt},
         path::PathBuf,
@@ -121,9 +122,9 @@ mod stopped {
             .find(|path| path.is_file())
             .expect("sh on PATH");
         let rounds = [
-            (libc::SIGTERM, false),
-            (libc::SIGKILL, false),
-            (libc::SIGTERM, true),
+            (Signal::TERM, false),
+            (Signal::KILL, false),
+            (Signal::TERM, true),
         ];
         for (round, (signal, in_preparation)) in rounds.into_iter().enumerate() {
             // A kitten that records its PID and hangs, in its benchmark or,
@@ -168,11 +169,11 @@ mod stopped {
             })
             .expect("the hanging kitten started");
             if in_preparation {
-                // SAFETY: kill has no memory preconditions; pid is our own child.
-                assert_eq!(unsafe { libc::kill(pid as i32, signal) }, 0);
+                // Our own unreaped child, so its PID cannot be reused.
+                kill_process(Pid::from_child(&harness), signal).unwrap();
                 let status = wait_until(Duration::from_secs(5), || harness.try_wait().unwrap())
                     .expect("the harness ended");
-                assert_eq!(status.signal(), Some(signal), "{status}");
+                assert_eq!(status.signal(), Some(signal.as_raw()), "{status}");
                 assert_eq!(sessions(pid), Vec::<PathBuf>::new());
                 // The version query dies with the harness.
                 assert!(
@@ -193,18 +194,17 @@ mod stopped {
             let host = children(pid);
             assert_eq!(host.len(), 1, "the harness's one child is Orbit: {host:?}");
             assert!(!sessions(pid).is_empty());
-            // SAFETY: kill has no memory preconditions; pid is our own child.
-            assert_eq!(unsafe { libc::kill(pid as i32, signal) }, 0);
+            kill_process(Pid::from_child(&harness), signal).unwrap();
             let status = wait_until(Duration::from_secs(20), || harness.try_wait().unwrap())
                 .expect("the harness ended");
-            assert_eq!(status.signal(), Some(signal), "{status}");
+            assert_eq!(status.signal(), Some(signal.as_raw()), "{status}");
             for gone in [host[0], child, workload] {
                 assert!(
                     wait_until(Duration::from_secs(10), || (!alive(gone)).then_some(())).is_some(),
-                    "process {gone} survived signal {signal}"
+                    "process {gone} survived signal {signal:?}"
                 );
             }
-            if signal == libc::SIGTERM {
+            if signal == Signal::TERM {
                 assert_eq!(sessions(pid), Vec::<PathBuf>::new());
                 assert!(!root.join(format!("out-{round}/result.json")).exists());
             }

@@ -1,6 +1,7 @@
 //! A daemon-like grandchild must not outlive an interrupted memory suite.
 #![cfg(target_os = "linux")]
 
+use rustix::process::{Pid, Signal, kill_process};
 use std::{
     fs,
     os::unix::{fs::PermissionsExt, process::ExitStatusExt},
@@ -34,7 +35,7 @@ fn signals_and_deadlines_destroy_the_private_namespace_and_leave_no_result() {
     )
     .unwrap();
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
-    for (round, signal) in [Some(libc::SIGTERM), Some(libc::SIGKILL), None]
+    for (round, signal) in [Some(Signal::TERM), Some(Signal::KILL), None]
         .into_iter()
         .enumerate()
     {
@@ -84,8 +85,8 @@ fn signals_and_deadlines_destroy_the_private_namespace_and_leave_no_result() {
         };
         assert!(namespace_present(&namespace));
         if let Some(signal) = signal {
-            // SAFETY: this exact child is still unreaped, so its PID cannot be reused.
-            assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+            // This exact child is still unreaped, so its PID cannot be reused.
+            kill_process(Pid::from_child(&child), signal).unwrap();
         }
         let start = Instant::now();
         let status = loop {
@@ -99,7 +100,7 @@ fn signals_and_deadlines_destroy_the_private_namespace_and_leave_no_result() {
             std::thread::sleep(Duration::from_millis(10));
         };
         if let Some(signal) = signal {
-            assert_eq!(status.signal(), Some(signal));
+            assert_eq!(status.signal(), Some(signal.as_raw()));
         } else {
             assert!(!status.success());
         }

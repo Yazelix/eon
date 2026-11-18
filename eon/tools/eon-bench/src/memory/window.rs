@@ -180,7 +180,7 @@ mod tests {
         let missing_venus = measure(child.id(), held, true, &dir);
         let _ = child.kill();
         let _ = child.wait();
-        held_process.signal(libc::SIGKILL);
+        held_process.signal(Signal::KILL);
         assert_eq!(
             missing_venus.unwrap_err(),
             "expected exactly one Venus, observed 0"

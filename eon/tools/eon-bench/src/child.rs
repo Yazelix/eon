@@ -12,7 +12,6 @@
 //! does. Files appear whole: each is written aside and renamed.
 
 use std::{
-    os::fd::AsRawFd,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -176,17 +175,8 @@ pub fn run(options: &Options) -> Result<u8, String> {
 
 /// The rows and columns stdin's terminal reports.
 pub(crate) fn grid() -> Option<(u16, u16)> {
-    // SAFETY: winsize is plain data that TIOCGWINSZ fills.
-    let mut size = unsafe { std::mem::zeroed::<libc::winsize>() };
-    // SAFETY: stdin is open for the process's life and size is a valid winsize.
-    let result = unsafe {
-        libc::ioctl(
-            std::io::stdin().as_raw_fd(),
-            libc::TIOCGWINSZ,
-            &raw mut size,
-        )
-    };
-    (result == 0).then_some((size.ws_row, size.ws_col))
+    let size = rustix::termios::tcgetwinsize(std::io::stdin()).ok()?;
+    Some((size.ws_row, size.ws_col))
 }
 
 fn wait_until(limit: Duration, what: &str, done: impl Fn() -> bool) -> Result<(), String> {
