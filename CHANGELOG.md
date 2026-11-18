@@ -14,6 +14,10 @@ installation, and proven contract changes.
   or `via store` on the launch line), and a provider no source has names each
   source's reason (EON-C40 amendment, `eon-eon-agent-lr8sx.39.12`).
 
+- `eon agent slot ls --json` reports Boat lease ownership before a VM receipt
+  exists and refuses incomplete local lock/queue inspection. Slot events and
+  local delegation share a run key for completion readers (`eon-eon-agent-lr8sx.36`).
+
 - Google quota chips are as compact as the Claude and Codex chips: a blue
   Gemini spark and `<position>/<duration> <remaining>%`, without `Google` or
   the model group. A group other than `Gemini Models` leads with its initial,

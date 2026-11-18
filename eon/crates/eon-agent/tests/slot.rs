@@ -31,6 +31,7 @@ flock -n legacy/old-1.lock true
 flock -n state/slots/queue/.lock true
 [ ! -e state/slots/boat/lease.lock ] || flock -n state/slots/boat/lease.lock true
 printf '%s %s' "$EON_SLOT_QUEUED_NS" "$EON_SLOT_CLASS" > provider/handoff
+printf '%s' "$EON_SLOT_RUN_KEY" > provider/run-key
 touch provider/delegated
 {}
 exec "$@"
@@ -62,7 +63,7 @@ fn delegated_fallback_releases_capacity_and_preserves_exact_command() {
             "--",
             "sh",
             "-c",
-            "printf '%s' \"$1\"; test -z \"${EON_SLOT_QUEUED_NS+x}${EON_SLOT_CLASS+x}\"; exit 7",
+            "printf '%s' \"$1\"; test -z \"${EON_SLOT_QUEUED_NS+x}${EON_SLOT_CLASS+x}${EON_SLOT_RUN_KEY+x}\" || exit 89; exit 7",
             "sh",
             "literal $word with spaces",
         ])
@@ -77,6 +78,65 @@ fn delegated_fallback_releases_capacity_and_preserves_exact_command() {
     assert_eq!(out.stdout, b"literal $word with spaces");
     assert!(f.dir.path().join("provider/delegated").exists());
     assert!(!f.dir.path().join("provider/calls").exists());
+    let key = fs::read_to_string(f.dir.path().join("provider/run-key")).unwrap();
+    let events = fs::read_to_string(f.root().join("log.jsonl")).unwrap();
+    for line in events.lines() {
+        let event: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(event["run_key"], key);
+    }
+}
+
+#[test]
+fn delayed_delegate_waiters_keep_fifo_age_and_reject_recycled_pid() {
+    let f = Fixture::boat_fixture();
+    delegate(&f, true);
+    let helper = f.dir.path().join("fake/local.sh");
+    let script = fs::read_to_string(&helper).unwrap();
+    fs::write(
+        &helper,
+        script.replace(
+            "exec \"$@\"",
+            r#"bash -c '
+mkdir -p legacy/queue
+ticket=legacy/queue/$EON_SLOT_QUEUED_NS.$$.run
+stat=$(cat /proc/$$/stat); set -- ${stat##*) }
+printf "%s\n" "${20}" > "$ticket"
+echo "$ticket" > provider/ticket
+while [ ! -f provider/release ]; do sleep 0.01; done
+rm "$ticket"
+'"#,
+        ),
+    )
+    .unwrap();
+    let mut run = Running(
+        f.boat_command(&["slot", "run", "--", "true"])
+            .spawn()
+            .unwrap(),
+    );
+    until(|| {
+        f.dir
+            .path()
+            .join("provider/delegated")
+            .exists()
+            .then_some(())
+    });
+    // Deliberately cross several Linux start ticks before spawning the helper.
+    std::thread::sleep(Duration::from_millis(30));
+    fs::write(f.dir.path().join("provider/continue"), "go").unwrap();
+    let ticket = until(|| fs::read_to_string(f.dir.path().join("provider/ticket")).ok());
+    let path = f.dir.path().join(ticket.trim());
+    let waiter = f.list()["waiters"].as_array().unwrap().clone();
+    assert_eq!(waiter.len(), 1);
+    assert!(waiter[0]["legacy"].as_bool().unwrap());
+    let handoff = fs::read_to_string(f.dir.path().join("provider/handoff")).unwrap();
+    assert_eq!(
+        waiter[0]["queued_ns"].as_u64().unwrap().to_string(),
+        handoff.split_whitespace().next().unwrap()
+    );
+    fs::write(path, "1\n").unwrap();
+    assert!(f.list()["waiters"].as_array().unwrap().is_empty());
+    fs::write(f.dir.path().join("provider/release"), "go").unwrap();
+    assert!(run.wait().success());
 }
 
 #[test]
@@ -1062,6 +1122,61 @@ fn review_quiet_ineligible_front_ticket_does_not_block_remote_exemption() {
 }
 
 #[test]
+fn listing_counts_a_held_extra_slot_after_its_policy_expires() {
+    let f = Fixture::new(2);
+    let _held = f.hold(3);
+    assert_eq!(f.list()["holders"], serde_json::json!([{"slot": 3}]));
+}
+
+#[test]
+fn listing_refuses_broken_local_observation_but_allows_absent_optional_slot() {
+    let f = Fixture::new(1);
+    assert_eq!(f.list()["boat_lease_held"], false);
+    assert!(!f.root().join("boat/lease.lock").exists());
+    fs::remove_file(f.dir.path().join("legacy/old-2.lock")).unwrap();
+    assert!(f.output(&["slot", "ls", "--json"]).status.success());
+    fs::remove_file(f.dir.path().join("legacy/old-1.lock")).unwrap();
+    assert!(!f.output(&["slot", "ls", "--json"]).status.success());
+}
+
+#[test]
+fn listing_does_not_ignore_queue_lock_inspection_errors() {
+    let f = Fixture::new(1);
+    fs::create_dir_all(f.root()).unwrap();
+    fs::write(f.root().join("queue"), "not a queue directory").unwrap();
+    assert!(!f.output(&["slot", "ls", "--json"]).status.success());
+}
+
+#[test]
+fn listing_observes_pre_record_lease_without_changing_its_inode() {
+    let f = Fixture::boat_fixture();
+    let path = f.root().join("boat/lease.lock");
+    for directory in [f.dir.path().join("state"), f.root(), f.root().join("boat")] {
+        fs::create_dir_all(&directory).unwrap();
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let lock = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    use std::os::unix::fs::MetadataExt;
+    let inode = lock.metadata().unwrap().ino();
+    FileExt::lock_exclusive(&lock).unwrap();
+    assert_eq!(f.list()["boat_lease_held"], true);
+    assert!(!f.root().join("boat/current.json").exists());
+    assert_eq!(path.metadata().unwrap().ino(), inode);
+    FileExt::unlock(&lock).unwrap();
+    assert_eq!(f.list()["boat_lease_held"], false);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o664)).unwrap();
+    let listing = f.list();
+    assert!(listing["boat_lease_held"].is_null());
+    assert!(listing["boat_error"].as_str().unwrap().contains("unsafe"));
+    assert_eq!(path.metadata().unwrap().ino(), inode);
+}
+
+#[test]
 fn review_bad_boat_record_does_not_hide_local_holders() {
     let f = Fixture::boat_fixture();
     f.pending_boat(false);
@@ -1360,6 +1475,11 @@ fn canceling_boat_preflight_exits_without_starting_remote_or_local_work() {
             .exists()
             .then_some(())
     });
+    let listing = f.list();
+    assert_eq!(listing["boat_lease_held"], true);
+    assert_eq!(listing["boat_lease_pid"], run.pid());
+    assert!(listing.get("boat").is_none());
+    assert!(listing["waiters"].as_array().unwrap().is_empty());
     rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM).unwrap();
     assert_eq!(run.wait().code(), Some(143));
     assert!(!f.dir.path().join("local-ran").exists());
@@ -2121,7 +2241,10 @@ fn log_failure_preserves_child_status_and_releases_slot() {
         assert!(stderr.contains(&format!("cannot log {event}")));
     }
     assert!(f.dir.path().join("started").exists());
-    assert_eq!(f.list(), serde_json::json!({"holders": [], "waiters": []}));
+    assert_eq!(
+        f.list(),
+        serde_json::json!({"holders": [], "waiters": [], "boat_lease_held": false})
+    );
     let _slot = f.hold(1);
 }
 

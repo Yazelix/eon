@@ -340,7 +340,23 @@ Uncertain work, including wrapper crash or lost result, retires the VM by
 confirmed deletion; merely stopping it cannot authorize warm reuse.
 
 `eon agent slot ls --json` identifies remote holders with `where: "boat"` and
-shows the last Boat receipt. Queue/grant/exit records include `where` and local
+shows the last Boat receipt. `boat_lease_held` is `true` or `false` when the
+existing lease inode can be inspected, including during preflight before a
+receipt exists; `null` with `boat_error` means inspection is unavailable or
+unsafe. Listing neither creates nor claims that lease. A held lease, an
+observed `boat_lease_pid` (when the kernel exposes its owner), an
+unfinished receipt or unknown cleanup cannot be treated as idle. A stopped
+receipt alone does not establish that the lease is free. Listing fails rather
+than omitting a configured required local lock or an unreadable queue lock;
+an absent optional extra local slot is allowed.
+Queue/grant/exit records carry `run_key` (`<queued_ns>:<pid>`) for correlation
+with a delegated helper. Its internal `EON_SLOT_RUN_KEY` handoff is removed
+before the payload runs, like the queue-age/class metadata. Helpers that log
+that key let a shared reader deduplicate ordinary native/helper exits while
+retaining native cancellation/error exits when a helper never writes one.
+Delegated legacy queue tickets record the helper's process start tick so
+listing preserves their inherited FIFO age while still rejecting PID reuse.
+Queue/grant/exit records also include `where` and local
 fallback reasons. Complete remote logs and schema-1 receipts live under
 `slots/runs/<id>/` beside the configured `state_file`; they are private and
 not printed by listing. A cleanup failure leaves a visible record that must

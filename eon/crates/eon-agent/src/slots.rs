@@ -310,6 +310,10 @@ fn is_false(value: &bool) -> bool {
 }
 
 impl Ticket {
+    fn run_key(&self) -> String {
+        format!("{}:{}", self.queued_ns, self.pid)
+    }
+
     fn key(&self) -> (u64, u32) {
         (self.queued_ns, self.pid)
     }
@@ -722,6 +726,7 @@ impl Slots<'_> {
         let mut entry = serde_json::json!({
             "time": now_ns() / SECOND,
             "event": event,
+            "run_key": ticket.run_key(),
             "pid": ticket.pid,
             "class": ticket.class,
             "folder": ticket.cwd,
@@ -1033,23 +1038,43 @@ fn list(
     observe: impl FnOnce() -> io::Result<ObservedFlocks>,
     mut out: impl Write,
 ) -> Result<u8, Failure> {
-    let queue = slots.queue_lock(false).ok().flatten();
+    let queue = slots.queue_lock(false).map_err(io_failure)?;
     let locks = observe().map_err(|e| io_failure(format!("cannot read /proc/locks: {e}")))?;
     let now = now_ns();
     let policy = legacy::policy(slots.config);
     let tickets = slots.tickets(Some(&locks));
     let ranked = rank(&tickets, &policy, now);
-    let (remote, boat_error) = match boat::listing(&slots.root) {
+    let (remote, mut boat_error) = match boat::listing(&slots.root) {
         Ok(remote) => (remote, None),
         Err(reason) => (None, Some(reason)),
     };
+    let (lease_held, lease_pid) = match boat::lease_metadata(&slots.root) {
+        Ok(metadata) => {
+            let owner = metadata.as_ref().and_then(|meta| locks.get(&lock_id(meta)));
+            (Some(owner.is_some()), owner.copied().flatten())
+        }
+        Err(reason) => {
+            boat_error.get_or_insert(reason);
+            (None, None)
+        }
+    };
     let mut holders = Vec::new();
     for slot in 1..=slots.config.count + 1 {
-        if let Some(owner) = slots
-            .slot_path(slot)
-            .and_then(|path| fs::metadata(path).ok())
-            .and_then(|metadata| locks.get(&lock_id(&metadata)))
-        {
+        let Some(path) = slots.slot_path(slot) else {
+            continue;
+        };
+        let metadata = match fs::metadata(path) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => return Err(io_failure(format!("slot {slot} lock is not a file"))),
+            Err(e)
+                if e.kind() == ErrorKind::NotFound
+                    && (slots.config.lock_files.is_empty() || slot > slots.config.count) =>
+            {
+                continue;
+            }
+            Err(e) => return Err(io_failure(format!("cannot inspect slot {slot}: {e}"))),
+        };
+        if let Some(owner) = locks.get(&lock_id(&metadata)) {
             let holder = owner.and_then(|pid| {
                 let (mut holder, _) = slots.holder(slot)?;
                 if !holder.matches_process(pid) {
@@ -1085,9 +1110,10 @@ fn list(
         let waiters: Vec<_> = ranked
             .iter()
             .filter(|item| {
-                !remote.as_ref().is_some_and(|record| {
-                    record.phase != "stopped" && record.pid == item.ticket.pid
-                })
+                lease_pid != Some(item.ticket.pid)
+                    && !remote.as_ref().is_some_and(|record| {
+                        record.phase != "stopped" && record.pid == item.ticket.pid
+                    })
             })
             .map(|item| {
                 let mut entry = serde_json::to_value(item.ticket)?;
@@ -1097,7 +1123,10 @@ fn list(
             })
             .collect::<Result<_, serde_json::Error>>()
             .map_err(io_failure)?;
-        let mut output = serde_json::json!({"holders": holders, "waiters": waiters});
+        let mut output = serde_json::json!({"holders": holders, "waiters": waiters, "boat_lease_held": lease_held});
+        if let Some(pid) = lease_pid {
+            output["boat_lease_pid"] = pid.into();
+        }
         if let Some(remote) = remote {
             output["boat"] = serde_json::to_value(remote).map_err(io_failure)?;
         }
@@ -1106,6 +1135,9 @@ fn list(
         }
         writeln!(out, "{output}").map_err(io_failure)?;
     } else {
+        if lease_held == Some(true) {
+            writeln!(out, "boat lease held (including preflight)").map_err(io_failure)?;
+        }
         if let Some(reason) = boat_error {
             writeln!(out, "boat record unavailable: {reason}").map_err(io_failure)?;
         }

@@ -25,6 +25,10 @@ const CLEANUP: u64 = 60;
 const PREPARATION: u64 = 1800;
 pub(super) fn private_directory(path: &Path) -> Result<(), String> {
     ensure_parent(&path.join("entry")).map_err(|_| "boat-state-directory")?;
+    check_private_directory(path)
+}
+
+fn check_private_directory(path: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(path).map_err(|_| "boat-state-directory")?;
     if !metadata.is_dir()
         || metadata.uid() != rustix::process::geteuid().as_raw()
@@ -149,6 +153,30 @@ pub(super) fn listing(root: &Path) -> Result<Option<Record>, String> {
         return Err("incompatible-boat-record".into());
     }
     Ok(record)
+}
+
+/// Observe the existing lease inode only: listing must never claim or create it.
+pub(super) fn lease_metadata(root: &Path) -> Result<Option<fs::Metadata>, String> {
+    let directory = root.join("boat");
+    match fs::symlink_metadata(&directory) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("boat-lease-directory-unreadable".into()),
+        Ok(_) => (),
+    }
+    for path in [root.parent().unwrap_or(root), root, &directory] {
+        check_private_directory(path)?;
+    }
+    match fs::symlink_metadata(directory.join("lease.lock")) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Ok(meta)
+            if meta.is_file()
+                && meta.uid() == rustix::process::geteuid().as_raw()
+                && meta.mode() & 0o077 == 0 =>
+        {
+            Ok(Some(meta))
+        }
+        _ => Err("unsafe-or-unreadable-boat-lease".into()),
+    }
 }
 
 #[derive(Deserialize, Serialize)]

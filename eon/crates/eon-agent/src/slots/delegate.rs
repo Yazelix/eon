@@ -52,6 +52,7 @@ pub(super) fn run(
         .envs(&slots.config.env)
         .env("EON_SLOT_QUEUED_NS", ticket.queued_ns.to_string())
         .env("EON_SLOT_CLASS", &ticket.class)
+        .env("EON_SLOT_RUN_KEY", ticket.run_key())
         .env(super::NESTING_TOKEN, token)
         .env("EON_SLOT_DELEGATE", directory.path().join("consumed.json"))
         .env("HEAVY_ANY_SLOT", if ticket.front { "1" } else { "0" })
@@ -105,7 +106,7 @@ pub(crate) fn execute(path: &Path, argv: &[String]) -> Result<u8, Failure> {
     }
     let mut command = Command::new(&payload.argv[0]);
     command.args(&payload.argv[1..]);
-    for key in ["EON_SLOT_QUEUED_NS", "EON_SLOT_CLASS"] {
+    for key in ["EON_SLOT_QUEUED_NS", "EON_SLOT_CLASS", "EON_SLOT_RUN_KEY"] {
         command.env_remove(key);
     }
     let ownership = fs::File::open(directory.join("consumed.json")).map_err(failure)?;

@@ -77,7 +77,12 @@ pub(super) fn tickets(dir: Option<&Path>) -> Vec<Ticket> {
         let start_ns = (u128::from(start) * u128::from(SECOND) / u128::from(ticks))
             .try_into()
             .unwrap_or(u64::MAX);
-        if boot.saturating_add(start_ns) > queued_ns {
+        let recorded_start = fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|text| text.trim().parse::<u64>().ok());
+        if recorded_start.is_some_and(|recorded| recorded != start)
+            || (recorded_start.is_none() && boot.saturating_add(start_ns) > queued_ns)
+        {
             continue;
         }
         tickets.push(Ticket {
