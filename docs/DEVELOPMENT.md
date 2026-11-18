@@ -211,7 +211,14 @@ shared inputs once in `check-inputs`. It then builds each check, skipping
 checks whose inputs failed (or whose input status is unknown). If combined
 derivation evaluation fails, paths are evaluated individually; checks that
 still fail evaluation run their own build. It runs `eon-test` once per
-workspace package. Each step has its own deadline, log and status. `--rev`
+workspace package, including compilation of `rota-cli`'s Darwin stub and test
+targets. Only the explicitly listed Linux-only `rota-cli` may report
+`not-applicable`, and only on exit 4 with nextest's `no tests to run` diagnostic.
+If it gains macOS tests, or its name disappears from workspace metadata, the
+run fails so the exclusion must be removed. An unlisted package with no tests
+still fails. Not-applicable has a recorded reason, permits a passing verdict,
+leaves no check for Yu, and does not satisfy another step's prerequisite.
+Each step has its own deadline, log and status. `--rev`
 picks another commit, `--timeout` is the run's time limit on the Mac (12
 hours by default; `remote` waits 30 minutes more) and `--dry-run` runs only
 the source step. `remote --local DIR` stands this machine in for the Mac,
@@ -262,7 +269,9 @@ backdrop below every window on the main display during its captures. With
 Accessibility, which lets it post key events, it also dismisses the first tab's
 picker, which takes a key, and drives Eon through the `eon` CLI, a driver in
 its first pane and keys sent to Venus. That covers panes, tabs, focus, `eon
-edit`, a pane's environment and size, the Files popup, Command+V, detach,
+edit` (the fixture's contents in the selected Editor popup, with the same popup
+still selected afterwards and the pane set unchanged), a pane's environment
+and size, the Files popup, Command+V, detach,
 Orbit's refusal of an attaching client that is not Eon, `eon pane read` and
 `eon pane send`, a Venus crash and supervisor adoption. With both
 Accessibility and Screen Recording, captures of Venus's window also check its

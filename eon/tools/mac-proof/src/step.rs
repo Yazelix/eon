@@ -5,6 +5,7 @@ use serde_json::json;
 use std::{
     fs::{self, File},
     io::{self, Read, Write},
+    os::unix::fs::FileExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -25,6 +26,8 @@ enum Status {
     Skipped,
     /// A dry run records the step without running it.
     Planned,
+    /// Deliberately outside this platform's test scope, with no human check left.
+    NotApplicable,
 }
 
 impl Status {
@@ -35,7 +38,12 @@ impl Status {
             Status::Timeout => "timeout",
             Status::Skipped => "skipped",
             Status::Planned => "planned",
+            Status::NotApplicable => "not-applicable",
         }
+    }
+
+    fn accepted(self) -> bool {
+        matches!(self, Self::Pass | Self::Planned | Self::NotApplicable)
     }
 }
 
@@ -48,6 +56,8 @@ pub enum Failure {
     Check(String),
     /// The step cannot run on this machine, so a person must check it.
     Unavailable(String),
+    /// Explicitly excluded on this platform, with the exclusion checked.
+    NotApplicable(String),
 }
 
 pub type Outcome = Result<(), Failure>;
@@ -75,6 +85,19 @@ impl Log {
 
     pub fn stdio(&self) -> io::Result<Stdio> {
         Ok(Stdio::from(self.file.try_clone()?))
+    }
+
+    /// Snapshots a Runner step's readable log without moving child write offsets.
+    pub fn text(&self) -> io::Result<String> {
+        let len = self
+            .file
+            .metadata()?
+            .len()
+            .try_into()
+            .map_err(io::Error::other)?;
+        let mut bytes = vec![0; len];
+        self.file.read_exact_at(&mut bytes, 0)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 }
 
@@ -343,7 +366,12 @@ impl Runner {
             name.replace(':', "-")
         );
         let mut file = Log {
-            file: File::create(self.evidence.join(&log))?,
+            file: File::options()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(self.evidence.join(&log))?,
         };
         let started = Instant::now();
         let missing: Vec<&str> = requires
@@ -382,9 +410,7 @@ impl Runner {
                 ),
                 Err(Failure::Command(message)) => {
                     file.line(&format!("mac-proof: {message}"));
-                    // Build and test output need not be UTF-8.
-                    let text = fs::read(self.evidence.join(&log)).unwrap_or_default();
-                    let text = String::from_utf8_lossy(&text);
+                    let text = file.text().unwrap_or_default();
                     (Status::Fail, Some(first_failure(&text).unwrap_or(message)))
                 }
                 Err(Failure::Check(message)) => {
@@ -395,6 +421,10 @@ impl Runner {
                     file.line(&format!("mac-proof: skipped: {message}"));
                     for_yu = true;
                     (Status::Skipped, Some(message))
+                }
+                Err(Failure::NotApplicable(message)) => {
+                    file.line(&format!("mac-proof: not-applicable: {message}"));
+                    (Status::NotApplicable, Some(message))
                 }
             }
         };
@@ -425,14 +455,13 @@ impl Runner {
     }
 
     /// Writes summary.json and summary.txt and returns whether every step
-    /// passed, was planned, or was skipped for Yu. Until the last step has
-    /// run (`complete`), their result is `incomplete`, so a run that dies
-    /// midway reads as such.
+    /// passed, was planned, was not applicable, or was skipped for Yu. Until
+    /// the last step has run (`complete`), their result is `incomplete`, so a
+    /// run that dies midway reads as such.
     pub fn write(&self, complete: bool) -> io::Result<bool> {
         let identity = &self.identity;
         let passed = self.records.iter().all(|record| {
-            matches!(record.status, Status::Pass | Status::Planned)
-                || (record.status == Status::Skipped && record.for_yu)
+            record.status.accepted() || (record.status == Status::Skipped && record.for_yu)
         });
         let result = match (complete, passed) {
             (false, _) => "incomplete",
@@ -533,7 +562,7 @@ fn summary_text(
 ) -> String {
     let failed = records
         .iter()
-        .filter(|record| !matches!(record.status, Status::Pass | Status::Planned))
+        .filter(|record| !record.status.accepted())
         .count();
     let remaining = if result == "pass" && failed > 0 {
         format!("{failed} left for Yu")
@@ -586,6 +615,62 @@ mod tests {
         let path = std::env::temp_dir().join(format!("mac-proof-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         path
+    }
+
+    #[test]
+    fn a_checked_platform_exclusion_is_not_left_for_yu_or_a_passed_dependency() {
+        let evidence = scratch("platform-exclusion");
+        let mut runner = Runner::new(&evidence, false, Duration::from_secs(60)).unwrap();
+        let reason = "rota-cli is Linux-only; no macOS tests are expected";
+        runner
+            .step(&mut (), "test:rota-cli", POLL, &[], false, |_, log, _| {
+                log.line("before snapshot");
+                assert!(log.text().unwrap().contains("before snapshot"));
+                log.line("after snapshot");
+                Err(Failure::NotApplicable(reason.to_owned()))
+            })
+            .unwrap();
+        assert!(runner.write(true).unwrap());
+        assert_eq!(runner.left_for_yu(), 0);
+        let summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
+        assert_eq!(summary["result"], "pass");
+        assert_eq!(summary["steps"][0]["status"], "not-applicable");
+        assert_eq!(summary["steps"][0]["for_yu"], false);
+        assert_eq!(summary["steps"][0]["first_failure"], reason);
+        let text = fs::read_to_string(evidence.join("summary.txt")).unwrap();
+        assert!(text.starts_with("mac-proof pass: 1 steps, 0 not passed\n"));
+        assert!(!text.contains("left for Yu"));
+        let log = fs::read_to_string(evidence.join("steps/01-test-rota-cli.log")).unwrap();
+        assert!(log.contains("before snapshot\nafter snapshot\n"));
+        assert!(log.contains(reason));
+        runner
+            .step(&mut (), "picker", POLL, &[], false, |_, _, _| {
+                Err(Failure::Unavailable("needs Accessibility".to_owned()))
+            })
+            .unwrap();
+        assert!(runner.write(true).unwrap());
+        assert_eq!(runner.left_for_yu(), 1);
+        let text = fs::read_to_string(evidence.join("summary.txt")).unwrap();
+        assert!(text.starts_with("mac-proof pass: 2 steps, 1 left for Yu\n"));
+        runner
+            .step(
+                &mut (),
+                "dependent",
+                POLL,
+                &["test:rota-cli"],
+                false,
+                |_, _, _| unreachable!(),
+            )
+            .unwrap();
+        assert!(!runner.write(true).unwrap());
+        assert_eq!(runner.status("dependent"), Some("skipped"));
+        assert_eq!(runner.left_for_yu(), 1);
+        assert_eq!(
+            runner.records[2].first_failure.as_deref(),
+            Some("needs test:rota-cli, which did not pass")
+        );
+        fs::remove_dir_all(evidence).unwrap();
     }
 
     #[test]

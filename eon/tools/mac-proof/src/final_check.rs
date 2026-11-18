@@ -355,9 +355,10 @@ fn writable(path: &Path) -> io::Result<()> {
 fn failure(failure: Failure) -> String {
     match failure {
         Failure::Timeout => "timed out".to_owned(),
-        Failure::Command(message) | Failure::Check(message) | Failure::Unavailable(message) => {
-            message
-        }
+        Failure::Command(message)
+        | Failure::Check(message)
+        | Failure::Unavailable(message)
+        | Failure::NotApplicable(message) => message,
     }
 }
 
@@ -441,7 +442,7 @@ impl Redaction {
         };
         let names = sorted(names).into_iter().filter(|name| {
             let reserved = matches!(name.to_ascii_lowercase().as_str(),
-                "pass" | "fail" | "skip" | "unanswered" | "not-run" | "yes" | "no" | "dirty" | "true" | "false" | "null" | "planned" | "skipped" | "timeout" | "left for yu"
+                "pass" | "fail" | "skip" | "unanswered" | "not-run" | "yes" | "no" | "dirty" | "true" | "false" | "null" | "planned" | "skipped" | "timeout" | "not-applicable" | "left for yu"
             ) || (name.len() >= 7 && name.bytes().all(|byte| byte.is_ascii_hexdigit()));
             if reserved {
                 progress(&format!("mac-proof: account name {name:?} matches a status word or hash; it may appear in the archive"));
@@ -1309,7 +1310,7 @@ mod tests {
         std::os::unix::fs::symlink(&outside, out.join("linked-directory")).unwrap();
         std::os::unix::fs::symlink(outside.join("secret"), out.join("linked-file")).unwrap();
         let facts = json!({
-            "statuses": ["pass", "fail", "skip", "unanswered", "not-run", "yes", "no", "dirty", "true", "false", "null", "planned", "skipped", "timeout"],
+            "statuses": ["pass", "fail", "skip", "unanswered", "not-run", "yes", "no", "dirty", "true", "false", "null", "planned", "skipped", "timeout", "not-applicable"],
             "rev": "abcdef0123456789", "tree": "abcdef0", "dry_run": true, "capture": null, "yu": "yu",
             "generated": "Automatic run: left for Yu",
         });

@@ -68,6 +68,8 @@ Steps, in order; each has a deadline, and a step whose prerequisite did not pass
               If combined evaluation fails, paths are evaluated individually; checks
               that still fail evaluation run their own build.
   workspace   the Cargo workspace's packages, then test:<package> runs eon-test on each
+              rota-cli is Linux-only: only its verified empty test result is not-applicable;
+              a newly nonempty result or a missing listed package fails, as do all other test failures
   session ... stop
               the GUI scenario on the built package; `mac-proof scenario --help` lists
               its steps and what each needs
@@ -77,13 +79,14 @@ Evidence folder:
   summary.txt          one line per step: status, duration, first failing line
   summary.json         {schema, result, dry_run, system, tree, head?, steps: [{name,
                        status, seconds, log, first_failure, for_yu}]}; status is pass,
-                       fail, timeout, skipped or planned; head only for a Git checkout;
+                       fail, timeout, skipped, planned or not-applicable; head only for a Git checkout;
                        for_yu marks a step skipped because it, or a step it requires,
                        could not run on this Mac, which summary.txt then lists for Yu
   steps/NN-<step>.log  each step's commands and their output, with : in the step as -
 Both summaries are rewritten after every step, with result incomplete until the last step
-has run; then result is pass when every step passed, was planned, or was skipped with for_yu;
-otherwise it is fail. Exits 0 for pass, 1 for fail, and 2 when the run could not start.";
+has run; then result is pass when every step passed, was planned, was not-applicable,
+or was skipped with for_yu; otherwise it is fail. Not-applicable never satisfies a prerequisite
+or leaves work for Yu. Exits 0 for pass, 1 for fail, and 2 when the run could not start.";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();

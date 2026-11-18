@@ -209,7 +209,8 @@ const STEPS: &[Spec] = &[
         name: "edit",
         needs: KEYS,
         requires: &["picker"],
-        proves: "`eon edit` opens a file in a Helix pane that stays live",
+        proves: "`eon edit` shows the fixture's contents in the selected Editor popup; \
+                 the same popup remains selected afterwards and no pane is added or removed",
         window: true,
         timeout: Duration::from_secs(2 * 60),
         body: edit,
@@ -1623,9 +1624,10 @@ fn ours(listing: &[Process], roots: &[u32], markers: &[String]) -> Vec<Process> 
 fn cause(failure: &Failure) -> &str {
     match failure {
         Failure::Timeout => "timed out",
-        Failure::Command(message) | Failure::Check(message) | Failure::Unavailable(message) => {
-            message
-        }
+        Failure::Command(message)
+        | Failure::Check(message)
+        | Failure::Unavailable(message)
+        | Failure::NotApplicable(message) => message,
     }
 }
 
@@ -1720,30 +1722,47 @@ fn panes(workspace: &Value) -> Vec<Pane> {
         .collect()
 }
 
+fn pane_ids(workspace: &Value) -> BTreeSet<String> {
+    panes(workspace).into_iter().map(|pane| pane.id).collect()
+}
+
+fn active_tab(workspace: &Value) -> Option<&Value> {
+    let active = workspace["active_tab"].as_str()?;
+    workspace["tabs"]
+        .as_array()?
+        .iter()
+        .find(|tab| tab["id"] == active)
+}
+
 /// The active tab and its selected pane.
 fn selection(workspace: &Value) -> (String, String) {
     let active = workspace["active_tab"].as_str().unwrap_or_default();
-    let tab = workspace["tabs"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|tab| tab["id"] == active);
-    let pane = tab.and_then(|tab| tab["selected_pane"].as_str());
+    let pane = active_tab(workspace).and_then(|tab| tab["selected_pane"].as_str());
     (active.to_owned(), pane.unwrap_or_default().to_owned())
 }
 
 /// The active tab's shown popup.
 fn shown_popup(workspace: &Value) -> Option<&Value> {
-    let active = &workspace["active_tab"];
-    let tab = workspace["tabs"]
-        .as_array()?
-        .iter()
-        .find(|tab| &tab["id"] == active)?;
+    let tab = active_tab(workspace)?;
     let shown = tab["selected_popup"].as_str()?;
     tab["popups"]
         .as_array()?
         .iter()
         .find(|popup| popup["id"] == shown)
+}
+
+/// The file is visible in the shown Editor, with the original panes intact.
+fn edit_observed(workspace: &Value, before: &BTreeSet<String>, read: &Value, token: &str) -> bool {
+    shown_popup(workspace).is_some_and(|popup| {
+        popup["entry"] == "editor"
+            && popup["id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && read["popup"] == id)
+            && read["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(token))
+            && pane_ids(workspace) == *before
+    })
 }
 
 /// Where the largest of `windows` (x, y, width and height) lies, in shares
@@ -2443,22 +2462,30 @@ fn focus(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
 fn edit(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     scenario.show_driver(log, deadline)?;
     let file = scenario.work().join("scenario.txt");
-    fs::write(&file, "Opened by mac-proof's scenario.\n")
+    let token = format!("mp-edit-{}", std::process::id());
+    fs::write(&file, format!("{token}\n"))
         .map_err(|error| Failure::Check(format!("{}: {error}", file.display())))?;
-    let before: BTreeSet<String> = panes(&scenario.workspace(log, deadline)?)
-        .into_iter()
-        .map(|pane| pane.id)
-        .collect();
+    let before = pane_ids(&scenario.workspace(log, deadline)?);
     scenario.act(&["edit", "--", "scenario.txt"], log, deadline)?;
-    // Helix that fails to start ends its terminal, and with it its pane,
-    // within this.
-    thread::sleep(Duration::from_secs(3));
-    let added: Vec<Pane> = panes(&scenario.workspace(log, deadline)?)
-        .into_iter()
-        .filter(|pane| !before.contains(&pane.id))
-        .collect();
-    check(added.len() == 1, || {
-        format!("eon edit added {added:?}, not one pane")
+    log.line("mac-proof: waiting for the Editor popup to show the file");
+    let read = until(deadline, || {
+        let workspace = scenario.workspace(log, deadline)?;
+        let Some(popup) = shown_popup(&workspace)
+            .filter(|popup| popup["entry"] == "editor")
+            .and_then(|popup| popup["id"].as_str())
+            .filter(|id| !id.is_empty())
+        else {
+            return Ok(None);
+        };
+        let read = scenario.act(&["pane", "read", popup], log, deadline)?;
+        Ok(edit_observed(&workspace, &before, &read, &token).then_some(read))
+    })?;
+    let after = scenario.workspace(log, deadline)?;
+    check(edit_observed(&after, &before, &read, &token), || {
+        format!(
+            "eon edit did not retain Editor {} with panes {before:?}: {after}",
+            read["popup"]
+        )
     })
 }
 
@@ -2892,6 +2919,52 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn edit_requires_the_file_in_the_selected_editor_and_preserves_panes() {
+        let workspace = json!({
+            "active_tab": "t1",
+            "tabs": [{"id": "t1", "selected_pane": "p1", "selected_popup": "u1",
+                "panes": [{"id": "p1"}], "popups": [{"id": "u1", "entry": "editor"}]}]
+        });
+        let before = pane_ids(&workspace);
+        let token = "mp-edit-42";
+        let read = json!({"popup": "u1", "text": "1 mp-edit-42\n"});
+        assert!(edit_observed(&workspace, &before, &read, token));
+        for text in [Value::Null, json!(""), json!("a different file")] {
+            let mut read = read.clone();
+            read["text"] = text;
+            assert!(!edit_observed(&workspace, &before, &read, token));
+        }
+        let mut other_read = read.clone();
+        other_read["popup"] = json!("u2");
+        assert!(!edit_observed(&workspace, &before, &other_read, token));
+        for (pointer, value) in [
+            ("/active_tab", json!("t2")),
+            ("/tabs/0/selected_popup", Value::Null),
+            ("/tabs/0/selected_popup", json!("u2")),
+            ("/tabs/0/popups/0/entry", json!("files")),
+            ("/tabs/0/popups/0/id", Value::Null),
+            ("/tabs/0/popups/0/id", json!("")),
+            ("/tabs/0/popups", json!([])),
+            ("/tabs/0/panes", json!([])),
+            ("/tabs/0/panes", json!([{"id": "p1"}, {"id": "p2"}])),
+        ] {
+            let mut after = workspace.clone();
+            *after.pointer_mut(pointer).unwrap() = value;
+            assert!(!edit_observed(&after, &before, &read, token), "{after}");
+        }
+        let empty_id = json!({"active_tab": "t1", "tabs": [{"id": "t1",
+            "selected_popup": "", "panes": [{"id": "p1"}],
+            "popups": [{"id": "", "entry": "editor"}]}]});
+        let empty_read = json!({"popup": "", "text": token});
+        assert!(!edit_observed(&empty_id, &before, &empty_read, token));
+        assert_eq!(selection(&json!({})), (String::new(), String::new()));
+        assert_eq!(
+            selection(&json!({"active_tab": "missing", "tabs": []})),
+            ("missing".to_owned(), String::new())
+        );
+    }
 
     #[test]
     fn app_launch_supplies_private_roots_but_no_managed_tools_or_shell_marker() {
