@@ -809,6 +809,7 @@ dependencies = [
  "orbit-protocol",
  "rmp",
  "rota-cli",
+ "rustix 1.1.4",
  "serde_json",
  "tempfile",
 ]
@@ -819,6 +820,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "orbit-protocol",
+ "rustix 1.1.4",
  "wayland-client",
  "wayland-protocols-wlr",
 ]

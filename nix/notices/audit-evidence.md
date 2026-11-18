@@ -12,7 +12,7 @@ feature or build-context changes require explicit inspection and reviewed renewa
 unused exceptions and missing evidence anchors fail. The full native-binding
 graph remains intact. See the checked-in [inspection and renewal recipe](../../eon/tools/archive-notices/README.md).
 The binary SHA-256 values below identify observations, not acceptance keys.
-The Eon, Orbit and Venus sections record the combined `eon-c828u.13`
+The historical `eon-c828u.13` observations below record the combined
 renewal over reserved edge `8a19251d`, including the accepted `eon-tulof.4`
 Venus features. Observations use source tree
 `05ed9701cebcb6fc01b53683b094131cefaa4d4f`, including the directory-EOF review
@@ -49,6 +49,38 @@ are also absent from the actual compile log and selected graphs.
 
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
+
+For `eon-c828u.7` dependency prep, observed on staged tree
+`ed395078dd7e2cd8bee29aa91a5e0e276380fff0` over `636d8ea8`, the only
+Cargo.lock changes add already pinned rustix 1.1.4 to Eon and eon-bench.
+Eon production selects event/fs/process/std/termios, development adds net/pty;
+eon-bench selects event/fs/net/param/process/pty/std/system/termios/thread/time.
+No registry/git package, version or checksum changes. All six local-producer
+canonical graphs differ from the preceding accepted observations only in
+`lock`: runtime identities, selected native features, audited packages and
+build contexts remain identical. The graph includes the workspace lock even
+when the changed package is not part of that producer.
+
+Both realized full and without-Accelerando notice inputs were inspected
+independently. Six `inspect-audit` runs reproduce the saved canonical graphs
+byte for byte. Each exact-vendor offline runtime and normal/build feature tree
+matches the saved tree after translating only its source prefix to
+`/build/source`. Every host-only exception remains selected in normal/build
+and absent from runtime; every unselected exception is absent from both trees
+and has no compile line in the actual producer build log. The same Eon 9/2,
+Orbit 6/1 and Venus 15/4 host/unselected identities remain. Log absence alone
+is insufficient when dependencies are cached; selected-tree membership also
+confirms the classifications.
+
+All 12 Rust producers have equal full/without-Accelerando context hashes and
+missing sets. The strict `propose-audit-renewal` command changes only six
+Eon/Orbit/Venus fingerprints; every exception identity, reason and evidence
+anchor is unchanged. The parsed checked-in JSON equals that proposal. No
+target-runtime omission or new license decision is waived. Final gates on
+the committed candidate are recorded in the owning bead; the observations
+below bind dependency evidence, not acceptance of a report's own verdict.
+
+Historical (`eon-c828u.13`):
 
 For `eon-c828u.13`, compared with accepted edge `8a19251d`, the only lock
 change is rota-cli's dependency on the already pinned rustix 1.1.4. Eon's
@@ -142,6 +174,27 @@ bead records passing reports generated with the accepted keys on the final
 tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
+
+Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
+`dceca7e518774ddfcd72ebebc66f097e051ae7592277eb133623c2499971f1e0`.
+Full and without-Accelerando contexts are identical. Compared with the
+preceding accepted observation below, only `lock` changes; the same 9 host-only and 2 unselected
+exceptions remain.
+
+- Source: `/nix/store/8zg7fabiqq48pr6sryxixm7a6ylnj33n-source`.
+- Vendor: `/nix/store/0p2h1fsr16lz6k70ha1q1c9grrman53d-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `eon/crates/eon/Cargo.toml`;
+  root: `eon`; default features, no added root features.
+- Full observation: `/nix/store/m1cvh8ciwl60vxgf0xwg6xg1adxchv9l-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/phfznwgh53iwiyp3m3f30xvvvf2hfkhp-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `49a1e482cd116e9b54bcd632d4ff2fabd42dc5fdc00cbc7c54b146b302683313`.
+  Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+- Without-Accelerando observation: `/nix/store/zb28sn3wribpsvav4sakl46sxrkmvvsb-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/fqdlw17psys9g7kr7yxz9x9dvi380z2j-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `08d23ff77cd408c818c4fb32dffd579dd1a28003425c7e492f0e4cde9154d122`.
+  Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-c828u.13`):
 
 Renewed on 2026-11-17 for `eon-c828u.13` over `8a19251d` to context
 `97795ee94ac8866b88673065a797788eecadeff175ff655fe922085712d227d2`.
@@ -268,6 +321,27 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
+`a5d21c843de07f8c04aeda59db92486270fdcef7af8ad1fdd56f1fba63b27ab3`.
+Full and without-Accelerando contexts are identical. Compared with the
+preceding accepted observation below, only `lock` changes; the same 6 host-only and 1 unselected
+exceptions remain.
+
+- Source: `/nix/store/03y8jb2d9hnzvn114ydlfrj4wzs01zxs-source`.
+- Vendor: `/nix/store/0p2h1fsr16lz6k70ha1q1c9grrman53d-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `orbit/Cargo.toml`;
+  root: `yazelix-orbit`; default features, no added root features.
+- Full observation: `/nix/store/ph8bs6s23vrygag5pndjzq0qip7pcy2l-orbit-cargo-notices-0.1.0`.
+  Binary: `/nix/store/0acls5qawf1i7z03kk01z5dcmp8lrlvf-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+  SHA-256: `480288c838389eec01d01330141399b06269211c49f65d0030e1ea849bcaafd7`.
+  Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+- Without-Accelerando observation: `/nix/store/ph8bs6s23vrygag5pndjzq0qip7pcy2l-orbit-cargo-notices-0.1.0`.
+  Binary: `/nix/store/0acls5qawf1i7z03kk01z5dcmp8lrlvf-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+  SHA-256: `480288c838389eec01d01330141399b06269211c49f65d0030e1ea849bcaafd7`.
+  Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-c828u.13`):
+
 Renewed on 2026-11-17 for `eon-c828u.13` over `8a19251d` to context
 `eef5792335ae9efa2b09be7acf49529b7ede0497d44a445393c158d2bf21b644`.
 Full and without-Accelerando contexts are identical. Compared with accepted
@@ -356,6 +430,27 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
+`9a2afd2f38afe0655273d5c7c94984aa0534690fd8c339c9af4225417649c151`.
+Full and without-Accelerando contexts are identical. Compared with the
+preceding accepted observation below, only `lock` changes; the same 15 host-only and 4 unselected
+exceptions remain.
+
+- Source: `/nix/store/pfzfn1ihxk5xzr9anlz4m8dd9yj9fq6q-source`.
+- Vendor: `/nix/store/0p2h1fsr16lz6k70ha1q1c9grrman53d-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `venus/Cargo.toml`;
+  root: `yazelix-venus`; default features, no added root features.
+- Full observation: `/nix/store/lw1m59z9hdi10z67az46pcklijzfllkg-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/plb55b5m77v7h8iyqchw56rznlzp0mbl-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+  SHA-256: `c519ac8268d5837b3deee41aa7d8aab9c6448bcf90e4b0513b850dcdfc16f74f`.
+  Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+- Without-Accelerando observation: `/nix/store/pr7qyxaasn89w66jkgfc3xbm1njid3wj-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/yynq0i8r8a7si0q2wjxbbf9b2wjif5rs-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+  SHA-256: `c519ac8268d5837b3deee41aa7d8aab9c6448bcf90e4b0513b850dcdfc16f74f`.
+  Actual flags: `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-c828u.13`):
 
 Renewed on 2026-11-17 for `eon-c828u.13` over `8a19251d` to context
 `00e8194e48dd891f6845f9934f3525603de09f2a518e1729e1e4c0153443f91f`.
