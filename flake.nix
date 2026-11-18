@@ -488,9 +488,10 @@
 
           # Orbit's host and its Bend worker (orbit/docs/HOST.md), which
           # orbit/build.rs compiles. The unit tests run here; the real-PTY test
-          # binary, whose checks are ignored here, goes to the tests output for the
-          # real-PTY checks. tests/lifecycle.rs needs setsid from the test harness, which
-          # the build sandbox lacks, so eon-test runs it.
+          # binary, whose checks are ignored here, goes to the tests output for
+          # the real-PTY checks. This build sandbox lacks setsid, so eon-test
+          # (nix/test-sandbox.nix) runs tests/lifecycle.rs with setsid from
+          # util-linux pinned in nix/test-tools.nix.
           orbitPackage =
             assert ghostty.rev == "0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec";
             assert bend.rev == "624dd9f4607cd29b0871a9b96d413bfb11e92f52";
@@ -1289,6 +1290,7 @@
             doCheck = false;
             installCargoArtifactsMode = "use-symlink";
           });
+          testTools = import ./nix/test-tools.nix { inherit pkgs; };
           eonTests = (craneLib.overrideScope (_: _: {
             inherit inheritCargoArtifactsHook;
           })).cargoNextest (eonTestArgs // {
@@ -1301,9 +1303,10 @@
             # the bwrap PID-namespace test with a diagnostic; hosts that have them still run it, and
             # eon-test does not set this, so it fails there when bwrap cannot start (eon-w5udv).
             ROTA_TEST_ALLOW_NO_BWRAP = "1";
-            nativeCheckInputs = [ nushellPackage pkgs.jq pkgs.bash pkgs.git pkgs.python3
-              (pkgs.coreutils.override { singleBinary = false; }) ]
-              ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.util-linux ];
+            nativeCheckInputs = [
+              nushellPackage # Runtime command round-trips.
+              pkgs.jq # Test inventory in preCheck.
+            ] ++ testTools.common;
             cargoNextestExtraArgs = ''--config-file ${./.config/nextest.toml} --no-fail-fast --no-tests fail --test-threads "$NIX_BUILD_CORES"'';
             preCheck = ''
               eonTestBuildTmpdir="$TMPDIR"

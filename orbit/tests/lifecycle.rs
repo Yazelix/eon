@@ -1993,6 +1993,15 @@ fn shutdown_hups_the_unreaped_direct_child() -> TestResult {
 #[test]
 #[cfg(target_os = "linux")]
 fn shutdown_escalates_foreground_and_permits_a_detached_process() -> TestResult {
+    let require_setsid = "command -v setsid >/dev/null || exit 127;";
+    if !Command::new("bash")
+        .args(["-c", require_setsid])
+        .status()?
+        .success()
+    {
+        return Err("setsid is missing from PATH. Run this test through eon-test".into());
+    }
+
     let dir = TestDir::new("portable-shutdown")?;
     let socket = dir.0.join("orbit.sock");
     let initial_pid_file = dir.0.join("initial.pid");
@@ -2005,12 +2014,12 @@ fn shutdown_escalates_foreground_and_permits_a_detached_process() -> TestResult 
             .arg("--")
             .arg("bash")
             .arg("-c")
-            .arg(
-                "trap '' HUP; set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
+            .arg(format!(
+                "{require_setsid} trap '' HUP; set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
                  setsid --fork /bin/sh -c 'printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
                  while [ ! -s \"$ORBIT_DETACHED_PID\" ]; do :; done; \
                  /bin/sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; exec sleep 60'",
-            )
+            ))
             .env("ORBIT_INITIAL_PID", &initial_pid_file)
             .env("ORBIT_DETACHED_PID", &detached_pid_file)
             .env("ORBIT_FOREGROUND_PID", &foreground_pid_file)

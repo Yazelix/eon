@@ -15,6 +15,7 @@
 # Linux-only.
 { pkgs }:
 let
+  testTools = import ./test-tools.nix { inherit pkgs; };
   tests = runner: installer: ''
     case "''${1:-}" in
       list)
@@ -137,23 +138,7 @@ let
 in
 pkgs.writeShellApplication {
   name = "eon-test";
-  runtimeInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
-    pkgs.bubblewrap
-    pkgs.getent
-    # Process evidence, slot admission and isolated compositor fixtures.
-    pkgs.procps
-    pkgs.util-linux
-    pkgs.dbus
-    # Installer signer fixtures invoke ssh-keygen before testing refusal.
-    pkgs.openssh
-  ] ++ [
-    pkgs.cargo-nextest
-    pkgs.bash
-    pkgs.python3
-    # Cap tests copy/rename sleep; multicall coreutils depends on argv[0].
-    (pkgs.coreutils.override { singleBinary = false; })
-    pkgs.git
-  ];
+  runtimeInputs = testTools.eonTestOnly ++ testTools.common;
   text = if pkgs.stdenv.isLinux then ''
     if [ -z "''${GHOSTTY_SOURCE_DIR:-}" ] || [ -z "''${FONTCONFIG_FILE:-}" ] || ! command -v cargo >/dev/null; then
       echo "eon-test: the dev shell toolchain is missing; run it as nix develop -c eon-test" >&2
