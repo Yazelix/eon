@@ -14,7 +14,7 @@ use crate::{
     child::publish,
     environment,
     json::Value,
-    orbit::Client,
+    orbit::{Client, connect_new},
     pty,
     result::{Cell, Grid, RunResult, Sample, utc_timestamp},
     sha256::Sha256,
@@ -676,8 +676,15 @@ impl<'a> Session<'a> {
                         .args(self.child_args(&dir));
                     let host = self.spawn(c, false)?;
                     self.required.push(Process::at(host)?);
-                    self.wait("Orbit socket", || socket.exists())?;
-                    let mut client = Client::new(UnixStream::connect(socket).map_err(error)?)?;
+                    let stream = connect_new(
+                        &socket,
+                        self.end.saturating_duration_since(Instant::now()),
+                        || self.tick(),
+                    )
+                    .map_err(|e| {
+                        format!("Orbit socket: {e}; evidence {}", self.evidence.display())
+                    })?;
+                    let mut client = Client::new(stream)?;
                     client.attach(24, 80)?;
                     let reader = client.discard_in_background()?;
                     self.wait("child grid", || dir.join("ready").exists())?;
@@ -1098,18 +1105,19 @@ pub fn presentation() -> Result {
         std::io::stdout().flush().map_err(error)?;
     }
     let socket = std::env::args().next_back().ok_or("missing Orbit socket")?;
+    const WAIT: Duration = Duration::from_secs(20);
     let start = Instant::now();
-    while !Path::new(&socket).exists() {
-        if start.elapsed() > Duration::from_secs(20) {
-            return Err("supervisor Orbit socket missing".into());
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
     let reader = loop {
-        let mut client = Client::new(UnixStream::connect(&socket).map_err(error)?)?;
+        let stream = connect_new(
+            Path::new(&socket),
+            WAIT.saturating_sub(start.elapsed()),
+            || Ok(()),
+        )
+        .map_err(|e| format!("supervisor Orbit: {e}"))?;
+        let mut client = Client::new(stream)?;
         match client.attach(24, 80) {
             Ok(_) => break client.discard_in_background()?,
-            Err(e) if e == "Orbit answered Busy" && start.elapsed() < Duration::from_secs(20) => {
+            Err(e) if e == "Orbit answered Busy" && start.elapsed() < WAIT => {
                 std::thread::sleep(Duration::from_millis(50))
             }
             Err(e) => return Err(e),
