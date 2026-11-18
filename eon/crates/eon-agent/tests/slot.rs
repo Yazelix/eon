@@ -1122,6 +1122,33 @@ fn review_quiet_ineligible_front_ticket_does_not_block_remote_exemption() {
 }
 
 #[test]
+fn malformed_quiet_policy_refuses_listing_and_exempt_admission() {
+    let f = Fixture::new(1);
+    for text in ["not-an-epoch", "-1", "+1", "", "18446744073709551616"] {
+        f.policy("quiet-until", text);
+        assert!(!f.output(&["slot", "ls", "--json"]).status.success());
+        let output = f.output(&[
+            "slot",
+            "run",
+            "--quiet-exempt",
+            "--",
+            "sh",
+            "-c",
+            "touch policy-bypassed",
+        ]);
+        assert!(!output.status.success());
+        assert!(!f.dir.path().join("policy-bypassed").exists());
+    }
+    let path = f.dir.path().join("legacy/quiet-until");
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(!f.output(&["slot", "ls", "--json"]).status.success());
+    fs::remove_dir(path).unwrap();
+    assert!(f.output(&["slot", "ls", "--json"]).status.success());
+    assert!(f.output(&["slot", "run", "--", "true"]).status.success());
+}
+
+#[test]
 fn listing_counts_a_held_extra_slot_after_its_policy_expires() {
     let f = Fixture::new(2);
     let _held = f.hold(3);

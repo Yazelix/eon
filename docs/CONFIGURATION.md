@@ -381,6 +381,10 @@ slot and optionally the timed extra slot; `legacy_dir` reads the existing
 queue/quiet policy. Omit the extra lock to disable extra-slot grants in this
 caller. Every fallback must use the fleet's same lock files. Do not acquire
 an outer heavy lock around a remote slot invocation.
+An absent `quiet-until` means no quiet hold. An existing malformed or
+unreadable value refuses native listing/admission, including quiet-exempt
+admission; it never becomes an implicit zero hold. The value is an unsigned
+epoch timestamp in seconds. Quiet exemption bypasses a valid time hold only.
 
 ## Runtime identity and protocol bounds
 

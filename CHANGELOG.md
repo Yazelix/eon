@@ -14,6 +14,9 @@ installation, and proven contract changes.
   or `via store` on the launch line), and a provider no source has names each
   source's reason (EON-C40 amendment, `eon-eon-agent-lr8sx.39.12`).
 
+- Native slot admission and listing reject malformed or unreadable existing
+  quiet policy, including for quiet-exempt runs (`eon-eon-agent-lr8sx.36`).
+
 - `eon agent slot ls --json` reports Boat lease ownership before a VM receipt
   exists and refuses incomplete local lock/queue inspection. Slot events and
   local delegation share a run key for completion readers (`eon-eon-agent-lr8sx.36`).

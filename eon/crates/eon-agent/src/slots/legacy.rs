@@ -6,15 +6,28 @@ use std::path::{Path, PathBuf};
 
 const MINUTE: u64 = 60 * SECOND;
 
-pub(super) fn policy(config: &SlotConfig) -> Policy<'_> {
+pub(super) fn policy(config: &SlotConfig) -> io::Result<Policy<'_>> {
     let dir = config.legacy_dir.as_deref();
     let read = |name| dir.and_then(|dir| fs::read_to_string(dir.join(name)).ok());
     let number = |name| read(name).and_then(|text| text.trim().parse::<u64>().ok());
-    Policy {
+    let quiet_until = match dir.map(|dir| fs::read_to_string(dir.join("quiet-until"))) {
+        None => 0,
+        Some(Err(error)) if error.kind() == io::ErrorKind::NotFound => 0,
+        Some(result) => {
+            let text = result?;
+            let invalid =
+                || io::Error::new(io::ErrorKind::InvalidData, "invalid quiet-until policy");
+            if !text.trim().bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(invalid());
+            }
+            text.trim().parse().map_err(|_| invalid())?
+        }
+    };
+    Ok(Policy {
         config,
         extra_until: number("extra-slot-until").unwrap_or_default(),
         one_until: number("one-slot-until").unwrap_or_default(),
-        quiet_until: number("quiet-until").unwrap_or_default(),
+        quiet_until,
         stalled: dir.is_some_and(|dir| dir.join("slot2-stalled").exists()),
         yield_roots: read("yield-roots").map_or_else(Vec::new, |text| {
             text.lines()
@@ -34,7 +47,7 @@ pub(super) fn policy(config: &SlotConfig) -> Policy<'_> {
                 }
             })
             .saturating_mul(MINUTE),
-    }
+    })
 }
 
 fn boot_time() -> io::Result<(u64, u64)> {

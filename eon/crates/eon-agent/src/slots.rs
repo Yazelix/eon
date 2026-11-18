@@ -841,7 +841,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 .queue_lock(true)
                 .map_err(|e| slots.failure(&ticket, e))?;
             let now = now_ns();
-            let policy = legacy::policy(slots.config);
+            let policy = legacy::policy(slots.config).map_err(|e| slots.failure(&ticket, e))?;
             let tickets = slots.tickets(None);
             let competitors = tickets
                 .iter()
@@ -1041,7 +1041,7 @@ fn list(
     let queue = slots.queue_lock(false).map_err(io_failure)?;
     let locks = observe().map_err(|e| io_failure(format!("cannot read /proc/locks: {e}")))?;
     let now = now_ns();
-    let policy = legacy::policy(slots.config);
+    let policy = legacy::policy(slots.config).map_err(io_failure)?;
     let tickets = slots.tickets(Some(&locks));
     let ranked = rank(&tickets, &policy, now);
     let (remote, mut boat_error) = match boat::listing(&slots.root) {
@@ -1290,7 +1290,7 @@ mod tests {
     #[test]
     fn yield_priority_expires_at_the_default_cap() {
         let config = SlotConfig::default();
-        let mut policy = legacy::policy(&config);
+        let mut policy = legacy::policy(&config).unwrap();
         policy.yield_roots.push("/projects/lower".into());
         let tickets = [
             ticket(SECOND, "run", "/projects/lower/subdir"),
@@ -1314,7 +1314,7 @@ mod tests {
     #[test]
     fn yielding_waiters_keep_fifo_without_a_competitor() {
         let config = SlotConfig::default();
-        let mut policy = legacy::policy(&config);
+        let mut policy = legacy::policy(&config).unwrap();
         policy.yield_roots.push("/projects/lower".into());
         let tickets = [
             ticket(2 * SECOND, "run", "/projects/lower/a"),
@@ -1343,7 +1343,7 @@ mod tests {
         ];
         for (text, minutes) in [("2\n", 2), ("\n", 30)] {
             fs::write(&cap_file, text).unwrap();
-            let policy = legacy::policy(&config);
+            let policy = legacy::policy(&config).unwrap();
             let cap = SECOND + minutes * 60 * SECOND;
             assert_eq!(
                 first_for_slot(&rank(&tickets, &policy, cap - 1), 1)
@@ -1363,7 +1363,7 @@ mod tests {
     #[test]
     fn quiet_exemption_jumps_older_eligible_waiter() {
         let config = SlotConfig::default();
-        let policy = legacy::policy(&config);
+        let policy = legacy::policy(&config).unwrap();
         let mut tickets = [
             ticket(SECOND, "nix", "/projects/normal"),
             ticket(2 * SECOND, "nix", "/projects/normal"),
@@ -1377,7 +1377,7 @@ mod tests {
     #[test]
     fn policy_expires_at_the_epoch_second() {
         let config = SlotConfig::default();
-        let mut policy = legacy::policy(&config);
+        let mut policy = legacy::policy(&config).unwrap();
         policy.quiet_until = 2;
         policy.one_until = 3;
         policy.extra_until = 4;
