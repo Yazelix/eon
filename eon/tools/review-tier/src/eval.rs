@@ -23,6 +23,7 @@ const CLASSES: &[&str] = &[
     "companion-code",
     "false-success",
     "macos-portability",
+    "nixos-portability",
     "racy-test",
     "gate-cannot-fail",
     "missing-gate-evidence",

@@ -298,3 +298,18 @@ mechanism = [["enotconn", "notconnected", "not connected", "os error 57", "unwra
 [[case.expect]]
 file = "runtime/crates/eon-runtime/src/sessions.rs"
 lines = [2692, 2695]
+
+[[case]]
+id = "R32"
+kind = "fix-forward"
+commit = "541ffa2bcdb60812369d70d1b30bd849b72edede"
+fixed_by = "1fac19360170cdc1b6e4ae3568c8c53389bbf0bd"
+class = "nixos-portability"
+tier = "high"
+summary = "eon-test's sandbox binds its private passwd and nsswitch.conf straight over /etc/passwd and /etc/nsswitch.conf, but on NixOS those are absolute symlinks through /etc/static into the Nix store, and bubblewrap 0.11.2 cannot bind over them, so eon-test failed at startup on NixOS hosts."
+evidence = "541ffa2b adds the two --ro-bind lines to sandbox() at test-sandbox.nix:272-273, binding onto host /etc entries without checking for symlinks. 1fac1936 (Yu Sun, PR #10) names the failure in its message: NixOS /etc/passwd and /etc/nsswitch.conf are absolute symlinks via /etc/static, and bubblewrap 0.11.2 cannot bind the private files over them. Its fix rebuilds /etc on a tmpfs per launch (other entries bound or re-linked) and adds a probe that the account files are not symlinks."
+mechanism = [["symlink", "symbolic link", "/etc/static", "nix store", "/nix/store", "into the store"], ["bind", "bwrap", "bubblewrap", "mount", "nixos"]]
+
+[[case.expect]]
+file = "nix/test-sandbox.nix"
+lines = [272, 273]
