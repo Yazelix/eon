@@ -299,6 +299,7 @@ mechanism = [["enotconn", "notconnected", "not connected", "os error 57", "unwra
 file = "runtime/crates/eon-runtime/src/sessions.rs"
 lines = [2692, 2695]
 
+# Reported and fixed by Yu Sun (PR #10).
 [[case]]
 id = "R32"
 kind = "fix-forward"
