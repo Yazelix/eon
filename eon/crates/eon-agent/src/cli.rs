@@ -145,6 +145,11 @@ fn run(
         println!("{usage}");
         return Ok(0);
     }
+    if let [internal, rest @ ..] = args.as_slice()
+        && internal == "_heavy-memory"
+    {
+        return slots::memory::helper(rest);
+    }
     if let [internal, path, separator, argv @ ..] = args.as_slice()
         && internal == "_slot-local-exec"
         && separator == "--"

@@ -105,6 +105,7 @@ pub struct BoatConfig {
     pub timeout_seconds: u64,
     pub jobs: u16,
     pub snapshot: String,
+    pub large_max_memory_gib: u8,
 }
 
 impl Default for BoatConfig {
@@ -116,6 +117,7 @@ impl Default for BoatConfig {
             timeout_seconds: 3600,
             jobs: 4,
             snapshot: "eon-warm".into(),
+            large_max_memory_gib: 0,
         }
     }
 }
@@ -144,6 +146,7 @@ impl SlotConfig {
             || boat.reserve_hours < 0.0
             || !(120..=7200).contains(&boat.timeout_seconds)
             || !(1..=4).contains(&boat.jobs)
+            || !(boat.large_max_memory_gib == 0 || (8..=12).contains(&boat.large_max_memory_gib))
             || boat.snapshot.len() > 63
             || boat.snapshot.starts_with('-')
             || !boat

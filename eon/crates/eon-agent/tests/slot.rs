@@ -435,7 +435,10 @@ fn queued_remote_request_observes_boat_off_before_claim() {
     f.policy("quiet-until", "0");
     assert!(run.wait().success());
     assert!(f.dir.path().join("local-ran").exists());
-    assert!(!f.dir.path().join("provider/calls").exists());
+    assert_eq!(
+        fs::read_to_string(f.dir.path().join("provider/calls")).unwrap(),
+        "limits\n"
+    );
     let handoff = fs::read_to_string(f.dir.path().join("provider/handoff")).unwrap();
     assert_eq!(handoff, format!("{} nix", ticket["queued_ns"]));
 }
@@ -697,7 +700,11 @@ high = ['never-start-this', '{{prompt}}']
     }
 
     fn boat_fixture() -> Self {
-        let fixture = Self::configure(1, true, "[slots.boat]\nallow_shapes = ['nix-gate']\n");
+        let fixture = Self::configure(
+            1,
+            true,
+            "[slots.boat]\nallow_shapes = ['nix-gate']\nlarge_max_memory_gib = 8\n",
+        );
         fixture.policy("boat-on", "enabled");
         for name in ["fake", "provider"] {
             fs::create_dir(fixture.dir.path().join(name)).unwrap();
@@ -1079,10 +1086,9 @@ fn review_canceled_resume_returns_signal_status_after_cleanup() {
 }
 
 #[test]
-fn review_quiet_ineligible_front_ticket_does_not_block_remote_exemption() {
+fn quiet_exemption_runs_locally_while_remote_front_ticket_waits() {
     let f = Fixture::boat_fixture();
     f.policy("quiet-until", FUTURE);
-    fs::write(f.dir.path().join("provider/hold"), "").unwrap();
     let mut older = Running(
         f.boat_command(&["slot", "run", "--front", "--", "nix", "build", ".#default"])
             .stdout(Stdio::null())
@@ -1106,17 +1112,17 @@ fn review_quiet_ineligible_front_ticket_does_not_block_remote_exemption() {
         .spawn()
         .unwrap(),
     );
-    until(|| {
-        f.dir
-            .path()
-            .join("provider/attached")
-            .exists()
-            .then_some(())
-    });
-    assert!(older.0.try_wait().unwrap().is_none());
-    assert_eq!(f.list()["boat"]["pid"], exempt.pid());
-    fs::remove_file(f.dir.path().join("provider/hold")).unwrap();
+    until(|| f.dir.path().join("local-ran").exists().then_some(()));
     exempt.success();
+    assert!(older.0.try_wait().unwrap().is_none());
+    assert!(!f.dir.path().join("provider/attached").exists());
+    assert!(!f.root().join("boat/lease.lock").exists());
+    assert!(f.events().iter().any(|event| {
+        event["pid"] == exempt.pid()
+            && event["event"] == "exit"
+            && event["where"] == "local"
+            && event["fallback_reason"] == "timing-local"
+    }));
     f.policy("quiet-until", "0");
     older.success();
 }
@@ -1477,12 +1483,193 @@ fn boat_policy_budget_and_connectivity_negatives_use_local_queue() {
             stderr.contains("rota slot: where=local reason="),
             "{stderr}"
         );
-        assert!(stderr.contains("rota slot: local output "), "{stderr}");
+        if mode != "unreachable" {
+            assert!(stderr.contains("rota slot: local output "), "{stderr}");
+        }
         assert!(!stderr.contains("eon agent"), "{stderr}");
         assert!(f.dir.path().join("local-ran").exists());
     }
     let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
     assert!(!calls.lines().any(|line| line == "new"));
+}
+
+#[test]
+fn boat_unqualified_caps_and_timing_do_not_query_or_wait_for_the_provider() {
+    let f = Fixture::boat_fixture();
+    let args = ["slot", "run", "--", "nix", "build", ".#default"];
+    let high = f
+        .boat_command(&args)
+        .env("HEAVY_MEM", "12G")
+        .output()
+        .unwrap();
+    assert!(high.status.success());
+    assert!(String::from_utf8_lossy(&high.stderr).contains("unqualified-ceiling"));
+    let invalid = f
+        .boat_command(&args)
+        .env("HEAVY_MEM", "13G")
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    let quiet = f
+        .boat_command(&[
+            "slot",
+            "run",
+            "--quiet-exempt",
+            "--",
+            "nix",
+            "build",
+            ".#default",
+        ])
+        .output()
+        .unwrap();
+    assert!(quiet.status.success());
+    assert!(String::from_utf8_lossy(&quiet.stderr).contains("timing-local"));
+    assert!(!f.dir.path().join("provider/calls").exists());
+    assert!(!f.root().join("boat/lease.lock").exists());
+}
+
+#[test]
+fn boat_requests_the_exact_cap_and_type_at_the_default_boundary() {
+    for (cap, kind, observed) in [
+        ("6G", "default", "6442450944 null 1073741824\n"),
+        ("7G", "large", "7516192768 null 2147483648\n"),
+    ] {
+        let f = Fixture::boat_fixture();
+        let provider = f.dir.path().join("provider");
+        fs::write(provider.join("observed-memory"), observed).unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .env("HEAVY_MEM", cap)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{cap}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(provider.join("type")).unwrap().trim(),
+            kind
+        );
+        assert_eq!(
+            fs::read_to_string(provider.join("requested-memory")).unwrap(),
+            observed
+        );
+        assert!(!f.dir.path().join("local-ran").exists());
+    }
+}
+
+#[test]
+fn boat_unavailable_large_type_never_waits_for_a_busy_lease() {
+    let f = Fixture::boat_fixture();
+    let directory = f.root().join("boat");
+    fs::create_dir_all(&directory).unwrap();
+    for dir in [f.dir.path().join("state"), f.root(), directory.clone()] {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let lease = File::create(directory.join("lease.lock")).unwrap();
+    lease.try_lock_exclusive().unwrap();
+    fs::write(f.dir.path().join("provider/mode"), "large-unavailable").unwrap();
+    let result = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("machine-unavailable"));
+    assert_eq!(
+        fs::read_to_string(f.dir.path().join("provider/calls")).unwrap(),
+        "limits\n"
+    );
+}
+
+#[test]
+fn boat_reports_oom_cause_and_preparation_through_exit_and_receipt() {
+    for (mode, code, cause, preparation) in [
+        ("prep-oom", 137, "job-limit", true),
+        ("job-oom", 137, "job-limit", false),
+        ("vm-oom", 125, "vm-wide", false),
+        ("mixed-oom", 125, "vm-wide", false),
+        ("unknown-oom", 125, "unknown", false),
+        ("normal", 137, "none", false),
+    ] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        fs::write(f.dir.path().join("provider/code"), "137").unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(code), "{mode}: {stderr}");
+        assert_eq!(
+            stderr.contains("OOM-KILLED"),
+            cause == "job-limit",
+            "{mode}: {stderr}"
+        );
+        assert_eq!(
+            stderr.contains("Boat VM out of memory"),
+            cause == "vm-wide",
+            "{mode}: {stderr}"
+        );
+        let event = f.events().pop().unwrap();
+        assert_eq!(event["memory"]["cause"], cause);
+        assert_eq!(event["memory"]["preparation"], preparation);
+        assert_eq!(f.list()["boat"]["memory"], event["memory"]);
+        assert!(!f.dir.path().join("local-ran").exists());
+    }
+}
+
+#[test]
+fn boat_pre_work_memory_refusals_require_cleanup_and_block_repeat_starts() {
+    for (mode, reason) in [
+        ("headroom", "remote-memory-headroom"),
+        ("memory-unavailable", "remote-memory-unavailable"),
+    ] {
+        let f = Fixture::boat_fixture();
+        let provider = f.dir.path().join("provider");
+        fs::write(provider.join("mode"), mode).unwrap();
+        let args = ["slot", "run", "--", "nix", "build", ".#default"];
+        for expected in [reason, "qualification-stale"] {
+            let out = f
+                .boat_command(&args)
+                .env("HEAVY_MEM", "6G")
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{mode}: {stderr}");
+            assert!(stderr.contains(expected), "{mode}: {stderr}");
+            fs::remove_file(f.dir.path().join("local-ran")).unwrap();
+        }
+        let calls = fs::read_to_string(provider.join("calls")).unwrap();
+        for verb in ["new", "stop", "delete"] {
+            assert_eq!(calls.lines().filter(|line| *line == verb).count(), 1);
+        }
+        assert_eq!(
+            fs::read_to_string(provider.join("state")).unwrap().trim(),
+            "deleted"
+        );
+        let evidence = fs::read(f.root().join("boat/default_qualification_hold.json")).unwrap();
+        let record: Value = serde_json::from_slice(&evidence).unwrap();
+        assert_eq!(record["reason"], reason);
+        if mode == "headroom" {
+            assert_eq!(record["evidence"]["available"], 1073741824u64);
+        } else {
+            assert!(record["evidence"].is_null());
+        }
+    }
+}
+
+#[test]
+fn boat_gate_exit_96_does_not_fall_back_or_hold_qualification() {
+    let f = Fixture::boat_fixture();
+    fs::write(f.dir.path().join("provider/code"), "96").unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(96));
+    assert!(!f.dir.path().join("local-ran").exists());
+    assert!(!f.root().join("boat/large_qualification_hold.json").exists());
 }
 
 #[test]

@@ -2,6 +2,7 @@
 pub(super) mod local;
 pub(super) mod tree;
 
+use super::memory::{Cause, Limit, Machine, Observation, Report};
 use crate::config::{BoatConfig, Shape};
 use crate::launch::{atomic_write, ensure_parent};
 use crate::platform::{BOAT_SIGNAL as SIGNAL, BoatSignals as Signals};
@@ -72,6 +73,10 @@ pub(super) struct Record {
     expires_at: Option<u64>,
     duration_seconds: Option<u64>,
     exit_code: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory: Option<Report>,
+    #[serde(default)]
+    machine: Machine,
     usage: Option<Value>,
     environment_version: Option<u64>,
     reason: Option<String>,
@@ -304,6 +309,7 @@ struct Client {
     deadline: Instant,
     cleanup: bool,
     reserve_seconds: f64,
+    machine: Machine,
 }
 
 impl Client {
@@ -438,8 +444,9 @@ impl Client {
                 let safe = limits.as_ref().is_ok_and(|limits| {
                     billing_policy(limits).is_ok()
                         && limits["keepGoing"]["enabled"] == false
-                        && remaining(limits)
-                            .is_ok_and(|seconds| seconds > self.reserve_seconds + CLEANUP as f64)
+                        && remaining(limits).is_ok_and(|seconds| {
+                            seconds > self.reserve_seconds + self.machine.weight() * CLEANUP as f64
+                        })
                 });
                 if !safe {
                     break Err("remote-budget-observation-or-reserve".into());
@@ -647,8 +654,9 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
 }
 
 pub(super) enum Outcome {
-    Complete(u8),
+    Complete(u8, Option<Report>),
     Local(String),
+    Uncertain(String, Option<Report>),
 }
 
 fn fallback(reason: String) -> Result<Outcome, String> {
@@ -667,7 +675,7 @@ fn fallback(reason: String) -> Result<Outcome, String> {
     Ok(if signal == 0 {
         Outcome::Local(reason)
     } else {
-        Outcome::Complete((128 + signal) as u8)
+        Outcome::Complete((128 + signal) as u8, None)
     })
 }
 
@@ -676,17 +684,23 @@ pub(super) fn run(
     config: &BoatConfig,
     argv: &[String],
     shape: Shape,
+    memory: (Limit, Machine),
     identity: &mut Option<tree::Identity>,
     program: &str,
 ) -> Result<Outcome, String> {
+    let (limit, machine) = memory;
     let _signals = Signals::install();
     let wall_started = Instant::now();
     let started = super::now_ns() / super::SECOND;
     let client = Client {
         deadline: Instant::now() + Duration::from_secs(config.timeout_seconds - CLEANUP),
         cleanup: false,
-        reserve_seconds: config.reserve_hours * 3600.0,
+        reserve_seconds: config.reserve_hours * 3600.0 * machine.weight(),
+        machine,
     };
+    if qualification_blocked(&lease.root, machine) {
+        return fallback("boat-capacity qualification-stale".into());
+    }
     if let Err(reason) = recover(&client, &lease) {
         return fallback(reason);
     }
@@ -704,6 +718,7 @@ pub(super) fn run(
         budget(
             &client.json(&["limits", "--all"])?,
             config,
+            machine,
             super::now_ns() / super::SECOND,
         )?;
         Ok::<_, String>(env_version)
@@ -775,6 +790,8 @@ pub(super) fn run(
         expires_at: Some(super::now_ns() / super::SECOND + config.timeout_seconds + 2 * CONTROL),
         duration_seconds: None,
         exit_code: None,
+        memory: None,
+        machine,
         usage: None,
         environment_version: Some(env_version),
         reason: None,
@@ -792,7 +809,7 @@ pub(super) fn run(
     if let Err(reason) = allowance_before
         .as_ref()
         .map_err(Clone::clone)
-        .and_then(|limits| budget(limits, config, super::now_ns() / super::SECOND))
+        .and_then(|limits| budget(limits, config, machine, super::now_ns() / super::SECOND))
     {
         record.phase = "stopped".into();
         record.reason = Some(reason.clone());
@@ -807,7 +824,7 @@ pub(super) fn run(
             &config.environment,
             "--no-env",
             "--type",
-            "default",
+            machine.as_str(),
             "--ttl",
             &ttl,
         ])
@@ -820,7 +837,7 @@ pub(super) fn run(
             &config.environment,
             "--no-env",
             "--type",
-            "default",
+            machine.as_str(),
             "--ttl",
             &ttl,
         ];
@@ -838,6 +855,7 @@ pub(super) fn run(
                 deadline: Instant::now() + Duration::from_secs(CLEANUP),
                 cleanup: true,
                 reserve_seconds: 0.0,
+                machine,
             };
             let recovered = recover(&cleanup, &lease);
             saved?;
@@ -857,6 +875,7 @@ pub(super) fn run(
             deadline: Instant::now() + Duration::from_secs(CLEANUP),
             cleanup: true,
             reserve_seconds: 0.0,
+            machine,
         };
         let recovered = recover(&cleanup, &lease);
         return fallback(
@@ -873,7 +892,7 @@ pub(super) fn run(
         let info = client.json(&["info", &id])?;
         let info = sandbox(&info);
         if info["holdsCreatorLogins"].as_bool() != Some(false)
-            || info["type"] != "default"
+            || info["type"] != machine.as_str()
             || info["environment"].as_str() != Some(&config.environment)
             || info["environmentVersion"].as_u64() != Some(env_version)
         {
@@ -909,6 +928,12 @@ pub(super) fn run(
         )?;
         let jobs = config.jobs.to_string();
         let gate_warm = if shape == Shape::NixGate { "1" } else { "0" };
+        let cap = limit.bytes().to_string();
+        let high = limit
+            .high()
+            .map(|bytes| bytes.to_string())
+            .unwrap_or_default();
+        let margin = machine.margin().to_string();
         let mut args = vec![
             "exec",
             &id,
@@ -924,7 +949,11 @@ pub(super) fn run(
             "--noprofile",
             "--norc",
             "-c",
-            include_str!("boat/run.sh"),
+            concat!(
+                include_str!("boat/scope.sh"),
+                "\n",
+                include_str!("boat/run.sh")
+            ),
             "eon-build",
             &source.tree,
             &source.cwd,
@@ -932,6 +961,9 @@ pub(super) fn run(
             &run_id,
             gate_warm,
             include_str!("boat/dependencies.nix"),
+            &cap,
+            &high,
+            &margin,
         ];
         args.extend(argv.iter().map(String::as_str));
         let command = client.json(&args)?;
@@ -962,6 +994,7 @@ pub(super) fn run(
         deadline: Instant::now() + Duration::from_secs(CLEANUP),
         cleanup: true,
         reserve_seconds: 0.0,
+        machine,
     };
     if execution.is_err()
         && let Some(process) = record.command_pid
@@ -1002,23 +1035,75 @@ pub(super) fn run(
         {
             return Err("remote-result-identity".into());
         }
-        if result["gate_ran"] != true || result["source_verified"] != true {
+        let complete_log = || {
+            if result["log_complete"] != true {
+                return Err("remote-log-incomplete".into());
+            }
+            log_result.as_ref().map(|_| ()).map_err(Clone::clone)
+        };
+        let code = u8::try_from(result["exit_code"].as_u64().ok_or("remote-result-status")?)
+            .map_err(|_| "remote-result-status".to_owned())?;
+        let prepared = result["preparation_started"].as_bool().ok_or("remote-memory-unverified")?;
+        if !prepared && code == 96 && result["gate_ran"] == false && result["source_verified"] == false {
+            complete_log()?;
+            let reason = if let Some(headroom) = result["headroom_failed"].as_object() {
+                let amount = |key: &str| headroom.get(key).and_then(Value::as_u64);
+                let total = amount("total").ok_or("remote-memory-unverified")?;
+                let available = amount("available").ok_or("remote-memory-unverified")?;
+                let ceiling = amount("ceiling").ok_or("remote-memory-unverified")?;
+                if total == 0 || available > total || ceiling >= limit.bytes()
+                    || ceiling > available.saturating_sub(machine.margin())
+                {
+                    return Err("remote-memory-unverified".into());
+                }
+                "remote-memory-headroom"
+            } else {
+                "remote-memory-unavailable"
+            };
+            let hold = serde_json::json!({"run_id":run_id, "limit":limit, "machine":machine,
+                "environment_version":env_version, "reason":reason, "evidence":result["headroom_failed"]});
+            atomic_write(&qualification_path(&lease.root, machine), &serde_json::to_vec(&hold).map_err(|_| "boat-qualification-hold")?)
+                .map_err(|_| "boat-qualification-hold")?;
+            return Err(reason.into());
+        }
+        let observation: Observation = serde_json::from_value(result["memory"].clone())
+            .map_err(|_| "remote-memory-unverified")?;
+        let report = observation.report(limit, machine, result["gate_ran"] == false)?;
+        let cause = report.cause;
+        record.memory = Some(report);
+        match cause {
+            Cause::JobLimit if prepared => {
+                record.exit_code = Some(137);
+                complete_log()?;
+                let _ = writeln!(io::stderr(), "{}", limit.oom_message());
+                return Ok(137);
+            }
+            Cause::VmWide => {
+                let _ = writeln!(io::stderr(), "Boat VM out of memory (not the job's cap)");
+                return Err("vm-wide-oom".into());
+            }
+            Cause::Unknown => return Err("oom-cause-unknown".into()),
+            Cause::JobLimit => return Err("remote-memory-unverified".into()),
+            Cause::None => (),
+        }
+        if !prepared || result["gate_ran"] != true || result["source_verified"] != true {
             return Err("remote-preparation-failed".into());
         }
         if result["build_identity_absent"] != true {
             return Err("remote-build-identity-unproven".into());
         }
-        let code = u8::try_from(result["exit_code"].as_u64().ok_or("remote-result-status")?)
-            .map_err(|_| "remote-result-status".to_owned())?;
         record.exit_code = Some(code);
-        if result["log_complete"] != true {
-            return Err("remote-log-incomplete".into());
-        }
-        log_result?;
+        complete_log()?;
         Ok(code)
     });
     record.exit_code = execution.as_ref().ok().copied().or(record.exit_code);
-    record.reason = execution.as_ref().err().cloned();
+    record.reason = execution.as_ref().err().cloned().or_else(|| {
+        record
+            .memory
+            .as_ref()
+            .filter(|report| report.cause == Cause::JobLimit)
+            .map(|_| "job-limit-oom".into())
+    });
     record.phase = "stopping".into();
     let mut cacheable = matches!(execution, Ok(0)) && record.credentials_absent;
     if cacheable {
@@ -1067,6 +1152,7 @@ pub(super) fn run(
         deadline: Instant::now() + Duration::from_secs(CLEANUP),
         cleanup: true,
         reserve_seconds: 0.0,
+        machine,
     };
     let stopped = stop_vm(&cleanup, &id);
     record.usage = usage(&cleanup, &id, started);
@@ -1134,12 +1220,22 @@ pub(super) fn run(
     }
     let signal = SIGNAL.load(Ordering::Relaxed);
     if signal != 0 {
-        return Ok(Outcome::Complete((128 + signal) as u8));
+        return Ok(Outcome::Complete((128 + signal) as u8, None));
     }
-    if !released && let Err(reason) = &execution {
+    if let Err(reason) = &execution
+        && (!released
+            || matches!(
+                reason.as_str(),
+                "remote-memory-headroom" | "remote-memory-unavailable"
+            ))
+    {
         return fallback(reason.clone());
     }
-    Ok(Outcome::Complete(execution?))
+    match execution {
+        Ok(code) => Ok(Outcome::Complete(code, record.memory)),
+        Err(reason) if record.memory.is_some() => Ok(Outcome::Uncertain(reason, record.memory)),
+        Err(reason) => Err(reason),
+    }
 }
 
 /// The Boat shape `argv` is permitted as, or `None` when it must run locally. One
@@ -1351,7 +1447,7 @@ fn billing_policy(limits: &Value) -> Result<bool, String> {
         limits["sandboxPlanKey"].as_str(),
     ) {
         (Some("trial"), Some("trialing"), Some("trial")) => Ok(true),
-        (Some("paid"), Some("active"), Some("box_20"))
+        (Some("paid" | "standard"), Some("active"), Some("box_20"))
             if limits["activeSandboxPlanKey"] == "box_20" =>
         {
             Ok(false)
@@ -1378,16 +1474,41 @@ fn remaining(limits: &Value) -> Result<f64, String> {
     Ok(seconds)
 }
 
-fn budget(limits: &Value, config: &BoatConfig, now: u64) -> Result<(), String> {
+fn type_available(limits: &Value, machine: Machine) -> bool {
+    limits["machineTypes"].as_array().is_some_and(|types| {
+        let mut matches = types.iter().filter(|t| t["type"] == machine.as_str());
+        matches.next().is_some_and(|t| t["available"] == true) && matches.next().is_none()
+    })
+}
+
+pub(super) fn available(machine: Machine) -> bool {
+    let client = Client {
+        deadline: Instant::now() + Duration::from_secs(CONTROL),
+        cleanup: false,
+        reserve_seconds: 0.0,
+        machine,
+    };
+    client
+        .json(&["limits", "--all"])
+        .is_ok_and(|limits| type_available(&limits, machine))
+}
+
+fn qualification_path(root: &Path, machine: Machine) -> PathBuf {
+    root.join("boat")
+        .join(format!("{}_qualification_hold.json", machine.as_str()))
+}
+
+pub(super) fn qualification_blocked(root: &Path, machine: Machine) -> bool {
+    !fs::symlink_metadata(qualification_path(root, machine))
+        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+}
+
+fn budget(limits: &Value, config: &BoatConfig, machine: Machine, now: u64) -> Result<(), String> {
     if limits["canStart"].as_bool() != Some(true)
         || limits["keepGoing"]["enabled"].as_bool() != Some(false)
         || limits["nextStartDollars"].as_f64() != Some(0.0)
         || limits["activeSandboxes"].as_u64() != Some(0)
-        || !limits["machineTypes"].as_array().is_some_and(|types| {
-            types
-                .iter()
-                .any(|t| t["type"] == "default" && t["available"] == true)
-        })
+        || !type_available(limits, machine)
     {
         return Err("boat-unavailable-or-paid-start".into());
     }
@@ -1399,7 +1520,8 @@ fn budget(limits: &Value, config: &BoatConfig, now: u64) -> Result<(), String> {
             return Err("start-limit".into());
         }
     }
-    let required = config.reserve_hours * 3600.0 + config.timeout_seconds as f64 + 60.0;
+    let required = machine.weight()
+        * (config.reserve_hours * 3600.0 + config.timeout_seconds as f64 + CLEANUP as f64);
     if remaining(limits)? < required {
         return Err("budget-reserve-or-trial-cap".into());
     }
@@ -1754,10 +1876,10 @@ mod tests {
     fn trial_cap_start_prices_and_missing_safety_fields_refuse_remote() {
         let config = BoatConfig::default();
         let good = limits();
-        assert!(budget(&good, &config, 1).is_ok());
+        assert!(budget(&good, &config, Machine::Default, 1).is_ok());
         let mut bad = good.clone();
         bad["trialComputeUsedSeconds"] = json!(89999);
-        assert!(budget(&bad, &config, 1).is_err());
+        assert!(budget(&bad, &config, Machine::Default, 1).is_err());
         for (pointer, value) in [
             ("/keepGoing/enabled", json!(true)),
             ("/nextStartDollars", json!(0.03)),
@@ -1768,14 +1890,17 @@ mod tests {
         ] {
             let mut bad = good.clone();
             *bad.pointer_mut(pointer).unwrap() = value;
-            assert!(budget(&bad, &config, 1).is_err(), "{pointer}");
+            assert!(
+                budget(&bad, &config, Machine::Default, 1).is_err(),
+                "{pointer}"
+            );
         }
         assert!(timestamp(&json!("2026-02-30T00:00:00.000Z")).is_none());
         let mut boundary = good;
         boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 60);
-        assert!(budget(&boundary, &config, 1).is_ok());
+        assert!(budget(&boundary, &config, Machine::Default, 1).is_ok());
         boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 59);
-        assert!(budget(&boundary, &config, 1).is_err());
+        assert!(budget(&boundary, &config, Machine::Default, 1).is_err());
     }
 
     #[test]
@@ -1791,6 +1916,6 @@ mod tests {
         let mut trial = limits();
         trial["trialComputeUsedSeconds"] = json!(90000);
         trial["wallet"] = json!({"balanceDollars": 10000});
-        assert!(budget(&trial, &BoatConfig::default(), 1).is_err());
+        assert!(budget(&trial, &BoatConfig::default(), Machine::Default, 1).is_err());
     }
 }

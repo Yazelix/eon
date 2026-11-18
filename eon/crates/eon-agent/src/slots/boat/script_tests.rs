@@ -1,17 +1,57 @@
+use super::super::memory::Class;
+use super::{Cause, Limit, Machine, Observation};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::net::UnixListener;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+const RUN_ID: &str = "11111111111111111111111111111111";
+const CGROUP: &str = "/user.slice/eon-boat-11111111111111111111111111111111.scope";
+
 fn runner(refuse_caps: bool, delayed_log: bool) -> (tempfile::TempDir, Command) {
+    runner_with_limits(refuse_caps, delayed_log, "6442450944", "", "1073741824")
+}
+
+fn runner_with_limits(
+    refuse_caps: bool,
+    delayed_log: bool,
+    cap: &str,
+    high: &str,
+    margin: &str,
+) -> (tempfile::TempDir, Command) {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
     let source = home.join("eon");
     let run = home.join("eon-run");
     let bin = home.join(".nix-profile/bin");
-    for path in [&source, &run, &bin] {
+    let cgroup = root.path().join("cgroup");
+    let unit = cgroup.join(&CGROUP[1..]);
+    let proc = root.path().join("proc");
+    for path in [
+        &source,
+        &run,
+        &bin,
+        &home.join("nix/store"),
+        &home.join("runtime"),
+        &unit,
+        &proc.join("self"),
+    ] {
         fs::create_dir_all(path).unwrap();
     }
+    UnixListener::bind(home.join("runtime/bus")).unwrap();
+    for path in [&unit, &cgroup.join("user.slice")] {
+        for control in ["memory.max", "memory.high"] {
+            fs::write(path.join(control), "max\n").unwrap();
+        }
+    }
+    fs::write(
+        proc.join("meminfo"),
+        "MemTotal: 16777216 kB\nMemAvailable: 12582912 kB\n",
+    )
+    .unwrap();
+    fs::write(proc.join("vmstat"), "oom_kill 5\n").unwrap();
+    fs::write(proc.join("kmsg"), "<6>[1.0] guest boot\n").unwrap();
     fs::write(source.join("source"), "captured").unwrap();
     for args in [["init", "-q"], ["add", "."]] {
         assert!(
@@ -36,43 +76,77 @@ fn runner(refuse_caps: bool, delayed_log: bool) -> (tempfile::TempDir, Command) 
         .unwrap();
     assert!(tee.status.success());
     let tee = String::from_utf8(tee.stdout).unwrap();
-    for (name, body) in [
-        ("nix", "exit 0"),
-        (
-            "setpriv",
-            if refuse_caps {
-                "exit 97"
-            } else {
-                "shift 2; exec \"$@\""
-            },
-        ),
-        (
-            "tee",
-            if delayed_log {
-                "sleep 1; exec \"$REAL_TEE\" \"$@\""
-            } else {
-                "exec \"$REAL_TEE\" \"$@\""
-            },
-        ),
+    // The test sandbox does not assume /usr/bin/env. Bash also preserves the
+    // exported controller/workload functions through the launcher boundary.
+    let bash = Command::new("sh")
+        .args(["-c", "command -v bash"])
+        .output()
+        .unwrap();
+    assert!(bash.status.success());
+    let bash = String::from_utf8(bash.stdout).unwrap();
+    let shim = bin.join("scope-fixture");
+    let body = include_str!("../../../tests/fixtures/boat-scope.sh");
+    fs::write(&shim, format!("#!{}\n{body}", bash.trim())).unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    for name in [
+        "nix",
+        "systemd-run",
+        "cat",
+        "mkdir",
+        "rmdir",
+        "dmesg",
+        "stat",
+        "setpriv",
+        "bwrap",
     ] {
-        let path = bin.join(name);
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&shim, bin.join(name)).unwrap();
     }
+    let tee_path = bin.join("tee");
+    let delay = if delayed_log { "sleep 1\n" } else { "" };
+    fs::write(
+        &tee_path,
+        format!("#!/bin/sh\n{delay}exec \"$REAL_TEE\" \"$@\"\n"),
+    )
+    .unwrap();
+    fs::set_permissions(tee_path, fs::Permissions::from_mode(0o755)).unwrap();
     fs::write(run.join("go"), "").unwrap();
     for name in [".bashrc", ".bash_profile", ".profile"] {
         fs::write(home.join(name), format!("export ASCII_TOKEN=DO_NOT_READ_RC\nexport BOAT_ID=DO_NOT_READ_RC\ntouch '{}'/rc-read\n", home.display())).unwrap();
     }
-    let script = include_str!("run.sh").replace("/home/user", home.to_str().unwrap());
+    let script = concat!(include_str!("scope.sh"), "\n", include_str!("run.sh"))
+        .replace(
+            "manager_runtime=/run/user/$(id -u)",
+            "manager_runtime=/home/user/runtime",
+        )
+        .replace("/nix/store", "/home/user/nix/store")
+        .replace(
+            "/nix/var/nix/daemon-socket/socket",
+            "/home/user/nix/daemon-socket",
+        )
+        .replace("/sys/fs/cgroup", cgroup.to_str().unwrap())
+        .replace(
+            "/proc/self/cgroup",
+            proc.join("self/cgroup").to_str().unwrap(),
+        )
+        .replace(
+            "/proc/self/oom_score_adj",
+            proc.join("self/oom_score_adj").to_str().unwrap(),
+        )
+        .replace("/proc/meminfo", proc.join("meminfo").to_str().unwrap())
+        .replace("/proc/vmstat", proc.join("vmstat").to_str().unwrap())
+        .replace("/home/user", home.to_str().unwrap());
+    let path = std::env::var("PATH").unwrap();
     let mut command = Command::new("bash");
     command
         .env_clear()
         .env("HOME", &home)
-        .env(
-            "PATH",
-            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
-        )
+        .env("PATH", format!("{}:{path}", bin.display()))
         .env("REAL_TEE", tee.trim())
+        .env("FIXTURE_REAL_PATH", path)
+        .env("FIXTURE_CGROUP", cgroup)
+        .env("FIXTURE_SCOPE", CGROUP)
+        .env("FIXTURE_PROC", proc)
+        .env("FIXTURE_REFUSE_CAPS", if refuse_caps { "1" } else { "0" })
         .args(["--noprofile", "--norc", "-c"])
         .arg(script)
         .args([
@@ -80,12 +154,17 @@ fn runner(refuse_caps: bool, delayed_log: bool) -> (tempfile::TempDir, Command) 
             tree.trim(),
             "",
             "4",
-            "11111111111111111111111111111111",
+            RUN_ID,
             "0",
             "unused",
+            cap,
+            high,
+            margin,
             "bash",
             "-c",
-            "printf 'stdout-tail\\n'; printf 'stderr-tail\\n' >&2",
+            "[ -z \"${XDG_RUNTIME_DIR+x}${DBUS_SESSION_BUS_ADDRESS+x}\" ] || exit 99; \
+             if (: >&5) 2>/dev/null; then exit 99; fi; \
+             printf 'stdout-tail\\n'; printf 'stderr-tail\\n' >&2; exit \"${FIXTURE_GATE_CODE:-0}\"",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -134,6 +213,205 @@ fn review_capability_refusal_is_preparation_failure_not_a_gate_result() {
     assert_eq!(result["source_verified"], true);
     assert_eq!(result["exit_code"], 97);
     assert_eq!(result["gate_ran"], false);
+}
+
+#[test]
+fn runner_refuses_daemon_socket_and_nonlocal_nix_store_before_preparation() {
+    for store in [None, Some("daemon"), Some("ssh://foreign-store")] {
+        let (root, mut command) = runner(false, false);
+        let home = root.path().join("home");
+        let _daemon = match store {
+            Some(store) => {
+                command.env("FIXTURE_NIX_STORE", store);
+                None
+            }
+            None => Some(UnixListener::bind(home.join("nix/daemon-socket")).unwrap()),
+        };
+        assert!(command.status().unwrap().success());
+        let result: serde_json::Value =
+            serde_json::from_slice(&fs::read(home.join("eon-run/result.json")).unwrap()).unwrap();
+        assert_eq!(result["exit_code"], 96);
+        assert_eq!(result["preparation_started"], false);
+        assert_eq!(result["source_verified"], false);
+    }
+}
+
+fn run_result(root: &tempfile::TempDir, command: &mut Command) -> serde_json::Value {
+    assert!(command.status().unwrap().success());
+    let run = root.path().join("home/eon-run");
+    serde_json::from_slice(&fs::read(run.join("result.json")).unwrap_or_else(|error| {
+        panic!(
+            "{error}: {}",
+            fs::read_to_string(run.join("output.log")).unwrap_or_default()
+        )
+    }))
+    .unwrap()
+}
+
+#[test]
+fn scope_and_nix_refusals_are_explicit_and_pre_work() {
+    for (key, value) in [
+        ("FIXTURE_LAUNCH", "fail"),
+        ("FIXTURE_NIX_STORE", "fail"),
+        ("FIXTURE_NIX_BUILDERS", "fail"),
+        ("FIXTURE_NIX_BUILDERS", "ssh://foreign-builder"),
+        ("FIXTURE_SCRATCH_FS", "tmpfs"),
+        ("FIXTURE_SCRATCH_FS", "ramfs"),
+    ] {
+        let (root, mut command) = runner(false, false);
+        let result = run_result(&root, command.env(key, value));
+        assert_eq!(result["exit_code"], 96, "{key}={value}: {result}");
+        assert_eq!(result["preparation_started"], false);
+        assert_eq!(result["gate_ran"], false);
+        assert_eq!(result["source_verified"], false);
+        assert_eq!(result["log_complete"], true);
+        assert!(result["memory"].is_null());
+    }
+    let (root, mut command) = runner(false, false);
+    let result = run_result(&root, command.env("FIXTURE_GATE_CODE", "96"));
+    assert_eq!(result["exit_code"], 96);
+    assert_eq!(result["preparation_started"], true);
+    assert_eq!(result["gate_ran"], true);
+}
+
+#[test]
+fn bubblewrap_setup_failure_is_a_pre_work_refusal() {
+    let (root, mut command) = runner(false, false);
+    let result = run_result(&root, command.env("FIXTURE_BWRAP", "fail"));
+    assert!(root.path().join("proc/bwrap-args").is_file());
+    assert_eq!(result["exit_code"], 96, "{result}");
+    assert_eq!(result["preparation_started"], false);
+    assert_eq!(result["source_verified"], false);
+    assert_eq!(result["gate_ran"], false);
+    assert_eq!(result["log_complete"], true);
+    assert_eq!(result["memory"]["drained"], true);
+    assert_eq!(
+        fs::metadata(root.path().join("home/eon-run/preparation-started"))
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn scope_sets_limits_and_keeps_the_guest_manager_outside_the_workload() {
+    for (cap, high, margin, expected) in [
+        ("6442450944", "", "1073741824", ["6442450944\n", "max\n"]),
+        (
+            "8589934592",
+            "7516192768",
+            "2147483648",
+            ["8589934592\n", "7516192768\n"],
+        ),
+    ] {
+        let (root, mut command) = runner_with_limits(false, false, cap, high, margin);
+        let result = run_result(&root, &mut command);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        let unit = root.path().join(format!("cgroup{CGROUP}"));
+        assert!(
+            fs::metadata(unit.join("controller/cgroup.procs"))
+                .unwrap()
+                .len()
+                > 0
+        );
+        assert!(
+            fs::metadata(unit.join("workload/cgroup.procs"))
+                .unwrap()
+                .len()
+                > 0
+        );
+        assert_eq!(
+            fs::read_to_string(unit.join("cgroup.subtree_control")).unwrap(),
+            "+memory\n"
+        );
+        for (key, value) in [
+            ("memory.max", expected[0]),
+            ("memory.high", expected[1]),
+            ("memory.swap.max", "0\n"),
+            ("memory.oom.group", "1\n"),
+        ] {
+            assert_eq!(
+                fs::read_to_string(unit.join("workload").join(key)).unwrap(),
+                value,
+                "{key}"
+            );
+        }
+        let arguments = fs::read_to_string(root.path().join("proc/bwrap-args")).unwrap();
+        assert!(arguments.contains("--tmpfs\n/run\n"));
+        let scratch = root.path().join("home/eon-run/workload/tmp");
+        assert!(arguments.contains(&format!("--bind\n{}\n/tmp\n", scratch.display())));
+        assert!(arguments.contains("--unshare-pid\n"));
+        let cgroup = root.path().join("cgroup");
+        assert!(arguments.contains(&format!("--ro-bind\n{0}\n{0}\n", cgroup.display())));
+        assert!(arguments.contains("--unsetenv\nXDG_RUNTIME_DIR\n"));
+        assert!(arguments.contains("--unsetenv\nDBUS_SESSION_BUS_ADDRESS\n"));
+    }
+}
+
+#[test]
+fn scope_refuses_a_lower_ancestor_or_insufficient_headroom() {
+    for (file, contents, ceiling) in [
+        (
+            "cgroup/user.slice/memory.high",
+            "6442450943\n",
+            6442450943u64,
+        ),
+        (
+            "proc/meminfo",
+            "MemTotal: 8388608 kB\nMemAvailable: 7340031 kB\n",
+            6442449920,
+        ),
+    ] {
+        let (root, mut command) = runner(false, false);
+        fs::write(root.path().join(file), contents).unwrap();
+        let result = run_result(&root, &mut command);
+        assert_eq!(result["exit_code"], 96, "{result}");
+        assert_eq!(result["preparation_started"], false);
+        assert_eq!(result["headroom_failed"]["ceiling"], ceiling);
+        assert!(!root.path().join("proc/bwrap-args").exists());
+    }
+}
+
+#[test]
+fn scope_reports_oom_from_raw_kernel_evidence_and_waits_for_drain() {
+    for (mode, cause) in [
+        ("job", Cause::JobLimit),
+        ("vm", Cause::VmWide),
+        ("mixed", Cause::VmWide),
+        ("unknown", Cause::Unknown),
+        ("wrapped", Cause::None),
+        ("unreadable", Cause::Unknown),
+        ("undrained", Cause::Unknown),
+    ] {
+        let (root, mut command) = runner(false, false);
+        if mode == "job" {
+            command.env("FIXTURE_RMDIR", "fail");
+        }
+        let result = run_result(&root, command.env("FIXTURE_OOM", mode));
+        let evidence = &result["memory"];
+        assert_eq!(evidence["drained"], mode != "undrained", "{mode}: {result}");
+        if mode == "wrapped" || mode == "unreadable" {
+            assert_eq!(evidence["complete"], false);
+        }
+        let observation: Observation = serde_json::from_value(evidence.clone()).unwrap();
+        let limit = Limit {
+            class: Class::Default,
+            cap_gib: 6,
+        };
+        assert_eq!(
+            observation
+                .report(limit, Machine::Default, false)
+                .unwrap()
+                .cause,
+            cause,
+            "{mode}: {result}"
+        );
+        if mode == "job" {
+            assert_eq!(result["exit_code"], 137);
+            assert_eq!(evidence["scope_kills"], 2);
+            assert_eq!(evidence["own_events"], 1);
+        }
+    }
 }
 
 #[test]

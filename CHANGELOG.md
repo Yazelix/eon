@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Boat heavy jobs use the local per-job memory policy and run without swap.
+  Requests select the default VM or a qualified large VM by cap while
+  sharing one lease. Completion reports distinguish job-limit OOMs from
+  VM-wide OOMs and unknown causes (`eon-eon-agent-lr8sx.36`).
+
 - OpenCode panes show their official mark in the Agents sidebar and attention
   inbox, with the label `OpenCode` and artwork suited to the row background
   (`eon-m595b`).

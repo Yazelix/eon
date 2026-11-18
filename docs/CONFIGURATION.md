@@ -300,8 +300,26 @@ reserve. Admission uses the smaller of included plan time and any trial cap;
 wallet credit never authorizes a paid start. Keep-going must be off. The
 whole run's lifetime must fit above the reserve and before the trial/billing
 boundary. `timeout_seconds` accepts 120–7200 and includes setup and cleanup;
-use 7200 for a first cold gate. `jobs` accepts 1–4 for the default 4-vCPU/8-GB
-VM; explicit permitted command flags retain their own values.
+use 7200 for a first cold gate. `jobs` accepts 1–4 for either supported machine;
+explicit permitted command flags retain their own values.
+
+Boat uses the same heavy memory classes as local admission. Defaults are 6G
+for ordinary jobs, 8G for Nix and Rune, and 4G for quiet runs. The shared
+`mem-caps` file can change the defaults, and `HEAVY_MEM` overrides the limit
+with a whole number from 1G to 12G. Quiet timing jobs stay local. Caps up to 6G
+select the default 4-vCPU/8-GB VM. Caps from 7G to 12G select the large
+8-vCPU/16-GB VM up to the measured `slots.boat.large_max_memory_gib` ceiling.
+The ceiling defaults to 0, meaning the large VM is unqualified, and accepts
+0 or 8–12. Requests above the qualified ceiling enter local admission with
+a capacity reason. Both sizes share one lease. A large job requires twice the
+default rate of included credit.
+
+The guest checks the actual per-job limit, no swap, ancestor limits, a local
+Nix store without an external builder, and spare memory before preparation.
+Default requires 1 GiB spare and large requires 2 GiB. A failed headroom
+check records a qualification hold for that type until the operator resolves
+it. A verified job-limit OOM exits 137 with the class and cap. VM-wide OOM
+and unknown OOM cause are reported separately with exit 125.
 
 Only tracked source, including tracked uncommitted edits and staged new
 files, is exported. Non-ignored untracked files require staging before remote

@@ -8239,6 +8239,27 @@ reference to existing pane creation, not by the unapproved targeting beads.
     execution and retain the proven tree, duration, usage cost and result or
     uncertainty. Complete output is retained in a separate private caller run log;
     public inspection/history do not include it.
+    Remote heavy execution resolves memory policy and locality before queueing
+    a remote ticket or claiming its lease. Built-in class defaults are default6G,
+    nix8G, rune8G and bench4G; the shared heavy policy may change them and
+    HEAVY_MEM overrides with whole-gigabyte values1–12G. Quiet-exempt timing jobs
+    stay local. Effective caps at most6G select the default machine;7G–12G select
+    large within its measured configured ceiling, using one shared serial lease
+    and size-aware included-credit guards. Above the qualified ceiling, locality
+    is decided at ticket creation with a capacity reason, without remote waiting.
+    A determinately unavailable selected type uses local admission with a capacity
+    reason before remote queueing/lease claim; invalid limits fail before queueing.
+    The guest cap covers preparation and every workload descendant, disallows
+    swap and applies Rune MemoryHigh one GiB below a cap of at least2G. Verify
+    the exact cap, ancestors and controller headroom before preparation begins;
+    inability to apply it chooses local before work, never an uncapped or reduced
+    cap. The controller stays outside the workload scope. No build runs outside
+    the job scope (no external build daemon). A verified job-limit OOM returns137 and
+    reports OOM-KILLED with class/cap in output, receipt and exit event, including
+    during preparation. A proven guest-wide OOM is explicitly Boat VM out of
+    memory/uncertainty125. Mixed job-limit and VM-wide OOM is also VM-wide125,
+    never OOM-KILLED; unavailable causal evidence is OOM-cause-unknown125.
+    A kill counter or signal alone does not prove the job's limit caused OOM.
     Provider identity: no caller credentials reach the VM; Boat's own
     sandbox-scoped identity (ASCII_TOKEN, BOAT_ID), which acts only on that
     sandbox, is present on the VM and absent from the build. See
