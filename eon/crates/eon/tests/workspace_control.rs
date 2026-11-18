@@ -14,13 +14,18 @@ use orbit_protocol::management::{
     ProgramStatus, Record as ManagementRecord, Refusal, Screen as OrbitScreen,
     ServerMessage as ManagementServerMessage, TerminationReason, Tombstone, VisibleText,
 };
+use rustix::{
+    event::{PollFd, PollFlags, Timespec},
+    fs::OFlags,
+    process::{Pid, Signal, WaitOptions},
+};
 use std::io::BufRead;
 use std::{
     ffi::OsStr,
     fs,
     io::{Read, Write},
     net::Shutdown,
-    os::fd::{AsFd, AsRawFd},
+    os::fd::AsFd,
     os::unix::{
         ffi::OsStrExt,
         fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
@@ -106,9 +111,8 @@ impl Drop for ManagedChild {
                 return;
             }
         }
-        // SAFETY: this still-unreaped child was spawned as its own group leader.
-        let result = unsafe { libc::kill(-i32::try_from(self.0.id()).unwrap(), libc::SIGKILL) };
-        let error = std::io::Error::last_os_error();
+        // This still-unreaped child was spawned as its own group leader.
+        let result = rustix::process::kill_process_group(Pid::from_child(&self.0), Signal::KILL);
         // A second panic while unwinding aborts the test binary, and then no other
         // test's guard stops its supervisor.
         if thread::panicking() {
@@ -124,10 +128,9 @@ impl Drop for ManagedChild {
         }
         // macOS reports EPERM, not ESRCH, for a group with no member left to signal.
         assert!(
-            result == 0
-                || error.raw_os_error() == Some(libc::ESRCH)
-                || cfg!(target_vendor = "apple") && error.raw_os_error() == Some(libc::EPERM),
-            "{error}"
+            matches!(result, Ok(()) | Err(rustix::io::Errno::SRCH))
+                || cfg!(target_vendor = "apple") && result == Err(rustix::io::Errno::PERM),
+            "{result:?}"
         );
         wait_for_exit(&mut self.0);
     }
@@ -2129,7 +2132,7 @@ fn publish_management_record(path: &Path, record: &ManagementRecord, ready_delay
     let expected = object_identity(path);
     let metadata = claim.metadata().unwrap();
     assert!(metadata.file_type().is_file());
-    assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+    assert_eq!(metadata.uid(), rustix::process::geteuid().as_raw());
     assert_eq!(metadata.mode() & 0o7777, 0o600);
     assert_eq!(metadata.len(), 0);
     claim.try_lock().unwrap();
@@ -2168,55 +2171,6 @@ fn endpoint_identity(path: &Path) -> EndpointIdentity {
         path: path.as_os_str().as_bytes().to_vec(),
         object: object_identity(path),
     }
-}
-
-/// Whether the process `pid` waits, as in a poll: Some(true) when its main
-/// thread sleeps on Linux, or no thread runs on macOS; None once it has ended.
-/// Linux shows a page-in as `D`, so a sleep there is a real wait. macOS also
-/// counts loader and page-in waits as not running, so there it is best effort.
-#[cfg(target_os = "linux")]
-fn process_waits(pid: u32) -> std::io::Result<Option<bool>> {
-    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let state = stat
-        .rsplit_once(')')
-        .and_then(|(_, rest)| rest.trim_start().chars().next())
-        .ok_or_else(|| std::io::Error::other(format!("unreadable /proc/{pid}/stat: {stat}")))?;
-    Ok(match state {
-        'Z' | 'X' => None,
-        state => Some(state == 'S'),
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn process_waits(pid: u32) -> std::io::Result<Option<bool>> {
-    // SAFETY: proc_taskinfo holds only integers, so all zeros is a valid value.
-    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of_val(&info) as libc::c_int;
-    // SAFETY: proc_pidinfo writes at most `size` bytes into the local info.
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid as libc::c_int,
-            libc::PROC_PIDTASKINFO,
-            0,
-            (&raw mut info).cast(),
-            size,
-        )
-    };
-    if read == size {
-        return Ok(Some(info.pti_numrunning == 0));
-    }
-    let error = std::io::Error::last_os_error();
-    // An ended process, a zombie included, has no task to describe.
-    if read <= 0 && error.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(None);
-    }
-    Err(std::io::Error::other(format!(
-        "proc_pidinfo({pid}) gave {read} of {size} bytes: {error}"
-    )))
 }
 
 /// Writes `message` to a management client. A client that went away, as a
@@ -2319,7 +2273,7 @@ fn managed_orbit_helper() {
         management_generation: management::VERSION,
         process_id: std::process::id(),
         process_start: process::start_identity(std::process::id()),
-        uid: unsafe { libc::geteuid() },
+        uid: rustix::process::geteuid().as_raw(),
         presentation: endpoint_identity(&presentation),
         management: endpoint_identity(&management_path),
     };
@@ -2621,18 +2575,10 @@ fn managed_orbit_helper() {
                                 // supervisor reads `long-history` in as many pieces
                                 // here as there.
                                 if reply.trim() == "long-history" {
-                                    let size: libc::c_int = 8192;
-                                    // SAFETY: size is a live c_int of the length given.
-                                    let set = unsafe {
-                                        libc::setsockopt(
-                                            stream.as_raw_fd(),
-                                            libc::SOL_SOCKET,
-                                            libc::SO_SNDBUF,
-                                            (&raw const size).cast(),
-                                            size_of::<libc::c_int>() as libc::socklen_t,
-                                        )
-                                    };
-                                    assert_eq!(set, 0);
+                                    rustix::net::sockopt::set_socket_send_buffer_size(
+                                        &stream, 8192,
+                                    )
+                                    .unwrap();
                                 }
                                 let (omitted_lines, cut_bytes, text) = match reply.trim() {
                                     "long-history" => (5, 0, "h\n".repeat(3 << 19) + "end"),
@@ -3016,11 +2962,7 @@ fn exit_reading_terminals(
 ) -> Option<ExitStatus> {
     let mut polled = terminals
         .iter()
-        .map(|terminal| libc::pollfd {
-            fd: terminal.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        })
+        .map(|terminal| PollFd::new(terminal, PollFlags::IN))
         .collect::<Vec<_>>();
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -3029,22 +2971,26 @@ fn exit_reading_terminals(
         if Instant::now() >= deadline {
             return None;
         }
-        // SAFETY: the descriptors stay open for the call; poll skips negative ones.
-        if unsafe { libc::poll(polled.as_mut_ptr(), polled.len() as _, 10) } > 0 {
-            for (terminal, polled) in terminals.iter_mut().zip(&mut polled) {
-                if polled.revents == 0 {
-                    continue;
+        if rustix::event::poll(
+            &mut polled,
+            Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 10_000_000,
+            }),
+        )
+        .is_ok_and(|ready| ready > 0)
+        {
+            polled.retain(|terminal| {
+                if terminal.revents().is_empty() {
+                    return true;
                 }
                 // A terminal that ends, fails or reports anything but input is done.
-                let done = polled.revents & libc::POLLIN == 0
-                    || match terminal.read(&mut [0; 256]) {
-                        Ok(count) => count == 0,
-                        Err(error) => error.kind() != std::io::ErrorKind::Interrupted,
-                    };
-                if done {
-                    polled.fd = -1;
-                }
-            }
+                terminal.revents().contains(PollFlags::IN)
+                    && match rustix::io::read(terminal, &mut [0; 256]) {
+                        Ok(count) => count != 0,
+                        Err(error) => error == rustix::io::Errno::INTR,
+                    }
+            });
         }
     }
 }
@@ -3908,8 +3854,11 @@ fn closing_a_pending_pair_dismisses_it_and_starts_the_first_pane() {
     assert!(window.eon(&["tab", "create"]).status.success());
     window.pair_launch("terminal-6");
     let venus = i32::try_from(wait_for_pid(&window.venus_pid)).unwrap();
-    // SAFETY: the PID came from this test's live Venus child.
-    assert_eq!(unsafe { libc::kill(venus, libc::SIGTERM) }, 0);
+    // The PID came from this test's live Venus child.
+    assert_eq!(
+        rustix::process::kill_process(Pid::from_raw(venus).unwrap(), Signal::TERM),
+        Ok(())
+    );
     let detached = wait_for_snapshot(&control, "detached", |snapshot| {
         snapshot.tabs.len() == 3 && !snapshot.tabs[2].pending
     });
@@ -4538,19 +4487,8 @@ fn a_failing_test_closes_its_terminals_before_reaping_their_child() {
             .stdin(Stdio::from(device))
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        // SAFETY: only the child acquires this fresh private controlling terminal, and
-        // a hangup ends it whatever this process ignores.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::signal(libc::SIGHUP, libc::SIG_DFL) == libc::SIG_ERR
-                    || libc::setsid() == -1
-                    || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        // A hangup ends the child whatever this process ignores.
+        process::session(&mut command, process::Terminal::Stdin, true);
         let mut child = TerminalChild::spawn(&mut command, vec![leader]);
         let pid = child.guard.0.id();
         // Unread echo, which macOS drains before the killed session leader can exit.
@@ -4565,14 +4503,14 @@ fn a_failing_test_closes_its_terminals_before_reaping_their_child() {
             .iter()
             .find(|(reaped, _)| *reaped == pid)
             .map(|(_, status)| *status);
-        let pid = i32::try_from(pid).unwrap();
-        // SAFETY: WNOHANG only reports, and a child still waiting here keeps its PID.
-        if unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) } == 0 {
-            // SAFETY: the child is still unreaped, so its PID and group are its own.
-            unsafe {
-                libc::kill(-pid, libc::SIGKILL);
-                libc::waitpid(pid, std::ptr::null_mut(), 0);
-            }
+        let pid = Pid::from_raw(i32::try_from(pid).unwrap()).unwrap();
+        if matches!(
+            rustix::process::waitpid(Some(pid), WaitOptions::NOHANG),
+            Ok(None)
+        ) {
+            // The child is still unreaped, so its PID and group are its own.
+            let _ = rustix::process::kill_process_group(pid, Signal::KILL);
+            let _ = rustix::process::waitpid(Some(pid), WaitOptions::empty());
         }
         assert_eq!(
             unwound.unwrap_err().downcast_ref::<&str>(),
@@ -5101,17 +5039,16 @@ esac
     ] {
         let (leader, device) = pseudo_terminal();
         if ending == "unreadable-terminal" {
-            assert_eq!(unsafe { libc::fchmod(device.as_raw_fd(), 0) }, 0);
+            device
+                .set_permissions(fs::Permissions::from_mode(0o0))
+                .unwrap();
         }
         let mut other = (ending == "different-terminal").then(pseudo_terminal);
-        let controlling = other
-            .as_ref()
-            .map_or(libc::STDIN_FILENO, |(_, device)| device.as_raw_fd());
         if let Some((leader, _)) = other.as_mut() {
             leader.write_all(b"y\n").unwrap();
         }
-        let flags = status_flags(device.as_raw_fd());
-        assert_eq!(flags & libc::O_NONBLOCK, 0);
+        let flags = status_flags(&device);
+        assert!(!flags.contains(OFlags::NONBLOCK));
         let mut command = eon_command(binary);
         command
             .arg("update")
@@ -5123,21 +5060,15 @@ esac
             .stdin(Stdio::from(device.try_clone().unwrap()))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // Only this private PTY becomes the child's controlling terminal.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if ending != "no-controlling-terminal"
-                    && libc::ioctl(controlling, libc::TIOCSCTTY as _, 0) == -1
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let (other, _other_device) = other.unzip();
+        let (other, other_device) = other.unzip();
+        let controlling = if ending == "no-controlling-terminal" {
+            process::Terminal::None
+        } else if let Some(device) = other_device {
+            process::Terminal::Other(device)
+        } else {
+            process::Terminal::Stdin
+        };
+        process::session(&mut command, controlling, false);
         let terminals = std::iter::once(leader).chain(other).collect();
         let mut child = TerminalChild::spawn(&mut command, terminals);
         let mut err = child.guard.0.stderr.take().unwrap();
@@ -5146,12 +5077,15 @@ esac
         if !matches!(ending, "no-controlling-terminal" | "different-terminal") {
             while !diagnostics.ends_with(b"[y/N] ") {
                 assert!(Instant::now() < deadline, "no question: {diagnostics:?}");
-                let mut polled = libc::pollfd {
-                    fd: err.as_raw_fd(),
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                if unsafe { libc::poll(&mut polled, 1, 100) } > 0 {
+                if rustix::event::poll(
+                    &mut [PollFd::new(&err, PollFlags::IN)],
+                    Some(&Timespec {
+                        tv_sec: 0,
+                        tv_nsec: 100_000_000,
+                    }),
+                )
+                .is_ok_and(|ready| ready > 0)
+                {
                     let mut bytes = [0; 256];
                     let count = err.read(&mut bytes).unwrap();
                     assert!(count > 0, "helper exited before question: {diagnostics:?}");
@@ -5159,28 +5093,29 @@ esac
                 }
             }
             if ending == "stopped" {
-                unsafe {
-                    libc::kill(child.guard.0.id() as i32, libc::SIGSTOP);
-                }
+                let _ =
+                    rustix::process::kill_process(Pid::from_child(&child.guard.0), Signal::STOP);
             }
             for _ in 0..10 {
                 assert_eq!(
-                    status_flags(device.as_raw_fd()),
+                    status_flags(&device),
                     flags,
                     "{ending}: inherited stdin flags changed during prompt"
                 );
                 thread::sleep(Duration::from_millis(20));
             }
             match ending {
-                "interrupt" => unsafe {
-                    libc::kill(child.guard.0.id() as i32, libc::SIGINT);
-                },
+                "interrupt" => {
+                    let _ =
+                        rustix::process::kill_process(Pid::from_child(&child.guard.0), Signal::INT);
+                }
                 "kill" => child.guard.0.kill().unwrap(),
                 _ => {
                     if ending == "stopped" {
-                        unsafe {
-                            libc::kill(child.guard.0.id() as i32, libc::SIGCONT);
-                        }
+                        let _ = rustix::process::kill_process(
+                            Pid::from_child(&child.guard.0),
+                            Signal::CONT,
+                        );
                     }
                     child.terminals[0].write_all(b"n\n").unwrap();
                 }
@@ -5190,7 +5125,7 @@ esac
             .exit(deadline)
             .unwrap_or_else(|| panic!("{ending}: helper did not finish"));
         assert_eq!(
-            status_flags(device.as_raw_fd()),
+            status_flags(&device),
             flags,
             "{ending}: inherited stdin flags changed after exit"
         );
@@ -5285,7 +5220,7 @@ esac
         );
         fs::write(root.join("mode"), manager).unwrap();
         let (leader, device) = pseudo_terminal();
-        let flags = status_flags(device.as_raw_fd());
+        let flags = status_flags(&device);
         let mut command = eon_command(&commands);
         command
             .env("PATH", std::env::join_paths(&path).unwrap())
@@ -5296,17 +5231,7 @@ esac
             .stdin(Stdio::from(device.try_clone().unwrap()))
             .stdout(Stdio::from(device.try_clone().unwrap()))
             .stderr(Stdio::from(device.try_clone().unwrap()));
-        // SAFETY: only the child acquires this fresh private controlling terminal.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1
-                    || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        process::session(&mut command, process::Terminal::Stdin, false);
         let mut child = TerminalChild::spawn(&mut command, vec![leader]);
         let read_until = |leader: &mut fs::File, marker: &[u8]| {
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -5316,12 +5241,15 @@ esac
                     Instant::now() < deadline,
                     "{mode}: no output marker: {text:?}"
                 );
-                let mut polled = libc::pollfd {
-                    fd: leader.as_raw_fd(),
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                if unsafe { libc::poll(&mut polled, 1, 100) } > 0 {
+                if rustix::event::poll(
+                    &mut [PollFd::new(&leader, PollFlags::IN)],
+                    Some(&Timespec {
+                        tv_sec: 0,
+                        tv_nsec: 100_000_000,
+                    }),
+                )
+                .is_ok_and(|ready| ready > 0)
+                {
                     let mut bytes = [0; 4096];
                     let count = leader.read(&mut bytes).unwrap();
                     assert!(count > 0, "{mode}: popup ended: {text:?}");
@@ -5359,7 +5287,7 @@ esac
             child.guard.0.try_wait().unwrap().is_none(),
             "result was not retained"
         );
-        assert_eq!(status_flags(device.as_raw_fd()), flags);
+        assert_eq!(status_flags(&device), flags);
         child.terminals[0].write_all(b"\n").unwrap();
         let exit = Instant::now() + Duration::from_secs(5);
         let exited = child.exit(exit);
@@ -5629,24 +5557,24 @@ esac
             })
             .collect::<Vec<_>>();
         let deadline = Instant::now() + Duration::from_secs(3);
-        while pids.iter().any(|pid| unsafe { libc::kill(*pid, 0) } == 0)
+        while pids
+            .iter()
+            .any(|pid| rustix::process::test_kill_process(Pid::from_raw(*pid).unwrap()).is_ok())
             && Instant::now() < deadline
         {
             thread::sleep(Duration::from_millis(20));
         }
         let leaked = pids
             .into_iter()
-            .filter(|pid| unsafe { libc::kill(*pid, 0) } == 0)
+            .filter(|pid| rustix::process::test_kill_process(Pid::from_raw(*pid).unwrap()).is_ok())
             .collect::<Vec<_>>();
         for pid in &leaked {
-            unsafe {
-                libc::kill(*pid, libc::SIGKILL);
-            }
+            let _ = rustix::process::kill_process(Pid::from_raw(*pid).unwrap(), Signal::KILL);
         }
         assert!(leaked.is_empty(), "helper left processes {leaked:?}");
     };
     // An interrupt reaches only the child this helper started, then reports selection.
-    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+    for signal in [Signal::INT, Signal::TERM, Signal::HUP, Signal::QUIT] {
         let _ = fs::remove_file(root.join("manager-pid"));
         let _ = fs::remove_file(root.join("sleep-pid"));
         fs::write(root.join("mode"), "cancel").unwrap();
@@ -5669,9 +5597,7 @@ esac
         assert!(root.join("manager-pid").exists());
         let output_busy = check(binary, &install);
         assert_eq!(report(&output_busy)["error"]["code"], "operation-busy");
-        unsafe {
-            libc::kill(child.id() as i32, signal);
-        }
+        let _ = rustix::process::kill_process(Pid::from_child(&child), signal);
         let deadline = Instant::now() + Duration::from_secs(8);
         while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(20));
@@ -5774,9 +5700,7 @@ esac
         .trim()
         .parse()
         .unwrap();
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGINT);
-    }
+    let _ = rustix::process::kill_process(Pid::from_child(&child), Signal::INT);
     let deadline = Instant::now() + Duration::from_secs(8);
     while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
@@ -5785,11 +5709,9 @@ esac
         child.kill().unwrap();
     }
     let output = child.wait_with_output().unwrap();
-    let leaked = unsafe { libc::kill(manager, 0) } == 0;
+    let leaked = rustix::process::test_kill_process(Pid::from_raw(manager).unwrap()).is_ok();
     if leaked {
-        unsafe {
-            libc::kill(manager, libc::SIGKILL);
-        }
+        let _ = rustix::process::kill_process(Pid::from_raw(manager).unwrap(), Signal::KILL);
     }
     assert_eq!(output.status.code(), Some(130), "{output:?}");
     assert!(!leaked, "Check left its own manager child running");
@@ -6559,8 +6481,14 @@ fn stop_accounts_for_late_ready_pair_and_retains_partial_cleanup_owner() {
     wait_for_process_removal(pair.process_id, "late Ready pair survived Stop");
     wait_for_process_removal(first.process_id, "completed terminal survived Stop");
     let venus_pid = wait_for_pid(&venus_pid);
-    // SAFETY: this is the unreaped presentation child recorded by this test's supervisor.
-    assert_eq!(unsafe { libc::kill(venus_pid as i32, libc::SIGTERM) }, 0);
+    // This is the unreaped presentation child recorded by this test's supervisor.
+    assert_eq!(
+        rustix::process::kill_process(
+            Pid::from_raw(i32::try_from(venus_pid).unwrap()).unwrap(),
+            Signal::TERM
+        ),
+        Ok(())
+    );
     wait_for_process_removal(venus_pid, "partial Stop retained an ended Venus child");
     let inventory = invoke(binary, &runtime, &config, &["window", "ls", "--json"]);
     assert!(inventory.status.success(), "{}", stdout(&inventory));
@@ -6821,8 +6749,8 @@ fn events_cli_streams_resumes_interrupts_and_exits_on_closed_stdout() {
         event
     );
     assert_eq!(
-        unsafe { libc::kill(resumed.child.id() as i32, libc::SIGINT) },
-        0
+        rustix::process::kill_process(Pid::from_child(&resumed.child), Signal::INT),
+        Ok(())
     );
     assert_eq!(wait_for_exit(&mut resumed.child).code(), Some(130));
     let mut closed = TestProcess {
@@ -7819,10 +7747,13 @@ cat >/dev/null
     assert_eq!(fs::read_to_string(&venus_log).unwrap().lines().count(), 1);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
 
-    // SAFETY: the PID came from this test's live Venus child.
+    // The PID came from this test's live Venus child.
     assert_eq!(
-        unsafe { libc::kill(initial_venus as i32, libc::SIGTERM) },
-        0
+        rustix::process::kill_process(
+            Pid::from_raw(i32::try_from(initial_venus).unwrap()).unwrap(),
+            Signal::TERM
+        ),
+        Ok(())
     );
     wait_for_process_removal(initial_venus, "terminal surface did not exit");
     wait_for(&supervisor_log);
@@ -7865,10 +7796,14 @@ cat >/dev/null
         .parse()
         .unwrap();
     let child_pid: i32 = fs::read_to_string(&child_pid).unwrap().parse().unwrap();
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    assert_eq!(unsafe { libc::kill(orbit_pid, 0) }, 0);
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    assert_eq!(unsafe { libc::kill(child_pid, 0) }, 0);
+    assert_eq!(
+        rustix::process::test_kill_process(Pid::from_raw(orbit_pid).unwrap()),
+        Ok(())
+    );
+    assert_eq!(
+        rustix::process::test_kill_process(Pid::from_raw(child_pid).unwrap()),
+        Ok(())
+    );
     assert_eq!(fs::read_to_string(&venus_log).unwrap().lines().count(), 1);
 
     fs::write(
@@ -7930,10 +7865,14 @@ cat >/dev/null
         thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    assert_eq!(unsafe { libc::kill(orbit_pid, 0) }, 0);
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    assert_eq!(unsafe { libc::kill(child_pid, 0) }, 0);
+    assert_eq!(
+        rustix::process::test_kill_process(Pid::from_raw(orbit_pid).unwrap()),
+        Ok(())
+    );
+    assert_eq!(
+        rustix::process::test_kill_process(Pid::from_raw(child_pid).unwrap()),
+        Ok(())
+    );
     let venus_log = fs::read_to_string(&venus_log).unwrap();
     let venus_pids = venus_log
         .lines()
@@ -8038,8 +7977,14 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
     let orbit_pid = live_identity(&orbit_socket).process_id;
     first.child.kill().unwrap();
     first.child.wait().unwrap();
-    // SAFETY: the test owns this exact process identity.
-    assert_eq!(unsafe { libc::kill(orbit_pid as i32, libc::SIGKILL) }, 0);
+    // The test owns this exact process identity.
+    assert_eq!(
+        rustix::process::kill_process(
+            Pid::from_raw(i32::try_from(orbit_pid).unwrap()).unwrap(),
+            Signal::KILL
+        ),
+        Ok(())
+    );
     wait_for_process_removal(orbit_pid, "dead Session was not reaped");
     assert!(artifact_path(&orbit_socket, ".record").exists());
     fs::remove_file(&orbit_log).unwrap();
@@ -10212,8 +10157,10 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         let endpoint = generation.join(endpoint);
         wait_for(&endpoint);
         let pid = live_identity(&endpoint).process_id as i32;
-        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        assert_eq!(
+            rustix::process::test_kill_process(Pid::from_raw(pid).unwrap()),
+            Ok(())
+        );
     }
 
     // A sideways move splits the selected stacked pane into a new column.
@@ -10824,10 +10771,13 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
         let peer = live_identity(&generation.join("terminal-2.sock"));
         if unclean {
             let identity = live_identity(&generation.join("orbit.sock"));
-            // SAFETY: this exact still-owned Orbit process belongs to the test.
+            // This exact still-owned Orbit process belongs to the test.
             assert_eq!(
-                unsafe { libc::kill(identity.process_id as i32, libc::SIGKILL) },
-                0
+                rustix::process::kill_process(
+                    Pid::from_raw(i32::try_from(identity.process_id).unwrap()).unwrap(),
+                    Signal::KILL
+                ),
+                Ok(())
             );
         } else {
             fs::write(&exit_initial, "").unwrap();
@@ -10848,8 +10798,10 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
         assert_eq!(live_identity(&generation.join("terminal-2.sock")), peer);
         assert!(!artifact_path(&generation.join("orbit.sock"), ".record").exists());
         let pid: i32 = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
-        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        assert_eq!(
+            rustix::process::test_kill_process(Pid::from_raw(pid).unwrap()),
+            Ok(())
+        );
 
         fs::write(&stop, "").unwrap();
         assert_eq!(
@@ -10921,8 +10873,7 @@ fn closing_the_final_tab_ends_the_window_and_its_terminals() {
     }
     let pid: i32 = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    while unsafe { libc::kill(pid, 0) } == 0 {
+    while rustix::process::test_kill_process(Pid::from_raw(pid).unwrap()).is_ok() {
         assert!(
             Instant::now() < deadline,
             "a final close left Venus running"
@@ -11176,8 +11127,8 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
 
     // Freeze the owner so the replacement launch necessarily overlaps teardown.
     assert_eq!(
-        unsafe { libc::kill(first.child.id() as i32, libc::SIGSTOP) },
-        0
+        rustix::process::kill_process(Pid::from_child(&first.child), Signal::STOP),
+        Ok(())
     );
     fs::write(&child_exit, "").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -11211,8 +11162,8 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     };
     thread::sleep(Duration::from_secs(5));
     assert_eq!(
-        unsafe { libc::kill(first.child.id() as i32, libc::SIGCONT) },
-        0
+        rustix::process::kill_process(Pid::from_child(&first.child), Signal::CONT),
+        Ok(())
     );
     wait_for_successful_exit(&mut first.child);
 
@@ -11295,10 +11246,13 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
 
     first.child.kill().unwrap();
     assert!(!first.child.wait().unwrap().success());
-    // SAFETY: the test owns this exact managed-Orbit process identity.
+    // The test owns this exact managed-Orbit process identity.
     assert_eq!(
-        unsafe { libc::kill(identity.process_id as i32, libc::SIGKILL) },
-        0
+        rustix::process::kill_process(
+            Pid::from_raw(i32::try_from(identity.process_id).unwrap()).unwrap(),
+            Signal::KILL
+        ),
+        Ok(())
     );
     wait_for_process_removal(identity.process_id, "dead Session was not reaped");
     let tombstone = |identity: &LiveIdentity| {
@@ -11484,8 +11438,12 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(!first.child.wait().unwrap().success());
     wait_for_process_removal(first_venus, "owner-loss Venus did not exit");
     for identity in &initial {
-        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-        assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
+        assert_eq!(
+            rustix::process::test_kill_process(
+                Pid::from_raw(i32::try_from(identity.process_id).unwrap()).unwrap()
+            ),
+            Ok(())
+        );
     }
     let first_record = artifact_path(&generation.join("orbit.sock"), ".record");
     let assert_recovery_failure = |program: &Path, arguments: &[&str], expected: &str| {
@@ -11541,8 +11499,12 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
 
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
     for identity in &initial {
-        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-        assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
+        assert_eq!(
+            rustix::process::test_kill_process(
+                Pid::from_raw(i32::try_from(identity.process_id).unwrap()).unwrap()
+            ),
+            Ok(())
+        );
     }
 
     let mut replacement = TestProcess {
@@ -12555,8 +12517,8 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     let prompt = fs::read_to_string(&prompt).unwrap();
     let replacement_live = second.child.try_wait().unwrap().is_none();
     let replacement_pid = live_identity(&orbit_socket).process_id as i32;
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    let replacement_child_live = unsafe { libc::kill(replacement_pid, 0) } == 0;
+    let replacement_child_live =
+        rustix::process::test_kill_process(Pid::from_raw(replacement_pid).unwrap()).is_ok();
     let workspace_live = invoke(&binary, &runtime, &config, &["session", "--json"])
         .status
         .success();
@@ -13510,18 +13472,7 @@ fn agent_popup_failures_stay_visible_until_enter_and_keep_exit_status() {
         ) }).unwrap();
         fs::write(root.path().join("brief"), "ordinary prompt").unwrap();
         let (mut controller, device) = pseudo_terminal();
-        let device = fs::File::from(device);
-        // SAFETY: the controller is owned here; set only its nonblocking flag.
-        assert_eq!(
-            unsafe {
-                libc::fcntl(
-                    controller.as_raw_fd(),
-                    libc::F_SETFL,
-                    status_flags(controller.as_raw_fd()) | libc::O_NONBLOCK,
-                )
-            },
-            0
-        );
+        rustix::fs::fcntl_setfl(&controller, status_flags(&controller) | OFlags::NONBLOCK).unwrap();
         let mut child = ManagedChild(
             Command::new(env!("CARGO_BIN_EXE_eon"))
                 .env_clear()
@@ -14790,8 +14741,8 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         .unwrap();
     assert_eq!(listed["name"], "second", "{inventory}");
     assert_eq!(
-        unsafe { libc::kill(first.child.id() as libc::pid_t, libc::SIGSTOP) },
-        0
+        rustix::process::kill_process(Pid::from_child(&first.child), Signal::STOP),
+        Ok(())
     );
     let output = command().args(["window", "new"]).output().unwrap();
     assert!(
@@ -14819,8 +14770,8 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     // Let the initial candidate-list change and its in-flight probes settle.
     thread::sleep(Duration::from_millis(2200));
     assert_eq!(
-        unsafe { libc::kill(first.child.id() as libc::pid_t, libc::SIGCONT) },
-        0
+        rustix::process::kill_process(Pid::from_child(&first.child), Signal::CONT),
+        Ok(())
     );
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -21963,7 +21914,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
                         let at = Instant::now();
                         gap = gap.max(at - sampled);
                         sampled = at;
-                        match process_waits(child.id()) {
+                        match process::waits(child.id()) {
                             Ok(Some(false)) => {
                                 waits = 0;
                                 running = at;
@@ -22286,13 +22237,12 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
 /// bsd/sys/fcntl.h), which F_GETFL reports once anything has written through
 /// the open file description.
 #[cfg(target_os = "macos")]
-const FWASWRITTEN: libc::c_int = 0x0001_0000;
+const FWASWRITTEN: OFlags = OFlags::from_bits_retain(0x0001_0000);
 
 /// The status flags of `fd`, without what a kernel records on its own, so that
 /// only flags someone set count when they are compared.
-fn status_flags(fd: std::os::fd::RawFd) -> libc::c_int {
-    // SAFETY: F_GETFL only reads the descriptor's flags.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+fn status_flags(fd: impl AsFd) -> OFlags {
+    let flags = rustix::fs::fcntl_getfl(fd).unwrap();
     #[cfg(target_os = "macos")]
     let flags = flags & !FWASWRITTEN;
     flags
@@ -22300,30 +22250,33 @@ fn status_flags(fd: std::os::fd::RawFd) -> libc::c_int {
 
 /// A pseudoterminal's controller and the device a child reads as stdin, both
 /// closed on exec.
-fn pseudo_terminal() -> (fs::File, std::os::fd::OwnedFd) {
-    use std::os::fd::{FromRawFd, OwnedFd};
-    let (mut leader, mut device) = (-1, -1);
-    // SAFETY: openpty initializes both descriptors on success.
-    let opened = unsafe {
-        libc::openpty(
-            &raw mut leader,
-            &raw mut device,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-    assert_eq!(opened, 0, "{}", std::io::Error::last_os_error());
-    // SAFETY: a successful openpty transferred ownership of both descriptors.
-    let (leader, device) = unsafe { (fs::File::from_raw_fd(leader), OwnedFd::from_raw_fd(device)) };
-    for descriptor in [leader.as_raw_fd(), device.as_raw_fd()] {
-        // SAFETY: both descriptors are open and owned here.
-        assert_eq!(
-            unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) },
-            0
+fn pseudo_terminal() -> (fs::File, fs::File) {
+    use rustix::{io::FdFlags, pty::OpenptFlags};
+    let flags = OpenptFlags::RDWR | OpenptFlags::NOCTTY;
+    #[cfg(target_os = "linux")]
+    let flags = flags | OpenptFlags::CLOEXEC;
+    let leader = rustix::pty::openpt(flags).unwrap();
+    #[cfg(target_os = "macos")]
+    rustix::io::fcntl_setfd(&leader, FdFlags::CLOEXEC).unwrap();
+    rustix::pty::grantpt(&leader).unwrap();
+    rustix::pty::unlockpt(&leader).unwrap();
+    #[cfg(target_os = "linux")]
+    let device = rustix::pty::ioctl_tiocgptpeer(&leader, flags).unwrap();
+    #[cfg(target_os = "macos")]
+    let device = rustix::fs::open(
+        rustix::pty::ptsname(&leader, Vec::new()).unwrap(),
+        OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .unwrap();
+    for descriptor in [&leader, &device] {
+        assert!(
+            rustix::io::fcntl_getfd(descriptor)
+                .unwrap()
+                .contains(FdFlags::CLOEXEC)
         );
     }
-    (leader, device)
+    (leader.into(), device.into())
 }
 
 /// Runs `command` with stdin null and returns its output, killing it and
@@ -23817,15 +23770,7 @@ esac
             .env("EON_UPDATE_PREFIX", &prefix)
             .env("EON_CONFIG_HOME", &config);
         // Consent reads this private controlling terminal, never the test runner's.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1 || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        process::session(&mut command, process::Terminal::Stdin, false);
         at_terminal(&mut command, answer, || {})
     };
     for answer in [b"n\n".as_slice(), b"\x04".as_slice()] {

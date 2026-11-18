@@ -136,7 +136,6 @@ fn tutor_refuses_bad_arguments_and_state_without_overwriting() {
 
 #[test]
 fn tutor_rejects_symlinks_permissions_and_contended_locks() {
-    use std::os::fd::AsRawFd;
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     json(root, &["--json"]);
@@ -159,10 +158,7 @@ fn tutor_rejects_symlinks_permissions_and_contended_locks() {
         .write(true)
         .open(root.join("state/eon/tutor-v1.lock"))
         .unwrap();
-    assert_eq!(
-        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-        0
-    );
+    lock.try_lock().unwrap();
     assert_eq!(run(root, &["next", "--json"]).status.code(), Some(1));
     assert_eq!(fs::read(&state).unwrap(), before);
     drop(lock);

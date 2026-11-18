@@ -22,3 +22,9 @@ orbit-protocol = { path = "../../../orbit/crates/protocol" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rota = { package = "rota-cli", path = "../eon-agent", version = "=0.1.0" }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

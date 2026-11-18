@@ -2501,7 +2501,6 @@ mod tests {
     use std::{
         cell::RefCell,
         collections::HashMap,
-        os::fd::AsRawFd,
         os::unix::fs::symlink,
         sync::atomic::{AtomicUsize, Ordering},
     };
@@ -2863,7 +2862,7 @@ mod tests {
         let _signals = SIGNAL_TEST.lock().unwrap();
         let (input, output) = UnixStream::pair().unwrap();
         input.set_nonblocking(true).unwrap();
-        let flags = unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) };
+        let flags = rustix::fs::fcntl_getfl(&input).unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         INTERRUPTED.store(true, Ordering::Relaxed);
         let result = thread::scope(|scope| {
@@ -2877,10 +2876,7 @@ mod tests {
             result.unwrap().unwrap_err().kind(),
             std::io::ErrorKind::Interrupted
         );
-        assert_eq!(
-            unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
-            flags
-        );
+        assert_eq!(rustix::fs::fcntl_getfl(&input).unwrap(), flags);
     }
 
     #[test]
@@ -2889,38 +2885,33 @@ mod tests {
         let _signals = SIGNAL_TEST.lock().unwrap();
         let (mut input, mut output) = UnixStream::pair().unwrap();
         input.set_nonblocking(true).unwrap();
-        let flags = unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) };
+        let flags = rustix::fs::fcntl_getfl(&input).unwrap();
         output.write_all(b"y\n").unwrap();
-        let mut polled = libc::pollfd {
-            fd: input.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        assert_eq!(unsafe { libc::poll(&mut polled, 1, 0) }, 1);
+        let mut polled = [PollFd::new(&input, PollFlags::IN)];
+        assert_eq!(
+            rustix::event::poll(
+                &mut polled,
+                Some(&Timespec {
+                    tv_sec: 0,
+                    tv_nsec: 0
+                }),
+            ),
+            Ok(1)
+        );
         // Reproduce a terminal flushing its line after poll reported readiness.
         input.read_exact(&mut [0; 2]).unwrap();
-        assert_ne!(flags & libc::O_NONBLOCK, 0);
-        let mut byte = 0u8;
-        let count = unsafe { libc::read(input.as_raw_fd(), (&mut byte as *mut u8).cast(), 1) };
-        let error = std::io::Error::last_os_error();
-        assert_eq!(count, -1);
+        assert!(flags.contains(rustix::fs::OFlags::NONBLOCK));
+        let count = input.read(&mut [0]);
+        assert!(count.is_err());
+        let error = count.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
-        assert_eq!(
-            unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
-            flags
-        );
+        assert_eq!(rustix::fs::fcntl_getfl(&input).unwrap(), flags);
         output.write_all(b"n\n").unwrap();
         output.shutdown(std::net::Shutdown::Write).unwrap();
         assert!(!confirmation(&input).unwrap());
-        assert_eq!(
-            unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
-            flags
-        );
+        assert_eq!(rustix::fs::fcntl_getfl(&input).unwrap(), flags);
         assert!(!confirmation(&input).unwrap());
-        assert_eq!(
-            unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) },
-            flags
-        );
+        assert_eq!(rustix::fs::fcntl_getfl(&input).unwrap(), flags);
     }
 
     #[test]

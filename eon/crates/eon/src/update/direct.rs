@@ -764,10 +764,7 @@ fn refresh(report: &mut Report, host: &dyn Host) {
 mod tests {
     use super::super::tests::{BUILD, Fake, Tree, at, invoked};
     use super::*;
-    use std::{
-        ffi::CString,
-        os::unix::fs::{PermissionsExt, symlink},
-    };
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
     const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -1063,8 +1060,14 @@ mod tests {
             Some("provenance-invalid")
         );
         fs::remove_file(&file).unwrap();
-        let name = CString::new(file.as_os_str().as_bytes()).unwrap();
-        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &file,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+            0,
+        )
+        .unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         thread::spawn(move || sender.send(bounded_file(&file)).unwrap());
         assert_eq!(
