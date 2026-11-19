@@ -11,7 +11,9 @@ use std::{
     time::Duration,
 };
 
-use eon_runtime::{CallerBuild, DiagnosticConfiguration, DiagnosticWindow, Inputs};
+use eon_runtime::{
+    ACCEPTED_AGY_VERSIONS, AgyCheck, CallerBuild, DiagnosticConfiguration, DiagnosticWindow, Inputs,
+};
 use serde_json::json;
 
 use crate::{
@@ -75,7 +77,7 @@ impl Check {
 }
 
 pub(crate) struct Diagnostics {
-    checks: [Check; 7],
+    checks: [Check; 8],
     pub installation: LocalInstallation,
     pub configuration_warnings: Result<Vec<String>, String>,
     pub window: DiagnosticWindow,
@@ -106,6 +108,9 @@ impl Diagnostics {
             ),
             editor_check(inputs, config.editor_available, programs.helix.as_deref()),
             update_check(&route),
+            quota_check(config.google_quota, || {
+                eon_runtime::agy_version_check(LOCAL_PROBE_LIMIT)
+            }),
         ];
         Self {
             checks,
@@ -476,6 +481,51 @@ fn helix_version_finding(result: Result<ExitStatus, Bounded>) -> Option<Check> {
             "Could not verify that the packaged Helix version command runs.",
             "Retry eon doctor and check the package if the probe remains unavailable.",
         )),
+    }
+}
+
+/// The Google quota collector's version preflight, run only when a Google selector is listed
+/// (EON-C1, EON-C27). It reads agy from this terminal's PATH, not the window's.
+fn quota_check(google_quota: Option<bool>, preflight: impl FnOnce() -> AgyCheck) -> Check {
+    const ID: &str = "quota";
+    match google_quota {
+        None => {
+            return Check::warn(
+                ID,
+                "Could not read whether Google quota is selected.",
+                "Run eon config check and correct the configuration error.",
+            );
+        }
+        Some(false) => return Check::pass(ID, "Google quota is not selected in [bar] widgets."),
+        Some(true) => {}
+    }
+    let supported = ACCEPTED_AGY_VERSIONS
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    match preflight() {
+        AgyCheck::Accepted(version) => Check::pass(
+            ID,
+            format!("agy {version} on this terminal's PATH is supported for Google quota."),
+        ),
+        AgyCheck::Unsupported(found) => Check::warn(
+            ID,
+            match found {
+                Some(version) => format!(
+                    "agy {version} on this terminal's PATH is not a supported version for Google quota (supported: {supported})."
+                ),
+                None => format!(
+                    "agy on this terminal's PATH reported an unrecognized version (supported: {supported})."
+                ),
+            },
+            "Install a supported agy version, or an Eon release that supports this one.",
+        ),
+        AgyCheck::Unavailable(why) => Check::warn(
+            ID,
+            format!("Could not check agy for Google quota: {why}."),
+            "Install agy on PATH, or remove the google_quota widgets.",
+        ),
     }
 }
 

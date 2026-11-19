@@ -138,8 +138,9 @@ pairs. Scope and value/reset bounds are canonical. EONW timestamps are Unix
 seconds; CLI JSON projects milliseconds. Runtime collects Google only when an exact Google selector is listed, including
 an unreported scope. All active groups reach Snapshot and CLI JSON regardless of
 selection; Venus shows the selected active windows as Google chips.
-The collector resolves agy through absolute PATH entries only, checks exactly
-1.4.1 with `--version`, and runs the same
+The collector resolves agy through absolute PATH entries only, checks with
+`--version` that the version is one EON-C27 lists as eligible (1.4.1 or 1.5.6),
+and runs the same
 resolved executable with `-p /usage --output-format json`. Both phases together
 have one ten-second deadline and aggregate 64 KiB stdout cap, null stdin,
 sanitized session context, private empty cwd and process-group cleanup. No

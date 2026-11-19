@@ -42,6 +42,7 @@ pub use managed_environment::{
     ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig, UpdateSettings,
     diagnostic_configuration, update_target, update_target_configured,
 };
+pub use quota::{ACCEPTED_AGY_VERSIONS, AgyCheck, AgyVersion, agy_version_check};
 pub use report::{CallerBuild, DiagnosticWindow, ReportFacts, diagnostic_window, report_facts};
 pub use slots::{SlotClass, SlotPolicy};
 pub use supervisor::configuration_directory;

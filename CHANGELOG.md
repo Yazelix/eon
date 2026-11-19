@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Google quota chips work again with agy 1.5.6. Eon reads Google quota only
+  from agy versions whose `/usage` command is verified, now 1.4.1 and 1.5.6.
+  When Google quota is selected, `eon doctor` has a `quota` check that names
+  an agy version Eon does not support, and the supported ones, instead of
+  leaving the chip missing with no reason (`eon-9iriq`).
 - When a window cannot start the thread that links it to Eon, it says so,
   that its terminals are safe, and how to reopen it, in place of "Cannot
   reach Eon."; closing it detaches and keeps the terminals. When its event

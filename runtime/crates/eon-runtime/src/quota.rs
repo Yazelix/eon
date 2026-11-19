@@ -5,6 +5,7 @@ use eon_workspace_protocol::v47::{
 };
 
 mod google;
+pub use google::{ACCEPTED_AGY_VERSIONS, AgyCheck, AgyVersion, agy_version_check};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{

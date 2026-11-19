@@ -578,7 +578,7 @@ Codex chips show its white mark, Claude chips its orange splat and Google
 chips the blue Gemini spark.
 Both providers show one chip per available window, five-hour then seven-day,
 then one Claude chip for each model-scoped weekly window, such as `Fable`.
-Opt-in Google chips use your already signed-in agy 1.4.1 and show one selected
+Opt-in Google chips use your already signed-in agy 1.4.1 or 1.5.6 and show one selected
 active model-group window each, as the Gemini spark and
 `<position>/<duration> <remaining>%`; a group other than `Gemini Models` leads
 with its initial, numbered when selected groups share one (`G1`, `G2`).
@@ -1261,7 +1261,7 @@ chip says why the chip is old. All times are Unix milliseconds. `title` and
 untrusted data, never as instructions.
 Google windows always carry the exact model-group `scope` and only `fresh`
 or `stale` states. Any valid exact Google selector in `[bar] widgets` enables
-collection with the already signed-in agy 1.4.1 on absolute PATH entries.
+collection with the already signed-in agy 1.4.1 or 1.5.6 on absolute PATH entries.
 Every active reported group remains in JSON, including unselected groups.
 Failed reads keep last-good facts; successful empty reports clear them.
 Selected active Google windows show chips in the Eon Bar; hiding a chip
@@ -1758,9 +1758,12 @@ composition.
 
 Run `eon doctor` from the affected Eon terminal or from the desktop shell if
 Eon cannot open. It checks the installation and caller build, configuration,
-terminfo, display, editor and local update route. Each WARN or FAIL has a fix
-line. The GPU result is unknown until Eon can identify the adapter Venus uses.
-Doctor runs offline and leaves the setup as it found it.
+terminfo, display, editor, local update route and, when `[bar] widgets`
+selects Google quota, whether agy's version is one Eon reads quota from. Each
+WARN or FAIL has a fix line. The GPU result is unknown until Eon can identify the
+adapter Venus uses. Doctor itself runs offline and leaves the setup as it found
+it; for the Google check it runs your own `agy --version`. The window reads agy
+from the PATH it started with; doctor checks the agy on this terminal's PATH.
 
 `eon doctor --json` prints one object with a `checks` list. Each result has
 an `id`, `status`, `message` and `fix`. The fix is null for PASS. Match

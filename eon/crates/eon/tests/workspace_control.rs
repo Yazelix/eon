@@ -1272,10 +1272,10 @@ fn doctor_reports_offline_findings_without_leaking_or_changing_inputs() {
     assert_eq!(
         ids,
         [
-            "config", "display", "editor", "gpu", "install", "terminal", "update"
+            "config", "display", "editor", "gpu", "install", "quota", "terminal", "update"
         ]
     );
-    for id in ["config", "editor"] {
+    for id in ["config", "editor", "quota"] {
         assert_eq!(doctor_result(&healthy, id)["status"], "PASS", "{id}");
     }
     assert_eq!(doctor_result(&healthy, "gpu")["status"], "WARN");
@@ -1357,7 +1357,7 @@ fn doctor_reports_offline_findings_without_leaking_or_changing_inputs() {
     assert_eq!(json.status.code(), Some(1), "{json:?}");
     assert_eq!(human.status.code(), json.status.code(), "{human:?}");
     assert_eq!(doctor_result(&json, "config")["status"], "FAIL");
-    for id in ["editor", "update"] {
+    for id in ["editor", "update", "quota"] {
         let check = doctor_result(&json, id);
         assert_eq!(check["status"], "WARN");
         assert!(check["fix"].is_string());
@@ -1384,7 +1384,7 @@ fn doctor_reports_offline_findings_without_leaking_or_changing_inputs() {
             assert!(!stdout(result).contains(value), "{value}: {result:?}");
         }
     }
-    assert_eq!(stdout(&human).matches("  Fix  ").count(), 7);
+    assert_eq!(stdout(&human).matches("  Fix  ").count(), 8);
     assert_eq!(tree_state(&root), bad_inputs);
 
     for (arguments, code) in [
@@ -1440,6 +1440,110 @@ fn doctor_reports_offline_findings_without_leaking_or_changing_inputs() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("cannot write stdout"));
     }
     assert!(!marker.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn doctor_names_an_unsupported_agy_version() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    fs::create_dir(&config).unwrap();
+    let selected = "[bar]\nwidgets = [\"google_quota:Gemini Models:5h\", \"clock\"]\n";
+    let usage = root.join("ran-usage");
+    let ran = root.join("ran-agy");
+    // A fresh directory per agy, so no script is rewritten while it may still run.
+    let agy = |name: &str, version: &str| {
+        let bin = root.join(name);
+        fs::create_dir(&bin).unwrap();
+        executable(
+            &bin.join("agy"),
+            format!(
+                "#!/bin/sh\n: > '{}'\n[ \"$*\" = --version ] || {{ : > '{}'; exit 8; }}\n{version}\n",
+                ran.display(),
+                usage.display()
+            ),
+        );
+        bin
+    };
+    let doctor = |path: &std::ffi::OsStr| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_eon"));
+        command
+            .args(["doctor", "--json"])
+            .env_clear()
+            .env("PATH", path)
+            .env("HOME", root.join("home"))
+            .env("XDG_CONFIG_HOME", root.join("xdg-config"))
+            .env("XDG_STATE_HOME", root.join("xdg-state"))
+            .env("XDG_RUNTIME_DIR", root.join("xdg-runtime"))
+            .env("EON_RUNTIME_DIR", root.join("r"))
+            .env("EON_CONFIG_HOME", &config)
+            .stdin(Stdio::null());
+        command
+    };
+    let result = |output: Output| {
+        assert!(output.stderr.is_empty(), "{output:?}");
+        assert!(!stdout(&output).contains("doctor-agy-marker"), "{output:?}");
+        let check = doctor_result(&output, "quota");
+        (
+            check["status"].as_str().unwrap().to_owned(),
+            check["message"].as_str().unwrap().to_owned(),
+        )
+    };
+    let quota = |bin: &Path| result(doctor(bin.as_os_str()).output().unwrap());
+
+    let refused = agy("refused", "printf 1.3.0");
+    fs::write(config.join("config.toml"), "[bar]\nwidgets = [\"clock\"]\n").unwrap();
+    assert_eq!(quota(&refused).0, "PASS");
+    assert!(!ran.exists(), "doctor ran agy without a Google selector");
+
+    fs::write(config.join("config.toml"), selected).unwrap();
+    let (status, message) = quota(&refused);
+    assert_eq!(status, "WARN");
+    for named in ["agy 1.3.0", "1.4.1", "1.5.6", "this terminal's PATH"] {
+        assert!(message.contains(named), "{named}: {message}");
+    }
+    assert!(ran.exists());
+
+    // Installed agy 1.5.6 prints exactly `1.5.6\n` for --version (od -c, eon-9iriq).
+    let supported = agy("supported", "printf '1.5.6\\n'");
+    let (status, message) = quota(&supported);
+    assert_eq!(status, "PASS");
+    assert!(message.contains("agy 1.5.6"), "{message}");
+
+    // Under a Codex shell's locale, the agy preflight still starts nothing but agy: no
+    // desktop-locale `systemctl`, from an absolute or a relative PATH entry (EON-C1).
+    let systemctl = root.join("ran-systemctl");
+    let forbidden = format!("#!/bin/sh\n: > '{}'\nexit 1\n", systemctl.display());
+    for directory in ["planted", "system"] {
+        fs::create_dir(root.join(directory)).unwrap();
+        executable(&root.join(directory).join("systemctl"), &forbidden);
+    }
+    let path =
+        std::env::join_paths([Path::new("planted"), &supported, &root.join("system")]).unwrap();
+    let (status, message) = result(
+        doctor(&path)
+            .current_dir(&root)
+            .env("CODEX_CI", "1")
+            .env("LANG", "C.UTF-8")
+            .env("LC_CTYPE", "C.UTF-8")
+            .env("LC_ALL", "C.UTF-8")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(status, "PASS", "{message}");
+    assert!(!systemctl.exists(), "doctor started systemctl");
+
+    let (status, message) = quota(&agy("unrecognized", "printf doctor-agy-marker"));
+    assert_eq!(status, "WARN");
+    assert!(message.contains("unrecognized"), "{message}");
+
+    let empty = root.join("empty");
+    fs::create_dir(&empty).unwrap();
+    let (status, message) = quota(&empty);
+    assert_eq!(status, "WARN");
+    assert!(message.contains("Could not check agy"), "{message}");
+
+    assert!(!usage.exists(), "doctor ran more than agy --version");
     fs::remove_dir_all(root).unwrap();
 }
 

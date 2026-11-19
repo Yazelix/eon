@@ -1,0 +1,58 @@
+{
+  "status": "SUCCESS",
+  "num_turns": 0,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_tokens": 0
+  },
+  "command": {
+    "name": "usage",
+    "data": {
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "buckets": [
+            {
+              "window": "weekly",
+              "remaining_fraction": 0.5,
+              "reset_time": "2026-11-27T01:00:00Z"
+            },
+            {
+              "window": "5h",
+              "remaining_fraction": 0.29,
+              "reset_time": "2026-11-20T02:00:00Z"
+            }
+          ]
+        },
+        {
+          "name": "Claude and GPT models",
+          "buckets": [
+            {
+              "window": "weekly",
+              "remaining_fraction": 0.75,
+              "reset_time": "2026-11-27T03:00:00Z"
+            },
+            {
+              "window": "5h",
+              "remaining_fraction": 1,
+              "reset_time": "2026-11-20T04:00:00Z"
+            }
+          ]
+        },
+        {
+          "name": "Gemini 4 Argon",
+          "buckets": [
+            {
+              "window": "weekly",
+              "remaining_fraction": 0.9,
+              "reset_time": "2026-11-27T05:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

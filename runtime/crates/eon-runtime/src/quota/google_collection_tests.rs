@@ -8,8 +8,12 @@ fn root() -> PathBuf {
 }
 
 fn report() -> Value {
-    let mut value: Value =
-        serde_json::from_slice(include_bytes!("../../testdata/agy-usage-1.4.1.json")).unwrap();
+    report_from(include_bytes!("../../testdata/agy-usage-1.4.1.json"))
+}
+
+/// A fixture without resets, which would expire against the wall-clock read completion.
+fn report_from(fixture: &[u8]) -> Value {
+    let mut value: Value = serde_json::from_slice(fixture).unwrap();
     for group in value["command"]["data"]["groups"].as_array_mut().unwrap() {
         for bucket in group["buckets"].as_array_mut().unwrap() {
             bucket.as_object_mut().unwrap().remove("reset_time");
@@ -317,6 +321,51 @@ fn google_read_bounds_cover_both_phases() {
             "{name}: expected {expected:?}, got {fetched:?}"
         );
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn agy_1_5_6_reports_reach_the_session() {
+    let root = root();
+    // Installed agy 1.5.6 prints exactly `1.5.6\n` for --version (od -c, eon-9iriq).
+    let program = backend(
+        &root,
+        "agy",
+        "printf '1.5.6\\n'",
+        &format!(
+            "printf '%s' '{}'",
+            report_from(include_bytes!("../../testdata/agy-usage-1.5.6.json"))
+        ),
+    );
+    let quotas = start_google(&program, Duration::from_secs(1), None);
+    wait(|| snapshot(&quotas).google_quota.is_some());
+    let snapshot = snapshot(&quotas);
+    assert_eq!(snapshot.google_quota_failure, None);
+    let json: Value = serde_json::from_str(&crate::workspace::json(&snapshot)).unwrap();
+    let scopes = json["google_quota"]["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|window| {
+            (
+                window["scope"].as_str().unwrap().to_owned(),
+                window["duration_minutes"].as_u64().unwrap(),
+                window["remaining_percent"].as_u64().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scopes,
+        [
+            ("Gemini Models".to_owned(), 10080, 50),
+            ("Gemini Models".to_owned(), 300, 28),
+            ("Claude and GPT models".to_owned(), 10080, 75),
+            ("Claude and GPT models".to_owned(), 300, 100),
+            ("Gemini 4 Argon".to_owned(), 10080, 90),
+        ]
+    );
+    assert_eq!(json["google_quota_failure"], Value::Null);
+    drop(quotas);
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -2663,6 +2663,13 @@ pub(crate) fn remove_agent_session(command: &mut Command) -> &mut Command {
     remove_agent_environment(command, |name| env::var_os(name), desktop_locale)
 }
 
+/// [`remove_agent_session`] for a child whose output does not depend on the locale: it
+/// never asks the desktop session, so it starts no `systemctl`, and Codex's `C.UTF-8`
+/// names are dropped as when the desktop has none (`LANG` stays, so UTF-8 remains).
+pub(crate) fn remove_agent_session_without_desktop(command: &mut Command) -> &mut Command {
+    remove_agent_environment(command, |name| env::var_os(name), |_| None)
+}
+
 fn remove_agent_environment(
     command: &mut Command,
     inherited: impl Fn(&str) -> Option<OsString>,
@@ -3303,6 +3310,8 @@ pub struct DiagnosticConfiguration {
     pub warnings: Result<Vec<String>, String>,
     pub editor_available: Option<bool>,
     pub updates: Option<Result<UpdateSettings, String>>,
+    /// Whether `[bar] widgets` selects Google quota (EON-C27); None when unreadable.
+    pub google_quota: Option<bool>,
 }
 
 pub fn diagnostic_configuration(inputs: &super::cli::Inputs) -> DiagnosticConfiguration {
@@ -3322,11 +3331,19 @@ pub fn diagnostic_configuration(inputs: &super::cli::Inputs) -> DiagnosticConfig
             (_, Err(_)) => None,
         };
         let updates = config.updates.clone().resolve(false);
+        let google_quota = match &config.bar.widgets {
+            Some(names) => names.iter().any(|name| google_quota_widget(name)),
+            None => defaults
+                .bar_widgets
+                .iter()
+                .any(|name| google_quota_widget(name)),
+        };
         DiagnosticConfiguration {
             valid: validate_config(config, path, defaults).is_ok(),
             warnings: Ok(warnings),
             editor_available,
             updates: Some(updates),
+            google_quota: Some(google_quota),
         }
     } else {
         DiagnosticConfiguration {
@@ -3334,6 +3351,7 @@ pub fn diagnostic_configuration(inputs: &super::cli::Inputs) -> DiagnosticConfig
             warnings: Err(config.unwrap_err().1),
             editor_available: None,
             updates: None,
+            google_quota: None,
         }
     }
 }

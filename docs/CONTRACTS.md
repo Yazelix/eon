@@ -90,6 +90,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-09 (approved by eon-overseer under Lucca's delegation) by
   `eon-8uxif`: `eon report`. Amended on 2026-11-19 (approved by the lead
   under Lucca's standing delegation) by `eon-6zoxr`: local Doctor and report.
+  Amended on 2026-11-19 (approved by eon-lead under Lucca's 2026-11-19 rule) by
+  `eon-9iriq`: Doctor's `quota` check of agy's version.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -150,8 +152,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     invalid syntax.
   - Standalone `eon doctor [--json]` checks the invoking Eon installation, the
     calling terminal's live window build when it can be established, Eon
-    configuration, terminal identity, display environment, GPU adapter, editor
-    and local update route. A check that cannot establish an observation
+    configuration, terminal identity, display environment, GPU adapter, editor,
+    local update route and, when `[bar] widgets` selects Google quota, whether
+    agy's version is eligible (EON-C27). A check that cannot establish an observation
     required for `PASS` reports `WARN` and names that observation. A failure
     established from other observations still reports `FAIL`.
     The command writes one result per check to stdout, with status `PASS`,
@@ -159,25 +162,33 @@ names its socket. CLI JSON names a session `session` and a terminal
     `--json` writes one object with a `checks` array. Each check has an `id`
     string, a `status` string with the same tokens as the human output, a
     `message` string and a `fix` string or null. `fix` is null on `PASS`.
-    Each ID appears at most once and keeps its meaning. Initial IDs are
-    `install`, `config`, `terminal`, `display`, `gpu`, `editor` and `update`.
+    Each ID appears at most once and keeps its meaning. IDs are
+    `install`, `config`, `terminal`, `display`, `gpu`, `editor`, `update` and
+    `quota`.
     Consumers use IDs and allow additional fields, checks and status values.
     Human wording and the order of rows and `checks` entries may change.
     Results omit file paths, subprocess output, configuration source and
-    environment values. The display result may include a single-line
+    environment values; `quota` may name agy's version, as three numbers parsed
+    from its version report. The display result may include a single-line
     compositor name from `XDG_CURRENT_DESKTOP`.
 
     Both modes exit 0 if there are no failed checks, 1 if a check fails or
     stdout cannot be written, and 2 for invalid syntax. A closed stdout pipe
     retains the checks' exit status. Invalid syntax gives a concise stderr
-    failure pointing to `eon --help` and runs no checks. Doctor makes no
+    failure pointing to `eon --help` and runs no checks. Doctor itself makes no
     network requests, starts or attaches no Eon window, supervisor, Orbit
     host or Venus, reads no terminal content, and creates, changes or removes
     no configuration, installation or runtime state. In an Eon terminal it
     may list running windows as `eon window ls` does, without passing a caller
     identity or cleaning up dead generations. Outside Eon it contacts no
-    supervisor. Doctor runs only `infocmp` and the packaged Helix version
-    command, each under a time limit.
+    supervisor. Doctor runs only `infocmp`, the packaged Helix version
+    command and, when `[bar] widgets` selects Google quota, the user's
+    `agy --version`, each under a time limit. It resolves and runs agy as the
+    EON-C27 Google preflight does: absolute caller PATH entries only, a
+    sanitized environment, null stdin, and an empty private directory that it
+    removes afterwards, within the collector's 64 KiB output cap. agy is the
+    user's own program, the one the window's collector already runs; Eon does
+    not vouch for what its `--version` does.
   - Standalone `eon report` prints a Markdown bug report for the window it runs
     in, or the `default` window outside Eon, to stdout. It exits 0, or 1 on
     stdout write failure other than a closed pipe. It includes the Doctor
@@ -1187,6 +1198,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-11 (approved by eon-overseer under Lucca's standing
   delegation) by `eon-configurability-qkq8.13`: offline configuration checking
   with structured JSON diagnostics.
+  Amended on 2026-11-19 by `eon-9iriq` (approved by eon-lead under Lucca's
+  2026-11-19 rule): the Google quota reader drops Codex's `C.UTF-8` locale
+  names without asking the desktop session.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
   paths or checking configuration, Eon terminals launched under Nushell or Bash,
   and every terminal, popup, Venus and quota reader the supervisor starts.
@@ -1335,7 +1349,11 @@ names its socket. CLI JSON names a session `session` and a terminal
     once per supervisor through `systemctl --user show-environment`, whose
     output Eon drains up to 4 MiB and whose process group it kills and reaps
     after one second at most; without one, `LC_CTYPE` and `LC_ALL` are
-    removed and `LANG` stays `C.UTF-8` so the locale remains UTF-8. Any other
+    removed and `LANG` stays `C.UTF-8` so the locale remains UTF-8. The
+    Google quota reader (EON-C27) never asks the desktop session and always
+    gets that without-a-value result: agy's version and usage reports do not
+    depend on the locale, and `eon doctor` runs the same command (EON-C1),
+    which must start nothing but agy. Any other
     value, or the same value without the marker, passes through. Eon cannot
     tell a person's own identical value from the runner's: a person who sets
     one of these on purpose, such as `PAGER=cat`, and starts Eon from such an
@@ -4645,6 +4663,9 @@ popup or automatic tutorial launch.
   Amended on 2026-11-19 by `eon-ots4r` (approved by eon-lead under Lucca's
   2026-11-19 rule): the first `provider_error` since a successful Claude or
   Google read retries after five minutes plus up to one minute of jitter.
+  Amended on 2026-11-19 by `eon-9iriq` (approved by eon-lead under Lucca's
+  2026-11-19 rule): agy 1.5.6 is eligible, and `eon doctor` names an ineligible agy
+  version.
   Amended 2026-11-13 by `eon-o9f3h.4` under Lucca's approved eon-w31ps
   decision: Google collection, shared scheduling and last-good retention.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -4816,16 +4837,21 @@ popup or automatic tutorial launch.
 Full Eon may read the selected Google account's Antigravity baseline subscription
 quota through the noninteractive command `agy -p /usage --output-format json`.
 Runtime reads `command.data` only from a successful `usage` command report with no
-model turn. Initially, only agy version 1.4.1 is eligible: before invoking
+model turn. Only agy versions 1.4.1 and 1.5.6 are eligible: before invoking
 `/usage`, Runtime resolves the executable, checks its version noninteractively with
 `--version` and uses that resolved executable for collection. Runtime searches
 only absolute PATH entries for agy; empty and relative entries are skipped, so a
 collector planted in the supervisor's starting directory is never selected
 through them. An absent, unrecognized or different
-version is unavailable and never invokes `/usage`. Another version becomes
-eligible only after a source review confirms noninteractive slash-command dispatch
-and a compatible report proves zero turns/tokens; record that evidence in the
-owning bead and update the accepted-version rule. Unsupported sources never fall
+version is unavailable and never invokes `/usage`. A version is recognized only as
+plain `MAJOR.MINOR.PATCH`. `eon doctor` runs the same preflight and names the
+version found and the eligible versions (EON-C1). Another version becomes
+eligible after either (a) a source review confirming noninteractive
+slash-command dispatch, or (b) a recorded zero-turn, zero-token `/usage` report
+from that exact version, together with Runtime's per-read zero-turn and token
+check; record that evidence in the owning bead and update the accepted-version
+rule. Each eligible version's evidence: 1.4.1, source review (a) and a turn-free
+report; 1.5.6, its recorded report (b), without a source review. Unsupported sources never fall
 back to an inference prompt. The provider is `google_quota`, not an agy-specific
 allowance. One Google window is one active reported model-group bucket: `5h` is
 300 minutes and `weekly` is 10080 minutes, remaining percent is the validated
@@ -4923,6 +4949,21 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   confirmed retained facts, selected/hidden windows, a narrow bar and both
   clearing paths. This evidence does not prove unrelated Codex/Claude or
   platform claims.
+- **agy 1.5.6 eligibility** (`eon-9iriq`): a 1.5.6 `/usage --output-format json`
+  report supplied on 2026-11-19 is a SUCCESS `usage` report with zero turns and
+  tokens and 1.4.1's parsed shape. Its scrubbed form,
+  `runtime/crates/eon-runtime/testdata/agy-usage-1.5.6.json`, is parsed by
+  `supplied_report_preserves_groups_and_uses_read_completion` and collected by
+  `agy_1_5_6_reports_reach_the_session`. This is evidence (b); no source review
+  of 1.5.6's slash-command dispatch was done. What that leaves open: Runtime's
+  per-read zero-turn and zero-token check rejects a report that carries a turn,
+  but cannot undo a model turn agy already ran, so a 1.5.6 build that sent
+  `/usage` as a prompt would spend that turn before the read failed. Installed
+  1.5.6 prints exactly `1.5.6` and a newline for `--version` (recorded on
+  2026-11-19). Doctor's preflight is proved by
+  `doctor_preflight_reports_the_version_with_the_collector_bounds` and
+  `doctor_names_an_unsupported_agy_version`. The fresh-window chip observation
+  is recorded on `eon-9iriq` after landing.
 - **Google open proof:** Account class and plan tier were not verified by the
   checked agy report fields. An identity-free successful read and authorization
   to use a personal subscription do not establish either. Verify them through
