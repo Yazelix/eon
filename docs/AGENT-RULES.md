@@ -188,6 +188,17 @@ crate.
   slices move Medium to Codex `xhigh`. A rolled-back tier returns only when each
   cause has an eval case that the reduced review catches, 50 slices under
   the stricter review are recorded, and Lucca approves.
+- **Close record.** The lead closes each landed bead with `br close
+  --reason "Landed; see the close record."` and a `--transition-comment`
+  holding `review-tier record render`'s output, passing the builder's
+  `--harness` and `--model` and a public `--actor`, never `--session` or
+  `--agent-name`. The record names the landing's base and source, not the
+  landing commit, which carries it; before that commit leaves the landing
+  worktree, `review-tier record check <bead> <commit>` must pass on it.
+  `eon/tools/review-tier/record-policy.toml` lists every value a record may
+  hold; a failed check is recorded with its exit status. Landing receipts
+  and other bead comments follow the same rule as the record: no local
+  paths, accounts, quotas or session IDs.
 
 Record one ledger line per slice in its bead: the `classify` output's tier
 and trees, pass count and findings, including Codex's.

@@ -9,9 +9,14 @@
 //! review-tier -- classify …`. REVIEW.md says what each tier requires, and
 //! docs/AGENT-RULES.md "Proof and Review" binds it to landing.
 //!
-//! Exit codes: 0 success; 1 when `eval check` finds a failing case; 2 for a
-//! usage, git, parse or provenance error, with `error: …` on stderr and
-//! nothing on stdout. Callers treat 2 as High.
+//! `review-tier record render <input.toml>` and `record check <bead>
+//! [<revision>]` write and verify the close record the lead stores on each
+//! landed bead; `record` documents the format.
+//!
+//! Exit codes: 0 success; 1 when `eval check` finds a failing case or
+//! `record check` a missing, invalid or mismatched record; 2 for a usage, git,
+//! parse or provenance error, with `error: …` on stderr and nothing on stdout.
+//! Callers treat 2 as High.
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
@@ -19,6 +24,7 @@ use std::process::ExitCode;
 mod classify;
 mod eval;
 mod git;
+mod record;
 mod rules;
 
 use classify::Verdict;
@@ -31,7 +37,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const SOURCE: &str = "eon/tools/review-tier";
 
 const USAGE: &str = "usage: review-tier classify <edge> <candidate> | rules | eval check \
-                     | eval prepare <case-id> <dir> | eval score <case-id> <report-file>";
+                     | eval prepare <case-id> <dir> | eval score <case-id> <report-file> \
+                     | record render <input.toml> | record check <bead> [<revision>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = match std::env::args_os()
@@ -54,7 +61,8 @@ fn fail(error: Box<dyn std::error::Error>) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Runs one command; `Ok(false)` means `eval check` found a failing case.
+/// Runs one command; `Ok(false)` means `eval check` found a failing case or
+/// `record check` a bad record.
 fn run(args: &[String]) -> Result<bool> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let output = match args.as_slice() {
@@ -72,10 +80,32 @@ fn run(args: &[String]) -> Result<bool> {
                 eval::score(&Git::current()?, id, Path::new(report))?
             )
         }
+        ["record", "render", input] => {
+            format!("{}\n", record::render(&Git::current()?, Path::new(input))?)
+        }
+        ["record", "check", bead] => return record_check(bead, "HEAD"),
+        ["record", "check", bead, revision] => return record_check(bead, revision),
         _ => return Err(USAGE.into()),
     };
     print!("{output}");
     Ok(true)
+}
+
+fn record_check(bead: &str, revision: &str) -> Result<bool> {
+    git::check_revision(bead)?;
+    git::check_revision(revision)?;
+    match record::check(&Git::current()?, bead, revision)? {
+        Ok(summary) => {
+            println!("{summary}");
+            Ok(true)
+        }
+        Err(findings) => {
+            for finding in findings {
+                println!("finding: {finding}");
+            }
+            Ok(false)
+        }
+    }
 }
 
 fn classify(git: &Git, edge: &str, candidate: &str) -> Result<String> {

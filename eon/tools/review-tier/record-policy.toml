@@ -1,0 +1,63 @@
+# The values a close record may hold (`review-tier record render`).
+#
+# Close records are published in .beads/issues.jsonl, so every string in a
+# record is a value listed here, a workspace package name, a bead ID that
+# exists in the tracker, an object ID or a digits-only version. Adding a
+# model, check, attribute or route is an edit to this file. `render` checks a
+# record against the policy compiled into the tool when it is written;
+# `record check` reads old records for format and landing identity only, so
+# editing this file never invalidates a landed record.
+
+# Effort levels, as the harnesses name them.
+efforts = ["low", "medium", "high", "xhigh", "max"]
+
+platforms = ["x86_64-linux", "aarch64-linux", "aarch64-darwin", "x86_64-darwin"]
+
+# Proof routes: the rows of docs/AGENT-RULES.md "Verification", by name.
+routes = [
+  "docs",
+  "logic-regression",
+  "owned-default",
+  "component-pin",
+  "installed-interaction",
+  "shared-boundary",
+  "render-path",
+]
+
+# Public flake attributes a `nix-build` proof may name.
+attrs = [
+  ".#default",
+  ".#bench",
+  ".#eonbase",
+  ".#no-helix",
+  ".#release-without-accelerando",
+  ".#archive-notice-check",
+  ".#archive-source-check",
+  ".#checks.x86_64-linux.default",
+  ".#checks.x86_64-linux.eon-tests",
+  ".#checks.x86_64-linux.managed-command-path",
+  ".#checks.x86_64-linux.orbit-boundary",
+]
+
+# Checks a proof entry may name, each with what its target is: "package" (a
+# workspace package name, or "workspace"), "attr" (one of `attrs`) or "none".
+[checks]
+eon-test = "package"
+fmt = "package"
+clippy = "package"
+nix-build = "attr"
+review-tier-eval = "none"
+orbit-governance = "none"
+installed-observation = "none"
+capture-1280x800 = "none"
+eon-bench-gate = "none"
+
+# Public harness names and the public model IDs each one runs.
+[harness.claude-code]
+models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+
+[harness.codex-cli]
+models = ["gpt-6.1-sol", "gpt-6.2-sol"]
+
+[harness.agy]
+models = ["gemini-4-hydrogen", "gemini-4-neon"]
