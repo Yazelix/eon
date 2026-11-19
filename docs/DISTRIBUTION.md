@@ -119,11 +119,17 @@ bundle installer's authorization boundary; Nix cache publication has separate
 authority.
 
 The [Linux cache workflow](../.github/workflows/cachix.yml) runs on `edge`
-pushes or manual dispatch. The [Darwin cache workflow](../.github/workflows/cachix-darwin.yml)
-runs on `v*` tag pushes or manual dispatch and can publish and retain cache roots
-when its publishing switch is enabled and credentials are available. A rogue tag can
-therefore expose a cache-publication path without a bundle signature. Actual
-workflow activation and cache access policy remain **unverified**.
+pushes, `v*` tag pushes or manual dispatch, and publishes cache roots on each
+run. The [Darwin cache workflow](../.github/workflows/cachix-darwin.yml)
+runs on `v*` tag pushes or manual dispatch and publishes cache roots when its
+publishing switch is enabled and credentials are available. On both platforms a
+run for the newest `vX.Y.Z` tag also moves that platform's
+`latest-release-<platform>` pin ([Release retention](#release-retention)). A rogue
+tag can therefore publish to the cache without a bundle signature, and a rogue
+`vX.Y.Z` tag above every release takes over those pins until a higher release
+replaces it. A maintainer recovers by deleting the rogue tag and rerunning
+both cache workflows on the newest genuine tag. Actual workflow activation and cache access policy
+remain **unverified**.
 
 ### Nix channel
 
@@ -398,8 +404,9 @@ The check rejects all five evaluator source-fetch builtins (`fetchTree`,
 `fetchGit`, `fetchMercurial`, `fetchTarball` and `fetchurl`) and compiles every
 selected grammar through Helix's builder. The job then builds
 `packages.x86_64-linux.helix-grammar-sources`, including disabled grammars, and
-pushes that source closure with `cachix push`, without creating a permanent
-grammar-source pin.
+pushes that source closure with `cachix push`. It pins the aggregate as
+`helix-grammar-sources-<helix rev>`, using the exact Helix revision in
+`flake.lock` and `cachix pin --keep-forever` to retain it.
 
 The job then builds `packages.x86_64-linux.default`, `eonbase`, and `no-helix`
 together. The packages share an `eon-rust` executable and require a build-only
@@ -420,7 +427,10 @@ Maintain repository write access carefully: trusted workflow editors can expose
 Actions secrets.
 
 Each run uses one standard `ubuntu-24.04` GitHub-hosted runner, with a 90-minute
-job timeout and cancellation of superseded runs on the same ref. Frequency is
+job timeout. Runs on `edge` cancel superseded runs on the same ref; release-tag
+runs share one concurrency group and queue without cancelling an active run.
+GitHub may replace an older pending run in a group, so a missing release result
+needs an explicit rerun. Frequency is
 one run per `edge` push, `v*` tag push or explicit dispatch. It runs only in the
 public upstream
 repository: standard public-runner minutes are free and do not draw from the
@@ -432,12 +442,13 @@ public-runner eligibility changes. Local `nix build .#default .#eonbase` remains
 canonical.
 
 To verify publication, check both exact product outputs' `.narinfo` records at
-the cache URL. On a release-tag run, check that `latest-release-x86_64-linux`
-points to that revision's default runtime with one retained revision. Inspect a
-catalog source output's `.narinfo` at the cache serving it. For a source Cachix skipped,
-check `cache.nixos.org` instead. Realise the products and source aggregate in a
-fresh Nix store with both caches and signing keys configured, signatures required
-and local builds disabled. A local build alone does not prove upload, retention
+the cache URL. Check that `helix-grammar-sources-<helix rev>` points to the source
+aggregate from that revision, with permanent retention. On a run for the newest
+`vX.Y.Z` tag, check that `latest-release-x86_64-linux` points to that revision's
+default runtime with one retained revision. Inspect a catalog source output's
+`.narinfo` at the cache serving it. For a source Cachix skipped, check `cache.nixos.org` instead. Realise the products and
+source aggregate in a fresh Nix store with both caches and signing keys
+configured, signatures required and local builds disabled. A local build alone does not prove upload, retention
 or fresh-store source substitution.
 
 ### Darwin publishing
@@ -461,40 +472,58 @@ sizes without uploading or pinning anything. A dispatch from any other branch
 fails at the environment check; build-only runs on other branches use
 `.github/workflows/darwin-build.yml`.
 
-Enabled runs push both closures. Only runs selecting a `refs/tags/v*` ref,
-including manual dispatches on such tags, update `latest-release-aarch64-darwin`
-to the default runtime with `cachix pin --keep-revisions 1`. The only branch
-whose dispatches can upload is `edge`, and its uploads are left to eviction.
+Enabled runs push both closures. Only runs selecting the newest `vX.Y.Z` tag,
+including manual dispatches on it, update `latest-release-aarch64-darwin` to the
+default runtime with `cachix pin --keep-revisions 1`. The only branch whose
+dispatches can upload is `edge`, and its uploads are left to eviction.
 Cachix's action has automatic pushing disabled in every mode.
 
 Each run uses one standard `macos-15` Apple Silicon runner, restricted to the
-public upstream repository, with a 120-minute timeout. Runs on the same ref
-share a concurrency group and do not cancel an active run; distinct tags have
-distinct groups. GitHub may replace an older pending run in a group, so a
+public upstream repository, with a 120-minute timeout. Release-tag runs share
+one concurrency group, other runs share one per ref, and no run cancels an
+active one. GitHub may replace an older pending run in a group, so a
 missing release result needs an explicit rerun. There are no edge-push or
 pull-request triggers, paid runners, Actions artifacts or Actions caches.
 Additional paid spend is $0. Local Nix builds remain available independently.
 
 ### Release retention
 
-After a successful upload, each platform independently updates one stable pin:
-`latest-release-x86_64-linux` or `latest-release-aarch64-darwin`. Each protects
-only the latest successfully pinned default runtime closure, without a timed
-expiry. A failed build or upload never reaches the pin step; if pin creation
-fails, Cachix leaves the previous pin unchanged. There is no explicit unpin,
-cache clearing, cross-platform wait or additional download-verification job.
+After a successful upload, a run for the newest `vX.Y.Z` tag updates one stable pin
+per platform, `latest-release-x86_64-linux` or `latest-release-aarch64-darwin`,
+to its default runtime closure. Each pin keeps one revision, without a timed
+expiry. Both workflows use
+[one shared pin script](../.github/scripts/pin-latest-release.sh). Grammar
+sources keep their own `helix-grammar-sources-<helix rev>` pins, which every
+Linux run writes (see [Publishing](#publishing)).
 See [Cachix pins](https://docs.cachix.org/pins).
 
-Here “latest” means the tag whose pin update most recently succeeded, not the
-greatest version number. An older tag that finishes later, including a manual
-rerun, can replace the pin. Dispatch the intended release.
-Other variants, grammar-source aggregates, intermediate outputs and edge builds
-are uploaded normally but have no retention guarantee from these runtime pins.
-Darwin's existing publication opt-in remains unchanged.
+“Newest” means the greatest top-level release tag, `v` and three dot-separated
+numbers, on the repository when the pin step checks, by Git's version sort.
+Other `v*` tags, such as `v0.3.0-rc1` or `vendor-x`, never count and never pin.
+The step checks once and then writes its one pin. A run for any other tag,
+including a rerun of an older release after a newer one exists, uploads
+normally, leaves the pin alone and logs one notice saying why.
+Release-tag runs of one platform share a concurrency group and queue instead of
+overlapping, so no two release runs pin at once. Other variants, including
+`no-helix`, intermediate outputs and edge runtime builds are uploaded normally
+but have no retention guarantee from these pins: `no-helix` shares most of its
+closure, including `eon-rust`, with the pinned default, and a fresh install
+builds any evicted remainder locally. Darwin publication still requires its
+opt-in.
 
-Existing `helix-grammar-sources-<helix rev>` and per-tag Darwin pins are not
-removed by these workflows. A cache owner must review any remaining consumers
-and retire those legacy pins separately if desired; until then they can retain
+A failed build or upload never reaches the pin step. When Cachix rejects a pin
+update, for example because a path is missing from the cache, the pin keeps its
+previous revision. A pin step that fails after Cachix may have accepted the
+update, such as on a lost response, leaves the outcome unknown. After any failed
+pin step, check the platform's pin in the cache's pin list on Cachix: if it
+names this run's runtime store path, this release is retained, whichever run
+wrote it; otherwise rerun the job for the newest tag. There is no explicit
+unpin, cache clearing, cross-platform wait or additional download-verification
+job.
+
+Existing per-tag Darwin pins, `aarch64-darwin-<tag>-<root>`, are not removed by
+these workflows. A cache owner must review any remaining consumers and retire
+those legacy pins separately if desired; until then they can retain
 additional storage. This policy does not assert current billed usage or reclaim
 space immediately.
 
@@ -517,7 +546,8 @@ timeout failures recur, public runners stop being free, the donation ends, or
 the owner's capacity is insufficient. No paid expansion is authorized.
 
 A build-only dispatch proves neither publication nor a compile-free install.
-After authorized publication, verify both release pins and exact output
+After authorized publication of the newest `vX.Y.Z` tag, verify
+`latest-release-aarch64-darwin` and the exact output
 `.narinfo` records, then realise the default package in a fresh Apple Silicon
 Nix store with both caches and keys configured, signatures required and local
 builds disabled. Record the release revision, run, paths and installing-user
