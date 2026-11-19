@@ -74,6 +74,17 @@ pub enum WorkspaceEvent {
         ticket: u64,
         accepted: bool,
     },
+    /// A helper thread did not start. The workspace keeps working without it; `detail` says
+    /// what is lost and goes only to Venus's diagnostics.
+    Degraded {
+        detail: String,
+    },
+    /// The workspace worker did not start, so nothing Venus asks is answered. The window words
+    /// the notice, since how to get back depends on the window; `detail` goes only to Venus's
+    /// diagnostics.
+    NoWorker {
+        detail: String,
+    },
 }
 
 /// Bounded semantic-action handle for EONW v47.
@@ -156,10 +167,47 @@ impl Waits {
     }
 }
 
+/// The workspace transport's threads.
+const WORKER_THREAD: &str = "venus-eon-workspace";
+const EVENTS_THREAD: &str = "venus-eon-events";
+const SLOW_THREAD: &str = "venus-eon-slow";
+
+/// Starts the workspace transport's threads. The product starts every one; a test's check
+/// refuses a thread by name, or fails the test when a thread it forbids is attempted.
+#[derive(Clone, Copy, Default)]
+struct Spawner {
+    #[cfg(test)]
+    check: Option<fn(&'static str) -> io::Result<()>>,
+}
+
+impl Spawner {
+    /// Starts the thread `name` with `spawn`, or reports why it did not start through `notify`
+    /// as `failed` makes the event. Returns whether it started.
+    fn start<T>(
+        self,
+        name: &'static str,
+        spawn: impl FnOnce(thread::Builder) -> io::Result<T>,
+        failed: impl FnOnce(io::Error) -> WorkspaceEvent,
+        notify: &Notify,
+    ) -> bool {
+        #[cfg(test)]
+        let checked = self.check.map_or(Ok(()), |check| check(name));
+        #[cfg(not(test))]
+        let checked = Ok(());
+        match checked.and_then(|()| spawn(thread::Builder::new().name(name.into()))) {
+            Ok(_) => true,
+            Err(error) => {
+                notify(failed(error));
+                false
+            }
+        }
+    }
+}
+
 impl WorkspaceTransport {
     #[must_use]
     pub fn start(socket: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Self {
-        Self::start_with(socket, WAITS, wake)
+        Self::start_with(socket, WAITS, Spawner::default(), wake)
     }
 
     /// The transport refreshing every `refresh`, for tests that are not about slow answers.
@@ -169,55 +217,73 @@ impl WorkspaceTransport {
         refresh: Duration,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        Self::start_with(socket, Waits::refreshing(refresh), wake)
+        Self::start_with(socket, Waits::refreshing(refresh), Spawner::default(), wake)
     }
 
-    fn start_with(socket: PathBuf, waits: Waits, wake: impl Fn() + Send + Sync + 'static) -> Self {
-        let transport = Self::start_worker(socket.clone(), waits, wake);
-        // Without its subscription the worker still refreshes on its interval.
-        let _ = thread::Builder::new()
-            .name("venus-eon-events".into())
-            .spawn({
-                let subscription = Arc::clone(&transport.subscription);
-                let notify = Arc::clone(&transport.notify);
-                move || run_subscription(socket, subscription, notify)
-            });
+    fn start_with(
+        socket: PathBuf,
+        waits: Waits,
+        spawner: Spawner,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        let (transport, started) = Self::start_worker(socket.clone(), waits, spawner, wake);
+        // Without a worker, the subscription's refreshes would have no reader.
+        if started {
+            spawner.start(
+                EVENTS_THREAD,
+                |builder| {
+                    let subscription = Arc::clone(&transport.subscription);
+                    let notify = Arc::clone(&transport.notify);
+                    builder.spawn(move || run_subscription(socket, subscription, notify))
+                },
+                |error| WorkspaceEvent::Degraded {
+                    detail: format!(
+                        "Cannot start the Eon event subscription; the workspace updates only on \
+                         its refresh interval, and a hidden popup can draw until then: {error}"
+                    ),
+                },
+                &*transport.notify,
+            );
+        }
         transport
     }
 
-    /// The transport without its subscription thread.
+    /// The transport without its subscription thread, and whether its worker started.
     fn start_worker(
         socket: PathBuf,
         waits: Waits,
+        spawner: Spawner,
         wake: impl Fn() + Send + Sync + 'static,
-    ) -> Self {
+    ) -> (Self, bool) {
         let (actions, receiver) = mpsc::sync_channel(32);
         let events = Arc::new(WorkspaceEventQueue::default());
         let notify = workspace_notifier(Arc::clone(&events), wake);
         let subscription = Arc::new(Subscription::new(actions.clone()));
-        if let Err(error) = thread::Builder::new()
-            .name("venus-eon-workspace".into())
-            .spawn({
+        let started = spawner.start(
+            WORKER_THREAD,
+            |builder| {
                 let (socket, subscription, notify) = (
                     socket.clone(),
                     Arc::clone(&subscription),
                     Arc::clone(&notify),
                 );
-                move || run_workspace(socket, receiver, waits, subscription, notify)
-            })
-        {
-            notify(WorkspaceEvent::Unavailable {
-                notice: UNREACHABLE_NOTICE.into(),
-                detail: Some(format!("Cannot start the Eon workspace worker: {error}")),
-            });
-        }
-        Self {
+                builder.spawn(move || {
+                    run_workspace(socket, receiver, waits, spawner, subscription, notify);
+                })
+            },
+            |error| WorkspaceEvent::NoWorker {
+                detail: format!("Cannot start the Eon workspace worker: {error}"),
+            },
+            &*notify,
+        );
+        let transport = Self {
             actions,
             events,
             tickets: AtomicU64::new(0),
             subscription,
             notify,
-        }
+        };
+        (transport, started)
     }
 
     /// Queues `action` and returns the ticket its `WorkspaceEvent::Answered` carries.
@@ -263,7 +329,8 @@ impl WorkspaceEventQueue {
         // each: a slow report, a response and its `Answered`. A snapshot replaces a snapshot
         // still waiting at the end, or one that only a slow report follows, which an `Answered`
         // would otherwise follow, and a slow report adds nothing after another. So refreshes and
-        // hides add at most two events between answers: 33 × 5 = 165.
+        // hides add at most two events between answers: 33 × 5 = 165. Each helper thread that
+        // cannot start adds one `Degraded`, once: 167.
         const CAPACITY: usize = 168;
         let mut events = self.0.lock().expect("workspace event queue lock poisoned");
         let wake = events.is_empty();
@@ -326,15 +393,23 @@ fn run_workspace(
     socket: PathBuf,
     receiver: mpsc::Receiver<WorkerItem>,
     waits: Waits,
+    spawner: Spawner,
     subscription: Arc<Subscription>,
     notify: Arc<Notify>,
 ) {
     let watch = SlowWatch::default();
     thread::scope(|scope| {
-        // Without the watch, answers and failures still arrive; only the slow report is lost.
-        let _ = thread::Builder::new()
-            .name("venus-eon-slow".into())
-            .spawn_scoped(scope, || watch.run(&*notify));
+        spawner.start(
+            SLOW_THREAD,
+            |builder| builder.spawn_scoped(scope, || watch.run(&*notify)),
+            |error| WorkspaceEvent::Degraded {
+                detail: format!(
+                    "Cannot start the Eon slow-answer watch; the window cannot say when Eon is \
+                     slow: {error}"
+                ),
+            },
+            &*notify,
+        );
         // Stops the watch even if the worker panics, so the scope can end.
         let _stop = StopWatch(&watch);
         exchange_until_dropped(&socket, &receiver, waits, &subscription, &*notify, &watch);
@@ -2074,23 +2149,9 @@ mod tests {
         second.active_tab = "t2".into();
         second.tabs.push(second_workspace_tab());
         second.workspaces[0].tab_count = second.tabs.len();
-        let snapshots = [first, second];
+        let snapshots = vec![first, second];
         let expected = snapshots.clone();
-        let server = thread::spawn(move || {
-            for snapshot in snapshots {
-                let (mut stream, action) = accept_workspace_action(&listener);
-                assert_eq!(
-                    action,
-                    WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect)
-                );
-                stream
-                    .write_all(
-                        &workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot))
-                            .unwrap(),
-                    )
-                    .unwrap();
-            }
-        });
+        let (server, hold) = serve_inspects(listener, snapshots);
         let (wakes, receiver) = mpsc::channel();
         let transport = WorkspaceTransport::start_with_refresh(
             socket.path.clone(),
@@ -2110,6 +2171,7 @@ mod tests {
             );
         }
         drop(transport);
+        drop(hold);
         server.join().unwrap();
     }
 
@@ -2201,9 +2263,14 @@ mod tests {
 
     fn worker(socket: &Path, waits: Waits) -> (WorkspaceTransport, mpsc::Receiver<()>) {
         let (wakes, receiver) = mpsc::channel();
-        let transport = WorkspaceTransport::start_worker(socket.to_path_buf(), waits, move || {
-            let _ = wakes.send(());
-        });
+        let (transport, _) = WorkspaceTransport::start_worker(
+            socket.to_path_buf(),
+            waits,
+            Spawner::default(),
+            move || {
+                let _ = wakes.send(());
+            },
+        );
         (transport, receiver)
     }
 
@@ -2213,9 +2280,20 @@ mod tests {
         receiver: &mpsc::Receiver<()>,
         last: impl Fn(&WorkspaceEvent) -> bool,
     ) -> Vec<WorkspaceEvent> {
+        take_until(transport, receiver, |events| {
+            events.last().is_some_and(&last)
+        })
+    }
+
+    /// The events until `done` holds for all of them, or all that arrive within 5 s.
+    fn take_until(
+        transport: &WorkspaceTransport,
+        receiver: &mpsc::Receiver<()>,
+        done: impl Fn(&[WorkspaceEvent]) -> bool,
+    ) -> Vec<WorkspaceEvent> {
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut events = Vec::new();
-        while !events.last().is_some_and(&last) {
+        while !done(&events) {
             let Some(wait) = deadline.checked_duration_since(Instant::now()) else {
                 break;
             };
@@ -2379,6 +2457,176 @@ mod tests {
                 "{events:?}"
             );
         }
+    }
+
+    /// Answers one Inspect with each of `snapshots` in turn, then keeps the socket open until
+    /// the returned sender drops, so no later refresh of the test's fails.
+    fn serve_inspects(
+        listener: UnixListener,
+        snapshots: Vec<Snapshot>,
+    ) -> (thread::JoinHandle<()>, mpsc::Sender<()>) {
+        let (hold, held) = mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            for snapshot in snapshots {
+                let (mut stream, action) = accept_workspace_action(&listener);
+                assert_eq!(
+                    action,
+                    WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect)
+                );
+                stream
+                    .write_all(
+                        &workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot))
+                            .unwrap(),
+                    )
+                    .unwrap();
+            }
+            let _ = held.recv();
+        });
+        (server, hold)
+    }
+
+    fn refused(name: &str) -> io::Error {
+        io::Error::other(format!("{name} refused by the test"))
+    }
+
+    /// The transport whose threads `check` lets start, refreshing on `waits`.
+    fn start_checked(
+        socket: &Path,
+        waits: Waits,
+        check: fn(&'static str) -> io::Result<()>,
+    ) -> (WorkspaceTransport, mpsc::Receiver<()>) {
+        let (wakes, receiver) = mpsc::channel();
+        let spawner = Spawner { check: Some(check) };
+        let transport =
+            WorkspaceTransport::start_with(socket.to_path_buf(), waits, spawner, move || {
+                let _ = wakes.send(());
+            });
+        (transport, receiver)
+    }
+
+    #[test]
+    fn a_subscription_that_cannot_start_is_reported_and_refreshes_continue() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.path).unwrap();
+        let first = workspace_snapshot();
+        let mut second = first.clone();
+        second.active_tab = "t2".into();
+        second.tabs.push(second_workspace_tab());
+        second.workspaces[0].tab_count = second.tabs.len();
+        let last = WorkspaceEvent::Response(WorkspaceResponse::Snapshot(second.clone()));
+        // Each snapshot answers its own Inspect, so the second proves a later refresh.
+        let (server, hold) = serve_inspects(listener, vec![first, second]);
+        let (transport, receiver) = start_checked(
+            &socket.path,
+            Waits::refreshing(Duration::from_millis(10)),
+            |name| {
+                if name == EVENTS_THREAD {
+                    Err(refused(name))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        // The report and the snapshots come from different threads, in either order.
+        let is_degraded = |event: &WorkspaceEvent| matches!(event, WorkspaceEvent::Degraded { .. });
+        let events = take_until(&transport, &receiver, |events| {
+            events.contains(&last) && events.iter().any(is_degraded)
+        });
+        assert!(events.contains(&last), "{events:?}");
+        let degraded: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                WorkspaceEvent::Degraded { detail } => Some(detail.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            degraded,
+            [
+                "Cannot start the Eon event subscription; the workspace updates only on its \
+                 refresh interval, and a hidden popup can draw until then: venus-eon-events \
+                 refused by the test"
+            ]
+        );
+        assert!(!events.iter().any(is_unavailable), "{events:?}");
+        drop(transport);
+        drop(hold);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_slow_watch_that_cannot_start_is_reported_and_answers_still_arrive() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.path).unwrap();
+        let snapshot = workspace_snapshot();
+        let answer = WorkspaceResponse::Snapshot(snapshot.clone());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = accept_workspace_action(&listener);
+            stream
+                .write_all(&workspace::encode_response(&answer).unwrap())
+                .unwrap();
+        });
+        let (wakes, receiver) = mpsc::channel();
+        let spawner = Spawner {
+            check: Some(|name| {
+                if name == SLOW_THREAD {
+                    Err(refused(name))
+                } else {
+                    Ok(())
+                }
+            }),
+        };
+        let (transport, started) = WorkspaceTransport::start_worker(
+            socket.path.clone(),
+            quick_waits(Duration::from_secs(10)),
+            spawner,
+            move || {
+                let _ = wakes.send(());
+            },
+        );
+        assert!(started);
+
+        // The watch starts before the first request, so its report comes first.
+        assert_eq!(
+            take_through(&transport, &receiver, is_response),
+            [
+                WorkspaceEvent::Degraded {
+                    detail: "Cannot start the Eon slow-answer watch; the window cannot say when \
+                             Eon is slow: venus-eon-slow refused by the test"
+                        .into()
+                },
+                WorkspaceEvent::Response(WorkspaceResponse::Snapshot(snapshot)),
+            ]
+        );
+        drop(transport);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_worker_that_cannot_start_makes_the_workspace_unavailable_and_opens_no_subscription() {
+        let socket = TestSocket::new();
+        let (transport, _receiver) = start_checked(&socket.path, WAITS, |name| match name {
+            WORKER_THREAD => Err(refused(name)),
+            EVENTS_THREAD => panic!("the subscription starts without a worker"),
+            _ => Ok(()),
+        });
+        // The failure is reported before `start` returns.
+        assert_eq!(
+            transport.drain_events(),
+            [WorkspaceEvent::NoWorker {
+                detail: "Cannot start the Eon workspace worker: venus-eon-workspace refused by \
+                         the test"
+                    .into(),
+            }]
+        );
+        // Nothing reads actions any more.
+        assert_eq!(
+            transport.send(WorkspaceAction::Workspace(
+                workspace::WorkspaceAction::Inspect
+            )),
+            Err(SendError::Closed)
+        );
     }
 
     #[test]

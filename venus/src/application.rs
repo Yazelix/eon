@@ -43,7 +43,7 @@ use yazelix_venus::{
     DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, FrameTimings, GpuUse,
     HeaderText, HeadingAction, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels,
     LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor,
-    PaneHeaderAction, PresentOutcome, RamUse, ReleaseStage, Renderer, Scene, SceneRect,
+    PaneHeaderAction, PresentOutcome, RamUse, ReleaseStage, Renderer, Scene, SceneRect, SendError,
     SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction,
     WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
     WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, bench_trace,
@@ -790,8 +790,8 @@ impl PendingClose {
             }
             // A `Confirm` followed by anything else answered another request.
             WorkspaceEvent::Answered { .. } | WorkspaceEvent::Response(_) => pending.answer = None,
-            WorkspaceEvent::Unavailable { .. } => *slot = None,
-            WorkspaceEvent::Slow => {}
+            WorkspaceEvent::Unavailable { .. } | WorkspaceEvent::NoWorker { .. } => *slot = None,
+            WorkspaceEvent::Slow | WorkspaceEvent::Degraded { .. } => {}
         }
         None
     }
@@ -1138,13 +1138,15 @@ impl QuitProgress {
                 }
                 return QuitEffects::default();
             }
-            WorkspaceEvent::Unavailable { .. } => {
+            WorkspaceEvent::Unavailable { .. } | WorkspaceEvent::NoWorker { .. } => {
                 if *self == Self::Pending {
                     *self = Self::Idle;
                 }
                 return QuitEffects::default();
             }
-            WorkspaceEvent::Slow => unreachable!("handle_workspace returns before a slow report"),
+            WorkspaceEvent::Slow | WorkspaceEvent::Degraded { .. } => {
+                unreachable!("handle_workspace returns before a slow or degraded report")
+            }
             WorkspaceEvent::Response(_) => return QuitEffects::default(),
         };
         let step = if *self == Self::Pending {
@@ -3919,6 +3921,16 @@ impl Application {
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
         bench_trace("workspace_apply", "");
+        let Some(event) = diagnose(event, |detail| report(detail)) else {
+            return;
+        };
+        let event = match event {
+            WorkspaceEvent::NoWorker { detail } => WorkspaceEvent::Unavailable {
+                notice: no_worker_notice(self.workspace_model.snapshot()),
+                detail: Some(detail),
+            },
+            event => event,
+        };
         if event == WorkspaceEvent::Slow {
             // Only the notice changes; a pending quit or jump waits for the answer (VEN-C8).
             // As below, the view waits for the window and its initial scale.
@@ -4013,8 +4025,11 @@ impl Application {
                 }
                 (changed, false)
             }
-            WorkspaceEvent::Answered { .. } | WorkspaceEvent::Slow => {
-                unreachable!("answers and slow reports return above")
+            WorkspaceEvent::Answered { .. }
+            | WorkspaceEvent::Slow
+            | WorkspaceEvent::Degraded { .. }
+            | WorkspaceEvent::NoWorker { .. } => {
+                unreachable!("answers, slow and degraded reports return above; no-worker is worded")
             }
         };
         if received_snapshot
@@ -4237,10 +4252,7 @@ impl Application {
             }
             Err(error) => {
                 let quota_expired = self.workspace_model.snapshot().is_some_and(has_quota);
-                if self
-                    .workspace_model
-                    .mark_unavailable(format!("Cannot queue Eon workspace action: {error}"), true)
-                {
+                if refuse_queued(&mut self.workspace_model, error) {
                     if quota_expired {
                         self.presentation.invalidate();
                     }
@@ -7034,6 +7046,48 @@ fn window_title<'a>(scene_title: Option<&'a str>, render_notice: Option<&'a str>
 
 fn report(message: impl std::fmt::Display) {
     let _ = writeln!(io::stderr().lock(), "venus: {message}");
+}
+
+/// Writes a diagnostics-only workspace event to `report` and consumes it; returns any other.
+fn diagnose(event: WorkspaceEvent, report: impl FnOnce(&str)) -> Option<WorkspaceEvent> {
+    if let WorkspaceEvent::Degraded { detail } = &event {
+        report(detail);
+        return None;
+    }
+    Some(event)
+}
+
+/// What a window whose workspace worker did not start shows: what failed and how to get back
+/// to its terminals. Closing the window detaches it, so the supervisor keeps them, and attach
+/// starts a fresh Venus. Without a snapshot Venus exits before its window opens, and knows
+/// neither its namespace nor its window, so it says only what failed. Fixed error text, as
+/// VEN-C8's notices are.
+fn no_worker_notice(snapshot: Option<&eon_workspace_protocol::v47::Snapshot>) -> String {
+    const FAILED: &str = "Venus could not start its link to Eon.";
+    let Some(snapshot) = snapshot else {
+        return FAILED.into();
+    };
+    // eonbase has no running-windows summary.
+    let reopen = match &snapshot.running {
+        None => "eonbase attach".to_owned(),
+        Some(running) => match &running.this.window {
+            None => "eon window attach".to_owned(),
+            Some(window) => format!("eon window attach {window}"),
+        },
+    };
+    format!(
+        "{FAILED} Your terminals are safe: close this window, then run `{reopen}` to reopen it."
+    )
+}
+
+/// Marks the workspace unavailable because `error` refused an action; true when the notice
+/// changed. A closed channel means no worker reads actions (it never started); while Eon is
+/// already unavailable, its notice already says why and how to get back, so it stays.
+fn refuse_queued(model: &mut WorkspaceModel, error: SendError) -> bool {
+    if error == SendError::Closed && model.unavailable() {
+        return false;
+    }
+    model.mark_unavailable(format!("Cannot queue Eon workspace action: {error}"), true)
 }
 
 fn record_render_failure<'a>(

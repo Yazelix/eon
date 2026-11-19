@@ -1870,6 +1870,104 @@ fn a_close_request_quits_where_alt_shift_q_does() {
     assert_eq!(close_request(None, false), CloseRequest::Detach);
 }
 
+/// Startup admission gives the window Eon's snapshot before its worker starts. When the worker
+/// cannot start, the notice says how to get back, an action the person then tries keeps it,
+/// and closing detaches (the supervisor keeps the terminals) instead of asking a Stop that
+/// nothing would answer.
+#[test]
+fn a_window_whose_worker_did_not_start_keeps_its_way_back_and_detaches_on_close() {
+    let mut model = WorkspaceModel::default();
+    model.apply(eon_workspace_protocol::v47::Response::Snapshot(
+        quit_snapshot(),
+    ));
+    assert_eq!(
+        close_request(model.snapshot(), model.unavailable()),
+        CloseRequest::Quit
+    );
+    let notice = no_worker_notice(model.snapshot());
+    assert!(model.mark_unavailable(notice.clone(), false));
+    // A tab click or key reaches the closed action channel.
+    assert!(!refuse_queued(&mut model, SendError::Closed));
+    assert_eq!(model.notice(), Some(notice.as_str()));
+    assert_eq!(
+        close_request(model.snapshot(), model.unavailable()),
+        CloseRequest::Detach
+    );
+    // A full queue still says so, and a closed channel says so while Eon is reachable.
+    assert!(refuse_queued(&mut model, SendError::Full));
+    let mut reachable = WorkspaceModel::default();
+    assert!(refuse_queued(&mut reachable, SendError::Closed));
+    assert_eq!(
+        reachable.notice(),
+        Some("Cannot queue Eon workspace action: Venus input channel is closed")
+    );
+}
+
+#[test]
+fn a_worker_failure_notice_names_how_to_reopen_this_window() {
+    let failed = "Venus could not start its link to Eon.";
+    let reopen = |command: &str| {
+        format!(
+            "{failed} Your terminals are safe: close this window, then run `{command}` to \
+             reopen it."
+        )
+    };
+    let default = quit_snapshot();
+    assert_eq!(
+        no_worker_notice(Some(&default)),
+        reopen("eon window attach")
+    );
+    let mut named = default.clone();
+    named.running.as_mut().unwrap().this.window = Some("0000002a".into());
+    assert_eq!(
+        no_worker_notice(Some(&named)),
+        reopen("eon window attach 0000002a")
+    );
+    // eonbase has no running-windows summary and its own namespace.
+    let mut eonbase = default;
+    eonbase.running = None;
+    assert_eq!(no_worker_notice(Some(&eonbase)), reopen("eonbase attach"));
+    // Without a snapshot Venus exits before any window opens, so there is nothing to close.
+    assert_eq!(no_worker_notice(None), failed);
+}
+
+#[test]
+fn a_degraded_report_reaches_the_diagnostics_and_nothing_else() {
+    let mut written = Vec::new();
+    let degraded = WorkspaceEvent::Degraded {
+        detail: "Cannot start the Eon slow-answer watch".into(),
+    };
+    assert_eq!(
+        diagnose(degraded, |detail| written.push(detail.to_owned())),
+        None
+    );
+    assert_eq!(written, ["Cannot start the Eon slow-answer watch"]);
+    for event in [
+        WorkspaceEvent::Slow,
+        WorkspaceEvent::Answered {
+            ticket: 1,
+            accepted: true,
+        },
+        WorkspaceEvent::Unavailable {
+            notice: "Cannot reach Eon.".into(),
+            detail: Some("os text".into()),
+        },
+        WorkspaceEvent::NoWorker {
+            detail: "os text".into(),
+        },
+        WorkspaceEvent::Response(eon_workspace_protocol::v47::Response::Snapshot(
+            quit_snapshot(),
+        )),
+    ] {
+        assert_eq!(
+            diagnose(event.clone(), |_| panic!(
+                "only a degraded report is written"
+            )),
+            Some(event)
+        );
+    }
+}
+
 #[test]
 fn window_menu_pointer_waits_for_matching_release_and_hover_never_scrolls() {
     let mut menu = WindowMenuState {

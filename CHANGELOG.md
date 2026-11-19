@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- When a window cannot start the thread that links it to Eon, it says so,
+  that its terminals are safe, and how to reopen it, in place of "Cannot
+  reach Eon."; closing it detaches and keeps the terminals. When its event
+  subscription or slow-answer watch cannot start, Venus names that once in
+  the diagnostic log instead of dropping it (`eon-0nn1p.16`).
 - `eon doctor` checks the local Eon setup offline and gives a fix for each
   warning or failure. `--json` gives agents the same checks, and `eon report`
   includes their redacted results (`eon-6zoxr`).
