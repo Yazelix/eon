@@ -703,6 +703,63 @@ load and startup/stop result. A presented terminal and the expected renderer
 must be observed before Stop succeeds. Trace and process logs stay beside it.
 This is a startup/cleanup check, without throughput, memory or latency claims.
 
+### Installed journeys
+
+`eon-bench journey --eon PATH --case first-launch --out DIR` runs one Eon
+window on the shared private 1280×800 Sway launcher. Use an x86_64 Linux Nix
+candidate and a fresh evidence directory. The case starts bare `eon` with two
+projects in private Zoxide history, selects one through the startup picker,
+and checks that the first pane runs its shell in that project. The picker PNG
+must show foreground pixels in the prompt and both result rows. The pane
+PNG must show non-background pixels in the pane text area. The run passes
+after `eon window stop all --json`
+acknowledges the observed generation and no candidate process remains.
+
+Use the active coordinator's heavy-command wrapper for all builds and journey
+runs. In this example `journey_root` is an existing private artifact directory,
+`heavy_runner` names that wrapper, and `CARGO_TARGET_DIR` names your own target.
+
+```sh
+bash "$heavy_runner" env CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+  nix build .#default --out-link "$journey_root/candidate"
+bash "$heavy_runner" env CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+  nix build .#bench --out-link "$journey_root/bench"
+bash "$heavy_runner" env CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+  "$journey_root/bench/bin/eon-bench" journey \
+  --eon "$journey_root/candidate/bin/eon" --case first-launch --out "$journey_root/g1"
+```
+
+Exit 0 means the case and Stop passed. Exit 1 means a run failed. Exit 2
+means the arguments were invalid. `DIR` must be new. `result.json` schema 1
+records the case, product root and its source receipt when present, resolved
+Eon executable, bench build identity and SHA-256, overall result and seconds.
+The ordered `steps` array gives each attempted step's `name`, `kind`,
+`result`, `seconds`, and `evidence` on success or `error` on failure. Before
+case steps, the `versions` row records component identities and checks the Eon
+build against the product's source receipt when present.
+
+| Step kind | Evidence on success |
+| --- | --- |
+| `setup` | Case-specific fixture values, including the seeded project paths in first-launch |
+| `cli` | `args` and `stdout`. A background launch has null `stdout` and writes `eon.log` |
+| `send` | The candidate's `pane send --json` reply |
+| `wait` | The matching session or terminal observation. A timed-out wait reports the last observation |
+| `capture` | PNG `file`, `width`, `height`, and the case's `pixels` measurements |
+| `cleanup` | The Stop `reply` and `live_candidate_processes` count |
+
+Cases are Rust step lists under `eon/tools/eon-bench/src/journey/`. A step calls
+the candidate CLI, sends to an explicit pane or popup ID, waits for an
+`eon session --json` predicate with optional CLI reads, or captures with
+`grim`. The first-launch case allows 45 seconds for the picker and 10 seconds
+each for the filtered query, shell readiness, and each capture. The picker
+budget includes the default animation. Predicates advance as soon as they
+hold, and mutating calls are sent once. The image check measures the saved
+1280×800 PNG at a fixed inset of each text area, excluding chrome and the
+sidebar. The sandbox exposes the Nix store, private system files and the
+new evidence directory at `/evidence`. It has its own terminal session, and
+the outer runner tears down the namespace after 180 seconds.
+For a beta proof, pass the out-link to the receipt-bearing product output.
+
 ### Terminal comparison
 
 The recorded comparison uses these explicit flags (replace `STAGED_TREE_HASH`

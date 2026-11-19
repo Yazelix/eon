@@ -81,6 +81,24 @@ fn evidence(output: &Output, out: &Path) -> String {
 }
 
 #[test]
+fn journey_inner_refuses_direct_entry_before_setup() {
+    let fixture = Fixture::new("journey-inner");
+    let out = fixture.0[1].join("out");
+    fs::create_dir(&out).unwrap();
+    let output = fixture
+        .command("journey-inner", &out)
+        .env_remove("EON_BENCH_JOURNEY_PARENT_PID_NS")
+        .arg("--eon")
+        .arg(executable("sh"))
+        .args(["--case", "first-launch"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires private bwrap"));
+    assert!(fs::read_dir(out).unwrap().next().is_none());
+}
+
+#[test]
 fn candidate_outlinks_and_run_evidence_survive_namespace_setup() {
     let fixture = Fixture::new("paths");
     fixture.tool("sway", "echo fixture-sway; exit 0");

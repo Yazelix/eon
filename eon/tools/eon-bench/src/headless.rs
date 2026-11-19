@@ -90,8 +90,7 @@ pub fn run(args: &[String], options: &Options) -> Result {
         .ok_or("missing --eon")?;
     arguments[index + 1] = eon.to_str().ok_or("non-UTF8 candidate path")?.into();
     let exe = std::env::current_exe().map_err(error)?;
-    let mut command = isolation::command(&out, &[&exe]);
-    isolation::display(&mut command, options.renderer.render_node()?);
+    let mut command = isolation::display_suite(&out, &exe, options.renderer.render_node()?);
     command
         .arg("--")
         .arg(exe)

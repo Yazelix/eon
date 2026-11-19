@@ -1,21 +1,21 @@
 //! Namespace containment shared by memory and display suites.
 use crate::{environment, suite};
 use std::{
+    fs,
     path::Path,
     process::{Command, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-pub(crate) fn command(out: &Path, tools: &[&Path]) -> Command {
-    let mut command =
-        Command::new(std::env::var_os("EON_BENCH_BWRAP").unwrap_or_else(|| "bwrap".into()));
+fn bwrap() -> Command {
+    Command::new(std::env::var_os("EON_BENCH_BWRAP").unwrap_or_else(|| "bwrap".into()))
+}
+
+fn namespaces(command: &mut Command) {
     command.args([
         "--die-with-parent",
         "--unshare-pid",
         "--unshare-net",
-        "--ro-bind",
-        "/",
-        "/",
         "--proc",
         "/proc",
         "--dev",
@@ -24,6 +24,16 @@ pub(crate) fn command(out: &Path, tools: &[&Path]) -> Command {
         "/tmp",
         "--tmpfs",
         "/run",
+        "--chdir",
+        "/",
+    ]);
+}
+
+pub(crate) fn command(out: &Path, tools: &[&Path]) -> Command {
+    let mut command = bwrap();
+    command.args(["--ro-bind", "/", "/"]);
+    namespaces(&mut command);
+    command.args([
         "--unsetenv",
         "DISPLAY",
         "--unsetenv",
@@ -32,8 +42,6 @@ pub(crate) fn command(out: &Path, tools: &[&Path]) -> Command {
         "DBUS_SESSION_BUS_ADDRESS",
         "--unsetenv",
         "SWAYSOCK",
-        "--chdir",
-        "/",
     ]);
     for path in [
         "/home",
@@ -61,17 +69,70 @@ pub(crate) fn display(command: &mut Command, render_node: Option<&Path>) {
     }
 }
 
+pub(crate) fn display_suite(out: &Path, exe: &Path, render_node: Option<&Path>) -> Command {
+    let mut command = self::command(out, &[exe]);
+    display(&mut command, render_node);
+    command
+}
+
+pub(crate) const JOURNEY_EVIDENCE: &str = "/evidence";
+
+/// The installed journey needs no host files outside of the immutable Nix
+/// store, its newly created output directory, and the bench executable itself.
+pub(crate) fn journey(out: &Path, exe: &Path, shell: &Path) -> Result<Command, String> {
+    let uid = rustix::process::geteuid().as_raw();
+    let gid = rustix::process::getegid().as_raw();
+    let passwd = out.join("sandbox-passwd");
+    let group = out.join("sandbox-group");
+    fs::write(
+        &passwd,
+        format!("journey:x:{uid}:{gid}:Eon journey:{JOURNEY_EVIDENCE}/home:/bin/sh\n"),
+    )
+    .and_then(|()| fs::write(&group, format!("journey:x:{gid}:\n")))
+    .map_err(|error| error.to_string())?;
+    let mut command = bwrap();
+    command.args(["--new-session", "--ro-bind", "/nix/store", "/nix/store"]);
+    namespaces(&mut command);
+    command
+        .arg("--symlink")
+        .arg(shell)
+        .arg("/bin/sh")
+        .arg("--ro-bind")
+        .arg(passwd)
+        .arg("/etc/passwd")
+        .arg("--ro-bind")
+        .arg(group)
+        .arg("/etc/group")
+        .arg("--bind")
+        .arg(out)
+        .arg(JOURNEY_EVIDENCE)
+        .arg("--ro-bind")
+        .arg(exe)
+        .arg(exe);
+    display(&mut command, None);
+    Ok(command)
+}
+
 pub(crate) fn run(command: &mut Command) -> Result<(), String> {
+    run_until(command, None)
+}
+
+pub(crate) fn run_until(command: &mut Command, deadline: Option<Instant>) -> Result<(), String> {
     command.stdin(Stdio::null());
     suite::interrupt::install()?;
     let mut child = crate::sys::die_with_parent(command)
         .spawn()
         .map_err(|e| e.to_string())?;
     loop {
-        if suite::interrupt::check().is_err() {
+        let expired = deadline.is_some_and(|deadline| Instant::now() >= deadline);
+        if expired || suite::interrupt::check().is_err() {
             let _ = child.kill();
             let _ = child.wait();
-            break Err("isolated run interrupted".into());
+            break Err(if expired {
+                "isolated run deadline elapsed".into()
+            } else {
+                "isolated run interrupted".into()
+            });
         }
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break if status.success() {
@@ -87,7 +148,69 @@ pub(crate) fn run(command: &mut Command) -> Result<(), String> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::os::unix::net::{UnixListener, UnixStream};
+
+    #[test]
+    fn journey_hides_alternate_roots_and_has_no_controlling_terminal() {
+        const PROBE: &str = "EON_BENCH_JOURNEY_ISOLATION_PROBE";
+        if let Some(root) = std::env::var_os(PROBE) {
+            let root = Path::new(&root);
+            assert!(!root.join("host-file").exists());
+            assert!(UnixStream::connect(root.join("ambient.sock")).is_err());
+            assert!(fs::File::open("/dev/tty").is_err());
+            fs::write(Path::new(JOURNEY_EVIDENCE).join("probe"), "private").unwrap();
+            return;
+        }
+
+        let root = std::env::current_dir()
+            .unwrap()
+            .join(format!(".journey-isolation-{}", std::process::id()));
+        let out = root.join("cobalt");
+        fs::create_dir_all(&out).unwrap();
+        fs::write(root.join("host-file"), "ambient").unwrap();
+        let socket = root.join("ambient.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        assert!(UnixStream::connect(&socket).is_ok());
+        let exe = std::env::current_exe().unwrap();
+        let shell = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join("sh"))
+            .find(|path| path.starts_with("/nix/store") && path.is_file())
+            .unwrap();
+        let (_master, slave) = crate::pty::open(24, 80).unwrap();
+        let mut command = journey(&out, &exe, &shell).unwrap();
+        let output = crate::sys::own_session_on_stdin(&mut command)
+            .stdin(slave)
+            .env(PROBE, &root)
+            .arg("--")
+            .arg(&exe)
+            .args([
+                "--exact",
+                "isolation::tests::journey_hides_alternate_roots_and_has_no_controlling_terminal",
+            ])
+            .output()
+            .unwrap();
+        let evidence = fs::read_to_string(out.join("probe"));
+        let mut blocked = journey(&out, &exe, &shell).unwrap();
+        blocked.args([
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf ready >/evidence/ready; exec sleep 30",
+        ]);
+        let blocked = run_until(&mut blocked, Some(Instant::now() + Duration::from_secs(2)));
+        let was_ready = out.join("ready").is_file();
+        drop(listener);
+        fs::remove_dir_all(root).unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert_eq!(evidence.unwrap(), "private");
+        assert!(was_ready);
+        assert_eq!(blocked.unwrap_err(), "isolated run deadline elapsed");
+    }
 
     #[test]
     fn display_namespace_hides_runtime_and_tmp_and_keeps_host_files_read_only() {
