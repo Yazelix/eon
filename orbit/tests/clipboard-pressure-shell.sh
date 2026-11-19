@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo -icanon
 gate() { until IFS= read -r _ < "$ORBIT_CLIPBOARD_GATE"; do :; done; }
 # 524,286 bytes of text: under the 1 MiB bound of one read's writes.

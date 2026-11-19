@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Raw input: the terminal driver hands this child every byte the terminal
 # sends back, with no signal, carriage-return or flow-control handling, so a
 # reply cannot hide a control byte. Output keeps its newline mapping. Bash
@@ -13,7 +14,7 @@ da=$'\e\\[\\?[0-9;]*c$'
 # answer that never ends is recorded as TIMEOUT with what did arrive. Bash
 # cannot hold NUL, so it is recorded as <NUL>.
 answer() {
-  local reply= character wait=0.5
+  local reply='' character wait=0.5
   [[ -n $2 ]] && wait=5
   while IFS= read -r -s -d '' -n 1 -t "$wait" character; do
     reply+=${character:-<NUL>}
@@ -38,7 +39,7 @@ ask() {
 }
 # Uppercase hexadecimal of each byte, as XTGETTCAP names keys.
 hex() {
-  local text=$1 out= i
+  local text=$1 out='' i
   for ((i = 0; i < ${#text}; i++)); do
     printf -v out '%s%02X' "$out" "'${text:i:1}"
   done

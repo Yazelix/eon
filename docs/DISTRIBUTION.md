@@ -345,6 +345,39 @@ compatibility, artifact parity, secret and signing boundaries, provenance, and
 failure recovery rather than assuming a local container matches GitHub's
 runner.
 
+### Pull request checks
+
+`.github/workflows/pr-checks.yml` gives every pull request into `edge`, from a
+fork or not, one quick check, "Pull request checks / quick". It runs once per
+push to the pull request; a newer push cancels the superseded run. One standard
+`ubuntu-24.04` runner, free for public repositories, with a 15-minute timeout
+and no artifacts, caches or storage; additional paid spend is $0, and a private
+copy of the repository skips the job. It checks whitespace in the pull request's
+diff, builds the quick flake checks (workflows and shell scripts, the release
+pin script, the unsafe policy, and the other checks that build no Cargo crate
+graph, Orbit, Venus, Eon or Ghostty), and evaluates every Linux and Darwin
+check, package and development shell without building them. Rust suites,
+package builds and real-PTY checks stay on `edge` pushes and the author's and
+maintainer's proof.
+
+The pull request's code is untrusted, so the workflow keeps it from every
+secret:
+
+- It triggers on `pull_request` only, which gives fork code no secrets and a
+  read-only token. `pull_request_target` and `workflow_run` would run with the
+  base repository's secrets and a write token; the `lint` check fails any
+  workflow that names either.
+- `permissions: contents: read`, `persist-credentials: false`, no `secrets`, no
+  `environment`, no Cachix action and no cache or artifact upload. Nix reads
+  only `cache.nixos.org` with `accept-flake-config = false`, so a pull request's
+  `flake.nix` cannot add a substituter or key.
+- Actions are pinned by commit, as in the other workflows.
+- Whether a first-time contributor's run waits for a maintainer's approval is a
+  repository setting (Settings, Actions, General), not the workflow's.
+
+Run the same checks locally before opening a pull request: the `nix build` and
+`nix eval` commands in the workflow, and `git diff --check edge`.
+
 ## Optional binary cache
 
 `eon-yazelix` is a public Cachix cache donated and managed by

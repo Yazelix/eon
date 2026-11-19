@@ -138,7 +138,9 @@ exec)
       ;;
     --attach)
       touch "$root/attached"
+      # shellcheck disable=SC2028 # the JSON string holds a literal \n escape
       echo '{"type":"stdout","data":"remote stdout\n"}'
+      # shellcheck disable=SC2028 # the JSON string holds a literal \n escape
       echo '{"type":"stderr","data":"remote stderr\n"}'
       case "$mode" in post-*) sleep 35 ;; esac
       while [ -e "$root/hold" ]; do sleep 0.05; done

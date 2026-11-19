@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Test-only kernel and process boundary for the real guest controller.
 set -eu
 group=$FIXTURE_CGROUP$FIXTURE_SCOPE/workload

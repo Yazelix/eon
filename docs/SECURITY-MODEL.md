@@ -335,7 +335,11 @@ newest `vX.Y.Z` tag moves its `latest-release-x86_64-linux` pin (`flake.nix:4`,
 `.github/workflows/cachix.yml:66`, `.github/workflows/cachix.yml:89`,
 `.github/scripts/pin-latest-release.sh:40`). Actual workflow activation and cache access
 policy remain **unverified**; the dated record below also covers the conditional
-Darwin tag-triggered publication path.
+Darwin tag-triggered publication path. The pull request workflow runs
+untrusted pull request code with a read-only token, no secrets and no cache
+writes, and its `lint` check rejects any workflow that names
+`pull_request_target` or `workflow_run` (`.github/workflows/pr-checks.yml`,
+`nix/lint-check.nix`; [Pull request checks](DISTRIBUTION.md#pull-request-checks)).
 
 Post-audit record (2026-11-16): read-only ruleset API checks found active
 **Protect edge and main** restrictions on non-fast-forward updates and deletion

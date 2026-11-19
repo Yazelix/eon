@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo
 until IFS= read -r _ < "$ORBIT_SYNC_GATE"; do :; done
 printf '\033[?2026h\033]0;SYNC PARTIAL\007partial'

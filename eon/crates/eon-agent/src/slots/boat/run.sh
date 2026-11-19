@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Only fixed process glue; Rust validates argv, source identity, policy and budget.
 set -eu
 tree=$1
@@ -20,6 +21,7 @@ stderr_tee=$!
 gate_ran=false
 source_verified=false
 build_identity_absent=false
+# shellcheck disable=SC2329 # the EXIT trap below calls it
 finish() {
   code=$?
   trap - EXIT
@@ -74,6 +76,7 @@ export NIX_USER_CONF_FILES=/home/user/.config/nix/nix.conf
 store=$(nix config show store) || exit 96
 builders=$(nix config show builders) || exit 96
 [ "$store" = local ] && [ -z "$builders" ] || exit 96
+# shellcheck disable=SC2329 # exported below and called by a child bash
 boat_workload() {
   set -eu
   local tree=$1 relative=$2 jobs=$3 gate_warm=$4 dependency_expression=$5
@@ -106,11 +109,13 @@ echo 'phase=warmup'
 mapfile -t dependencies < /home/user/eon-run/workload/dependencies
 if [ "${#dependencies[@]}" -gt 0 ]; then nix build -L --no-link "${dependencies[@]}"; fi
 else
+  # shellcheck disable=SC2016 # the child shell expands it
   nix develop -L -c bash --noprofile --norc -c \
     '[ ! "${ASCII_TOKEN+x}" ] && [ ! "${BOAT_ID+x}" ]'
 fi
 cd "/home/user/eon/$relative"
 # Boat supplies ambient capabilities; unprivileged Bubblewrap rejects them.
+# shellcheck disable=SC2016 # the child shell expands it
 setpriv --inh-caps=-all --ambient-caps=-all bash --noprofile --norc -c '
   while read -r key bits; do
     case "$key" in

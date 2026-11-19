@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared process glue; Rust selects class, cap and reclaim threshold.
 unit='' aslice='' scope=()
 scope_setup() {
@@ -14,6 +15,7 @@ scope_setup() {
     # rule and the stop are unchanged.
     mhigh=()
     [ "${mhigh_gib:-0}" -eq 0 ] || mhigh=(-p "MemoryHigh=${mhigh_gib}G")
+    # shellcheck disable=SC2154 # eon-b1e8b: no caller sets mcap
     scope=(systemd-run --user --scope --quiet --unit "$unit" ${aslice:+"--slice=$aslice"}
       -p "MemoryMax=${mcap}G" "${mhigh[@]}" -p MemorySwapMax=0 -p OOMPolicy=kill --)
   else
@@ -25,8 +27,10 @@ scope_setup() {
 scope_end() {
   local i=0 k v as
   while :; do
+    # shellcheck disable=SC2034 # eon-b1e8b: no caller reads mres
     as='' mres=''
     while IFS='=' read -r k v; do
+      # shellcheck disable=SC2034 # eon-b1e8b: no caller reads mres
       case $k in ActiveState) as=$v ;; Result) mres=$v ;; esac
     done < <(systemctl --user show -p ActiveState -p Result "$unit.scope" 2>/dev/null)
     case $as in active|activating|deactivating) [ "$i" -lt 20 ] && { i=$((i + 1)); sleep 0.1; continue; } ;; esac

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 printf '%s\n' "$$" > "$ORBIT_PID_FILE"
 until IFS= read -r _ < "$ORBIT_TITLE_GATE"; do :; done
 printf '\033]0;LATE ONE\007\n'

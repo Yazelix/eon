@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo
 until IFS= read -r _ < "$ORBIT_PREVIEW_GATE"; do :; done
 for ((line = 1; line <= 100; line++)); do

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 printf '%s\n' "$$" > "$ORBIT_PID_FILE"
 until IFS= read -r _ < "$ORBIT_OUTPUT_GATE"; do :; done
 # Enough distinct frames to fill the stopped client's socket before Exited.

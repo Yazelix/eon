@@ -1325,6 +1325,18 @@ add no benchmark tables or charts to the repository.
 
 ## Checks
 
+Every pull request runs the quick checks in
+[`pr-checks.yml`](../.github/workflows/pr-checks.yml)
+([Pull request checks](DISTRIBUTION.md#pull-request-checks)); run its
+`nix build` and `nix eval` commands and `git diff --check edge` before opening
+one. `nix build --no-link .#checks.x86_64-linux.lint` runs actionlint over the
+workflows and ShellCheck over every `*.sh` and `*.bash` file. A script with no
+shebang (a fragment Rust or Nix hands to bash) starts with `# shellcheck
+shell=bash`; silence a finding only with a `# shellcheck disable=SCnnnn #
+reason` comment on the line before it. `nix build --no-link
+.#checks.x86_64-linux.pin-latest-release` runs the release pin script against
+real Git tags and a stub `cachix`.
+
 [`components/eon-v5.json`](../components/eon-v5.json) is the canonical
 distribution-neutral component graph. Validate it with:
 

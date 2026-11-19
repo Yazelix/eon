@@ -1,0 +1,67 @@
+name: Pull request checks
+
+# Quick checks on every pull request into edge, forks included. The pull
+# request's code runs with a read-only token, no secrets, no write caches and
+# no artifacts (docs/DISTRIBUTION.md, Pull request checks). Heavier suites stay
+# on edge pushes.
+on:
+  pull_request:
+    branches: [edge]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eon-pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    # No paid private-repository runs or runs in forks' own Actions.
+    if: github.repository == 'Yazelix/eon' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The merge commit and its base parent, for the whitespace diff.
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          # A pull request's flake.nix must never add substituters or keys.
+          extra_nix_config: accept-flake-config = false
+
+      - name: Whitespace
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: git diff --check HEAD^1 HEAD
+
+      # Checks that build no Cargo crate graph, Orbit, Venus, Eon or Ghostty.
+      - name: Quick flake checks
+        if: ${{ !cancelled() && steps.nix.outcome == 'success' }}
+        run: >-
+          nix build --print-build-logs --no-link --keep-going
+          .#checks.x86_64-linux.lint
+          .#checks.x86_64-linux.pin-latest-release
+          .#checks.x86_64-linux.unsafe-policy
+          .#checks.x86_64-linux.eon-update-launch-environment
+          .#checks.x86_64-linux.quick-search-guard
+          .#checks.x86_64-linux.orbit-terminfo-darwin
+          .#checks.x86_64-linux.orbit-boundary
+          .#checks.x86_64-linux.orbit-laws
+
+      - name: Flake evaluates
+        if: ${{ !cancelled() && steps.nix.outcome == 'success' }}
+        run: |
+          for attr in checks.x86_64-linux checks.aarch64-darwin \
+            packages.x86_64-linux packages.aarch64-darwin \
+            devShells.x86_64-linux devShells.aarch64-darwin; do
+            echo "Evaluating $attr"
+            nix eval --no-allow-import-from-derivation --json ".#$attr" \
+              --apply 'xs: builtins.mapAttrs (_: x: x.drvPath) xs' > /dev/null
+          done

@@ -41,6 +41,17 @@ attrs = [
   ".#checks.x86_64-linux.managed-command-path",
   ".#checks.x86_64-linux.orbit-boundary",
   ".#checks.x86_64-linux.unsafe-policy",
+  ".#checks.x86_64-linux.lint",
+  ".#checks.x86_64-linux.pin-latest-release",
+  ".#checks.x86_64-linux.eon-update-launch-environment",
+  ".#checks.x86_64-linux.quick-search-guard",
+  ".#checks.x86_64-linux.orbit-terminfo-darwin",
+  ".#checks.x86_64-linux.orbit-laws",
+  ".#checks.x86_64-linux.orbit-clipboard",
+  ".#checks.x86_64-linux.orbit-mouse",
+  ".#checks.x86_64-linux.orbit-selection",
+  ".#checks.x86_64-linux.orbit-selection-tick",
+  ".#checks.x86_64-linux.orbit-terminal-replies",
 ]
 
 # Checks a proof entry may name, each with what its target is: "package" (a

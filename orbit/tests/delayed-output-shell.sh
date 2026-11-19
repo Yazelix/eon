@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo
 printf '\033[?1004h'
 until IFS= read -r _ < "$ORBIT_DELAY_GATE"; do :; done

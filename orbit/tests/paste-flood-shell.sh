@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Without imaxbel, macOS's terminal rings no bell when the input queue fills.
 stty -echo -imaxbel
 printf '\033]0;PASTE READY\007'

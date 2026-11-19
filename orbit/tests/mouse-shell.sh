@@ -1,9 +1,11 @@
+# shellcheck shell=bash
 stty -echo -icanon
 gate() {
   until IFS= read -r _ < "$ORBIT_MOUSE_GATE"; do :; done
 }
 # Reports in the title, as hex, every byte read before the next "a".
 report() {
+  # shellcheck disable=SC2034 # ShellCheck reads the -d delimiter as a variable
   IFS= read -r -d a data
   printf '\033]0;%s %s\007' "$1" "$(printf %s "$data" | od -An -tx1 | tr -d ' \n')"
 }

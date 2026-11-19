@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 printf '%s\n' "$$" > "$ORBIT_PID_FILE"
 tick=0
 while test ! -e "$ORBIT_STOP"; do

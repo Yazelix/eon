@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 until IFS= read -r _ < "$ORBIT_REOPEN_GATE"; do :; done
 # Close every descriptor on the terminal, so the PTY master reads EIO while
 # this child lives, for longer than the host's two-second reap bound.

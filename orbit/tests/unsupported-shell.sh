@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 printf '%s\n' "$$" > "$ORBIT_PID_FILE"
 stty -echo
 IFS= read -r -n 1 first

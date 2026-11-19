@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo -icanon
 gate() { until IFS= read -r _ < "$ORBIT_TICK_GATE"; do :; done; }
 # Sixty lines leave 37 rows of history above a 24-row viewport.
@@ -7,6 +8,7 @@ gate
 # Open a synchronized update; the answer to a cursor query proves the server
 # has read it before the check goes on.
 printf '\033[?2026h\033[6n'
+# shellcheck disable=SC2034 # ShellCheck reads the -d delimiter as a variable
 IFS= read -r -s -d R _
 : > "$ORBIT_HELD_FILE"
 gate

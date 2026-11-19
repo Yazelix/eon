@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 until IFS= read -r _ < "$ORBIT_SLOW_GATE"; do :; done
 padding=$(printf '%01000d' 0)
 for ((n = 1; n <= 1000; n++)); do

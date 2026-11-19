@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 set -euo pipefail
 LC_ALL=C
 credential_pattern='(^|_)(TOKEN|API_KEY|SECRET)$|^SSH_AUTH_SOCK$'

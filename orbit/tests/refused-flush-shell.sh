@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo -imaxbel
 printf '\033]0;FLUSH READY\007'
 until IFS= read -r _ < "$ORBIT_FLUSH_GATE"; do :; done

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 printf '%s\n' "$$" > "$ORBIT_PID_FILE"
 stty -echo
 until IFS= read -r _ < "$ORBIT_READY_GATE"; do :; done

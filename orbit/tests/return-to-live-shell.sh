@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo
 gate() {
   until IFS= read -r _ < "$ORBIT_LIVE_GATE"; do :; done

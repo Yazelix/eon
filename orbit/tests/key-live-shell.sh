@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo
 until IFS= read -r _ < "$ORBIT_KEY_GATE"; do :; done
 for ((line = 1; line <= 200; line++)); do

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 stty -echo -icanon
 gate() { until IFS= read -r _ < "$ORBIT_CLIPBOARD_GATE"; do :; done; }
 gate
@@ -16,9 +17,11 @@ gate
 # More writes in one read than the bound of 64 end the attachment.
 writes=''
 for ((i = 0; i < 300; i++)); do writes+='\033]52;c;eA==\007'; done
+# shellcheck disable=SC2059 # the format is the escape sequences themselves
 printf "$writes"
 gate
 # A second burst makes an attachment before all output is drained overflow too.
+# shellcheck disable=SC2059 # the format is the escape sequences themselves
 printf "$writes\033]0;OVERFLOW DRAINED\007"
 gate
 printf '\033]0;AFTER OVERFLOW\007'

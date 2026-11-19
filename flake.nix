@@ -1277,6 +1277,8 @@
               inherit pkgs rustToolchain eonEnvironment eonComponents eonHelix eonNoHelix eonLaunchWrapper wrapperArgs;
             };
           unsafePolicyCheck = import ./nix/unsafe-policy-check.nix { inherit pkgs rustToolchain; };
+          lintCheck = import ./nix/lint-check.nix { inherit pkgs; };
+          pinLatestReleaseCheck = import ./nix/pin-latest-release-check.nix { inherit pkgs rustToolchain; };
           eonTestArgs = {
             pname = "eon-tests";
             inherit (eonCargo.package) version;
@@ -1748,6 +1750,9 @@
             managed-command-path = managedCommandPathCheck;
             # docs/UNSAFE.md's policy over the source for every platform.
             unsafe-policy = unsafePolicyCheck;
+            # Workflows and shell scripts, and the release pin script (pull request checks).
+            lint = lintCheck;
+            pin-latest-release = pinLatestReleaseCheck;
             # The pair's quick search against a slow stand-in fzf (EON-C18), its marker
             # removed before fzf starts and after it ends, a pick or Esc reported while
             # Yazi is still hidden, and the leave key bound in neither Eon's Files keymap
