@@ -50,6 +50,37 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+For eon-kx9uh, the Eon, Orbit and Venus contexts changed through the lock
+alone. eon-3n73k.1 (`89dc5264`) gave the local `review-tier` package two
+dependencies that were already pinned, `serde_json` and `sha2`. The
+canonical graph embeds the whole normalized workspace lock. So that edit
+changes the context of every producer built from the workspace lock (Eon,
+Orbit and Venus), even though none of them uses `review-tier`. The installer
+and launcher producers have their own locks and are unchanged. Reports from
+`4ee5ce34` match the accepted Orbit and Venus contexts, and reports from
+`89dc5264` do not. Their parsed graphs differ only in `lock`. Eon was not
+built at either revision; the reconstruction below alone covers it. Removing just those two dependency lines from each new graph
+reproduces the accepted hash byte for byte:
+`843c43c7` → `deffe99d` for Eon, `8af38403` → `f31033ee` for Orbit, and
+`21358fd8` → `e80f9935` for Venus. Runtime identities, native features,
+audited packages and build contexts are therefore identical to the accepted
+graphs. Selection is unchanged, so the host-only and unselected
+classifications carry over (Eon 9/2, Orbit 6/1, Venus 15/4).
+
+Both variants resolve to equal contexts per producer. Six `inspect-audit`
+replays reproduce the saved graphs. The strict proposal changes only the six
+fingerprints, and parsed, it equals the checked-in file. The new contexts:
+
+- Eon: `843c43c7a3b7e8a9923ec880b341586b00d15b8dcfc609d60fe3757183e088af`.
+- Orbit: `8af38403080d1b929c3f8ce6f53b8ff1036935011ee13317e56ff992c3a5c443`.
+- Venus: `21358fd89d42ea77db8fc7629f268adb47f2bdea330f17f24b0704cf0f6f07f1`.
+- Vendor: `/nix/store/bp6nxdfdcsbdi696v9fcw3md20h8afq7-cargo-vendor-dir`.
+- Proposal inputs, from edge `22967582` before this renewal:
+  full `/nix/store/zh857967bg51w2r7082fkk08gjf75xsy-eon-archive-notice-input.json`,
+  without Accelerando `/nix/store/f3lkhvs2agiss991ddbsn571cxf3wkjg-eon-archive-notice-input.json`.
+
+Historical (`eon-yp6vg.7.12`):
+
 For eon-yp6vg.7.12, both release variants carry forward rota-cli's
 `time` edge and update wgpu-core and wgpu-hal from 30.0.0 to 30.0.1.
 Compared with edge `ca0f5780`, the Eon and Orbit contexts change only
@@ -207,6 +238,23 @@ bead records passing reports generated with the accepted keys on the final
 tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
+
+Renewed on 2026-11-19 for `eon-kx9uh` to context
+`843c43c7a3b7e8a9923ec880b341586b00d15b8dcfc609d60fe3757183e088af`
+in both variants. Only the shared lock changes in this context: it gains
+`review-tier`'s `serde_json` and `sha2` edges. Removing those two lines from
+either observation's graph reproduces `deffe99d…`. Eon was not built at
+`4ee5ce34` or `89dc5264`; that reconstruction alone covers it.
+
+- Source: `/nix/store/zfz1zysaz9r1rz01awnkiasqhmnvi0yd-source` (edge `22967582`).
+- Full observation: `/nix/store/q1xil6468cwaqqpvlzzyjk69hdhvpj96-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/35z1s0s6bl9mwb3dagmgc740ad2jflsz-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `c4941bb738de469caea8831aa04b2574f4b60a4b462587f25db3c88aef9206d4`.
+- Without-Accelerando observation: `/nix/store/h2125vk48lmj99w45nqxa19szp5fssld-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/nbhmi57nf81x44wqc8sml8xd2sdn144g-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `6dd8b6ad6e7daf060cb1892ed7ca2b2fd881f91a5b5cedd07e2e46345dcb7bf2`.
+
+Historical (`eon-yp6vg.7.12`):
 
 Renewed on 2026-11-19 for `eon-yp6vg.7.12` to context
 `deffe99de7f841cddb7b77a27d93a1265f09d005bfed5e3c56e07d136ffc8e8b`
@@ -377,6 +425,23 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-19 for `eon-kx9uh` to context
+`8af38403080d1b929c3f8ce6f53b8ff1036935011ee13317e56ff992c3a5c443`
+in both variants. Only the shared lock changes in this context: it gains
+`review-tier`'s `serde_json` and `sha2` edges. Removing those two lines
+reproduces `f31033ee…`. The `4ee5ce34` report
+`/nix/store/81n6f6xv21nfr3684xprc013i2qk7kr4-orbit-cargo-notices-0.1.0`
+holds the accepted context. The `89dc5264` report
+`/nix/store/4fr65rnd2m9bb0c18dr2l3mjpjir7hi3-orbit-cargo-notices-0.1.0`
+holds this one. Their parsed graphs differ only in `lock`.
+
+- Source: `/nix/store/sgqqw1hnrhr4f0gada6xhd0sb8i9v7m5-source` (edge `22967582`).
+- Both observations: `/nix/store/n70skjk229r00bnx2g5cfi77dj2gw690-orbit-cargo-notices-0.1.0`.
+- Binary: `/nix/store/ryf7vakjfmjyym2xmn87ffh18nbk26jc-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+- SHA-256: `49c5e6b7f9bbde1dff5d3d566e108b1a6cc8e52067da10a80fd34dbd88d47e05`.
+
+Historical (`eon-yp6vg.7.12`):
+
 Renewed on 2026-11-19 for `eon-yp6vg.7.12` to context
 `f31033eeca20227b7c820d08e80dfabc00eb18ba7433409e792ff9f6d5847c71`
 in both variants. Only the shared lock changes in this context.
@@ -541,6 +606,25 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-19 for `eon-kx9uh` to context
+`21358fd89d42ea77db8fc7629f268adb47f2bdea330f17f24b0704cf0f6f07f1`
+in both variants. Only the shared lock changes in this context: it gains
+`review-tier`'s `serde_json` and `sha2` edges. Removing those two lines from
+either observation's graph reproduces `e80f9935…`. The `4ee5ce34` report
+`/nix/store/38x39hdbqksyflv9sihhn55bwb2qnc61-venus-cargo-notices-0.1.0`
+holds the accepted context. The `89dc5264` report
+`/nix/store/c9jvlspzgf6c2hgv337bh2z2rdqpkq2i-venus-cargo-notices-0.1.0`
+holds this one.
+
+- Source: `/nix/store/qm63sxyss33ma6d1v2nxw5vbsfl8jcwd-source` (edge `22967582`).
+- Full observation: `/nix/store/i2zrdzbjki0bmfvncli58wcbhw4s22b2-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/vpy1kcg70fcbpyfc43l043v0y60w0xrc-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Without-Accelerando observation: `/nix/store/akqqcqwlpb1iigv2z50mkqahx970i93p-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/35qa09xlj48dgqjq9gf4gvsl0d0ajwdj-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- SHA-256 for both binaries: `0b322c36e269136c9383c980ba0aa863b9802cab1a2e0c63537844f597a54f04`.
+
+Historical (`eon-yp6vg.7.12`):
 
 Renewed on 2026-11-19 for `eon-yp6vg.7.12` to context
 `e80f9935370e3e52cc1120d03584e0440c3a452ba13239d27fcd0a5db1539e34`
