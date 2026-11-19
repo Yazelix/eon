@@ -50,6 +50,15 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+For eon-yp6vg.7.12, the workspace lock updates registry wgpu-core and
+wgpu-hal from 30.0.0 to 30.0.1. The Linux Venus runtime and audited crate
+lists replace those two versions. Linux Eon and Orbit retain their selected
+packages. The shared lock changes all three producer fingerprints. Both
+realized notice-input variants reproduced their saved canonical graphs with
+`inspect-audit`. The renewal proposal changes six fingerprints, with the
+same exception package versions, reasons and evidence anchors in both
+variants. The bead records the final notice and source checks.
+
 For `eon-c828u.7` dependency prep, observed on staged tree
 `ed395078dd7e2cd8bee29aa91a5e0e276380fff0` over `636d8ea8`, the only
 Cargo.lock changes add already pinned rustix 1.1.4 to Eon and eon-bench.
