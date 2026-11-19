@@ -107,21 +107,50 @@ pub(crate) struct Processes {
     pub(crate) known: BTreeMap<u32, String>,
     marker: String,
 }
-fn process_state(pid: u32) -> Option<(String, bool, u32)> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let fields = stat
-        .rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    Some((
-        fields.get(19)?.to_string(),
-        fields.first() != Some(&"Z"),
-        fields.get(1)?.parse().ok()?,
-    ))
+/// What `/proc/<pid>/stat` says about a process.
+#[derive(Debug)]
+pub(crate) struct Stat {
+    /// The start time, which tells this lifetime from a later one reusing the PID.
+    pub(crate) start: String,
+    /// Not yet a zombie.
+    pub(crate) running: bool,
+    /// The kernel has begun `do_exit`, which sets `PF_EXITING` (0x4 in the
+    /// flags field) before it drops the process's memory and executable, and
+    /// only then marks it a zombie. Meanwhile its `exe`, `environ` and `maps`
+    /// no longer read, though its state still says running.
+    pub(crate) exiting: bool,
+    pub(crate) parent: u32,
 }
+impl Stat {
+    fn parse(stat: &str) -> Option<Self> {
+        // The command name may hold spaces and `)`, so split after its last `)`.
+        let fields = stat
+            .rsplit_once(") ")?
+            .1
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        let flags: u32 = fields.get(6)?.parse().ok()?;
+        Some(Self {
+            start: fields.get(19)?.to_string(),
+            running: fields.first() != Some(&"Z"),
+            exiting: flags & 0x4 != 0,
+            parent: fields.get(1)?.parse().ok()?,
+        })
+    }
+    /// The lifetime that started at `identity`, running and not exiting: its
+    /// `/proc` entries must read.
+    pub(crate) fn intact(&self, identity: &str) -> bool {
+        self.start == identity && self.running && !self.exiting
+    }
+}
+pub(crate) fn process_state(pid: u32) -> Option<Stat> {
+    Stat::parse(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+/// Whether the lifetime that started at `identity` still exists and is not a
+/// zombie; it may be exiting, and an exiting process still holds its
+/// descriptors and, briefly, its memory.
 pub(crate) fn live_identity(pid: u32, identity: &str) -> bool {
-    process_state(pid).is_some_and(|(now, running, _)| now == identity && running)
+    process_state(pid).is_some_and(|stat| stat.start == identity && stat.running)
 }
 
 /// Only use for an inventory after entering the display suite's PID namespace.
@@ -130,8 +159,8 @@ pub(crate) fn namespace_processes() -> Result<BTreeMap<u32, String>> {
         .map_err(failure)?
         .filter_map(|entry| {
             let pid = entry.ok()?.file_name().to_str()?.parse().ok()?;
-            let (start, live, _) = process_state(pid)?;
-            live.then_some((pid, start))
+            let stat = process_state(pid)?;
+            stat.running.then_some((pid, stat.start))
         })
         .collect())
 }
@@ -155,7 +184,11 @@ pub(crate) fn signal_pinned(pid: u32, still_same: impl FnOnce() -> bool, signal:
 pub(crate) fn signal_pinned(_: u32, _: impl FnOnce() -> bool, _: Signal) {}
 impl Processes {
     pub(crate) fn remember(&mut self, pid: u32) -> Option<String> {
-        let (identity, running, _) = process_state(pid)?;
+        let Stat {
+            start: identity,
+            running,
+            ..
+        } = process_state(pid)?;
         let owned = fs::read(format!("/proc/{pid}/environ"))
             .ok()?
             .split(|&b| b == 0)
@@ -180,7 +213,13 @@ impl Processes {
             .split_whitespace()
             .filter_map(|pid| pid.parse().ok())
         {
-            let Some((start, true, parent)) = process_state(child) else {
+            let Some(Stat {
+                start,
+                running: true,
+                parent,
+                ..
+            }) = process_state(child)
+            else {
                 continue;
             };
             if parent != pid || !live_identity(pid, identity) {
@@ -192,7 +231,7 @@ impl Processes {
                 continue;
             }
             if !live_identity(pid, identity)
-                || process_state(child).is_none_or(|(now, _, parent)| now != start || parent != pid)
+                || process_state(child).is_none_or(|now| now.start != start || now.parent != pid)
             {
                 self.known.remove(&child);
                 continue;
@@ -782,6 +821,30 @@ impl Renderer {
 mod tests {
     use super::*;
 
+    /// A `/proc/<pid>/stat` line, with a command name that holds `) ` itself.
+    fn stat_line(state: char, flags: u32, start: u64) -> String {
+        format!(
+            "4242 (sh) -c ) x) {state} 7 4242 4242 0 -1 {flags} 120 0 0 0 1 2 0 0 20 0 1 0 {start} \
+             2768896 222 18446744073709551615 1 1 0 0 0 0 65536 4 65538 0 0 0 17 3 0 0 0 0 0"
+        )
+    }
+
+    #[test]
+    fn stat_parse_reads_exiting_and_zombie_states() {
+        // 0x400100 is PF_RANDOMIZE | PF_SUPERPRIV: set flags that are not PF_EXITING.
+        let running = Stat::parse(&stat_line('R', 0x40_0100, 81)).unwrap();
+        assert_eq!((running.start.as_str(), running.parent), ("81", 7));
+        assert!(running.running && !running.exiting);
+        assert!(running.intact("81"));
+        assert!(!running.intact("82"), "a later lifetime of the same PID");
+        let exiting = Stat::parse(&stat_line('R', 0x40_0104, 81)).unwrap();
+        assert!(exiting.running && exiting.exiting);
+        assert!(!exiting.intact("81"));
+        let zombie = Stat::parse(&stat_line('Z', 0x40_0104, 81)).unwrap();
+        assert!(!zombie.running && !zombie.intact("81"));
+        assert!(Stat::parse("4242 (sh) R 7").is_none());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn command_output_does_not_wait_on_a_helpers_inherited_descriptors() {
@@ -795,8 +858,12 @@ mod tests {
         assert!(out.status.success());
         assert_eq!(out.stderr, b"note");
         let pid = std::str::from_utf8(&out.stdout).unwrap().parse().unwrap();
-        let (identity, live, _) = process_state(pid).expect("helper is still alive");
-        assert!(live);
+        let Stat {
+            start: identity,
+            running,
+            ..
+        } = process_state(pid).expect("helper is still alive");
+        assert!(running);
         signal_pinned(pid, || live_identity(pid, &identity), Signal::KILL);
     }
 
@@ -838,7 +905,7 @@ mod tests {
         }
         processes.descendants(child.id(), "different-lifetime");
         assert_eq!(processes.known.len(), 1);
-        let identity = process_state(child.id()).unwrap().0;
+        let identity = process_state(child.id()).unwrap().start;
         processes.descendants(child.id(), &identity);
         assert_eq!(processes.known.len(), 1);
         assert!(processes.remember(child.id()).is_none());

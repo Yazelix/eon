@@ -735,22 +735,15 @@ impl Jail {
         let mut outside = 0u64;
         for (pid, start) in launcher::namespace_processes()? {
             let proc = PathBuf::from(format!("/proc/{pid}"));
-            // A process that exits mid-read is skipped; a live one must read.
-            fn gone<T>(pid: u32, start: &str, error: std::io::Error) -> Result<Option<T>> {
-                if launcher::live_identity(pid, start) {
-                    Err(format!("process {pid}: {error}"))
-                } else {
-                    Ok(None)
-                }
-            }
             let read = || -> std::io::Result<_> {
                 Ok((
                     fs::read_link(proc.join("ns/pid"))?,
                     fs::read_link(proc.join("exe"))?,
                 ))
             };
-            let Some((namespace, exe)) =
-                read().map(Some).or_else(|error| gone(pid, &start, error))?
+            let Some((namespace, exe)) = read().map(Some).or_else(|error| {
+                unread(pid, launcher::process_state(pid).as_ref(), &start, error)
+            })?
             else {
                 continue;
             };
@@ -778,8 +771,9 @@ impl Jail {
                         fs::read_to_string(proc.join("maps"))?,
                     ))
                 };
-                let Some((environ, maps)) =
-                    read().map(Some).or_else(|error| gone(pid, &start, error))?
+                let Some((environ, maps)) = read().map(Some).or_else(|error| {
+                    unread(pid, launcher::process_state(pid).as_ref(), &start, error)
+                })?
                 else {
                     continue;
                 };
@@ -808,6 +802,22 @@ impl Jail {
             ("jailed", Value::Array(seen)),
             ("outside", outside.into()),
         ]))
+    }
+}
+
+/// A read of `/proc/<pid>` failed. A process that has exited, or has begun
+/// to (its `exe`, `environ` and `maps` go before it reads as a zombie), is
+/// skipped; one still intact must read, jailed or not.
+fn unread<T>(
+    pid: u32,
+    stat: Option<&launcher::Stat>,
+    start: &str,
+    error: std::io::Error,
+) -> Result<Option<T>> {
+    if stat.is_some_and(|stat| stat.intact(start)) {
+        Err(format!("process {pid}: {error}"))
+    } else {
+        Ok(None)
     }
 }
 
@@ -1347,6 +1357,38 @@ mod tests {
             argv[argv.len() - 3..],
             ["--", "/opt/prefix/bin/eon", "versions"]
         );
+    }
+
+    #[test]
+    fn a_failed_read_fails_the_audit_only_for_an_intact_process() {
+        let stat = |running, exiting| launcher::Stat {
+            start: "81".into(),
+            running,
+            exiting,
+            parent: 7,
+        };
+        let check = |stat: Option<&launcher::Stat>, start: &str| {
+            let error = std::io::Error::from(std::io::ErrorKind::NotFound);
+            unread::<()>(4242, stat, start, error)
+        };
+        // A live process, jailed or not, must read.
+        assert_eq!(
+            check(Some(&stat(true, false)), "81").unwrap_err(),
+            "process 4242: entity not found"
+        );
+        // Mid-exit (still running, exe already gone), a zombie, a later
+        // lifetime of the PID, and an exited process are all skipped.
+        assert_eq!(check(Some(&stat(true, true)), "81"), Ok(None));
+        assert_eq!(check(Some(&stat(false, true)), "81"), Ok(None));
+        assert_eq!(check(Some(&stat(true, false)), "82"), Ok(None));
+        assert_eq!(check(None, "81"), Ok(None));
+        // The audit's own path: this test process reads as intact.
+        #[cfg(target_os = "linux")]
+        {
+            let pid = std::process::id();
+            let state = launcher::process_state(pid).unwrap();
+            assert!(check(Some(&state), &state.start).is_err());
+        }
     }
 
     /// A holder plus joined calls on this host: no `/nix`, a fresh procfs that
