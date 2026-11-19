@@ -1,0 +1,17 @@
+[
+  {
+    "provider": "codex",
+    "source": "codex-cli",
+    "usage": {
+      "updatedAt": "2026-10-14T00:00:00Z",
+      "primary": {"usedPercent": 23.5, "windowMinutes": 300},
+      "secondary": {"usedPercent": 2, "windowMinutes": 10080, "resetsAt": "2026-10-19T20:59:59Z"},
+      "tertiary": null,
+      "identity": {
+        "providerID": "codex",
+        "accountEmail": "discard@example.invalid",
+        "accountID": "fixture-workspace"
+      }
+    }
+  }
+]

@@ -771,3 +771,311 @@ fn allow_missing_loads_ignored_with_a_warning() {
     assert_eq!(dry.status.code(), Some(3), "{dry:?}");
     assert!(text(&dry.stderr).starts_with(warning), "{dry:?}");
 }
+
+#[test]
+fn codexbar_quota_uses_the_shared_gate() {
+    use serde_json::{Value, json};
+
+    let root = root();
+    let observed_at = recent();
+    let date = |at: u64| {
+        let output = Command::new("date")
+            .args([
+                "-u",
+                "-d",
+                &format!("@{}.{:03}", at / 1000, at % 1000),
+                "+%Y-%m-%dT%H:%M:%S.%3NZ",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        text(&output.stdout).trim().to_owned()
+    };
+    let updated = date(observed_at);
+    let reset = date(observed_at + 86_400_000);
+    let fixture = |content: &str| -> Value {
+        serde_json::from_str(
+            &content
+                .replace("2026-10-14T00:00:00Z", &updated)
+                .replace("2026-10-19T20:59:59Z", &reset),
+        )
+        .unwrap()
+    };
+    let codex = fixture(include_str!("fixtures/codexbar/codex.json"));
+    let claude = fixture(include_str!("fixtures/codexbar/claude.json"));
+    let mut weekly = fixture(include_str!("fixtures/codexbar/claude-weekly-only.json"));
+    let error = fixture(include_str!("fixtures/codexbar/error.json"));
+
+    let write = |name: &str, report: &Value| {
+        fs::write(root.path.join(name), report.to_string()).unwrap();
+    };
+    let limits = "[backends.limits.implement.max_used]\nfive_hour = 30\n\
+                  [backends.limits.review.max_used]\nfive_hour = 50\nseven_day = 40\n";
+    let backend = |name: &str, command: &str, rules: &str| {
+        backend(
+            name,
+            "['implement', 'review']",
+            command,
+            "account = 'configured-subscription'",
+            rules,
+        )
+        .replacen("parser = 'remaining_json'", "parser = 'codexbar'", 1)
+    };
+    let codex_backend = backend("codex", "['cat', '<ROOT>codex.json']", limits);
+    let claude_backend = backend(
+        "claude",
+        "['cat', '<ROOT>claude.json']",
+        &format!("{limits}seven_day_fable = 50\n"),
+    );
+    let status = || -> Value {
+        let output = root.rota(&["status", "--json"]);
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let dry = |name: &str, role: &str, hold: Option<&str>| {
+        let output = root.rota(&[
+            "launch",
+            "--dry-run",
+            "--only",
+            name,
+            "--role",
+            role,
+            "brief",
+        ]);
+        if let Some(reason) = hold {
+            assert_eq!(output.status.code(), Some(3), "{name}/{role}: {output:?}");
+            assert!(
+                text(&output.stderr).contains(reason),
+                "{reason}: {output:?}"
+            );
+        } else {
+            assert!(output.status.success(), "{name}/{role}: {output:?}");
+            assert!(text(&output.stdout).starts_with(&format!("pick: {name}\n")));
+        }
+    };
+    write("codex.json", &codex);
+    write("claude.json", &claude);
+    root.config(&format!("{codex_backend}{claude_backend}"));
+    let report = status();
+    let codex_reading = &report[0]["reading"];
+    assert_eq!(
+        codex_reading["remaining"],
+        json!({"five_hour":76.5,"seven_day":98.0})
+    );
+    assert_eq!(codex_reading["resets"], json!({"seven_day":reset}));
+    assert_eq!(
+        codex_reading["source"],
+        json!({
+            "account": "configured-subscription",
+            "observed_at": observed_at,
+            "identity": {"account_id":"fixture-workspace","account_email":"discard@example.invalid"}
+        })
+    );
+    let claude_reading = &report[1]["reading"];
+    assert_eq!(
+        claude_reading["remaining"],
+        json!({"five_hour":76.5,"seven_day":98.0,"seven_day_fable":60.0})
+    );
+    assert_eq!(
+        claude_reading["source"],
+        json!({"account":"configured-subscription","observed_at":observed_at})
+    );
+    let mut mirrored = codex.clone();
+    let email = mirrored[0]["usage"]["identity"]
+        .as_object_mut()
+        .unwrap()
+        .remove("accountEmail")
+        .unwrap();
+    mirrored[0]["usage"]["accountEmail"] = email;
+    write("codex.json", &mirrored);
+    assert_eq!(
+        status()[0]["reading"]["source"]["identity"],
+        codex_reading["source"]["identity"]
+    );
+
+    for (provider, baseline) in [("codex", &codex), ("claude", &claude)] {
+        let file = format!("{provider}.json");
+        for (role, slot, just_below, limit, reason) in [
+            ("review", "primary", 49, 50, "five_hour used 50%"),
+            ("review", "secondary", 39, 40, "seven_day used 40%"),
+            ("implement", "primary", 29, 30, "five_hour used 30%"),
+        ] {
+            let mut payload = baseline.clone();
+            payload[0]["usage"][slot]["usedPercent"] = json!(just_below);
+            write(&file, &payload);
+            dry(provider, role, None);
+            payload[0]["usage"][slot]["usedPercent"] = json!(limit);
+            write(&file, &payload);
+            dry(provider, role, Some(reason));
+        }
+    }
+    for confidence in ["exact", "percentOnly", "estimated"] {
+        let mut payload = codex.clone();
+        payload[0]["usage"]["dataConfidence"] = json!(confidence);
+        write("codex.json", &payload);
+        dry(
+            "codex",
+            "review",
+            (confidence == "estimated").then_some("CodexBar usage confidence"),
+        );
+    }
+
+    let mut scoped = claude.clone();
+    scoped[0]["usage"]["extraRateWindows"][0]["window"]["usedPercent"] = json!(49);
+    write("claude.json", &scoped);
+    dry("claude", "review", None);
+    scoped[0]["usage"]["extraRateWindows"][0]["window"]["usedPercent"] = json!(50);
+    write("claude.json", &scoped);
+    dry("claude", "review", Some("seven_day_fable used 50%"));
+    scoped[0]["usage"]["extraRateWindows"][0]["window"]["usedPercent"] = json!(102);
+    write("claude.json", &scoped);
+    dry(
+        "claude",
+        "review",
+        Some("missing quota window seven_day_fable"),
+    );
+
+    write("claude.json", &weekly);
+    dry("claude", "review", Some("missing quota window five_hour"));
+    let weekly_backend = claude_backend.replace(
+        "parser = 'codexbar'",
+        "parser = 'codexbar'\nabsent_windows = ['five_hour']",
+    );
+    root.config(&weekly_backend);
+    dry("claude", "review", None);
+    for slot in ["primary", "secondary"] {
+        weekly[0]["usage"][slot]["usedPercent"] = json!(40);
+    }
+    write("claude.json", &weekly);
+    dry("claude", "review", Some("seven_day used 40%"));
+    weekly[0]["usage"]["secondary"] = Value::Null;
+    write("claude.json", &weekly);
+    dry("claude", "review", Some("missing quota window seven_day"));
+    write("claude.json", &error);
+    dry("claude", "review", Some("CodexBar reported an error"));
+
+    let wildcard = backend(
+        "codex",
+        "['cat', '<ROOT>codex.json']",
+        "[backends.limits.review.max_used]\n'*' = 20\n",
+    );
+    let mut clean = codex.clone();
+    clean[0]["usage"]["primary"]["usedPercent"] = json!(5);
+    root.config(&wildcard);
+    write("codex.json", &clean);
+    dry("codex", "review", None);
+    for (slot, key) in [("primary", "five_hour"), ("secondary", "seven_day")] {
+        let mut partial = clean.clone();
+        partial[0]["usage"][slot] = Value::Null;
+        write("codex.json", &partial);
+        root.config(&wildcard);
+        dry(
+            "codex",
+            "review",
+            Some(&format!("missing quota window {key}")),
+        );
+        root.config(&wildcard.replace(
+            "parser = 'codexbar'",
+            &format!("parser = 'codexbar'\nabsent_windows = ['{key}']"),
+        ));
+        dry("codex", "review", None);
+    }
+    root.config(&wildcard);
+    for slot in ["primary", "secondary"] {
+        let mut payload = clean.clone();
+        payload[0]["usage"][slot]["usedPercent"] = json!(102);
+        payload[0]["usage"][slot]["resetsAt"] = json!(updated);
+        write("codex.json", &payload);
+        dry("codex", "review", Some("invalid percentage"));
+    }
+    let mut tertiary = clean.clone();
+    tertiary[0]["usage"]["tertiary"] = clean[0]["usage"]["secondary"].clone();
+    write("codex.json", &tertiary);
+    dry("codex", "review", Some("CodexBar Codex tertiary"));
+    let mut placeholder = clean.clone();
+    placeholder[0]["usage"]["primary"]["isSyntheticPlaceholder"] = json!(true);
+    write("codex.json", &placeholder);
+    dry(
+        "codex",
+        "review",
+        Some("invalid CodexBar window placeholder"),
+    );
+    let mut unsupported = clean.clone();
+    unsupported[0]["provider"] = json!("claude");
+    unsupported[0]["source"] = json!("web");
+    write("codex.json", &unsupported);
+    dry(
+        "codex",
+        "review",
+        Some("unsupported CodexBar provider or source"),
+    );
+    write("codex.json", &json!([clean[0], clean[0]]));
+    dry(
+        "codex",
+        "review",
+        Some("expected one CodexBar usage result"),
+    );
+    let mut untimed = clean;
+    untimed[0]["usage"]
+        .as_object_mut()
+        .unwrap()
+        .remove("updatedAt");
+    write("codex.json", &untimed);
+    dry("codex", "review", Some("invalid CodexBar observation time"));
+
+    root.config(&codex_backend);
+    for (at, problem) in [
+        (observed_at - 900_000, "s old"),
+        (observed_at + 86_400_000, "observed in the future"),
+    ] {
+        let mut payload = codex.clone();
+        payload[0]["usage"]["updatedAt"] = json!(date(at));
+        write("codex.json", &payload);
+        dry("codex", "review", Some(problem));
+    }
+    let mut expired = codex.clone();
+    expired[0]["usage"]["secondary"]["resetsAt"] = json!(updated);
+    write("codex.json", &expired);
+    dry("codex", "review", Some("missing quota window seven_day"));
+    let mut stale = codex.clone();
+    stale[0]["usage"]["updatedAt"] = json!(date(observed_at - 900_000));
+    root.config(&backend("codex", "['cat', '<ROOT>codex.json']", ""));
+    write("codex.json", &stale);
+    dry("codex", "review", Some("s old"));
+
+    write("codex.json", &codex);
+    root.config(&backend(
+        "codex",
+        "['sh', '-c', 'cat \"$1\"; exit 7', 'fixture', '<ROOT>codex.json']",
+        limits,
+    ));
+    dry("codex", "review", Some("exit status: 7"));
+
+    let mut label_only = codex.clone();
+    label_only[0]["usage"]["identity"] = Value::Null;
+    label_only[0]["usage"]["accountEmail"] = Value::Null;
+    label_only[0]["account"] = json!("fixture-profile");
+    write("claude.json", &claude);
+    root.config(&format!("{codex_backend}{claude_backend}"));
+    write("codex.json", &label_only);
+    assert_eq!(
+        status()[0]["reading"]["source"]["identity"],
+        json!({"account_label":"fixture-profile"})
+    );
+    write("codex.json", &codex);
+    let launched = root.rota(&["launch", "--only", "codex", "brief"]);
+    assert!(launched.status.success(), "{launched:?}");
+    assert!(root.exists("launched-codex"));
+    assert_eq!(root.spent("configured-subscription"), Some(observed_at));
+
+    let log = fs::read_to_string(root.path.join("log/decisions.jsonl")).unwrap();
+    let decision: Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+    assert_eq!(
+        decision["readings"][0]["reading"]["source"],
+        json!({"account":"configured-subscription","observed_at":observed_at})
+    );
+    let held = root.rota(&["launch", "--only", "claude", "brief"]);
+    assert_eq!(held.status.code(), Some(3), "{held:?}");
+    assert!(text(&held.stderr).contains(&repeat(observed_at, "configured-subscription")));
+    assert!(!root.exists("launched-claude"));
+}

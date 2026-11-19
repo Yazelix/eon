@@ -18,6 +18,8 @@ pub struct Reading {
     /// Whose usage this is and when it was fetched; set on a successful quota reading, and on a
     /// native one whose host names its source even when its facts cannot be used.
     pub source: Option<Source>,
+    #[serde(skip)]
+    pub identity: Option<crate::quota::Identity>,
 }
 
 /// The account a quota reading describes and when its provider data was fetched.
@@ -71,11 +73,17 @@ pub fn availability(backend: &Backend, reading: &Reading, role: Role) -> Result<
         ));
     }
     if let Some(limits) = backend.limits.get(&role) {
+        let wildcard_windows = if backend.uses_codexbar() {
+            crate::quota::codexbar::BASE_WINDOWS
+        } else {
+            &[]
+        };
         check_limits(
             remaining,
             &reading.resets,
             limits,
             backend.absent_windows(),
+            wildcard_windows,
             account,
         )?;
     }
@@ -110,7 +118,8 @@ fn percent_text(value: f64) -> String {
     format!("{}", (value * 1e6).round() / 1e6)
 }
 
-/// Checks each window a limit names. A missing window holds unless `absent` declares it.
+/// Checks named limits and any base windows required by a wildcard. A missing window holds
+/// unless `absent` declares it.
 ///
 /// A refusal names the account and, for each window under a limit, its value, the rule and the
 /// threshold the rule needs: `max_used < N%` (admits strictly below), `min_remaining >= N%`
@@ -121,18 +130,28 @@ fn check_limits(
     resets: &BTreeMap<String, String>,
     limits: &Limits,
     absent: &[String],
+    wildcard_windows: &[&str],
     account: &str,
 ) -> Result<(), String> {
     use std::cmp::Ordering::{Greater, Less};
     let mut failed = Vec::new();
     let mut missing: Vec<&str> = Vec::new();
+    let is_absent = |window: &str| absent.iter().any(|key| covers(key, window));
     for (used, rules) in [(false, &limits.min_remaining), (true, &limits.max_used)] {
         for (window, threshold) in rules {
+            if window == "*" {
+                missing.extend(
+                    wildcard_windows
+                        .iter()
+                        .copied()
+                        .filter(|key| !remaining.contains_key(*key) && !is_absent(key)),
+                );
+            }
             let values: Vec<_> = remaining
                 .iter()
                 .filter(|(key, _)| window == "*" || covers(window, key))
                 .collect();
-            if values.is_empty() && !absent.iter().any(|a| covers(a, window)) {
+            if values.is_empty() && !is_absent(window) {
                 missing.push(window.as_str());
             }
             let threshold_text = percent_text(*threshold);
@@ -564,7 +583,7 @@ mod tests {
             ..Limits::default()
         };
         assert_eq!(
-            check_limits(&remaining, &resets, &limits, &[], "acct-1").unwrap_err(),
+            check_limits(&remaining, &resets, &limits, &[], &[], "acct-1").unwrap_err(),
             "quota limit on account acct-1: five_hour left 0% (min_remaining >= 10%); \
              weekly left 0% (min_remaining >= 10%, resets 2030-01-08T14:00:00Z)"
         );
@@ -573,7 +592,7 @@ mod tests {
             ..Limits::default()
         };
         assert_eq!(
-            check_limits(&remaining, &resets, &missing, &[], "acct-1").unwrap_err(),
+            check_limits(&remaining, &resets, &missing, &[], &[], "acct-1").unwrap_err(),
             "missing quota window absent on account acct-1"
         );
     }
@@ -588,7 +607,7 @@ mod tests {
             ..Limits::default()
         };
         assert_eq!(
-            check_limits(&remaining, &resets, &limits, &[], "acct-1"),
+            check_limits(&remaining, &resets, &limits, &[], &[], "acct-1"),
             Err("quota limit on account acct-1: weekly left 0% \
                  (min_remaining >= 10%, resets 2030-01-08T14:00:00Z); missing quota window five_hour"
                 .into())

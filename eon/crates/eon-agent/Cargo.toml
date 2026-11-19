@@ -36,6 +36,7 @@ toml = "=0.8.23"
 tempfile = "=3.27.0"
 fs2 = "=0.4.3"
 libc = "=0.2.189"
+time = { version = "=0.3.55", default-features = false, features = ["parsing"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "=1.1.4", default-features = false, features = ["fs", "param", "process", "rand", "std", "termios", "time", "use-libc-auxv"] }

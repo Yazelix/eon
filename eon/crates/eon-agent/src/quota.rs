@@ -1,5 +1,9 @@
 use crate::config::Parser;
+use serde::Serialize;
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub(crate) mod codexbar;
 
 pub type Windows = BTreeMap<String, f64>;
 pub type Resets = BTreeMap<String, String>;
@@ -16,6 +20,24 @@ pub struct Quota {
     pub failure: Option<String>,
     /// Where the host found these facts, when it says.
     pub via: Option<String>,
+    pub identity: Option<Identity>,
+}
+
+/// Account details supplied by a quota command, exposed only in status JSON.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Identity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_label: Option<String>,
+}
+
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
 }
 
 /// The value of a JSON reading's reserved `observed_at` key: Unix milliseconds, an unsigned
@@ -222,6 +244,7 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
                 }
             }
         }
+        Parser::Codexbar => return codexbar::parse(text),
         Parser::EonCodex | Parser::EonClaude => {
             let json: serde_json::Value =
                 serde_json::from_str(text).map_err(|_| "invalid workspace JSON")?;
@@ -290,6 +313,7 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
         observed_at_ms,
         failure,
         via,
+        identity: None,
     })
 }
 

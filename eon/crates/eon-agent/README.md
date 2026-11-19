@@ -66,7 +66,8 @@ future, a provider failure reported beside retained facts
 unreadable ledger all hold a limited backend. Dry-run and status show these
 holds but never write the ledger or refresh. If `admissions.json` is ever
 corrupt, delete it: each account's last observation may then admit once more.
-Backends without limits keep their previous behavior and record nothing.
+Backends without limits consume no observations. CodexBar readers still check
+the observation age on those backends.
 
 `--role lead` marks a lead launch, by convention rather than as a security
 boundary. Backends opt in with `roles = ["lead"]` and are tried in configured
@@ -233,7 +234,8 @@ Custom popup and headless argv remain your explicit command choices too.
 - Custom `quota.command` returns data for `quota.parser`: `agy` (tab-separated usage),
   `claude_text` (five-hour/seven-day used percentages, with `None` for missing,
   then an optional `observed_at=MS` token), `claude_json` (usage endpoint JSON),
-  or `remaining_json` (object mapping window names to remaining percentages).
+  `codexbar` (CodexBar CLI usage JSON), or `remaining_json` (object mapping
+  window names to remaining percentages).
   `claude_json` and `remaining_json` take an optional top-level
   `"observed_at": MS`; in `remaining_json` that key is reserved, never a window.
   `MS` is Unix milliseconds, an unsigned integer; anything else fails the read.
@@ -243,7 +245,28 @@ Custom popup and headless argv remain your explicit command choices too.
   optional. A limit that names `five_hour` still refuses a group without that
   row unless `absent_windows` declares it. A `disabled` value reads as 0% remaining,
   and each row's RFC 3339 reset time is kept when present.
-  `eon_codex` / `eon_claude` read the invoking Eon caller's Runtime facts in
+- `parser = "codexbar"` reads one account through CodexBar. For Codex, set
+  `command = ["codexbar", "usage", "--provider", "codex", "--source", "cli", "--format", "json", "--json-only"]`
+  in `[backends.quota]`. For Claude, use `--provider claude --source oauth`.
+  CodexBar handles credentials. Use `five_hour` and `seven_day` in limits
+  and `absent_windows`, and `seven_day_<id>` for named Claude weekly extras.
+  Quote non-ASCII keys, for example `"seven_day_é" = 50`. Claude's unnamed
+  tertiary window has no model key. Configure the general and named scoped
+  limits together when both apply. A `"*"` limit requires each base window
+  unless declared absent. It checks usable model extras. Set an explicit
+  model limit to hold when that model's extra is missing or unusable.
+  An error, nonzero exit or stale reading holds. `status --json` reports
+  available provider ID, email and label in
+  `reading.source.identity` as `account_id`, `account_email` and `account_label`.
+  `reading.source.account` is the configured account used by the ledger.
+  Upgrade all binaries that read a shared config before opting in, since
+  older binaries reject this parser. When switching a native reader, update
+  duration keys such as `300m` and `10080m` in limits and `absent_windows`
+  to the corresponding named keys. Restore the old config before rolling
+  back a reader. For a Claude account Eon already polls, use `eon_claude`
+  through `eon agent` to share its polling and back-off, including after
+  a rate limit.
+- `eon_codex` / `eon_claude` read the invoking Eon caller's Runtime facts in
   process, using the same projection as `eon session --json`. Their optional
   `command` is ignored by Eon and remains readable by rota in shared config.
   `timeout_seconds` (default 30) covers the whole native read, including
@@ -272,8 +295,8 @@ Custom popup and headless argv remain your explicit command choices too.
   `quota unreadable on account ACCOUNT: provider failure (REASON)`.
   Custom reader commands have a configurable timeout covering output collection,
   and a 1 MiB output limit. Optional `refresh` runs only during a real launch or
-  run, below the backend's cap: after a failed read, or when a limited backend's
-  reading is spent or older than `max_age_seconds`; then it reads once more.
+  run, below the backend's cap. It can run after a failed read or when the
+  reading is spent or older than its `max_age_seconds`, then reads once more.
 - `limits.implement` / `limits.review` compare `min_remaining` inclusively and
   `max_used` exclusively. `strictly_above_min` makes the minimum exclusive.
   A window a limit names must be in the reading, or the role holds
@@ -299,10 +322,9 @@ Custom popup and headless argv remain your explicit command choices too.
   or `quota limit on account uclaude: 10080m/1 left 2.9% (min_remaining >= 3%)`;
   a missing window reads `missing quota window seven_day on account sclaude`.
 - `[backends.quota] max_age_seconds` (a positive integer, default 600 on a
-  backend that sets limits) bounds how old a reading may be: an older one holds
-  as unreadable, even when its observation was never spent, so a reader that
-  replays a stale cached line cannot admit. Backends without limits have no
-  bound.
+  backend that sets limits or uses CodexBar) holds older readings as unreadable,
+  even when the observation was never spent. Rota converts CodexBar's
+  RFC 3339 `usage.updatedAt` to Unix milliseconds.
 - `account = "NAME"` names the subscription account a backend draws on; it
   defaults to the backend's `name`. Backends sharing one account declare the same
   `account`, and so share its spent observations. A backend that sets limits

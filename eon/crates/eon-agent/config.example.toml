@@ -126,6 +126,10 @@ medium = ["codex", "--no-daemon", "-m", "MODEL", "-c", "model_reasoning_effort=h
 high = ["codex", "--no-daemon", "-m", "MODEL", "-c", "model_reasoning_effort=xhigh", "-s", "workspace-write", "-a", "on-request", "-C", "{cwd}", "{prompt}"]
 [backends.quota]
 parser = "eon_codex"
+# For standalone quota, replace the parser and add the command after upgrading shared readers.
+# parser = "codexbar"
+# command = ["codexbar", "usage", "--provider", "codex", "--source", "cli", "--format", "json", "--json-only"]
+# With CodexBar, use five_hour and seven_day for named limits and absent_windows.
 [backends.limits.implement]
 strictly_above_min = true
 # Eon windows are DURATIONm/INDEX; a key "10080m" covers every weekly window.

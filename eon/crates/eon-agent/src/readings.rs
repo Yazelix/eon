@@ -1,7 +1,7 @@
 use crate::admissions::Ledger;
 use crate::config::{Backend, Cap, Config, Reader};
 use crate::decision::Reading;
-use crate::quota;
+use crate::quota::{self, now_ms};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
@@ -313,16 +313,14 @@ enum Stale {
     Hold(String),
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
-}
-
-/// Whether a limited backend's reading may admit: it must carry a time that is not in the
-/// future, no older than the backend's `max_age_seconds` and not yet spent on its account, with
-/// no provider failure beside it. Each hold names the account.
-fn freshness(quota: &quota::Quota, backend: &Backend, ledger: &Ledger) -> Result<(), Stale> {
+/// A timed reading must be recent, with no provider failure beside it. Limited backends also
+/// require an unspent observation.
+fn freshness(
+    quota: &quota::Quota,
+    backend: &Backend,
+    ledger: &Ledger,
+    max_age_seconds: u64,
+) -> Result<(), Stale> {
     let account = backend.account();
     if let Some(reason) = &quota.failure {
         return Err(Stale::Hold(format!(
@@ -341,13 +339,14 @@ fn freshness(quota: &quota::Quota, backend: &Backend, ledger: &Ledger) -> Result
         )));
     }
     let age = now.saturating_sub(at);
-    if let Some(max) = backend.max_age_seconds()
-        && age > max.saturating_mul(1000)
-    {
+    if age > max_age_seconds.saturating_mul(1000) {
         return Err(Stale::Retry(format!(
-            "quota reading on account {account} is {} s old (max_age_seconds {max})",
+            "quota reading on account {account} is {} s old (max_age_seconds {max_age_seconds})",
             age / 1000
         )));
+    }
+    if !backend.limited() {
+        return Ok(());
     }
     let spent = ledger
         .spent(account)
@@ -361,8 +360,7 @@ fn freshness(quota: &quota::Quota, backend: &Backend, ledger: &Ledger) -> Result
     }
 }
 
-/// Reads one backend: access checks, then its quota as `mode` allows. A backend that sets limits
-/// also needs a fresh observation (see [`freshness`]); `ledger` says which ones are spent.
+/// Reads one backend: access checks, then its quota as `mode` allows.
 pub fn read(
     backend: &Backend,
     cwd: &Path,
@@ -473,21 +471,25 @@ fn read_quota(
         quota = get();
     }
     let mut quota = quota.map_err(|e| unreadable(reading, e))?;
-    let mut fresh = backend
-        .limited()
-        .then(|| freshness(&quota, backend, ledger));
+    let check_freshness = |quota: &quota::Quota| {
+        backend
+            .max_age_seconds()
+            .map(|max_age| freshness(quota, backend, ledger, max_age))
+    };
+    let mut fresh = check_freshness(&quota);
     // A spent or too old observation: a real admission reads once more, after a refresh where
     // configured.
     if mode == QuotaMode::Admit && matches!(fresh, Some(Err(Stale::Retry(_)))) {
         run_refresh(reading)?;
         quota = get().map_err(|e| unreadable(reading, e))?;
-        fresh = Some(freshness(&quota, backend, ledger));
+        fresh = check_freshness(&quota);
     }
     reading.source = Some(crate::decision::Source {
         account: account.into(),
         observed_at_ms: quota.observed_at_ms,
         via: quota.via,
     });
+    reading.identity = quota.identity;
     reading.detail = quota
         .remaining
         .iter()

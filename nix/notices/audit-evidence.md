@@ -50,6 +50,17 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+For `eon-eon-agent-lr8sx.40.3`, the normalized workspace lock adds the
+existing `time` package to `rota-cli`. Before and after that change, the
+locked x86_64-linux Cargo trees for Eon, Orbit and Venus select the same
+runtime and normal/build package and feature sets. The candidate fingerprints
+substitute that one lock edge into the accepted canonical graphs under
+`eon`, `orbit` and `venus` below. Every exception identity, reason and anchor
+is retained. The owning bead records the projection and the lead's
+independent inspection of both release candidates at landing.
+
+Historical (`eon-c828u.7`):
+
 For `eon-c828u.7` dependency prep, observed on staged tree
 `ed395078dd7e2cd8bee29aa91a5e0e276380fff0` over `636d8ea8`, the only
 Cargo.lock changes add already pinned rustix 1.1.4 to Eon and eon-bench.
@@ -174,6 +185,14 @@ bead records passing reports generated with the accepted keys on the final
 tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
+
+For `eon-eon-agent-lr8sx.40.3`, the projected context changes from
+`dceca7e518774ddfcd72ebebc66f097e051ae7592277eb133623c2499971f1e0` to
+`d7b0fde812702cc3b3acd7770a7c7af10266e18258e956e2c2088085d5407e62`.
+The normalized lock adds rota-cli's `time` edge. Full and fallback
+release artifact observations are due at landing.
+
+Historical (`eon-c828u.7`):
 
 Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
 `dceca7e518774ddfcd72ebebc66f097e051ae7592277eb133623c2499971f1e0`.
@@ -322,6 +341,14 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+For `eon-eon-agent-lr8sx.40.3`, the projected context changes from
+`0cc52b66ea290e19fc237d74b4f83bbc26fa8b7669c4db2769ecdf15a75b8ba1` to
+`08b1b002544da6eb222850e2c24b5d1aee51650c53383629dfdb9a8e2271cac7`.
+The normalized lock adds rota-cli's `time` edge. Full and fallback
+release artifact observations are due at landing.
+
+Historical (`eon-c828u.10`):
+
 Renewed on 2026-11-18 for `eon-c828u.10` to context
 `0cc52b66ea290e19fc237d74b4f83bbc26fa8b7669c4db2769ecdf15a75b8ba1`.
 The full and without-Accelerando inputs independently resolve to the same
@@ -467,6 +494,14 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+For `eon-eon-agent-lr8sx.40.3`, the projected context changes from
+`9a2afd2f38afe0655273d5c7c94984aa0534690fd8c339c9af4225417649c151` to
+`79a485081ca3d288ba3b89eab0793151d240d6431bdf0413b04bb13f879e698e`.
+The normalized lock adds rota-cli's `time` edge. Full and fallback
+release artifact observations are due at landing.
+
+Historical (`eon-c828u.7`):
 
 Renewed on 2026-11-17 for `eon-c828u.7` dependency prep to context
 `9a2afd2f38afe0655273d5c7c94984aa0534690fd8c339c9af4225417649c151`.

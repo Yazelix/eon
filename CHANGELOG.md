@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent` and standalone `rota` can read Codex and Claude quota through
+  `parser = "codexbar"`, including Claude's named weekly model windows.
+  Upgrade every reader of a shared config before enabling it. When switching
+  from native quota, update duration-based keys in limits and absent windows.
+  See [configuration](docs/CONFIGURATION.md#agent-commands)
+  (`eon-eon-agent-lr8sx.40.3`).
+
 - Boat heavy jobs use the local per-job memory policy and run without swap.
   Requests select the default VM or a qualified large VM by cap while
   sharing one lease. Completion reports distinguish job-limit OOMs from

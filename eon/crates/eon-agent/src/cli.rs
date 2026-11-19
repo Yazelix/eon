@@ -233,6 +233,9 @@ fn run(
             let mut value = serde_json::json!({ "backend": b.name, "enabled": b.enabled, "reading": r,
                 "implement": status_for(&config, b, r, Role::Implement, host.program), "review": status_for(&config, b, r, Role::Review, host.program),
                 "lead": status_for(&config, b, r, Role::Lead, host.program), "warnings": warnings });
+            if let Some(identity) = &r.identity {
+                value["reading"]["source"]["identity"] = serde_json::json!(identity);
+            }
             if host.report_config_file {
                 value["config_file"] = match config_path.to_str() {
                     Some(path) => serde_json::json!(path),

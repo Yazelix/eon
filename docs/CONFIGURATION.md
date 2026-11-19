@@ -131,6 +131,53 @@ keep the same fresh-only admission, role thresholds and optional refresh retry;
 collection and `eon session --json` quota output are unchanged. Backend provider
 credentials do not change the supervisor's selected quota account.
 
+Set `parser = "codexbar"` in `[backends.quota]` to use one CodexBar CLI
+account for a backend. With standalone `rota`, put the CLI on `PATH` or
+give its absolute path as the first command argument.
+
+```toml
+[backends.quota]
+parser = "codexbar"
+command = ["codexbar", "usage", "--provider", "codex", "--source", "cli", "--format", "json", "--json-only"]
+```
+
+The installed `eon` wrapper sets `EON_CODEXBAR` to its bundled CLI.
+Use this command to resolve it when the check runs.
+
+```toml
+[backends.quota]
+parser = "codexbar"
+command = ["sh", "-c", 'exec "${EON_CODEXBAR:?EON_CODEXBAR is unset}" "$@"', "codexbar", "usage", "--provider", "codex", "--source", "cli", "--format", "json", "--json-only"]
+```
+
+For Claude, use `--provider claude --source oauth`. Use `eon_claude` for
+the Claude account Eon already polls, so agent commands share Eon's polling
+and back-off. Direct reads also run during status and dry runs. A rate-limited
+read, provider error, nonzero exit or stale result holds. CodexBar owns
+credential access for these commands.
+
+Use `five_hour` and `seven_day` in limits and `absent_windows`. Claude's
+named `claude-weekly-scoped-<id>` extras use `seven_day_<id>`. Quote keys
+with non-ASCII characters in TOML, for example `"seven_day_é" = 50`.
+Configure both the general and scoped weekly caps when they apply. A cap
+that CodexBar reports only in Claude's unnamed `tertiary` window has no
+model key. A limit on a missing named window holds unless declared absent.
+With `"*"`, CodexBar requires both base windows unless declared absent and
+checks every usable reported model window. An unusable or missing model
+extra requires an explicit `seven_day_<id>` limit to hold for that cap.
+
+Upgrade every `rota` or `eon agent` binary that reads a shared config before
+enabling this parser. Older binaries reject the file. When switching from
+a native reader, replace duration keys such as `300m`, `10080m` and their
+indexed variants in limits and `absent_windows` with the corresponding
+named keys. A native duration key can cover several windows, so list each
+applicable key. Restore the previous config before rolling back a reader.
+
+`status --json` keeps the configured account in `reading.source.account`.
+When CodexBar identifies the account, `reading.source.identity` includes
+the available `account_id`, `account_email` and `account_label` fields.
+The ledger and decision log use the configured account.
+
 `eon agent status` prints `config: PATH` before backend rows.
 `eon agent status --json` keeps rota's backend array and adds `config_file`
 to every backend object (a string, or a byte array for a non-UTF-8 path).
@@ -157,11 +204,13 @@ different models or wrappers declare the same `account`. A backend that sets
 one launch or run per quota observation of that account: its reader must
 report `observed_at` (`claude_text`'s `observed_at=MS` token, a top-level
 `"observed_at"` in `claude_json` or `remaining_json`, or the native snapshot's
-time). Spent observations are kept in `admissions.json` beside `state_file`.
+time). Rota converts CodexBar's RFC 3339 `usage.updatedAt` to Unix
+milliseconds. Spent observations are kept in `admissions.json` beside
+`state_file`.
 `[backends.quota] max_age_seconds` (a positive integer, default 600 on a
-backend that sets limits) holds a reading older than that many seconds, even
-an unspent one. Each quota hold names the account and, for a limit, the
-window, its value, the rule and its threshold.
+backend that sets limits or uses CodexBar) holds a reading older than that
+many seconds, even an unspent one. Each quota hold names the account and,
+for a limit, the window, its value, the rule and its threshold.
 `[backends.quota] absent_windows` (default empty) lists windows the account
 does not have: a limit naming a missing window holds unless it is listed. A
 key `DURATIONm` without an index, in limits or `absent_windows`, covers every

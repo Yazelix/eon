@@ -5,6 +5,13 @@ see.
 
 ## Unreleased
 
+- `parser = "codexbar"` reads Codex and Claude five-hour and weekly limits
+  and Claude's named model weeklies through CodexBar CLI. `status --json`
+  includes the provider identity when available. Upgrade every binary using
+  a shared config before enabling it. When switching from native quota,
+  replace duration-based keys in limits and `absent_windows` with the
+  CodexBar keys documented in [Configuration](README.md#configuration).
+
 - Native quota sources: a host reading may report where each provider's facts
   came from (`quota_source`) and why none has a provider (`quota_unreadable`).
   The source shows as `reading.source.via` in `status --json` and as

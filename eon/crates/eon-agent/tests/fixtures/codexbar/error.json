@@ -1,0 +1,7 @@
+[
+  {
+    "provider": "claude",
+    "source": "oauth",
+    "error": {"code": 3, "message": "fixture provider rate limit", "kind": "provider"}
+  }
+]

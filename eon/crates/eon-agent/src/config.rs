@@ -282,12 +282,12 @@ pub struct Reader {
     /// Windows this account does not have: a limit naming one does not hold when it is missing.
     #[serde(default)]
     pub absent_windows: Vec<String>,
-    /// The oldest reading, in seconds since its `observed_at`, that a backend with limits admits;
-    /// [`DEFAULT_MAX_AGE_SECONDS`] when unset.
+    /// Maximum age in seconds for limited backends and CodexBar readers.
+    /// Uses [`DEFAULT_MAX_AGE_SECONDS`] when unset.
     pub max_age_seconds: Option<u64>,
 }
 
-/// The default `max_age_seconds` of a backend that sets limits.
+/// Default maximum age for limited backends and CodexBar readers.
 pub const DEFAULT_MAX_AGE_SECONDS: u64 = 600;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -296,6 +296,7 @@ pub enum Parser {
     Agy,
     ClaudeText,
     ClaudeJson,
+    Codexbar,
     EonCodex,
     EonClaude,
     RemainingJson,
@@ -366,10 +367,15 @@ impl Backend {
         !self.limits.is_empty()
     }
 
-    /// How old, in seconds, a reading may be and still admit: only backends that set limits
-    /// have a bound.
+    pub(crate) fn uses_codexbar(&self) -> bool {
+        self.quota
+            .as_ref()
+            .is_some_and(|reader| matches!(reader.parser, Parser::Codexbar))
+    }
+
+    /// Maximum observation age for limited backends and CodexBar readers.
     pub fn max_age_seconds(&self) -> Option<u64> {
-        self.limited().then(|| {
+        (self.limited() || self.uses_codexbar()).then(|| {
             self.quota
                 .as_ref()
                 .and_then(|reader| reader.max_age_seconds)
@@ -872,7 +878,7 @@ mod tests {
         assert!(config.backends[4].allow_unknown_quota && !config.backends[4].limited());
         assert_eq!(config.backends[1].absent_windows(), ["five_hour"]);
         assert!(config.backends[1].roles.contains(&Role::Lead));
-        // Only a backend that sets limits has a reading age bound, 600 s unless configured.
+        // The example's limited reader has a 600 s default, while its unlimited backend has no bound.
         assert_eq!(config.backends[1].max_age_seconds(), Some(600));
         assert_eq!(config.backends[4].max_age_seconds(), None);
         let text = EXAMPLE.replace(absent, &format!("{absent}\nmax_age_seconds = 2000"));

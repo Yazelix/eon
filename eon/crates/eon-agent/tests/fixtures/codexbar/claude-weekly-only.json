@@ -1,0 +1,19 @@
+[
+  {
+    "provider": "claude",
+    "source": "oauth",
+    "usage": {
+      "updatedAt": "2026-10-14T00:00:00Z",
+      "primary": {"usedPercent": 2, "windowMinutes": 10080, "resetsAt": "2026-10-19T20:59:59Z"},
+      "secondary": {"usedPercent": 2, "windowMinutes": 10080, "resetsAt": "2026-10-19T20:59:59Z"},
+      "tertiary": null,
+      "extraRateWindows": [
+        {
+          "id": "claude-weekly-scoped-fable",
+          "title": "Fable only",
+          "window": {"usedPercent": 40, "windowMinutes": 10080, "resetsAt": "2026-10-19T20:59:59Z"}
+        }
+      ]
+    }
+  }
+]
