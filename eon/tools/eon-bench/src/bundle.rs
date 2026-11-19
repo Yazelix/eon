@@ -1352,6 +1352,8 @@ mod tests {
     /// A holder plus joined calls on this host: no `/nix`, a fresh procfs that
     /// shows only jail processes, a detached child that outlives its call, and
     /// an outer view that still sees it.
+    // Linux only: bwrap, PID and user namespaces, and the Linux host set.
+    #[cfg(target_os = "linux")]
     #[test]
     fn joined_calls_share_one_closed_pid_namespace() {
         let host = match HostSet::discover(&[]) {
@@ -1386,6 +1388,19 @@ mod tests {
         )
         .unwrap();
         let mut holder = holder.unwrap();
+        // bwrap reports the jail init before the init starts the holder's
+        // shell, so wait for that shell; the audit below counts it. The
+        // shell starts milliseconds after the mounts, so 5 s (as for
+        // `read_info` in `Jail::start`) fails only on a stalled host.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let started = jail.audit(&root, &root.join("tree"), &["dash"]);
+            if started.is_ok() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{started:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let call = |args: &[&str], stdin: Stdio| {
             let argv = jail.join(&env, Path::new("/bin/sh"), args).unwrap();
             // Bounded, so a descriptor leak fails the test instead of hanging it.
@@ -1527,6 +1542,8 @@ mod tests {
         remove(&fixture).unwrap();
     }
 
+    // Linux only: `occupied` reads /proc, which Darwin does not have.
+    #[cfg(target_os = "linux")]
     #[test]
     fn occupied_names_processes_that_run_from_the_extraction() {
         let root = scratch("occupied");
