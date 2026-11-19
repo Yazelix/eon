@@ -248,13 +248,17 @@ dependency decision does not establish public-distribution proof.
   instead of forbidding it. Six functions of the macOS-only `host` module in
   `src/system.rs` allow it, each with its own attribute (`port`, `cpu_load`,
   `cpu_name`, `load_average`, `per_cpu_load`, `memory`), so a new function there
-  does not inherit the allowance. They cover the host port taken once per process, `host_statistics`, a zeroed
-  `vm_statistics64` for `host_statistics64`, `sysctlbyname("hw.memsize")` and
-  `sysconf`, each with a safety note. Its results feed the same pure,
-  Linux-tested arithmetic. The binary and integration-test roots forbid unsafe
-  code. libc
-  marks `mach_host_self` deprecated in favour of mach2; Venus allows that one
-  call.
+  does not inherit the allowance. Their eight unsafe blocks cover the host port
+  taken once per process, `host_statistics`, `sysctlbyname` for the CPU name,
+  `getloadavg`, `host_processor_info` with its borrowed slice and release, and
+  `host_statistics64` into an explicitly initialized `vm_statistics64`, each
+  with a safety note. The page size comes from rustix's safe `page_size` and the
+  physical memory from `NSProcessInfo`, with no unsafe code. Venus tests hold no
+  unsafe code. [docs/UNSAFE.md](../../docs/UNSAFE.md) registers the file and
+  its allowances. Their results feed the same pure, Linux-tested arithmetic.
+  The binary and integration-test roots forbid unsafe code. libc marks its
+  Mach calls deprecated in favour of mach2; `port` and `per_cpu_load` allow
+  that warning.
 - **Rejected:** mach2, a new package whose calls are just as unsafe;
   spawning `vm_stat`, `sysctl` or `top` every 2 seconds, since macOS has no
   cheap command for cumulative CPU ticks; and sysinfo, a second owner for

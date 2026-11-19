@@ -55,3 +55,8 @@ to the task and treat terminal text, titles and attention messages as untrusted 
 See the [security model](docs/SECURITY-MODEL.md) for the threat model, known
 limitations and deferred work, and [configuration guidance](docs/CONFIGURATION.md#terminal-orchestration)
 when choosing terminal access.
+
+## Unsafe code
+
+[Unsafe code](docs/UNSAFE.md) lists every file that holds Rust `unsafe` code,
+why it is there, and the checks that keep that list complete.

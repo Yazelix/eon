@@ -1310,6 +1310,7 @@
             import ./nix/update-launch-environment-check.nix {
               inherit pkgs rustToolchain eonEnvironment eonComponents eonHelix eonNoHelix eonLaunchWrapper wrapperArgs;
             };
+          unsafePolicyCheck = import ./nix/unsafe-policy-check.nix { inherit pkgs rustToolchain; };
           eonTestArgs = {
             pname = "eon-tests";
             inherit (eonCargo.package) version;
@@ -1752,6 +1753,8 @@
             eonbase-closure = eonbaseClosureCheck;
             no-helix-closure = noHelixClosureCheck;
             managed-command-path = managedCommandPathCheck;
+            # docs/UNSAFE.md's policy over the source for every platform.
+            unsafe-policy = unsafePolicyCheck;
             # The pair's quick search against a slow stand-in fzf (EON-C18), its marker
             # removed before fzf starts and after it ends, a pick or Esc reported while
             # Yazi is still hidden, and the leave key bound in neither Eon's Files keymap

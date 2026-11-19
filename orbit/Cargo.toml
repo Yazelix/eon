@@ -12,6 +12,7 @@ rustix = { version = "=1.1.4", default-features = false, features = ["event", "f
 
 [lints.rust]
 unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"

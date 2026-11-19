@@ -91,3 +91,7 @@ jobs:
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: bash .github/scripts/pin-latest-release.sh x86_64-linux "$(cat "$RUNNER_TEMP/runtime-path")"
+
+      - name: Check the unsafe policy
+        if: ${{ !cancelled() }}
+        run: nix build --print-build-logs --no-link .#checks.x86_64-linux.unsafe-policy

@@ -23,6 +23,7 @@ zbus = { version = "=5.19.0", default-features = false, features = ["async-io", 
 
 [lints.rust]
 unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"

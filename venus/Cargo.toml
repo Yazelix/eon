@@ -41,6 +41,7 @@ accesskit_consumer = "=0.39.2"
 
 [lints.rust]
 unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"

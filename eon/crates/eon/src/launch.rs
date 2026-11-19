@@ -9,6 +9,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Removes the launch-capture variables from the process environment.
+///
+/// # Safety
+///
 /// Caller must still be single-threaded, before any other library can start workers.
 #[allow(unsafe_code)]
 pub(crate) unsafe fn clear_capture() {

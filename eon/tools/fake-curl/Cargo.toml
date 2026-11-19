@@ -8,3 +8,9 @@ publish = false
 # Built static on its own (nix/fake-curl.nix), like the bundle launcher, so it
 # runs inside the bench's Nix-free jail; not a workspace member.
 [workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
