@@ -215,6 +215,19 @@ milliseconds. Spent observations are kept in `admissions.json` beside
 backend that sets limits or uses CodexBar) holds a reading older than that
 many seconds, even an unspent one. Each quota hold names the account and,
 for a limit, the window, its value, the rule and its threshold.
+For a backend with `parser = "eon_claude"`, when Eon's quota facts report
+that a Claude read failed after the last good reading, that reading is
+stale. Status and launch lines show it as
+`stale 18m (last read failed: provider_error)` after the window values, and
+JSON readings carry `source.stale` as `{"age_ms", "failure"}`. On a backend
+that sets limits, a stale reading still admits while it is under 30 minutes
+old when admission reads it, whatever `max_age_seconds` says. Limits and
+the one-launch-per-observation rule apply to it as to any reading. At 30
+minutes or older it holds after one more read of Eon's facts, without
+running `refresh`. A Claude failure older than the last good Claude reading
+does not hold; any other failed reading holds as before, including any
+failure beside Codex facts. The 30-minute bound is fixed: Lucca's
+approved rule (2026-11-19) names it.
 `[backends.quota] absent_windows` (default empty) lists windows the account
 does not have: a limit naming a missing window holds unless it is listed. A
 key `DURATIONm` without an index, in limits or `absent_windows`, covers every
@@ -1276,9 +1289,14 @@ usage command together have one ten-second deadline and one 64 KiB stdout cap.
 Google starts at least five minutes apart, including failures and re-enabling.
 Supervisors share `google.schedule` beside the retained reading under a short
 file lock, showing shared facts and failure while waiting; an unusable schedule
-falls back to each supervisor's own spacing. Provider errors wait 30 minutes,
-then one hour, then two hours until success restores five minutes. Successful
-readings atomically replace versioned normalized
+falls back to each supervisor's own spacing. The first provider error since
+the last success waits five minutes plus up to one minute of jitter; further
+provider errors wait 30 minutes, then one hour, then two hours until success
+restores five minutes. Only a success resets the count, so a provider error
+after another failure that follows a provider error takes the 30-minute
+step. A supervisor started from an older Eon writes its own, longer delay,
+which the others honor until it restarts. Successful readings atomically
+replace versioned normalized
 `$XDG_STATE_HOME/eon/quota/google.json` (`~/.local/state/eon/quota/google.json`
 by default); valid empty reports clear it. Failures keep the last good reading.
 Retained readings are available on restart, become stale after one hour and
@@ -1327,8 +1345,12 @@ apart, also after a failed read or a chip shown again. Eon windows share one
 Claude read every five minutes when the shared schedule is usable; otherwise
 each keeps its own schedule. Older Eon versions still read on their own.
 After the provider refuses a Claude read (for example a rate limit), the next
-one waits 30 minutes, then an hour after a second refusal and two hours after
-each later one, until a read succeeds. A failed read keeps the last good
+one waits five minutes plus up to one minute of jitter when it is the first
+refusal since a successful read, then 30 minutes after a second refusal, an
+hour after a third and two hours after each later one, until a read succeeds.
+Only a success resets the count. A supervisor started from an older Eon still
+writes its own, longer delay into the shared schedule, and the others honor it
+until that supervisor restarts. A failed read keeps the last good
 values; they become `old` once they are more than an hour old and disappear
 after 24 hours. Each supplied reset expires its own window. Missing facts do
 not mean zero usage. Sign-out is not detected; the last reading ages like any

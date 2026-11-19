@@ -4608,6 +4608,9 @@ popup or automatic tutorial launch.
   candidate evidence, with current-component installed re-proof pending under
   `eon-igae.7.1`. Google has the separate lower and installed evidence below;
   its account-class and plan-tier verification remains open.
+  Amended on 2026-11-19 by `eon-ots4r` (approved by eon-lead under Lucca's
+  2026-11-19 rule): the first `provider_error` since a successful Claude or
+  Google read retries after five minutes plus up to one minute of jitter.
   Amended 2026-11-13 by `eon-o9f3h.4` under Lucca's approved eon-w31ps
   decision: Google collection, shared scheduling and last-good retention.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -4626,9 +4629,10 @@ popup or automatic tutorial launch.
   a file lock, and a supervisor whose turn has not come shows the stored
   reading and the shared last failure instead of reading. After a read that
   fails with `provider_error`, as a rate-limited read does, the next Claude
-  read waits 30 minutes, then one hour, then two hours for each further such
-  failure with no successful read between; a successful read restores the
-  five-minute spacing. A schedule that is unreadable, or set further ahead
+  read waits five minutes plus a random delay of up to one minute when it is
+  the first such failure since the last successful read; each further such
+  failure with no successful read between then waits 30 minutes, then one
+  hour, then two hours; a successful read restores the five-minute spacing. A schedule that is unreadable, or set further ahead
   than two hours, is ignored, and a supervisor that cannot read, lock or write
   it keeps its own schedule. Codex reads stay per supervisor and never back
   off.
@@ -4744,9 +4748,18 @@ popup or automatic tutorial launch.
     `invalid_claude_schedules_allow_an_immediate_read`,
     `claude_schedule_preserves_reasons_bounds_and_backoff`,
     `failed_schedule_rewrites_keep_the_in_memory_backoff`,
-    `claude_provider_errors_back_off_without_a_usable_schedule` and the
+    `claude_provider_errors_back_off_without_a_usable_schedule` (since renamed
+    `claude_retries_once_soon_then_backs_off_without_a_usable_schedule` by
+    `eon-ots4r`) and the
     extended `workers_isolate_failure_and_bound_output_timeout_and_shutdown`;
-    that bead's commit is its revision.
+    that bead's commit is its revision. The short first retry after a
+    provider error (`eon-ots4r`) is proved by the updated
+    `claude_schedule_preserves_reasons_bounds_and_backoff`,
+    `claude_is_read_once_across_supervisors_and_backs_off_after_provider_errors`,
+    `claude_retries_once_soon_then_backs_off_without_a_usable_schedule`,
+    `google_supervisors_share_schedule_and_backoff` and
+    `google_schedule_fallback_preserves_local_spacing`; that bead's commit is
+    its revision.
 - **Open proof:** Pending re-proof in this repository: real installed Codex and
   Claude windows with reset details on hover; on an installed surface, a
   controlled source failure leaving a recent reading unchanged and a retained
@@ -4794,9 +4807,10 @@ memory facts and failure; its retained disk reading is available if it is enable
 again. Google reads start at least five minutes apart, including failures and
 stop/restart, off workspace I/O. Supervisors use one user-shared Google schedule
 beside the stored readings under a short file lock; peers show retained facts and
-the shared last failure while waiting. A `provider_error` waits 30 minutes, then
-one hour, then two hours on further consecutive provider errors; success restores
-five-minute spacing. An unusable shared schedule falls back to each supervisor's
+the shared last failure while waiting. The first `provider_error` since the
+last success waits five minutes plus a random delay of up to one minute;
+further provider errors before a success then wait 30 minutes, then one hour,
+then two hours; success restores five-minute spacing. An unusable shared schedule falls back to each supervisor's
 own schedule, as for Claude.
 
 agy owns Google credential selection, authentication, refresh and the backend
@@ -7019,6 +7033,16 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   improvement on the moved code. Proven clauses are only those the move's
   beads prove.
 
+  Amended on 2026-11-19 by `eon-ots4r` (bounded stale fallback, approved by
+  Lucca 2026-11-19 via eon-desk): clause 3 below. It is proved by
+  `readings` unit tests (`stale_needs_a_newer_claude_failure`,
+  `freshness_admits_a_stale_reading_only_under_thirty_minutes`,
+  `a_stale_reading_still_enforces_limits`,
+  `past_the_bound_rereads_without_refreshing`,
+  `a_stale_reading_admits_one_launch_per_observation`) and
+  `native_quota_store_admits_one_launch_on_a_stale_claude_reading`; that
+  bead's commit is its revision.
+
   Amended on 2026-11-17 (`eon-eon-agent-lr8sx.39`; approved by eon-lead
   under Lucca's delegation; its policy clauses carry Lucca's 2026-11-16
   rules). Each clause takes effect when the named child lands and is proven
@@ -7054,8 +7078,15 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
      sets limits, an admission consumes (account, observed_at). A later
      admission for that account needs a later `observed_at`: it reads again
      (running a configured refresh where one exists) and holds when it is
-     unchanged. A failed or unreadable reading holds, and a reading without
-     `observed_at` counts as unreadable. `--dry-run` reads but consumes
+     unchanged. An unreadable reading holds, and a reading without
+     `observed_at` counts as unreadable. When Eon's newest Claude read failed
+     after the last good Claude reading, that reading still admits while it is
+     under 30 minutes old when admission reads it (`eon-ots4r`): it is marked
+     stale, with its age and the failure, in status and decision output; it never
+     passes the configured limits; and it still admits only one launch. At 30
+     minutes or older it holds, after one in-process re-read and without a
+     refresh. A Claude failure older than the last good Claude reading does
+     not hold; any other failed reading holds. `--dry-run` reads but consumes
      nothing. Backends without limits keep their existing
      `allow_unknown_quota` behavior.
   4. **Windows** (`.39.2`). A window that a role's limits name must be in the

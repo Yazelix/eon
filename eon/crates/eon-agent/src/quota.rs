@@ -16,11 +16,19 @@ pub struct Quota {
     pub resets: Resets,
     /// When the provider data was fetched, in Unix milliseconds, as the reader reports it.
     pub observed_at_ms: Option<u64>,
-    /// The reason the host's last poll of this provider failed, while it keeps older facts.
-    pub failure: Option<String>,
+    /// The host's last poll of this provider, when it failed after these facts were fetched.
+    pub failure: Option<Failure>,
     /// Where the host found these facts, when it says.
     pub via: Option<String>,
     pub identity: Option<Identity>,
+}
+
+/// A native host's failed poll: its reason and, when the host gives a valid one, when it
+/// failed, in Unix milliseconds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    pub reason: String,
+    pub at_ms: Option<u64>,
 }
 
 /// Account details supplied by a quota command, exposed only in status JSON.
@@ -109,7 +117,7 @@ fn rfc3339(text: &str) -> bool {
 #[derive(Debug, Default, PartialEq)]
 pub struct Origin {
     pub via: Option<String>,
-    pub failure: Option<String>,
+    pub failure: Option<Failure>,
     pub observed_at_ms: Option<u64>,
 }
 
@@ -132,11 +140,13 @@ fn native_origin(json: &serde_json::Value, provider: &str) -> Origin {
         failure: json
             .get(format!("{key}_failure"))
             .filter(|f| !f.is_null())
-            .map(|f| {
-                f.get("reason")
+            .map(|f| Failure {
+                reason: f
+                    .get("reason")
                     .and_then(|r| r.as_str())
                     .unwrap_or("unknown")
-                    .to_string()
+                    .to_string(),
+                at_ms: f.get("at").and_then(|at| at.as_u64()),
             }),
         observed_at_ms: json
             .get(&key)
@@ -145,13 +155,12 @@ fn native_origin(json: &serde_json::Value, provider: &str) -> Origin {
     }
 }
 
-/// For a native reading the host attributes to a source (`quota_source`), that source and what
-/// it says, whether or not [`parse`] can use its facts; None for other readings.
+/// What a native reading's host facts say beside its windows, whether or not [`parse`] can
+/// use them; None for other readings and for text that is not JSON.
 pub fn origin(parser: Parser, text: &str) -> Option<Origin> {
     let provider = native_provider(parser)?;
     let json: serde_json::Value = serde_json::from_str(text).ok()?;
-    let origin = native_origin(&json, provider);
-    origin.via.is_some().then_some(origin)
+    Some(native_origin(&json, provider))
 }
 
 /// Parses one reading. Every format but `agy` may carry `observed_at`, when the provider data
@@ -262,7 +271,7 @@ pub fn parse(parser: Parser, agy_group: Option<&str>, text: &str) -> Result<Quot
             failure = origin.failure;
             // A failure beside facts that cannot be read is the reason they are missing.
             let unusable = |problem: &str| match &failure {
-                Some(reason) => format!("provider failure ({reason}); {problem}"),
+                Some(Failure { reason, .. }) => format!("provider failure ({reason}); {problem}"),
                 None => problem.to_owned(),
             };
             let snapshot = json
@@ -504,7 +513,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(native.observed_at_ms, Some(9));
-        assert_eq!(native.failure.as_deref(), Some("deadline"));
+        assert_eq!(
+            native.failure,
+            Some(Failure {
+                reason: "deadline".into(),
+                at_ms: Some(1)
+            })
+        );
+        // A failure without a usable time keeps its reason and no time.
+        for at in ["\"soon\"", "-1", "null"] {
+            let native = parse(
+                Parser::EonClaude,
+                None,
+                &format!(
+                    r#"{{"claude_quota":{{"state":"fresh","observed_at":9,
+                    "windows":[{{"duration_minutes":300,"remaining_percent":50}}]}},
+                    "claude_quota_failure":{{"at":{at},"reason":"provider_error"}}}}"#
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                native.failure,
+                Some(Failure {
+                    reason: "provider_error".into(),
+                    at_ms: None
+                })
+            );
+        }
         assert_eq!(
             parse(Parser::Agy, None, include_str!("../tests/fixtures/agy.tsv"))
                 .unwrap()

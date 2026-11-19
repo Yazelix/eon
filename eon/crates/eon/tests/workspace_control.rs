@@ -24533,14 +24533,15 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
 fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon() {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Facts retained beside a failed poll never admit a backend that sets limits.
+    // Facts retained beside a newer failed poll hold a Codex backend that sets limits; Claude's
+    // admit as stale under 30 minutes (EON-C40). `available` is (Codex, Claude).
     for (case, age, failed, available) in [
-        ("fresh", Some(10), false, true),
-        ("old", Some(7200), false, false),
-        ("missing", None, false, false),
-        ("failed retained", Some(10), true, false),
-        ("failed missing", None, true, false),
-        ("expired", Some(86401), false, false),
+        ("fresh", Some(10), false, [true, true]),
+        ("old", Some(7200), false, [false, false]),
+        ("missing", None, false, [false, false]),
+        ("failed retained", Some(10), true, [false, true]),
+        ("failed missing", None, true, [false, false]),
+        ("expired", Some(86401), false, [false, false]),
     ] {
         let window = PairWindow::new();
         let configuration = window.config.join("config.toml");
@@ -24643,7 +24644,12 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
                 (rota::config::Role::Review, "review"),
             ] {
                 let expected = rota::decision::availability(backend, &expected, role);
-                assert_eq!(expected.is_ok(), available, "{case}/{}/{key}", backend.name);
+                assert_eq!(
+                    expected.is_ok(),
+                    available[index],
+                    "{case}/{}/{key}",
+                    backend.name
+                );
                 // A window with no facts for a provider sends the reader to the store, which
                 // has nothing usable here either, so the reading names both reasons.
                 if matches!(case, "missing" | "expired") {
@@ -24668,6 +24674,14 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
             }
             if matches!(case, "missing" | "expired") {
                 continue;
+            }
+            // Only Claude's facts beside the newer failure are marked stale.
+            let stale = &actual[index]["reading"]["source"]["stale"];
+            if case == "failed retained" && backend.name == "eon_claude" {
+                assert_eq!(stale["failure"], "exit_status", "{case}: {stale}");
+                assert!(stale["age_ms"].as_u64().is_some(), "{case}: {stale}");
+            } else {
+                assert!(stale.is_null(), "{case}/{}: {stale}", backend.name);
             }
             // Whatever the window supplies names it, a stale snapshot or a bare failure too, and
             // a failure without facts keeps its reason.
@@ -25033,8 +25047,9 @@ fn native_quota_reads_the_store_when_the_callers_window_runs_another_eonw() {
     fs::remove_dir_all(root).unwrap();
 }
 
-/// The store stands in only for what a window would report: Claude's recorded failure holds,
-/// and a reading it cannot vouch for is refused with both sources' reasons.
+/// The store stands in only for what a window would report: Claude's recorded failure leaves
+/// its reading stale, admitting under 30 minutes and holding past them, and a reading it cannot
+/// vouch for is refused with both sources' reasons.
 #[cfg(target_os = "linux")]
 #[test]
 fn native_quota_store_refuses_what_a_window_would_not_admit() {
@@ -25050,7 +25065,8 @@ fn native_quota_store_refuses_what_a_window_would_not_admit() {
     // Each case: its name, how it fills the state directory, and what Codex and Claude show
     // (None: available).
     type Case<'a> = (&'a str, &'a dyn Fn(&Path), Option<&'a str>, Option<&'a str>);
-    let cases: [Case; 7] = [
+    let past = format!("{held}; the last good reading is ");
+    let cases: [Case; 8] = [
         (
             "claude failure",
             &|state| {
@@ -25059,7 +25075,17 @@ fn native_quota_store_refuses_what_a_window_would_not_admit() {
                 stored_claude_schedule(state, Some("provider_error"));
             },
             None,
-            Some(held),
+            None,
+        ),
+        (
+            "claude failure past the bound",
+            &|state| {
+                stored_quota_reading(state, "codex", now - 10, 80);
+                stored_quota_reading(state, "claude", now - 1801, 70);
+                stored_claude_schedule(state, Some("provider_error"));
+            },
+            None,
+            Some(past.as_str()),
         ),
         (
             "no claude schedule",
@@ -25117,11 +25143,19 @@ fn native_quota_store_refuses_what_a_window_would_not_admit() {
         let actual = native_quota_status(&runtime, &state);
         for (index, expected) in [codex, claude].into_iter().enumerate() {
             let problem = actual[index]["implement"].as_str().unwrap();
+            // Claude's facts beside its newer recorded failure are marked stale.
+            let stale = &actual[index]["reading"]["source"]["stale"];
+            if index == 1 && case.starts_with("claude failure") {
+                assert_eq!(stale["failure"], "provider_error", "{case}: {stale}");
+            } else {
+                assert!(stale.is_null(), "{case}: {stale}");
+            }
             match expected {
                 None => assert_eq!(problem, "available", "{case}"),
-                // Claude's recorded failure holds its reading, as through a window.
-                Some(expected) if expected == held => {
-                    assert_eq!(problem, expected, "{case}");
+                // Past 30 minutes Claude's recorded failure holds its stale reading, as through a
+                // window.
+                Some(expected) if expected.starts_with(held) => {
+                    assert!(problem.starts_with(expected), "{case}: {problem}");
                     assert_eq!(actual[index]["reading"]["source"]["via"], "store", "{case}");
                 }
                 // Anything the store cannot vouch for names both sources' reasons.
@@ -25138,6 +25172,112 @@ fn native_quota_store_refuses_what_a_window_would_not_admit() {
             }
         }
     }
+    end_older_supervisors(
+        &done,
+        &[runtime.join("generations").join(&id).join("eon.sock")],
+        vec![server],
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Bead acceptance (eon-ots4r): a stale Claude reading from the store admits one real launch.
+/// Status and dry-run show it stale and spend nothing; the launch records the reading's own
+/// `observed_at` and logs the marker; a second launch on the same reading holds.
+#[cfg(target_os = "linux")]
+#[test]
+fn native_quota_store_admits_one_launch_on_a_stale_claude_reading() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let state = root.join("state");
+    let done = root.join("done");
+    let id = format!("g1-{:032x}", 155);
+    let server = other_eonw_supervisor(&runtime, &id, &done, VERSION - 1);
+    write_native_quota_backends(&root, 5);
+    let config = root.join("config/agent.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)
+            .unwrap()
+            .replace("'never-start'", "'true'"),
+    )
+    .unwrap();
+    let observed = unix_seconds() - 600;
+    stored_quota_reading(&state, "codex", observed, 80);
+    stored_quota_reading(&state, "claude", observed, 70);
+    stored_claude_schedule(&state, Some("provider_error"));
+    let before = tree_listing(&[&runtime, &state]);
+    let ledger = root.join("admissions.json");
+
+    let status = native_quota_status(&runtime, &state);
+    assert_eq!(status[1]["implement"], "available", "{status}");
+    let stale = &status[1]["reading"]["source"]["stale"];
+    assert_eq!(stale["failure"], "provider_error", "{status}");
+    assert!(stale["age_ms"].as_u64().unwrap() >= 600_000, "{status}");
+    assert!(
+        status[1]["reading"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains(" stale 10m (last read failed: provider_error)"),
+        "{status}"
+    );
+    let prompt = root.join("prompt");
+    fs::write(&prompt, "work").unwrap();
+    let launch = |dry_run: bool| {
+        let mut arguments = vec![
+            OsStr::new("agent"),
+            OsStr::new("launch"),
+            OsStr::new("--only"),
+            OsStr::new("claude"),
+        ];
+        if dry_run {
+            arguments.push(OsStr::new("--dry-run"));
+        }
+        arguments.push(prompt.as_os_str());
+        routed_eon(&runtime, &state, &arguments, None, None, b"")
+    };
+    let dry = launch(true);
+    assert!(dry.status.success(), "{dry:?}");
+    assert!(
+        String::from_utf8_lossy(&dry.stderr)
+            .contains(" stale 10m (last read failed: provider_error) via store"),
+        "{dry:?}"
+    );
+    assert!(!ledger.exists(), "status and dry-run spend nothing");
+    assert_eq!(tree_listing(&[&runtime, &state]), before);
+
+    let first = launch(false);
+    assert!(first.status.success(), "{first:?}");
+    let spent: serde_json::Value = serde_json::from_slice(&fs::read(&ledger).unwrap()).unwrap();
+    assert_eq!(
+        spent["accounts"]["claude"]["observed_at"],
+        observed * 1000,
+        "{spent}"
+    );
+    let log = fs::read_to_string(root.join("agent-log")).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+    assert_eq!(entry["decision"], "pick", "{entry}");
+    assert_eq!(entry["pick"], "claude", "{entry}");
+    let logged = entry["readings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|reading| reading["backend"] == "claude")
+        .unwrap();
+    assert_eq!(
+        logged["reading"]["source"]["stale"]["failure"], "provider_error",
+        "{entry}"
+    );
+
+    // The moved launcher keeps rota's refusal status 3 (EON-C40, 2026-11-13 amendment).
+    let second = launch(false);
+    assert_eq!(second.status.code(), Some(3), "{second:?}");
+    assert!(
+        String::from_utf8_lossy(&second.stderr).contains(&format!(
+            "reading observed at {} already admitted a launch on account claude",
+            observed * 1000
+        )),
+        "{second:?}"
+    );
     end_older_supervisors(
         &done,
         &[runtime.join("generations").join(&id).join("eon.sock")],

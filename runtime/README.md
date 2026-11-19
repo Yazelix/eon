@@ -81,8 +81,9 @@ apart. Raw provider JSON and identities are discarded.
 Supervisors share one Claude read every five minutes through a locked schedule
 beside the stored readings; one that cannot use it keeps its own. After the
 provider refuses a Claude read (for example a rate limit), the next one waits
-30 minutes, then an hour after a second refusal and two hours after each later
-one, until a read succeeds.
+five minutes plus up to one minute of jitter when it is the first refusal since
+a successful read, then 30 minutes after a second refusal, an hour after a
+third and two hours after each later one, until a read succeeds.
 
 Runtime validates timestamps, actual periods and percentages, rounding remaining
 percentages down once. Failed reads keep last-good facts unchanged;

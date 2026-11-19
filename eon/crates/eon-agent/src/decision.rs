@@ -34,6 +34,30 @@ pub struct Source {
     /// readers do.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via: Option<String>,
+    /// Set when the host's newest poll failed after this reading was fetched (EON-C40):
+    /// the reading is stale, though a limited Claude backend may still admit on it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale: Option<Stale>,
+}
+
+/// A reading the host's newer failed poll left stale: its age when read, in milliseconds,
+/// and the failure's reason.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Stale {
+    pub age_ms: u64,
+    pub failure: String,
+}
+
+impl Stale {
+    /// The marker human output appends to a reading, such as
+    /// `stale 18m (last read failed: provider_error)`.
+    pub fn text(&self) -> String {
+        let age = match self.age_ms {
+            ms if ms < 60_000 => "<1m".to_owned(),
+            ms => format!("{}m", ms / 60_000),
+        };
+        format!("stale {age} (last read failed: {})", self.failure)
+    }
 }
 
 pub fn availability(backend: &Backend, reading: &Reading, role: Role) -> Result<(), String> {
@@ -830,6 +854,7 @@ mod tests {
             account: "acct".into(),
             observed_at_ms: Some(1000),
             via: None,
+            stale: None,
         });
         let json = serde_json::to_value(&reading).unwrap();
         assert_eq!(
@@ -841,6 +866,27 @@ mod tests {
             serde_json::to_value(&reading).unwrap()["source"],
             serde_json::json!({"account": "acct", "observed_at": 1000, "via": "store"})
         );
+        // A stale reading names its age and the newer failure; humans read it in minutes.
+        let stale = Stale {
+            age_ms: 1_080_000,
+            failure: "provider_error".into(),
+        };
+        assert_eq!(stale.text(), "stale 18m (last read failed: provider_error)");
+        reading.source.as_mut().unwrap().stale = Some(stale);
+        assert_eq!(
+            serde_json::to_value(&reading).unwrap()["source"]["stale"],
+            serde_json::json!({"age_ms": 1_080_000, "failure": "provider_error"})
+        );
+        for (age_ms, text) in [(59_999, "<1m"), (60_000, "1m"), (119_999, "1m")] {
+            let stale = Stale {
+                age_ms,
+                failure: "deadline".into(),
+            };
+            assert_eq!(
+                stale.text(),
+                format!("stale {text} (last read failed: deadline)")
+            );
+        }
         assert!(json["quota_problem"].is_null());
     }
 

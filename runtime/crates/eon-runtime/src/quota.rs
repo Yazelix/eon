@@ -440,18 +440,57 @@ fn milliseconds(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// Wait in shared-provider read intervals after consecutive provider errors: 30 min, 1 h, then 2 h.
-fn backoff(failures: u32) -> u32 {
-    match failures {
-        0 | 1 => 6,
-        2 => 12,
-        _ => 24,
+/// How a read finished: the failure it reports or clears (None leaves the last one), whether
+/// it succeeded, and whether it backs off (a provider error on a shared schedule).
+#[derive(Clone, Copy)]
+struct Finished {
+    outcome: Option<Option<QuotaFailure>>,
+    success: bool,
+    back_off: bool,
+}
+
+/// Records a finished read in the schedule at `now` (ms): its failure, the provider-error count,
+/// which only a success resets, and when the next read may start.
+fn record_read(schedule: &mut Schedule, now: u64, read: Finished, interval: Duration, jitter: f64) {
+    if let Some(outcome) = read.outcome {
+        schedule.failure = outcome;
     }
+    if read.success {
+        schedule.failures = 0;
+    } else if read.back_off {
+        schedule.failures = schedule.failures.saturating_add(1);
+    }
+    let delay = if read.back_off {
+        provider_error_wait(interval, schedule.failures, jitter)
+    } else {
+        interval
+    };
+    schedule.next_at = now.saturating_add(milliseconds(delay));
+}
+
+/// The wait after `failures` consecutive provider errors on a shared schedule (EON-C27): the
+/// first since a success retries after one interval plus up to a fifth more by `jitter`, in
+/// `[0, 1)` (five to six minutes for Claude); later ones wait 6, 12, then 24 intervals
+/// (30 minutes, 1 hour, then 2 hours).
+fn provider_error_wait(interval: Duration, failures: u32, jitter: f64) -> Duration {
+    match failures {
+        0 | 1 => interval + interval.mul_f64(jitter.clamp(0.0, 1.0) / 5.0),
+        2 => interval * 6,
+        3 => interval * 12,
+        _ => interval * 24,
+    }
+}
+
+/// A fraction in `[0, 1)` that keeps a retry out of step with other pollers.
+fn jitter() -> f64 {
+    use std::hash::BuildHasher;
+    let random = std::collections::hash_map::RandomState::new().hash_one(Instant::now());
+    (random >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// The longest backoff; a schedule further ahead is ignored (EON-C27).
 fn longest_wait(interval: Duration) -> Duration {
-    interval * backoff(u32::MAX)
+    provider_error_wait(interval, u32::MAX, 0.0)
 }
 
 fn open_schedule(path: &Path) -> io::Result<fs::File> {
@@ -693,20 +732,17 @@ impl Provider {
                         schedule_path.as_deref(),
                         maximum,
                         |schedule, now| {
-                            if let Some(outcome) = outcome {
-                                schedule.failure = outcome;
-                            }
-                            if success {
-                                schedule.failures = 0;
-                            } else if back_off {
-                                schedule.failures = schedule.failures.saturating_add(1);
-                            }
-                            let delay = if back_off {
-                                interval * backoff(schedule.failures)
-                            } else {
-                                interval
-                            };
-                            schedule.next_at = now.saturating_add(milliseconds(delay));
+                            record_read(
+                                schedule,
+                                now,
+                                Finished {
+                                    outcome,
+                                    success,
+                                    back_off,
+                                },
+                                interval,
+                                jitter(),
+                            );
                             true
                         },
                     );
@@ -1691,6 +1727,8 @@ mod tests {
                     .is_some_and(|f| f.reason == Failure::ProviderError)
             })
         });
+        // `record_read` pins each delay (claude_schedule_preserves_reasons_bounds_and_backoff);
+        // here the supervisors share them: one soon retry, then a backoff.
         wait(&|| starts().iter().filter(|(mode, _)| mode == "error").count() >= 2);
         fs::write(&mode, "ok").unwrap();
         wait(&|| {
@@ -1706,12 +1744,15 @@ mod tests {
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         assert_eq!(errors.len(), 2, "{calls:?}");
+        let retry = calls[errors[1]]
+            .1
+            .duration_since(calls[errors[0]].1)
+            .unwrap();
+        // One interval plus jitter (at most 360 units), with room for a loaded machine; the
+        // backoff is 1800.
         assert!(
-            calls[errors[1]]
-                .1
-                .duration_since(calls[errors[0]].1)
-                .unwrap()
-                >= unit * 1800
+            retry >= unit * 300 && retry < unit * 1200,
+            "first retry: {retry:?}"
         );
         let recovered = errors[1] + 1;
         assert!(
@@ -1719,7 +1760,7 @@ mod tests {
                 .1
                 .duration_since(calls[errors[1]].1)
                 .unwrap()
-                >= unit * 3600
+                >= unit * 1800
         );
         wait(&|| starts().len() > recovered + 1);
         let calls = starts();
@@ -1777,7 +1818,55 @@ mod tests {
 
     #[test]
     fn claude_schedule_preserves_reasons_bounds_and_backoff() {
-        assert_eq!([1, 2, 3, 4, u32::MAX].map(backoff), [6, 12, 24, 24, 24]);
+        // The first provider error since a success retries after one interval plus a jitter of
+        // up to a fifth; later ones back off to 6, 12 and 24 intervals.
+        let interval = Duration::from_secs(300);
+        assert_eq!(provider_error_wait(interval, 1, 0.0), interval);
+        assert_eq!(
+            provider_error_wait(interval, 1, 0.5),
+            interval + interval / 10
+        );
+        assert!(provider_error_wait(interval, 1, 0.999) < interval * 6 / 5);
+        assert_eq!(
+            [2, 3, 4, u32::MAX].map(|failures| provider_error_wait(interval, failures, 0.5)),
+            [6, 12, 24, 24].map(|n| interval * n)
+        );
+        assert_eq!(longest_wait(interval), interval * 24);
+        // A finished read schedules the next from the same rule: the first provider error after
+        // a success retries after one interval plus jitter, the next backs off, a failure that is
+        // not a provider error keeps the count, and only a success resets it.
+        let mut schedule = Schedule::default();
+        let error = |reason| Finished {
+            outcome: Some(Some(QuotaFailure { at: NOW, reason })),
+            success: false,
+            back_off: reason == Failure::ProviderError,
+        };
+        let mut next = |read: Finished, now: u64| {
+            record_read(&mut schedule, now, read, interval, 0.5);
+            (
+                schedule.failures,
+                Duration::from_millis(schedule.next_at - now),
+            )
+        };
+        let provider = error(Failure::ProviderError);
+        assert_eq!(next(provider, 1_000), (1, interval + interval / 10));
+        assert_eq!(next(error(Failure::Deadline), 2_000), (1, interval));
+        assert_eq!(next(provider, 3_000), (2, interval * 6));
+        assert_eq!(next(provider, 4_000), (3, interval * 12));
+        let ok = Finished {
+            outcome: Some(None),
+            success: true,
+            back_off: false,
+        };
+        assert_eq!(next(ok, 5_000), (0, interval));
+        assert_eq!(next(provider, 6_000), (1, interval + interval / 10));
+        assert_eq!(
+            schedule.failure.map(|f| f.reason),
+            Some(Failure::ProviderError)
+        );
+        let draws = (0..16).map(|_| jitter()).collect::<Vec<_>>();
+        assert!(draws.iter().all(|j| (0.0..1.0).contains(j)), "{draws:?}");
+        assert!(draws.iter().any(|j| *j != draws[0]), "{draws:?}");
         // A clock set back never stops reads, also without a schedule file.
         let ahead = Mutex::new(Schedule {
             next_at: u64::MAX,
@@ -1997,7 +2086,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_provider_errors_back_off_without_a_usable_schedule() {
+    fn claude_retries_once_soon_then_backs_off_without_a_usable_schedule() {
         let root = super::super::supervisor::temporary_directory();
         let program = root.join("backend");
         let calls = root.join("calls");
@@ -2030,10 +2119,13 @@ mod tests {
                 quotas.claude.failure().unwrap().reason,
                 Failure::ProviderError
             );
+            assert_eq!(reads("claude"), 1);
+            // Shown again, the chip keeps its in-memory spacing: one retry after one 300 ms
+            // interval plus jitter, then six intervals before the next.
             quotas.show(&[]);
             quotas.show(&widgets);
-            thread::sleep(Duration::from_millis(600));
-            assert_eq!(reads("claude"), 1);
+            thread::sleep(Duration::from_millis(1000));
+            assert_eq!(reads("claude"), 2);
             // Codex keeps its 60-unit spacing after the same provider error.
             assert!(reads("codex") >= 3, "codex reads: {}", reads("codex"));
             drop(quotas);

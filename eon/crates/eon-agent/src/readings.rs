@@ -1,5 +1,5 @@
 use crate::admissions::Ledger;
-use crate::config::{Backend, Cap, Config, Reader};
+use crate::config::{Backend, Cap, Config, Parser, Reader, STALE_BOUND_SECONDS};
 use crate::decision::Reading;
 use crate::quota::{self, now_ms};
 use std::collections::BTreeMap;
@@ -266,7 +266,7 @@ fn running_in(proc: &Path, uid: u32, cap: &Cap) -> Result<usize, String> {
 ///   "quota_unreadable": {"codex": "why"}   // optional; a provider no source has: its
 ///                               // reading fails with this reason
 /// }
-/// FAILURE = { "at": 123, "reason": "deadline" }   // only `reason` is read
+/// FAILURE = { "at": 123, "reason": "deadline" }   // `at`: Unix milliseconds of the failed poll
 /// SNAPSHOT = {
 ///   "state": "fresh",           // any other value ("stale", ...) fails the reading
 ///   "observed_at": 1720000001000,  // Unix milliseconds when the provider data was fetched;
@@ -281,9 +281,13 @@ fn running_in(proc: &Path, uid: u32, cap: &Cap) -> Result<usize, String> {
 ///
 /// A missing snapshot, a missing or empty `windows`, or a window without both fields fails the
 /// reading. Window `i` is named `DURATIONm/i` (for example `300m/0`) in limits and output, so
-/// windows sharing a duration stay distinct; a limit key `DURATIONm` covers all of them. A
-/// present FAILURE holds a backend that sets limits, whatever its snapshot says, since the facts
-/// beside it are retained from an earlier poll. Eon supplies this object in the projection of
+/// windows sharing a duration stay distinct; a limit key `DURATIONm` covers all of them.
+/// Beside Claude facts, a FAILURE older than the snapshot is superseded by it, and a newer
+/// FAILURE (valid `at`, after `observed_at`, not in the future) leaves them stale: they still admit
+/// a backend that sets limits while under 30 minutes old, within its limits and once per
+/// observation, and are marked stale. Any other present FAILURE holds a backend that sets
+/// limits, since the facts beside it are retained from an earlier poll (EON-C40). Eon supplies
+/// this object in the projection of
 /// `eon session --json`, from the caller's window or, for a provider that window does not
 /// supply, from the quota store Eon's windows share (EON-C40).
 pub type SessionReader<'a> = dyn Fn(Instant) -> Result<String, String> + 'a;
@@ -307,52 +311,96 @@ enum Hold {
 }
 
 /// What freshness says about a limited backend's reading.
-enum Stale {
+enum Recheck {
     /// Spent on its account, or older than its bound: a refresh may bring a later observation.
-    Retry(String),
+    Refresh(String),
+    /// Stale past its bound: Eon's facts are read once more, never refreshed (EON-C40).
+    Reread(String),
     Hold(String),
 }
 
-/// A timed reading must be recent, with no provider failure beside it. Limited backends also
-/// require an unspent observation.
+/// The reading a newer failed Claude poll left stale, judged at `now` (EON-C40): only a
+/// failure with a valid time strictly after the reading and not in the future counts.
+fn stale(
+    parser: Parser,
+    observed: Option<u64>,
+    failure: Option<&quota::Failure>,
+    now: u64,
+) -> Option<crate::decision::Stale> {
+    let failure = failure?;
+    let observed = observed?;
+    let failed = failure.at_ms?;
+    (matches!(parser, Parser::EonClaude) && observed < failed && failed <= now).then(|| {
+        crate::decision::Stale {
+            age_ms: now - observed,
+            failure: failure.reason.clone(),
+        }
+    })
+}
+
+/// A timed reading must be recent. A provider failure beside it holds, except beside Claude
+/// facts: one older than the reading is superseded by it, and a newer one leaves it `stale`,
+/// which admits under [`STALE_BOUND_SECONDS`]. Limited backends also require an unspent
+/// observation.
 fn freshness(
     quota: &quota::Quota,
+    parser: Parser,
+    stale: Option<&crate::decision::Stale>,
     backend: &Backend,
     ledger: &Ledger,
     max_age_seconds: u64,
-) -> Result<(), Stale> {
+    now: u64,
+) -> Result<(), Recheck> {
     let account = backend.account();
-    if let Some(reason) = &quota.failure {
-        return Err(Stale::Hold(format!(
-            "quota unreadable on account {account}: provider failure ({reason})"
+    if let Some(failure) = &quota.failure
+        && stale.is_none()
+        // A failure older than Claude's reading is superseded by it.
+        && !(matches!(parser, Parser::EonClaude)
+            && failure
+                .at_ms
+                .zip(quota.observed_at_ms)
+                .is_some_and(|(failed, observed)| failed < observed))
+    {
+        return Err(Recheck::Hold(format!(
+            "quota unreadable on account {account}: provider failure ({})",
+            failure.reason
         )));
     }
     let at = quota.observed_at_ms.ok_or_else(|| {
-        Stale::Hold(format!(
+        Recheck::Hold(format!(
             "quota reading on account {account} has no observed_at"
         ))
     })?;
-    let now = now_ms();
-    if at > now {
-        return Err(Stale::Hold(format!(
+    let Some(age) = now.checked_sub(at) else {
+        return Err(Recheck::Hold(format!(
             "quota reading on account {account} observed in the future (observed_at {at})"
         )));
-    }
-    let age = now.saturating_sub(at);
-    if age > max_age_seconds.saturating_mul(1000) {
-        return Err(Stale::Retry(format!(
-            "quota reading on account {account} is {} s old (max_age_seconds {max_age_seconds})",
-            age / 1000
-        )));
+    };
+    match stale {
+        Some(stale) if age >= STALE_BOUND_SECONDS.saturating_mul(1000) => {
+            return Err(Recheck::Reread(format!(
+                "quota unreadable on account {account}: provider failure ({}); the last good \
+                 reading is {} s old (a stale reading admits under {STALE_BOUND_SECONDS} s)",
+                stale.failure,
+                age / 1000
+            )));
+        }
+        None if age > max_age_seconds.saturating_mul(1000) => {
+            return Err(Recheck::Refresh(format!(
+                "quota reading on account {account} is {} s old (max_age_seconds {max_age_seconds})",
+                age / 1000
+            )));
+        }
+        _ => (),
     }
     if !backend.limited() {
         return Ok(());
     }
     let spent = ledger
         .spent(account)
-        .map_err(|e| Stale::Hold(format!("quota hold on account {account}: {e}")))?;
+        .map_err(|e| Recheck::Hold(format!("quota hold on account {account}: {e}")))?;
     match spent {
-        Some(spent) if spent >= at => Err(Stale::Retry(format!(
+        Some(spent) if spent >= at => Err(Recheck::Refresh(format!(
             "reading observed at {at} already admitted a launch on account {account}; \
              hold for a fresh reading"
         ))),
@@ -446,11 +494,15 @@ fn read_quota(
     };
     let account = backend.account();
     let unreadable = |reading: &mut Reading, (e, origin): (String, Option<quota::Origin>)| {
-        reading.source = origin.map(|origin| crate::decision::Source {
-            account: account.into(),
-            observed_at_ms: origin.observed_at_ms,
-            via: origin.via,
-        });
+        reading.source =
+            origin
+                .filter(|origin| origin.via.is_some())
+                .map(|origin| crate::decision::Source {
+                    account: account.into(),
+                    observed_at_ms: origin.observed_at_ms,
+                    via: origin.via,
+                    stale: None,
+                });
         Hold::Quota(format!("quota unreadable on account {account}: {e}"))
     };
     let refresh = reader.refresh.as_ref().filter(|_| mode == QuotaMode::Admit);
@@ -466,40 +518,86 @@ fn read_quota(
         Ok(())
     };
     let mut quota = get();
-    if quota.is_err() && refresh.is_some() {
-        run_refresh(reading)?;
-        quota = get();
+    // Set once the one in-process re-read for stale Claude facts is spent: after it, anything
+    // but a fresh unspent reading holds, with no further read and no refresh.
+    let mut reread = false;
+    if mode == QuotaMode::Admit
+        && let Err((_, origin)) = &quota
+    {
+        // Claude facts a newer failure left stale, which the host no longer calls fresh (an hour
+        // old), are past the 30-minute bound: read once more in process, never refresh.
+        if origin.as_ref().is_some_and(|origin| {
+            stale(
+                reader.parser,
+                origin.observed_at_ms,
+                origin.failure.as_ref(),
+                now_ms(),
+            )
+            .is_some()
+        }) {
+            reread = true;
+            quota = get();
+        } else if refresh.is_some() {
+            run_refresh(reading)?;
+            quota = get();
+        }
     }
     let mut quota = quota.map_err(|e| unreadable(reading, e))?;
+    // One clock sample judges both the marker and the decision.
     let check_freshness = |quota: &quota::Quota| {
-        backend
-            .max_age_seconds()
-            .map(|max_age| freshness(quota, backend, ledger, max_age))
+        let now = now_ms();
+        let stale = stale(
+            reader.parser,
+            quota.observed_at_ms,
+            quota.failure.as_ref(),
+            now,
+        );
+        let fresh = backend.max_age_seconds().map(|max_age| {
+            freshness(
+                quota,
+                reader.parser,
+                stale.as_ref(),
+                backend,
+                ledger,
+                max_age,
+                now,
+            )
+        });
+        (fresh, stale)
     };
-    let mut fresh = check_freshness(&quota);
-    // A spent or too old observation: a real admission reads once more, after a refresh where
-    // configured.
-    if mode == QuotaMode::Admit && matches!(fresh, Some(Err(Stale::Retry(_)))) {
-        run_refresh(reading)?;
+    let (mut fresh, mut stale) = check_freshness(&quota);
+    // A real admission reads once more: after a refresh where configured for a spent or too old
+    // observation, and without one for a stale reading past its bound.
+    if mode == QuotaMode::Admit
+        && !reread
+        && let Some(Err(recheck @ (Recheck::Refresh(_) | Recheck::Reread(_)))) = &fresh
+    {
+        if matches!(recheck, Recheck::Refresh(_)) {
+            run_refresh(reading)?;
+        }
         quota = get().map_err(|e| unreadable(reading, e))?;
-        fresh = check_freshness(&quota);
+        (fresh, stale) = check_freshness(&quota);
     }
-    reading.source = Some(crate::decision::Source {
-        account: account.into(),
-        observed_at_ms: quota.observed_at_ms,
-        via: quota.via,
-    });
-    reading.identity = quota.identity;
     reading.detail = quota
         .remaining
         .iter()
         .map(|(k, v)| format!("{k}_left={v}%"))
+        .chain(stale.as_ref().map(crate::decision::Stale::text))
         .collect::<Vec<_>>()
         .join(" ");
+    reading.source = Some(crate::decision::Source {
+        account: account.into(),
+        observed_at_ms: quota.observed_at_ms,
+        via: quota.via,
+        stale,
+    });
+    reading.identity = quota.identity;
     reading.resets = quota.resets;
     reading.remaining = Some(quota.remaining);
     match fresh {
-        Some(Err(Stale::Retry(problem) | Stale::Hold(problem))) => Err(Hold::Quota(problem)),
+        Some(Err(
+            Recheck::Refresh(problem) | Recheck::Reread(problem) | Recheck::Hold(problem),
+        )) => Err(Hold::Quota(problem)),
         _ => Ok(()),
     }
 }
@@ -648,6 +746,7 @@ mod tests {
                         account: "claude-main".into(),
                         observed_at_ms: Some(at),
                         via: None,
+                        stale: None,
                     }
                 );
             }
@@ -707,6 +806,9 @@ mod tests {
         use crate::{config::Role, decision};
         use serde_json::json;
         let at = now_ms() - 60_000;
+        // A reading 31 minutes old, past the 30-minute bound a stale Claude reading admits under.
+        let past = now_ms() - 1_860_000;
+        let held = "quota unreadable on account native: provider failure (provider_error)";
 
         for (parser, key) in [("eon_codex", "codex_quota"), ("eon_claude", "claude_quota")] {
             let backend: Backend = toml::from_str(&format!(
@@ -721,57 +823,75 @@ mod tests {
                 (
                     "fresh",
                     json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":21}]}),
-                    false,
+                    None,
                     None,
                     None,
                 ),
                 (
                     "threshold",
                     json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":20}]}),
-                    false,
+                    None,
                     Some("quota limit on account native: 300m/0 left 20% (min_remaining > 20%)"),
                     None,
                 ),
                 (
                     "empty quota",
                     json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":0}]}),
-                    false,
+                    None,
                     Some("quota limit on account native: 300m/0 left 0% (min_remaining > 20%)"),
                     None,
                 ),
                 (
-                    // Facts retained from an earlier poll never admit while the last one failed.
+                    // Facts retained beside a newer failed poll hold Codex; Claude's admit as stale
+                    // (checked below).
                     "retained after failure",
                     json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":21}]}),
-                    true,
-                    Some("quota unreadable on account native: provider failure (provider_error)"),
-                    Some("quota unreadable on account native: provider failure (provider_error)"),
+                    Some(at + 30_000),
+                    Some(held),
+                    Some(held),
+                ),
+                (
+                    // A failure older than Claude's facts is superseded by them (checked below);
+                    // beside Codex facts it holds.
+                    "superseded failure",
+                    json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":21}]}),
+                    Some(at - 30_000),
+                    Some(held),
+                    Some(held),
+                ),
+                (
+                    // Past the bound, a stale reading holds (Claude's message is checked below).
+                    "stale past the bound",
+                    json!({"state":"fresh","observed_at":past,"windows":[{"duration_minutes":300,"remaining_percent":21}]}),
+                    Some(past + 30_000),
+                    Some(held),
+                    Some(held),
                 ),
                 (
                     "untimed",
                     json!({"state":"fresh","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
-                    false,
+                    None,
                     Some("quota reading on account native has no observed_at"),
                     Some("quota reading on account native has no observed_at"),
                 ),
                 (
                     "scoped",
                     json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":10080,"remaining_percent":80},{"duration_minutes":10080,"remaining_percent":19,"scope":"Fable"}]}),
-                    false,
+                    None,
                     Some("quota limit on account native: 10080m/1 left 19% (min_remaining > 20%)"),
                     None,
                 ),
                 (
                     "old",
                     json!({"state":"stale","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
-                    false,
+                    None,
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "missing",
                     json!(null),
-                    false,
+                    None,
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
@@ -779,7 +899,7 @@ mod tests {
                     // The failure's reason is kept when there are no facts to hold.
                     "failed without retained facts",
                     json!(null),
-                    true,
+                    Some(at),
                     Some(
                         "quota unreadable on account native: provider failure (provider_error); quota snapshot is not fresh",
                     ),
@@ -790,37 +910,46 @@ mod tests {
                 (
                     "blocked",
                     json!({"state":"blocked","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
-                    false,
+                    None,
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "unknown",
                     json!({"state":"unknown","windows":[{"duration_minutes":300,"remaining_percent":80}]}),
-                    false,
+                    None,
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                     Some("quota unreadable on account native: quota snapshot is not fresh"),
                 ),
                 (
                     "empty windows",
                     json!({"state":"fresh","observed_at":at,"windows":[]}),
-                    false,
+                    None,
                     Some("quota unreadable on account native: quota windows unavailable"),
                     Some("quota unreadable on account native: quota windows unavailable"),
                 ),
                 (
                     "invalid percent",
                     json!({"state":"fresh","observed_at":at,"windows":[{"duration_minutes":300,"remaining_percent":101}]}),
-                    false,
+                    None,
                     Some("quota unreadable on account native: invalid percentage"),
                     Some("quota unreadable on account native: invalid percentage"),
                 ),
             ] {
                 let mut facts = json!({key: snapshot.clone(), "quota_source": {key.trim_end_matches("_quota"): "window w"}});
-                if failure {
+                if let Some(failed) = failure {
                     facts[format!("{key}_failure")] =
-                        json!({"at":123000,"reason":"provider_error"});
+                        json!({"at":failed,"reason":"provider_error"});
                 }
+                // Claude's newer failure leaves its facts stale: they admit under 30 minutes.
+                let claude = parser == "eon_claude";
+                let (implement, review) = match name {
+                    "retained after failure" | "superseded failure" if claude => (None, None),
+                    _ => (implement, review),
+                };
+                let past_bound = claude && name == "stale past the bound";
+                let stale =
+                    claude && matches!(name, "retained after failure" | "stale past the bound");
                 let text = facts.to_string();
                 // The old reader ran a command and parsed its stdout.
                 let old = probe(
@@ -846,25 +975,40 @@ mod tests {
                 });
                 assert_eq!(new.remaining, old.remaining, "{parser}/{name}");
                 assert_eq!(new.resets, old.resets, "{parser}/{name}");
-                // Usable or not, the reading names its source, with the snapshot's time if any.
+                // Usable or not, the reading names its source, with the snapshot's time if any,
+                // and says when a newer failure left it stale.
+                let mut source = new.source.clone();
+                let marker = source.as_mut().and_then(|source| source.stale.take());
                 assert_eq!(
-                    new.source,
+                    marker.map(|marker| marker.failure),
+                    stale.then(|| "provider_error".to_owned()),
+                    "{parser}/{name}"
+                );
+                assert_eq!(new.detail.contains(" stale "), stale, "{parser}/{name}");
+                assert_eq!(
+                    source,
                     Some(crate::decision::Source {
                         account: "native".into(),
                         observed_at_ms: snapshot.get("observed_at").and_then(|at| at.as_u64()),
                         via: Some("window w".into()),
+                        stale: None,
                     }),
                     "{parser}/{name}"
                 );
                 for (role, expected) in [(Role::Implement, implement), (Role::Review, review)] {
                     let result = decision::availability(&backend, &new, role);
                     // The old reader ignored provider failures and observation times.
-                    if !failure && name != "untimed" {
+                    if failure.is_none() && name != "untimed" {
                         assert_eq!(
                             result,
                             decision::availability(&backend, &old, role),
                             "{parser}/{name}/{role:?}"
                         );
+                    }
+                    if past_bound {
+                        // The age is read when the row runs: at least 1860 s.
+                        assert_past_bound(&result.err().unwrap(), 1860);
+                        continue;
                     }
                     assert_eq!(
                         result.err().as_deref(),
@@ -907,34 +1051,418 @@ mod tests {
         assert_eq!(launch.remaining.unwrap()["300m/0"], 80.0);
         assert_eq!(calls.get(), 3);
     }
-    #[test]
-    fn a_provider_failure_beside_fresh_unspent_facts_holds_only_a_limited_backend() {
-        let at = now_ms() - 60_000;
-        let facts = format!(
-            r#"{{"claude_quota":{{"state":"fresh","observed_at":{at},
-            "windows":[{{"duration_minutes":10080,"remaining_percent":80}}]}},
-            "claude_quota_failure":{{"at":3,"reason":"deadline"}}}}"#
+    /// Eon's facts with one Claude snapshot observed at `at`, remaining `left`% of its week,
+    /// and, when `failed` is set, a failed poll at that time.
+    fn claude_facts(at: u64, left: f64, failed: Option<u64>) -> String {
+        let mut facts = serde_json::json!({"claude_quota":{"state":"fresh","observed_at":at,
+            "windows":[{"duration_minutes":10080,"remaining_percent":left}]}});
+        if let Some(failed) = failed {
+            facts["claude_quota_failure"] =
+                serde_json::json!({"at": failed, "reason": "provider_error"});
+        }
+        facts.to_string()
+    }
+
+    /// Asserts a hold for a stale reading past the 30-minute bound, at least `oldest` seconds
+    /// old and at most a minute more, however slowly the test ran.
+    fn assert_past_bound(problem: &str, oldest: u64) {
+        let age = problem
+            .split_once("; the last good reading is ")
+            .and_then(|(_, rest)| rest.strip_suffix(" s old (a stale reading admits under 1800 s)"))
+            .and_then(|age| age.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("not a past-bound hold: {problem}"));
+        assert!(
+            problem.starts_with("quota unreadable on account "),
+            "{problem}"
         );
+        assert!((oldest..oldest + 60).contains(&age), "{problem}");
+    }
+
+    fn limited_claude(parser: &str, rule: &str) -> Backend {
+        backend(&format!(
+            "account = 'acct'\n[quota]\nparser = '{parser}'\n{rule}\
+             [limits.implement.min_remaining]\n'10080m' = 20\n"
+        ))
+    }
+
+    #[test]
+    fn stale_needs_a_newer_claude_failure() {
+        let now = 10_000_000;
+        let failure = |at: Option<u64>| quota::Failure {
+            reason: "provider_error".into(),
+            at_ms: at,
+        };
+        assert_eq!(
+            stale(
+                Parser::EonClaude,
+                Some(now - 60_000),
+                Some(&failure(Some(now))),
+                now
+            ),
+            Some(crate::decision::Stale {
+                age_ms: 60_000,
+                failure: "provider_error".into()
+            })
+        );
+        for (parser, observed, at) in [
+            // Codex keeps its hold.
+            (Parser::EonCodex, Some(now - 60_000), Some(now)),
+            // Not newer: at the reading's own time, or before it.
+            (Parser::EonClaude, Some(now - 60_000), Some(now - 60_000)),
+            (Parser::EonClaude, Some(now - 60_000), Some(now - 60_001)),
+            // A failure in the future, or without a time or a reading time.
+            (Parser::EonClaude, Some(now - 60_000), Some(now + 1)),
+            (Parser::EonClaude, Some(now - 60_000), None),
+            (Parser::EonClaude, None, Some(now)),
+            // A reading from the future cannot be older than a past failure.
+            (Parser::EonClaude, Some(now + 5), Some(now)),
+        ] {
+            assert_eq!(
+                stale(parser, observed, Some(&failure(at)), now),
+                None,
+                "{parser:?} {observed:?} {at:?}"
+            );
+        }
+        assert_eq!(
+            stale(Parser::EonClaude, Some(now - 60_000), None, now),
+            None
+        );
+    }
+
+    #[test]
+    fn freshness_admits_a_stale_reading_only_under_thirty_minutes() {
+        let now = 100_000_000;
+        let limited = limited_claude("eon_claude", "");
+        let judge = |age: u64, failed: Option<u64>| {
+            let observed = now - age;
+            let quota = quota::Quota {
+                observed_at_ms: Some(observed),
+                failure: failed.map(|offset| quota::Failure {
+                    reason: "provider_error".into(),
+                    at_ms: Some(observed.wrapping_add(offset)),
+                }),
+                ..quota::Quota::default()
+            };
+            let stale = stale(
+                Parser::EonClaude,
+                quota.observed_at_ms,
+                quota.failure.as_ref(),
+                now,
+            );
+            freshness(
+                &quota,
+                Parser::EonClaude,
+                stale.as_ref(),
+                &limited,
+                &empty(),
+                600,
+                now,
+            )
+        };
+        let newer = Some(1);
+        for age in [1, 600_001, 1_799_999] {
+            assert!(judge(age, newer).is_ok(), "{age}");
+        }
+        for age in [1_800_000, 1_800_001] {
+            match judge(age, newer) {
+                Err(Recheck::Reread(problem)) => assert_eq!(
+                    problem,
+                    format!(
+                        "quota unreadable on account acct: provider failure (provider_error); \
+                         the last good reading is {} s old (a stale reading admits under 1800 s)",
+                        age / 1000
+                    )
+                ),
+                _ => panic!("{age}: a stale reading at the bound must re-read"),
+            }
+        }
+        // Without a failure the configured bound stands.
+        assert!(judge(600_000, None).is_ok());
+        assert!(matches!(judge(600_001, None), Err(Recheck::Refresh(_))));
+        // A failure older than the reading is superseded: the configured bound stands too.
+        let older = Some(u64::MAX); // wraps to one millisecond before the reading
+        assert!(judge(600_000, older).is_ok());
+        assert!(matches!(judge(600_001, older), Err(Recheck::Refresh(_))));
+        // A failure at the reading's own time holds, as on a Codex backend.
+        let held = |result: Result<(), Recheck>| match result {
+            Err(Recheck::Hold(problem)) => problem,
+            _ => panic!("expected a hold"),
+        };
+        assert_eq!(
+            held(judge(60_000, Some(0))),
+            "quota unreadable on account acct: provider failure (provider_error)"
+        );
+        // Beside Codex facts every failure holds, newer or older than the reading.
+        let codex = limited_claude("eon_codex", "");
+        for failed in [now, now - 120_000] {
+            let quota = quota::Quota {
+                observed_at_ms: Some(now - 60_000),
+                failure: Some(quota::Failure {
+                    reason: "deadline".into(),
+                    at_ms: Some(failed),
+                }),
+                ..quota::Quota::default()
+            };
+            assert_eq!(
+                held(freshness(
+                    &quota,
+                    Parser::EonCodex,
+                    None,
+                    &codex,
+                    &empty(),
+                    600,
+                    now
+                )),
+                "quota unreadable on account acct: provider failure (deadline)"
+            );
+        }
+    }
+
+    #[test]
+    fn a_newer_claude_failure_beside_recent_facts_admits_them_as_stale() {
+        let at = now_ms() - 300_000;
+        let facts = claude_facts(at, 80.0, Some(at + 60_000));
         let host = |_: Instant| Ok(facts.clone());
         let dir = tempfile::tempdir().unwrap();
-        let state = dir.path().join("anchor");
-        let mut ledger = Ledger::load(&state);
+        let mut ledger = Ledger::load(&dir.path().join("anchor"));
         ledger.record("acct", at - 1).unwrap();
-        let limited = backend(
-            "account = 'acct'\n[quota]\nparser = 'eon_claude'\n\
-             [limits.implement.min_remaining]\n'10080m' = 3\n",
+        let limited = limited_claude("eon_claude", "");
+        for backend in [&limited, &backend("[quota]\nparser = 'eon_claude'\n")] {
+            let reading = read(backend, Path::new("."), QuotaMode::Admit, &ledger, &host);
+            assert_eq!((reading.problem, reading.quota_problem), (None, None));
+            assert_eq!(reading.remaining.unwrap()["10080m/0"], 80.0);
+            let stale = reading.source.unwrap().stale.unwrap();
+            assert_eq!(stale.failure, "provider_error");
+            assert!((300_000..400_000).contains(&stale.age_ms), "{stale:?}");
+            assert!(
+                reading
+                    .detail
+                    .starts_with("10080m/0_left=80% stale 5m (last read failed: provider_error)"),
+                "{}",
+                reading.detail
+            );
+        }
+        // The same facts beside a Codex failure still hold a limited backend.
+        let codex_facts = facts.replace("claude_quota", "codex_quota");
+        let reading = read(
+            &limited_claude("eon_codex", ""),
+            Path::new("."),
+            QuotaMode::Admit,
+            &ledger,
+            &|_| Ok(codex_facts.clone()),
         );
-        let reading = read(&limited, Path::new("."), QuotaMode::Admit, &ledger, &host);
         assert_eq!(
             reading.quota_problem.as_deref(),
-            Some("quota unreadable on account acct: provider failure (deadline)")
+            Some("quota unreadable on account acct: provider failure (provider_error)")
         );
-        assert_eq!(reading.problem, None);
-        // Backends without limits keep today's behaviour: the retained facts admit.
-        let unlimited = backend("[quota]\nparser = 'eon_claude'\n");
-        let reading = read(&unlimited, Path::new("."), QuotaMode::Admit, &ledger, &host);
+        assert_eq!(reading.source.unwrap().stale, None);
+    }
+
+    #[test]
+    fn a_stale_reading_still_enforces_limits() {
+        use crate::{config::Role, decision};
+        let at = now_ms() - 600_000;
+        for (rule, left, expected) in [
+            (
+                "",
+                19.0,
+                Some("quota limit on account acct: 10080m/0 left 19% (min_remaining >= 20%)"),
+            ),
+            ("", 20.0, None),
+            (
+                "[limits.implement]\nstrictly_above_min = true\n",
+                20.0,
+                Some("quota limit on account acct: 10080m/0 left 20% (min_remaining > 20%)"),
+            ),
+            (
+                "[limits.implement]\nstrictly_above_min = true\n",
+                20.5,
+                None,
+            ),
+        ] {
+            let facts = claude_facts(at, left, Some(at + 1));
+            let backend = limited_claude("eon_claude", rule);
+            let reading = read(
+                &backend,
+                Path::new("."),
+                QuotaMode::Admit,
+                &empty(),
+                &|_| Ok(facts.clone()),
+            );
+            assert_eq!(reading.quota_problem, None, "{rule}/{left}");
+            assert!(reading.source.as_ref().unwrap().stale.is_some());
+            assert!(reading.detail.contains(" stale 10m "), "{}", reading.detail);
+            assert_eq!(
+                decision::availability(&backend, &reading, Role::Implement)
+                    .err()
+                    .as_deref(),
+                expected,
+                "{rule}/{left}"
+            );
+        }
+    }
+
+    #[test]
+    fn past_the_bound_rereads_without_refreshing() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("refreshed");
+        let backend = limited_claude(
+            "eon_claude",
+            &format!("refresh = ['touch', '{}']\n", marker.display()),
+        );
+        let past = now_ms() - 1_860_000;
+        let stale = claude_facts(past, 80.0, Some(past + 1));
+        let calls = std::cell::Cell::new(0);
+        let reading = read(&backend, dir.path(), QuotaMode::Admit, &empty(), &|_| {
+            calls.set(calls.get() + 1);
+            Ok(stale.clone())
+        });
+        assert_eq!(calls.get(), 2);
+        assert!(
+            !marker.exists(),
+            "a stale reading past its bound never runs refresh"
+        );
+        assert_past_bound(reading.quota_problem.as_deref().unwrap(), 1860);
+        // Past an hour the host no longer calls the facts fresh, so they fail to parse; a newer
+        // failure beside them still re-reads in process and never refreshes.
+        let hour = now_ms() - 3_660_000;
+        let old = claude_facts(hour, 80.0, Some(hour + 1))
+            .replace("\"state\":\"fresh\"", "\"state\":\"stale\"");
+        assert!(old.contains("\"state\":\"stale\""), "{old}");
+        calls.set(0);
+        let reading = read(&backend, dir.path(), QuotaMode::Admit, &empty(), &|_| {
+            calls.set(calls.get() + 1);
+            Ok(old.clone())
+        });
+        assert_eq!(calls.get(), 2);
+        assert!(
+            !marker.exists(),
+            "an hour-old stale reading never runs refresh"
+        );
+        assert_eq!(
+            reading.quota_problem.as_deref(),
+            Some(
+                "quota unreadable on account acct: provider failure (provider_error); \
+                 quota snapshot is not fresh"
+            )
+        );
+        // Without a newer failure, an unreadable reading still refreshes as before.
+        let plain =
+            claude_facts(hour, 80.0, None).replace("\"state\":\"fresh\"", "\"state\":\"stale\"");
+        let _ = read(&backend, dir.path(), QuotaMode::Admit, &empty(), &|_| {
+            Ok(plain.clone())
+        });
+        assert!(
+            marker.exists(),
+            "other unreadable readings keep their refresh"
+        );
+        fs::remove_file(&marker).unwrap();
+        // The re-read of unreadable stale facts is the only one: when it returns facts past the
+        // bound, they hold with no third read and no refresh.
+        let hour_then_past = |call: u32| {
+            if call == 1 {
+                old.clone()
+            } else {
+                stale.clone()
+            }
+        };
+        calls.set(0);
+        let reading = read(&backend, dir.path(), QuotaMode::Admit, &empty(), &|_| {
+            calls.set(calls.get() + 1);
+            Ok(hour_then_past(calls.get()))
+        });
+        assert_eq!(calls.get(), 2, "one re-read, never a third read");
+        assert!(!marker.exists(), "a spent re-read never runs refresh");
+        assert_past_bound(reading.quota_problem.as_deref().unwrap(), 1860);
+        // A good read that landed meanwhile admits on the re-read.
+        let fresh = claude_facts(now_ms() - 1_000, 70.0, None);
+        calls.set(0);
+        let reading = read(&backend, dir.path(), QuotaMode::Admit, &empty(), &|_| {
+            calls.set(calls.get() + 1);
+            Ok(if calls.get() == 1 {
+                stale.clone()
+            } else {
+                fresh.clone()
+            })
+        });
         assert_eq!((reading.problem, reading.quota_problem), (None, None));
-        assert_eq!(reading.remaining.unwrap()["10080m/0"], 80.0);
+        assert_eq!(reading.remaining.unwrap()["10080m/0"], 70.0);
+        assert_eq!(reading.source.unwrap().stale, None);
+        assert!(!marker.exists());
+        // Status reads once and never re-reads.
+        calls.set(0);
+        let shown = read(&backend, dir.path(), QuotaMode::Read, &empty(), &|_| {
+            calls.set(calls.get() + 1);
+            Ok(stale.clone())
+        });
+        assert_eq!(calls.get(), 1);
+        assert!(shown.quota_problem.is_some());
+    }
+
+    #[test]
+    fn a_spent_reread_of_unreadable_stale_facts_holds_without_refresh() {
+        // Unreadable stale facts get one re-read. When it returns a recent observation that
+        // already admitted a launch, that holds: no third read and no refresh.
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("refreshed");
+        let backend = limited_claude(
+            "eon_claude",
+            &format!("refresh = ['touch', '{}']\n", marker.display()),
+        );
+        let hour = now_ms() - 3_660_000;
+        let old = claude_facts(hour, 80.0, Some(hour + 1))
+            .replace("\"state\":\"fresh\"", "\"state\":\"stale\"");
+        let calls = std::cell::Cell::new(0);
+        let spent_at = now_ms() - 60_000;
+        let spent = claude_facts(spent_at, 70.0, None);
+        let mut ledger = Ledger::load(&dir.path().join("anchor"));
+        ledger.record("acct", spent_at).unwrap();
+        let reading = read(&backend, dir.path(), QuotaMode::Admit, &ledger, &|_| {
+            calls.set(calls.get() + 1);
+            Ok(if calls.get() == 1 {
+                old.clone()
+            } else {
+                spent.clone()
+            })
+        });
+        assert_eq!(calls.get(), 2, "one re-read, never a third read");
+        assert!(!marker.exists(), "a spent re-read never runs refresh");
+        assert_eq!(
+            reading.quota_problem,
+            Some(format!(
+                "reading observed at {spent_at} already admitted a launch on account acct; \
+                 hold for a fresh reading"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_stale_reading_admits_one_launch_per_observation() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = now_ms() - 300_000;
+        let facts = claude_facts(at, 80.0, Some(at + 1));
+        let backend = limited_claude("eon_claude", "");
+        let mut ledger = Ledger::load(&dir.path().join("anchor"));
+        let calls = std::cell::Cell::new(0);
+        let host = |_: Instant| {
+            calls.set(calls.get() + 1);
+            Ok(facts.clone())
+        };
+        let first = read(&backend, dir.path(), QuotaMode::Admit, &ledger, &host);
+        assert_eq!(first.quota_problem, None);
+        // The launcher spends the admitted observation (`launch::record_admission`).
+        ledger.record("acct", at).unwrap();
+        calls.set(0);
+        let second = read(&backend, dir.path(), QuotaMode::Admit, &ledger, &host);
+        assert_eq!(calls.get(), 2, "a spent observation is read once more");
+        assert_eq!(
+            second.quota_problem,
+            Some(format!(
+                "reading observed at {at} already admitted a launch on account acct; \
+                 hold for a fresh reading"
+            ))
+        );
+        assert!(second.source.unwrap().stale.is_some());
     }
 
     #[test]
@@ -976,6 +1504,7 @@ mod tests {
                 account: "acct".into(),
                 observed_at_ms: Some(first),
                 via: None,
+                stale: None,
             })
         );
         assert!(!refreshed.exists());

@@ -430,7 +430,16 @@ most one hour old, with only unexpired valid windows. Read-only status/dry-run
 use retained facts only. No provider request merely to list defaults.
 
 A valid not-old reading enforces every configured limit even if a later read
-failed; the available failure is reported beside the retained facts. Claude's
+failed; the available failure is reported beside the retained facts. When
+Eon's newest Claude read failed after the last good Claude reading, a backend
+that sets limits may still admit on that reading while it is under 30
+minutes old when admission reads it: the reading is marked stale, with its
+age and the failure, in status and decision output; it never passes the
+configured limits; and it admits only one launch, as any reading does. At
+30 minutes or older it holds, after one in-process re-read and without a
+refresh. A failed Codex read still holds. After the first Claude
+`provider_error` since a successful read, the shared reader retries after
+five minutes plus up to one minute of jitter before backing off (EON-C27). Claude's
 shared provider_error does not itself prove usage exhaustion. Missing, old,
 blocked, unknown, malformed or failed data is unavailable, never 0% or unlimited
 capacity. Built-ins set allow_unknown_quota=true so unavailable data, including

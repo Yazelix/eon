@@ -290,6 +290,10 @@ pub struct Reader {
 /// Default maximum age for limited backends and CodexBar readers.
 pub const DEFAULT_MAX_AGE_SECONDS: u64 = 600;
 
+/// How long a stale Claude reading (a newer poll failed) still admits a limited backend, in
+/// place of `max_age_seconds`. Fixed: Lucca's approved rule of 2026-11-19 names it (EON-C40).
+pub const STALE_BOUND_SECONDS: u64 = 1800;
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Parser {

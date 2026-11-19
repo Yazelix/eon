@@ -587,7 +587,14 @@ fn google_supervisors_share_schedule_and_backoff() {
         });
     };
     fs::write(&mode, "error").unwrap();
-    for (failures, delay) in [(1, 3600), (2, 7200), (3, 14400), (4, 14400)] {
+    // The first provider error retries after one 600 ms interval plus up to a fifth; later ones
+    // back off to 6, 12 and 24 intervals. Each check allows 300 ms for a loaded machine.
+    for (failures, shortest, delay) in [
+        (1, 600, 720),
+        (2, 3600, 3600),
+        (3, 7200, 7200),
+        (4, 14400, 14400),
+    ] {
         if failures > 1 {
             force_due();
         }
@@ -596,7 +603,7 @@ fn google_supervisors_share_schedule_and_backoff() {
         let scheduled = schedule();
         assert_eq!(scheduled.failure.unwrap().reason, Failure::ProviderError);
         assert!(
-            (delay - 300..=delay).contains(&scheduled.next_at.saturating_sub(now)),
+            (shortest - 300..=delay).contains(&scheduled.next_at.saturating_sub(now)),
             "failure {failures}: delay {}",
             scheduled.next_at.saturating_sub(now)
         );
@@ -641,10 +648,13 @@ fn google_schedule_fallback_preserves_local_spacing() {
     );
     let mut quotas = start_google(&program, Duration::from_millis(1), Some(blocked));
     wait(|| snapshot(&quotas).google_quota_failure.is_some());
+    assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 1);
+    // Shown again, the in-memory spacing stands: one retry after one 300 ms interval plus
+    // jitter, then six intervals before the next.
     quotas.show(&[]);
     quotas.show(&widgets());
-    thread::sleep(Duration::from_millis(400));
-    assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 1);
+    thread::sleep(Duration::from_millis(1000));
+    assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 2);
     drop(quotas);
     let program = good(&root);
     for (index, invalid) in [

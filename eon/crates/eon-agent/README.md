@@ -63,7 +63,15 @@ observation spent by one holds the other. A reading without `observed_at`
 (`quota reading on account ACCOUNT has no observed_at`), one observed in the
 future, a provider failure reported beside retained facts
 (`quota unreadable on account ACCOUNT: provider failure (REASON)`), and an
-unreadable ledger all hold a limited backend. Dry-run and status show these
+unreadable ledger all hold a limited backend, with two exceptions beside
+`eon_claude` facts. A failure older than the reading is superseded by it. A
+newer failure leaves them stale: they still admit, under the backend's limits and once
+per observation, while under 30 minutes old when admission reads them,
+whatever `max_age_seconds` says. Output marks them
+`stale 18m (last read failed: REASON)`, and JSON readings carry
+`source.stale` (`{"age_ms", "failure"}`). At 30 minutes or older a real launch
+reads the facts once more, without `refresh`, and holds with
+`...; the last good reading is N s old (a stale reading admits under 1800 s)`. Dry-run and status show these
 holds but never write the ledger or refresh. If `admissions.json` is ever
 corrupt, delete it: each account's last observation may then admit once more.
 Backends without limits consume no observations. CodexBar readers still check

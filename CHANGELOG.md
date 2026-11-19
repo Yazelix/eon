@@ -13,6 +13,12 @@ installation, and proven contract changes.
   pane instead of being stopped. Under Codex, a failed read of the desktop
   session's locale is named once in the diagnostic log, with the locale
   terminals get instead (`eon-0nn1p.4`).
+- One failed Claude usage read no longer holds every `eon agent` launch. A
+  reading under 30 minutes old still admits, marked stale with its age, within
+  the configured limits and one launch per reading. After a single
+  provider error, Eon reads Claude (and opt-in Google) usage again after about five minutes
+  instead of 30 (`eon-ots4r`).
+
 - On Linux, agents in unattended panes and popups can send one desktop
   notification when they fail, need input or finish. Error and needs-input
   notices request the desktop sound. Finished notices are silent. COSMIC
