@@ -1182,6 +1182,7 @@
               EON_ANIMA = "${animaPackage}/bin/anima";
               # `eon update --check` asks GitHub through this curl, never PATH's.
               EON_CURL = "${pkgs.curlMinimal}/bin/curl";
+              EON_INFOCMP = "${pkgs.ncurses}/bin/infocmp";
               EON_NU = "${nushellPackage}/bin/nu";
               EON_BASH = "${bashPackage}/bin/bash";
               EON_YAZI = "${yaziPackage}/bin/yazi";

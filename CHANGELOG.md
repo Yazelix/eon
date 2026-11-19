@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon doctor` checks the local Eon setup offline and gives a fix for each
+  warning or failure. `--json` gives agents the same checks, and `eon report`
+  includes their redacted results (`eon-6zoxr`).
+
 - A pick or dismissal that cannot clear its pending Files pair's marker is
   refused and changes nothing, so a later supervisor recovery no longer stops
   a committed tab's Files. EON-C18 now says that a pending pair whose

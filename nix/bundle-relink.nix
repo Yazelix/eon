@@ -56,6 +56,16 @@ let
       target = "${dirOf wrapper.program}/.${baseNameOf wrapper.program}-wrapped";
     }
   ) wrappers;
+  eonWrapper = lib.findFirst (wrapper: wrapper.program == "${eonPackage}/bin/eon")
+    (throw "bundle relink requires Eon's wrapper") bundleWrappers;
+  probeDirectory = "${eonPackage}/share/eon/doctor-probes";
+  probeTargets = {
+    hx = eonWrapper.environment.set.EON_HX;
+    infocmp = eonWrapper.environment.set.EON_INFOCMP;
+  };
+  relativeLink = link: target: ''
+    ln -s "$(realpath -s -m --relative-to="$out${dirOf link}" "$out${target}")" "$out${link}"
+  '';
   paths =
     environment:
     lib.attrValues (environment.set or { } // environment.setDefault or { })
@@ -141,9 +151,14 @@ let
     # The static bootstrap ships unchanged; only its launcher-supplied locator relocates.
     cp -a ${installer} "$out${installer}"
     ${lib.concatMapStrings ({ link, target }: ''
-      ln -s "$(realpath -s -m --relative-to="$out${dirOf link}" "$out${target}")" "$out${link}"
+      ${relativeLink link target}
       test -d "$out${link}/"
     '') fallbacks}
+    mkdir "$out${probeDirectory}"
+    ${lib.concatStrings (lib.mapAttrsToList (name: target: ''
+      ${relativeLink "${probeDirectory}/${name}" target}
+      test -x "$out${probeDirectory}/${name}"
+    '') probeTargets)}
 
     if [[ "$(readelf -l ${launcher}/bin/eon-launcher)" == *INTERP* ]]; then
       echo "the launcher must be static" >&2
@@ -202,7 +217,7 @@ in
   excluded = map toString excluded;
   substituted = map (lib.mapAttrs (_: toString)) substitutes;
   launch = pkgs.runCommand "eon-bundle-launch" {
-    nativeBuildInputs = [ pkgs.bubblewrap pkgs.makeWrapper ];
+    nativeBuildInputs = [ pkgs.bubblewrap pkgs.makeWrapper pkgs.jq ];
   } ''
     mkdir home
     # Runs COMMAND with the tree at ROOT into the file actual, and fails on any store path
@@ -229,6 +244,9 @@ in
         run "$root" "$root${eonPackage}/bin/eon" $arguments
         ${eonPackage}/bin/eon $arguments | cmp - actual
       done
+      run "$root" "$root${eonPackage}/bin/eon" doctor --json
+      jq -e '.checks | any(.id == "terminal" and .status == "PASS")
+        and any(.id == "editor" and .status == "PASS")' actual >/dev/null
       for command in nu bash eon-nu eon-bash; do
         run "$root" "$command" --version
         reference "$command" --version

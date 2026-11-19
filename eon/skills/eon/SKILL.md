@@ -291,6 +291,12 @@ or services. Allow additional JSON fields.
 
 ## Handle exit status
 
+For setup failures, run `eon doctor --json` in the affected terminal. Read
+`checks` by `id` and use each WARN or FAIL result's `fix` for the next
+action. PASS has a null fix. Accept additional fields, IDs and status values.
+Doctor reads the local setup without applying repairs or contacting the network.
+`eon report` includes the checks in its redacted support output.
+
 | Status | Meaning |
 |---:|---|
 | 0 | Success, including a Stop or close confirmation declined at a terminal |

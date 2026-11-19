@@ -1180,6 +1180,725 @@ fn version_prints_one_line_without_preparing_anything() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn doctor_result(output: &Output, id: &str) -> serde_json::Value {
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {output:?}"));
+    value["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == id)
+        .unwrap_or_else(|| panic!("Missing {id}: {value}"))
+        .clone()
+}
+
+#[test]
+fn doctor_reports_offline_findings_without_leaking_or_changing_inputs() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    let home = root.join("doctor-home-marker");
+    let xdg = root.join("xdg");
+    let bin = root.join("bin");
+    for directory in [&config, &home, &xdg, &bin] {
+        fs::create_dir(directory).unwrap();
+    }
+    let runtime = root.join("r");
+    let socket = xdg.join("doctor-socket-marker");
+    let _display = UnixListener::bind(&socket).unwrap();
+    let editor = bin.join("doctor-editor-marker");
+    let marker = root.join("forbidden-call");
+    let forbidden = format!("#!/bin/sh\n: > '{}'\nexit 1\n", marker.display());
+    for executable_path in [
+        &editor,
+        &bin.join("nix"),
+        &bin.join("curl"),
+        &bin.join("eon-install"),
+    ] {
+        executable(executable_path, &forbidden);
+    }
+    executable(
+        &bin.join("infocmp"),
+        format!(
+            "#!/bin/sh\n[ \"$#\" = 2 ] && [ \"$1\" = -x ] && [ \"$2\" = eon ] || exit 3\n\
+             if [ \"${{RECORD_PROBE-}}\" = yes ]; then : > '{}'; fi\n\
+             printf '%s\\n' 'doctor-subprocess-marker' >&2\n\
+             exit 0\n",
+            marker.display()
+        ),
+    );
+    let command = |arguments: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_eon"));
+        command
+            .args(arguments)
+            .env_clear()
+            .env("PATH", &bin)
+            .env("HOME", &home)
+            .env("XDG_CACHE_HOME", root.join("xdg-cache"))
+            .env("XDG_CONFIG_HOME", root.join("xdg-config"))
+            .env("XDG_DATA_HOME", root.join("xdg-data"))
+            .env("XDG_STATE_HOME", root.join("xdg-state"))
+            .env("XDG_RUNTIME_DIR", &xdg)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("VISUAL", &editor)
+            .env("WAYLAND_DISPLAY", "doctor-socket-marker")
+            .env("XDG_CURRENT_DESKTOP", "Sway:Wayland")
+            .stdin(Stdio::null());
+        command
+    };
+    let before = tree_state(&root);
+    let healthy = command(&["doctor", "--json"])
+        .env("RECORD_PROBE", "yes")
+        .output()
+        .unwrap();
+    assert_eq!(healthy.status.code(), Some(0), "{healthy:?}");
+    assert!(healthy.stderr.is_empty(), "{healthy:?}");
+    let value: serde_json::Value = serde_json::from_slice(&healthy.stdout).unwrap();
+    let mut ids: Vec<_> = value["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|check| {
+            assert!(check["message"].is_string(), "{check}");
+            match check["status"].as_str() {
+                Some("PASS") => assert!(check["fix"].is_null(), "{check}"),
+                Some("WARN") => assert!(check["fix"].is_string(), "{check}"),
+                _ => panic!("unexpected check {check}"),
+            }
+            check["id"].as_str().unwrap()
+        })
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        [
+            "config", "display", "editor", "gpu", "install", "terminal", "update"
+        ]
+    );
+    for id in ["config", "editor"] {
+        assert_eq!(doctor_result(&healthy, id)["status"], "PASS", "{id}");
+    }
+    assert_eq!(doctor_result(&healthy, "gpu")["status"], "WARN");
+    assert_eq!(doctor_result(&healthy, "terminal")["status"], "WARN");
+    assert_eq!(doctor_result(&healthy, "install")["status"], "WARN");
+    assert_eq!(doctor_result(&healthy, "update")["status"], "WARN");
+    let expected_display = if cfg!(target_os = "macos") {
+        "WARN"
+    } else {
+        "PASS"
+    };
+    assert_eq!(
+        doctor_result(&healthy, "display")["status"],
+        expected_display
+    );
+    assert!(!stdout(&healthy).contains("doctor-subprocess-marker"));
+    let report = command(&["report"])
+        .env("RECORD_PROBE", "yes")
+        .output()
+        .unwrap();
+    assert_eq!(report.status.code(), Some(0), "{report:?}");
+    assert!(!marker.exists(), "executed an infocmp from caller PATH");
+    assert_eq!(tree_state(&root), before);
+
+    let warned = command(&["doctor", "--json"])
+        .env("VISUAL", " \t")
+        .env("EDITOR", &editor)
+        .env("PATH", root.join("missing-bin"))
+        .env_remove("XDG_CURRENT_DESKTOP")
+        .output()
+        .unwrap();
+    assert_eq!(warned.status.code(), Some(0), "{warned:?}");
+    assert_eq!(doctor_result(&warned, "terminal")["status"], "WARN");
+    assert_eq!(doctor_result(&warned, "display")["status"], "WARN");
+    assert_eq!(doctor_result(&warned, "editor")["status"], "PASS");
+
+    for args in [vec!["doctor"], vec!["doctor", "--json"]] {
+        for desktop in ["/private/project-name-marker", "Sway\nforged\x1b"] {
+            let output = command(&args)
+                .env("XDG_CURRENT_DESKTOP", desktop)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            let text = stdout(&output);
+            assert!(
+                !text.contains("project-name-marker") && !text.contains("forged"),
+                "{text}"
+            );
+            if args.contains(&"--json") {
+                assert_eq!(doctor_result(&output, "display")["status"], "WARN");
+            } else {
+                assert!(text.contains("WARN display"), "{text}");
+            }
+        }
+    }
+
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nfuture_border_width = 3\n",
+    )
+    .unwrap();
+    let unknown_config = command(&["doctor", "--json"]).output().unwrap();
+    assert_eq!(unknown_config.status.code(), Some(0));
+    assert_eq!(doctor_result(&unknown_config, "config")["status"], "WARN");
+
+    fs::write(
+        config.join("config.toml"),
+        "broken = \"doctor-config-marker\"\n[\n",
+    )
+    .unwrap();
+    let bad_inputs = tree_state(&root);
+    let failed = |args: &[&str]| {
+        let mut child = command(args);
+        child.env("WAYLAND_DISPLAY", "missing-socket");
+        child
+    };
+    let json = failed(&["doctor", "--json"]).output().unwrap();
+    let human = failed(&["doctor"]).output().unwrap();
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    assert_eq!(human.status.code(), json.status.code(), "{human:?}");
+    assert_eq!(doctor_result(&json, "config")["status"], "FAIL");
+    for id in ["editor", "update"] {
+        let check = doctor_result(&json, id);
+        assert_eq!(check["status"], "WARN");
+        assert!(check["fix"].is_string());
+    }
+    if cfg!(target_os = "linux") {
+        assert_eq!(doctor_result(&json, "display")["status"], "FAIL");
+    }
+    for result in [&healthy, &json, &human] {
+        assert!(result.stderr.is_empty(), "{result:?}");
+        assert!(!stdout(result).contains('\u{1b}'), "{result:?}");
+        assert!(
+            !stdout(result)
+                .lines()
+                .any(|line| line.starts_with("forged")),
+            "{result:?}"
+        );
+        for value in [
+            "doctor-home-marker",
+            "doctor-socket-marker",
+            "doctor-editor-marker",
+            "doctor-config-marker",
+            "doctor-subprocess-marker",
+        ] {
+            assert!(!stdout(result).contains(value), "{value}: {result:?}");
+        }
+    }
+    assert_eq!(stdout(&human).matches("  Fix  ").count(), 7);
+    assert_eq!(tree_state(&root), bad_inputs);
+
+    for (arguments, code) in [
+        (vec!["doctor", "--help"], 0),
+        (vec!["doctor", "--json", "--json"], 2),
+        (vec!["doctor", "--online"], 2),
+    ] {
+        let output = command(&arguments)
+            .env("RECORD_PROBE", "yes")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(code), "{output:?}");
+        if code == 2 {
+            assert!(output.stdout.is_empty(), "{output:?}");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("eon --help"));
+        }
+    }
+
+    for (arguments, expected) in [
+        (vec!["doctor"], 1),
+        (vec!["doctor", "--json"], 1),
+        (vec!["report"], 0),
+    ] {
+        let (read, write) = std::io::pipe().unwrap();
+        drop(read);
+        let output = failed(&arguments)
+            .stdout(Stdio::from(write))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(expected), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
+    fs::write(config.join("config.toml"), "").unwrap();
+    let (read, write) = std::io::pipe().unwrap();
+    drop(read);
+    let output = command(&["doctor", "--json"])
+        .stdout(Stdio::from(write))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    #[cfg(target_os = "linux")]
+    for arguments in [vec!["doctor", "--json"], vec!["report"]] {
+        let full = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let output = command(&arguments)
+            .stdout(Stdio::from(full))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("cannot write stdout"));
+    }
+    assert!(!marker.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn doctor_checks_the_packaged_helix_and_the_effective_editor_read_only() {
+    for relocated in [false, true] {
+        check_doctor_probes(relocated);
+    }
+}
+
+fn check_doctor_probes(relocated: bool) {
+    let root = temporary_directory().canonicalize().unwrap();
+    let roots = root.join("environment");
+    let home = roots.join("home");
+    let xdg_cache = roots.join("cache");
+    let config = roots.join("config");
+    let package = if relocated {
+        root.join("another/prefix/package")
+    } else {
+        root.join("package")
+    };
+    let bin = package.join("bin");
+    let share = package.join("share/eon");
+    for directory in [&home, &config, &bin, &share, &xdg_cache] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    let wrapped = bin.join(".eon-wrapped");
+    let launcher = bin.join("eon");
+    // A child copies the executable so concurrent fixture subprocesses cannot inherit its writer.
+    assert!(
+        Command::new("cp")
+            .args([Path::new(env!("CARGO_BIN_EXE_eon")), &wrapped])
+            .status()
+            .unwrap()
+            .success()
+    );
+    executable(&launcher, "#!/bin/sh\nexit 3\n");
+    let helix = bin.join("hx");
+    executable(
+        &helix,
+        r#"#!/bin/sh
+if [ "$#" != 5 ] || [ "$1 $2 $3 $4 $5" != '--config /dev/null --log /dev/null --version' ]; then
+  printf bad > "$XDG_CACHE_HOME/version-wrote-state"
+  exit 3
+fi
+printf 'doctor-helix-output-marker\n'
+exit "${HX_FIXTURE_STATUS-0}"
+"#,
+    );
+    let infocmp = bin.join("infocmp");
+    executable(
+        &infocmp,
+        r#"#!/bin/sh
+if [ "$#" != 2 ] || [ "$1 $2" != '-x eon' ] || [ "$TERMINFO_DIRS" != "$EXPECTED_TERMINFO" ]; then
+  exit 3
+fi
+exit "${TERMINFO_FIXTURE_STATUS-0}"
+"#,
+    );
+    let external = bin.join("external-editor");
+    executable(
+        &external,
+        "#!/bin/sh\n: > \"$XDG_CACHE_HOME/external-ran\"\nexit 1\n",
+    );
+    let facts = share.join("launch-environment");
+    if relocated {
+        let probes = share.join("doctor-probes");
+        fs::create_dir(&probes).unwrap();
+        symlink("../../../bin/hx", probes.join("hx")).unwrap();
+        symlink("../../../bin/infocmp", probes.join("infocmp")).unwrap();
+    } else {
+        let fields: &[&[u8]] = &[
+            b"EON-LAUNCH-1",
+            launcher.as_os_str().as_bytes(),
+            wrapped.as_os_str().as_bytes(),
+            b"set",
+            b"EON_HX",
+            helix.as_os_str().as_bytes(),
+            b"set",
+            b"EON_INFOCMP",
+            infocmp.as_os_str().as_bytes(),
+            b"prefix",
+            b"TERMINFO_DIRS",
+            b"package-terminfo",
+        ];
+        let mut content = fields.join(&0u8);
+        content.push(0);
+        fs::write(&facts, content).unwrap();
+    }
+    let run = |status: &str, terminfo: &str, inside: bool| {
+        let mut command = Command::new(&wrapped);
+        command
+            .arg0(&launcher)
+            .args(["doctor", "--json"])
+            .current_dir(&roots)
+            .env_clear()
+            .env("PATH", &bin)
+            .env("HOME", &home)
+            .env("EON_RUNTIME_DIR", roots.join("r"))
+            .env("EON_CONFIG_HOME", &config)
+            .env("XDG_STATE_HOME", roots.join("state"))
+            .env("XDG_CONFIG_HOME", roots.join("xdg-config"))
+            .env("XDG_DATA_HOME", roots.join("xdg-data"))
+            .env("XDG_CACHE_HOME", &xdg_cache)
+            .env("EON_HX", &helix)
+            .env("EON_INFOCMP", &infocmp)
+            .env("TERMINFO_DIRS", "package-terminfo:caller-terminfo")
+            .env("TERMINFO_FIXTURE_STATUS", terminfo)
+            .env("HX_FIXTURE_STATUS", status)
+            .env("TERM", "eon")
+            .stdin(Stdio::null());
+        if !relocated {
+            command
+                .env("EON_LAUNCH_FACTS", &facts)
+                .env("EON_LAUNCH_SAVED_EON_HX", "-")
+                .env("EON_LAUNCH_SAVED_EON_INFOCMP", "-")
+                .env("EON_LAUNCH_SAVED_TERMINFO_DIRS", "+caller-terminfo");
+        }
+        if inside {
+            command.env("EON_TERMINAL", "terminal-1.run-1");
+        }
+        command.env(
+            "EXPECTED_TERMINFO",
+            if inside && !relocated {
+                "caller-terminfo"
+            } else {
+                "package-terminfo:caller-terminfo"
+            },
+        );
+        command.output().unwrap()
+    };
+    let verify = |status, inside, editor_status| {
+        let before = tree_state(&roots);
+        let output = run(status, "0", inside);
+        assert_eq!(
+            doctor_result(&output, "editor")["status"],
+            editor_status,
+            "{output:?}"
+        );
+        assert_eq!(
+            doctor_result(&output, "terminal")["status"],
+            "PASS",
+            "{output:?}"
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(i32::from(editor_status == "FAIL")),
+            "{output:?}"
+        );
+        assert!(!stdout(&output).contains("doctor-helix-output-marker"));
+        assert!(output.stderr.is_empty(), "{output:?}");
+        assert_eq!(tree_state(&roots), before);
+    };
+    verify("0", false, "PASS");
+    verify("0", true, "PASS");
+    let missing_terminfo = run("0", "1", false);
+    assert_eq!(
+        missing_terminfo.status.code(),
+        Some(1),
+        "{missing_terminfo:?}"
+    );
+    assert_eq!(
+        doctor_result(&missing_terminfo, "terminal")["status"],
+        "FAIL"
+    );
+    fs::write(
+        config.join("config.toml"),
+        "[editor]\ncommand = [\"missing-editor\"]\n",
+    )
+    .unwrap();
+    verify("0", false, "FAIL");
+    fs::write(
+        config.join("config.toml"),
+        "[editor]\ncommand = [\"external-editor\"]\n",
+    )
+    .unwrap();
+    verify("0", false, "PASS");
+    verify("1", false, "FAIL");
+    if relocated {
+        let link = share.join("doctor-probes/hx");
+        fs::remove_file(&link).unwrap();
+        symlink(&helix, &link).unwrap();
+        verify("0", false, "WARN");
+        fs::remove_file(&link).unwrap();
+        symlink("../../../bin/hx", &link).unwrap();
+        executable(&helix, "#!/nonexistent/helix-loader\n");
+        verify("0", false, "FAIL");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn doctor_verifies_the_calling_build_and_keeps_update_target_separate() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    let config_file = config.join("config.toml");
+    let home = root.join("home");
+    let bin = root.join("bin");
+    let session_bin = root.join("package/libexec/eon/bin");
+    let package = root.join("package");
+    let profile = home.join(".nix-profile");
+    let profile_generation = root.join("profile-generation");
+    for directory in [
+        &config,
+        &bin,
+        &session_bin,
+        &package.join("bin"),
+        &package.join("share"),
+        &profile_generation.join("bin"),
+        &home,
+    ] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    let built = Path::new(env!("CARGO_BIN_EXE_eon"));
+    symlink(built, package.join("bin/eon")).unwrap();
+    symlink(package.join("bin/eon"), session_bin.join("eon")).unwrap();
+    symlink(package.join("bin/eon"), profile_generation.join("bin/eon")).unwrap();
+    symlink(&profile_generation, home.join("profile-1-link")).unwrap();
+    symlink("profile-1-link", &profile).unwrap();
+    executable(&bin.join("editor"), "#!/bin/sh\nexit 1\n");
+    executable(&bin.join("infocmp"), "#!/bin/sh\nexit 0\n");
+    let path =
+        std::env::join_paths([session_bin.clone(), profile.join("bin"), bin.clone()]).unwrap();
+    let command = |program: &Path, arguments: &[&str]| {
+        let mut child = Command::new(program);
+        child
+            .args(arguments)
+            .env_clear()
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("HOME", &home)
+            .env("PATH", &path)
+            .env("VISUAL", bin.join("editor"))
+            .env("TERM", "eon")
+            .env("EON_SESSION_BIN", &session_bin)
+            .stdin(Stdio::null());
+        child
+    };
+    let internal = session_bin.join("eon");
+    let profile_eon = profile.join("bin/eon");
+    let versions = command(&internal, &["versions"]).output().unwrap();
+    assert!(versions.status.success(), "{versions:?}");
+    let current = stdout(&versions).split_whitespace().nth(2).unwrap();
+    let other = "g1-11111111111111111111111111111111";
+    assert_ne!(current, other);
+    let platform = eon_manifest::target().unwrap();
+    let attribute = format!("packages.{platform}.default");
+    let revision = "2222222222222222222222222222222222222222";
+    let mut manifest = serde_json::json!({
+        "version": 3,
+        "elements": {"eon": {
+            "active": true,
+            "originalUrl": "github:Yazelix/eon/edge",
+            "url": format!("github:Yazelix/eon/{revision}"),
+            "attrPath": attribute,
+            "storePaths": [package],
+        }}
+    });
+    let manifest_path = profile_generation.join("manifest.json");
+    fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let receipt_path = package.join("share/eon-source-receipt.json");
+    let receipt = serde_json::json!({
+        "schema_version": 1, "repository": "https://github.com/Yazelix/eon",
+        "revision": revision, "build": current, "platform": platform, "attribute": attribute,
+    });
+    fs::write(&receipt_path, receipt.to_string()).unwrap();
+
+    let state = home.join(".local/state/eon");
+    let supervisor_logs = state.join("logs");
+    let logs = supervisor_logs.join("orbit");
+    fs::create_dir_all(&logs).unwrap();
+    let supervisor_log = supervisor_logs.join(format!("{other}-1000-1.log"));
+    let orbit_log = logs.join(format!("{other}-terminal-1-ended-run.log"));
+    fs::write(&supervisor_log, "supervisor log fixture").unwrap();
+    fs::write(&orbit_log, "retained Orbit log fixture").unwrap();
+
+    let listener = generation_listener(&runtime, other);
+    listener.set_nonblocking(true).unwrap();
+    #[cfg(target_os = "linux")]
+    let (watch, identity) = {
+        use rustix::fs::inotify::{self, CreateFlags, WatchFlags};
+        let generation = runtime.join("generations").join(other);
+        let identity = generation.join("identity");
+        fs::write(&identity, "record that outside doctor must leave unopened").unwrap();
+        let fd = inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK).unwrap();
+        for path in [
+            &runtime,
+            &runtime.join("generations"),
+            &generation,
+            &identity,
+            &state,
+            &supervisor_logs,
+            &logs,
+            &supervisor_log,
+            &orbit_log,
+        ] {
+            inotify::add_watch(&fd, path, WatchFlags::OPEN | WatchFlags::ACCESS).unwrap();
+        }
+        (fd, identity)
+    };
+    let output = command(&profile_eon, &["doctor", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(doctor_result(&output, "install")["status"], "PASS");
+    assert_eq!(doctor_result(&output, "update")["status"], "PASS");
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::fs::inotify::Reader;
+        let mut buffer = [std::mem::MaybeUninit::uninit(); 512];
+        let mut events = Reader::new(&watch, &mut buffer);
+        assert!(
+            matches!(events.next(), Err(rustix::io::Errno::AGAIN)),
+            "outside doctor opened runtime state"
+        );
+        fs::read(&supervisor_log).unwrap();
+        assert!(events.next().is_ok(), "log watch missed a read");
+        fs::remove_file(identity).unwrap();
+    }
+
+    listener.set_nonblocking(false).unwrap();
+    let active = Arc::new(Mutex::new(other.to_owned()));
+    let observed_active = Arc::clone(&active);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let request = decode_request(&read_request(&mut stream)).unwrap();
+            assert!(request.caller.is_none(), "{request:?}");
+            assert!(
+                matches!(
+                    request.action,
+                    ProtocolAction::Workspace(Action::InspectRuntime | Action::InspectPresentation)
+                ),
+                "{request:?}"
+            );
+            let mut window = previous_runtime(other);
+            window.eon_version = env!("CARGO_PKG_VERSION").into();
+            window.active_build = observed_active.lock().unwrap().clone();
+            window.terminal_inventory[0].run = "run-1".into();
+            let reply = encode_lifecycle_response(&LifecycleResponse::Runtime(window)).unwrap();
+            stream.write_all(&reply).unwrap();
+        }
+    });
+    let report = command(&profile_eon, &["report"]).output().unwrap();
+    assert_eq!(report.status.code(), Some(0), "{report:?}");
+    assert!(
+        stdout(&report).contains(&format!("\"generation\":\"{other}\"")),
+        "{report:?}"
+    );
+    assert!(stdout(&report).contains("PASS install"), "{report:?}");
+    let caller = |program: &Path| {
+        let mut child = command(program, &["doctor", "--json"]);
+        child.env("EON_TERMINAL", "terminal-1.run-1");
+        child
+    };
+    let unanchored = caller(&profile_eon).output().unwrap();
+    assert_eq!(doctor_result(&unanchored, "install")["status"], "WARN");
+
+    let stale = caller(&profile_eon)
+        .env("EON_TERMINAL", "terminal-1.ended-run")
+        .output()
+        .unwrap();
+    assert_eq!(doctor_result(&stale, "install")["status"], "WARN");
+
+    fs::write(logs.join(format!("{other}-terminal-1-run-1.log")), "").unwrap();
+    let mismatch = caller(&internal).output().unwrap();
+    assert_eq!(mismatch.status.code(), Some(1), "{mismatch:?}");
+    assert_eq!(doctor_result(&mismatch, "install")["status"], "FAIL");
+
+    // The generation and its created build stay the same. Only the active build changes.
+    *active.lock().unwrap() = current.into();
+    let matched = caller(&internal).output().unwrap();
+    assert_eq!(matched.status.code(), Some(0), "{matched:?}");
+    assert_eq!(doctor_result(&matched, "install")["status"], "PASS");
+    assert_eq!(doctor_result(&matched, "update")["status"], "PASS");
+
+    let refused = caller(&internal)
+        .env("EON_UPDATE_HANDOFF", "")
+        .output()
+        .unwrap();
+    assert_eq!(doctor_result(&refused, "update")["status"], "WARN");
+    let missing = caller(&internal)
+        .env("PATH", &session_bin)
+        .output()
+        .unwrap();
+    assert_eq!(doctor_result(&missing, "update")["status"], "WARN");
+
+    let external = root.join("external");
+    fs::create_dir(&external).unwrap();
+    let marker = root.join("external-ran");
+    executable(
+        &external.join("eon"),
+        format!("#!/bin/sh\n: > '{}'\nexit 1\n", marker.display()),
+    );
+    let path_to_other =
+        std::env::join_paths([&session_bin, &external, &profile.join("bin"), &bin]).unwrap();
+    let different_external = caller(&internal)
+        .env("PATH", path_to_other)
+        .output()
+        .unwrap();
+    assert_eq!(
+        doctor_result(&different_external, "install")["status"],
+        "WARN"
+    );
+    assert_eq!(
+        doctor_result(&different_external, "update")["status"],
+        "PASS"
+    );
+    assert!(!marker.exists());
+
+    fs::write(
+        &config_file,
+        format!(
+            "[updates]\nnix_profile = {:?}\nnix_entry = 'absent'\n",
+            profile.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let wrong_target = caller(&internal).output().unwrap();
+    assert_eq!(doctor_result(&wrong_target, "install")["status"], "PASS");
+    assert_eq!(doctor_result(&wrong_target, "update")["status"], "FAIL");
+
+    // A readable configured target cannot turn a bare CLI into its owner.
+    fs::write(
+        &config_file,
+        format!(
+            "[updates]\nnix_profile = {:?}\nnix_entry = 'eon'\n",
+            profile.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let mut variant_conflict = receipt.clone();
+    variant_conflict["attribute"] = serde_json::json!(format!("packages.{platform}.no-helix"));
+    fs::write(&receipt_path, variant_conflict.to_string()).unwrap();
+    let conflict = command(built, &["doctor", "--json"]).output().unwrap();
+    assert_eq!(conflict.status.code(), Some(1), "{conflict:?}");
+    assert_eq!(doctor_result(&conflict, "install")["status"], "WARN");
+    assert_eq!(doctor_result(&conflict, "update")["status"], "FAIL");
+    fs::write(&receipt_path, receipt.to_string()).unwrap();
+
+    manifest["elements"]["eon"]["originalUrl"] = serde_json::json!("github:Yazelix/eon/v0.1.28");
+    fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let pinned = command(built, &["doctor", "--json"]).output().unwrap();
+    assert_eq!(doctor_result(&pinned, "install")["status"], "WARN");
+    assert_eq!(doctor_result(&pinned, "update")["status"], "PASS");
+
+    fs::write(&receipt_path, "{}").unwrap();
+    let bad_receipt = caller(&internal).output().unwrap();
+    assert_eq!(bad_receipt.status.code(), Some(1), "{bad_receipt:?}");
+    assert_eq!(doctor_result(&bad_receipt, "install")["status"], "FAIL");
+    assert_eq!(doctor_result(&bad_receipt, "update")["status"], "FAIL");
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn report_prints_a_redacted_bug_report_without_preparing_anything() {
     let root = temporary_directory();
@@ -1193,22 +1912,29 @@ fn report_prints_a_redacted_bug_report_without_preparing_anything() {
     .unwrap();
     let runtime = root.join("runtime");
     let state = home.join(".local/state");
-    // Install inspection is local: a Nix it asks records the call, warns on stderr with the
-    // home and a secret, and lists one profile entry that installs this eon.
+    // The profile's own manifest lists the entry. A fake nix detects accidental execution.
     let package = root.join("package");
     fs::create_dir_all(package.join("bin")).unwrap();
     symlink(env!("CARGO_BIN_EXE_eon"), package.join("bin/eon")).unwrap();
+    fs::write(
+        package.join("manifest.json"),
+        serde_json::json!({
+            "version": 3,
+            "elements": {"eon": {
+                "originalUrl": "github:Yazelix/eon",
+                "storePaths": [package],
+            }},
+        })
+        .to_string(),
+    )
+    .unwrap();
     let stubs = root.join("stubs");
     fs::create_dir(&stubs).unwrap();
     executable(
         &stubs.join("nix"),
         format!(
-            "#!/bin/sh\necho \"nix $*\" >> '{}'\n\
-             echo \"warning: $HOME/.nix-profile is old; $SECRET_TOKEN\" >&2\n\
-             printf '%s' '{{\"version\":3,\"elements\":{{\"eon\":{{\
-             \"originalUrl\":\"github:Yazelix/eon\",\"storePaths\":[\"{}\"]}}}}}}'\n",
+            "#!/bin/sh\necho \"nix $*\" >> '{}'\nexit 1\n",
             root.join("nix-calls").display(),
-            package.display()
         ),
     );
     let path = std::iter::once(stubs)
@@ -1280,6 +2006,7 @@ fn report_prints_a_redacted_bug_report_without_preparing_anything() {
             "### Configuration warnings\n```text\neon: ignoring unknown setting \
              terminal.future_border_width in ~/.config/eon/config.toml\n```\n"
                 .to_owned(),
+            "### Doctor\n```text\n".to_owned(),
             "### Logs\n".to_owned(),
         ] {
             let at = report[from..]
@@ -1291,6 +2018,7 @@ fn report_prints_a_redacted_bug_report_without_preparing_anything() {
         assert!(!report.contains(home), "{report}");
         assert!(!report.contains(token), "{report}");
         assert!(!report.contains("reporter"), "{report}");
+        assert!(report.contains("FAIL editor"), "{report}");
         report
     };
 
@@ -1334,18 +2062,23 @@ fn report_prints_a_redacted_bug_report_without_preparing_anything() {
     assert!(report.ends_with(&tail), "{report}");
     assert!(!report.contains("other generation"));
 
-    // Started through the Nix profile that installs it, the report asks Nix and drops the
-    // warning Nix prints beside the listing.
+    // Both commands read the profile without invoking Nix.
     let profile = home.join(".nix-profile");
     symlink(&package, &profile).unwrap();
     check(
         &eon(&profile.join("bin/eon"), &["report"]),
         "Nix profile (nix profile add) (install_kind: nix-profile)",
     );
-    assert_eq!(
-        fs::read_to_string(root.join("nix-calls")).unwrap(),
-        format!("nix profile list --json --profile {}\n", profile.display())
+    let doctor = eon(&profile.join("bin/eon"), &["doctor", "--json"]);
+    assert_eq!(doctor.status.code(), Some(1), "{doctor:?}");
+    assert!(doctor.stderr.is_empty(), "{doctor:?}");
+    assert!(
+        doctor_result(&doctor, "install")["message"]
+            .as_str()
+            .unwrap()
+            .contains("Nix profile")
     );
+    assert!(!root.join("nix-calls").exists());
 
     // Extra arguments are invalid syntax; help stays with the help.
     let output = eon(built, &["report", "extra"]);

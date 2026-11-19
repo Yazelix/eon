@@ -1128,7 +1128,8 @@ pub(super) fn listed_window(
     inputs: &Inputs,
     root: &Path,
     generation: Option<&str>,
-) -> Result<Option<(String, String)>, String> {
+    caller: Option<&str>,
+) -> Result<Option<super::report::ListedWindow>, String> {
     let windows = window_listing(inputs, false, None)?
         .into_iter()
         .map(|found| found.map_err(|window| window.error))
@@ -1152,11 +1153,12 @@ pub(super) fn listed_window(
             (None, [only]) => Some(only),
             _ => None,
         });
-    Ok(window.map(|window| {
-        (
-            window.record.id.clone(),
-            window_json(&window.record, &window.id, &window.short_id, false),
-        )
+    Ok(window.map(|window| super::report::ListedWindow {
+        generation: window.record.id.clone(),
+        caller_build: caller
+            .and_then(|caller| window.record.caller_build(caller))
+            .map(str::to_owned),
+        json: window_json(&window.record, &window.id, &window.short_id, false),
     }))
 }
 

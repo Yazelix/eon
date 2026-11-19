@@ -1,23 +1,17 @@
 //! `eon report` (EON-C1): one Markdown bug report for the issue template, printed to stdout.
-//! It gathers what the template asks for without starting an Eon component, checking the
-//! network, or creating, changing or removing configuration or runtime state; it may run
-//! `nix profile list` and, on macOS, `sw_vers`, each under a time limit. One redactor runs over
-//! the whole report so that a path or value from any section is covered.
+//! It shares Doctor's read-only observations and may run a bounded `sw_vers` on macOS.
+//! One redactor covers every section.
 
 use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{self, Write},
     path::{Component, Path, PathBuf},
     process::Command,
-    time::Duration,
 };
 
-use crate::update;
+use crate::{doctor, update};
 
-/// How long `sw_vers` may take: a fixed safety budget for a local read.
-const SW_VERS_LIMIT: Duration = Duration::from_secs(5);
 /// Environment values shorter than this stay: they are too common to identify anyone. Fixed,
 /// since a configurable redactor invites leaks.
 const SHORTEST_SECRET: usize = 8;
@@ -46,42 +40,38 @@ pub(crate) fn run(
     invoked: update::Build,
     inputs: &eon_runtime::Inputs,
 ) -> u8 {
-    let facts = eon_runtime::report_facts(inputs);
-    let install = update::install_kind(&arguments[0], invoked);
-    let macos = cfg!(target_os = "macos");
-    let distribution = if macos {
+    let diagnostics = doctor::Diagnostics::collect(&arguments[0], invoked, inputs, true);
+    let checks = diagnostics.human();
+    let facts = eon_runtime::report_facts(inputs, diagnostics.window);
+    let install = match &diagnostics.installation.error {
+        Some(reason) => Err(reason.as_str()),
+        None => Ok(diagnostics.installation.kind),
+    };
+    let distribution = if cfg!(target_os = "macos") {
         macos_version()
     } else {
         linux_distribution(OS_RELEASE)
     };
-    let compositor = compositor(
-        macos,
-        env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
-        env::var("XDG_SESSION_TYPE").ok().as_deref(),
-    );
     let report = assemble(
         &facts,
         install,
         distribution,
-        &compositor,
+        &diagnostics.compositor,
+        &diagnostics.configuration_warnings,
+        &checks,
         &Redaction::of_this_process(),
     );
-    match io::stdout().lock().write_all(report.as_bytes()) {
-        Ok(()) => 0,
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => 0,
-        Err(error) => {
-            eprintln!("eon: cannot write stdout: {error}");
-            1
-        }
-    }
+    doctor::write_stdout(&report, 0)
 }
 
 /// The report, with `redaction` over all of it.
 fn assemble(
     facts: &eon_runtime::ReportFacts,
-    install: Result<&str, String>,
+    install: Result<&str, &str>,
     distribution: Result<String, String>,
     compositor: &str,
+    config_warnings: &Result<Vec<String>, String>,
+    checks: &str,
     redaction: &Redaction,
 ) -> String {
     // A reason's first line says what failed; later ones can quote the input, such as a
@@ -105,10 +95,10 @@ fn assemble(
     };
     let install = match install {
         Ok(kind) => format!("{} (install_kind: {kind})", install_route(kind)),
-        Err(reason) => unknown(&reason),
+        Err(reason) => unknown(reason),
     };
     let distribution = distribution.unwrap_or_else(|reason| unknown(&reason));
-    let warnings = match &facts.config_warnings {
+    let warnings = match config_warnings {
         Ok(warnings) if warnings.is_empty() => "none".into(),
         Ok(warnings) => fenced("text", &warnings.join("\n")),
         Err(reason) => unknown(reason),
@@ -117,6 +107,7 @@ fn assemble(
         Ok((path, tail)) => fenced("text", &format!("{}\n{tail}", path.display())),
         Err(reason) => unknown(reason),
     };
+    let checks = fenced("text", checks);
     redaction.apply(&format!(
         "<!-- eon report: read this before sharing it. Paths under your home are shown as ~;
      long environment values (8 bytes or more) are removed. The log tail may still hold other
@@ -135,6 +126,8 @@ fn assemble(
 not detected yet; please fill in
 ### Configuration warnings
 {warnings}
+### Doctor
+{checks}
 ### Logs
 {log}
 "
@@ -179,7 +172,7 @@ fn pretty_name(os_release: &str) -> Option<String> {
 fn macos_version() -> Result<String, String> {
     let mut command = Command::new("/usr/bin/sw_vers");
     command.arg("-productVersion");
-    let output = update::bounded(command, SW_VERS_LIMIT).map_err(|error| {
+    let output = update::bounded(command, doctor::LOCAL_PROBE_LIMIT).map_err(|error| {
         error
             .trouble(["missing", "timed-out", "failed"], "sw_vers")
             .1
@@ -193,18 +186,6 @@ fn macos_version() -> Result<String, String> {
 fn macos_name(sw_vers: &[u8]) -> Option<String> {
     let version = std::str::from_utf8(sw_vers).ok()?.trim();
     (!version.is_empty()).then(|| format!("macOS {version}"))
-}
-
-/// The desktop and its session type, as the session names them.
-fn compositor(macos: bool, desktop: Option<&str>, session: Option<&str>) -> String {
-    if macos {
-        return "macOS".into();
-    }
-    match (desktop.filter(|desktop| !desktop.is_empty()), session) {
-        (Some(desktop), Some(session)) if !session.is_empty() => format!("{desktop} ({session})"),
-        (Some(desktop), _) => desktop.into(),
-        (None, _) => "unknown (XDG_CURRENT_DESKTOP is unset)".into(),
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -360,9 +341,8 @@ impl Redaction {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Redaction, assemble, compositor, install_route, linux_distribution, macos_name, pretty_name,
-    };
+    use super::{Redaction, assemble, install_route, linux_distribution, macos_name, pretty_name};
+    use crate::doctor::compositor;
     use std::{ffi::OsString, path::PathBuf};
 
     fn redaction(environment: &[(&str, &str)], canonical_home: Option<&str>) -> Redaction {
@@ -577,10 +557,6 @@ mod tests {
         let facts = eon_runtime::ReportFacts {
             versions: Err("no versions".into()),
             window: Ok(None),
-            config_warnings: Err(
-                "cannot parse config.toml: TOML parse error at line 2\n  |\n2 | command = \"secret\"\n"
-                    .into(),
-            ),
             log: Err("no log\nsecond".into()),
         };
         let report = assemble(
@@ -588,6 +564,8 @@ mod tests {
             Ok("unmanaged"),
             Err("one\ntwo".into()),
             "sway",
+            &Err("cannot parse config.toml: TOML parse error at line 2\n  |\n2 | command = \"secret\"\n".into()),
+            "",
             &redaction(&[], None),
         );
         assert!(report.contains(
@@ -603,23 +581,28 @@ mod tests {
         let facts = eon_runtime::ReportFacts {
             versions: Ok("eon 0.1.0\n".into()),
             window: Ok(None),
-            config_warnings: Ok(Vec::new()),
             log: Err("no log".into()),
         };
         let report = assemble(
             &facts,
-            Err("nix profile list failed: SECRET_TOKEN=abcdefgh\nijklmnop".into()),
+            Err("cannot read profile: SECRET_TOKEN=abcdefgh\nijklmnop"),
             Ok("NixOS".into()),
             "sway",
+            &Ok(Vec::new()),
+            "WARN config — abcdefgh\nijklmnop\n",
             &redaction(&[("SECRET_TOKEN", "abcdefgh\nijklmnop")], None),
         );
         assert!(
             report.contains(
-                "### Install route\nunknown (nix profile list failed: SECRET_TOKEN=[redacted])\n"
+                "### Install route\nunknown (cannot read profile: SECRET_TOKEN=[redacted])\n"
             ),
             "{report}"
         );
         assert!(!report.contains("abcdefgh"), "{report}");
         assert!(!report.contains("ijklmnop"), "{report}");
+        assert!(
+            report.contains("### Doctor\n```text\nWARN config — [redacted]\n```"),
+            "{report}"
+        );
     }
 }

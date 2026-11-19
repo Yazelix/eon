@@ -86,6 +86,15 @@ impl LaunchFacts {
             operations,
         })
     }
+
+    /// An absolute executable locator declared by the installed composition.
+    pub fn program(&self, name: &str) -> Option<&Path> {
+        self.operations
+            .iter()
+            .find(|operation| operation.name == name && operation.kind == "set")
+            .map(|operation| Path::new(&operation.value))
+            .filter(|path| path.is_absolute())
+    }
 }
 
 /// Original supported user inputs. Interpreter bookkeeping is recreated per wrapper.
@@ -157,6 +166,12 @@ impl LaunchInputs {
 
     pub fn facts(&self) -> &LaunchFacts {
         &self.facts
+    }
+
+    pub fn caller_terminfo_dirs(&self) -> Option<&OsStr> {
+        self.environment
+            .get(OsStr::new("TERMINFO_DIRS"))
+            .map(OsString::as_os_str)
     }
 
     pub fn arguments(&self) -> &[OsString] {

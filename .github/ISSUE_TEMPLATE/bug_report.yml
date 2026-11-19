@@ -4,7 +4,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Run `eon report` and paste its sections into
+        Run `eon doctor` for local checks and suggested fixes. If the issue persists,
+        run `eon report` and paste its sections into
         the fields below. Before you submit, remove paths, environment
         values, terminal content and credentials that should stay private.
   - type: textarea
@@ -53,6 +54,14 @@ body:
     attributes:
       label: GPU and driver
       placeholder: AMD Radeon 780M with Mesa, ...
+    validations:
+      required: false
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor results
+      description: Paste the lines inside the Doctor block of eon report or the output of eon doctor.
+      render: text
     validations:
       required: false
   - type: textarea

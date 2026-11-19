@@ -841,6 +841,20 @@ pub(super) struct GenerationRecord {
 }
 
 impl GenerationRecord {
+    pub(super) fn caller_build(&self, caller: &str) -> Option<&str> {
+        let (terminal, run) = caller.split_once('.')?;
+        if self.state == "live"
+            && self
+                .terminal_inventory
+                .iter()
+                .any(|entry| entry.terminal == terminal && entry.run == run)
+        {
+            self.active_build.as_deref()
+        } else {
+            None
+        }
+    }
+
     /// Whether this build controls it.
     pub(super) fn current(&self) -> bool {
         self.kind == "current"

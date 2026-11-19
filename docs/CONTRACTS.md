@@ -88,7 +88,8 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session for the product concept.
   Amended on 2026-11-09 (approved by eon-overseer under Lucca's delegation) by
-  `eon-8uxif`: `eon report`.
+  `eon-8uxif`: `eon report`. Amended on 2026-11-19 (approved by the lead
+  under Lucca's standing delegation) by `eon-6zoxr`: local Doctor and report.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -147,13 +148,46 @@ names its socket. CLI JSON names a session `session` and a terminal
     Eon version, as one line on stdout and exit successfully without starting
     children or preparing configuration or runtime state. Extra arguments are
     invalid syntax.
+  - Standalone `eon doctor [--json]` checks the invoking Eon installation, the
+    calling terminal's live window build when it can be established, Eon
+    configuration, terminal identity, display environment, GPU adapter, editor
+    and local update route. A check that cannot establish an observation
+    required for `PASS` reports `WARN` and names that observation. A failure
+    established from other observations still reports `FAIL`.
+    The command writes one result per check to stdout, with status `PASS`,
+    `WARN` or `FAIL` and one fix line for each `WARN` or `FAIL`.
+    `--json` writes one object with a `checks` array. Each check has an `id`
+    string, a `status` string with the same tokens as the human output, a
+    `message` string and a `fix` string or null. `fix` is null on `PASS`.
+    Each ID appears at most once and keeps its meaning. Initial IDs are
+    `install`, `config`, `terminal`, `display`, `gpu`, `editor` and `update`.
+    Consumers use IDs and allow additional fields, checks and status values.
+    Human wording and the order of rows and `checks` entries may change.
+    Results omit file paths, subprocess output, configuration source and
+    environment values. The display result may include a single-line
+    compositor name from `XDG_CURRENT_DESKTOP`.
+
+    Both modes exit 0 if there are no failed checks, 1 if a check fails or
+    stdout cannot be written, and 2 for invalid syntax. A closed stdout pipe
+    retains the checks' exit status. Invalid syntax gives a concise stderr
+    failure pointing to `eon --help` and runs no checks. Doctor makes no
+    network requests, starts or attaches no Eon window, supervisor, Orbit
+    host or Venus, reads no terminal content, and creates, changes or removes
+    no configuration, installation or runtime state. In an Eon terminal it
+    may list running windows as `eon window ls` does, without passing a caller
+    identity or cleaning up dead generations. Outside Eon it contacts no
+    supervisor. Doctor runs only `infocmp` and the packaged Helix version
+    command, each under a time limit.
   - Standalone `eon report` prints a Markdown bug report for the window it runs
-    in, or the `default` window outside Eon, to stdout and exits successfully.
-    It starts no Eon component, checks no network, and creates, changes or
-    removes no configuration or runtime state; it may run `nix profile list`
-    and, on macOS, `sw_vers`, each under a time limit. A section it cannot
-    determine reads `unknown` and the report still prints; extra arguments are
-    invalid syntax.
+    in, or the `default` window outside Eon, to stdout. It exits 0, or 1 on
+    stdout write failure other than a closed pipe. It includes the Doctor
+    results from the same observations under the report's redaction. The
+    results do not affect the report's exit status. The report observes
+    Doctor's network, process and state restrictions, with two additions.
+    It may use the same read-only window listing to inspect `default` when
+    invoked outside Eon, and on macOS it may also run `sw_vers` under a time
+    limit. A section it cannot determine reads `unknown` and the report
+    still prints. Extra arguments are invalid syntax.
     Its output shows paths under `$HOME` as `~`, replaces the user name with
     `[user]` and every environment value of 8 bytes or more with `[redacted]`,
     except `XDG_CURRENT_DESKTOP`, `XDG_SESSION_TYPE`, the XDG base directories
@@ -7611,6 +7645,8 @@ reference to existing pane creation, not by the unapproved targeting beads.
   Amended on 2026-11-13 (approved by eon-overseer under Lucca's delegation)
   by `eon-jbshk`: untargeted in-window package maintenance uses external
   PATH's `eon`, with a one-hop guard and independent build locators.
+  Amended on 2026-11-19 (approved by the lead under Lucca's standing
+  delegation) by `eon-6zoxr`: read-only local diagnostics.
 - **Consumer:** A person or local agent acting as that person, using full
   Eon's product CLI or its future Commands/menu action to inspect or update
   one installation. eonbase is outside this scope.
@@ -7633,7 +7669,16 @@ reference to existing pane creation, not by the unapproved targeting beads.
     and upgrade a package. Check reads manager metadata and official remote
     metadata without evaluating or realizing a prospective product. Normal
     launch, rendering, session actions and Runtime background work invoke no
-    Nix evaluator or update check. Runtime resolves configuration; Venus
+    Nix evaluator or update check.
+    Standalone `eon doctor` and `eon report` use the product helper's local
+    ownership and provenance checks without package handoff. For a Nix
+    profile they read the selected profile generation's `manifest.json`
+    without invoking Nix. They make no network requests, evaluate no flake,
+    select no package and authorize no installation. Doctor's `install`
+    result describes the invoking installation. Its `update` result
+    describes the configured target when present. A configured target does
+    not supply the invoking installation's owner or build.
+    Runtime resolves configuration; Venus
     presents results and sends intent, parsing neither configuration nor
     manager output. Orbit retains terminal authority.
   - **One target.** An explicit CLI selector replaces the configured target

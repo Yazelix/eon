@@ -1090,7 +1090,8 @@ line points agents to `eon --skill`.
 | `eon focus PANE\|POPUP\|left\|right\|up\|down [--json]` | Focus a pane or exact existing popup `uN`, selecting its tab, or traverse the session; switch tabs with `eon tab switch` |
 | `eon keys [--json]` | List effective keyboard and link shortcuts for this window: JSON emits `generation`, `window`, `platform`, `sidebar`, `number_keys` (read from `config.toml` on disk; edits there take effect in `eon keys` immediately while `Alt+/` keeps the window's launch/reloaded value until reload), `number_keys_source` (`"config"`), `running`, `groups` matching the `Alt+/` dialog, `bindings` with active chords and popup overrides, enabled `popups` (including unbound and overridden ones), and `reserved` (`strict` and `focus`); human output prints the header, `Alt+/` groups, unbound popups, and reserved sets |
 | `eon versions` | Print Eon, protocol, and component identities |
-| `eon report` | Print a Markdown bug report for this window, with paths under your home as `~` and long environment values (8 bytes or more) removed, to read and then paste into the bug form; see [Troubleshooting and reporting](#troubleshooting-and-reporting) |
+| `eon doctor [--json]` | Check the local Eon setup and give one fix for each warning or failure |
+| `eon report` | Print a redacted Markdown bug report for this window, including Doctor results, to read and paste into the bug form |
 | `eon update --install [--yes] [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Update one eligible Nix entry on its original ref or one managed Linux prefix through its bundled installer for fresh launches; inside a window, untargeted package updates use external PATH's `eon`; JSON/nonterminal consent requires an explicit or configured target; see [Update](#update) |
 | `eon update --check [--json] [--profile ABS --entry NAME \| --prefix ABS]` | Report the installation's owner, source, installed build, update availability and capability without changes; inside a window, untargeted package updates use external PATH's `eon`; see [Update](#update) |
 | `eon config path` | Create the configuration root and print the full path of its settings file, `config.toml`, which need not exist yet |
@@ -1755,6 +1756,18 @@ composition.
 
 ## Troubleshooting and reporting
 
+Run `eon doctor` from the affected Eon terminal or from the desktop shell if
+Eon cannot open. It checks the installation and caller build, configuration,
+terminfo, display, editor and local update route. Each WARN or FAIL has a fix
+line. The GPU result is unknown until Eon can identify the adapter Venus uses.
+Doctor runs offline and leaves the setup as it found it.
+
+`eon doctor --json` prints one object with a `checks` list. Each result has
+an `id`, `status`, `message` and `fix`. The fix is null for PASS. Match
+checks by ID and allow additional fields and values. Both modes exit 0 when
+there are no failures, 1 for a failed check or output error, and 2 for invalid
+arguments. A consumer that closes stdout early leaves the checks' exit status intact.
+
 - **Nix cannot fetch an input:** check access to GitHub and retry. Eon
   fetches only external inputs; Orbit, Venus and Eon Runtime build
   from this repository.
@@ -1792,7 +1805,7 @@ Run `eon report` from the window that failed, read it, then paste it. It prints
 the bug form's fields as Markdown: `eon versions`, the window from
 `eon window ls --json` without the window's name or busy terminals' names
 (outside Eon, the `default` window), the install route, distribution,
-compositor, configuration warnings and the last 40 lines of the newest
+compositor, configuration warnings, Doctor results and the last 40 lines of the newest
 supervisor log, which it names. A part it cannot determine reads `unknown`. It
 shows paths under your home as `~` and removes long environment values (8 bytes
 or more), except `XDG_CURRENT_DESKTOP`, `XDG_SESSION_TYPE`, the XDG base

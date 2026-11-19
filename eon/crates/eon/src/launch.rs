@@ -2,11 +2,11 @@
 
 use eon_runtime::{LAUNCH_FACTS_LIMIT, LAUNCH_FACTS_VARIABLE, LaunchFacts, LaunchInputs};
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs::{self, OpenOptions},
     io::Read,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 /// Caller must still be single-threaded, before any other library can start workers.
@@ -43,8 +43,22 @@ fn capture_at(
     arguments: Vec<OsString>,
     environment: Vec<(OsString, OsString)>,
 ) -> Result<LaunchInputs, String> {
+    let (executable, wrapper, locator) = installed_paths(executable)?;
+    if environment
+        .iter()
+        .find(|(name, _)| name == LAUNCH_FACTS_VARIABLE)
+        .map(|(_, value)| value.as_os_str())
+        != Some(locator.as_os_str())
+    {
+        return Err("launch facts locator contradicts installed executable".into());
+    }
+    let facts = LaunchFacts::decode(&read_facts(&locator)?, &wrapper, &executable)?;
+    LaunchInputs::capture(&facts, arguments, environment)
+}
+
+fn installed_paths(executable: &Path) -> Result<(PathBuf, PathBuf, PathBuf), String> {
     let executable = fs::canonicalize(executable).map_err(|error| error.to_string())?;
-    if executable.file_name() != Some(std::ffi::OsStr::new(".eon-wrapped")) {
+    if executable.file_name() != Some(OsStr::new(".eon-wrapped")) {
         return Err("launch capture does not belong to an installed Eon executable".into());
     }
     let bin = executable
@@ -59,18 +73,14 @@ fn capture_at(
         .parent()
         .ok_or("missing installed root")?
         .join("share/eon/launch-environment");
-    if environment
-        .iter()
-        .find(|(name, _)| name == LAUNCH_FACTS_VARIABLE)
-        .map(|(_, value)| value.as_os_str())
-        != Some(locator.as_os_str())
-    {
-        return Err("launch facts locator contradicts installed executable".into());
-    }
+    Ok((executable, wrapper, locator))
+}
+
+fn read_facts(locator: &Path) -> Result<Vec<u8>, String> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(&locator)
+        .open(locator)
         .map_err(|error| format!("cannot open installed launch facts: {error}"))?;
     if !file
         .metadata()
@@ -83,8 +93,52 @@ fn capture_at(
     file.take((LAUNCH_FACTS_LIMIT + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
-    let facts = LaunchFacts::decode(&bytes, &wrapper, &executable)?;
-    LaunchInputs::capture(&facts, arguments, environment)
+    Ok(bytes)
+}
+
+#[derive(Default)]
+pub(crate) struct DiagnosticPrograms {
+    pub infocmp: Option<PathBuf>,
+    pub helix: Option<PathBuf>,
+}
+
+pub(crate) fn diagnostic_programs(launch: Option<&LaunchInputs>) -> DiagnosticPrograms {
+    if let Some(launch) = launch {
+        return DiagnosticPrograms {
+            infocmp: launch.facts().program("EON_INFOCMP").map(Path::to_path_buf),
+            helix: launch.facts().program("EON_HX").map(Path::to_path_buf),
+        };
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| bundle_programs(&path))
+        .unwrap_or_default()
+}
+
+/// The relinker installs probe locators beside the wrapped executable's other
+/// resources. They are relative links so moving the bundle preserves them.
+fn bundle_programs(executable: &Path) -> Option<DiagnosticPrograms> {
+    let (executable, wrapper, locator) = installed_paths(executable).ok()?;
+    let probes = locator.parent()?.join("doctor-probes");
+    if !fs::symlink_metadata(&probes).ok()?.is_dir() || fs::canonicalize(&probes).ok()? != probes {
+        return None;
+    }
+    let probe = |name| {
+        let path = probes.join(name);
+        if fs::read_link(&path).ok()?.is_absolute() {
+            return None;
+        }
+        match fs::canonicalize(&path) {
+            Ok(target) if target != executable && target != wrapper => Some(target),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(path),
+            Err(_) => None,
+            Ok(_) => None,
+        }
+    };
+    Some(DiagnosticPrograms {
+        infocmp: probe("infocmp"),
+        helix: probe("hx"),
+    })
 }
 
 #[cfg(test)]

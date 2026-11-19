@@ -95,7 +95,7 @@ impl EonConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UpdateSettings {
     pub nix_profile: Option<PathBuf>,
@@ -650,7 +650,7 @@ pub(crate) struct PreparedCommand {
     pub(crate) listener: Option<(super::editor::ListenerKind, usize)>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct EditorSettings {
     command: Option<PopupCommandSetting>,
@@ -672,7 +672,7 @@ struct PopupEntrySettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 enum PopupCommandSetting {
     Named(String),
@@ -3284,12 +3284,77 @@ fn read_config(
     Ok(config)
 }
 
-/// The warnings the configuration gives, as `read_config` would print them, without printing
-/// them or preparing any directory.
-pub(super) fn configuration_warnings(defaults: &Defaults) -> Result<Vec<String>, String> {
-    let root = super::supervisor::configuration_directory()?;
-    let config = parse_config(&root, defaults)?;
-    Ok(config_warnings(&config, &root.join(CONFIG_FILE), defaults))
+type ConfigurationError = (&'static str, String);
+
+pub(super) fn check_configuration(
+    defaults: &Defaults,
+) -> (Result<PathBuf, String>, Result<(), ConfigurationError>) {
+    let (path, config) = read_configuration_for_check(defaults);
+    let result = config.and_then(|config| {
+        validate_config(config, path.as_ref().unwrap(), defaults)
+            .map_err(|detail| ("invalid-configuration", detail))
+    });
+    (path, result)
+}
+
+/// Additional observations from the same parsed configuration used for validation.
+pub struct DiagnosticConfiguration {
+    pub valid: bool,
+    pub warnings: Result<Vec<String>, String>,
+    pub editor_available: Option<bool>,
+    pub updates: Option<Result<UpdateSettings, String>>,
+}
+
+pub fn diagnostic_configuration(inputs: &super::cli::Inputs) -> DiagnosticConfiguration {
+    let defaults = &inputs.defaults;
+    let (path, config) = read_configuration_for_check(defaults);
+    if let Ok(config) = config {
+        let path = path.as_ref().unwrap();
+        let warnings = config_warnings(&config, path, defaults);
+        let editor = editor_from_settings(config.editor.clone(), defaults);
+        let editor_available = match (editor, env::current_dir()) {
+            (Ok(argv), Ok(directory)) => {
+                popup_executable(&argv[0], inputs.managed.shell_bin.as_deref(), &directory)
+                    .ok()
+                    .map(|path| path.is_some())
+            }
+            (Err(_), _) => Some(false),
+            (_, Err(_)) => None,
+        };
+        let updates = config.updates.clone().resolve(false);
+        DiagnosticConfiguration {
+            valid: validate_config(config, path, defaults).is_ok(),
+            warnings: Ok(warnings),
+            editor_available,
+            updates: Some(updates),
+        }
+    } else {
+        DiagnosticConfiguration {
+            valid: false,
+            warnings: Err(config.unwrap_err().1),
+            editor_available: None,
+            updates: None,
+        }
+    }
+}
+
+fn read_configuration_for_check(
+    defaults: &Defaults,
+) -> (
+    Result<PathBuf, String>,
+    Result<EonConfig, ConfigurationError>,
+) {
+    let path = super::supervisor::configuration_directory().map(|root| root.join(CONFIG_FILE));
+    let result = (|| {
+        let path = path
+            .as_ref()
+            .map_err(|detail| ("unreadable-configuration", detail.clone()))?;
+        let source =
+            read_configuration(path).map_err(|detail| ("unreadable-configuration", detail))?;
+        parse_configuration_text(&source, path, defaults)
+            .map_err(|detail| ("invalid-configuration", detail))
+    })();
+    (path, result)
 }
 
 /// One warning per unknown, deprecated or renamed key of the configuration read from `path`,
@@ -3436,7 +3501,15 @@ pub(super) fn validate_configuration_text(
     path: &Path,
     defaults: &Defaults,
 ) -> Result<(), String> {
-    parse_configuration_text(source, path, defaults)?
+    validate_config(
+        parse_configuration_text(source, path, defaults)?,
+        path,
+        defaults,
+    )
+}
+
+fn validate_config(config: EonConfig, path: &Path, defaults: &Defaults) -> Result<(), String> {
+    config
         .validate(defaults)
         .map_err(|error| invalid_configuration_error(path, error))
 }

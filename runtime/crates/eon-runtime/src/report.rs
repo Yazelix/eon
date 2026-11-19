@@ -5,7 +5,6 @@
 use super::{
     cli::{Inputs, calling_terminal, versions},
     diagnostics::{newest_log, orbit_run_generation},
-    managed_environment::configuration_warnings,
     supervisor::{base_runtime_directory, runtime_directory},
     windows::listed_window,
 };
@@ -23,11 +22,27 @@ pub struct ReportFacts {
     /// its labels (window name, busy terminals' names): the caller's generation, else the
     /// window's one running generation; none when none is running.
     pub window: Result<Option<String>, String>,
-    /// Each warning Eon gives for its configuration.
-    pub config_warnings: Result<Vec<String>, String>,
     /// The newest supervisor log of the caller's window generation, else the newest of any,
     /// with its last lines.
     pub log: Result<(PathBuf, String), String>,
+}
+
+pub(super) struct ListedWindow {
+    pub generation: String,
+    pub caller_build: Option<String>,
+    pub json: String,
+}
+
+pub enum CallerBuild {
+    Outside,
+    Unknown,
+    Known(String),
+}
+
+pub struct DiagnosticWindow {
+    pub caller_build: CallerBuild,
+    caller_generation: Option<String>,
+    listed: Result<Option<ListedWindow>, String>,
 }
 
 /// The window the report describes and its generation, chosen from local records alone: a
@@ -42,31 +57,54 @@ fn reported_window(caller: Option<&str>) -> (PathBuf, Option<String>) {
     }
 }
 
-pub fn report_facts(inputs: &Inputs) -> ReportFacts {
-    let own = calling_terminal()
-        .map_err(|failure| failure.detail)
-        .map(|caller| reported_window(caller.as_deref()));
-    let window = own
-        .as_ref()
-        .map_err(Clone::clone)
-        .and_then(|(root, generation)| listed_window(inputs, root, generation.as_deref()));
-    let log = newest_log(
-        own.as_ref()
-            .ok()
-            .and_then(|(_, generation)| generation.as_deref())
-            .or_else(|| {
-                window
+/// Inspection without a caller on the wire. Outside Eon only the report needs a window.
+pub fn diagnostic_window(inputs: &Inputs, include_default: bool) -> DiagnosticWindow {
+    let (caller_build, caller_generation, listed) = match calling_terminal() {
+        Ok(None) if !include_default => (CallerBuild::Outside, None, Ok(None)),
+        Ok(caller) => {
+            let (root, generation) = reported_window(caller.as_deref());
+            let listed = if include_default || generation.is_some() {
+                listed_window(inputs, &root, generation.as_deref(), caller.as_deref())
+            } else {
+                Ok(None)
+            };
+            let caller_build = if caller.is_none() {
+                CallerBuild::Outside
+            } else {
+                listed
                     .as_ref()
                     .ok()
-                    .and_then(|window| window.as_ref())
-                    .map(|(generation, _)| generation.as_str())
-            }),
+                    .and_then(Option::as_ref)
+                    .filter(|window| Some(&window.generation) == generation.as_ref())
+                    .and_then(|window| window.caller_build.clone())
+                    .map_or(CallerBuild::Unknown, CallerBuild::Known)
+            };
+            (caller_build, generation, listed)
+        }
+        Err(failure) => (CallerBuild::Unknown, None, Err(failure.detail)),
+    };
+    DiagnosticWindow {
+        caller_build,
+        caller_generation,
+        listed,
+    }
+}
+
+pub fn report_facts(inputs: &Inputs, window: DiagnosticWindow) -> ReportFacts {
+    let log = newest_log(
+        window.caller_generation.as_deref().or_else(|| {
+            window
+                .listed
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .map(|window| window.generation.as_str())
+        }),
         LOG_LINES,
     );
     ReportFacts {
         versions: versions(inputs),
-        window: window.map(|window| window.map(|(_, json)| json)),
-        config_warnings: configuration_warnings(&inputs.defaults),
+        window: window.listed.map(|window| window.map(|window| window.json)),
         log,
     }
 }

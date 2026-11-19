@@ -42,12 +42,13 @@ const RECEIPT: &str = "share/eon-source-receipt.json";
 /// The words that select a package mode; bare `eon update` is live adoption's.
 const PACKAGE_WORDS: [&str; 5] = ["--check", "--install", "--profile", "--entry", "--prefix"];
 const HANDOFF_MARKER: &str = "EON_UPDATE_HANDOFF";
-const BUILD_LOCATORS: [&str; 17] = [
+const BUILD_LOCATORS: [&str; 18] = [
     "EON_ORBIT",
     "EON_VENUS",
     "EON_CODEXBAR",
     "EON_ANIMA",
     "EON_CURL",
+    "EON_INFOCMP",
     "EON_ICON",
     "EON_NU",
     "EON_BASH",
@@ -63,6 +64,7 @@ const BUILD_LOCATORS: [&str; 17] = [
 ];
 /// How long `nix profile list` may take: a fixed safety budget for a local read.
 const NIX_LIMIT: Duration = Duration::from_secs(30);
+const PROFILE_MANIFEST_LIMIT: u64 = 4 * 1024 * 1024;
 /// curl's own limit is 30 s; this bounds a curl that ignores it.
 const CURL_LIMIT: Duration = Duration::from_secs(45);
 /// Fixed cancellation safety budget before killing the helper-owned process group.
@@ -126,10 +128,8 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
             Ok(target) => {
                 if !explicit {
                     request.prefix = target.bundle_prefix;
-                    request.selection = Ok(target
-                        .nix_profile
-                        .zip(target.nix_entry)
-                        .map(|(profile, entry)| Selector { profile, entry }));
+                    request.selection =
+                        Ok(configured_profile(target.nix_profile, target.nix_entry));
                 }
                 signers = target.allowed_signers;
             }
@@ -142,7 +142,6 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
         curl: env::var_os("EON_CURL")
             .map(PathBuf::from)
             .filter(|path| path.is_absolute()),
-        nix_diagnostics: true,
     };
     let report = match &request.selection {
         Ok(_) if config_error.is_some() => {
@@ -157,8 +156,14 @@ pub(crate) fn run(arguments: &[OsString], invoked: Build, defaults: &eon_runtime
                 } else {
                     if let Some(prefix) = &request.prefix {
                         check_remote(
-                            direct::inspect(Some(prefix), invoked, &places, SystemTime::now())
-                                .unwrap(),
+                            inspect_route(
+                                Some(prefix),
+                                None,
+                                invoked,
+                                &places,
+                                &|profile, _generation| profile_elements(&system, profile),
+                                SystemTime::now(),
+                            ),
                             &system,
                         )
                     } else {
@@ -213,16 +218,7 @@ fn print_report(report: &Report, json: bool) -> u8 {
 
 /// Maintenance follows the person's external PATH; workspace commands keep the window's build.
 fn handoff(arguments: &[OsString], places: &Places) -> Result<(), Trouble> {
-    let Some(bin) = env::var_os("EON_SESSION_BIN")
-        .map(PathBuf::from)
-        .filter(|bin| bin.is_absolute())
-    else {
-        return Ok(());
-    };
-    if !places
-        .launcher
-        .as_deref()
-        .is_some_and(|launcher| through(launcher, &bin))
+    if !started_in_session_bin(places)
         || arguments[2..].iter().any(|word| {
             ["--profile", "--entry", "--prefix"]
                 .iter()
@@ -237,20 +233,8 @@ fn handoff(arguments: &[OsString], places: &Places) -> Result<(), Trouble> {
         return Ok(());
     }
     let manual = "Configure an update target, name --profile /ABS/PROFILE --entry ENTRY or --prefix /ABS/PREFIX, or add its absolute launcher directory to PATH";
-    if env::var_os(HANDOFF_MARKER).is_some() {
-        return Err((
-            "install-ambiguous",
-            format!("{HANDOFF_MARKER} is set; refusing a second update handoff. {manual}."),
-        ));
-    }
-    let launcher = env::var_os("PATH")
-        .and_then(|path| external_launcher(&path))
-        .ok_or_else(|| {
-            (
-                "install-ambiguous",
-                format!("No external eon launcher on PATH. {manual}."),
-            )
-        })?;
+    let launcher = maintenance_launcher(process_external_launcher)
+        .map_err(|reason| ("install-ambiguous", format!("{reason}. {manual}.")))?;
     let mut command = Command::new(&launcher);
     command.args(&arguments[1..]).env(HANDOFF_MARKER, "1");
     for name in BUILD_LOCATORS {
@@ -261,6 +245,29 @@ fn handoff(arguments: &[OsString], places: &Places) -> Result<(), Trouble> {
         "selection-failed",
         format!("cannot run external eon {}: {error}", launcher.display()),
     ))
+}
+
+fn started_in_session_bin(places: &Places) -> bool {
+    env::var_os("EON_SESSION_BIN")
+        .map(PathBuf::from)
+        .filter(|bin| bin.is_absolute())
+        .is_some_and(|bin| {
+            places
+                .launcher
+                .as_deref()
+                .is_some_and(|launcher| through(launcher, &bin))
+        })
+}
+
+fn maintenance_launcher(find: impl FnOnce() -> Option<PathBuf>) -> Result<PathBuf, &'static str> {
+    if env::var_os(HANDOFF_MARKER).is_some() {
+        return Err("EON_UPDATE_HANDOFF is set; refusing a second update handoff");
+    }
+    find().ok_or("No external eon launcher on PATH")
+}
+
+fn process_external_launcher() -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|path| external_launcher(&path))
 }
 
 fn external_launcher(path: &OsStr) -> Option<PathBuf> {
@@ -291,27 +298,109 @@ fn internal_launcher(launcher: &Path) -> bool {
     true
 }
 
-/// The EON-C41 `install_kind` of this `eon`, started as `program`, by local inspection
-/// alone, or why inspection failed. `eon report` prints it; it never reaches the network.
-pub(crate) fn install_kind(program: &OsStr, invoked: Build) -> Result<&'static str, String> {
-    let system = System {
-        version: env!("CARGO_PKG_VERSION"),
-        curl: None,
-        // The report prints only what it redacts, so a warning Nix gives
-        // beside a listing it could read is dropped.
-        nix_diagnostics: false,
-    };
-    let report = inspect(
-        None,
-        invoked,
-        &Places::of_this_process(program),
-        &system,
-        SystemTime::now(),
-    );
-    match report.error {
-        Some(error) => Err(error.message),
-        None => Ok(report.install_kind),
+#[derive(Clone)]
+pub(crate) struct LocalInstallation {
+    pub kind: &'static str,
+    pub proved: bool,
+    pub variant_mismatch: bool,
+    pub reason: Option<&'static str>,
+    pub error: Option<String>,
+}
+
+impl From<Report> for LocalInstallation {
+    fn from(report: Report) -> Self {
+        Self {
+            kind: report.install_kind,
+            proved: report.proved,
+            variant_mismatch: report.variant_mismatch,
+            reason: report.capability.reason,
+            error: report.error.map(|error| error.message),
+        }
     }
+}
+
+pub(crate) enum LocalUpdate {
+    Target {
+        installation: LocalInstallation,
+        configured: bool,
+    },
+    ExternalLauncher,
+    NoExternalLauncher,
+    ConfigurationUnknown,
+    InvalidConfiguration,
+}
+
+/// Local ownership and update route, with no Nix subprocess or package handoff.
+pub(crate) fn local_installations(
+    program: &OsStr,
+    invoked: Build,
+    settings: Option<Result<eon_runtime::UpdateSettings, String>>,
+) -> (LocalInstallation, LocalUpdate) {
+    let mut places = Places::of_this_process(program);
+    let in_session_bin = started_in_session_bin(&places);
+    let external = in_session_bin.then(process_external_launcher).flatten();
+    if let Some(Ok(settings)) = &settings {
+        places.signers.clone_from(&settings.allowed_signers);
+    }
+    let observe = |prefix: Option<&Path>, profile: Option<&Selector>, places: &Places| {
+        LocalInstallation::from(inspect_route(
+            prefix,
+            profile,
+            invoked.clone(),
+            places,
+            &local_profile_elements,
+            SystemTime::now(),
+        ))
+    };
+    let mut installation = observe(None, None, &places);
+    if installation.reason == Some("install-ambiguous")
+        && let Some(launcher) = external.as_deref()
+        && places
+            .invoked
+            .as_deref()
+            .is_some_and(|invoked| resolves_to(launcher, invoked))
+    {
+        let original = places.launcher.replace(launcher.to_path_buf());
+        let candidate = observe(None, None, &places);
+        places.launcher = original;
+        if candidate.kind != "unknown" {
+            installation = candidate;
+        }
+    }
+    let route = match settings {
+        Some(Ok(settings)) => {
+            let profile = configured_profile(settings.nix_profile, settings.nix_entry);
+            if settings.bundle_prefix.is_some() || profile.is_some() {
+                LocalUpdate::Target {
+                    installation: observe(
+                        settings.bundle_prefix.as_deref(),
+                        profile.as_ref(),
+                        &places,
+                    ),
+                    configured: true,
+                }
+            } else if in_session_bin {
+                match maintenance_launcher(|| external) {
+                    Ok(_) => LocalUpdate::ExternalLauncher,
+                    Err(_) => LocalUpdate::NoExternalLauncher,
+                }
+            } else {
+                LocalUpdate::Target {
+                    installation: installation.clone(),
+                    configured: false,
+                }
+            }
+        }
+        Some(Err(_)) => LocalUpdate::InvalidConfiguration,
+        None => LocalUpdate::ConfigurationUnknown,
+    };
+    (installation, route)
+}
+
+fn configured_profile(profile: Option<PathBuf>, entry: Option<String>) -> Option<Selector> {
+    profile
+        .zip(entry)
+        .map(|(profile, entry)| Selector { profile, entry })
 }
 
 struct Request {
@@ -544,9 +633,6 @@ struct System {
     version: &'static str,
     /// The composition's pinned curl, `EON_CURL`.
     curl: Option<PathBuf>,
-    /// Whether what Nix prints on stderr beside a successful listing goes to
-    /// stderr.
-    nix_diagnostics: bool,
 }
 
 fn curl_ca_configured(value: impl Fn(&str) -> Option<OsString>) -> bool {
@@ -572,7 +658,7 @@ impl Host for System {
         let diagnostics = String::from_utf8_lossy(&output.stderr);
         let diagnostics = diagnostics.trim();
         if output.status.success() {
-            if self.nix_diagnostics && !diagnostics.is_empty() {
+            if !diagnostics.is_empty() {
                 eprintln!("{diagnostics}");
             }
             Ok(output.stdout)
@@ -709,6 +795,16 @@ pub(crate) fn bounded(mut command: Command, limit: Duration) -> Result<Output, B
     })
 }
 
+pub(crate) fn bounded_status(mut command: Command, limit: Duration) -> Result<ExitStatus, Bounded> {
+    let mut child = owned_child(&mut command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(Bounded::Spawn)?;
+    wait_child(&mut child, Some(limit), true)
+}
+
 /// Observe exit without releasing the process-group leader's PID.
 fn child_exited(child: &Child) -> std::io::Result<bool> {
     loop {
@@ -807,6 +903,33 @@ fn elements(listing: &[u8]) -> Result<Vec<Element>, Trouble> {
         .collect())
 }
 
+fn profile_elements(host: &dyn Host, profile: &Path) -> Result<Vec<Element>, Trouble> {
+    elements(&host.profile_list(profile)?)
+}
+
+fn local_profile_elements(_profile: &Path, generation: &Path) -> Result<Vec<Element>, Trouble> {
+    let read_error = || {
+        (
+            "nix-failed",
+            format!(
+                "Cannot read the local manifest for {}",
+                generation.display()
+            ),
+        )
+    };
+    let manifest = generation.join("manifest.json");
+    let bytes = read_regular(&manifest, PROFILE_MANIFEST_LIMIT).ok_or_else(read_error)?;
+    elements(&bytes).map_err(|(code, _)| {
+        (
+            code,
+            format!(
+                "Invalid or unsupported profile manifest {}",
+                manifest.display()
+            ),
+        )
+    })
+}
+
 /// Who owns the installation a check addresses.
 enum Owner {
     Entry {
@@ -825,7 +948,9 @@ enum Owner {
 
 const HOME_MANAGER: &str = "Home Manager (its home-manager-path profile entry)";
 
-fn owner(selector: Option<&Selector>, places: &Places, host: &dyn Host) -> Owner {
+type ReadProfile<'a> = dyn Fn(&Path, &Path) -> Result<Vec<Element>, Trouble> + 'a;
+
+fn owner(selector: Option<&Selector>, places: &Places, read_profile: &ReadProfile<'_>) -> Owner {
     if let Some(Selector { profile, entry }) = selector {
         if let Some((_, manager)) = places.declarative.iter().find(|(managed, _)| {
             profile == managed
@@ -836,15 +961,13 @@ fn owner(selector: Option<&Selector>, places: &Places, host: &dyn Host) -> Owner
         }) {
             return Owner::Declarative(manager);
         }
-        let is_profile = fs::canonicalize(profile)
-            .is_ok_and(|generation| generation.join("manifest.json").is_file());
-        if !is_profile {
+        let generation = fs::canonicalize(profile)
+            .ok()
+            .filter(|path| path.join("manifest.json").is_file());
+        let Some(generation) = generation else {
             return Owner::Missing(format!("{} is not a Nix profile", profile.display()));
-        }
-        return match host
-            .profile_list(profile)
-            .and_then(|listing| elements(&listing))
-        {
+        };
+        return match read_profile(profile, &generation) {
             Err(trouble) => Owner::Unreadable(trouble),
             Ok(mut elements) => match elements.iter().position(|element| &element.name == entry) {
                 Some(index) => Owner::Entry {
@@ -879,14 +1002,12 @@ fn owner(selector: Option<&Selector>, places: &Places, host: &dyn Host) -> Owner
         let Ok(canonical) = fs::canonicalize(profile) else {
             continue;
         };
-        if seen.contains(&canonical) || !through(launcher, profile) {
+        if seen.contains(&canonical) || !through_generation(launcher, &canonical) {
             continue;
         }
+        let elements = read_profile(profile, &canonical);
         seen.push(canonical);
-        let elements = match host
-            .profile_list(profile)
-            .and_then(|listing| elements(&listing))
-        {
+        let elements = match elements {
             Ok(elements) => elements,
             Err(trouble) => return Owner::Unreadable(trouble),
         };
@@ -963,9 +1084,10 @@ fn resolves_to(launcher: &Path, directory: &Path) -> bool {
 /// Whether `launcher` runs through `profile`: one of its leading directories
 /// is that profile's selected generation.
 fn through(launcher: &Path, profile: &Path) -> bool {
-    let Ok(generation) = fs::canonicalize(profile) else {
-        return false;
-    };
+    fs::canonicalize(profile).is_ok_and(|generation| through_generation(launcher, &generation))
+}
+
+fn through_generation(launcher: &Path, generation: &Path) -> bool {
     // A launcher can be a symlink to the profile's, as `~/.local/bin/eon`
     // to `~/.nix-profile/bin/eon`, so each hop of its chain counts.
     let mut hop = launcher.to_path_buf();
@@ -1085,6 +1207,10 @@ struct Receipt {
 
 /// Read one regular descriptor without following its final link or waiting on a FIFO.
 fn bounded_file(path: &Path) -> Option<Vec<u8>> {
+    read_regular(path, 65536)
+}
+
+fn read_regular(path: &Path, limit: u64) -> Option<Vec<u8>> {
     let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -1094,8 +1220,8 @@ fn bounded_file(path: &Path) -> Option<Vec<u8>> {
         return None;
     }
     let mut bytes = Vec::new();
-    file.take(65537).read_to_end(&mut bytes).ok()?;
-    (bytes.len() <= 65536).then_some(bytes)
+    file.take(limit + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= limit).then_some(bytes)
 }
 
 fn receipt(package: &Path) -> Option<Receipt> {
@@ -1169,6 +1295,7 @@ struct Report {
     source: Option<Source>,
     /// Whether this backend's local source and build receipts form a validated chain.
     proved: bool,
+    variant_mismatch: bool,
     invoked: Option<Build>,
     installed: Option<Build>,
     checked_at: Option<String>,
@@ -1193,6 +1320,7 @@ impl Report {
             launcher: None,
             source: None,
             proved: false,
+            variant_mismatch: false,
             invoked: Some(invoked),
             installed: None,
             checked_at: Some(rfc3339(now)),
@@ -1217,6 +1345,7 @@ impl Report {
             launcher: None,
             source: None,
             proved: false,
+            variant_mismatch: false,
             invoked: None,
             installed: None,
             checked_at: None,
@@ -1594,8 +1723,26 @@ fn inspect(
     host: &dyn Host,
     now: SystemTime,
 ) -> Report {
+    inspect_route(
+        None,
+        selector,
+        invoked,
+        places,
+        &|profile, _generation| profile_elements(host, profile),
+        now,
+    )
+}
+
+fn inspect_route(
+    prefix: Option<&Path>,
+    selector: Option<&Selector>,
+    invoked: Build,
+    places: &Places,
+    read_profile: &ReadProfile<'_>,
+    now: SystemTime,
+) -> Report {
     if selector.is_none()
-        && let Some(report) = direct::inspect(None, invoked.clone(), places, now)
+        && let Some(report) = direct::inspect(prefix, invoked.clone(), places, now)
     {
         return report;
     }
@@ -1610,7 +1757,7 @@ fn inspect(
         };
     };
     let name_it = "Name the installation with --profile /ABS/PROFILE --entry ENTRY";
-    let (profile, element, others) = match owner(selector, places, host) {
+    let (profile, element, others) = match owner(selector, places, read_profile) {
         Owner::Missing(message) => {
             report.outcome = "failed";
             report.error = Some(Failure {
@@ -1733,6 +1880,7 @@ fn inspect(
             && product_package(receipt.attribute.as_deref(), platform.as_deref()).is_some()
             && receipt.attribute != source.attribute
     });
+    report.variant_mismatch = product.is_some() && variant_mismatch;
     report.proved = receipt.as_ref().is_some_and(|receipt| {
         receipt.revision.is_some()
             && receipt.revision == source.revision
@@ -2750,6 +2898,48 @@ mod tests {
     }
 
     #[test]
+    fn local_profile_listing_bounds_and_checks_the_manifest() {
+        let tree = Tree::new();
+        let profile = tree.0.join("profile");
+        let generation = tree.0.join("profile-generation");
+        fs::create_dir(&generation).unwrap();
+        symlink(&generation, &profile).unwrap();
+        let manifest = generation.join("manifest.json");
+        fs::write(&manifest, br#"{"version":3,"elements":{}}"#).unwrap();
+        assert!(
+            local_profile_elements(&profile, &generation)
+                .unwrap()
+                .is_empty()
+        );
+
+        fs::write(&manifest, br#"{"version":4,"elements":{}}"#).unwrap();
+        assert_eq!(
+            local_profile_elements(&profile, &generation).unwrap_err().0,
+            "nix-output-invalid"
+        );
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&manifest)
+            .unwrap()
+            .set_len(PROFILE_MANIFEST_LIMIT + 1)
+            .unwrap();
+        assert_eq!(
+            local_profile_elements(&profile, &generation).unwrap_err().0,
+            "nix-failed"
+        );
+
+        // A regular file reached through a final symlink is outside the selected generation.
+        let external = tree.0.join("outside-manifest");
+        fs::write(&external, br#"{"version":3,"elements":{}}"#).unwrap();
+        fs::remove_file(&manifest).unwrap();
+        symlink(external, manifest).unwrap();
+        assert_eq!(
+            local_profile_elements(&profile, &generation).unwrap_err().0,
+            "nix-failed"
+        );
+    }
+
+    #[test]
     fn arguments_outside_the_contract_are_invalid() {
         let accepted = parse(&words(&[
             "--json",
@@ -2937,7 +3127,9 @@ mod tests {
         let mut managed = tree.places(&selector.profile.join("bin/eon"));
         managed.declarative = vec![(selector.profile.clone(), "declarative fixture")];
         assert!(matches!(
-            owner(Some(&selector), &managed, &fake),
+            owner(Some(&selector), &managed, &|profile, _generation| {
+                profile_elements(&fake, profile)
+            }),
             Owner::Declarative(_)
         ));
         symlink(
@@ -3762,6 +3954,13 @@ mod tests {
         ));
         let output = bounded(Command::new("true"), NIX_LIMIT).ok().unwrap();
         assert!(output.status.success());
+
+        let mut command = Command::new("sleep");
+        command.arg("10");
+        assert!(matches!(
+            bounded_status(command, Duration::from_millis(200)),
+            Err(Bounded::TimedOut(_))
+        ));
     }
 
     #[test]

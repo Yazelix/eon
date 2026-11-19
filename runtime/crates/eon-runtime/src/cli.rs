@@ -1129,16 +1129,7 @@ fn print_config_path(file: bool) -> Result<i32, String> {
 }
 
 fn check_configuration(inputs: &Inputs, json: bool) -> Result<i32, String> {
-    let path = configuration_directory().map(|root| root.join(managed_environment::CONFIG_FILE));
-    let result = match &path {
-        Ok(path) => managed_environment::read_configuration(path)
-            .map_err(|detail| ("unreadable-configuration", detail))
-            .and_then(|source| {
-                managed_environment::validate_configuration_text(&source, path, &inputs.defaults)
-                    .map_err(|detail| ("invalid-configuration", detail))
-            }),
-        Err(detail) => Err(("unreadable-configuration", detail.clone())),
-    };
+    let (path, result) = managed_environment::check_configuration(&inputs.defaults);
     let valid = result.is_ok();
     if json {
         let error = result
@@ -1341,6 +1332,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("anima [STYLE] [CHILD OPTIONS...]", "Play an animation here"),
             ("versions", "Show exact component versions"),
+            ("doctor [--json]", "Check the local Eon setup"),
             ("report", "Print a bug report to paste"),
             (
                 "update --check [--json]",

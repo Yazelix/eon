@@ -3553,9 +3553,8 @@ fn dispatch(
     )
 }
 
-/// [`dispatch`] for an established principal. Admission runs once, after the
-/// turn's reconciliation and the refusals that precede it today, and before
-/// any effect: a refused request changes nothing.
+/// [`dispatch`] for an established principal. Caller-free lifecycle inspection
+/// reads the current state. Other requests reconcile before admission.
 fn dispatch_as(
     incoming: Incoming,
     principal: Principal,
@@ -3565,9 +3564,9 @@ fn dispatch_as(
     runtime: &Path,
     generation: &str,
 ) -> Dispatched {
-    super::diagnostics::bench_trace("dispatch_begin", "");
     let request = match incoming {
         Incoming::Stop(target) => {
+            super::diagnostics::bench_trace("dispatch_begin", "");
             let reply = match admission::admit(
                 principal,
                 None,
@@ -3583,6 +3582,22 @@ fn dispatch_as(
         }
         Incoming::Request(request) => request,
     };
+    if request.caller.is_none()
+        && matches!(
+            request.action,
+            Action::Workspace(
+                WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation
+            )
+        )
+    {
+        return match admit_request(principal, &request, state, generation) {
+            Ok(()) => {
+                dispatch_control_request(request, state, inputs, config, runtime, generation).into()
+            }
+            Err(error) => Dispatched::Reply(refused(&request.action, error), false),
+        };
+    }
+    super::diagnostics::bench_trace("dispatch_begin", "");
     if state.stopping.is_none() {
         reconcile(state, inputs, config);
     }
@@ -8872,6 +8887,48 @@ mod tests {
         assert_eq!(observable(&state), before, "routing recorded the exit");
         super::reconcile(&mut state, &inputs, &root);
         assert!(state.sessions.is_empty(), "the turn records the exit");
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn caller_free_lifecycle_inspection_does_not_reconcile_an_exited_terminal() {
+        let root = temporary_directory();
+        let (mut state, peer, _) = leased_window(&root);
+        drop(peer);
+        let before = observable(&state);
+        for action in [
+            WorkspaceAction::InspectRuntime,
+            WorkspaceAction::InspectPresentation,
+        ] {
+            let reply = admitted_as(
+                Principal::Owner,
+                &mut state,
+                &root,
+                None,
+                Action::Workspace(action),
+            );
+            assert!(
+                matches!(
+                    reply,
+                    Dispatched::Reply(
+                        super::ControlResponse::Lifecycle(super::LifecycleResponse::Runtime(_)),
+                        false
+                    )
+                ),
+                "Lifecycle inspection must still return the snapshot."
+            );
+            assert_eq!(
+                observable(&state),
+                before,
+                "inspection reconciled a terminal"
+            );
+        }
+        super::reconcile(&mut state, &crate::fixtures::inputs(), &root);
+        assert!(
+            state.sessions.is_empty(),
+            "the normal turn reconciles the exit"
+        );
         drop(state);
         fs::remove_dir_all(root).unwrap();
     }

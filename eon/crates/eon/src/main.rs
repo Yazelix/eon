@@ -1,3 +1,4 @@
+mod doctor;
 mod launch;
 #[allow(unsafe_code)]
 mod platform;
@@ -50,6 +51,12 @@ fn main() -> ExitCode {
     };
     if update::wanted(&arguments) {
         return ExitCode::from(update::run(&arguments, invoked(), &inputs.defaults));
+    }
+    if product_cli
+        && arguments.get(1).is_some_and(|command| command == "doctor")
+        && !matches!(&arguments[2..], [flag] if flag == "-h" || flag == "--help")
+    {
+        return ExitCode::from(doctor::run(&arguments, invoked(), &inputs));
     }
     if report::wanted(&arguments) {
         return ExitCode::from(report::run(&arguments, invoked(), &inputs));
