@@ -14,6 +14,11 @@ use std::{
 
 use rustix::process::Signal;
 
+use crate::{
+    bundle::{HostSet, Jail},
+    json::Value,
+};
+
 type Result<T = ()> = std::result::Result<T, String>;
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -240,6 +245,14 @@ pub(crate) enum WindowMode {
     Floating,
 }
 
+/// How every candidate program runs: the launch, CLI calls, helpers and Stop.
+/// Chosen with the candidate, never from a program's path; bench tools such as
+/// `swaymsg` and `grim` always run directly.
+pub(crate) enum Route {
+    Direct,
+    Jail(Box<Jail>),
+}
+
 /// Suites supply their own config, trace consumer and workloads. The launcher owns
 /// only the private display and process lifetime, including failure cleanup.
 pub(crate) struct Headless {
@@ -249,10 +262,74 @@ pub(crate) struct Headless {
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) eon: PathBuf,
     pub(crate) out: PathBuf,
+    route: Route,
 }
 impl Headless {
     pub(crate) fn new(out: &Path, eon: &Path, window_mode: WindowMode) -> Result<Self> {
-        let eon = candidate(eon)?;
+        Self::create(out, candidate(eon)?, window_mode)
+    }
+    /// A Nix-free bundle candidate whose every program runs in one jail built
+    /// from `host` (crate::bundle).
+    pub(crate) fn bundle(
+        out: &Path,
+        eon: &Path,
+        window_mode: WindowMode,
+        host: HostSet,
+    ) -> Result<Self> {
+        let mut launch = Self::create(out, eon.to_path_buf(), window_mode)?;
+        let xdg = launch.out.join("xdg");
+        for directory in ["data", "config"] {
+            fs::create_dir_all(xdg.join(directory)).map_err(failure)?;
+        }
+        let runtime = PathBuf::from(&launch.env["XDG_RUNTIME_DIR"]);
+        let eon_root = PathBuf::from(&launch.env["EON_RUNTIME_DIR"]);
+        // Sway runs any command its IPC socket is sent, outside the jail, so
+        // the socket lives where no jail bind reaches.
+        let mut ipc = runtime.into_os_string();
+        ipc.push("-ipc");
+        let ipc = PathBuf::from(ipc);
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&ipc)
+            .map_err(failure)?;
+        launch.roots.0.push(ipc.clone());
+        launch.env.insert(
+            "SWAYSOCK".into(),
+            ipc.join("sway.sock").display().to_string(),
+        );
+        let runtime = PathBuf::from(&launch.env["XDG_RUNTIME_DIR"]);
+        let mounts = Jail::mounts(
+            &host,
+            Path::new(crate::bundle::HOST_ROOT),
+            &[&launch.out, &runtime, &eon_root],
+        )?;
+        let log = File::create(launch.out.join("jail.log")).map_err(failure)?;
+        let mut holder = None;
+        let env = launch.env.clone();
+        let jail = Jail::start(
+            crate::isolation::bwrap_path().into(),
+            host,
+            mounts,
+            xdg,
+            &env,
+            |program, args| {
+                let mut command = launch.command(program);
+                command
+                    .args(args)
+                    .stdin(Stdio::piped())
+                    .stdout(log.try_clone().map_err(failure)?)
+                    .stderr(log.try_clone().map_err(failure)?);
+                holder = Some(command.spawn().map_err(failure)?);
+                Ok(())
+            },
+        );
+        if let Some(holder) = holder {
+            launch.adopt(holder);
+        }
+        launch.route = Route::Jail(Box::new(jail?));
+        Ok(launch)
+    }
+    fn create(out: &Path, eon: PathBuf, window_mode: WindowMode) -> Result<Self> {
         let roots = Roots::create()?;
         let out = fs::canonicalize(out).map_err(failure)?;
         let runtime = roots.0[0].clone();
@@ -299,6 +376,7 @@ impl Headless {
             env,
             eon,
             out,
+            route: Route::Direct,
         })
     }
     pub(crate) fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -326,6 +404,42 @@ impl Headless {
             .args(args);
         capture_output(&mut command, Path::new(&self.env["XDG_RUNTIME_DIR"])).map_err(failure)
     }
+    /// `output_until` for a candidate program, through the candidate's route.
+    pub(crate) fn candidate_output_until(
+        &self,
+        deadline: Instant,
+        program: &Path,
+        args: &[&str],
+    ) -> Result<Output> {
+        let (program, args) = self.routed(program, args)?;
+        let args: Vec<_> = args.iter().map(String::as_str).collect();
+        self.inheriting(|| self.output_until(deadline, &program, &args))?
+    }
+    fn routed(&self, program: &Path, args: &[&str]) -> Result<(PathBuf, Vec<String>)> {
+        Ok(match &self.route {
+            Route::Direct => (
+                program.to_path_buf(),
+                args.iter().map(|&arg| arg.into()).collect(),
+            ),
+            Route::Jail(jail) => (
+                jail.bwrap().to_path_buf(),
+                jail.join(&self.env, program, args)?,
+            ),
+        })
+    }
+    fn inheriting<R>(&self, spawn: impl FnOnce() -> R) -> Result<R> {
+        match &self.route {
+            Route::Direct => Ok(spawn()),
+            Route::Jail(jail) => jail.inherit(spawn),
+        }
+    }
+    /// Audits candidate process origins in the bundle jail (crate::bundle).
+    pub(crate) fn audit_origins(&self, tree: &Path, required: &[&str]) -> Result<Value> {
+        let Route::Jail(jail) = &self.route else {
+            return Err("origin audits need the bundle jail".into());
+        };
+        jail.audit(&self.out, tree, required)
+    }
     pub(crate) fn spawn(&mut self, program: &str, args: &[&str], log: &str) -> Result {
         let output = File::create(self.out.join(log)).map_err(failure)?;
         self.spawn_logged(program, args, output.try_clone().map_err(failure)?, output)
@@ -352,9 +466,12 @@ impl Headless {
             .stderr(stderr)
             .spawn()
             .map_err(failure)?;
+        self.adopt(child);
+        Ok(())
+    }
+    fn adopt(&mut self, child: Child) {
         self.processes.remember(child.id());
         self.processes.children.push(child);
-        Ok(())
     }
     pub(crate) fn start_compositor(&mut self, bus: BusPolicy) -> Result {
         self.start_compositor_until(bus, Instant::now() + Duration::from_secs(15))
@@ -451,17 +568,24 @@ impl Headless {
                 entry.file_name().to_string_lossy().starts_with("wayland-")
                     && !entry.file_name().to_string_lossy().ends_with(".lock")
             });
-            let ipc = files.iter().find(|entry| {
-                entry.file_name().to_string_lossy().starts_with("sway-ipc.")
-                    && entry.file_name().to_string_lossy().ends_with(".sock")
-            });
+            // A preset SWAYSOCK names where Sway must put its command socket.
+            let ipc = match self.env.get("SWAYSOCK") {
+                Some(preset) => Path::new(preset).exists().then(|| PathBuf::from(preset)),
+                None => files
+                    .iter()
+                    .find(|entry| {
+                        entry.file_name().to_string_lossy().starts_with("sway-ipc.")
+                            && entry.file_name().to_string_lossy().ends_with(".sock")
+                    })
+                    .map(|entry| entry.path()),
+            };
             if let (Some(wayland), Some(ipc)) = (wayland, ipc) {
                 self.env.insert(
                     "WAYLAND_DISPLAY".into(),
                     wayland.file_name().to_string_lossy().into(),
                 );
                 self.env
-                    .insert("SWAYSOCK".into(), ipc.path().display().to_string());
+                    .insert("SWAYSOCK".into(), ipc.display().to_string());
                 // Socket creation can precede the IPC event loop becoming responsive.
                 let reply = self.output_until(
                     deadline.min(Instant::now() + Duration::from_secs(1)),
@@ -496,12 +620,15 @@ impl Headless {
         if self.eon_child.is_some() {
             return Err("private Eon already started".into());
         }
-        let eon = self
-            .eon
-            .to_str()
-            .ok_or("non-UTF8 candidate path")?
-            .to_owned();
-        self.spawn(&eon, args, "eon.log")?;
+        let (program, args) = self.routed(&self.eon, args)?;
+        let log = File::create(self.out.join("eon.log")).map_err(failure)?;
+        let mut command = self.command(program);
+        command
+            .args(args)
+            .stdout(log.try_clone().map_err(failure)?)
+            .stderr(log);
+        let child = self.inheriting(|| command.spawn())?.map_err(failure)?;
+        self.adopt(child);
         self.eon_child = Some(self.processes.children.len() - 1);
         Ok(())
     }
@@ -513,7 +640,7 @@ impl Headless {
             return Ok(None);
         };
         let stopped = self
-            .output_until(
+            .candidate_output_until(
                 Instant::now() + Duration::from_secs(10),
                 &self.eon,
                 &["window", "stop", "all", "--json"],

@@ -57,6 +57,17 @@ pub(super) const STEPS: &[Step] = &[
     Step("pane", Action::Capture(pane_pixels)),
 ];
 
+/// In bundle mode, after each named step, the processes that must be live in
+/// the jail, by executable name, while every candidate process's origin is
+/// audited (crate::bundle::origin).
+pub(super) const BUNDLE_AUDITS: &[(&str, &[&str])] = &[
+    ("picker-ready", &["yazi", "fzf"]),
+    (
+        "first-shell",
+        &[".eon-wrapped", crate::bundle::VENUS, "yazelix-orbit", "nu"],
+    ),
+];
+
 fn popup_target(journey: &Journey) -> Option<&str> {
     journey.popup.as_deref()
 }
@@ -83,13 +94,7 @@ for _ in 0..2 {{ print $"($ink)($stripe)(ansi reset)" }}
         ),
     )
     .map_err(error)?;
-    let zoxide = journey
-        .launch
-        .eon
-        .parent()
-        .and_then(std::path::Path::parent)
-        .ok_or("candidate has no package directory")?
-        .join("libexec/eon/bin/zoxide");
+    let zoxide = journey.product_root.join("libexec/eon/bin/zoxide");
     journey.call(
         &zoxide,
         &["add", "--", path_text(&project)?, path_text(&decoy)?],

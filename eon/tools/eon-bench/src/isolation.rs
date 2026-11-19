@@ -2,13 +2,17 @@
 use crate::{environment, suite};
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
+pub(crate) fn bwrap_path() -> std::ffi::OsString {
+    std::env::var_os("EON_BENCH_BWRAP").unwrap_or_else(|| "bwrap".into())
+}
+
 fn bwrap() -> Command {
-    Command::new(std::env::var_os("EON_BENCH_BWRAP").unwrap_or_else(|| "bwrap".into()))
+    Command::new(bwrap_path())
 }
 
 fn namespaces(command: &mut Command) {
@@ -78,8 +82,14 @@ pub(crate) fn display_suite(out: &Path, exe: &Path, render_node: Option<&Path>) 
 pub(crate) const JOURNEY_EVIDENCE: &str = "/evidence";
 
 /// The installed journey needs no host files outside of the immutable Nix
-/// store, its newly created output directory, and the bench executable itself.
-pub(crate) fn journey(out: &Path, exe: &Path, shell: &Path) -> Result<Command, String> {
+/// store, its newly created output directory, the bench executable itself and
+/// the read-only `binds` (source, destination) a bundle candidate brings.
+pub(crate) fn journey(
+    out: &Path,
+    exe: &Path,
+    shell: &Path,
+    binds: &[(PathBuf, PathBuf)],
+) -> Result<Command, String> {
     let uid = rustix::process::geteuid().as_raw();
     let gid = rustix::process::getegid().as_raw();
     let passwd = out.join("sandbox-passwd");
@@ -109,6 +119,9 @@ pub(crate) fn journey(out: &Path, exe: &Path, shell: &Path) -> Result<Command, S
         .arg("--ro-bind")
         .arg(exe)
         .arg(exe);
+    for (source, destination) in binds {
+        command.arg("--ro-bind").arg(source).arg(destination);
+    }
     display(&mut command, None);
     Ok(command)
 }
@@ -177,7 +190,7 @@ mod tests {
             .find(|path| path.starts_with("/nix/store") && path.is_file())
             .unwrap();
         let (_master, slave) = crate::pty::open(24, 80).unwrap();
-        let mut command = journey(&out, &exe, &shell).unwrap();
+        let mut command = journey(&out, &exe, &shell, &[]).unwrap();
         let output = crate::sys::own_session_on_stdin(&mut command)
             .stdin(slave)
             .env(PROBE, &root)
@@ -190,7 +203,7 @@ mod tests {
             .output()
             .unwrap();
         let evidence = fs::read_to_string(out.join("probe"));
-        let mut blocked = journey(&out, &exe, &shell).unwrap();
+        let mut blocked = journey(&out, &exe, &shell, &[]).unwrap();
         blocked.args([
             "--",
             "/bin/sh",

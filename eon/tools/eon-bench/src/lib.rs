@@ -1,6 +1,7 @@
 //! Eon's benchmark harness (docs/DEVELOPMENT.md), a development tool outside
 //! Eon's closure. Each suite writes its evidence under `--out`.
 
+mod bundle;
 pub mod child;
 pub mod corpus;
 mod environment;

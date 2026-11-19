@@ -55,6 +55,16 @@ impl<T: Into<Value>> From<Option<T>> for Value {
     }
 }
 
+/// A JSON object from `(key, value)` pairs, in order.
+pub(crate) fn object<'a>(entries: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+    Value::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.into(), value))
+            .collect(),
+    )
+}
+
 impl Value {
     pub fn get(&self, key: &str) -> Option<&Value> {
         match self {

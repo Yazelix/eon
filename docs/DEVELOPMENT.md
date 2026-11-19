@@ -705,9 +705,11 @@ This is a startup/cleanup check, without throughput, memory or latency claims.
 
 ### Installed journeys
 
-`eon-bench journey --eon PATH --case first-launch --out DIR` runs one Eon
-window on the shared private 1280×800 Sway launcher. Use an x86_64 Linux Nix
-candidate and a fresh evidence directory. The case starts bare `eon` with two
+`eon-bench journey (--eon PATH | --bundle ARCHIVE) --case first-launch --out DIR`
+runs one Eon window on the shared private 1280×800 Sway launcher. Use an
+x86_64 Linux candidate and a fresh evidence directory. `--eon` names a Nix
+candidate's `bin/eon`; `--bundle` names the Nix-free release archive (see
+[Nix-free bundle journeys](#nix-free-bundle-journeys)). The case starts bare `eon` with two
 projects in private Zoxide history, selects one through the startup picker,
 and checks that the first pane runs its shell in that project. The picker PNG
 must show foreground pixels in the prompt and both result rows. The pane
@@ -731,8 +733,9 @@ bash "$heavy_runner" env CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
 
 Exit 0 means the case and Stop passed. Exit 1 means a run failed. Exit 2
 means the arguments were invalid. `DIR` must be new. `result.json` schema 1
-records the case, product root and its source receipt when present, resolved
-Eon executable, bench build identity and SHA-256, overall result and seconds.
+records the case, the `mode` (`nix` or `bundle`), product root and its source
+receipt when present, resolved Eon executable, bench build identity and
+SHA-256, overall result and seconds.
 The ordered `steps` array gives each attempted step's `name`, `kind`,
 `result`, `seconds`, and `evidence` on success or `error` on failure. Before
 case steps, the `versions` row records component identities and checks the Eon
@@ -745,7 +748,8 @@ build against the product's source receipt when present.
 | `send` | The candidate's `pane send --json` reply |
 | `wait` | The matching session or terminal observation. A timed-out wait reports the last observation |
 | `capture` | PNG `file`, `width`, `height`, and the case's `pixels` measurements |
-| `cleanup` | The Stop `reply` and `live_candidate_processes` count |
+| `check` | A bundle origin audit: each jailed process's `pid`, `exe` and `origin`, and the count of `outside` processes |
+| `cleanup` | The Stop `reply` and `live_candidate_processes` count, or the removed bundle extraction |
 
 Cases are Rust step lists under `eon/tools/eon-bench/src/journey/`. A step calls
 the candidate CLI, sends to an explicit pane or popup ID, waits for an
@@ -759,6 +763,73 @@ sidebar. The sandbox exposes the Nix store, private system files and the
 new evidence directory at `/evidence`. It has its own terminal session, and
 the outer runner tears down the namespace after 180 seconds.
 For a beta proof, pass the out-link to the receipt-bearing product output.
+
+#### Nix-free bundle journeys
+
+`--bundle ARCHIVE` runs the same case against the Nix-free archive
+(`eon-VERSION-x86_64-linux.tar.zst`, from `nix build .#manual-bundle`). Each
+run extracts the archive into a fresh `/evidence/bundle`, hashing the same
+bytes it feeds to tar. The extraction must hold one top-level directory, and
+its `provenance.json`, product root, `eon` entrypoint and
+`share/eon-source-receipt.json` must all resolve inside it; the receipt's
+`build` is what the `versions` row must match.
+
+```sh
+bash "$heavy_runner" nix build .#manual-bundle --out-link "$journey_root/bundle"
+bash "$heavy_runner" "$journey_root/bench/bin/eon-bench" journey \
+  --bundle "$journey_root/bundle/eon-VERSION-x86_64-linux.tar.zst" \
+  --case first-launch --out "$journey_root/g2"
+```
+
+Every candidate program (the launch, each `eon` CLI call, the Zoxide seed and
+Stop) runs in one jail, while Sway, D-Bus, `grim` and ImageMagick stay in the
+outer journey sandbox. Sway's command socket sits in a runtime directory no
+jail bind reaches, because Sway runs whatever command that socket is sent
+outside the jail; the jail keeps the Wayland and D-Bus sockets. The jail is one persistent PID namespace with a fresh
+procfs, so `/nix` is absent even through `/proc/*/root`. Its only host files
+are the bundle's declared host boundary ([MANUAL-BUNDLE.md](MANUAL-BUNDLE.md):
+glibc, `libgcc_s`, `libwayland-client`), the host's Mesa lavapipe driver
+(`/usr/share/vulkan/icd.d/lvp_icd.json` and the libraries the host loader lists
+for it), `/etc/ld.so.cache` and `/bin/sh`. `PATH` is `/usr/bin:/bin`, whose
+directories hold only `sh` and `dash`. `XDG_DATA_DIRS` and `XDG_CONFIG_DIRS`
+point at empty private directories, and no environment value may name `/nix`.
+The host's Vulkan loader is never mounted. The host therefore needs a merged
+`/usr`, glibc at or above the archive's `relink.glibc_floor`, and Mesa
+lavapipe; Ubuntu 24.04 qualifies, NixOS does not. The run fails readably
+naming a missing prerequisite.
+
+Bundle mode adds these rows to the receipt:
+
+- `bundle` (`setup`): archive path, SHA-256 and size, the extraction, product
+  root, entrypoint, provenance `package` and `glibc_floor`.
+- `host` (`setup`): a probe inside the jail. It records the host loader and
+  glibc, the PATH tools and the visible processes, and fails on any way to
+  `/nix` or to Sway's command socket, any process outside the jail, a tool
+  other than `sh` and `dash`, or a missing Wayland socket.
+  It also records the host set.
+- `origins-picker-ready` and `origins-first-shell` (`check`): audits of every
+  live process in the journey sandbox, whatever its environment. Outside the jail, none may run from the extraction.
+  Inside, each must run from the extraction or the host set, name no `/nix`
+  in its environment, and map only files from the evidence directory, devices,
+  memfds and the host set. Only Venus may map lavapipe's own libraries, and it
+  must map the bundled `libvulkan.so.1` and the host driver. The picker audit
+  requires live Yazi and fzf; the shell audit requires the supervisor, Venus,
+  Orbit and Nushell.
+- `doctor` (`cli`), after the case steps: `eon doctor --json` in the jail. It
+  records the report and requires exit 0, no FAIL by check ID, and a passing
+  `editor` check.
+- `remove-bundle` (`cleanup`): the extraction, complete or partial, is
+  removed once process cleanup succeeded and no process runs from or maps
+  it. When the row keeps it, or the run limit stops the inner run, the outer
+  run removes it after the journey sandbox's PID namespace is gone.
+
+A failed `wait` row carries the last lines of `eon.log`.
+
+The proof is that no store lookup succeeds and none is required; probes that
+fail are not traced. That covers one host distribution and a software
+renderer. Hardware GPUs and other distributions belong to the release's VM
+proof. A release proof runs `--bundle` on the exact frozen archive, because
+the archive embeds its source revision.
 
 ### Terminal comparison
 

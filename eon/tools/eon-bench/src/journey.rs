@@ -11,8 +11,9 @@ use std::{
 };
 
 use crate::{
+    bundle::{self, Bundle, HostSet},
     child, environment, isolation,
-    json::Value,
+    json::{Value, object},
     launcher::{self, BusPolicy, Headless, Renderer, WindowMode},
     picture::Picture,
     suite,
@@ -21,21 +22,51 @@ use crate::{
 type Result<T = ()> = std::result::Result<T, String>;
 
 const HELP: &str = "\
-eon-bench journey --eon PATH --case first-launch --out DIR
+eon-bench journey (--eon PATH | --bundle ARCHIVE) --case first-launch --out DIR
 
-Exercise the installed Nix Eon candidate in private 1280x800 headless Sway.
-PATH is the candidate's bin/eon. DIR must not exist. Linux only.
+Exercise an installed Eon candidate in private 1280x800 headless Sway.
+PATH is a Nix candidate's bin/eon. ARCHIVE is the Nix-free release archive
+(eon-VERSION-x86_64-linux.tar.zst from .#manual-bundle): it runs extracted, in
+a jail with no /nix, on the host's glibc and Mesa lavapipe (a merged-/usr host).
+DIR must not exist. Linux only.
 Writes result.json, capture-*.png and private launch logs.
 Exit 0 on a passing case and Stop, 1 on a run failure, 2 on invalid arguments.";
 
 const PARENT_PID_NS: &str = "EON_BENCH_JOURNEY_PARENT_PID_NS";
 const PRODUCT_ROOT: &str = "EON_BENCH_JOURNEY_PRODUCT_ROOT";
+const HOST_SET: &str = "EON_BENCH_JOURNEY_HOST_SET";
+const ARCHIVE: &str = "/bundle.tar.zst";
+/// Lines of `eon.log` a failed wait carries.
+const LOG_TAIL: usize = 20;
+/// The extraction, under the evidence directory.
+const BUNDLE_ROOT: &str = "bundle";
 const RUN_LIMIT: Duration = Duration::from_secs(180);
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 const CAPTURE_LIMIT: Duration = Duration::from_secs(10);
+const EXTRACT_LIMIT: Duration = Duration::from_secs(60);
+
+enum Input {
+    Nix(PathBuf),
+    Bundle(PathBuf),
+}
+
+impl Input {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Nix(path) | Self::Bundle(path) => path,
+        }
+    }
+
+    fn mode(&self) -> &'static str {
+        match self {
+            Self::Nix(_) => "nix",
+            Self::Bundle(_) => "bundle",
+        }
+    }
+}
 
 pub struct Options {
-    eon: PathBuf,
+    input: Input,
     out: PathBuf,
     case: String,
 }
@@ -48,7 +79,7 @@ pub fn options(args: &[String]) -> Result<Options> {
     let mut values = BTreeMap::new();
     let mut args = args.iter();
     while let Some(flag) = args.next() {
-        if !matches!(flag.as_str(), "--eon" | "--out" | "--case") {
+        if !matches!(flag.as_str(), "--eon" | "--bundle" | "--out" | "--case") {
             return Err(format!("unknown argument {flag}\n{HELP}"));
         }
         let value = args
@@ -63,9 +94,14 @@ pub fn options(args: &[String]) -> Result<Options> {
     if case != "first-launch" {
         return Err(format!("unknown journey case {case}\n{HELP}"));
     }
+    let input = match (values.get("--eon"), values.get("--bundle")) {
+        (Some(eon), None) => Input::Nix(eon.into()),
+        (None, Some(archive)) => Input::Bundle(archive.into()),
+        _ => return Err(format!("give exactly one of --eon and --bundle\n{HELP}")),
+    };
     Ok(Options {
         case: case.into(),
-        eon: values.get("--eon").ok_or("--eon is required")?.into(),
+        input,
         out: values.get("--out").ok_or("--out is required")?.into(),
     })
 }
@@ -74,13 +110,8 @@ fn error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-fn object<const N: usize>(entries: [(&str, Value); N]) -> Value {
-    Value::Object(
-        entries
-            .into_iter()
-            .map(|(key, value)| (key.into(), value))
-            .collect(),
-    )
+fn text(path: &Path) -> Value {
+    path.display().to_string().into()
 }
 
 fn path_text(path: &Path) -> Result<&str> {
@@ -120,39 +151,75 @@ pub fn run(options: &Options) -> Result {
         .create(&options.out)
         .map_err(error)?;
     let out = fs::canonicalize(&options.out).map_err(error)?;
-    let mut eon = options.eon.clone();
+    let mut eon = options.input.path().to_path_buf();
     let mut root = None;
     let started = Instant::now();
     let result = (|| {
-        eon = launcher::candidate(&options.eon)?;
-        root = Some(product_root(&options.eon, &eon)?);
         let exe = std::env::current_exe().map_err(error)?;
         let shell = std::env::var_os("EON_BENCH_SH")
             .ok_or("missing EON_BENCH_SH (use the Nix bench package)")?;
         let shell = launcher::candidate(Path::new(&shell))?;
+        let (binds, setenv, inner) = match &options.input {
+            Input::Nix(requested) => {
+                eon = launcher::candidate(requested)?;
+                let product = product_root(requested, &eon)?;
+                root = Some(product.clone());
+                (
+                    Vec::new(),
+                    (PRODUCT_ROOT, product.into_os_string()),
+                    ["--eon".into(), eon.clone().into_os_string()],
+                )
+            }
+            Input::Bundle(archive) => {
+                eon = fs::canonicalize(archive)
+                    .map_err(|reason| format!("--bundle {}: {reason}", archive.display()))?;
+                if !eon.is_file() {
+                    return Err(format!("--bundle {} is not a file", eon.display()));
+                }
+                let host = HostSet::discover()?;
+                let mut binds = host.outer_binds();
+                binds.push((eon.clone(), ARCHIVE.into()));
+                (
+                    binds,
+                    (HOST_SET, host.to_json().to_pretty().into()),
+                    ["--bundle".into(), ARCHIVE.into()],
+                )
+            }
+        };
         let log = fs::File::create(out.join("sandbox.log")).map_err(error)?;
-        let mut command = isolation::journey(&out, &exe, &shell)?;
+        let mut command = isolation::journey(&out, &exe, &shell, &binds)?;
         command
             .env_clear()
             .envs(
-                ["PATH", "EON_BENCH_LAVAPIPE", "EON_BENCH_MAGICK"]
-                    .into_iter()
-                    .filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
+                [
+                    "PATH",
+                    "EON_BENCH_LAVAPIPE",
+                    "EON_BENCH_MAGICK",
+                    "EON_BENCH_BWRAP",
+                    "EON_BENCH_TAR",
+                    "EON_BENCH_ZSTD",
+                ]
+                .into_iter()
+                .filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
             )
             .stdout(log.try_clone().map_err(error)?)
             .stderr(log)
             .args(["--setenv", PARENT_PID_NS])
             .arg(fs::read_link("/proc/self/ns/pid").map_err(error)?)
-            .args(["--setenv", PRODUCT_ROOT])
-            .arg(root.as_ref().expect("resolved product root"))
+            .args(["--setenv", setenv.0])
+            .arg(setenv.1)
             .arg("--")
             .arg(exe)
-            .args(["journey-inner", "--case", &options.case, "--eon"])
-            .arg(&eon)
+            .args(["journey-inner", "--case", &options.case])
+            .args(inner)
             .arg("--out")
             .arg(isolation::JOURNEY_EVIDENCE);
-        isolation::run_until(&mut command, Some(started + RUN_LIMIT))
-            .map_err(|reason| format!("{reason}; see sandbox.log"))
+        let ran = isolation::run_until(&mut command, Some(started + RUN_LIMIT))
+            .map_err(|reason| format!("{reason}; see sandbox.log"));
+        // The sandbox's PID namespace is gone, so nothing runs from an
+        // extraction the inner run kept or never reached removing, such as
+        // after the run limit killed it.
+        reclaim(&out, ran)
     })();
     if let Err(reason) = &result
         && !out.join("result.json").exists()
@@ -184,6 +251,7 @@ fn require_isolation() -> Result {
 
 struct Receipt<'a> {
     case: &'a str,
+    mode: &'static str,
     eon: Value,
     product_root: Value,
     source_receipt: Value,
@@ -201,8 +269,9 @@ impl<'a> Receipt<'a> {
         };
         Self {
             case: &options.case,
-            eon: eon.display().to_string().into(),
-            product_root: root.map(|root| root.display().to_string()).into(),
+            mode: options.input.mode(),
+            eon: text(eon),
+            product_root: root.map(text).unwrap_or(Value::Null),
             source_receipt: Value::Null,
             bench,
             started,
@@ -229,11 +298,28 @@ impl<'a> Receipt<'a> {
         result.map(drop)
     }
 
+    /// Records a step whose action also yields a value for later steps.
+    fn produce<T>(
+        &mut self,
+        name: &str,
+        kind: &str,
+        action: impl FnOnce() -> Result<(T, Value)>,
+    ) -> Result<T> {
+        let mut produced = None;
+        self.record(name, kind, || {
+            let (value, evidence) = action()?;
+            produced = Some(value);
+            Ok(evidence)
+        })?;
+        Ok(produced.expect("a passing step produced its value"))
+    }
+
     fn write(self, out: &Path) -> Result {
         let value = object([
             ("schema", 1u64.into()),
             ("suite", "journey".into()),
             ("case", self.case.into()),
+            ("mode", self.mode.into()),
             ("eon", self.eon),
             ("product_root", self.product_root),
             ("source_receipt", self.source_receipt),
@@ -243,6 +329,31 @@ impl<'a> Receipt<'a> {
             ("steps", Value::Array(self.steps)),
         ]);
         child::publish(&out.join("result.json"), &value.to_pretty())
+    }
+}
+
+/// The last `lines` lines of a log, for a failed step's evidence.
+fn log_tail(path: &Path, lines: usize) -> String {
+    match fs::read_to_string(path) {
+        Ok(text) => {
+            let all: Vec<_> = text.lines().collect();
+            let tail = all[all.len().saturating_sub(lines)..].join("\n");
+            format!("{} ends:\n{tail}", path.display())
+        }
+        Err(error) => format!("{}: {error}", path.display()),
+    }
+}
+
+/// Removes an extraction the inner run left behind, once its sandbox is gone,
+/// and adds any removal failure to the run's result.
+fn reclaim(out: &Path, ran: Result) -> Result {
+    let leftover = out.join(BUNDLE_ROOT);
+    match fs::symlink_metadata(&leftover).map(|_| bundle::remove(&leftover)) {
+        Ok(Err(removal)) => Err(match ran {
+            Ok(()) => removal,
+            Err(reason) => format!("{reason}; {removal}"),
+        }),
+        _ => ran,
     }
 }
 
@@ -262,6 +373,10 @@ fn source_receipt(root: &Path) -> Result<Value> {
 
 struct Journey {
     launch: Headless,
+    /// The installed product root: the Nix package, or the bundle's package.
+    product_root: PathBuf,
+    /// The extracted bundle tree, whose processes the case audits.
+    tree: Option<PathBuf>,
     generation: Option<String>,
     tab: Option<String>,
     popup: Option<String>,
@@ -351,24 +466,97 @@ fn verify_build(versions: &str, expected: Option<&str>) -> Result {
 
 pub fn run_inner(options: &Options) -> Result {
     require_isolation()?;
-    let root =
-        PathBuf::from(std::env::var_os(PRODUCT_ROOT).ok_or("missing candidate product root")?);
-    let mut receipt = Receipt::new(options, &options.eon, Some(&root), Instant::now());
-    let mut run = || {
-        let mut launch = Headless::new(&options.out, &options.eon, WindowMode::Fullscreen)?;
-        receipt.source_receipt = source_receipt(&root)?;
+    let mut receipt = Receipt::new(options, options.input.path(), None, Instant::now());
+    let mut extraction = None;
+    let mut extracted = None;
+    let mut cleaned = true;
+    let result = (|| {
+        if receipt.bench.get("error").is_some() {
+            return Err(format!("could not identify bench: {:?}", receipt.bench));
+        }
+        let (launch, product_root) = match &options.input {
+            Input::Nix(eon) => {
+                let root = PathBuf::from(
+                    std::env::var_os(PRODUCT_ROOT).ok_or("missing candidate product root")?,
+                );
+                receipt.product_root = text(&root);
+                let mut launch = Headless::new(&options.out, eon, WindowMode::Fullscreen)?;
+                receipt.source_receipt = source_receipt(&root)?;
+                Renderer("lavapipe".into()).apply(&mut launch)?;
+                launch.start_compositor(BusPolicy::Private)?;
+                (launch, root)
+            }
+            Input::Bundle(archive) => {
+                let host = std::env::var(HOST_SET).map_err(|_| "missing bundle host set")?;
+                let host = HostSet::from_json(&Value::parse(&host)?)?;
+                // Owned from creation: removed at the end however setup ends.
+                let root = extraction.insert(options.out.join(BUNDLE_ROOT));
+                let opened = receipt.produce("bundle", "setup", || {
+                    let tool = |key: &str| {
+                        std::env::var_os(key)
+                            .ok_or(format!("missing {key} (use the Nix bench package)"))
+                    };
+                    let opened = Bundle::extract(
+                        archive,
+                        root,
+                        (&tool("EON_BENCH_TAR")?, &tool("EON_BENCH_ZSTD")?),
+                        Instant::now() + EXTRACT_LIMIT,
+                    )?;
+                    let evidence = opened.to_json();
+                    Ok((opened, evidence))
+                })?;
+                let opened = extracted.insert(opened);
+                receipt.eon = text(&opened.entry);
+                receipt.product_root = text(&opened.product);
+                receipt.source_receipt = opened.receipt.clone();
+                let launch = receipt.produce("host", "setup", || {
+                    let mut launch = Headless::bundle(
+                        &options.out,
+                        &opened.entry,
+                        WindowMode::Fullscreen,
+                        host.clone(),
+                    )?;
+                    launch.start_compositor(BusPolicy::Private)?;
+                    let ipc = launch.env["SWAYSOCK"].clone();
+                    let wayland = Path::new(&launch.env["XDG_RUNTIME_DIR"])
+                        .join(&launch.env["WAYLAND_DISPLAY"]);
+                    let probe = launch.candidate_output_until(
+                        Instant::now() + CALL_LIMIT,
+                        Path::new("/bin/sh"),
+                        &[
+                            "-c",
+                            bundle::PROBE,
+                            "sh",
+                            bundle::LOADER,
+                            bundle::ICD,
+                            &ipc,
+                            path_text(&wayland)?,
+                        ],
+                    )?;
+                    let evidence = bundle::host_probe(
+                        &String::from_utf8_lossy(&probe.stdout),
+                        &opened.glibc_floor,
+                    )
+                    .map_err(|reason| format!("{reason}; probe: {}", describe(&probe)))?;
+                    Ok((
+                        launch,
+                        object([("jail", evidence), ("host_set", host.to_json())]),
+                    ))
+                })?;
+                (launch, opened.product.clone())
+            }
+        };
         let expected_build = receipt
             .source_receipt
             .get("build")
             .and_then(Value::as_str)
             .map(str::to_owned);
-        if receipt.bench.get("error").is_some() {
-            return Err(format!("could not identify bench: {:?}", receipt.bench));
-        }
-        Renderer("lavapipe".into()).apply(&mut launch)?;
-        launch.start_compositor(BusPolicy::Private)?;
         let mut journey = Journey {
             launch,
+            product_root,
+            tree: extracted
+                .as_ref()
+                .map(|opened: &Bundle| opened.tree.clone()),
             generation: None,
             tab: None,
             popup: None,
@@ -386,24 +574,56 @@ pub fn run_inner(options: &Options) -> Result {
             })
             .and_then(|()| receipt.record("seed-home", "setup", || first_launch::prepare(&journey)))
             .and_then(|()| {
-                first_launch::STEPS
-                    .iter()
-                    .try_for_each(|step| step.run(&mut journey, &mut receipt))
+                first_launch::STEPS.iter().try_for_each(|step| {
+                    step.run(&mut journey, &mut receipt)?;
+                    let audit = first_launch::BUNDLE_AUDITS
+                        .iter()
+                        .find(|(after, _)| *after == step.0);
+                    match (&journey.tree, audit) {
+                        (Some(tree), Some((after, required))) => {
+                            receipt.record(&format!("origins-{after}"), "check", || {
+                                journey.launch.audit_origins(tree, required)
+                            })
+                        }
+                        _ => Ok(()),
+                    }
+                })
+            })
+            .and_then(|()| match &journey.tree {
+                Some(_) => receipt.record("doctor", "cli", || doctor(&journey)),
+                None => Ok(()),
             });
         let stopped = receipt.record("stop", "cleanup", || journey.stop(&baseline));
-        let cleaned = journey.launch.processes.cleanup();
+        cleaned = journey.launch.processes.cleanup();
         if !cleaned {
             let _ = receipt.record("cleanup", "cleanup", || {
                 Err("private process cleanup failed".into())
             });
         }
         result.and(stopped)
-    };
-    let result = run();
+    })();
     if let Err(reason) = &result
         && !receipt.failed
     {
         let _ = receipt.record("setup", "setup", || Err(reason.clone()));
+    }
+    // The extraction is large and the archive reproduces it; keep it only
+    // while a process may still run from it. Setup errors drop the launch
+    // early, so its cleanup result is unknown here: check for such processes
+    // directly. The outer run removes a kept extraction once the journey
+    // sandbox is gone.
+    if let Some(root) = &extraction {
+        let _ = receipt.record("remove-bundle", "cleanup", || {
+            let occupants = bundle::occupied(root)?;
+            if !cleaned || !occupants.is_empty() {
+                return Err(format!(
+                    "kept {} for the outer run: process cleanup {}, occupants {occupants:?}",
+                    root.display(),
+                    if cleaned { "succeeded" } else { "failed" }
+                ));
+            }
+            bundle::remove(root)
+        });
     }
     let failed = receipt.failed;
     receipt.write(&options.out)?;
@@ -411,6 +631,47 @@ pub fn run_inner(options: &Options) -> Result {
         return Err("private cleanup failed; see result.json".into());
     }
     result
+}
+
+/// `eon doctor --json` on the healthy bundle (eon-6zoxr): no FAIL by check
+/// ID, and the packaged editor passes.
+fn doctor(journey: &Journey) -> Result<Value> {
+    let output = journey.output(
+        &journey.launch.eon,
+        &["doctor", "--json"],
+        Instant::now() + CALL_LIMIT,
+    )?;
+    let report = std::str::from_utf8(&output.stdout)
+        .map_err(error)
+        .and_then(Value::parse)
+        .map_err(|reason| format!("eon doctor --json: {reason}; {}", describe(&output)))?;
+    judge_doctor(report, output.status.code())
+}
+
+fn judge_doctor(report: Value, exit: Option<i32>) -> Result<Value> {
+    let checks = report
+        .get("checks")
+        .and_then(Value::as_array)
+        .ok_or("eon doctor --json has no checks list")?;
+    fn field<'a>(check: &'a Value, key: &str) -> Option<&'a str> {
+        check.get(key).and_then(Value::as_str)
+    }
+    let failed: Vec<_> = checks
+        .iter()
+        .filter(|check| field(check, "status") == Some("FAIL"))
+        .filter_map(|check| field(check, "id"))
+        .collect();
+    let editor = checks
+        .iter()
+        .find(|check| field(check, "id") == Some("editor"))
+        .and_then(|check| field(check, "status"));
+    if !failed.is_empty() || exit != Some(0) || editor != Some("PASS") {
+        return Err(format!(
+            "eon doctor failed {failed:?} with editor {editor:?} (exit {exit:?}): {}",
+            report.to_pretty().trim()
+        ));
+    }
+    Ok(object([("exit", 0u64.into()), ("report", report)]))
 }
 
 fn describe(output: &Output) -> String {
@@ -433,22 +694,34 @@ fn startup_pending(generation: Option<&str>, reply: &Value) -> bool {
         )
 }
 
+fn succeeded(program: &Path, args: &[&str], output: Output) -> Result<Vec<u8>> {
+    if !output.status.success() {
+        return Err(format!(
+            "{} {args:?}: {}",
+            program.display(),
+            describe(&output)
+        ));
+    }
+    Ok(output.stdout)
+}
+
 impl Journey {
+    /// Runs a candidate program through the candidate's route.
     fn output(&self, program: &Path, args: &[&str], deadline: Instant) -> Result<Output> {
         self.launch
-            .output_until(deadline.min(Instant::now() + CALL_LIMIT), program, args)
+            .candidate_output_until(deadline.min(Instant::now() + CALL_LIMIT), program, args)
     }
 
     fn call(&self, program: &Path, args: &[&str], deadline: Instant) -> Result<Vec<u8>> {
-        let output = self.output(program, args, deadline)?;
-        if !output.status.success() {
-            return Err(format!(
-                "{} {args:?}: {}",
-                program.display(),
-                describe(&output)
-            ));
-        }
-        Ok(output.stdout)
+        succeeded(program, args, self.output(program, args, deadline)?)
+    }
+
+    /// Runs a bench tool, never through the candidate's route.
+    fn tool(&self, program: &Path, args: &[&str], deadline: Instant) -> Result<Vec<u8>> {
+        let output =
+            self.launch
+                .output_until(deadline.min(Instant::now() + CALL_LIMIT), program, args)?;
+        succeeded(program, args, output)
     }
 
     fn call_json(&self, args: &[&str], deadline: Instant) -> Result<Value> {
@@ -519,9 +792,10 @@ impl Journey {
             }
         }
         Err(format!(
-            "predicate did not match within {}s; last observation: {}",
+            "predicate did not match within {}s; last observation: {}; {}",
             limit.as_secs(),
-            last.to_pretty().trim()
+            last.to_pretty().trim(),
+            log_tail(&self.launch.out.join("eon.log"), LOG_TAIL)
         ))
     }
 
@@ -534,8 +808,8 @@ impl Journey {
         );
         let deadline = Instant::now() + CAPTURE_LIMIT;
         let frame = || {
-            self.call(Path::new("grim"), &["-t", "png", path_arg], deadline)?;
-            let pixels = self.call(
+            self.tool(Path::new("grim"), &["-t", "png", path_arg], deadline)?;
+            let pixels = self.tool(
                 &magick,
                 &[path_arg, "-strip", "-alpha", "off", "-depth", "8", "ppm:-"],
                 deadline,
@@ -629,6 +903,22 @@ mod tests {
     }
 
     #[test]
+    fn doctor_needs_no_failure_and_a_passing_editor() {
+        let report = |editor: &str, gpu: &str| {
+            Value::parse(&format!(
+                r#"{{"checks":[{{"id":"install","status":"PASS"}},{{"id":"editor","status":"{editor}"}},{{"id":"gpu","status":"{gpu}","fix":"later"}}]}}"#
+            ))
+            .unwrap()
+        };
+        assert!(judge_doctor(report("PASS", "WARN"), Some(0)).is_ok());
+        assert!(judge_doctor(report("WARN", "WARN"), Some(0)).is_err());
+        let failed = judge_doctor(report("PASS", "FAIL"), Some(1)).unwrap_err();
+        assert!(failed.contains(r#"["gpu"]"#), "{failed}");
+        assert!(judge_doctor(report("PASS", "PASS"), Some(1)).is_err());
+        assert!(judge_doctor(Value::parse("{}").unwrap(), Some(0)).is_err());
+    }
+
+    #[test]
     fn first_inspection_waits_through_initial_registry_admission() {
         let busy = Value::parse(r#"{"error":{"code":"registry-busy"}}"#).unwrap();
         let invalid = Value::parse(r#"{"error":{"code":"malformed-action"}}"#).unwrap();
@@ -644,6 +934,10 @@ mod tests {
             "--eon eon --out out --case other",
             "--eon eon --out out --case first-launch --out again",
             "--eon --out out --case first-launch",
+            "--out out --case first-launch",
+            "--eon eon --bundle a.tar.zst --out out --case first-launch",
+            "--bundle a.tar.zst --bundle b.tar.zst --out out --case first-launch",
+            "--bundle a.tar.zst --out out --case first-launch --extra x",
         ] {
             let args = bad
                 .split_whitespace()
@@ -651,5 +945,46 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(options(&args).is_err(), "{bad}");
         }
+        let modes = ["--eon eon", "--bundle a.tar.zst"].map(|input| {
+            let args: Vec<_> = format!("{input} --out out --case first-launch")
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect();
+            options(&args).unwrap().input.mode()
+        });
+        assert_eq!(modes, ["nix", "bundle"]);
+    }
+
+    #[test]
+    fn the_outer_run_reclaims_a_kept_read_only_extraction() {
+        use std::os::unix::fs::PermissionsExt;
+        let out = std::env::temp_dir().join(format!("bench-reclaim-{}", std::process::id()));
+        let kept = out.join(BUNDLE_ROOT).join("eon-1/nix");
+        fs::create_dir_all(&kept).unwrap();
+        for dir in [&kept, &out.join(BUNDLE_ROOT).join("eon-1")] {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        assert_eq!(
+            reclaim(&out, Err("run limit".into())),
+            Err("run limit".into())
+        );
+        assert!(!out.join(BUNDLE_ROOT).exists());
+        assert_eq!(reclaim(&out, Ok(())), Ok(()));
+        fs::remove_dir(&out).unwrap();
+    }
+
+    #[test]
+    fn failed_waits_carry_the_tail_of_eon_log() {
+        let dir = std::env::temp_dir().join(format!("bench-tail-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("eon.log");
+        let text: String = (1..=30).map(|line| format!("l{line:02}\n")).collect();
+        fs::write(&log, text).unwrap();
+        let tail = log_tail(&log, LOG_TAIL);
+        assert!(tail.contains("l11") && tail.contains("l30"), "{tail}");
+        assert!(!tail.contains("l10"), "{tail}");
+        fs::remove_file(&log).unwrap();
+        assert!(log_tail(&log, LOG_TAIL).contains("eon.log"));
+        fs::remove_dir(&dir).unwrap();
     }
 }

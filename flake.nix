@@ -1578,6 +1578,8 @@
                   --set-default EON_BENCH_LAVAPIPE ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
                   --set-default EON_BENCH_MAGICK ${pkgs.imagemagick}/bin/magick \
                   --set-default EON_BENCH_SH ${pkgs.runtimeShell} \
+                  --set-default EON_BENCH_TAR ${pkgs.gnutar}/bin/tar \
+                  --set-default EON_BENCH_ZSTD ${pkgs.zstd}/bin/zstd \
                   ${lib.concatStringsSep " " (lib.mapAttrsToList (name: value: "--set-default ${name} ${lib.escapeShellArg value}") benchTerminals.environment)} \
                 ''} \
                 --set-default EON_BENCH_KITTEN ${pkgs.kitty.kitten}/bin/kitten
