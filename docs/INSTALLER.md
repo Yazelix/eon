@@ -167,15 +167,10 @@ payloads or promises rollback. Use the explicit installer rollback below.
 A release carries `eon-VERSION-x86_64-linux.tar.zst`, its copyleft source
 companion `eon-VERSION-x86_64-linux-sources.tar.zst`, the static installer as
 `eon-install-x86_64-linux`, `SHA256SUMS` over all three and the maintainer's
-`SHA256SUMS.sig`. Nix builds the artifacts and checksum list from one revision.
-At the cut, check the rights holder's Accelerando redistribution grant for the
-exact pinned font and glyph bytes. With that recorded grant, select
-`release_attribute=release` (`.#release`). Without it, select
-`release_attribute=release-without-accelerando` (`.#release-without-accelerando`):
-the archive omits Accelerando and its fonts; Game of Life remains available.
-The workflow defaults to this route. Both routes retain the notice/source
-checks, and the full route rejects a missing grant. Record the selected
-attribute and grant disposition with the release evidence.
+`SHA256SUMS.sig`. `.#release` builds the artifacts and checksum list from one
+revision. Its build fails when the archive's notices or source companion are
+incomplete, or when the archive lacks the Accelerando font or Anima's
+Accelerando program ([Accelerando](MANUAL-BUNDLE.md#installer-and-publication-handoff)).
 
 The binary notices name the source companion, say that it is
 attached to the same release as the archive, and give the releases page; see
@@ -192,9 +187,9 @@ attestation for each, and attaches them to a draft release. The tag must be
 package version; an existing tag must name the dispatched commit. A release
 tags its exact proven `edge` commit ([Git Workflow](AGENT-RULES.md#git-workflow)),
 so push the tag first and dispatch the workflow on it. The draft is unsigned.
-The draft notes name the selected release attribute. Before signing, the
+Before signing, the
 maintainer who holds the release key compares its `SHA256SUMS` with one from
-a local build of that same attribute at the same commit. If
+a local build of `.#release` at the same commit. If
 they differ, do not sign: stop and file a bead, since bit-for-bit parity of the
 hosted and local builds is unproven until a rehearsal shows it. The
 [custody policy](DISTRIBUTION.md#release-signing-custody-and-recovery) requires
@@ -207,12 +202,11 @@ not run them. This procedure requires the owner's explicit go-ahead. First
 dispatch the build and compare checksums in the development environment:
 
 ```sh
-release_attribute=release-without-accelerando # use release only with the recorded grant
 git push origin vVERSION
-gh workflow run release.yml -R Yazelix/eon --ref vVERSION -f tag=vVERSION -f release_attribute="$release_attribute"
+gh workflow run release.yml -R Yazelix/eon --ref vVERSION -f tag=vVERSION
 # Once that run has succeeded; each step runs only if the previous one passed.
 gh release download vVERSION -R Yazelix/eon -p SHA256SUMS &&
-  git checkout vVERSION && nix build ".#$release_attribute" &&
+  git checkout vVERSION && nix build .#release &&
   diff SHA256SUMS result/SHA256SUMS
 ```
 

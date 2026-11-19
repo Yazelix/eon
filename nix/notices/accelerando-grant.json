@@ -1,0 +1,12 @@
+{
+  "work": "Accelerando-8192 font and glyph artwork by gillverd, as adapted in Anima: the Accelerando Terminal Regular and Bold fonts and Anima's Accelerando glyph bitmaps",
+  "upstream": "https://github.com/gillverd/accelerando-8192",
+  "license": "MIT",
+  "chosen_by": "Lucca, Eon's maintainer, on 2026-11-19",
+  "basis": "Upstream publishes no license for this artwork, and the license request at https://github.com/gillverd/accelerando-8192/issues/3 had no answer. Eon's maintainer chose MIT for the artwork as Eon ships it; the MIT text is licenses/accelerando-MIT. Anima's NOTICE files, which predate this choice, still describe how the fonts and bitmaps were derived.",
+  "assets": {
+    "fonts/accelerando-terminal.ttf": "b0ebee3d316d0afcdac01f506fbbebd721d880c6e13126eb43bf40a6def6abb5",
+    "fonts/accelerando-terminal-bold.ttf": "a38efd97e02101e57ef8d153fe86ff380d9a59112c3813fb96fac4c1dc0cc6f0",
+    "src/accelerando-glyphs.bin": "e7ea5569d73bb5e0969cfe75c024667b2827ebdd2afd2c6a173086785d6062db"
+  }
+}

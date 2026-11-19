@@ -368,7 +368,7 @@ commit = "89dc5264e2ab53cf3a9ef544a6afd9112dac8d8a"
 fixed_by = "72982b818f8952cce290e06f42ef06b329d014c0"
 class = "missing-gate-evidence"
 tier = "high"
-summary = "Adding serde_json and sha2 to review-tier edited the root workspace Cargo.lock, which changes the dependency context of every producer built from that workspace, so the six graph_sha256 values pinning the eon, Orbit and Venus Rust audit exceptions went stale and .#archive-source-check and .#release-without-accelerando failed on edge."
+summary = "Adding serde_json and sha2 to review-tier edited the root workspace Cargo.lock, which changes the dependency context of every producer built from that workspace, so the six graph_sha256 values pinning the eon, Orbit and Venus Rust audit exceptions went stale and .#archive-source-check and the archive release check failed on edge."
 evidence = "89dc5264 adds serde_json and sha2 at eon/tools/review-tier/Cargo.toml:11-14, so review-tier's Cargo.lock entry gains them at Cargo.lock:2296-2297, and leaves nix/notices/audit-exceptions.json unchanged; 72982b81 renews exactly the graph_sha256 lines 5, 22, 34, 48, 59 and 82 of that file and names 89dc5264 as the cause. Bead eon-kx9uh first blamed 44ccf12f, then traced the stale digests to 89dc5264 from store outputs."
 mechanism = [["cargo.lock", "lockfile", "lock file", "workspace lock", "dependency", "dependencies", "serde_json", "sha2"], ["graph_sha256", "fingerprint", "audit exception", "audit-exception", "audit-exceptions", "dependency context", "stale digest", "archive-source-check", "archive-notice-check", "notice", "archive"]]
 

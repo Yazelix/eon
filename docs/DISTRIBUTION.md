@@ -234,9 +234,8 @@ with no promised support response time. Failed staging leaves the prior
 installation usable. Upgrades retain executables and payloads needed by live
 work or defer replacement; no Orbit/machine restart persistence is promised.
 
-The release workflow and local parity build select the same
-[archive route](INSTALLER.md#release-assets): the full route with a recorded
-Accelerando grant, or the route without Accelerando when no grant exists.
+The release workflow and the local parity build both build `.#release`
+([release assets](INSTALLER.md#release-assets)).
 
 The accepted cost envelope uses provisional estimates of 0.5–1.0 GB per archive,
 1.8–3.0 GB per extracted payload and 6.4–11.0 GB for two payloads, staging and

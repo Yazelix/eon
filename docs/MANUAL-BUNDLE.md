@@ -9,8 +9,8 @@ VERSION is the Eon package version. From v0.2.0 each
 [GitHub release](https://github.com/Yazelix/eon/releases) publishes it with
 the installer, `SHA256SUMS` and its signature
 ([release assets](INSTALLER.md#release-assets)). `nix build .#manual-bundle`
-produces the full archive from source. The
-[selected release route](INSTALLER.md#release-assets) adds the source
+produces the archive from source. `.#release`
+([release assets](INSTALLER.md#release-assets)) adds the source
 companion, installer and `SHA256SUMS`. Nix builds the artifact; the extracted
 entrypoint requires no installed Nix, store, daemon or evaluator. The archive targets
 x86_64 Linux native Wayland. The [installer](INSTALLER.md#install-a-release)
@@ -199,15 +199,18 @@ The archive omits the Helix grammars for Blueprint, Drools, GNU assembler
 Those languages have no syntax
 highlighting in the archive; the Nix package keeps its grammars.
 
-With the rights holder's recorded grant for the exact font and glyph bytes,
-the full route (`.#manual-bundle`, `.#release`) includes Accelerando and its
-fonts. Without that grant, the release uses `.#release-without-accelerando`;
-`nix build .#manual-bundle-without-accelerando` builds its binary archive.
-That route omits the Accelerando program and fonts, and its default font
-fallback list contains only Symbols Nerd Font Mono. Game of Life remains
-available. Both routes preserve the notice/source checks; the full release
-route rejects a missing grant. Check and record the chosen route at the cut
-as described in [release assets](INSTALLER.md#release-assets).
+The archive includes Anima's Accelerando program and the Accelerando Terminal
+fonts, adapted from gillverd's
+[Accelerando-8192](https://github.com/gillverd/accelerando-8192) artwork. Eon
+ships that artwork under MIT, chosen by Eon's maintainer
+([record](../nix/notices/accelerando-grant.json),
+[license](../licenses/accelerando-MIT)). The record pins the exact font and
+glyph bytes it covers, and the notice check fails when the pinned Anima files
+differ. `.#archive-accelerando-check` fails, and with it `.#manual-bundle` and
+`.#release`, unless the archive's own fonts.conf finds both Accelerando faces,
+byte for byte as recorded, and its Anima executable embeds the Accelerando
+glyphs. `.#default` and `.#no-helix` carry the same check for the Nix package
+and, on macOS, its Eon.app.
 
 Manual-download copy: Download the immutable Linux archive, `SHA256SUMS` and
 `SHA256SUMS.sig` from the release. Verify them with the Eon release public key

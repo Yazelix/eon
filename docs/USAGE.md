@@ -1718,10 +1718,6 @@ reattaching a window, or recovering it, keeps the old environment.
 
 ### Accelerando glyphs
 
-This animation is available in builds that include Accelerando. Without a
-recorded redistribution grant, the Linux release archive omits the animation
-and its fonts; Game of Life stays available. See [release routes](INSTALLER.md#release-assets).
-
 In Eon's native terminal, `eon anima accelerando` shows the 8,192-glyph alien
 alphabet in long green trails; add `--symbols` to mix in letters, digits and
 punctuation. Add `--big` for large, solid block glyphs; combine `--big --symbols`

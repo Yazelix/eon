@@ -71,7 +71,7 @@
       # Each target the manifest names gets its outputs from this one definition.
       perSystem =
         system:
-        { archive ? false, withoutAccelerando ? false }:
+        { archive ? false }:
         let
           pkgs = import nixpkgs {
             inherit system;
@@ -255,31 +255,7 @@
           yaziIdentity = component "yazi";
           lazygitIdentity = component "lazygit";
           ratconfigIdentity = component "ratconfig";
-          animaPackage = anima.packages.${system}.anima.overrideAttrs (old: lib.optionalAttrs withoutAccelerando {
-            src = let
-              root = /. + builtins.unsafeDiscardStringContext anima.outPath;
-              path = relative: root + "/${relative}";
-            in lib.fileset.toSource {
-              inherit root;
-              fileset = lib.fileset.difference (lib.fileset.unions (map path [
-                "Cargo.toml" "Cargo.lock" "LICENSE" "README.md" "src"
-              ])) (lib.fileset.unions (map path [
-                "src/accelerando-glyphs.bin" "src/accelerando-glyphs.NOTICE"
-              ]));
-            };
-            patches = (old.patches or [ ]) ++ [ ./nix/notices/anima-without-accelerando.patch ];
-            env.RUSTFLAGS = "--cfg eon_without_accelerando --check-cfg=cfg(eon_without_accelerando)";
-            # The upstream postInstall also links the font output into Anima's closure.
-            postInstall = ''
-              install -Dm444 LICENSE "$out/share/licenses/anima/LICENSE"
-              if "$out/bin/anima" accelerando > /dev/null 2> error; then
-                echo "Accelerando must not be available in this archive" >&2
-                exit 1
-              fi
-              grep -F 'unsupported screen style' error
-              "$out/bin/anima" --help | grep -F game_of_life_gliders
-            '';
-          });
+          animaPackage = anima.packages.${system}.anima;
 
           githubSource =
             identity: hash:
@@ -578,8 +554,8 @@
           venusFonts = [
             pkgs.dejavu_fonts
             pkgs.nerd-fonts.symbols-only
-          ] ++ lib.optional (!withoutAccelerando) anima.packages.${system}.accelerando-font
-            ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.noto-fonts-color-emoji ];
+            anima.packages.${system}.accelerando-font
+          ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.noto-fonts-color-emoji ];
           # Font directories are relative to this file, so the relocated bundle finds them too.
           venusFontsConf = pkgs.runCommand "fonts.conf" { } ''
             sed 's|<dir>${builtins.storeDir}/|<dir prefix="relative">|' ${
@@ -645,14 +621,6 @@
             }
             // venusFontEnvironment
             // venusTestEnvironment
-            // lib.optionalAttrs (withoutAccelerando && pkgs.stdenv.isLinux) {
-              # Existing tests use Accelerando as a fixture; it stays out of runtime fonts.
-              preCheck = ''
-                export FONTCONFIG_FILE=${pkgs.makeFontsConf {
-                  fontDirectories = venusFonts ++ [ anima.packages.${system}.accelerando-font ];
-                }}
-              '';
-            }
             // lib.optionalAttrs pkgs.stdenv.isDarwin {
               # Venus's tests build their font database without
               # EON_VENUS_FONT_DIRS, and on macOS it reads only the system and
@@ -1084,7 +1052,6 @@
               "Anima manifest version does not match the selected Cargo package";
             buildWorkspacePackage ({
               pname = "eon-rust";
-              env = lib.optionalAttrs withoutAccelerando { EON_WITHOUT_ACCELERANDO = "1"; };
               inherit (eonCargo.package) version;
               src = workspaceSource;
               cargoLock = workspaceCargoLock;
@@ -1277,6 +1244,8 @@
                 install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eon/eon-runtime/LICENSE"
                 install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eon/eon-runtime/NOTICE"
                 install -Dm444 ${anima}/LICENSE "$out/share/licenses/eon/anima/LICENSE"
+                install -Dm444 ${./licenses/accelerando-MIT} "$out/share/licenses/eon/accelerando/LICENSE"
+                install -Dm444 ${accelerandoGrant.path} "$out/share/licenses/eon/accelerando/grant.json"
                 install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
                 install -Dm444 ${bashLicense} "$out/share/licenses/eon/bash/COPYING"
                 install -Dm444 ${starshipPackage.src}/LICENSE "$out/share/licenses/eon/starship/LICENSE"
@@ -1286,10 +1255,7 @@
                 install -Dm444 ${carapacePackage.src}/LICENSE "$out/share/licenses/eon/carapace/LICENSE"
                 install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
                 install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
-              '' + (tools.postInstall or "") + lib.optionalString withoutAccelerando ''
-                "$out/bin/eon" config defaults --json | ${pkgs.jq}/bin/jq -e \
-                  '.terminal.font_fallbacks == ["Symbols Nerd Font Mono"]'
-              '' + lib.optionalString pkgs.stdenv.isDarwin ''
+              '' + (tools.postInstall or "") + lib.optionalString pkgs.stdenv.isDarwin ''
                 cp -R ${macosApp}/Applications "$out/Applications"
                 chmod -R u+w "$out/Applications"
                 printf '%s' "$out/bin/eon" > "$out/Applications/Eon.app/Contents/Resources/eon-command"
@@ -1372,6 +1338,36 @@
               export TMPDIR="$eonTestBuildTmpdir"
             '';
           });
+          accelerandoGrant = import ./nix/notices/accelerando-grant.nix { inherit lib; };
+          accelerandoCheck = import ./nix/accelerando-check.nix {
+            inherit pkgs anima noticeTool;
+            grant = accelerandoGrant;
+          };
+          # The Nix package, and on macOS its Eon.app, cannot build without Accelerando.
+          accelerandoPackageCheck = package: accelerandoCheck {
+            inherit (package) name;
+            program = "${package}/libexec/eon/bin/anima";
+            fontsConf = venusFontsConf;
+            wiring = ''
+              grep -qF ${venusPackage}/bin/yazelix-venus ${package}/bin/eon \
+                || fail "eon does not launch the checked Venus"
+              grep -qF ${lib.escapeShellArg (if pkgs.stdenv.isLinux then "${venusFontsConf}"
+                else venusFontEnvironment.EON_VENUS_FONT_DIRS)} \
+                ${venusPackage}/bin/yazelix-venus || fail "Venus does not use the checked fonts"
+              ${package}/libexec/eon/bin/anima --help | grep -qxE '[[:space:]]*accelerando' \
+                || fail "anima --help lists no accelerando style"
+            '' + lib.optionalString pkgs.stdenv.isDarwin ''
+              test "$(cat ${package}/Applications/Eon.app/Contents/Resources/eon-command)" \
+                = ${package}/bin/eon || fail "Eon.app does not launch the checked eon"
+            '';
+          };
+          # The Nix-free archive's exact tree; its relinked programs cannot run here.
+          accelerandoArchiveCheck = accelerandoCheck {
+            name = "archive";
+            root = bundleRelink.tree;
+            program = builtins.unsafeDiscardStringContext "${animaPackage}/bin/anima";
+            fontsConf = builtins.unsafeDiscardStringContext "${venusFontsConf}";
+          };
           # The installed product: the composition's files and the source receipt that
           # `eon update --check` reads (EON-C41 Provenance). The receipt names this
           # flake's revision, so it stays outside the Rust build: a commit that
@@ -1383,6 +1379,7 @@
               inherit (package) cargoArtifacts;
             };
           } ''
+            test -e ${accelerandoPackageCheck package}
             ${lib.optionalString pkgs.stdenv.isLinux ''
               test -s ${eonTests}/test-list.json
             ''}
@@ -1627,7 +1624,7 @@
           };
           archiveNotices = import ./nix/notices/inputs.nix {
             inherit pkgs manifest noticeTool bundleRelink helix yazi ghostty ghosttyDeps bend anima
-            zig rustToolchain system withoutAccelerando githubSource codexbarIdentity
+            zig rustToolchain system githubSource codexbarIdentity
             animaIdentity helixIdentity venusFonts venusBuildInputs venusRuntimeLibraries
             venusFontsConf filesPopupConfig eonRust eonPackage orbitPackage venusPackage installerPackage
             animaPackage nushellPackage bashPackage starshipPackage zoxidePackage fzfPackage
@@ -1669,10 +1666,6 @@
             mv "$out/bin/LICENSE" "$out/share/licenses/bv/LICENSE"
           '';
           archivePackages = (perSystem system { archive = true; }).packages.${system};
-          withoutAccelerandoPackages = (perSystem system {
-            archive = true;
-            withoutAccelerando = true;
-          }).packages.${system};
         in
         {
           # The installer, the manual bundle, the release files, the demo recorder
@@ -1693,6 +1686,7 @@
               manifestFile = ./components/eon-v5.json;
               lockFile = ./flake.lock;
               notices = archiveNotices.notices;
+              accelerandoCheck = accelerandoArchiveCheck;
             };
             release = if !archive then
               archivePackages.release
@@ -1713,10 +1707,8 @@
               archivePackages.archive-source;
             archive-source-check = if archive then archiveSource.check else
               archivePackages.archive-source-check;
-            manual-bundle-without-accelerando =
-              withoutAccelerandoPackages.manual-bundle;
-            release-without-accelerando =
-              withoutAccelerandoPackages.release;
+            archive-accelerando-check = if archive then accelerandoArchiveCheck else
+              archivePackages.archive-accelerando-check;
           };
           apps.${system} = {
             default = {
@@ -1749,6 +1741,7 @@
             default = if pkgs.stdenv.isLinux then eonProduct else eonPackage;
             source-receipt = eonProduct;
             macos-app = macosApp;
+            accelerando = accelerandoPackageCheck eonPackage;
             helix-grammars = helix.checks.${system}.codeberg_grammars;
             eonbase-closure = eonbaseClosureCheck;
             no-helix-closure = noHelixClosureCheck;

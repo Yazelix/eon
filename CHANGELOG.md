@@ -10,6 +10,12 @@ installation, and proven contract changes.
   When Google quota is selected, `eon doctor` has a `quota` check that names
   an agy version Eon does not support, and the supported ones, instead of
   leaving the chip missing with no reason (`eon-9iriq`).
+- Accelerando (the Accelerando Terminal fonts and `eon anima accelerando`)
+  ships under MIT, chosen by Eon's maintainer for gillverd's Accelerando-8192
+  artwork. The Nix-free archive's notices and the Nix package's licenses carry
+  the MIT text and a record pinning the exact font and glyph bytes. The archive,
+  the Nix package and its macOS app fail to build without the Accelerando font
+  or program, and the release has one route, `.#release` (`eon-igae.15.6.1`).
 - When a window cannot start the thread that links it to Eon, it says so,
   that its terminals are safe, and how to reopen it, in place of "Cannot
   reach Eon."; closing it detaches and keeps the terminals. When its event
@@ -366,9 +372,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   types, bounds, choices and when changes take effect, including built-in and
   custom popup fields. It works with broken configuration (`eon-s0oj.1`).
 
-- The Linux install instructions include the release public key. Without a
-  recorded Accelerando redistribution grant, the Linux archive omits
-  Accelerando and its fonts; Game of Life stays available (`eon-igae.18`).
+- The Linux install instructions include the release public key (`eon-igae.18`).
 - Window commands route through the window's recorded Eon build across EONW
   versions, including events, reload and caller-free independent-window
   selection. Missing builds name the generation and how to recover; explicit
@@ -560,8 +564,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 - The Nix-free archive carries generated third-party notices. Its Helix build
   omits the Blueprint, Drools, GNU assembler, Hare, Jinja2, nginx and Prolog
   grammars, so those languages lack syntax highlighting in the archive. The
-  Nix package keeps those grammars. An opt-in archive variant omits Accelerando,
-  its fonts and its default font fallback (`eon-igae.15.6`).
+  Nix package keeps those grammars (`eon-igae.15.6`).
 
 - `eon column close PANE --yes [--json]` closes the pane's Stack through
   EONW v39. Without `--yes`, it lists every terminal it would stop and

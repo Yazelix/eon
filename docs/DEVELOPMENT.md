@@ -852,12 +852,10 @@ sandbox has no network, so nothing reaches GitHub. The release key is a
 throwaway ed25519 key made in the sandbox's private `/tmp` and deleted once
 the fixture is signed.
 
-B needs its own build. From a checkout at the frozen revision `rev`, with
-`attr` the release route's bundle (`manual-bundle-without-accelerando` by
-default, `manual-bundle` with the recorded Accelerando grant):
+B needs its own build. From a checkout at the frozen revision `rev`:
 
 ```sh
-bash "$heavy_runner" nix build ".#$attr" --out-link "$journey_root/a"
+bash "$heavy_runner" nix build .#manual-bundle --out-link "$journey_root/a"
 mkdir "$journey_root/next-src"
 git archive --format=tar "$rev" | tar -x -C "$journey_root/next-src"
 # Raise eon's patch version (0.1.28 to 0.1.29, say) in
@@ -865,7 +863,7 @@ git archive --format=tar "$rev" | tar -x -C "$journey_root/next-src"
 # Cargo.lock entry; nothing else may change.
 nix develop -c cargo metadata --offline --format-version 1 \
   --manifest-path "$journey_root/next-src/Cargo.toml" >/dev/null
-bash "$heavy_runner" nix build "path:$journey_root/next-src#$attr" --out-link "$journey_root/b"
+bash "$heavy_runner" nix build "path:$journey_root/next-src#manual-bundle" --out-link "$journey_root/b"
 bash "$heavy_runner" "$journey_root/bench/bin/eon-bench" journey \
   --bundle "$journey_root/a/eon-VERSION-x86_64-linux.tar.zst" \
   --next "$journey_root/b/eon-NEXT-x86_64-linux.tar.zst" \

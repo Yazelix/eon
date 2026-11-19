@@ -42,6 +42,19 @@ binary and resource bundle. Its MIT license is retained in
 [licenses/codexbar-MIT](licenses/codexbar-MIT) and the installed package.
 CodexBar owns its provider integrations; Eon exposes only normalized quota facts.
 
+## Accelerando font and glyph artwork
+
+Eon's packages include Anima's Accelerando program and its Accelerando
+Terminal Regular and Bold fonts, adapted from gillverd's
+[Accelerando-8192](https://github.com/gillverd/accelerando-8192) artwork.
+Upstream publishes no license for that artwork, and
+[the license request](https://github.com/gillverd/accelerando-8192/issues/3)
+had no answer. On 2026-11-19 Eon's maintainer chose MIT for the artwork as Eon
+ships it: [licenses/accelerando-MIT](licenses/accelerando-MIT), with the record
+in [nix/notices/accelerando-grant.json](nix/notices/accelerando-grant.json)
+pinning the exact font and glyph bytes it covers. Anima's own NOTICE files
+describe how the fonts and bitmaps were derived.
+
 ## Claude Code standalone Clawd symbol
 
 `venus/assets/claude-code-clawd.svg` is the unaltered original

@@ -50,8 +50,6 @@ struct Entry {
     #[serde(default)]
     unresolved: Vec<String>,
     #[serde(default)]
-    forbidden_embedded_files: Vec<PathBuf>,
-    #[serde(default)]
     output_name: Option<String>,
     #[serde(default)]
     cargo_reports: Vec<PathBuf>,
@@ -69,21 +67,17 @@ struct Entry {
     grant: Option<Grant>,
 }
 
+/// The license record for third-party artwork, bound to the exact bytes it covers.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Grant {
-    rights_holder: String,
+    license: String,
     record: PathBuf,
-    sha256: String,
-    public_binary_redistribution: bool,
-    modified_regular_font: bool,
-    modified_bold_font: bool,
-    bitmap_glyphs: bool,
-    recipients_rights: String,
-    attribution: String,
-    revocability: String,
     assets: BTreeMap<PathBuf, String>,
 }
+
+/// Entries that ship only under a grant record.
+const GRANTED_ENTRIES: &[&str] = &["accelerando-artwork"];
 
 #[derive(Deserialize, Serialize)]
 struct File {
@@ -217,13 +211,16 @@ fn run() -> Result<()> {
                 Path::new(output),
             )?;
         }
-        [command, exceptions, full, fallback, output] if command == "propose-audit-renewal" => {
-            audit::propose(
-                Path::new(exceptions),
-                Path::new(full),
-                Path::new(fallback),
-                Path::new(output),
-            )?;
+        [command, exceptions, input, output] if command == "propose-audit-renewal" => {
+            audit::propose(Path::new(exceptions), Path::new(input), Path::new(output))?;
+        }
+        [command, file, blob] if command == "require-embedded" => {
+            let (file, blob) = (Path::new(file), Path::new(blob));
+            if !embeds(&fs::read(file)?, &fs::read(blob)?) {
+                return Err(
+                    format!("{} lacks the bytes of {}", file.display(), blob.display()).into(),
+                );
+            }
         }
         [command, observation, exceptions, name, version] if command == "prove-audit-omission" => {
             audit::prove_omission(
@@ -656,6 +653,11 @@ fn digest(path: &Path) -> Result<String> {
     Ok(hash.to_owned())
 }
 
+/// Whether `bytes` contains `blob` verbatim; an empty blob proves nothing.
+fn embeds(bytes: &[u8], blob: &[u8]) -> bool {
+    !blob.is_empty() && bytes.windows(blob.len()).any(|part| part == blob)
+}
+
 fn output_name(path: &str) -> Result<&str> {
     let name = path
         .strip_prefix("/nix/store/")
@@ -889,9 +891,6 @@ fn notice_obligation(license: &str) -> &'static str {
         }
         "CC-BY-4.0" => {
             "Credit the original authors, identify the source and license, and indicate adaptations such as remapping glyphs. Preserve the recipients' rights under the license."
-        }
-        "LicenseRef-Accelerando" => {
-            "Use only the attribution and recipient terms in the applicable redistribution grant."
         }
         license if source_obligation(license).is_some() => {
             "Retain the applicable copyright, license and warranty notices; mark changes as required. See source obligations for this component."
@@ -1140,38 +1139,34 @@ fn generate(input: &Path, tree: &Path, output: &Path) -> Result<()> {
                 entry.id
             ));
         }
-        if entry
-            .licenses
-            .iter()
-            .any(|license| license == "LicenseRef-Accelerando")
-        {
-            match &entry.grant {
-                None => findings.push(format!("{}: missing redistribution grant", entry.id)),
-                Some(grant) => {
-                    let fields = [
-                        &grant.rights_holder,
-                        &grant.recipients_rights,
-                        &grant.attribution,
-                        &grant.revocability,
-                    ];
-                    if fields.iter().any(|field| field.trim().is_empty())
-                        || digest(&grant.record)? != grant.sha256
-                        || grant.assets.len() != 3
-                        || !grant.public_binary_redistribution
-                        || !grant.modified_regular_font
-                        || !grant.modified_bold_font
-                        || !grant.bitmap_glyphs
-                    {
-                        findings.push(format!("{}: incomplete or changed grant", entry.id));
-                    }
-                    for (asset, expected) in &grant.assets {
-                        if digest(asset)? != *expected {
-                            findings.push(format!(
-                                "{}: grant does not cover asset {}",
-                                entry.id,
-                                asset.display()
-                            ));
-                        }
+        match &entry.grant {
+            None if GRANTED_ENTRIES.contains(&entry.id.as_str()) => {
+                findings.push(format!("{}: missing grant", entry.id));
+            }
+            None => {}
+            Some(grant) => {
+                if !entry.licenses.contains(&grant.license) {
+                    findings.push(format!(
+                        "{}: grant license {} is not among its licenses",
+                        entry.id, grant.license
+                    ));
+                }
+                if !entry.notice_files.contains(&grant.record) {
+                    findings.push(format!(
+                        "{}: grant record is not among its notices",
+                        entry.id
+                    ));
+                }
+                if grant.assets.is_empty() {
+                    findings.push(format!("{}: grant covers no assets", entry.id));
+                }
+                for (asset, expected) in &grant.assets {
+                    if digest(asset)? != *expected {
+                        findings.push(format!(
+                            "{}: grant does not cover asset {}",
+                            entry.id,
+                            asset.display()
+                        ));
                     }
                 }
             }
@@ -1315,11 +1310,6 @@ fn generate(input: &Path, tree: &Path, output: &Path) -> Result<()> {
                 path: name,
             });
         }
-        let forbidden = entry
-            .forbidden_embedded_files
-            .iter()
-            .map(fs::read)
-            .collect::<std::io::Result<Vec<_>>>()?;
         for path in &entry.outputs {
             let name = output_name(path)?;
             if owners.insert(name.to_owned(), &entry.id).is_some() {
@@ -1391,18 +1381,6 @@ fn generate(input: &Path, tree: &Path, output: &Path) -> Result<()> {
                         findings.push(format!(
                             "{}: {relative} lacks evidence of Rust {}",
                             entry.id, stdlib.version
-                        ));
-                    }
-                }
-                if !forbidden.is_empty() {
-                    let bytes = fs::read(&file)?;
-                    if forbidden.iter().any(|pattern| {
-                        pattern.is_empty()
-                            || bytes.windows(pattern.len()).any(|part| part == pattern)
-                    }) {
-                        findings.push(format!(
-                            "{}: excluded artwork remains in {relative}",
-                            entry.id
                         ));
                     }
                 }
@@ -1665,7 +1643,7 @@ mod tests {
     }
 
     #[test]
-    fn omitted_grammar_unlisted_strong_copyleft_and_missing_grant_fail_closed() {
+    fn omitted_grammar_and_unlisted_strong_copyleft_fail_closed() {
         let fixture = Fixture::new();
         fs::create_dir(
             fixture
@@ -1675,7 +1653,7 @@ mod tests {
         .unwrap();
         let mut input = fixture.input();
         input["entries"][0]["grammar"] = json!("another-grammar");
-        input["entries"][0]["licenses"] = json!(["AGPL-3.0-only", "LicenseRef-Accelerando"]);
+        input["entries"][0]["licenses"] = json!(["AGPL-3.0-only"]);
         let report = fixture.generate(input);
         assert!(
             report
@@ -1689,12 +1667,6 @@ mod tests {
                 .iter()
                 .any(|f| f.contains("strong-copyleft grammar"))
         );
-        assert!(
-            report
-                .findings
-                .iter()
-                .any(|f| f.contains("missing redistribution grant"))
-        );
         assert!(check(&fixture.0.join("notices")).is_err());
 
         let fixture = Fixture::new();
@@ -1703,6 +1675,66 @@ mod tests {
         input["entries"][0]["licenses"] = json!(["LicenseRef-TZ-Public-Domain"]);
         assert!(fixture.generate(input).findings.is_empty());
         check(&fixture.0.join("notices")).unwrap();
+    }
+
+    #[test]
+    fn grants_bind_their_license_record_and_asset_bytes() {
+        let fixture = Fixture::new();
+        let asset = fixture.0.join("artwork.ttf");
+        fs::write(&asset, "pinned artwork").unwrap();
+        let record = fixture.0.join("LICENSE");
+        let grant = json!({"license": "MIT", "record": record,
+            "assets": {asset.to_str().unwrap(): digest(&asset).unwrap()}});
+        let findings = |change: &dyn Fn(&mut serde_json::Value)| {
+            let mut input = fixture.input();
+            input["entries"][0]["id"] = json!("accelerando-artwork");
+            input["entries"][0]["grant"] = grant.clone();
+            change(&mut input["entries"][0]);
+            // Generation refuses an existing output directory.
+            let _ = fs::remove_dir_all(fixture.0.join("notices"));
+            fixture.generate(input).findings
+        };
+        assert_eq!(findings(&|_| {}), Vec::<String>::new());
+        check(&fixture.0.join("notices")).unwrap();
+
+        for (change, expected) in [
+            (
+                &(|entry: &mut serde_json::Value| entry["grant"] = json!(null))
+                    as &dyn Fn(&mut serde_json::Value),
+                "accelerando-artwork: missing grant",
+            ),
+            (
+                &|entry| entry["grant"]["license"] = json!("Apache-2.0"),
+                "grant license Apache-2.0 is not among its licenses",
+            ),
+            (
+                &|entry| entry["grant"]["record"] = json!("/elsewhere/record.json"),
+                "grant record is not among its notices",
+            ),
+            (
+                &|entry| entry["grant"]["assets"] = json!({}),
+                "grant covers no assets",
+            ),
+            (
+                &|entry| entry["grant"]["assets"][asset.to_str().unwrap()] = json!("0".repeat(64)),
+                "grant does not cover asset",
+            ),
+        ] {
+            let found = findings(change);
+            assert!(
+                found.len() == 1 && found[0].contains(expected),
+                "{expected}: {found:?}"
+            );
+            assert!(check(&fixture.0.join("notices")).is_err());
+        }
+    }
+
+    #[test]
+    fn require_embedded_needs_the_exact_nonempty_bytes() {
+        assert!(embeds(b"head\0glyphs\x01tail", b"glyphs\x01"));
+        assert!(!embeds(b"head\0glyphs\x02tail", b"glyphs\x01"));
+        assert!(!embeds(b"short", b"longer than it"));
+        assert!(!embeds(b"anything", b""));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-{ pkgs, eonPackage, eonProduct, installer, relink, manifestFile, lockFile, notices }:
+{ pkgs, eonPackage, eonProduct, installer, relink, manifestFile, lockFile, notices, accelerandoCheck }:
 let
   name = "eon-${eonPackage.version}-x86_64-linux";
   provenance = pkgs.writeText "eon-bundle-provenance.json" (builtins.toJSON {
@@ -20,6 +20,7 @@ in
 pkgs.runCommand "${name}-bundle" {
   nativeBuildInputs = [ pkgs.gnutar pkgs.zstd ];
 } ''
+  test -e ${accelerandoCheck}
   mkdir -p "$out" ${name}/licenses
   cp -a --reflink=auto ${relink.tree}/nix ${name}/nix
   # Commit provenance changes only this archive step, not the relinked closure.

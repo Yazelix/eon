@@ -97,14 +97,10 @@ pub(crate) fn inputs(launch: Result<eon_runtime::LaunchInputs, String>) -> Input
                 cursor_trail_color: None,
                 cursor_trail_duration: Some(1.5),
                 font_family: None,
-                font_fallbacks: if option_env!("EON_WITHOUT_ACCELERANDO") == Some("1") {
-                    vec!["Symbols Nerd Font Mono".into()]
-                } else {
-                    vec![
-                        "Symbols Nerd Font Mono".into(),
-                        "Accelerando Terminal".into(),
-                    ]
-                },
+                font_fallbacks: vec![
+                    "Symbols Nerd Font Mono".into(),
+                    "Accelerando Terminal".into(),
+                ],
                 font_size: None,
                 line_height: None,
                 columns: None,
@@ -302,16 +298,12 @@ mod tests {
     use super::{eon_icon, inputs};
 
     #[test]
-    fn packaged_font_defaults_follow_the_accelerando_omission() {
+    fn packaged_font_defaults_include_accelerando() {
         let fonts = inputs(Err("unwrapped test".into()))
             .defaults
             .terminal
             .font_fallbacks;
-        assert!(fonts.iter().any(|font| font == "Symbols Nerd Font Mono"));
-        assert_eq!(
-            fonts.iter().any(|font| font == "Accelerando Terminal"),
-            option_env!("EON_WITHOUT_ACCELERANDO") != Some("1")
-        );
+        assert_eq!(fonts, ["Symbols Nerd Font Mono", "Accelerando Terminal"]);
     }
 
     #[test]

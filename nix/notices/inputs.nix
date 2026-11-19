@@ -1,5 +1,5 @@
 { pkgs, manifest, noticeTool, bundleRelink, helix, yazi, ghostty, ghosttyDeps, bend, anima, nixpkgsSource
-, zig, rustToolchain, system, withoutAccelerando, githubSource, codexbarIdentity
+, zig, rustToolchain, system, githubSource, codexbarIdentity
 , animaIdentity, helixIdentity, venusFonts, venusBuildInputs, venusRuntimeLibraries
 , venusFontsConf, filesPopupConfig, eonRust, eonPackage, orbitPackage, venusPackage, installerPackage
 , animaPackage, nushellPackage, bashPackage, starshipPackage, zoxidePackage, fzfPackage
@@ -84,7 +84,6 @@ let
       { name = "LICENSE-MIT"; hash = "sha256-I/GOA9xJ35FiL+KnYXZJdATkbO2KcV2dK2enRGVxzKM="; }
       { name = "LICENSE-APACHE"; hash = "sha256-Yseh419WQGiW16p8pS0MwNJyrAIrXSeW59aQXbijY2o="; }
     ];
-  accelerandoGrantPath = "${anima}/fonts/redistribution-grant.json";
   sourceBuildSupport = lib.fileset.toSource {
     root = ../..;
     fileset = lib.fileset.unions [
@@ -95,24 +94,17 @@ let
   sourceName = "eon-${eonPackage.version}-x86_64-linux-sources.tar.zst";
   nixpkgsSourcePath = builtins.path { path = nixpkgsSource.outPath; name = "source"; };
   helixSourcePath = builtins.path { path = helix.outPath; name = "source"; };
-  accelerandoGrant = if !builtins.pathExists accelerandoGrantPath then null else
-    let
-      grant = builtins.fromJSON (builtins.readFile accelerandoGrantPath);
-      asset = relative: hash: {
-        name = builtins.unsafeDiscardStringContext "${anima}/${relative}";
-        value = hash;
-      };
-    in {
-      inherit (grant) rights_holder public_binary_redistribution modified_regular_font
-        modified_bold_font bitmap_glyphs recipients_rights attribution revocability;
-      record = accelerandoGrantPath;
-      sha256 = builtins.hashFile "sha256" accelerandoGrantPath;
-      assets = lib.listToAttrs [
-        (asset "fonts/accelerando-terminal.ttf" grant.regular_sha256)
-        (asset "fonts/accelerando-terminal-bold.ttf" grant.bold_sha256)
-        (asset "src/accelerando-glyphs.bin" grant.bitmaps_sha256)
-      ];
-    };
+  # MIT, chosen by Eon's maintainer; the record pins the exact Anima bytes it covers.
+  accelerandoGrant = let
+    grant = import ./accelerando-grant.nix { inherit lib; };
+  in {
+    inherit (grant) license;
+    record = "${grant.path}";
+    assets = noticeHashes (lib.mapAttrsToList (relative: hash: {
+      file = "${anima}/${relative}";
+      inherit hash;
+    }) grant.assets);
+  };
 in
 import ./default.nix {
   inherit pkgs manifest;
@@ -257,8 +249,7 @@ import ./default.nix {
       "system-linker-runtime" "rust-nixpkgs-standard-library" "yazi-upstream-syntax-pack"
     ];
     ${eonRust.name} = {
-      source = "${eonRust.src}" + lib.optionalString withoutAccelerando
-        " compiled with EON_WITHOUT_ACCELERANDO=1";
+      source = "${eonRust.src}";
       notice_files = map (notice: "${notice}") [
         ../../LICENSE ../../THIRD_PARTY_NOTICES.md ../../runtime/LICENSE ../../runtime/NOTICE
       ];
@@ -291,19 +282,9 @@ import ./default.nix {
         "git+https://github.com/Uzaaft/libghostty-rs.git?rev=9b598d6528c08c013407052767bb2e885ba869ba#9b598d6528c08c013407052767bb2e885ba869ba" = [ "MIT" ];
       };
     };
-    ${animaPackage.name} = {
-      source = "${animaPackage.src}" + lib.optionalString withoutAccelerando
-        " patched with ${./anima-without-accelerando.patch}";
-      notice_files = lib.optional withoutAccelerando "${pkgs.writeText "anima-eon-modifications.NOTICE" ''
-        Eon modifies Anima ${animaIdentity.revision} for the archive without Accelerando.
-        Modified files: src/matrix.rs, src/random.rs, src/screen_runner.rs.
-        These changes omit Accelerando selection and embedded artwork; Game of Life remains.
-        Original code remains under Apache-2.0; its license accompanies this notice.
-      ''}";
-      embedded = [ "system-linker-runtime" "rust-nixpkgs-standard-library" ]
-        ++ lib.optional (!withoutAccelerando) "accelerando-artwork";
-      forbidden_embedded_files = lib.optional withoutAccelerando "${anima}/src/accelerando-glyphs.bin";
-    };
+    ${animaPackage.name}.embedded = [
+      "system-linker-runtime" "rust-nixpkgs-standard-library" "accelerando-artwork"
+    ];
     ${pkgs.stdenv.cc.cc.name}.licenses = [
       "GPL-3.0-or-later WITH GCC-exception-3.1"
       "GPL-3.0-or-later" # GDB helpers
@@ -336,14 +317,15 @@ import ./default.nix {
       source_roots = [ "${helix}/runtime" "${helixRuntimeInlineNotices}" ];
       source_material = { sources = [ helixSourcePath ]; patches = [ ]; build = "${helix}/flake.nix"; };
     };
-  } // lib.optionalAttrs (!withoutAccelerando) {
     ${anima.packages.${system}.accelerando-font.name} = {
       id = "accelerando-artwork";
       version = animaIdentity.revision;
       source = "${anima}/fonts";
-      licenses = [ "LicenseRef-Accelerando" ];
-      notice_files = [ "${anima}/fonts/NOTICE" "${anima}/src/accelerando-glyphs.NOTICE" ]
-        ++ lib.optional (accelerandoGrant != null) accelerandoGrantPath;
+      licenses = [ accelerandoGrant.license ];
+      notice_files = [
+        "${../../licenses/accelerando-MIT}" accelerandoGrant.record
+        "${anima}/fonts/NOTICE" "${anima}/src/accelerando-glyphs.NOTICE"
+      ];
       grant = accelerandoGrant;
     };
   };

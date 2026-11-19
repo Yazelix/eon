@@ -12,7 +12,7 @@ let
     "GPL-2.0-or-later" "GPL-3.0-only" "GPL-3.0-or-later" "GPL-3.0-or-later WITH GCC-exception-3.1"
     "OFL-1.1" "Bitstream-Vera" "Arev" "AMS" "Artistic-2.0" "W3C-20150513"
     "curl" "X11" "MIT-open-group" "HPND-doc" "HPND-sell-variant" "TekHVC"
-    "HPND-doc-sell" "HPND" "Cronyx" "hyphen-bulgarian" "blessing" "LicenseRef-TZ-Public-Domain" "LicenseRef-Accelerando"
+    "HPND-doc-sell" "HPND" "Cronyx" "hyphen-bulgarian" "blessing" "LicenseRef-TZ-Public-Domain"
     "Apache-2.0 WITH Swift-exception" "OpenSSL" "ICU" "CC-BY-4.0"
     "LicenseRef-Anthropic-Brand-Terms"
     "LicenseRef-Codex-Identification-Use"

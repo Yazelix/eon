@@ -285,45 +285,19 @@ pub(super) fn check_evidence(reference: &str, documents: &BTreeMap<String, PathB
     Ok(())
 }
 
-pub(super) fn propose(
-    exceptions: &Path,
-    full: &Path,
-    fallback: &Path,
-    output: &Path,
-) -> Result<()> {
+pub(super) fn propose(exceptions: &Path, input: &Path, output: &Path) -> Result<()> {
     let mut groups: BTreeMap<String, Vec<Group>> = serde_json::from_slice(&fs::read(exceptions)?)?;
+    let input: Inputs = serde_json::from_slice(&fs::read(input)?)?;
     let mut snapshots = BTreeMap::new();
-    let mut previous_producers = None;
-    for input in [full, fallback] {
-        let input: Inputs = serde_json::from_slice(&fs::read(input)?)?;
-        let mut producers = BTreeSet::new();
-        for report in input.entries.iter().flat_map(|e| &e.cargo_reports) {
-            let path = report
-                .parent()
-                .ok_or("Cargo report lacks parent")?
-                .join("audit/observation.json");
-            let snapshot: Snapshot = serde_json::from_slice(
-                &fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?,
-            )?;
-            producers.insert(snapshot.context.producer.clone());
-            if let Some(previous) = snapshots.insert(snapshot.context.producer.clone(), snapshot) {
-                let current = &snapshots[&previous.context.producer];
-                if previous.graph_sha256 != current.graph_sha256
-                    || previous.missing != current.missing
-                {
-                    return Err(format!(
-                        "variants have different audit contexts for {}",
-                        current.context.producer
-                    )
-                    .into());
-                }
-            }
-        }
-        if let Some(previous) = previous_producers.replace(producers.clone())
-            && previous != producers
-        {
-            return Err("variants have different Rust producer sets".into());
-        }
+    for report in input.entries.iter().flat_map(|e| &e.cargo_reports) {
+        let path = report
+            .parent()
+            .ok_or("Cargo report lacks parent")?
+            .join("audit/observation.json");
+        let snapshot: Snapshot = serde_json::from_slice(
+            &fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?,
+        )?;
+        snapshots.insert(snapshot.context.producer.clone(), snapshot);
     }
     for (producer, snapshot) in &snapshots {
         let mut expected: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
@@ -648,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn renewal_refuses_changed_gaps_variants_and_missing_evidence() {
+    fn renewal_refuses_changed_gaps_and_missing_evidence() {
         let fixture = crate::tests::Fixture::new();
         let mut context = context();
         context
@@ -680,46 +654,20 @@ mod tests {
         .unwrap();
         let mut input = fixture.input();
         input["entries"][0]["cargo_reports"] = json!([fixture.0.join("report.json")]);
-        let full = fixture.0.join("full.json");
+        let full = fixture.0.join("notice-input.json");
         fs::write(&full, serde_json::to_vec(&input).unwrap()).unwrap();
         let proposal = fixture.0.join("proposal.json");
-        propose(&exceptions, &full, &full, &proposal).unwrap();
+        propose(&exceptions, &full, &proposal).unwrap();
         let proposed: serde_json::Value =
             serde_json::from_slice(&fs::read(&proposal).unwrap()).unwrap();
         assert_eq!(
             proposed["application"][0]["graph_sha256"],
             snapshot.graph_sha256
         );
-        assert!(propose(&exceptions, &full, &full, &proposal).is_err());
+        assert!(propose(&exceptions, &full, &proposal).is_err());
 
-        let mut changed = serde_json::to_value(&snapshot).unwrap();
-        changed["graph_sha256"] = json!("different");
-        fs::create_dir_all(fixture.0.join("fallback/audit")).unwrap();
-        fs::write(
-            fixture.0.join("fallback/audit/observation.json"),
-            serde_json::to_vec(&changed).unwrap(),
-        )
-        .unwrap();
-        input["entries"][0]["cargo_reports"] = json!([fixture.0.join("fallback/report.json")]);
-        let fallback = fixture.0.join("fallback.json");
-        fs::write(&fallback, serde_json::to_vec(&input).unwrap()).unwrap();
         let rejected = fixture.0.join("rejected.json");
-        assert!(
-            propose(&exceptions, &full, &fallback, &rejected)
-                .unwrap_err()
-                .to_string()
-                .contains("different audit contexts")
-        );
-        input["entries"] = json!([]);
-        fs::write(&fallback, serde_json::to_vec(&input).unwrap()).unwrap();
-        assert!(
-            propose(&exceptions, &full, &fallback, &rejected)
-                .unwrap_err()
-                .to_string()
-                .contains("different Rust producer sets")
-        );
-
-        changed["graph_sha256"] = json!(&snapshot.graph_sha256);
+        let mut changed = serde_json::to_value(&snapshot).unwrap();
         changed["missing"]["application"] = json!([["new", "3"]]);
         fs::write(
             fixture.0.join("audit/observation.json"),
@@ -727,7 +675,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            propose(&exceptions, &full, &full, &rejected)
+            propose(&exceptions, &full, &rejected)
                 .unwrap_err()
                 .to_string()
                 .contains("changed exception identities")
@@ -739,7 +687,7 @@ mod tests {
         .unwrap();
         fs::write(fixture.0.join("evidence.md"), "## renamed\n").unwrap();
         assert!(
-            propose(&exceptions, &full, &full, &rejected)
+            propose(&exceptions, &full, &rejected)
                 .unwrap_err()
                 .to_string()
                 .contains("missing audit evidence anchor")
