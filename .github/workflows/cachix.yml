@@ -3,6 +3,7 @@ name: Publish Linux binary cache
 on:
   push:
     branches: [edge]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -53,15 +54,14 @@ jobs:
       - name: Check Helix grammars without evaluator source fetches
         run: nix build --print-build-logs --no-link .#checks.x86_64-linux.helix-grammars
 
-      - name: Build the retained Helix grammar sources
+      - name: Build the Helix grammar sources
         run: nix build --no-link --print-out-paths .#packages.x86_64-linux.helix-grammar-sources > "$RUNNER_TEMP/helix-grammar-source-path"
 
-      - name: Publish and retain Helix grammar sources
+      - name: Publish Helix grammar sources
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
           cachix push eon-yazelix < "$RUNNER_TEMP/helix-grammar-source-path"
-          cachix pin eon-yazelix "helix-grammar-sources-$(jq -r '.nodes.helix.locked.rev' flake.lock)" "$(cat "$RUNNER_TEMP/helix-grammar-source-path")" --keep-forever
 
       - name: Build the canonical Linux packages
         run: |
@@ -79,3 +79,12 @@ jobs:
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: cachix push eon-yazelix < "$RUNNER_TEMP/eon-store-paths"
+
+      - name: Retain the latest Linux release runtime
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          # Resolve the already-built default, not intermediate test/build outputs.
+          path=$(nix path-info .#packages.x86_64-linux.default)
+          cachix pin eon-yazelix latest-release-x86_64-linux "$path" --keep-revisions 1

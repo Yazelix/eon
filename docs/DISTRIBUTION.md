@@ -387,19 +387,19 @@ repository-level `CACHIX_AUTH_TOKEN` secret also exists, a modified workflow can
 skip the environment and read it, so delete the repository secret once the
 environment secret is set. Never put
 the token in Git, an issue, or a pull request. Cache reads are public; the
-credential check and the two upload steps receive the token. A missing secret
+credential check, upload and release-pin steps receive the token. A missing secret
 fails before installing tools or building the package. To build the Apple Silicon
 package from another branch without credentials, dispatch
 `.github/workflows/darwin-build.yml`.
 
-A push to `edge` or a manual dispatch first runs the pinned Helix grammar check.
+A push to `edge`, a `v*` tag push or a manual dispatch first runs the pinned
+Helix grammar check.
 The check rejects all five evaluator source-fetch builtins (`fetchTree`,
 `fetchGit`, `fetchMercurial`, `fetchTarball` and `fetchurl`) and compiles every
 selected grammar through Helix's builder. The job then builds
 `packages.x86_64-linux.helix-grammar-sources`, including disabled grammars, and
-pushes that source closure with `cachix push`. It pins the aggregate as
-`helix-grammar-sources-<helix rev>`, using the exact Helix revision in
-`flake.lock` and `cachix pin --keep-forever` to retain it.
+pushes that source closure with `cachix push`, without creating a permanent
+grammar-source pin.
 
 The job then builds `packages.x86_64-linux.default`, `eonbase`, and `no-helix`
 together. The packages share an `eon-rust` executable and require a build-only
@@ -421,7 +421,8 @@ Actions secrets.
 
 Each run uses one standard `ubuntu-24.04` GitHub-hosted runner, with a 90-minute
 job timeout and cancellation of superseded runs on the same ref. Frequency is
-one run per `edge` push or explicit dispatch. It runs only in the public upstream
+one run per `edge` push, `v*` tag push or explicit dispatch. It runs only in the
+public upstream
 repository: standard public-runner minutes are free and do not draw from the
 organization's private-repository allowance. No larger runner,
 Actions artifact, or Actions cache is used. GitHub paid runner spend is zero;
@@ -431,9 +432,9 @@ public-runner eligibility changes. Local `nix build .#default .#eonbase` remains
 canonical.
 
 To verify publication, check both exact product outputs' `.narinfo` records at
-the cache URL. Check that `helix-grammar-sources-<helix rev>` points to the source
-aggregate from that revision, with permanent retention, and inspect a catalog
-source output's `.narinfo` at the cache serving it. For a source Cachix skipped,
+the cache URL. On a release-tag run, check that `latest-release-x86_64-linux`
+points to that revision's default runtime with one retained revision. Inspect a
+catalog source output's `.narinfo` at the cache serving it. For a source Cachix skipped,
 check `cache.nixos.org` instead. Realise the products and source aggregate in a
 fresh Nix store with both caches and signing keys configured, signatures required
 and local builds disabled. A local build alone does not prove upload, retention
@@ -461,12 +462,10 @@ fails at the environment check; build-only runs on other branches use
 `.github/workflows/darwin-build.yml`.
 
 Enabled runs push both closures. Only runs selecting a `refs/tags/v*` ref,
-including manual dispatches on such tags, retain the two roots with
-`cachix pin --keep-forever`. Pin names are
-`aarch64-darwin-<tag>-default` and
-`aarch64-darwin-<tag>-helix-grammar-sources`. The only branch whose dispatches
-can upload is `edge`, and its uploads are left to eviction. Cachix's action has automatic pushing disabled in every
-mode. The Linux workflow's publishing and retention policy is separate.
+including manual dispatches on such tags, update `latest-release-aarch64-darwin`
+to the default runtime with `cachix pin --keep-revisions 1`. The only branch
+whose dispatches can upload is `edge`, and its uploads are left to eviction.
+Cachix's action has automatic pushing disabled in every mode.
 
 Each run uses one standard `macos-15` Apple Silicon runner, restricted to the
 public upstream repository, with a 120-minute timeout. Runs on the same ref
@@ -475,6 +474,29 @@ distinct groups. GitHub may replace an older pending run in a group, so a
 missing release result needs an explicit rerun. There are no edge-push or
 pull-request triggers, paid runners, Actions artifacts or Actions caches.
 Additional paid spend is $0. Local Nix builds remain available independently.
+
+### Release retention
+
+After a successful upload, each platform independently updates one stable pin:
+`latest-release-x86_64-linux` or `latest-release-aarch64-darwin`. Each protects
+only the latest successfully pinned default runtime closure, without a timed
+expiry. A failed build or upload never reaches the pin step; if pin creation
+fails, Cachix leaves the previous pin unchanged. There is no explicit unpin,
+cache clearing, cross-platform wait or additional download-verification job.
+See [Cachix pins](https://docs.cachix.org/pins).
+
+Here “latest” means the tag whose pin update most recently succeeded, not the
+greatest version number. An older tag that finishes later, including a manual
+rerun, can replace the pin. Dispatch the intended release.
+Other variants, grammar-source aggregates, intermediate outputs and edge builds
+are uploaded normally but have no retention guarantee from these runtime pins.
+Darwin's existing publication opt-in remains unchanged.
+
+Existing `helix-grammar-sources-<helix rev>` and per-tag Darwin pins are not
+removed by these workflows. A cache owner must review any remaining consumers
+and retire those legacy pins separately if desired; until then they can retain
+additional storage. This policy does not assert current billed usage or reclaim
+space immediately.
 
 Historical cold-store mac-proof runs `42898289714` and `42342668048` took
 49–53 minutes for the default package, building 620–624 derivations and
