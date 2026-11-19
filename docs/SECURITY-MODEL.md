@@ -327,11 +327,13 @@ different signer; possession of a repository token alone does not establish
 release-signing authority.
 
 Nix composition declares a Cachix substituter and public key. The Linux cache
-workflow triggers on `edge` pushes or manual dispatch, restricts publishing to
-the public upstream repository and needs its configured cache credential and
-successful checks/builds before publication (`flake.nix:4`,
-`.github/workflows/cachix.yml:3`, `.github/workflows/cachix.yml:18`,
-`.github/workflows/cachix.yml:63`). Actual workflow activation and cache access
+workflow triggers on `edge` pushes, `v*` tag pushes or manual dispatch, restricts
+publishing to the public upstream repository and needs its configured cache
+credential and successful checks/builds before publication. Only a run for the
+newest `vX.Y.Z` tag moves its `latest-release-x86_64-linux` pin (`flake.nix:4`,
+`.github/workflows/cachix.yml:3`, `.github/workflows/cachix.yml:21`,
+`.github/workflows/cachix.yml:66`, `.github/workflows/cachix.yml:89`,
+`.github/scripts/pin-latest-release.sh:40`). Actual workflow activation and cache access
 policy remain **unverified**; the dated record below also covers the conditional
 Darwin tag-triggered publication path.
 

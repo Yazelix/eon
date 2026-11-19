@@ -8,8 +8,9 @@ on:
 permissions:
   contents: read
 
+# Release-tag runs share one group, so their release pins never interleave.
 concurrency:
-  group: eon-cachix-darwin-${{ github.ref }}
+  group: eon-cachix-darwin-${{ startsWith(github.ref, 'refs/tags/v') && 'release' || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -92,14 +93,13 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: cut -f2 "$RUNNER_TEMP/darwin-roots" | cachix push eon-yazelix
 
-      - name: Retain the latest Darwin release runtime
+      - name: Retain the newest Darwin release runtime
         if: env.PUSH_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/v')
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
           path=$(awk -F '\t' '$1 == "default" { print $2 }' "$RUNNER_TEMP/darwin-roots")
-          test -n "$path"
-          cachix pin eon-yazelix latest-release-aarch64-darwin "$path" --keep-revisions 1
+          bash .github/scripts/pin-latest-release.sh aarch64-darwin "$path"
 
       - name: Report remaining disk
         if: always()
