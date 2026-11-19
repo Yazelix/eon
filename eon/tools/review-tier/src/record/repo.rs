@@ -1,7 +1,7 @@
 //! What the record tool reads from git and from the tracker's JSONL export.
 use super::model::{RULES_FILES, Record, SOURCE_PREFIX, sha256_hex};
 use crate::Result;
-use crate::classify;
+use crate::classify::{self, Change};
 use crate::git::Git;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -136,22 +136,64 @@ pub fn workspace_packages(git: &Git, commit: &str) -> Result<BTreeSet<String>> {
     Ok(names)
 }
 
-/// Why the proof tree is not exactly the reviewed change applied onto
-/// `landing.base`: every path the reviewed change touches must be as the
-/// reviewed tree has it, and the landing may change no other path outside
-/// `.beads/`. Empty when it is.
+/// Why the proof tree is not the reviewed change applied onto
+/// `landing.base`; empty when it is. Each path the reviewed change touches
+/// must change the same way from `landing.base` to the proof tree: the same
+/// status and the same mode change (none, or to the same mode). A file
+/// whose text edge did not change must land with the reviewed text. A file
+/// whose text edge changed must land with the same `-U0` hunks in the same
+/// order, byte for byte. Line numbers are ignored there, so edge's
+/// edits elsewhere in the file pass, while any change to the candidate's
+/// own lines, their whitespace or their hunks' order is refused. A type
+/// change onto a file edge changed is refused. The landing may change no
+/// other path outside `.beads/`.
+///
+/// In a file edge changed, positions are not compared: a hunk moved
+/// elsewhere in it with the same lines passes. Every other disagreement
+/// refuses, and the lead then has the builder rebase.
 pub fn identity_problems(git: &Git, record: &Record) -> Result<Vec<String>> {
     let (landing, candidate) = (&record.landing, &record.candidate);
-    let reviewed = changed_paths(git, &candidate.base, &candidate.tree)?;
-    let drift = changed_paths(git, &candidate.tree, &landing.proof_tree)?;
-    let landed = changed_paths(git, &landing.base, &landing.proof_tree)?;
+    let reviewed = changes(git, &candidate.base, &candidate.tree)?;
+    let landed = changes(git, &landing.base, &landing.proof_tree)?;
+    let differs =
+        |path: &str| format!("the landed change to {path} differs from the reviewed change");
     let mut problems = Vec::new();
-    for path in drift.intersection(&reviewed) {
-        problems.push(format!(
-            "the proof tree's {path} differs from the reviewed tree's"
-        ));
+    let mut moved = Vec::new();
+    for (path, change) in &reviewed {
+        match landed.get(path) {
+            None => problems.push(format!(
+                "the landing does not change {path}, which the reviewed change does"
+            )),
+            Some(other) if other == change => {}
+            Some(other)
+                if other.status != change.status || mode_change(other) != mode_change(change) =>
+            {
+                problems.push(differs(path));
+            }
+            // Edge left the text alone (it may have changed the mode): the
+            // text must land exactly as reviewed.
+            Some(other) if other.old_object == change.old_object => {
+                if other.new_object != change.new_object {
+                    problems.push(differs(path));
+                }
+            }
+            // A type change has no hunks of its own to compare.
+            Some(_) if change.status == 'T' => problems.push(differs(path)),
+            Some(_) => moved.push(path.as_str()),
+        }
     }
-    for path in landed.difference(&reviewed) {
+    if !moved.is_empty() {
+        let hunks =
+            |from: &str, to: &str| classify::parse_hunks(&git.line_diff(from, to, &moved)?, &moved);
+        let reviewed_hunks = hunks(&candidate.base, &candidate.tree)?;
+        let landed_hunks = hunks(&landing.base, &landing.proof_tree)?;
+        for path in &moved {
+            if reviewed_hunks.get(*path) != landed_hunks.get(*path) {
+                problems.push(differs(path));
+            }
+        }
+    }
+    for path in landed.keys().filter(|path| !reviewed.contains_key(*path)) {
         problems.push(format!(
             "the landing changes {path}, which the reviewed change does not"
         ));
@@ -159,13 +201,19 @@ pub fn identity_problems(git: &Git, record: &Record) -> Result<Vec<String>> {
     Ok(problems)
 }
 
-/// Paths outside `.beads/` that differ between two tree-ish objects.
-fn changed_paths(git: &Git, from: &str, to: &str) -> Result<BTreeSet<String>> {
-    let changes = classify::parse_raw(&git.raw_diff(from, to)?)?;
-    Ok(changes
+/// The mode a change sets, or `None` when it keeps the mode it found, so a
+/// landing keeps a mode edge changed and cannot drop or add one.
+fn mode_change(change: &Change) -> Option<&str> {
+    (change.old_mode != change.new_mode).then_some(change.new_mode.as_str())
+}
+
+/// The raw diff entries between two tree-ish objects by path, outside
+/// `.beads/`.
+fn changes(git: &Git, from: &str, to: &str) -> Result<BTreeMap<String, Change>> {
+    Ok(classify::parse_raw(&git.raw_diff(from, to)?)?
         .into_iter()
-        .map(|change| change.path)
-        .filter(|path| !path.starts_with(".beads/"))
+        .filter(|change| !change.path.starts_with(".beads/"))
+        .map(|change| (change.path.clone(), change))
         .collect())
 }
 

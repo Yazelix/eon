@@ -95,41 +95,66 @@ fn mode_reason(change: &Change) -> Option<&'static str> {
         .map(|rule| rule.reason)
 }
 
-/// Parses `git diff -U0` output for `paths` into each path's added and
-/// removed lines. A section for any other path is an error.
-pub fn parse_line_diff(diff: &[u8], paths: &[&str]) -> Result<BTreeMap<String, Vec<String>>> {
+/// One path's `git diff -U0` hunks: each hunk's lines after its `@@` header,
+/// byte for byte with their `+`, `-` or `\` marker.
+pub type Hunks = Vec<Vec<Vec<u8>>>;
+
+/// Parses `git diff -U0` output for `paths` into each path's hunks, in the
+/// order git printed them. A section for any other path is an error.
+pub fn parse_hunks(diff: &[u8], paths: &[&str]) -> Result<BTreeMap<String, Hunks>> {
     let headers: BTreeMap<String, &str> = paths
         .iter()
         .map(|path| (section_header(path), *path))
         .collect();
-    let mut lines: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut sections: BTreeMap<String, Hunks> = BTreeMap::new();
     let mut current: Option<&str> = None;
-    let mut in_hunk = false;
     let text = diff.strip_suffix(b"\n").unwrap_or(diff);
     if text.is_empty() {
-        return Ok(lines);
+        return Ok(sections);
     }
     for line in text.split(|byte| *byte == b'\n') {
-        let line = String::from_utf8_lossy(line);
-        if line.starts_with("diff --git ") {
+        if line.starts_with(b"diff --git ") {
+            let header = String::from_utf8_lossy(line);
             let path = *headers
-                .get(line.as_ref())
-                .ok_or_else(|| format!("unexpected diff section {line:?}"))?;
-            if lines.insert(path.into(), Vec::new()).is_some() {
+                .get(header.as_ref())
+                .ok_or_else(|| format!("unexpected diff section {header:?}"))?;
+            if sections.insert(path.into(), Vec::new()).is_some() {
                 return Err(format!("repeated diff section for {path}").into());
             }
             current = Some(path);
-            in_hunk = false;
         } else {
-            let path = current.ok_or_else(|| format!("diff text before any section: {line:?}"))?;
-            if line.starts_with("@@ ") {
-                in_hunk = true;
-            } else if in_hunk && (line.starts_with('+') || line.starts_with('-')) {
-                lines.entry(path.into()).or_default().push(line[1..].into());
+            let path = current.ok_or_else(|| {
+                format!(
+                    "diff text before any section: {:?}",
+                    String::from_utf8_lossy(line)
+                )
+            })?;
+            let hunks = sections.entry(path.into()).or_default();
+            if line.starts_with(b"@@ ") {
+                hunks.push(Vec::new());
+            } else if let Some(hunk) = hunks.last_mut() {
+                hunk.push(line.to_vec());
             }
         }
     }
-    Ok(lines)
+    Ok(sections)
+}
+
+/// Parses `git diff -U0` output for `paths` into each path's added and
+/// removed lines. A section for any other path is an error.
+pub fn parse_line_diff(diff: &[u8], paths: &[&str]) -> Result<BTreeMap<String, Vec<String>>> {
+    Ok(parse_hunks(diff, paths)?
+        .into_iter()
+        .map(|(path, hunks)| {
+            let lines = hunks
+                .iter()
+                .flatten()
+                .filter(|line| matches!(line.first(), Some(b'+' | b'-')))
+                .map(|line| String::from_utf8_lossy(&line[1..]).into_owned())
+                .collect();
+            (path, lines)
+        })
+        .collect())
 }
 
 /// The `diff --git` header git prints for `path` with `a/` and `b/` prefixes,

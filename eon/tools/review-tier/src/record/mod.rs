@@ -26,9 +26,12 @@
 //!   entry. The landing commit differs from that tree only in the tracker
 //!   export, so any clone recomputes the digest from committed data.
 //! - `landing.proof_tree` and `candidate.tree`: the trees the lead's and the
-//!   builder's checks ran on. `render` requires the proof tree to be exactly
-//!   the reviewed change applied onto `landing.base`; nobody retains either
-//!   tree afterwards.
+//!   builder's checks ran on. `render` requires the proof tree to carry the
+//!   reviewed change onto `landing.base` and nothing else: each path the
+//!   reviewed change touches changes the same way, down to its `-U0` hunks
+//!   in order (line numbers aside, so edge's edits elsewhere in the same
+//!   file pass), and no other path outside `.beads/` changes. Nobody
+//!   retains either tree afterwards.
 //! - `candidate.base`: the builder's base, an ancestor of `landing.base`.
 //! - `proof`: each check with the tree it ran on (`candidate` is the
 //!   reviewed tree, `landed` the landing's), its check ID and target, the
@@ -475,7 +478,9 @@ round1_blockers = 0
             &format!("proof_tree = \"{drifted}\""),
         ));
         assert!(
-            error.contains("the proof tree's crate-a/src/lib.rs differs from the reviewed tree's"),
+            error.contains(
+                "the landed change to crate-a/src/lib.rs differs from the reviewed change"
+            ),
             "{error}"
         );
         assert!(
@@ -496,6 +501,280 @@ round1_blockers = 0
             &format!("[candidate]\nbase = \"{later}\""),
         ));
         assert!(error.contains("is not an ancestor"), "{error}");
+    }
+
+    const CHANGELOG: &str = "# Changelog\n\n## Unreleased\n\n- old entry\n";
+    const TEXT: &str = "a\nb\nc\nd\ne\nf\n";
+
+    /// A landing onto a moved base: the base commit with CHANGELOG.md and
+    /// crate-a/src/text.rs, the candidate tree after `reviewed` on it, edge's
+    /// commit after `edge` on it as the landing base, and the proof tree after
+    /// `landed` on that.
+    fn render_steps(
+        repo: &Repo,
+        reviewed: &dyn Fn(&Repo),
+        edge: &dyn Fn(&Repo),
+        landed: &dyn Fn(&Repo),
+    ) -> Result<String> {
+        repo.write("CHANGELOG.md", CHANGELOG);
+        repo.write("crate-a/src/text.rs", TEXT);
+        let candidate_base = base(repo);
+        reviewed(repo);
+        let candidate_tree = repo.stage_tree();
+        repo.git
+            .run(&["reset", "-q", "--hard", &candidate_base])
+            .unwrap();
+        edge(repo);
+        let landing_base = repo.commit("edge");
+        landed(repo);
+        let proof_tree = repo.stage_tree();
+        let input = code_input(&landing_base, &proof_tree, DEFAULT_BUILD).replace(
+            &format!("[candidate]\nbase = \"{landing_base}\"\ntree = \"{proof_tree}\""),
+            &format!("[candidate]\nbase = \"{candidate_base}\"\ntree = \"{candidate_tree}\""),
+        );
+        render(&repo.git, &repo.input(&input))
+    }
+
+    /// [`render_steps`] where each step writes files' whole new text.
+    fn render_moved(
+        repo: &Repo,
+        reviewed: &[(&str, &str)],
+        edge: &[(&str, &str)],
+        landed: &[(&str, &str)],
+    ) -> Result<String> {
+        render_steps(repo, &writes(reviewed), &writes(edge), &writes(landed))
+    }
+
+    /// A step writing each file's whole new text.
+    fn writes<'a>(files: &'a [(&'a str, &'a str)]) -> impl Fn(&Repo) + 'a {
+        move |repo| {
+            for (path, text) in files {
+                repo.write(path, text);
+            }
+        }
+    }
+
+    fn changelog(entries: &str) -> String {
+        CHANGELOG.replace("- old entry\n", &format!("{entries}- old entry\n"))
+    }
+
+    fn refused(result: Result<String>, needle: &str) {
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains(needle), "{error}");
+    }
+
+    #[test]
+    fn edge_edits_beside_the_candidates_lines_pass() {
+        // Today's case: edge adds its CHANGELOG entry above the candidate's
+        // and edits another line of a file the candidate also changed.
+        let repo = Repo::new("moved");
+        let text = render_moved(
+            &repo,
+            &[
+                ("CHANGELOG.md", &changelog("- mine\n")),
+                ("crate-a/src/text.rs", &TEXT.replace('b', "B")),
+            ],
+            &[
+                ("CHANGELOG.md", &changelog("- edge\n")),
+                ("crate-a/src/text.rs", &TEXT.replace('e', "E")),
+            ],
+            &[
+                ("CHANGELOG.md", &changelog("- edge\n- mine\n")),
+                (
+                    "crate-a/src/text.rs",
+                    &TEXT.replace('b', "B").replace('e', "E"),
+                ),
+            ],
+        )
+        .unwrap();
+        assert!(text.starts_with(HEADER));
+    }
+
+    #[test]
+    fn a_change_to_the_candidates_own_lines_is_refused() {
+        let edge = changelog("- edge\n");
+        for (name, reviewed, landed) in [
+            ("edited", "- mine\n", "- edge\n- mine, edited\n"),
+            ("indented", "- mine\n", "- edge\n  - mine\n"),
+            // One reviewed hunk landed as two around edge's line.
+            ("split", "- one\n- two\n", "- one\n- edge\n- two\n"),
+        ] {
+            let repo = Repo::new(name);
+            let result = render_moved(
+                &repo,
+                &[("CHANGELOG.md", &changelog(reviewed))],
+                &[("CHANGELOG.md", &edge)],
+                &[("CHANGELOG.md", &changelog(landed))],
+            );
+            refused(
+                result,
+                "the landed change to CHANGELOG.md differs from the reviewed change",
+            );
+        }
+    }
+
+    #[test]
+    fn reordered_hunks_are_refused() {
+        // The candidate adds X after a and Y after f; the resolution puts Y
+        // after a and X after f, beside edge's edit to d.
+        let repo = Repo::new("reordered");
+        let result = render_moved(
+            &repo,
+            &[("crate-a/src/text.rs", "a\nX\nb\nc\nd\ne\nf\nY\n")],
+            &[("crate-a/src/text.rs", "a\nb\nc\nD\ne\nf\n")],
+            &[("crate-a/src/text.rs", "a\nY\nb\nc\nD\ne\nf\nX\n")],
+        );
+        refused(
+            result,
+            "the landed change to crate-a/src/text.rs differs from the reviewed change",
+        );
+    }
+
+    #[test]
+    fn a_landing_that_drops_edges_edit_or_the_candidates_change_is_refused() {
+        let mine = TEXT.replace('b', "B");
+        // The proof tree's file is the reviewed tree's, so it reverts edge.
+        let repo = Repo::new("revert");
+        let result = render_moved(
+            &repo,
+            &[("crate-a/src/text.rs", &mine)],
+            &[("crate-a/src/text.rs", &TEXT.replace('e', "E"))],
+            &[("crate-a/src/text.rs", &mine)],
+        );
+        refused(
+            result,
+            "the landed change to crate-a/src/text.rs differs from the reviewed change",
+        );
+        // Edge already carries the change, so the landing does not.
+        let repo = Repo::new("carried");
+        let result = render_moved(
+            &repo,
+            &[("crate-a/src/text.rs", &mine)],
+            &[("crate-a/src/text.rs", &mine)],
+            &[],
+        );
+        refused(
+            result,
+            "the landing does not change crate-a/src/text.rs, which the reviewed change does",
+        );
+    }
+
+    #[test]
+    fn a_landing_keeps_the_mode_changes_of_both_sides() {
+        use std::os::unix::fs::PermissionsExt;
+        let edit = |text: &'static str, executable: bool| {
+            move |repo: &Repo| {
+                repo.write("crate-a/src/text.rs", text);
+                let mode = if executable { 0o755 } else { 0o644 };
+                let path = repo.dir.join("crate-a/src/text.rs");
+                fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+            }
+        };
+        let (mine, edge, both) = (
+            "a\nB\nc\nd\ne\nf\n",
+            "a\nb\nc\nd\nE\nf\n",
+            "a\nB\nc\nd\nE\nf\n",
+        );
+        // Edge makes the file executable; the landing keeps that.
+        let repo = Repo::new("mode-kept");
+        render_steps(
+            &repo,
+            &edit(mine, false),
+            &edit(edge, true),
+            &edit(both, true),
+        )
+        .unwrap();
+        let differs = "the landed change to crate-a/src/text.rs differs from the reviewed change";
+        // Edge only makes the file executable; the landing keeps that.
+        let repo = Repo::new("mode-only");
+        render_steps(
+            &repo,
+            &edit(mine, false),
+            &edit(TEXT, true),
+            &edit(mine, true),
+        )
+        .unwrap();
+        // ... or drops it.
+        let repo = Repo::new("mode-only-dropped");
+        let result = render_steps(
+            &repo,
+            &edit(mine, false),
+            &edit(TEXT, true),
+            &edit(mine, false),
+        );
+        refused(result, differs);
+        // The landing drops edge's executable bit.
+        let repo = Repo::new("mode-dropped");
+        let result = render_steps(
+            &repo,
+            &edit(mine, false),
+            &edit(edge, true),
+            &edit(both, false),
+        );
+        refused(result, differs);
+        // The landing drops the candidate's executable bit.
+        let repo = Repo::new("mode-lost");
+        let result = render_steps(
+            &repo,
+            &edit(mine, true),
+            &edit(edge, false),
+            &edit(both, false),
+        );
+        refused(result, differs);
+    }
+
+    #[test]
+    fn configured_inter_hunk_context_cannot_merge_hunks() {
+        // With diff.interHunkContext = 1, edge's line between the candidate's
+        // two edits would join both hunks as context and differ.
+        let repo = Repo::new("inter-hunk");
+        repo.git
+            .run(&["config", "diff.interHunkContext", "1"])
+            .unwrap();
+        render_moved(
+            &repo,
+            &[("crate-a/src/text.rs", "a\nB\nc\nD\ne\nf\n")],
+            &[("crate-a/src/text.rs", "a\nb\nC\nd\ne\nf\n")],
+            &[("crate-a/src/text.rs", "a\nB\nC\nD\ne\nf\n")],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn positions_count_in_a_file_edge_did_not_touch() {
+        // Edge changes only CHANGELOG.md; the landing moves the candidate's
+        // line elsewhere in text.rs.
+        let repo = Repo::new("positions");
+        let result = render_moved(
+            &repo,
+            &[("crate-a/src/text.rs", "a\nX\nb\nc\nd\ne\nf\n")],
+            &[("CHANGELOG.md", &changelog("- edge\n"))],
+            &[("crate-a/src/text.rs", "a\nb\nc\nd\ne\nX\nf\n")],
+        );
+        refused(
+            result,
+            "the landed change to crate-a/src/text.rs differs from the reviewed change",
+        );
+    }
+
+    #[test]
+    fn a_type_change_onto_a_file_edge_edited_is_refused_by_name() {
+        let link = |repo: &Repo| {
+            let path = repo.dir.join("crate-a/src/text.rs");
+            fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink("elsewhere", path).unwrap();
+        };
+        let repo = Repo::new("typechange");
+        let result = render_steps(
+            &repo,
+            &link,
+            &writes(&[("crate-a/src/text.rs", "a\nb\nc\nd\nE\nf\n")]),
+            &link,
+        );
+        refused(
+            result,
+            "the landed change to crate-a/src/text.rs differs from the reviewed change",
+        );
     }
 
     #[test]
@@ -549,10 +828,7 @@ round1_blockers = 0
         let side = repo.commit("side");
         repo.write("crate-a/src/lib.rs", "pub fn two() {}\n");
         let proof_tree = repo.stage_tree();
-        let input = code_input(&base, &proof_tree, DEFAULT_BUILD).replace(
-            &format!("[landing]\nbase = \"{base}\""),
-            &format!("[landing]\nbase = \"{side}\""),
-        );
+        let input = code_input(&side, &proof_tree, DEFAULT_BUILD);
         let text = render(&repo.git, &repo.input(&input)).unwrap();
         repo.git.run(&["reset", "-q", "--hard", &base]).unwrap();
         repo.write("crate-a/src/lib.rs", "pub fn two() {}\n");

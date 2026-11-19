@@ -194,6 +194,11 @@ fn line_diff_args<'a>(base: &'a str, candidate: &'a str, paths: &[&'a str]) -> V
         "--literal-pathspecs",
         "diff",
         "-U0",
+        // Hunk bodies are compared across diffs, so nothing configurable may
+        // merge hunks or move their boundaries.
+        "--inter-hunk-context=0",
+        "--diff-algorithm=myers",
+        "--indent-heuristic",
         "--src-prefix=a/",
         "--dst-prefix=b/",
     ];
@@ -308,6 +313,14 @@ mod tests {
             ] {
                 assert!(args.contains(&option), "{option} in {args:?}");
             }
+        }
+        for option in [
+            "-U0",
+            "--inter-hunk-context=0",
+            "--diff-algorithm=myers",
+            "--indent-heuristic",
+        ] {
+            assert!(lines.contains(&option), "{option} in {lines:?}");
         }
         assert_eq!(raw[..4], ["diff", "--raw", "-z", "--no-abbrev"]);
         assert_eq!(raw[raw.len() - 2..], ["B", "C"]);
