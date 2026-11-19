@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- On Linux, agents in unattended panes and popups can send one desktop
+  notification when they fail, need input or finish. Error and needs-input
+  notices request the desktop sound. Finished notices are silent. COSMIC
+  and mako currently play no sound for these notices. Set `[attention]`
+  `notify = false` to disable notices or `notify_names = false` to use
+  session, tab and pane or popup IDs (`eon-2kvr.2`).
+
 - `eon agent` and standalone `rota` can read Codex and Claude quota through
   `parser = "codexbar"`, including Claude's named weekly model windows.
   Upgrade every reader of a shared config before enabling it. When switching

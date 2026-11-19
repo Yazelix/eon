@@ -318,6 +318,11 @@ Use `--after STREAM:SEQ` to resume; if unavailable, the stream starts fresh.
 Sequence gaps from filtering are normal. Handle end and connection loss;
 never treat lost connection as successful completion. `pane wait` is planned.
 
+Use `eon events --json --kind attention --state error --state needs-input --state finished`
+to follow the states that drive desktop attention notices. Read the new
+`attention.state` on each event. The feed reports state changes even when
+desktop delivery is disabled or the terminal is being viewed.
+
 Attention JSON carries `previous` and the full `attention` record. A question
 has `attention.kind` set to `question`. Event JSON has no structured options
 field; options appear only as `attention.message` text (for example, `Red · Blue`).

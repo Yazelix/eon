@@ -1851,6 +1851,19 @@ one flag combine with OR, different flags with AND. Kinds are `session`, `tab`,
 Attention matches its previous or current state. A target follows its terminal
 when a popup becomes a pane. Session selectors resolve once by ID or exact name.
 
+To follow the attention states used for Linux desktop agent notifications,
+subscribe with:
+
+```sh
+eon events --json --kind attention --state error --state needs-input --state finished
+```
+
+On each event, read `attention.state` to see the new state. The feed reports
+state changes, including while you're viewing the terminal. Desktop notices
+are best effort and follow separate eligibility and delivery rules. They
+resume when the notification service returns or a later detach succeeds.
+See [Agent attention notifications](CONFIGURATION.md#agent-attention-notifications).
+
 The first line gives `stream`, `seq`, `resumed`, `generation`, `created_build`,
 `active_build`, `window`, `caller`
 and state (`sessions`, `tabs`, `attention_queue`, `busy`). Save `STREAM:SEQ` to

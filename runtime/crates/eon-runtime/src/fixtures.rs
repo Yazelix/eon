@@ -133,6 +133,10 @@ pub(crate) fn inputs() -> Inputs {
             animate_working_badge: true,
             number_keys: true,
             sidebar_enabled: true,
+            attention: crate::AttentionNotifications {
+                notify: true,
+                notify_names: true,
+            },
             terminal_access: TerminalAccess::Window,
             send_enter_delay_ms: 300,
             send_typing_quiet_ms: 2000,

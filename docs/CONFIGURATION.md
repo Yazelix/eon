@@ -58,6 +58,10 @@ number_keys = true
 [sidebar]
 enabled = true
 
+[attention]
+notify = true
+notify_names = true
+
 [agents]
 terminal_access = "window"
 send_enter_delay_ms = 300
@@ -556,6 +560,10 @@ warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
 [sidebar]
 enabled = true # Enable this feature or popup.
+
+[attention]
+notify = true # Send desktop agent attention notifications on Linux.
+notify_names = true # Use location names in agent attention notices. False uses IDs.
 
 [agents]
 send_enter_delay_ms = 300 # Wait between `eon pane send` text and its --enter.
@@ -1116,6 +1124,26 @@ it off; Alt+G and Alt+Shift+G still jump between agents. The window reads the
 setting when it starts. Alt+Shift+H shows or hides the sidebar; it also steps
 aside while the window leaves fewer than 80 cells for the terminals beside it.
 See [Agent sidebar](USAGE.md#agent-sidebar).
+
+### Agent attention notifications
+
+On Linux, full Eon sends a desktop notification once when an agent fails,
+needs input or finishes outside the pane or popup you're viewing. A finish
+held by background work can notify when the hold clears.
+`[attention] notify = false` turns off these notices and their sounds.
+`notify_names = false` shows session, tab and pane or popup IDs. The default
+uses the session name, the tab's launch-directory name, and the pinned pane
+name or configured popup label, with IDs where names are unavailable.
+The window reads both settings when its supervisor starts.
+
+Error and needs-input notices request the desktop theme's notification
+sound. Finished notices request silence. COSMIC and mako currently display
+these notices without playing the requested sound (`eon-mqmli` tracks COSMIC
+playback). When the notification service is absent, notices resume on its
+return or after the next successful detach notice. When the bus or worker
+fails, a later detach lets Eon reconnect. Missed notices do not repeat.
+
+### Agent terminal access
 
 `[agents] terminal_access` limits the direct terminal-content commands used
 by well-behaved agents through Eon's workspace control socket. It applies

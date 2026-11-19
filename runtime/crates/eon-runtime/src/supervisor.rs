@@ -1171,14 +1171,12 @@ fn supervise(
         managed_environment::shell_command(config, &inputs.defaults, Some(log))?;
     }
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
-    let mut attention = if mode == LaunchMode::Workspace {
-        Some(Attention::new(managed_environment::sidebar_enabled(
-            config,
-            &inputs.defaults,
-            Some(log),
-        )?))
+    let (mut attention, notice_settings) = if mode == LaunchMode::Workspace {
+        let (sidebar, notices) =
+            managed_environment::attention_settings(config, &inputs.defaults, Some(log))?;
+        (Some(Attention::new(sidebar)), notices)
     } else {
-        None
+        (None, Default::default())
     };
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
         geometry: inputs.defaults.popups.geometry,
@@ -1529,7 +1527,7 @@ fn supervise(
         attention,
         pane_labels: super::pane_labels::Labels::default(),
         agents,
-        notices: notification::Notices::default(),
+        notices: notification::Notices::new(notice_settings),
         subscribers: Subscribers::new(generation),
         scrollback,
         editor_sockets,
@@ -2142,7 +2140,8 @@ impl SupervisorState {
         let (Some(attention), Some(workspace)) = (&mut self.attention, &self.workspaces) else {
             return;
         };
-        let (targets, focus) = attention::targets(&workspace.snapshots());
+        let snapshots = workspace.snapshots();
+        let (targets, focus) = attention::targets(&snapshots);
         attention.observe(
             focus,
             self.venus
@@ -2151,6 +2150,12 @@ impl SupervisorState {
         );
         attention.poll(&targets, &mut self.sessions, Instant::now());
         attention.retain(&targets, &self.sessions);
+        attention.take_notifications(&targets, |target, kind, dispatch| {
+            self.notices
+                .attention(kind, &self.application_id, &self.log, dispatch, |names| {
+                    target.notice_location(&snapshots, names)
+                });
+        });
     }
 }
 

@@ -36,6 +36,7 @@ struct EonConfig {
     anima: AnimationSettings,
     session: SessionSettings,
     sidebar: SidebarSettings,
+    attention: AttentionSettings,
     agents: AgentSettings,
     editor: EditorSettings,
     updates: UpdateSettings,
@@ -75,6 +76,7 @@ impl EonConfig {
             ("anima.", &self.anima.unknown),
             ("session.", &self.session.unknown),
             ("sidebar.", &self.sidebar.unknown),
+            ("attention.", &self.attention.unknown),
             ("agents.", &self.agents.unknown),
             ("editor.", &self.editor.unknown),
             ("updates.", &self.updates.unknown),
@@ -192,6 +194,7 @@ pub struct Defaults {
     pub number_keys: bool,
     /// Whether full Eon offers the agent sidebar (EON-C31).
     pub sidebar_enabled: bool,
+    pub attention: AttentionNotifications,
     /// Whether `eon pane read` and `eon pane send` reach the window's
     /// terminals (EON-C35, EON-C36).
     pub terminal_access: TerminalAccess,
@@ -574,6 +577,21 @@ struct SidebarSettings {
     enabled: Option<bool>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+struct AttentionSettings {
+    notify: Option<bool>,
+    notify_names: Option<bool>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AttentionNotifications {
+    pub notify: bool,
+    pub notify_names: bool,
 }
 
 /// `[agents] terminal_access`: a preference and a kill switch, not a security
@@ -1186,6 +1204,18 @@ fn configuration_metadata() -> &'static [ConfigKey] {
                 &["next-supervisor-start"],
             ),
             ConfigKey::new(
+                "attention.notify",
+                "boolean",
+                "Send desktop agent attention notifications on Linux.",
+                &["next-supervisor-start"],
+            ),
+            ConfigKey::new(
+                "attention.notify_names",
+                "boolean",
+                "Use location names in agent attention notices. False uses IDs.",
+                &["next-supervisor-start"],
+            ),
+            ConfigKey::new(
                 "agents.terminal_access",
                 "string",
                 "\"none\" denies pane read/history/send and CLI Scrollback, even when you run them yourself; the window shortcut still works. This is not sandbox isolation.",
@@ -1522,6 +1552,11 @@ fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String>
             enabled: Some(defaults.sidebar_enabled),
             unknown: BTreeMap::new(),
         },
+        attention: AttentionSettings {
+            notify: Some(defaults.attention.notify),
+            notify_names: Some(defaults.attention.notify_names),
+            unknown: BTreeMap::new(),
+        },
         agents: AgentSettings {
             terminal_access: Some(defaults.terminal_access),
             send_enter_delay_ms: Some(u64::from(defaults.send_enter_delay_ms)),
@@ -1591,8 +1626,18 @@ fn format_defaults(mut config: serde_json::Value, json: bool) -> Result<String, 
     let mut output =
         String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
     let order = [
-        "bar", "terminal", "panels", "shell", "anima", "session", "sidebar", "agents", "editor",
-        "updates", "popups",
+        "bar",
+        "terminal",
+        "panels",
+        "shell",
+        "anima",
+        "session",
+        "sidebar",
+        "attention",
+        "agents",
+        "editor",
+        "updates",
+        "popups",
     ];
     let mut sections: Vec<_> = config.as_object().unwrap().iter().collect();
     sections.sort_by_key(|(section, _)| {
@@ -1991,15 +2036,22 @@ pub(crate) fn number_keys(
         .unwrap_or(defaults.number_keys))
 }
 
-pub(crate) fn sidebar_enabled(
+pub(super) fn attention_settings(
     root: &Path,
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
-) -> Result<bool, String> {
-    Ok(read_config(root, defaults, log)?
-        .sidebar
-        .enabled
-        .unwrap_or(defaults.sidebar_enabled))
+) -> Result<(bool, AttentionNotifications), String> {
+    let config = read_config(root, defaults, log)?;
+    Ok((
+        config.sidebar.enabled.unwrap_or(defaults.sidebar_enabled),
+        AttentionNotifications {
+            notify: config.attention.notify.unwrap_or(defaults.attention.notify),
+            notify_names: config
+                .attention
+                .notify_names
+                .unwrap_or(defaults.attention.notify_names),
+        },
+    ))
 }
 
 pub(crate) fn agents(
@@ -3233,11 +3285,11 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
-        animate_working_badge, command as managed_command, disk_path, integration_mask,
-        number_keys, pair_launch_flags, popup_catalog, prepare_popup_command, prepend_path,
-        print_defaults, read_shell_config, remove_agent_environment, remove_agent_session,
-        sidebar_enabled, startup_animation, terminal_presentation, tool, user_manager_environment,
-        warning_close_last_tab,
+        animate_working_badge, attention_settings, command as managed_command, disk_path,
+        integration_mask, number_keys, pair_launch_flags, popup_catalog, prepare_popup_command,
+        prepend_path, print_defaults, read_shell_config, remove_agent_environment,
+        remove_agent_session, startup_animation, terminal_presentation, tool,
+        user_manager_environment, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -4168,7 +4220,7 @@ mod tests {
                     warning_close_last_tab(root, &defaults, None).unwrap(),
                     animate_working_badge(root, &defaults, None).unwrap(),
                     number_keys(root, &defaults, None).unwrap(),
-                    sidebar_enabled(root, &defaults, None).unwrap(),
+                    attention_settings(root, &defaults, None).unwrap(),
                     super::agents(root, &defaults, None).unwrap(),
                     super::editor_setting(root, &defaults, None).unwrap(),
                     super::read_config(root, &defaults, None)
@@ -4198,6 +4250,7 @@ mod tests {
         let bar = super::bar(root, defaults, None)?;
         let agents = super::agents(root, defaults, None)?;
         let anima = startup_animation(root, defaults, None)?;
+        let (sidebar_enabled, attention) = super::attention_settings(root, defaults, None)?;
         let resolved = super::Defaults {
             // `Defaults` holds a static widget list.
             bar_widgets: Box::leak(
@@ -4222,7 +4275,8 @@ mod tests {
             warning_close_last_tab: warning_close_last_tab(root, defaults, None)?,
             animate_working_badge: animate_working_badge(root, defaults, None)?,
             number_keys: number_keys(root, defaults, None)?,
-            sidebar_enabled: sidebar_enabled(root, defaults, None)?,
+            sidebar_enabled,
+            attention,
             terminal_access: agents.terminal_access,
             send_enter_delay_ms: agents.send_enter_delay_ms,
             send_typing_quiet_ms: agents.send_typing_quiet_ms,
@@ -4974,22 +5028,30 @@ nested = { value = true }
     }
 
     #[test]
-    fn the_sidebar_setting_reads_its_value_and_rejects_non_booleans() {
+    fn attention_settings_read_independent_booleans() {
         let inputs = crate::fixtures::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-sidebar",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        assert!(sidebar_enabled(&root, &inputs.defaults, None).unwrap());
-        fs::write(root.join("config.toml"), "[sidebar]\nenabled = false\n").unwrap();
-        assert!(!sidebar_enabled(&root, &inputs.defaults, None).unwrap());
-        fs::write(root.join("config.toml"), "[sidebar]\nenabled = 'no'\n").unwrap();
-        assert!(
-            sidebar_enabled(&root, &inputs.defaults, None)
-                .unwrap_err()
-                .contains("enabled")
-        );
+        let read = || attention_settings(&root, &inputs.defaults, None);
+        let (sidebar, attention) = read().unwrap();
+        assert!(sidebar && attention.notify && attention.notify_names);
+        fs::write(
+            root.join("config.toml"),
+            "[sidebar]\nenabled = false\n[attention]\nnotify_names = false\n",
+        )
+        .unwrap();
+        let (sidebar, attention) = read().unwrap();
+        assert!(!sidebar && attention.notify && !attention.notify_names);
+        for (source, key) in [
+            ("[sidebar]\nenabled = 'no'\n", "enabled"),
+            ("[attention]\nnotify = 'no'\n", "notify"),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert!(read().unwrap_err().contains(key));
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

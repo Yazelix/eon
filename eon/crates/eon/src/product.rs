@@ -119,6 +119,10 @@ pub(crate) fn inputs(launch: Result<eon_runtime::LaunchInputs, String>) -> Input
             animate_working_badge: true,
             number_keys: true,
             sidebar_enabled: true,
+            attention: eon_runtime::AttentionNotifications {
+                notify: true,
+                notify_names: true,
+            },
             terminal_access: TerminalAccess::Window,
             send_enter_delay_ms: 300,
             send_typing_quiet_ms: 2000,

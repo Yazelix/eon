@@ -39,9 +39,10 @@ pub use launch_environment::{
     FACTS_VARIABLE as LAUNCH_FACTS_VARIABLE, LaunchFacts, LaunchInputs,
 };
 pub use managed_environment::{
-    BarLoad, Defaults, EditorKind, EditorOpenIn, ManagedPrograms, PaddingColor, PanelHeading,
-    PopupCatalog, PopupCommand, PopupDefinition, ShellConfig, StartupAnimation, TerminalAccess,
-    TerminalConfig, UpdateSettings, update_target, update_target_configured,
+    AttentionNotifications, BarLoad, Defaults, EditorKind, EditorOpenIn, ManagedPrograms,
+    PaddingColor, PanelHeading, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
+    StartupAnimation, TerminalAccess, TerminalConfig, UpdateSettings, update_target,
+    update_target_configured,
 };
 pub use report::{ReportFacts, report_facts};
 pub use slots::{SlotClass, SlotPolicy};

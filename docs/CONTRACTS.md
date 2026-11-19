@@ -935,10 +935,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
   restoration, a per-pane terminal restart action, closing tabs or panes
-  outside the addressed session, terminal
-  content/history, provider state (except EON-C31's attention values), plugin
-  surface, remote access, reconstructed terminal state, or notifications other
-  than the detach notice.
+  outside the addressed session, terminal content/history, provider state
+  (except EON-C31's attention values), plugin surface, remote access,
+  reconstructed terminal state, or notifications other than the
+  detach notice and EON-C31's attention notices.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Qualification:** The evidence at
     `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
@@ -5036,6 +5036,8 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   `ToggleSidebar`.
   Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
   `eon-cq38r`: `SetSidebar` and disabled-sidebar action rules on EONW v39.
+  Amended on 2026-11-19 (approved by eon-lead) by `eon-2kvr.2`:
+  desktop notifications and sound hints for eligible attention episodes.
 - **Consumer:** One person supervising coding agents across the tabs and sessions (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -5170,6 +5172,35 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
     the count returns to 0, the record maps as before, so an unseen finish shows finished unless
     newer work saw it. Claude Code goes `working` when its background task ends, so its next
     `done` raises a fresh finish.
+  - **Notification opportunities.** For each pane or popup, an error or
+    finished raise produces exactly one opportunity when it first
+    normalizes to error or finished after applying **Seen**. A
+    background-held finish qualifies when the hold clears, if its raise
+    is still unseen. Each entry of a record into `blocked`, keyed by run,
+    `id` and change sequence, produces exactly one opportunity when Runtime
+    first observes it, unless its terminal meets the native-focus
+    conditions in **Seen**, in which case it is consumed quietly.
+    Repeated reports, focus leaving and Venus reattaching do not replay
+    an opportunity. Recovery takes the first good reply of an adopted
+    Orbit run as a quiet baseline.
+  - **Desktop notifications.** In full Eon on Linux, `[attention] notify = true`
+    enables best-effort desktop delivery of these opportunities. With
+    `[attention] notify_names = true`, Eon uses the session name, the tab's
+    launch-directory name and the pane's pinned name or popup's configured
+    label, with the corresponding ID wherever a name is unavailable. With
+    `notify_names = false`, Eon uses location IDs. The notice carries
+    only the attention state and these names or IDs. It carries no terminal
+    content or terminal title, and none of the record's `app`, `name`,
+    `title` or `msg`. Error and needs input carry the freedesktop hint
+    `sound-name = "message-new-instant"`. Finished carries
+    `suppress-sound = true`. The desktop controls actual playback. The
+    notices take no focus and offer no actions. If the notice worker
+    cannot start or is lost, the session bus connection fails, or D-Bus
+    reports the notification service is absent, attention delivery pauses
+    until the service name gains a new owner or a later detach notice succeeds.
+    Failed or disabled delivery never delays terminals or replays an
+    opportunity. Both settings default to true. Darwin and eonbase send
+    no attention notices.
   - **Rollup.** A tab's rollup is the highest-priority state among its terminals, and a
     session's rollup the highest among all its terminals (EON-C33), which EONW v22 carries
     as `attention` on each `WorkspaceInfo`. A stale terminal counts with its last state, and
@@ -5376,18 +5407,22 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   - **No side effects.** Status changes never change focus, open the sidebar, raise the window or
     send terminal input.
 - **Owner:**
-  - **Eon Runtime** owns the poller, raise, normalization, seen, rollup, the queue and cursor,
-    sidebar visibility and `[sidebar]` configuration.
+  - **Eon Runtime** owns the poller, raise, normalization, seen, rollup,
+    the queue and cursor, sidebar visibility, notification opportunities
+    and delivery policy, and `[sidebar]` and `[attention]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 8, EON-C8 topology, and EON-C10
-  (EONW v44, request and response). EON-C39 exposes a stream of its changes.
+- **Consumes:** ORB-C15, ORB-C13 generation 8, EON-C8 topology and, on
+  Linux, its notice worker and the freedesktop Notifications service.
+  EON-C10 carries requests and responses (EONW v44). EON-C39 exposes
+  a stream of attention state changes.
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no screen, transcript or provider-state parsing; Runtime recognizes only
     the process roles listed above and passes `app` and `name` through unchanged;
     Venus maps `app` for display (VEN-C30);
-  - no notifications or sound (eon-iwmz consumes this later);
+  - desktop notifications and sound follow the policy above. It includes
+    no per-state switches, notice actions, click-to-jump or sound picker;
   - no agent launching, orchestration or worktrees;
   - agents under tmux report nothing; this is documented.
 - **Proof:** `eon-agent-sidebar-yx8.9`

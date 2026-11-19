@@ -1,15 +1,17 @@
-//! The desktop notice that a detached Eon window keeps running, with its Quit
-//! action (EON-C8). It is a freedesktop notification, so only Linux sends it;
-//! on macOS the native route needs the app bundle's notification permission
-//! and belongs with that bundle's owner.
+//! Linux desktop notifications for detach (EON-C8) and agent attention
+//! (EON-C31). Both use the supervisor's session-bus worker.
 //!
 //! The text and the notice's state machine are plain data, tested on every
 //! platform. On Linux, `Notices` owns one session-bus connection on a worker
-//! thread, started at the first detach and kept for the supervisor's life, so
-//! the notification server can deliver the notice's actions back to it.
+//! thread. The notification server can deliver the detach notice's actions
+//! back to it, while attention notices have no actions.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-use super::{running::window_label, windows::durable_window_id};
+use super::{
+    attention::{NoticeDispatch, NoticeKind},
+    running::window_label,
+    windows::durable_window_id,
+};
 use eon_workspace_protocol::v47::WindowEntry;
 
 /// The notification service's well-known bus name.
@@ -82,6 +84,7 @@ enum Signal {
         sender: String,
         name: String,
         old: String,
+        new: String,
     },
 }
 
@@ -97,6 +100,7 @@ enum Stage {
 enum Effect {
     Event(Event),
     Close,
+    ServiceAvailable(bool),
 }
 
 /// A notification the server shows.
@@ -113,20 +117,44 @@ struct Shown {
 /// One `Notify` call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Notification {
-    /// The issuing owner when replacing, else the capability reply's sender.
     destination: String,
     replaces: u32,
     summary: String,
     body: String,
     /// Identifier and label pairs.
     actions: &'static [&'static str],
-    stage: Stage,
+    sound: Sound,
 }
 
-/// One call to the notification server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sound {
+    Default,
+    Silent,
+    Theme,
+}
+
+impl Notification {
+    fn attention(state: NoticeKind, location: &str) -> Self {
+        let (summary, sound) = match state {
+            NoticeKind::Finished => ("Agent finished", Sound::Silent),
+            NoticeKind::Error => ("Agent failed", Sound::Theme),
+            NoticeKind::NeedsInput => ("Agent needs input", Sound::Theme),
+        };
+        Self {
+            destination: SERVICE.into(),
+            replaces: 0,
+            summary: summary.into(),
+            body: escape_body(location),
+            actions: &[],
+            sound,
+        }
+    }
+}
+
+/// One detach notice call to the notification server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Call {
-    Notify(Notification),
+    Notify(Notification, Stage),
     Close { id: u32, owner: String },
 }
 
@@ -169,20 +197,23 @@ impl Notice {
                 });
             }
         };
-        Some(Call::Notify(Notification {
-            destination: self
-                .shown
-                .as_ref()
-                .map(|shown| &shown.owner)
-                .or_else(|| self.actions.as_ref().map(|(owner, _)| owner))
-                .map_or(SERVICE, String::as_str)
-                .to_owned(),
-            replaces: self.shown.as_ref().map_or(0, |shown| shown.id),
-            summary,
-            body,
-            actions,
+        Some(Call::Notify(
+            Notification {
+                destination: self
+                    .shown
+                    .as_ref()
+                    .map(|shown| &shown.owner)
+                    .or_else(|| self.actions.as_ref().map(|(owner, _)| owner))
+                    .map_or(SERVICE, String::as_str)
+                    .to_owned(),
+                replaces: self.shown.as_ref().map_or(0, |shown| shown.id),
+                summary,
+                body,
+                actions,
+                sound: Sound::Default,
+            },
             stage,
-        }))
+        ))
     }
 
     /// The server `owner` shows the notification as `id`.
@@ -229,9 +260,15 @@ impl Notice {
     /// the window.
     fn on_signal(&mut self, signal: Signal) -> Option<Effect> {
         match signal {
-            Signal::OwnerChanged { sender, name, old } => {
+            Signal::OwnerChanged {
+                sender,
+                name,
+                old,
+                new,
+            } => {
                 if sender == BUS && name == SERVICE {
                     self.forget(&old);
+                    return Some(Effect::ServiceAvailable(!new.is_empty()));
                 }
                 None
             }
@@ -318,12 +355,17 @@ pub(super) use linux::Notices;
 #[cfg(target_os = "linux")]
 mod linux {
     use super::{
-        BUS, Call, Command, Effect, Event, Notice, NoticeWindow, Notification, SERVICE, Signal,
+        BUS, Call, Command, Effect, Event, Notice, NoticeDispatch, NoticeKind, NoticeWindow,
+        Notification, SERVICE, Signal, Sound,
     };
-    use crate::diagnostics::DiagnosticLog;
+    use crate::{AttentionNotifications, diagnostics::DiagnosticLog};
     use std::{
         collections::HashMap,
-        sync::{Arc, mpsc},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering::Relaxed},
+            mpsc,
+        },
         thread,
         time::Duration,
     };
@@ -336,14 +378,61 @@ mod linux {
 
     const SERVICE_PATH: &str = "/org/freedesktop/Notifications";
     const BUS_PATH: &str = "/org/freedesktop/DBus";
+    const ATTENTION_CAPACITY: usize = 16;
 
     enum Input {
         Command(Command),
         Signal(Signal),
+        Attention(PendingAttention),
         /// The bus connection ended.
         Disconnected,
         /// The supervisor is ending; the worker drops the sender as it exits.
         Finish(mpsc::Sender<()>),
+        #[cfg(test)]
+        Barrier(mpsc::Sender<()>),
+    }
+
+    #[derive(Clone)]
+    struct InputSender {
+        sender: mpsc::Sender<Input>,
+        wake: thread::Thread,
+    }
+
+    impl InputSender {
+        fn send(&self, input: Input) -> Result<(), mpsc::SendError<Input>> {
+            self.sender.send(input)?;
+            self.wake.unpark();
+            Ok(())
+        }
+    }
+
+    struct PendingAttention {
+        notification: Notification,
+        epoch: usize,
+        dispatch: Arc<NoticeDispatch>,
+    }
+
+    #[derive(Default)]
+    struct AttentionEpoch(AtomicUsize);
+
+    impl AttentionEpoch {
+        fn current(&self) -> usize {
+            self.0.load(Relaxed)
+        }
+
+        /// Odd accepts new offers. Advancing on both transitions prevents a
+        /// concurrent offer from an earlier cycle from surviving recovery.
+        fn set_available(&self, available: bool) {
+            if self.current() % 2 != usize::from(available) {
+                self.0.fetch_add(1, Relaxed);
+            }
+        }
+    }
+
+    struct WorkerHandle {
+        inputs: InputSender,
+        attention: mpsc::SyncSender<PendingAttention>,
+        epoch: Arc<AttentionEpoch>,
     }
 
     /// A failed call to the notification server.
@@ -363,30 +452,50 @@ mod linux {
 
     /// Opens a server for the desktop entry `application_id`, passing its
     /// signals to the worker's inputs.
-    type Connect =
-        Arc<dyn Fn(&str, mpsc::Sender<Input>) -> zbus::Result<Box<dyn Server>> + Send + Sync>;
+    type Connect = Arc<dyn Fn(&str, InputSender) -> zbus::Result<Box<dyn Server>> + Send + Sync>;
 
-    /// The supervisor's handle on its window's notice. The worker starts at
-    /// the first `show`, and again at a later `show` after its connection
-    /// failed, so a missing or failing notification service never delays a
-    /// detach, and a later detach tries again.
+    /// The supervisor's handle on its window's notifications. A later detach
+    /// can replace a lost worker.
     pub(crate) struct Notices {
-        worker: Option<mpsc::Sender<Input>>,
+        worker: Option<WorkerHandle>,
+        attempted: bool,
+        detach_requested: bool,
         events: (mpsc::Sender<Event>, mpsc::Receiver<Event>),
         connect: Connect,
+        settings: AttentionNotifications,
     }
 
     impl Default for Notices {
         fn default() -> Self {
-            Self {
-                worker: None,
-                events: mpsc::channel(),
-                connect: Arc::new(DBus::connect),
-            }
+            Self::new(AttentionNotifications::default())
+        }
+    }
+
+    impl Drop for Notices {
+        fn drop(&mut self) {
+            self.close_and_wait(Duration::ZERO);
         }
     }
 
     impl Notices {
+        pub(crate) fn new(settings: AttentionNotifications) -> Self {
+            Self {
+                worker: None,
+                attempted: false,
+                detach_requested: false,
+                events: mpsc::channel(),
+                connect: Arc::new(|application_id, inputs| {
+                    if cfg!(test) {
+                        return Err(zbus::Error::Failure(
+                            "tests inject the notification server".into(),
+                        ));
+                    }
+                    DBus::connect(application_id, inputs)
+                }),
+                settings,
+            }
+        }
+
         /// Shows the window's notice; `application_id` names Eon's desktop
         /// entry to the server.
         pub(crate) fn show(
@@ -395,30 +504,108 @@ mod linux {
             application_id: &str,
             log: &Arc<DiagnosticLog>,
         ) {
-            let mut input = Input::Command(Command::Show(window));
-            if let Some(worker) = &self.worker {
-                match worker.send(input) {
+            self.detach_requested = true;
+            let input = Input::Command(Command::Show(window));
+            let input = match &self.worker {
+                Some(worker) => match worker.inputs.send(input) {
                     Ok(()) => return,
-                    Err(mpsc::SendError(unsent)) => input = unsent,
-                }
+                    Err(mpsc::SendError(unsent)) => unsent,
+                },
+                None => input,
+            };
+            self.start(application_id, log, false);
+            self.send(input);
+        }
+
+        pub(crate) fn attention(
+            &mut self,
+            state: NoticeKind,
+            application_id: &str,
+            log: &Arc<DiagnosticLog>,
+            dispatch: Arc<NoticeDispatch>,
+            location: impl FnOnce(bool) -> String,
+        ) -> bool {
+            if !self.settings.notify {
+                return false;
             }
+            if !self.attempted {
+                self.start(application_id, log, true);
+            }
+            let Some(worker) = &self.worker else {
+                return false;
+            };
+            let epoch = worker.epoch.current();
+            if epoch.is_multiple_of(2) {
+                return false;
+            }
+            let notification =
+                Notification::attention(state, &location(self.settings.notify_names));
+            let queued = worker
+                .attention
+                .try_send(PendingAttention {
+                    notification,
+                    epoch,
+                    dispatch,
+                })
+                .is_ok();
+            if queued {
+                worker.inputs.wake.unpark();
+            }
+            queued
+        }
+
+        fn start(&mut self, application_id: &str, log: &Arc<DiagnosticLog>, connect_now: bool) {
             let (sender, receiver) = mpsc::channel();
+            let (attention, pending) = mpsc::sync_channel(ATTENTION_CAPACITY);
+            let epoch = Arc::new(AttentionEpoch::default());
+            epoch.set_available(!std::mem::replace(&mut self.attempted, true));
             let worker = Worker {
                 log: Arc::clone(log),
                 events: self.events.0.clone(),
                 notice: Notice::default(),
                 reported: false,
+                attention_reported: false,
+                epoch: Arc::clone(&epoch),
             };
             let connect = Arc::clone(&self.connect);
             let application_id = application_id.to_owned();
-            let inputs = sender.clone();
-            // A refused thread only loses the notice.
-            self.worker = thread::Builder::new()
-                .name("eon-detach-notice".into())
-                .spawn(move || worker.run(&connect, &application_id, inputs, &receiver))
-                .ok()
-                .map(|_| sender);
-            self.send(input);
+            let signals = sender.clone();
+            match thread::Builder::new()
+                .name("eon-notifications".into())
+                .spawn(move || {
+                    let inputs = InputSender {
+                        sender: signals,
+                        wake: thread::current(),
+                    };
+                    let server = if connect_now {
+                        worker.connect(&connect, &application_id, &inputs)
+                    } else {
+                        None
+                    };
+                    worker.run(
+                        &connect,
+                        &application_id,
+                        inputs,
+                        &receiver,
+                        &pending,
+                        server,
+                    );
+                }) {
+                Ok(thread) => {
+                    self.worker = Some(WorkerHandle {
+                        inputs: InputSender {
+                            sender,
+                            wake: thread.thread().clone(),
+                        },
+                        attention,
+                        epoch,
+                    })
+                }
+                Err(_) => {
+                    self.worker = None;
+                    log.record("desktop notifications are unavailable: cannot start the worker");
+                }
+            }
         }
 
         pub(crate) fn confirm(&self, window: NoticeWindow) {
@@ -435,7 +622,7 @@ mod linux {
 
         fn send(&self, input: Input) {
             if let Some(worker) = &self.worker {
-                let _ = worker.send(input);
+                let _ = worker.inputs.send(input);
             }
         }
 
@@ -445,41 +632,46 @@ mod linux {
 
         #[cfg(test)]
         pub(crate) fn record_closes() -> (Self, impl Fn() -> bool) {
-            let (sender, receiver) = mpsc::channel();
-            (
-                Self {
-                    worker: Some(sender),
-                    ..Self::default()
-                },
-                move || matches!(receiver.try_recv(), Ok(Input::Command(Command::Close))),
-            )
+            let (notices, receiver) = Self::record_commands();
+            (notices, move || {
+                matches!(receiver.try_recv(), Ok(Input::Command(Command::Close)))
+            })
         }
 
         #[cfg(test)]
         pub(crate) fn record_shows() -> (Self, impl Fn() -> Option<NoticeWindow>) {
-            let (sender, receiver) = mpsc::channel();
-            (
-                Self {
-                    worker: Some(sender),
-                    ..Self::default()
-                },
-                move || match receiver.try_recv().ok()? {
-                    Input::Command(Command::Show(window)) => Some(window),
-                    _ => None,
-                },
-            )
+            let (notices, receiver) = Self::record_commands();
+            (notices, move || match receiver.try_recv().ok()? {
+                Input::Command(Command::Show(window)) => Some(window),
+                _ => None,
+            })
         }
 
-        /// Closes the notice as the supervisor ends, waiting at most
-        /// `timeout` for the server.
+        #[cfg(test)]
+        fn record_commands() -> (Self, mpsc::Receiver<Input>) {
+            let (sender, receiver) = mpsc::channel();
+            let (attention, _) = mpsc::sync_channel(0);
+            let worker = WorkerHandle {
+                inputs: InputSender {
+                    sender,
+                    wake: thread::current(),
+                },
+                attention,
+                epoch: Arc::default(),
+            };
+            let mut notices = Self::default();
+            notices.worker = Some(worker);
+            notices.attempted = true;
+            (notices, receiver)
+        }
+
+        /// Stops the worker, allowing up to `timeout` for detach cleanup.
         pub(crate) fn close_and_wait(&mut self, timeout: Duration) {
             let Some(worker) = self.worker.take() else {
                 return;
             };
             let (done, finished) = mpsc::channel();
-            if worker.send(Input::Command(Command::Close)).is_ok()
-                && worker.send(Input::Finish(done)).is_ok()
-            {
+            if worker.inputs.send(Input::Finish(done)).is_ok() && self.detach_requested {
                 let _ = finished.recv_timeout(timeout);
             }
         }
@@ -491,6 +683,31 @@ mod linux {
         notice: Notice,
         /// Whether the log already holds the current failure.
         reported: bool,
+        attention_reported: bool,
+        epoch: Arc<AttentionEpoch>,
+    }
+
+    fn next_input(
+        inputs: &mpsc::Receiver<Input>,
+        pending: &mpsc::Receiver<PendingAttention>,
+        selected: &mut Option<PendingAttention>,
+        mut park: impl FnMut(),
+    ) -> Option<Input> {
+        loop {
+            match inputs.try_recv() {
+                Ok(input) => return Some(input),
+                Err(mpsc::TryRecvError::Disconnected) => return None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            if let Some(attention) = selected.take() {
+                return Some(Input::Attention(attention));
+            }
+            // Recheck controls after receiving an alert from the other queue.
+            *selected = pending.try_recv().ok();
+            if selected.is_none() {
+                park();
+            }
+        }
     }
 
     impl Worker {
@@ -498,63 +715,130 @@ mod linux {
             mut self,
             connect: &Connect,
             application_id: &str,
-            signals: mpsc::Sender<Input>,
+            signals: InputSender,
             inputs: &mpsc::Receiver<Input>,
+            pending: &mpsc::Receiver<PendingAttention>,
+            mut server: Option<Box<dyn Server>>,
         ) {
-            let server = match connect(application_id, signals) {
-                Ok(server) => server,
-                Err(error) => {
-                    self.log.record(&format!(
-                        "desktop notifications are unavailable: cannot connect to the session bus: {error}"
-                    ));
-                    return;
-                }
-            };
-            while let Ok(input) = inputs.recv() {
+            let mut selected = None;
+            while let Some(input) = next_input(inputs, pending, &mut selected, thread::park) {
                 match input {
-                    Input::Command(command) => self.carry_out(&*server, command),
+                    Input::Command(command) => {
+                        if server.is_none() && matches!(command, Command::Show(_)) {
+                            server = self.connect(connect, application_id, &signals);
+                        }
+                        if let Some(server) = &server {
+                            self.carry_out(&**server, command);
+                        }
+                    }
+                    Input::Attention(attention) => {
+                        if let Some(server) = &server {
+                            self.notify_attention(&**server, attention);
+                        }
+                    }
                     Input::Signal(signal) => match self.notice.on_signal(signal) {
                         Some(Effect::Event(event)) => {
                             let _ = self.events.send(event);
                         }
-                        Some(Effect::Close) => self.carry_out(&*server, Command::Close),
+                        Some(Effect::Close) => {
+                            if let Some(server) = &server {
+                                self.carry_out(&**server, Command::Close);
+                            }
+                        }
+                        Some(Effect::ServiceAvailable(available)) => {
+                            self.epoch.set_available(available)
+                        }
                         None => {}
                     },
-                    Input::Disconnected => return,
+                    Input::Disconnected => {
+                        self.epoch.set_available(false);
+                        server = None;
+                        self.notice = Notice::default();
+                    }
                     Input::Finish(done) => {
-                        // The supervisor stops waiting first; dropping the
-                        // server then ends the signal thread too.
+                        if let Some(server) = &server {
+                            self.carry_out(&**server, Command::Close);
+                        }
                         drop(done);
                         return;
+                    }
+                    #[cfg(test)]
+                    Input::Barrier(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        }
+
+        fn connect(
+            &self,
+            connect: &Connect,
+            application_id: &str,
+            signals: &InputSender,
+        ) -> Option<Box<dyn Server>> {
+            match connect(application_id, signals.clone()) {
+                Ok(server) => Some(server),
+                Err(error) => {
+                    self.epoch.set_available(false);
+                    self.log.record(&format!(
+                        "desktop notifications are unavailable: cannot connect to the session bus: {error}"
+                    ));
+                    None
+                }
+            }
+        }
+
+        fn notify_attention(&mut self, server: &dyn Server, pending: PendingAttention) {
+            if pending.epoch != self.epoch.current() || !pending.dispatch.begin() {
+                return;
+            }
+            match server.notify(&pending.notification) {
+                Ok(_) => self.attention_reported = false,
+                Err(failure) => {
+                    if failure.gone {
+                        self.epoch.set_available(false);
+                    }
+                    if !std::mem::replace(&mut self.attention_reported, true) {
+                        self.log
+                            .record("desktop agent attention notification could not be sent");
                     }
                 }
             }
         }
 
         fn carry_out(&mut self, server: &dyn Server, command: Command) {
+            let show = matches!(command, Command::Show(_));
             // Only the detach notice depends on the capability; the server's
             // is read once, and again after that server leaves.
-            if matches!(command, Command::Show(_)) && self.notice.actions.is_none() {
+            if show && self.notice.actions.is_none() {
                 match server.capabilities() {
                     Ok((capabilities, owner)) => {
                         let offered = capabilities.iter().any(|name| name == "actions");
                         self.notice.actions = Some((owner, offered));
                     }
-                    Err(failure) => return self.unavailable(&failure),
+                    Err(failure) => {
+                        if failure.gone {
+                            self.epoch.set_available(false);
+                        }
+                        return self.unavailable(&failure);
+                    }
                 }
             }
             let Some(call) = self.notice.call(&command) else {
                 return;
             };
             match call {
-                Call::Notify(notification) => match server.notify(&notification) {
+                Call::Notify(notification, stage) => match server.notify(&notification) {
                     Ok((id, owner)) => {
                         self.reported = false;
+                        if show {
+                            self.epoch.set_available(true);
+                        }
                         self.log.record(&format!(
                             "desktop notification {id} sent: {}",
                             notification.summary
                         ));
-                        self.notice.sent(id, owner, notification.stage);
+                        self.notice.sent(id, owner, stage);
                     }
                     // The issuing server left before its owner change
                     // arrived: show the notification afresh.
@@ -562,7 +846,12 @@ mod linux {
                         self.notice.forget(&notification.destination);
                         self.carry_out(server, command);
                     }
-                    Err(failure) => self.unavailable(&failure),
+                    Err(failure) => {
+                        if failure.gone && notification.destination == SERVICE {
+                            self.epoch.set_available(false);
+                        }
+                        self.unavailable(&failure);
+                    }
                 },
                 Call::Close { id, owner } => match server.close(id, &owner) {
                     Ok(()) => self.notice.closed(id, &owner),
@@ -600,10 +889,7 @@ mod linux {
         /// any notification, since a fast click can arrive before `Notify`
         /// returns. A server that never answers fails a call after D-Bus's
         /// usual 25-second timeout and holds only the worker.
-        fn connect(
-            application_id: &str,
-            inputs: mpsc::Sender<Input>,
-        ) -> zbus::Result<Box<dyn Server>> {
+        fn connect(application_id: &str, inputs: InputSender) -> zbus::Result<Box<dyn Server>> {
             let connection = zbus::blocking::connection::Builder::session()?
                 .method_timeout(Duration::from_secs(25))
                 .build()?;
@@ -684,6 +970,15 @@ mod linux {
             if !notification.actions.is_empty() {
                 hints.insert("resident", Value::from(true));
             }
+            match notification.sound {
+                Sound::Default => {}
+                Sound::Silent => {
+                    hints.insert("suppress-sound", Value::from(true));
+                }
+                Sound::Theme => {
+                    hints.insert("sound-name", Value::from("message-new-instant"));
+                }
+            }
             answer(&self.call(
                 &notification.destination,
                 "Notify",
@@ -714,7 +1009,7 @@ mod linux {
 
     /// Passes on the bus's notification and owner-change signals; the
     /// worker's notice decides which to believe.
-    fn listen(messages: MessageIterator, inputs: &mpsc::Sender<Input>) {
+    fn listen(messages: MessageIterator, inputs: &InputSender) {
         for message in messages {
             let Ok(message) = message else {
                 break;
@@ -747,8 +1042,13 @@ mod linux {
                     Signal::Closed { sender, id }
                 }
                 (BUS, "NameOwnerChanged") => {
-                    let (name, old, _new) = body.deserialize::<(String, String, String)>().ok()?;
-                    Signal::OwnerChanged { sender, name, old }
+                    let (name, old, new) = body.deserialize::<(String, String, String)>().ok()?;
+                    Signal::OwnerChanged {
+                        sender,
+                        name,
+                        old,
+                        new,
+                    }
                 }
                 _ => return None,
             },
@@ -758,12 +1058,22 @@ mod linux {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::notification::{QUIT, Stage};
-        use std::sync::Mutex;
+        use crate::notification::QUIT;
+        use std::{
+            cell::Cell,
+            sync::{Mutex, atomic::AtomicBool},
+            time::Instant,
+        };
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum Recorded {
+            Notify(Notification),
+            Close(u32, String),
+        }
 
         /// A server at `:1.7` that records each call and numbers its
         /// notifications from 1, keeping a replaced one's ID.
-        struct Fake(Arc<Mutex<Vec<Call>>>);
+        struct Fake(Arc<Mutex<Vec<Recorded>>>);
 
         impl Server for Fake {
             fn capabilities(&self) -> Result<(Vec<String>, String), Failure> {
@@ -772,7 +1082,7 @@ mod linux {
 
             fn notify(&self, notification: &Notification) -> Result<(u32, String), Failure> {
                 let mut calls = self.0.lock().unwrap();
-                calls.push(Call::Notify(notification.clone()));
+                calls.push(Recorded::Notify(notification.clone()));
                 let id = match notification.replaces {
                     0 => u32::try_from(calls.len()).unwrap(),
                     replaces => replaces,
@@ -781,12 +1091,25 @@ mod linux {
             }
 
             fn close(&self, id: u32, owner: &str) -> Result<(), Failure> {
-                self.0.lock().unwrap().push(Call::Close {
-                    id,
-                    owner: owner.into(),
-                });
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(Recorded::Close(id, owner.into()));
                 Ok(())
             }
+        }
+
+        fn window() -> NoticeWindow {
+            NoticeWindow {
+                name: "w".into(),
+                id: None,
+                stop_command: "eon window stop default".into(),
+                terminals: 1,
+            }
+        }
+
+        fn log() -> Arc<DiagnosticLog> {
+            DiagnosticLog::open_in(Err("no log in this test".into()), "g1", "eon")
         }
 
         /// Two detaches go through the call `reap_presentation` makes, so
@@ -796,30 +1119,20 @@ mod linux {
         fn every_detach_shows_a_notice() {
             let calls = Arc::new(Mutex::new(Vec::new()));
             let recorded = Arc::clone(&calls);
-            let mut notices = Notices {
-                connect: Arc::new(move |_: &str, _| {
-                    Ok(Box::new(Fake(Arc::clone(&recorded))) as Box<dyn Server>)
-                }),
-                ..Notices::default()
-            };
-            let log = DiagnosticLog::open_in(Err("no log in this test".into()), "g1", "eon");
-            let window = || NoticeWindow {
-                name: "w".into(),
-                id: None,
-                stop_command: "eon window stop default".into(),
-                terminals: 1,
-            };
+            let mut notices = Notices::default();
+            notices.connect = Arc::new(move |_, _| Ok(Box::new(Fake(Arc::clone(&recorded)))));
+            let log = log();
             notices.show(window(), "eon", &log);
             notices.show(window(), "eon", &log);
             notices.close_and_wait(Duration::from_secs(30));
             let shown = |destination: &str, replaces| {
-                Call::Notify(Notification {
+                Recorded::Notify(Notification {
                     destination: destination.into(),
                     replaces,
                     summary: "Eon window w is still running".into(),
                     body: "1 terminal keeps running in the background. Open Eon to return.".into(),
                     actions: &[QUIT, "Quit"],
-                    stage: Stage::Shown,
+                    sound: Sound::Default,
                 })
             };
             assert_eq!(
@@ -830,12 +1143,386 @@ mod linux {
                     // server that issued it.
                     shown(":1.7", 1),
                     // The supervisor's end closes it there.
-                    Call::Close {
-                        id: 1,
-                        owner: ":1.7".into()
-                    },
+                    Recorded::Close(1, ":1.7".into()),
                 ]
             );
+        }
+
+        const WAIT: Duration = Duration::from_secs(5);
+
+        /// Report each call before reading the test's selected result.
+        struct GatedServer {
+            calls: mpsc::Sender<Notification>,
+            replies: mpsc::Receiver<Result<(), Failure>>,
+            fail_capabilities: Cell<bool>,
+        }
+
+        impl Server for GatedServer {
+            fn capabilities(&self) -> Result<(Vec<String>, String), Failure> {
+                if self.fail_capabilities.replace(false) {
+                    return Err(Failure {
+                        gone: false,
+                        detail: "timeout".into(),
+                    });
+                }
+                Ok((vec!["actions".into()], ":1.8".into()))
+            }
+
+            fn notify(&self, notification: &Notification) -> Result<(u32, String), Failure> {
+                self.calls.send(notification.clone()).unwrap();
+                self.replies.recv_timeout(WAIT).unwrap()?;
+                Ok((1, ":1.8".into()))
+            }
+
+            fn close(&self, _: u32, _: &str) -> Result<(), Failure> {
+                Ok(())
+            }
+        }
+
+        fn gated(
+            notify_names: bool,
+        ) -> (
+            Notices,
+            mpsc::Receiver<Notification>,
+            mpsc::Sender<Result<(), Failure>>,
+        ) {
+            let (calls, observed) = mpsc::channel();
+            let (replies, answers) = mpsc::channel();
+            let answers = Mutex::new(Some(answers));
+            let mut notices = Notices::new(AttentionNotifications {
+                notify: true,
+                notify_names,
+            });
+            notices.connect = Arc::new(move |_, _| {
+                Ok(Box::new(GatedServer {
+                    calls: calls.clone(),
+                    replies: answers.lock().unwrap().take().unwrap(),
+                    fail_capabilities: Cell::default(),
+                }))
+            });
+            (notices, observed, replies)
+        }
+
+        fn barrier(inputs: &InputSender) {
+            let (done, finished) = mpsc::channel();
+            assert!(inputs.send(Input::Barrier(done)).is_ok());
+            finished.recv_timeout(WAIT).unwrap();
+        }
+
+        #[test]
+        fn attention_recovers_on_service_replacement_without_replaying_or_detaching() {
+            let (mut notices, observed, replies) = gated(true);
+            let log = log();
+            let notify = |notices: &mut Notices, location: &str| {
+                notices.attention(NoticeKind::Error, "eon", &log, Arc::default(), |names| {
+                    assert!(names);
+                    location.into()
+                });
+            };
+            let read = || observed.recv_timeout(WAIT).unwrap();
+            notify(&mut notices, "error while the service was down");
+            assert_eq!(read().body, "error while the service was down");
+            let worker = notices.worker.as_ref().unwrap().inputs.clone();
+            notify(&mut notices, "old queued error");
+            replies
+                .send(Err(Failure {
+                    gone: true,
+                    detail: "ServiceUnknown".into(),
+                }))
+                .unwrap();
+            barrier(&worker);
+            notify(&mut notices, "error while paused");
+            barrier(&worker);
+            let restored = |sender: &str| Signal::OwnerChanged {
+                sender: sender.into(),
+                name: SERVICE.into(),
+                old: String::new(),
+                new: ":1.8".into(),
+            };
+            assert!(worker.send(Input::Signal(restored(":1.7"))).is_ok());
+            barrier(&worker);
+            notify(&mut notices, "error after spoofed owner signal");
+            assert!(worker.send(Input::Signal(restored(BUS))).is_ok());
+            barrier(&worker);
+            notify(&mut notices, "fresh error under new owner");
+            assert_eq!(read().body, "fresh error under new owner");
+            replies
+                .send(Err(Failure {
+                    gone: false,
+                    detail: "timeout".into(),
+                }))
+                .unwrap();
+            barrier(&worker);
+            notify(&mut notices, "fresh error after timeout");
+            assert_eq!(read().body, "fresh error after timeout");
+            replies.send(Ok(())).unwrap();
+            notices.close_and_wait(WAIT);
+            assert!(observed.try_recv().is_err());
+        }
+
+        #[test]
+        fn full_attention_queue_keeps_detach_ahead_of_pending_alerts() {
+            let (mut notices, observed, replies) = gated(false);
+            let log = log();
+            let notify = |notices: &mut Notices, label: String| {
+                notices.attention(NoticeKind::Finished, "eon", &log, Arc::default(), |names| {
+                    assert!(!names);
+                    label
+                })
+            };
+            let read = || observed.recv_timeout(WAIT).unwrap();
+            assert!(notify(&mut notices, "active".into()));
+            assert_eq!(read().body, "active");
+            for index in 0..ATTENTION_CAPACITY {
+                assert!(notify(&mut notices, format!("queued {index}")));
+            }
+            assert!(!notify(&mut notices, "overflow".into()));
+            notices.show(window(), "eon", &log);
+            replies.send(Ok(())).unwrap();
+            let detach = read();
+            assert_eq!(detach.actions, &[QUIT, "Quit"]);
+            replies.send(Ok(())).unwrap();
+            for index in 0..ATTENTION_CAPACITY {
+                assert_eq!(read().body, format!("queued {index}"));
+                replies.send(Ok(())).unwrap();
+            }
+            notices.close_and_wait(WAIT);
+            assert!(observed.try_recv().is_err());
+        }
+
+        #[test]
+        fn cancelled_attention_is_skipped_before_dispatch() {
+            let (mut notices, observed, replies) = gated(false);
+            let log = log();
+            let mut offer = |label: &str, cancelled| {
+                assert!(
+                    notices.attention(NoticeKind::Finished, "eon", &log, cancelled, |_| label
+                        .into())
+                );
+            };
+            offer("active", Arc::default());
+            assert_eq!(observed.recv_timeout(WAIT).unwrap().body, "active");
+            let dispatch = Arc::new(NoticeDispatch::default());
+            offer("now seen", Arc::clone(&dispatch));
+            assert!(dispatch.cancel());
+            offer("still unseen", Arc::default());
+            replies.send(Ok(())).unwrap();
+            assert_eq!(observed.recv_timeout(WAIT).unwrap().body, "still unseen");
+
+            // With no detach to close, shutdown returns even while the last call hangs.
+            let (returned, done) = mpsc::channel();
+            let closer = thread::spawn(move || {
+                notices.close_and_wait(WAIT * 2);
+                returned.send(()).unwrap();
+            });
+            let stopped_without_waiting = done.recv_timeout(WAIT);
+            replies.send(Ok(())).unwrap();
+            closer.join().unwrap();
+            stopped_without_waiting.unwrap();
+        }
+
+        #[test]
+        fn controls_precede_an_alert_selected_from_the_other_queue() {
+            let (sender, receiver) = mpsc::channel();
+            let (_attention, pending) = mpsc::sync_channel(1);
+            let mut selected = Some(PendingAttention {
+                notification: Notification::attention(NoticeKind::Finished, "queued"),
+                epoch: 1,
+                dispatch: Arc::default(),
+            });
+            assert!(sender.send(Input::Command(Command::Show(window()))).is_ok());
+            let park = || panic!("input is ready");
+            assert!(matches!(
+                next_input(&receiver, &pending, &mut selected, park),
+                Some(Input::Command(Command::Show(_)))
+            ));
+            assert!(matches!(
+                next_input(&receiver, &pending, &mut selected, park),
+                Some(Input::Attention(_))
+            ));
+        }
+
+        #[test]
+        fn input_arriving_between_empty_check_and_park_wakes_the_worker() {
+            let (sender, receiver) = mpsc::channel();
+            let (announce, announced) = mpsc::channel();
+            let may_park = Arc::new(AtomicBool::new(false));
+            let release = Arc::clone(&may_park);
+            let (done, finished) = mpsc::channel();
+            let waiter = thread::spawn(move || {
+                let (_attention, pending) = mpsc::sync_channel(1);
+                let input = next_input(&receiver, &pending, &mut None, || {
+                    announce.send(()).unwrap();
+                    let deadline = Instant::now() + WAIT;
+                    while !may_park.load(Relaxed) {
+                        assert!(Instant::now() < deadline);
+                        thread::yield_now();
+                    }
+                    thread::park_timeout(WAIT * 2);
+                });
+                done.send(matches!(
+                    input,
+                    Some(Input::Signal(Signal::Closed { id: 42, .. }))
+                ))
+                .unwrap();
+            });
+            let inputs = InputSender {
+                sender,
+                wake: waiter.thread().clone(),
+            };
+            announced.recv_timeout(WAIT).unwrap();
+            assert!(
+                inputs
+                    .send(Input::Signal(Signal::Closed {
+                        sender: SERVICE.into(),
+                        id: 42
+                    }))
+                    .is_ok()
+            );
+            release.store(true, Relaxed);
+            assert!(finished.recv_timeout(WAIT).unwrap());
+            waiter.join().unwrap();
+        }
+
+        #[test]
+        fn default_test_connector_refuses_the_bus() {
+            let (sender, _) = mpsc::channel();
+            let inputs = InputSender {
+                sender,
+                wake: thread::current(),
+            };
+            assert!((Notices::default().connect)("eon", inputs).is_err());
+        }
+
+        #[test]
+        fn detach_retries_an_initial_bus_connection_failure() {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&calls);
+            let (attempted, attempts) = mpsc::channel();
+            let count = AtomicUsize::new(0);
+            let mut notices = Notices::new(AttentionNotifications {
+                notify: true,
+                notify_names: false,
+            });
+            notices.connect = Arc::new(move |_, _| {
+                let index = count.fetch_add(1, Relaxed);
+                attempted.send(index).unwrap();
+                if index == 0 {
+                    return Err(zbus::Error::Failure("private bus unavailable".into()));
+                }
+                Ok(Box::new(Fake(Arc::clone(&recorded))))
+            });
+            let log = log();
+            let notify = |notices: &mut Notices| {
+                notices.attention(NoticeKind::Error, "eon", &log, Arc::default(), |_| {
+                    "lost".into()
+                })
+            };
+
+            notify(&mut notices);
+            assert_eq!(attempts.recv_timeout(WAIT).unwrap(), 0);
+            barrier(&notices.worker.as_ref().unwrap().inputs);
+            assert!(!notify(&mut notices));
+            notices.show(window(), "eon", &log);
+            assert_eq!(attempts.recv_timeout(WAIT).unwrap(), 1);
+            notices.close_and_wait(WAIT);
+            let records = calls.lock().unwrap();
+            assert!(
+                matches!(&records[..], [Recorded::Notify(notification), Recorded::Close(..)] if notification.actions == [QUIT, "Quit"])
+            );
+            assert!(attempts.try_recv().is_err());
+        }
+
+        #[test]
+        fn detach_already_queued_behind_disconnect_reconnects_and_stays_paused_if_it_fails() {
+            let (mut notices, observed, replies) = gated(false);
+            let first = Arc::clone(&notices.connect);
+            // Two fake connections, both attached to the same worker control queue.
+            let (calls, recovered_calls) = mpsc::channel();
+            let (answers, replies_after_reconnect) = mpsc::channel();
+            let replies_after_reconnect = Mutex::new(Some(replies_after_reconnect));
+            let (connected, connections) = mpsc::channel();
+            let attempts = AtomicUsize::new(0);
+            notices.connect = Arc::new(move |application, inputs| {
+                let attempt = attempts.fetch_add(1, Relaxed);
+                connected.send(attempt).unwrap();
+                if attempt == 0 {
+                    first(application, inputs)
+                } else {
+                    Ok(Box::new(GatedServer {
+                        calls: calls.clone(),
+                        replies: replies_after_reconnect.lock().unwrap().take().unwrap(),
+                        fail_capabilities: Cell::new(true),
+                    }))
+                }
+            });
+            let log = log();
+            let offer = |notices: &mut Notices, label: &str| {
+                notices.attention(NoticeKind::Error, "eon", &log, Arc::default(), |_| {
+                    label.into()
+                })
+            };
+            assert!(offer(&mut notices, "holding the worker"));
+            assert_eq!(connections.recv_timeout(WAIT).unwrap(), 0);
+            assert_eq!(
+                observed.recv_timeout(WAIT).unwrap().body,
+                "holding the worker"
+            );
+            let inputs = notices.worker.as_ref().unwrap().inputs.clone();
+            assert!(inputs.send(Input::Disconnected).is_ok());
+            notices.show(window(), "eon", &log);
+            assert!(offer(&mut notices, "old epoch"));
+            replies.send(Ok(())).unwrap();
+            assert_eq!(connections.recv_timeout(WAIT).unwrap(), 1);
+            barrier(&inputs);
+            assert!(!offer(
+                &mut notices,
+                "after reconnect, before a successful detach"
+            ));
+            notices.show(window(), "eon", &log);
+            assert_eq!(
+                recovered_calls.recv_timeout(WAIT).unwrap().actions,
+                [QUIT, "Quit"]
+            );
+            answers.send(Ok(())).unwrap();
+            barrier(&inputs);
+            assert!(offer(&mut notices, "fresh after detach"));
+            assert_eq!(
+                recovered_calls.recv_timeout(WAIT).unwrap().body,
+                "fresh after detach"
+            );
+            answers.send(Ok(())).unwrap();
+            notices.close_and_wait(WAIT);
+        }
+
+        #[test]
+        fn a_lost_worker_replacement_stays_paused_if_the_detach_fails() {
+            let (mut notices, observed, answers) = gated(false);
+            let (mut lost, receiver) = Notices::record_commands();
+            notices.worker = lost.worker.take();
+            notices.attempted = true;
+            drop(receiver);
+            let log = log();
+            notices.show(window(), "eon", &log);
+            assert!(
+                !notices.attention(NoticeKind::Error, "eon", &log, Arc::default(), |_| {
+                    "paused".into()
+                })
+            );
+            assert_eq!(observed.recv_timeout(WAIT).unwrap().actions, [QUIT, "Quit"]);
+            answers
+                .send(Err(Failure {
+                    gone: false,
+                    detail: "timeout".into(),
+                }))
+                .unwrap();
+            barrier(&notices.worker.as_ref().unwrap().inputs);
+            assert!(
+                !notices.attention(NoticeKind::Error, "eon", &log, Arc::default(), |_| {
+                    "still paused".into()
+                })
+            );
+            notices.close_and_wait(WAIT);
         }
     }
 }
@@ -845,8 +1532,8 @@ pub(super) use other::Notices;
 
 #[cfg(not(target_os = "linux"))]
 mod other {
-    use super::{Event, NoticeWindow};
-    use crate::diagnostics::DiagnosticLog;
+    use super::{Event, NoticeDispatch, NoticeKind, NoticeWindow};
+    use crate::{AttentionNotifications, diagnostics::DiagnosticLog};
     use std::{sync::Arc, time::Duration};
 
     /// macOS has no freedesktop notification server; a detach sends nothing.
@@ -854,6 +1541,19 @@ mod other {
     pub(crate) struct Notices {}
 
     impl Notices {
+        pub(crate) fn new(_settings: AttentionNotifications) -> Self {
+            Self::default()
+        }
+        pub(crate) fn attention(
+            &mut self,
+            _state: NoticeKind,
+            _application_id: &str,
+            _log: &Arc<DiagnosticLog>,
+            _dispatch: Arc<NoticeDispatch>,
+            _location: impl FnOnce(bool) -> String,
+        ) -> bool {
+            false
+        }
         pub(crate) fn show(
             &mut self,
             _window: NoticeWindow,
@@ -978,6 +1678,7 @@ mod tests {
             sender: sender.into(),
             name: name.into(),
             old: old.into(),
+            new: String::new(),
         }
     }
 
@@ -987,7 +1688,7 @@ mod tests {
             actions: Some((":1.7".into(), true)),
             ..Notice::default()
         };
-        let Some(Call::Notify(notification)) = notice.call(&Command::Show(window("w", None, 1)))
+        let Some(Call::Notify(notification, _)) = notice.call(&Command::Show(window("w", None, 1)))
         else {
             panic!("a detach sends a notification");
         };
@@ -1057,8 +1758,14 @@ mod tests {
         );
         // An owner change queued before this notice was sent names an
         // earlier owner, and forgets nothing.
-        assert_eq!(notice.on_signal(owner_left(BUS, SERVICE, ":1.5")), None);
-        assert_eq!(notice.on_signal(owner_left(BUS, SERVICE, "")), None);
+        assert_eq!(
+            notice.on_signal(owner_left(BUS, SERVICE, ":1.5")),
+            Some(Effect::ServiceAvailable(false))
+        );
+        assert_eq!(
+            notice.on_signal(owner_left(BUS, SERVICE, "")),
+            Some(Effect::ServiceAvailable(false))
+        );
         assert!(notice.actions.is_some());
         assert_eq!(
             notice.on_signal(action(":1.7", 7, QUIT_CONFIRM)),
@@ -1073,7 +1780,7 @@ mod tests {
                 owner: ":1.7".into()
             })
         );
-        let Some(Call::Notify(replacement)) = notice.call(&Command::Show(window("w", None, 1)))
+        let Some(Call::Notify(replacement, _)) = notice.call(&Command::Show(window("w", None, 1)))
         else {
             panic!("a detach sends a notification");
         };
@@ -1083,10 +1790,13 @@ mod tests {
         );
         // The issuing server leaving forgets its notice and capabilities, and
         // the next notification goes to the well-known name afresh.
-        assert_eq!(notice.on_signal(owner_left(BUS, SERVICE, ":1.7")), None);
+        assert_eq!(
+            notice.on_signal(owner_left(BUS, SERVICE, ":1.7")),
+            Some(Effect::ServiceAvailable(false))
+        );
         assert_eq!(notice.actions, None);
         assert_eq!(notice.on_signal(action(":1.7", 7, QUIT_CONFIRM)), None);
-        let Some(Call::Notify(fresh)) = notice.call(&Command::Show(window("w", None, 1))) else {
+        let Some(Call::Notify(fresh, _)) = notice.call(&Command::Show(window("w", None, 1))) else {
             panic!("a detach sends a notification");
         };
         assert_eq!((fresh.destination.as_str(), fresh.replaces), (SERVICE, 0));
@@ -1101,7 +1811,7 @@ mod tests {
             actions: Some((":1.7".into(), true)),
             ..Notice::default()
         };
-        let Some(Call::Notify(first)) = notice.call(&Command::Show(w())) else {
+        let Some(Call::Notify(first, _)) = notice.call(&Command::Show(w())) else {
             panic!("a detach sends a notification");
         };
         assert_eq!(
@@ -1117,11 +1827,11 @@ mod tests {
         // the next close, and a detach before then replaces the notice.
         assert_eq!(notice.call(&Command::Close), close);
         assert_eq!(notice.call(&Command::Close), close);
-        let Some(Call::Notify(next)) = notice.call(&Command::Confirm(w())) else {
+        let Some(Call::Notify(next, stage)) = notice.call(&Command::Confirm(w())) else {
             panic!("a confirmation sends a notification");
         };
         assert_eq!(
-            (next.destination.as_str(), next.replaces, next.stage),
+            (next.destination.as_str(), next.replaces, stage),
             (":1.7", 5, Stage::Confirming)
         );
         assert_eq!(
@@ -1139,7 +1849,7 @@ mod tests {
         assert_eq!(notice.call(&Command::Close), None);
         // A server that removed the notice on the action gets a fresh
         // confirmation.
-        let Some(Call::Notify(fresh)) = notice.call(&Command::Confirm(w())) else {
+        let Some(Call::Notify(fresh, _)) = notice.call(&Command::Confirm(w())) else {
             panic!("a confirmation sends a notification");
         };
         assert_eq!((fresh.destination.as_str(), fresh.replaces), (":1.7", 0));

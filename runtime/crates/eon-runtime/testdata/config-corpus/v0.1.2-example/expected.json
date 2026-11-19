@@ -10,6 +10,10 @@
       "enabled": true,
       "style": "random"
     },
+    "attention": {
+      "notify": true,
+      "notify_names": true
+    },
     "bar": {
       "cpu_average_seconds": 30,
       "cpu_critical_percent": 90,

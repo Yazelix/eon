@@ -15,6 +15,13 @@ use orbit_protocol::management::{
 };
 use std::{
     cmp::Reverse,
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt,
+    path::Path,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicU8, Ordering::Relaxed},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -42,6 +49,56 @@ pub(super) struct Target {
 impl Target {
     fn agent(&self) -> bool {
         self.entry.as_deref() == Some(AGENT_ENTRY)
+    }
+
+    fn placement<'a>(&self, workspaces: &'a [Snapshot]) -> (&'a Snapshot, &'a eonw::Tab) {
+        let workspace = &workspaces[self.workspace];
+        (workspace, &workspace.tabs[self.tab])
+    }
+
+    fn pane<'a>(&self, tab: &'a eonw::Tab) -> Option<&'a eonw::Pane> {
+        tab.panes().find(|pane| pane.id == self.id)
+    }
+
+    fn popup_label<'a>(&self, workspace: &'a Snapshot) -> Option<&'a str> {
+        let entry = self.entry.as_deref()?;
+        workspace
+            .entries
+            .iter()
+            .find(|item| item.id == entry)
+            .map(|item| item.label.as_str())
+    }
+
+    /// The notice uses explicit names, without the terminal-derived pane label.
+    pub(super) fn notice_location(&self, workspaces: &[Snapshot], names: bool) -> String {
+        let (workspace, tab) = self.placement(workspaces);
+        if !names {
+            return format!("{} · {} · {}", workspace.workspace, tab.id, self.id);
+        }
+        let session = workspace
+            .workspaces
+            .first()
+            .and_then(|session| session.name.as_deref())
+            .unwrap_or(&workspace.workspace);
+        let directory = Path::new(OsStr::from_bytes(&tab.directory));
+        let tab_name = directory
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .chars()
+            .filter(|&character| eonw::pane_label_character(character))
+            .collect::<String>();
+        let tab_name = if tab_name.is_empty() {
+            &tab.id
+        } else {
+            &tab_name
+        };
+        let name = match self.entry {
+            Some(_) => self.popup_label(workspace),
+            None => self.pane(tab).and_then(|pane| pane.pinned_name.as_deref()),
+        }
+        .unwrap_or(&self.id);
+        format!("{session} · {tab_name} · {name}")
     }
 }
 
@@ -90,22 +147,17 @@ pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) 
 /// `target` as EON-C11 names a busy terminal: by a pane's label or a
 /// popup's entry label.
 pub(super) fn busy_terminal(workspaces: &[Snapshot], target: &Target) -> eonw::BusyTerminal {
-    let workspace = &workspaces[target.workspace];
-    let tab = &workspace.tabs[target.tab];
+    let (workspace, tab) = target.placement(workspaces);
     let (id, name) = match &target.entry {
         None => (
             eonw::TargetId::Pane(target.id.clone()),
-            tab.panes()
-                .find(|pane| pane.id == target.id)
+            target
+                .pane(tab)
                 .map_or_else(|| target.id.clone(), |pane| pane.label.clone()),
         ),
         Some(entry) => (
             eonw::TargetId::Popup(target.id.clone()),
-            workspace
-                .entries
-                .iter()
-                .find(|candidate| &candidate.id == entry)
-                .map_or_else(|| entry.clone(), |entry| entry.label.clone()),
+            target.popup_label(workspace).unwrap_or(entry).to_owned(),
         ),
     };
     eonw::BusyTerminal {
@@ -178,7 +230,79 @@ struct Terminal {
     /// Records the reply omitted for size, kept while Orbit still holds them
     /// so their change times and seen raises survive until they return.
     omitted: Vec<Record>,
+    notices: PendingNotices,
     replied: Instant,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum NoticeKind {
+    NeedsInput,
+    Error,
+    Finished,
+}
+
+#[derive(Default)]
+pub(super) struct NoticeDispatch(AtomicU8);
+
+impl NoticeDispatch {
+    const QUEUED: u8 = 0;
+    #[cfg(any(target_os = "linux", test))]
+    const DISPATCHED: u8 = 1;
+    const CANCELLED: u8 = 2;
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn begin(&self) -> bool {
+        self.claim(Self::DISPATCHED)
+    }
+
+    pub(super) fn cancel(&self) -> bool {
+        self.claim(Self::CANCELLED)
+    }
+
+    fn claim(&self, state: u8) -> bool {
+        self.0
+            .compare_exchange(Self::QUEUED, state, Relaxed, Relaxed)
+            .is_ok()
+    }
+}
+
+struct OfferedNotice {
+    dispatch: Weak<NoticeDispatch>,
+    finish: Option<u64>,
+}
+
+#[derive(Default)]
+struct PendingNotices(Vec<OfferedNotice>);
+
+impl PendingNotices {
+    fn cancel(
+        &mut self,
+        mut matches: impl FnMut(Option<u64>) -> bool,
+        mut cancelled: impl FnMut(Option<u64>),
+    ) {
+        self.0.retain(|notice| {
+            let Some(dispatch) = notice.dispatch.upgrade() else {
+                return false;
+            };
+            if matches(notice.finish) {
+                if dispatch.cancel() {
+                    cancelled(notice.finish);
+                }
+                return false;
+            }
+            true
+        });
+    }
+
+    fn discard(&mut self, matches: impl FnMut(Option<u64>) -> bool) {
+        self.cancel(matches, |_| {});
+    }
+}
+
+impl Drop for PendingNotices {
+    fn drop(&mut self) {
+        self.discard(|_| true);
+    }
 }
 
 impl Terminal {
@@ -206,6 +330,8 @@ impl Terminal {
         else {
             return;
         };
+        self.notices
+            .discard(|finish| finish.is_some_and(|changed| changed < working));
         for record in self.records.iter_mut().chain(&mut self.omitted) {
             if let (ProgramState::Done | ProgramState::Idle, Some(raise)) =
                 (record.record.state, record.raise.as_mut())
@@ -217,6 +343,7 @@ impl Terminal {
     }
 
     fn see(&mut self) {
+        self.notices.discard(|_| true);
         for record in self.records.iter_mut().chain(&mut self.omitted) {
             if let Some(raise) = &mut record.raise {
                 raise.seen = true;
@@ -226,6 +353,24 @@ impl Terminal {
                 record.blocked_notified = true;
             }
         }
+    }
+
+    fn hold_finishes(&mut self) {
+        // Only a hold that wins before dispatch can restore eligibility.
+        self.notices.cancel(
+            |finish| finish.is_some(),
+            |finish| {
+                if let Some(raise) = self
+                    .records
+                    .iter_mut()
+                    .chain(&mut self.omitted)
+                    .filter_map(|record| record.raise.as_mut())
+                    .find(|raise| Some(raise.changed) == finish)
+                {
+                    raise.notified = false;
+                }
+            },
+        );
     }
 }
 
@@ -431,12 +576,10 @@ impl Attention {
     }
 
     /// Consumes eligible opportunities before handing them to a best-effort sink.
-    // Delivery is wired by eon-2kvr.2; S1 exercises this through a recording sink.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn take_notifications(
         &mut self,
         targets: &[Target],
-        mut send: impl FnMut(&Target, State),
+        mut send: impl FnMut(&Target, NoticeKind, Arc<NoticeDispatch>),
     ) {
         for target in targets {
             let Some(terminal) = self
@@ -446,21 +589,40 @@ impl Attention {
             else {
                 continue;
             };
+            terminal
+                .notices
+                .0
+                .retain(|notice| notice.dispatch.strong_count() != 0);
             for record in &mut terminal.records {
                 let (state, _) = record.normalized(terminal.background > 0);
-                let notified = match state {
-                    State::NeedsInput => &mut record.blocked_notified,
+                let (kind, notified, finish) = match state {
+                    State::NeedsInput => {
+                        (NoticeKind::NeedsInput, &mut record.blocked_notified, None)
+                    }
                     State::Finished | State::Error => {
-                        &mut record
-                            .raise
-                            .as_mut()
-                            .expect("normalized unseen raise")
-                            .notified
+                        let raise = record.raise.as_mut().expect("normalized unseen raise");
+                        if state == State::Finished {
+                            (
+                                NoticeKind::Finished,
+                                &mut raise.notified,
+                                Some(raise.changed),
+                            )
+                        } else {
+                            (NoticeKind::Error, &mut raise.notified, None)
+                        }
                     }
                     _ => continue,
                 };
                 if !std::mem::replace(notified, true) {
-                    send(target, state);
+                    let dispatch = Arc::new(NoticeDispatch::default());
+                    let notice = OfferedNotice {
+                        dispatch: Arc::downgrade(&dispatch),
+                        finish,
+                    };
+                    send(target, kind, dispatch);
+                    if notice.dispatch.strong_count() != 0 {
+                        terminal.notices.0.push(notice);
+                    }
                 }
             }
         }
@@ -485,7 +647,7 @@ impl Attention {
             .iter()
             .position(|terminal| terminal.session == session);
         let before = self.entry(targets, session);
-        let (records, omitted) = match index.map(|index| &mut self.terminals[index]) {
+        let (records, omitted, notices) = match index.map(|index| &mut self.terminals[index]) {
             Some(terminal) if terminal.run == run => {
                 if status.update < terminal.update {
                     return;
@@ -493,6 +655,7 @@ impl Attention {
                 (
                     std::mem::take(&mut terminal.records),
                     std::mem::take(&mut terminal.omitted),
+                    std::mem::take(&mut terminal.notices),
                 )
             }
             _ => Default::default(),
@@ -565,8 +728,12 @@ impl Attention {
             name: status.terminal_title,
             records: fresh,
             omitted,
+            notices,
             replied: now,
         };
+        if terminal.background > 0 {
+            terminal.hold_finishes();
+        }
         terminal.see_finishes_before_work();
         match index {
             Some(index) => self.terminals[index] = terminal,
@@ -1089,6 +1256,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn notice_locations_use_explicit_names_or_ids() {
+        let mut tab = tab("t2", &["one", "two"], &[("agent", "three")], None);
+        tab.directory = b"/private/review".to_vec();
+        tab.columns[0].panes[0].pinned_name = Some("Pinned <&>".into());
+        for pane in &mut tab.columns[0].panes {
+            pane.label = "private terminal title".into();
+        }
+        let mut workspace = snapshot("t2", vec![tab]);
+        workspace.workspaces[0].name = Some("Project".into());
+        workspace.entries.push(eonw::PopupEntry {
+            id: "agent".into(),
+            label: "Agent popup".into(),
+            shortcut: eonw::PopupKey::Unbound,
+        });
+        let mut snapshots = [workspace];
+        let locations = |snapshots: &[Snapshot], names| {
+            targets(snapshots)
+                .0
+                .iter()
+                .map(|target| target.notice_location(snapshots, names))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            locations(&snapshots, true),
+            [
+                "Project · review · Pinned <&>",
+                "Project · review · pane-two",
+                "Project · review · Agent popup",
+            ]
+        );
+        assert_eq!(
+            locations(&snapshots, false),
+            [
+                "s1 · t2 · pane-one",
+                "s1 · t2 · pane-two",
+                "s1 · t2 · popup-three",
+            ]
+        );
+        for directory in ["/private/review/..", "/"] {
+            snapshots[0].tabs[0].directory = directory.as_bytes().to_vec();
+            assert_eq!(locations(&snapshots, true)[0], "Project · t2 · Pinned <&>");
+        }
+    }
+
     /// A queue jump the supervisor accepted.
     fn step<'a>(
         attention: &mut Attention,
@@ -1115,7 +1327,12 @@ mod tests {
 
     fn notifications(attention: &mut Attention, targets: &[Target]) -> Vec<(String, State)> {
         let mut notices = Vec::new();
-        attention.take_notifications(targets, |target, state| {
+        attention.take_notifications(targets, |target, kind, _| {
+            let state = match kind {
+                NoticeKind::NeedsInput => State::NeedsInput,
+                NoticeKind::Error => State::Error,
+                NoticeKind::Finished => State::Finished,
+            };
             notices.push((target.id.clone(), state));
         });
         notices
@@ -1160,6 +1377,109 @@ mod tests {
                 notifications(&mut attention, &targets),
                 [("pane-s".into(), expected)]
             );
+            assert!(notifications(&mut attention, &targets).is_empty());
+        }
+    }
+
+    #[test]
+    fn viewing_cancels_offered_notices_even_when_their_records_are_omitted() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let mut attention = Attention::new(true);
+        let now = Instant::now();
+        attention.apply(
+            &targets,
+            "s",
+            "run",
+            status(
+                3,
+                vec![
+                    record("a", Done, None, 1),
+                    record("b", Error, None, 2),
+                    record("c", Blocked, None, 3),
+                ],
+            ),
+            now,
+        );
+        let mut offered = Vec::new();
+        attention.take_notifications(&targets, |_, _, dispatch| offered.push(dispatch));
+        assert_eq!(offered.len(), 3);
+        let omitted = ProgramStatus {
+            count: 3,
+            omitted: vec![1, 2, 3],
+            ..status(4, Vec::new())
+        };
+        attention.apply(&targets, "s", "run", omitted, now);
+        attention.observe(Some("s".into()), false);
+        assert!(
+            offered
+                .iter()
+                .all(|dispatch| dispatch.0.load(Relaxed) == NoticeDispatch::QUEUED)
+        );
+        attention.observe(Some("s".into()), true);
+        assert!(
+            offered
+                .iter()
+                .all(|dispatch| dispatch.0.load(Relaxed) == NoticeDispatch::CANCELLED)
+        );
+    }
+
+    #[test]
+    fn an_offered_finish_is_cancelled_when_held_or_seen_by_new_work() {
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
+        let now = Instant::now();
+        for (background, dispatched, viewed) in [
+            (false, false, false),
+            (true, false, false),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let mut attention = Attention::new(true);
+            let finish = record("a", Done, None, 1);
+            let error = record("b", Error, None, 2);
+            attention.apply(
+                &targets,
+                "s",
+                "run",
+                status(2, vec![finish.clone(), error.clone()]),
+                now,
+            );
+            let mut offered = Vec::new();
+            attention.take_notifications(&targets, |_, kind, dispatch| {
+                if dispatched && kind == NoticeKind::Finished {
+                    assert!(dispatch.begin());
+                }
+                offered.push((kind, dispatch));
+            });
+            assert_eq!(offered.len(), 2);
+            let mut records = vec![finish.clone(), error.clone()];
+            if !background {
+                records.push(record("c", Working, None, 3));
+            }
+            let mut next = status(3, records);
+            if background {
+                next.background = 1;
+            }
+            attention.apply(&targets, "s", "run", next, now);
+            for (kind, dispatch) in offered {
+                let expected = match kind {
+                    NoticeKind::Finished if dispatched => NoticeDispatch::DISPATCHED,
+                    NoticeKind::Finished => NoticeDispatch::CANCELLED,
+                    _ => NoticeDispatch::QUEUED,
+                };
+                assert_eq!(dispatch.0.load(Relaxed), expected);
+            }
+            assert!(notifications(&mut attention, &targets).is_empty());
+            if viewed {
+                attention.observe(Some("s".into()), true);
+                attention.observe(None, false);
+            }
+            attention.apply(&targets, "s", "run", status(4, vec![finish, error]), now);
+            let after_hold = notifications(&mut attention, &targets);
+            if background && !dispatched && !viewed {
+                assert_eq!(after_hold, [("pane-s".into(), State::Finished)]);
+            } else {
+                assert!(after_hold.is_empty());
+            }
             assert!(notifications(&mut attention, &targets).is_empty());
         }
     }
@@ -1356,7 +1676,7 @@ mod tests {
                 status(3, vec![record("a", program, None, 3)]),
                 now,
             );
-            attention.take_notifications(&targets, |_, _| {});
+            attention.take_notifications(&targets, |_, _, _| {});
             assert!(notifications(&mut attention, &targets).is_empty());
         }
     }
