@@ -24,6 +24,7 @@ use super::{
         session_finished, session_finished_within, start_orbit, stop_managed_sessions,
         untracked_runs,
     },
+    start_pump::{Capture, StartPump},
     subscriptions::{Subscriber, Subscribers},
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
@@ -1216,6 +1217,8 @@ fn supervise(
     scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
     let mut editor_sockets = Sockets::recover(runtime, &sessions, log);
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
+    // Clients that connect while the first terminals start are held for the loop.
+    let mut start_pump = StartPump::new(control_listener.try_clone_listener(), Arc::clone(log));
     drop(namespace_lock);
     let recovering = mode == LaunchMode::Workspace && !sessions.is_empty();
     let (registry, mut registry_setup_error) = match (mode == LaunchMode::Workspace)
@@ -1427,6 +1430,7 @@ fn supervise(
                     // Starts after admission, which may have used most of its own deadline.
                     Instant::now() + start_timeout,
                     &mut failed_starts,
+                    &mut |until| start_pump.wait(until),
                 )
                 .map_err(&startup_error)?,
             );
@@ -1460,6 +1464,7 @@ fn supervise(
                             generation,
                             &mut sessions,
                             &mut failed_starts,
+                            &mut start_pump,
                             &mut initial_child,
                             &mut editor_sockets,
                             operation,
@@ -1506,6 +1511,7 @@ fn supervise(
     let registration_pending = recovering && registry_worker.is_some();
     let mut state = SupervisorState {
         failed_starts,
+        start_pump,
         registry_worker,
         registry_pending: registration_pending
             .then(|| RegistryPending::Recovery(workspaces.as_ref().unwrap().snapshot().workspace)),
@@ -1629,11 +1635,19 @@ fn supervise(
                     return Ok(state.initial_status.unwrap_or(0));
                 }
 
-                let accepted = control_listener.accept(|request, peer| {
-                    dispatch(
-                        request, &mut state, inputs, config, runtime, generation, peer,
-                    )
-                })?;
+                // Clients held while a terminal started go first, in arrival order.
+                let accepted = match state.start_pump.next_held() {
+                    Some(client) => Ok(super::control::serve_client(client, |request, peer| {
+                        dispatch(
+                            request, &mut state, inputs, config, runtime, generation, peer,
+                        )
+                    })),
+                    None => control_listener.accept(|request, peer| {
+                        dispatch(
+                            request, &mut state, inputs, config, runtime, generation, peer,
+                        )
+                    }),
+                }?;
                 state.end_turn(Instant::now());
                 match accepted {
                     Accepted::None => thread::sleep(Duration::from_millis(25)),
@@ -1669,6 +1683,8 @@ fn supervise(
     };
     // Stop, quit and the window's final close end every subscription.
     state.subscribers.end(generation);
+    // Held clients read EOF with the listener, before Venus and notices close.
+    state.start_pump = StartPump::default();
     drop(control_listener);
     if let Some(process) = state.venus.take() {
         drop(process);
@@ -1770,6 +1786,8 @@ struct SupervisorState {
     workspaces: Option<WorkspaceSet>,
     sessions: Vec<RunningSession>,
     failed_starts: sessions::FailedStarts,
+    /// Serves the control socket while a terminal start waits (eon-pimct).
+    start_pump: StartPump,
     venus: Option<PresentationProcess>,
     /// Last accepted presentation, retained across detach and failed reload.
     venus_path: Option<PathBuf>,
@@ -1845,6 +1863,8 @@ impl SupervisorState {
                     Ok(Some(registration)) if self.stopping.is_none() => {
                         // A completion is a turn of its own.
                         reconcile(self, inputs, config);
+                        let capture = capture_reads(self, inputs, Some(generation));
+                        self.start_pump.arm(capture);
                         let reply = dispatch_registered_request(
                             request.clone(),
                             self,
@@ -1854,6 +1874,7 @@ impl SupervisorState {
                             generation,
                             Some(registration),
                         );
+                        self.start_pump.disarm();
                         if let Some(workspaces) = &mut self.workspaces {
                             workspaces.remember_registration(&request.id);
                         }
@@ -1997,6 +2018,11 @@ impl SupervisorState {
     /// The window's busy terminals without `exclude`, derived from the
     /// poller's cached replies; eonbase has none (EON-C11).
     fn busy(&self, exclude: Option<&str>) -> Option<BusyTerminals> {
+        self.busy_at(exclude, Instant::now())
+    }
+
+    /// [`Self::busy`] as the poller's cached replies stand at `now`.
+    fn busy_at(&self, exclude: Option<&str>, now: Instant) -> Option<BusyTerminals> {
         let (Some(attention), Some(workspaces)) = (&self.attention, &self.workspaces) else {
             return None;
         };
@@ -2004,7 +2030,7 @@ impl SupervisorState {
         for snapshot in &mut snapshots {
             self.pane_labels.present(snapshot, workspaces.home());
         }
-        Some(attention.busy(&snapshots, &self.sessions, exclude, Instant::now()))
+        Some(attention.busy(&snapshots, &self.sessions, exclude, now))
     }
 
     /// The window now as EON-C39 projects it: every workspace prepared as
@@ -2253,6 +2279,7 @@ fn reap_finished_sessions(
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
                 let failed_starts = &mut state.failed_starts;
+                let start_pump = &mut state.start_pump;
                 let initial_child = &mut state.initial_child;
                 let editor_sockets = &mut state.editor_sockets;
                 let log = &state.log;
@@ -2265,6 +2292,7 @@ fn reap_finished_sessions(
                             component_generation,
                             sessions,
                             failed_starts,
+                            start_pump,
                             initial_child,
                             editor_sockets,
                             operation,
@@ -2945,6 +2973,7 @@ fn apply_session_operation(
     component_generation: &str,
     sessions: &mut Vec<RunningSession>,
     failed_starts: &mut sessions::FailedStarts,
+    start_pump: &mut StartPump,
     initial_child: &mut Vec<OsString>,
     editor_sockets: &mut Sockets,
     operation: SessionOperation,
@@ -2958,7 +2987,12 @@ fn apply_session_operation(
             command,
             tab,
         } => (session, directory, command, tab),
-        SessionOperation::Stop(id) => return stop_owned_session(sessions, &id, log).map(|_| ()),
+        SessionOperation::Stop(id) => {
+            // A stopped terminal is visible before the operation replies, so
+            // the state captured before it no longer answers reads.
+            start_pump.disarm();
+            return stop_owned_session(sessions, &id, log).map(|_| ());
+        }
         SessionOperation::MarkPair { session, pending } => {
             let Some(pair) = sessions.iter().find(|item| item.id == session) else {
                 return Ok(());
@@ -3026,6 +3060,7 @@ fn apply_session_operation(
         log,
         Instant::now() + TERMINAL_START_TIMEOUT,
         failed_starts,
+        &mut |until| start_pump.wait(until),
     );
     let mut running = match started {
         Ok(running) => running,
@@ -3190,11 +3225,15 @@ fn dismiss_pending_pairs(
     config: &Path,
 ) -> Result<(), String> {
     let venus = state.presentation_name();
+    let generation = state.component_generation.clone();
+    let capture = capture_reads(state, inputs, Some(&generation));
+    state.start_pump.arm(capture);
     let SupervisorState {
         component_generation,
         workspaces,
         sessions,
         failed_starts,
+        start_pump,
         initial_child,
         editor_sockets,
         log,
@@ -3211,6 +3250,7 @@ fn dismiss_pending_pairs(
             component_generation,
             sessions,
             failed_starts,
+            start_pump,
             initial_child,
             editor_sockets,
             operation,
@@ -3218,6 +3258,7 @@ fn dismiss_pending_pairs(
             venus,
         )
     });
+    start_pump.disarm();
     report_session_end(result, log)
 }
 
@@ -3591,7 +3632,7 @@ fn dispatch_as(
         )
     {
         return match admit_request(principal, &request, state, generation) {
-            Ok(()) => {
+            Ok(_) => {
                 dispatch_control_request(request, state, inputs, config, runtime, generation).into()
             }
             Err(error) => Dispatched::Reply(refused(&request.action, error), false),
@@ -3601,11 +3642,14 @@ fn dispatch_as(
     if state.stopping.is_none() {
         reconcile(state, inputs, config);
     }
-    if let Err(error) = admit_request(principal, &request, state, generation) {
-        super::diagnostics::bench_trace("dispatch_end", "");
-        state.serve_subscribers(Instant::now());
-        return Dispatched::Reply(refused(&request.action, error), false);
-    }
+    let required = match admit_request(principal, &request, state, generation) {
+        Ok(required) => required,
+        Err(error) => {
+            super::diagnostics::bench_trace("dispatch_end", "");
+            state.serve_subscribers(Instant::now());
+            return Dispatched::Reply(refused(&request.action, error), false);
+        }
+    };
     if matches!(request.action, Action::Subscribe { .. }) && state.stopping.is_none() {
         let reply = match subscribe(state, &request, generation) {
             Ok(subscriber) => Dispatched::Subscribe(Box::new(subscriber)),
@@ -3676,7 +3720,16 @@ fn dispatch_as(
             }
         };
     }
+    // Reads that arrive while this request starts a terminal are answered
+    // from the state before it (eon-pimct).
+    let capture = required
+        .effects
+        .contains(admission::Effect::Run)
+        .then(|| capture_reads(state, inputs, Some(generation)))
+        .flatten();
+    state.start_pump.arm(capture);
     let reply = dispatch_control_request(request, state, inputs, config, runtime, generation);
+    state.start_pump.disarm();
     super::diagnostics::bench_trace("dispatch_end", "");
     state.serve_subscribers(Instant::now());
     reply.into()
@@ -3692,7 +3745,7 @@ fn admit_request(
     request: &Request,
     state: &SupervisorState,
     generation: &str,
-) -> Result<(), Failure> {
+) -> Result<admission::Required, Failure> {
     let action = &request.action;
     if state.stopping.is_some()
         && !matches!(
@@ -3733,6 +3786,7 @@ fn admit_request(
         required,
         state.agents.terminal_access,
     )
+    .map(|()| required)
 }
 
 /// A refusal in the response kind `action` expects.
@@ -3898,27 +3952,16 @@ fn dispatch_registered_request(
                     .find(|session| session.is_terminal(&caller))
                     .map(|session| session.id.clone())
             });
-            match runtime_status(inputs, generation, state, mode, exclude.as_deref()) {
-                Ok(mut runtime) => {
-                    if state.stopping.is_some() {
-                        runtime.attach = Availability {
-                            available: false,
-                            reason: stop_incomplete(mode, state.window.as_deref(), generation),
-                        };
-                    }
-                    (
-                        ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
-                        false,
-                    )
-                }
-                Err(detail) => (
-                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
-                        "unrepresentable-state",
-                        detail,
-                    ))),
-                    false,
-                ),
-            }
+            (
+                ControlResponse::Lifecycle(runtime_reply(
+                    inputs,
+                    generation,
+                    state,
+                    mode,
+                    exclude.as_deref(),
+                )),
+                false,
+            )
         }
         Request {
             action:
@@ -4270,6 +4313,7 @@ fn dispatch_registered_request(
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
             let failed_starts = &mut state.failed_starts;
+            let start_pump = &mut state.start_pump;
             let initial_child = &mut state.initial_child;
             let editor_sockets = &mut state.editor_sockets;
             let log = &state.log;
@@ -4309,6 +4353,7 @@ fn dispatch_registered_request(
                             component_generation,
                             sessions,
                             failed_starts,
+                            start_pump,
                             initial_child,
                             editor_sockets,
                             operation,
@@ -4342,6 +4387,7 @@ fn dispatch_registered_request(
                                 component_generation,
                                 sessions,
                                 failed_starts,
+                                start_pump,
                                 initial_child,
                                 editor_sockets,
                                 operation,
@@ -4495,6 +4541,7 @@ fn edit_terminal_history(
     let component_generation = &state.component_generation;
     let sessions = &mut state.sessions;
     let failed_starts = &mut state.failed_starts;
+    let start_pump = &mut state.start_pump;
     let initial_child = &mut state.initial_child;
     let editor_sockets = &mut state.editor_sockets;
     let log = &state.log;
@@ -4529,6 +4576,7 @@ fn edit_terminal_history(
                     component_generation,
                     sessions,
                     failed_starts,
+                    start_pump,
                     initial_child,
                     editor_sockets,
                     operation,
@@ -4814,6 +4862,94 @@ fn live_sessions<'a>(
         .filter(move |session| !session.is_finished() && !pending.contains(&session.id))
 }
 
+/// The reply to a runtime or presentation inspection.
+fn runtime_reply(
+    inputs: &Inputs,
+    generation: &str,
+    state: &SupervisorState,
+    mode: LaunchMode,
+    exclude: Option<&str>,
+) -> LifecycleResponse {
+    match runtime_status(inputs, generation, state, mode, exclude) {
+        Ok(mut runtime) => {
+            if state.stopping.is_some() {
+                runtime.attach = Availability {
+                    available: false,
+                    reason: stop_incomplete(mode, state.window.as_deref(), generation),
+                };
+            }
+            LifecycleResponse::Runtime(runtime)
+        }
+        Err(detail) => LifecycleResponse::Failure(failure("unrepresentable-state", detail)),
+    }
+}
+
+/// What a start pump answers while `state`'s next operation starts a
+/// terminal (eon-pimct): the replies normal dispatch gives now to a callerless
+/// or live-caller `Inspect` and, given the supervisor's `generation`, to a
+/// callerless runtime inspection. `None` holds every read.
+fn capture_reads(
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    generation: Option<&str>,
+) -> Option<Capture> {
+    if state.stopping.is_some() {
+        return None;
+    }
+    // Sampled before any reply below computes its busy terminals, so every
+    // terminal those replies count idle is still idle at `now`, and
+    // `fresh_until` bounds it: an answer can only fail closed (EON-C11).
+    let now = Instant::now();
+    let ids = state
+        .workspaces
+        .as_ref()?
+        .snapshots()
+        .into_iter()
+        .map(|snapshot| snapshot.workspace)
+        .collect::<Vec<_>>();
+    let reply = |snapshot: Result<Snapshot, Failure>| {
+        snapshot.map_or_else(Response::Failure, Response::Snapshot)
+    };
+    let shown = reply(state.workspace_snapshot_in(None));
+    let workspaces = ids
+        .into_iter()
+        .map(|id| {
+            let snapshot = reply(state.workspace_snapshot_in(Some(&id)));
+            (id, snapshot)
+        })
+        .collect();
+    // Admission refuses every caller while a reconciliation error waits.
+    let callers = match (&state.reconciliation, &state.workspaces) {
+        (None, Some(set)) => state
+            .sessions
+            .iter()
+            .filter_map(|session| {
+                let identity = sessions::terminal_identity(&session.id, session.run_id());
+                let id = live_caller(state, &identity)?;
+                Some((identity, set.caller_workspace_id(Some(&id)).ok()??))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let runtime = generation
+        .map(|generation| runtime_reply(inputs, generation, state, launch_mode(state), None));
+    let (stale_busy, fresh_until) = match &state.attention {
+        Some(attention) => (
+            state.busy_at(None, now + attention::STALE_AFTER),
+            attention.fresh_until(now),
+        ),
+        None => (None, None),
+    };
+    Some(Capture {
+        shown,
+        workspaces,
+        callers,
+        runtime,
+        stale_busy,
+        fresh_until,
+    })
+}
+
 fn runtime_status(
     inputs: &Inputs,
     generation: &str,
@@ -4993,6 +5129,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts,
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -5203,6 +5340,7 @@ mod tests {
             &state.log,
             Instant::now() + SESSION_CLEANUP_TIMEOUT,
             &mut sessions::FailedStarts::default(),
+            &mut sessions::sleep_until,
         )
         .unwrap()
     }
@@ -6224,6 +6362,7 @@ mod tests {
                 &log,
                 Instant::now() + Duration::from_secs(5),
                 &mut sessions::FailedStarts::default(),
+                &mut sessions::sleep_until,
             )
             .unwrap();
             let pid = orbit_pid(&live);
@@ -6729,6 +6868,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -6947,6 +7087,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: Some(
                 crate::session_registry::Worker::start(workspace.registry().clone()).unwrap(),
             ),
@@ -7162,6 +7303,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -7292,6 +7434,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -8433,6 +8576,7 @@ mod tests {
             created_build: ADMISSION_GENERATION.into(),
             active_build: ADMISSION_GENERATION.into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -8523,6 +8667,125 @@ mod tests {
             root,
             ADMISSION_GENERATION,
         )
+    }
+
+    /// What a start pump answers equals what dispatch replies in the state
+    /// it captured, for requests with fresh ids (eon-pimct).
+    #[test]
+    fn a_capture_answers_reads_as_dispatch_does() {
+        use super::{ControlResponse, LifecycleResponse, WorkspaceAction};
+        use eon_workspace_protocol::v47::{BusyTerminals, Response};
+        let root = temporary_directory();
+        let (mut state, peer, _) = leased_window(&root);
+        let inputs = crate::fixtures::inputs();
+        let caller = sessions::terminal_identity(&state.sessions[0].id, state.sessions[0].run_id());
+        let request = |id: &str, caller: Option<&str>, action| super::Request {
+            id: id.into(),
+            caller: caller.map(str::to_owned),
+            action: Action::Workspace(action),
+        };
+        let capture =
+            super::capture_reads(&mut state, &inputs, Some(ADMISSION_GENERATION)).unwrap();
+        let now = Instant::now();
+        for (id, caller, action) in [
+            ("shown", None, WorkspaceAction::Inspect),
+            ("pane", Some(caller.as_str()), WorkspaceAction::Inspect),
+            ("runtime", None, WorkspaceAction::InspectRuntime),
+            ("presentation", None, WorkspaceAction::InspectPresentation),
+        ] {
+            let request = request(id, caller, action.clone());
+            let answered = capture.answer(&request, now);
+            let Dispatched::Reply(dispatched, false) = super::dispatch_as(
+                super::Incoming::Request(request),
+                Principal::Owner,
+                &mut state,
+                &inputs,
+                &root,
+                &root,
+                ADMISSION_GENERATION,
+            ) else {
+                panic!("{action:?} was not answered");
+            };
+            assert_eq!(answered, Some(dispatched), "{action:?}");
+        }
+
+        // Once the poller's replies would be stale, the answers fail closed
+        // as dispatch would then (EON-C11).
+        let stale = BusyTerminals {
+            terminals: Vec::new(),
+            omitted: 7,
+        };
+        let expired = super::Capture {
+            stale_busy: Some(stale.clone()),
+            fresh_until: Some(now),
+            ..capture
+        };
+        let Some(ControlResponse::Workspace(Response::Snapshot(shown))) =
+            expired.answer(&request("expired", None, WorkspaceAction::Inspect), now)
+        else {
+            panic!("an expired capture did not answer Inspect");
+        };
+        assert_eq!(shown.busy, Some(stale.clone()));
+        let Some(ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime))) = expired.answer(
+            &request("expired-runtime", None, WorkspaceAction::InspectRuntime),
+            now,
+        ) else {
+            panic!("an expired capture did not answer InspectRuntime");
+        };
+        assert_eq!(runtime.busy, Some(stale));
+
+        // While a reconciliation error waits, dispatch refuses every caller,
+        // so the pump holds them for it.
+        state.reconciliation = Some("the terminal record is unreadable".into());
+        let pending = super::capture_reads(&mut state, &inputs, None).unwrap();
+        assert!(
+            pending
+                .answer(
+                    &request("pending", Some(&caller), WorkspaceAction::Inspect),
+                    now
+                )
+                .is_none()
+        );
+        assert!(
+            refusal(&admitted_as(
+                Principal::Owner,
+                &mut state,
+                &root,
+                Some(&caller),
+                Action::Workspace(WorkspaceAction::Inspect),
+            ))
+            .is_some()
+        );
+        drop((state, peer));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A Stop in the operation makes the state before it wrong to answer from.
+    #[test]
+    fn a_stop_ends_the_start_capture() {
+        let root = temporary_directory();
+        let (mut state, peer, _) = leased_window(&root);
+        let inputs = crate::fixtures::inputs();
+        let capture = super::capture_reads(&mut state, &inputs, None);
+        state.start_pump.arm(capture);
+        assert!(state.start_pump.armed());
+        let _ = apply_session_operation(
+            &inputs,
+            &root,
+            &state.log,
+            "g1-00000000000000000000000000000001",
+            &mut Vec::new(),
+            &mut sessions::FailedStarts::default(),
+            &mut state.start_pump,
+            &mut Vec::new(),
+            &mut Sockets::default(),
+            crate::workspace::SessionOperation::Stop("terminal-9".into()),
+            PairStart::Later,
+            None,
+        );
+        assert!(!state.start_pump.armed());
+        drop((state, peer));
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// The failure code of a refused reply, in whichever framing it came.
@@ -9116,6 +9379,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -9209,6 +9473,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -9426,6 +9691,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -9641,6 +9907,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -9764,6 +10031,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -9830,6 +10098,7 @@ mod tests {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,
@@ -10008,6 +10277,7 @@ mod tests {
                     "g1-00000000000000000000000000000001",
                     owned,
                     &mut sessions::FailedStarts::default(),
+                    &mut Default::default(),
                     &mut Vec::new(),
                     &mut Sockets::default(),
                     crate::workspace::SessionOperation::MarkPair {
@@ -11411,6 +11681,7 @@ rows = 30
     ) -> SupervisorState {
         SupervisorState {
             failed_starts: sessions::FailedStarts::default(),
+            start_pump: Default::default(),
             registry_worker: None,
             registry_pending: None,
             started_at: 1,

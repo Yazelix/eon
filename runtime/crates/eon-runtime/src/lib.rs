@@ -24,6 +24,7 @@ mod scrollback;
 mod session_registry;
 mod sessions;
 mod slots;
+mod start_pump;
 mod subscriptions;
 mod supervisor;
 mod windows;

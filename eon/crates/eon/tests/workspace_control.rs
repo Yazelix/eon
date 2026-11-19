@@ -3093,6 +3093,27 @@ fn managed_orbit_helper() {
             delay.to_str().unwrap().parse().unwrap(),
         ));
     }
+    // While the gate exists, a start waits before publishing anything, as an
+    // Orbit that is slow to become Ready does; each held start is noted.
+    if let Some(gate) = std::env::var_os("EON_TEST_HOLD_READY").map(PathBuf::from)
+        && gate.exists()
+    {
+        let mut held = gate.into_os_string();
+        held.push(".held");
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&held)
+            .unwrap()
+            .write_all(format!("{session_id}\n").as_bytes())
+            .unwrap();
+        held.push(format!(".pid-{session_id}"));
+        fs::write(&held, std::process::id().to_string()).unwrap();
+        let gate = std::env::var_os("EON_TEST_HOLD_READY").unwrap();
+        while Path::new(&gate).exists() {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
     let session_id = std::env::var("EON_TEST_ORBIT_SESSION_ID").unwrap_or(session_id);
 
     let management_path = artifact_path(&presentation, ".management");
@@ -4253,6 +4274,255 @@ impl Drop for PairWindow {
             let _ = fs::remove_dir_all(&self.root);
         }
     }
+}
+
+/// A window whose next terminal starts wait for Ready while the returned
+/// gate exists, with the first terminal's caller identity (eon-pimct).
+fn hold_ready_window() -> (PairWindow, TestProcess, PathBuf, String) {
+    let window = PairWindow::new();
+    let gate = window.root.join("hold-ready");
+    let mut command = window.command(&[]);
+    command
+        .arg("--dir")
+        .arg(&window.launch)
+        .env("EON_TEST_HOLD_READY", &gate);
+    let supervisor = window.start(command);
+    wait_for_ready(&window.control());
+    let caller = live_identity(&window.generation().join("orbit.sock"));
+    fs::write(&gate, "").unwrap();
+    let caller = format!("{}.{}", caller.session_id, caller.run_id);
+    (window, supervisor, gate, caller)
+}
+
+/// Starts `eon pane create` for a new command pane in the caller's tab.
+fn spawn_pane_create(window: &PairWindow, caller: &str) -> Child {
+    eon_command(&window.binary)
+        .args([
+            "pane",
+            "create",
+            "--json",
+            "--no-focus",
+            "--",
+            "sleep",
+            "300",
+        ])
+        .env("EON_RUNTIME_DIR", &window.runtime)
+        .env("EON_CONFIG_HOME", &window.config)
+        .env("EON_TERMINAL", caller)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+/// Waits until `count` starts are held at `gate`, and returns their terminals.
+fn wait_held(gate: &Path, count: usize) -> Vec<String> {
+    let mut held = gate.as_os_str().to_owned();
+    held.push(".held");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let terminals = fs::read_to_string(&held)
+            .map(|held| held.lines().map(str::to_owned).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if terminals.len() >= count {
+            return terminals;
+        }
+        assert!(Instant::now() < deadline, "{count} starts were not held");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Sends `action` on a fresh connection without reading its reply.
+fn send_request(
+    socket: &Path,
+    id: &str,
+    caller: Option<&str>,
+    action: ProtocolAction,
+) -> UnixStream {
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    stream
+        .write_all(
+            &encode_request(&Request {
+                id: id.into(),
+                caller: caller.map(str::to_owned),
+                action,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    stream
+}
+
+/// The reply to `action`, which must come within 10 s.
+fn reply_within(socket: &Path, id: &str, caller: Option<&str>, action: ProtocolAction) -> Vec<u8> {
+    read_protocol_message(&mut send_request(socket, id, caller, action), id)
+}
+
+fn held_snapshot(socket: &Path, id: &str, caller: Option<&str>) -> Snapshot {
+    match decode_response(&reply_within(
+        socket,
+        id,
+        caller,
+        ProtocolAction::Workspace(Action::Inspect),
+    ))
+    .unwrap()
+    {
+        Response::Snapshot(snapshot) => snapshot,
+        response => panic!("{id}: {response:?}"),
+    }
+}
+
+#[test]
+fn inspect_answers_while_a_new_terminal_waits_for_ready() {
+    let (window, mut supervisor, gate, caller) = hold_ready_window();
+    let control = window.control();
+    let mut create = spawn_pane_create(&window, &caller);
+    assert_eq!(wait_held(&gate, 1), ["terminal-2"]);
+
+    // Every read below answers while the start still waits for Ready, from
+    // the window as it was before the start.
+    let shown = held_snapshot(&control, "held-inspect", None);
+    assert_eq!(shown.tabs[0].panes().count(), 1);
+    let from_pane = held_snapshot(&control, "held-inspect-caller", Some(&caller));
+    assert_eq!(from_pane.workspace, shown.workspace);
+    assert_eq!(from_pane.tabs[0].panes().count(), 1);
+    match decode_lifecycle_response(&reply_within(
+        &control,
+        "held-runtime",
+        None,
+        ProtocolAction::Workspace(Action::InspectRuntime),
+    ))
+    .unwrap()
+    {
+        LifecycleResponse::Runtime(runtime) => assert!(runtime.attach.available),
+        response => panic!("held-runtime: {response:?}"),
+    }
+    assert!(
+        create.try_wait().unwrap().is_none(),
+        "the start ended before the reads were answered"
+    );
+
+    fs::remove_file(&gate).unwrap();
+    let created = create.wait_with_output().unwrap();
+    assert!(created.status.success(), "{}", stdout(&created));
+    let reply: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert_eq!(reply["created"]["pane"], "p2");
+    assert_eq!(
+        window.inspect("after-held-start").tabs[0].panes().count(),
+        2
+    );
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn a_never_ready_start_fails_once_while_inspect_still_answers() {
+    let (window, mut supervisor, gate, caller) = hold_ready_window();
+    let control = window.control();
+    let create = spawn_pane_create(&window, &caller);
+    wait_held(&gate, 1);
+    assert_eq!(
+        held_snapshot(&control, "never-ready-inspect", None).tabs[0]
+            .panes()
+            .count(),
+        1
+    );
+
+    // The gate never opens: the start fails at its bound, its Orbit is
+    // stopped while still held, and the start is not retried.
+    let created = create.wait_with_output().unwrap();
+    assert!(!created.status.success(), "{}", stdout(&created));
+    let reply: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert_eq!(reply["error"]["code"], "terminal-start", "{reply}");
+    let mut pid = gate.as_os_str().to_owned();
+    pid.push(".held.pid-terminal-2");
+    let orbit = fs::read_to_string(&pid).unwrap().parse().unwrap();
+    wait_for_process_removal(orbit, "the held Orbit was not stopped");
+    fs::remove_file(&gate).unwrap();
+    assert_eq!(wait_held(&gate, 1), ["terminal-2"]);
+    assert_eq!(
+        window.inspect("after-never-ready").tabs[0].panes().count(),
+        1
+    );
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn held_requests_run_in_order_after_a_start() {
+    let (window, mut supervisor, gate, caller) = hold_ready_window();
+    let control = window.control();
+    let create = spawn_pane_create(&window, &caller);
+    wait_held(&gate, 1);
+
+    // Sent one after the other while the start waits: each runs after the
+    // start, in arrival order, so the last rename wins and the close finds
+    // the pane the start created.
+    let rename = |id: &str, name: &str| {
+        send_request(
+            &control,
+            id,
+            None,
+            ProtocolAction::RenamePane {
+                pane: "p1".into(),
+                name: Some(name.into()),
+                tag: None,
+            },
+        )
+    };
+    let mut held = vec![
+        ("rename-first", rename("rename-first", "first")),
+        ("rename-second", rename("rename-second", "second")),
+        (
+            "close-created",
+            send_request(
+                &control,
+                "close-created",
+                None,
+                ProtocolAction::ClosePane { pane: "p2".into() },
+            ),
+        ),
+    ];
+    // The pump accepts in arrival order, so this read's answer means all
+    // three were held before the start ends.
+    held_snapshot(&control, "held-order-barrier", None);
+    fs::remove_file(&gate).unwrap();
+
+    let created = create.wait_with_output().unwrap();
+    assert!(created.status.success(), "{}", stdout(&created));
+    for (id, stream) in &mut held {
+        match decode_response(&read_protocol_message(stream, id)).unwrap() {
+            Response::Snapshot(_) => {}
+            response => panic!("{id}: {response:?}"),
+        }
+    }
+    let after = window.inspect("after-held-requests");
+    let panes = after.tabs[0].panes().collect::<Vec<_>>();
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].pinned_name.as_deref(), Some("second"));
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
+fn three_parallel_creators_while_inspect_answers() {
+    let (window, mut supervisor, gate, caller) = hold_ready_window();
+    let control = window.control();
+    let creates = (0..3)
+        .map(|_| spawn_pane_create(&window, &caller))
+        .collect::<Vec<_>>();
+    wait_held(&gate, 1);
+    for index in 0..3 {
+        held_snapshot(&control, &format!("parallel-inspect-{index}"), None);
+    }
+    fs::remove_file(&gate).unwrap();
+    for create in creates {
+        let created = create.wait_with_output().unwrap();
+        assert!(created.status.success(), "{}", stdout(&created));
+    }
+    assert_eq!(window.inspect("after-parallel").tabs[0].panes().count(), 4);
+    window.stop_generation(&mut supervisor);
 }
 
 #[test]

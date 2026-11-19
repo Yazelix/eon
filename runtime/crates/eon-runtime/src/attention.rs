@@ -28,7 +28,7 @@ use std::{
 /// At most 2 Hz.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const POLL_DEADLINE: Duration = Duration::from_millis(250);
-const STALE_AFTER: Duration = Duration::from_secs(3);
+pub(super) const STALE_AFTER: Duration = Duration::from_secs(3);
 const AGENT_ENTRY: &str = "agent";
 /// Popups whose work is short and rare, so they never count busy (EON-C11).
 const IDLE_ENTRIES: [&str; 2] = ["files", "git"];
@@ -232,6 +232,14 @@ struct Terminal {
     omitted: Vec<Record>,
     notices: PendingNotices,
     replied: Instant,
+}
+
+impl Terminal {
+    /// Whether this reply, at `now`, finds the shell's own group leading and
+    /// is younger than the stale bound.
+    fn idle_at(&self, now: Instant) -> bool {
+        self.foreground == Foreground::Child && now.duration_since(self.replied) < STALE_AFTER
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -984,6 +992,17 @@ impl Attention {
             .collect();
     }
 
+    /// The first instant after `now` at which a reply that finds a terminal
+    /// idle now goes stale, so that terminal counts busy (EON-C11); `None`
+    /// when no reply finds one idle.
+    pub(super) fn fresh_until(&self, now: Instant) -> Option<Instant> {
+        self.terminals
+            .iter()
+            .filter(|terminal| terminal.idle_at(now))
+            .map(|terminal| terminal.replied + STALE_AFTER)
+            .min()
+    }
+
     /// EON-C11's busy terminals of `workspaces`, whose pane labels are
     /// presented, in window order, without `exclude` and bounded as EONW
     /// carries them: the first 32 named, the rest counted.
@@ -1046,8 +1065,7 @@ impl Attention {
                 && self.terminals.iter().any(|terminal| {
                     terminal.session == session.id
                         && terminal.run == session.run_id()
-                        && terminal.foreground == Foreground::Child
-                        && now.duration_since(terminal.replied) < STALE_AFTER
+                        && terminal.idle_at(now)
                 });
             !idle_shell
                 && !target
@@ -3511,6 +3529,9 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let busy = attention.busy(&workspaces, &sessions, None, start);
+        // Only the replies that find a shell idle bound the start pump's
+        // capture: terminal-5's stale one and terminal-2's busy one do not.
+        assert_eq!(attention.fresh_until(start), Some(start + STALE_AFTER));
         assert_eq!(
             names(&busy),
             [

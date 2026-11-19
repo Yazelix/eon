@@ -145,12 +145,16 @@ impl ReadyClaim {
         Ok(metadata.len() == 0 && self.retains_path()?)
     }
 
-    fn lock_for_rollback(&self, deadline: Instant) -> Result<bool, String> {
+    fn lock_for_rollback(
+        &self,
+        deadline: Instant,
+        wait: &mut dyn FnMut(Instant),
+    ) -> Result<bool, String> {
         loop {
             match self.file.try_lock() {
                 Ok(()) => return self.exact_path_is_empty(),
                 Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    thread::sleep(Duration::from_millis(25));
+                    wait(poll_step(deadline));
                 }
                 Err(fs::TryLockError::WouldBlock) => {
                     return Err(format!(
@@ -371,6 +375,18 @@ fn operation_timeout(deadline: Instant, operation: &str) -> Result<Duration, Str
         .checked_duration_since(Instant::now())
         .filter(|remaining| !remaining.is_zero())
         .ok_or_else(|| format!("{operation} exceeded its deadline"))
+}
+
+/// How long one startup poll waits, never past `deadline`.
+fn poll_step(deadline: Instant) -> Instant {
+    (Instant::now() + Duration::from_millis(25)).min(deadline)
+}
+
+/// A `wait` for a start or rollback that serves nothing meanwhile.
+pub(super) fn sleep_until(until: Instant) {
+    if let Some(left) = until.checked_duration_since(Instant::now()) {
+        thread::sleep(left);
+    }
 }
 
 pub(super) fn unix_connect_with_timeout(
@@ -1860,6 +1876,7 @@ pub(super) fn start_orbit(
     log: &DiagnosticLog,
     deadline: Instant,
     failed_starts: &mut FailedStarts,
+    wait: &mut dyn FnMut(Instant),
 ) -> Result<RunningSession, String> {
     let origin_build = super::generation::current_generation(inputs)?;
     let [_, orbs, orbf] = *inputs
@@ -2018,7 +2035,7 @@ pub(super) fn start_orbit(
                         };
                     }
                     if Instant::now() < deadline {
-                        thread::sleep(Duration::from_millis(25));
+                        wait(poll_step(deadline));
                     } else {
                         return Err(
                             "terminal did not publish Ready before its startup deadline".into()
@@ -2055,6 +2072,7 @@ pub(super) fn start_orbit(
                 &claim,
                 (&run_id, component_generation, socket),
                 SESSION_CLEANUP_TIMEOUT,
+                wait,
             ) {
                 Ok(()) => format!(
                     "{error}; startup rolled back; command may have run; retry only if replaying it is safe"
@@ -2079,17 +2097,13 @@ fn rollback_unleased_orbit(
     claim: &ReadyClaim,
     launch: (&str, &str, &Path),
     timeout: Duration,
+    wait: &mut dyn FnMut(Instant),
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
-    let claim_error = match claim.lock_for_rollback(deadline) {
+    let claim_error = match claim.lock_for_rollback(deadline, wait) {
+        // With the claim locked empty, Orbit can no longer publish Ready, so
+        // waiting for it to exit by itself only delays the failure (eon-pimct).
         Ok(true) => {
-            while Instant::now() < deadline {
-                match orbit.try_wait() {
-                    Ok(Some(_)) => return claim.remove_empty(),
-                    Ok(None) => thread::sleep(Duration::from_millis(25)),
-                    Err(_) => break,
-                }
-            }
             stop(orbit);
             return claim.remove_empty();
         }
@@ -2131,7 +2145,7 @@ fn rollback_unleased_orbit(
             .is_none()
         {
             operation_timeout(deadline, "terminal exit after its final record")?;
-            thread::sleep(Duration::from_millis(25));
+            wait(poll_step(deadline));
         }
         remove_dead_endpoints(&identity)?;
         return cleanup_record(&claim.path, object);
@@ -3816,6 +3830,7 @@ pub(crate) mod tests {
                 &claim,
                 (&launch.0, "g1-00000000000000000000000000000001", &launch.1),
                 Duration::from_secs(2),
+                &mut super::sleep_until,
             )
             .unwrap();
             assert!(
@@ -4073,6 +4088,7 @@ pub(crate) mod tests {
             &log,
             Instant::now() + Duration::from_secs(5),
             &mut super::FailedStarts::default(),
+            &mut super::sleep_until,
         )
         .unwrap()
     }
@@ -4137,6 +4153,7 @@ pub(crate) mod tests {
                 &socket,
             ),
             SESSION_CLEANUP_TIMEOUT,
+            &mut super::sleep_until,
         )
         .unwrap();
         assert!(!record.exists());
@@ -4144,6 +4161,33 @@ pub(crate) mod tests {
         assert!(!super::artifact_path(&socket, ".management").exists());
         assert!(crate::platform::process(orbit.id()).unwrap().is_none());
         drop(super::ReadyClaim::create(&record).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_empty_claim_rolls_back_without_waiting_for_orbit() {
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let record = root.join("orbit.sock.record");
+        let claim = super::ReadyClaim::create(&record).unwrap();
+        // An Orbit that never publishes Ready and never exits by itself.
+        let mut orbit = Command::new("sleep").arg("300").spawn().unwrap();
+        let started = Instant::now();
+        super::rollback_unleased_orbit(
+            &mut orbit,
+            &claim,
+            (
+                "never-ready",
+                "g1-00000000000000000000000000000001",
+                &root.join("orbit.sock"),
+            ),
+            SESSION_CLEANUP_TIMEOUT,
+            &mut |_| panic!("an empty claim needs no wait"),
+        )
+        .unwrap();
+        assert!(started.elapsed() < SESSION_CLEANUP_TIMEOUT);
+        assert!(orbit.try_wait().unwrap().is_some(), "Orbit was not stopped");
+        assert!(!record.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4170,6 +4214,7 @@ pub(crate) mod tests {
                 &root.join("orbit.sock"),
             ),
             Duration::from_millis(10),
+            &mut super::sleep_until,
         )
         .unwrap_err();
         assert!(failure.contains("invalid terminal record"), "{failure}");
@@ -4224,6 +4269,7 @@ pub(crate) mod tests {
             &log,
             Instant::now() + Duration::from_secs(5),
             &mut super::FailedStarts::default(),
+            &mut super::sleep_until,
         )
         .err()
         .expect("an Orbit that exits before Ready started a terminal");

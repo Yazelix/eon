@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon keeps answering while a new terminal starts. `eon session` and other
+  reads of the session or runtime no longer wait for the new terminal to
+  become ready, and other requests run in arrival order once it has. A
+  terminal that never becomes ready now fails at its 15-second bound, not
+  after 20 seconds (`eon-pimct`). Other clients' requests, such as a rename
+  or close from another pane, still wait while such a start runs, up to
+  about 15 seconds (`eon-6522z`).
 - Google quota chips work again with agy 1.5.6. Eon reads Google quota only
   from agy versions whose `/usage` command is verified, now 1.4.1 and 1.5.6.
   When Google quota is selected, `eon doctor` has a `quota` check that names

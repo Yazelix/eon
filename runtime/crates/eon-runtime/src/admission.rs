@@ -66,8 +66,6 @@ impl Effects {
         Self(self.0 | other.0)
     }
 
-    /// Only a test principal asks; N1's grants will.
-    #[cfg(test)]
     pub(crate) const fn contains(self, effect: Effect) -> bool {
         self.0 & Self::of(effect).0 != 0
     }

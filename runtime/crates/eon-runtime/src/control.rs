@@ -70,6 +70,7 @@ impl EndpointFailure {
 
 // Snapshot payloads are already heap-owned; keep the direct value API.
 #[allow(clippy::large_enum_variant)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub(super) enum ControlResponse {
     Workspace(Response),
     Lifecycle(LifecycleResponse),
@@ -650,6 +651,11 @@ impl ControlListener {
         Ok(control)
     }
 
+    /// A second handle on the listening socket, for the start pump.
+    pub(super) fn try_clone_listener(&self) -> Option<UnixListener> {
+        self.listener.try_clone().ok()
+    }
+
     pub(super) fn accept<D: Into<Dispatched>>(
         &self,
         dispatch: impl FnOnce(Incoming, Option<(libc::pid_t, libc::uid_t)>) -> D,
@@ -679,31 +685,63 @@ impl Drop for ControlListener {
 }
 
 fn handle_client<D: Into<Dispatched>>(
-    mut stream: UnixStream,
+    stream: UnixStream,
     dispatch: impl FnOnce(Incoming, Option<(libc::pid_t, libc::uid_t)>) -> D,
 ) -> Accepted {
+    match read_client(stream) {
+        Some(client) => serve_client(client, dispatch),
+        None => Accepted::Replied { shutdown: false },
+    }
+}
+
+/// Dispatches a read client's request, or gives a request that could not be
+/// read its one reply, and finishes the client.
+pub(super) fn serve_client<D: Into<Dispatched>>(
+    client: Client,
+    dispatch: impl FnOnce(Incoming, Option<(libc::pid_t, libc::uid_t)>) -> D,
+) -> Accepted {
+    let dispatched = match client.incoming {
+        Ok(incoming) => dispatch(incoming, client.peer).into(),
+        Err(unread) => unread,
+    };
+    finish_client(client.stream, dispatched)
+}
+
+/// An accepted control client whose request has been read: the request, or
+/// the one reply a request that could not be read gets.
+pub(super) struct Client {
+    pub(super) stream: UnixStream,
+    pub(super) incoming: Result<Incoming, Dispatched>,
+    pub(super) peer: Option<(libc::pid_t, libc::uid_t)>,
+}
+
+/// Reads one accepted client's request under the client I/O bounds; `None`
+/// when the connection cannot be configured, which leaves it unserved.
+pub(super) fn read_client(mut stream: UnixStream) -> Option<Client> {
     let peer = super::platform::peer_identity(&stream).ok();
-    let unserved = Accepted::Replied { shutdown: false };
     // Accepted sockets inherit the listener's nonblocking mode on macOS.
-    if stream.set_nonblocking(false).is_err() {
-        return unserved;
-    }
+    stream.set_nonblocking(false).ok()?;
     let timeout = Some(CLIENT_IO_TIMEOUT);
-    if bound_io(&stream, stream.set_read_timeout(timeout)).is_err()
-        || bound_io(&stream, stream.set_write_timeout(timeout)).is_err()
-    {
-        return unserved;
-    }
+    bound_io(&stream, stream.set_read_timeout(timeout)).ok()?;
+    bound_io(&stream, stream.set_write_timeout(timeout)).ok()?;
+    let incoming = read_incoming(&mut stream);
+    Some(Client {
+        stream,
+        incoming,
+        peer,
+    })
+}
+
+/// Writes `dispatched`'s reply to a read client, or hands its connection
+/// over to a subscription or a deferred completion.
+pub(super) fn finish_client(mut stream: UnixStream, dispatched: Dispatched) -> Accepted {
     let unrepresentable = |error: String| {
         failure(
             "unrepresentable-state",
             format!("cannot encode Eon session result: {error}"),
         )
     };
-    let (encoded, shutdown) = match read_incoming(&mut stream)
-        .map(|incoming| dispatch(incoming, peer).into())
-        .unwrap_or_else(|unread| unread)
-    {
+    let (encoded, shutdown) = match dispatched {
         Dispatched::Reply(response, shutdown) => (
             match &response {
                 ControlResponse::Workspace(response) => encode_response(response),
