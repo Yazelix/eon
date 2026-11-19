@@ -168,18 +168,44 @@ impl Pair {
     }
 
     fn wait_for(&mut self, wanted: impl Fn(&str) -> bool) -> Result<String, String> {
+        self.poll(Self::screen, |text| wanted(text))
+    }
+
+    /// Looks at the pair until `done` holds of what it sees, a supervisor
+    /// turn before each look, for at most 10 s; the error is the last look.
+    fn poll<T>(
+        &mut self,
+        observe: impl Fn(&mut Self) -> T,
+        done: impl Fn(&T) -> bool,
+    ) -> Result<T, T> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             self.turn();
-            let text = self.screen();
-            if wanted(&text) {
-                return Ok(text);
+            let seen = observe(self);
+            if done(&seen) {
+                return Ok(seen);
             }
             if Instant::now() >= deadline {
-                return Err(text);
+                return Err(seen);
             }
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    /// Polls something other than the screen until `done` holds of it, or
+    /// fails naming `what` and the last thing seen.
+    fn turns_until<T: std::fmt::Debug>(
+        &mut self,
+        what: &str,
+        observe: impl Fn(&mut Self) -> T,
+        done: impl Fn(&T) -> bool,
+    ) -> T {
+        self.poll(observe, done).unwrap_or_else(|seen| {
+            panic!(
+                "Expected {what}\nLast seen: {seen:?}\n{}",
+                self.diagnostics()
+            )
+        })
     }
 
     fn fail(&self, expected: &str, observed: &str, baseline: Option<&str>) -> ! {
@@ -376,6 +402,18 @@ impl Pair {
             done,
             drain: Some(drain),
         }
+    }
+
+    /// The entries beside the pair's endpoint that quick search names, sorted.
+    fn quick_entries(&self) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(&self.root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().into_string().unwrap())
+            .filter(|name| name.contains("quick"))
+            .collect();
+        names.sort();
+        names
     }
 
     fn eon_calls(&self) -> Vec<String> {
@@ -650,7 +688,15 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
     let quick = pair.quick_search_shown();
     let mut keyboard = pair.keyboard();
     assert!(quick.contains("beta") && quick.contains("alpha"), "{quick}");
-    assert!(pair.marker.exists());
+    // fzf can draw before its start action writes the ready marker, and the
+    // initial request lasts until the first turn after that. Then the marker
+    // is quick search's only entry beside the endpoint: no socket.
+    pair.turns_until(
+        "the ready marker as quick search's only entry",
+        |pair| pair.quick_entries(),
+        |entries| *entries == ["orbit.quick"],
+    );
+    assert!(fs::symlink_metadata(&pair.marker).unwrap().is_file());
     #[cfg(target_os = "linux")]
     {
         let mut seen = 0;
@@ -666,13 +712,6 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
         }
         assert!(seen >= 1, "found no quick search fzf");
     }
-    let sockets: Vec<_> = fs::read_dir(&pair.root)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.file_name().into_string().unwrap())
-        .filter(|name| name.contains("quick"))
-        .collect();
-    assert_eq!(sockets, ["orbit.quick"]);
 
     // A query typed, then Alt+Shift+Y.
     keyboard.text("bet");
@@ -687,15 +726,15 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
     keyboard.text("bet");
     pair.until("the query", |text| text.contains("> bet"));
     keyboard.press(PhysicalKey::ENTER);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !pair
-        .eon_calls()
-        .iter()
-        .any(|call| call.starts_with("tab directory t1 -- ") && call.ends_with("/w/files/beta"))
-    {
-        assert!(Instant::now() < deadline, "{:?}", pair.eon_calls());
-        thread::sleep(Duration::from_millis(20));
-    }
+    pair.turns_until(
+        "the tab's directory set to beta",
+        |pair| pair.eon_calls(),
+        |calls| {
+            calls.iter().any(|call| {
+                call.starts_with("tab directory t1 -- ") && call.ends_with("/w/files/beta")
+            })
+        },
+    );
     pair.files_shown();
     assert!(!pair.marker.exists());
 
@@ -714,11 +753,11 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
     pair.show_quick_search();
     pair.quick_search_shown();
     keyboard.press(PhysicalKey::ESCAPE);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !pair.eon_calls().contains(&"popup hide u1".to_owned()) {
-        assert!(Instant::now() < deadline, "{:?}", pair.eon_calls());
-        thread::sleep(Duration::from_millis(20));
-    }
+    pair.turns_until(
+        "Files hidden",
+        |pair| pair.eon_calls(),
+        |calls| calls.iter().any(|call| call == "popup hide u1"),
+    );
     pair.until("Files in alpha again", |text| {
         text.contains("Tab Search") && text.contains("files/alpha")
     });
