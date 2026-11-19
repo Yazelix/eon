@@ -50,6 +50,28 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+For eon-yp6vg.7.12, both release variants carry forward rota-cli's
+`time` edge and update wgpu-core and wgpu-hal from 30.0.0 to 30.0.1.
+Compared with edge `ca0f5780`, the Eon and Orbit contexts change only
+in the shared lock. The Linux Venus runtime, native feature and audited
+normal/build graphs differ only by those version substitutions. No
+exception names either changed crate. Selection is unchanged for every
+exception, so the host-only and unselected classifications carry over
+(Eon 9/2, Orbit 6/1 and Venus 15/4). Six `inspect-audit` replays reproduced
+the saved graphs. The strict proposal changes six fingerprints and
+preserves every exception identity, reason and anchor.
+
+The three renewals below share the vendor directory
+`/nix/store/m1dbijzwgxcgl927npimixbcfra0wzgk-cargo-vendor-dir`.
+They use these notice inputs.
+
+- Full: `/nix/store/awrqbx2q7a0qhbh7dizqgbkw1vih111k-eon-archive-notice-input.json`.
+- Without Accelerando: `/nix/store/9xj2wyh1gk098j66fyfnaz0ryv1xvlfk-eon-archive-notice-input.json`.
+
+The lead records the final notice and source checks in the bead at landing.
+
+Historical (`eon-eon-agent-lr8sx.40.3`):
+
 For `eon-eon-agent-lr8sx.40.3`, the normalized workspace lock adds the
 existing `time` package to `rota-cli`. Before and after that change, the
 locked x86_64-linux Cargo trees for Eon, Orbit and Venus select the same
@@ -185,6 +207,20 @@ bead records passing reports generated with the accepted keys on the final
 tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
+
+Renewed on 2026-11-19 for `eon-yp6vg.7.12` to context
+`deffe99de7f841cddb7b77a27d93a1265f09d005bfed5e3c56e07d136ffc8e8b`
+in both variants. Only the shared lock changes in this context.
+
+- Source: `/nix/store/9piq02nmsb8zv46z2g10v2ywx5qw9122-source`.
+- Full observation: `/nix/store/bb0lxr7fi8qikm3ssn09hf7qr3lmzqkw-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/lki7n5917gwy60vxvnq3p8acjkx556fl-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `b27f3bb2b630ad867748f65dd5bf1b997ca243be3b11bcdab7180ba2f56938aa`.
+- Without-Accelerando observation: `/nix/store/s9gcnixarvcxfzq3in4cikngip26ci9v-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/z3gzsxmqll5js55gc02rnifa813izjgs-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `464ee6fd35545647c40c9cb1bb0c4d25ee8f43bb257786846ef818e8e9481a9c`.
+
+Historical (`eon-eon-agent-lr8sx.40.3`):
 
 For `eon-eon-agent-lr8sx.40.3`, the projected context changes from
 `dceca7e518774ddfcd72ebebc66f097e051ae7592277eb133623c2499971f1e0` to
@@ -341,6 +377,17 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-19 for `eon-yp6vg.7.12` to context
+`f31033eeca20227b7c820d08e80dfabc00eb18ba7433409e792ff9f6d5847c71`
+in both variants. Only the shared lock changes in this context.
+
+- Source: `/nix/store/7s46p30d2n8hlwkk8wf1nqn61mcj4wqi-source`.
+- Both observations: `/nix/store/nsgp795d45c7cgqkllja8k3df5sjff0d-orbit-cargo-notices-0.1.0`.
+- Binary: `/nix/store/adhrw32j6sb6h32pz6nyknzhy7cbv3kr-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+- SHA-256: `ab8db071d0749510f27bff3475d852e08a71a298394dda4dc9d6b3de84905acb`.
+
+Historical (`eon-eon-agent-lr8sx.40.3`):
+
 For `eon-eon-agent-lr8sx.40.3`, the projected context changes from
 `0cc52b66ea290e19fc237d74b4f83bbc26fa8b7669c4db2769ecdf15a75b8ba1` to
 `08b1b002544da6eb222850e2c24b5d1aee51650c53383629dfdb9a8e2271cac7`.
@@ -494,6 +541,20 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-19 for `eon-yp6vg.7.12` to context
+`e80f9935370e3e52cc1120d03584e0440c3a452ba13239d27fcd0a5db1539e34`
+in both variants. The two wgpu version changes affect the shared lock,
+runtime graph, native feature graph and audited normal/build graph.
+
+- Source: `/nix/store/gw8daf7xp83qivpx2ra5jwj4jdfxzck9-source`.
+- Full observation: `/nix/store/c1ackl4a8rca86f2hnzfjmcb6p078gz2-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/1kkkb3l7952bv4s9ymqydrzxsxfrasb8-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Without-Accelerando observation: `/nix/store/wp6q8z3gv008ijs65n39m62m5wcx1mxj-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/py2kxdps6bp1224d49gm1c3dny02j2y9-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- SHA-256 for both binaries: `b1c2a14b9399b0fece31376f2b55773940aca2051b63be111769a61919e066f5`.
+
+Historical (`eon-eon-agent-lr8sx.40.3`):
 
 For `eon-eon-agent-lr8sx.40.3`, the projected context changes from
 `9a2afd2f38afe0655273d5c7c94984aa0534690fd8c339c9af4225417649c151` to

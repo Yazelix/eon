@@ -138,12 +138,20 @@ for one zero-payload semantic action without a new dependency or adapter.
   preparation. None sees transport or terminal state. Venus can prepare and
   draw on a host's device/queue without owning its presentation or device-loss
   callbacks; standalone rendering uses the same path.
-- **Version policy:** wgpu stays exact at 30.0.1; the lock retains wgpu-core,
-  wgpu-hal, wgpu-types, wgpu-naga-bridge, naga and naga-types 30.0.0. The
-  lock also advances wasm-only js-sys/web-sys to 0.3.105, wasm-bindgen and its
-  macro, macro-support and shared crates to 0.2.128, and wasm-bindgen-futures
-  to 0.4.78. Neither native target builds these seven crates. Native feature
-  graphs and the cfg_aliases 0.2.2 build dependency stay unchanged.
+- **Version policy:** wgpu is exact at 30.0.1. The lock selects wgpu-core and
+  wgpu-hal 30.0.1 on both native targets (eon-yp6vg.7.12), alongside
+  wgpu-types, wgpu-naga-bridge, naga and naga-types 30.0.0. Keep those versions
+  until a reviewed GPU update repeats the affected native proof. The core
+  patch changes package metadata, and the HAL patch removes the Vulkan image
+  acquire fence on non-Windows targets and resolves Metal color-space symbols
+  at runtime through the already locked libloading 0.8.9. That edge enters
+  the Apple Silicon Venus graph. The noop backend and device-loss code are
+  unchanged. The lock keeps wasm-only js-sys/web-sys at 0.3.105, wasm-bindgen and
+  its macro, macro-support and shared crates at 0.2.128, and
+  wasm-bindgen-futures at 0.4.78. Neither native target builds those seven
+  crates. The selected native backends and the cfg_aliases 0.2.2 build
+  dependency stay unchanged.
+  [wgpu 30.0.1 release notes](https://github.com/gfx-rs/wgpu/releases/tag/v30.0.1)
 
 ### Ordered startup font fallback
 
