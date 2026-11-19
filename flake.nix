@@ -1575,6 +1575,8 @@
                   --set-default EON_BENCH_DRI ${pkgs.mesa}/lib/dri \
                   --set-default EON_BENCH_EGL ${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json \
                   --set-default EON_BENCH_LAVAPIPE ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
+                  --set-default EON_BENCH_MAGICK ${pkgs.imagemagick}/bin/magick \
+                  --set-default EON_BENCH_SH ${pkgs.runtimeShell} \
                   ${lib.concatStringsSep " " (lib.mapAttrsToList (name: value: "--set-default ${name} ${lib.escapeShellArg value}") benchTerminals.environment)} \
                 ''} \
                 --set-default EON_BENCH_KITTEN ${pkgs.kitty.kitten}/bin/kitten

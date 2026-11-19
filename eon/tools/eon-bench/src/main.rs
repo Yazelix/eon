@@ -3,8 +3,8 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use eon_bench::{
-    child, corpus, floor, frames, gate, headless, memory, orbit, pressure, response, terminals,
-    writer,
+    child, corpus, floor, frames, gate, headless, journey, memory, orbit, pressure, response,
+    terminals, writer,
 };
 
 const USAGE: &str = "\
@@ -14,6 +14,7 @@ usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench gate --baseline FILE --eon PATH --source-tree HASH [OPTIONS]
        eon-bench memory --out DIR [OPTIONS]
        eon-bench headless --eon PATH --out DIR [OPTIONS]
+       eon-bench journey --eon PATH --case NAME --out DIR
        eon-bench terminals --eon PATH --source-tree HASH --out DIR [OPTIONS]
        eon-bench frames --eon LABEL=PATH --revision LABEL=COMMIT --candidate-tree LABEL=TREE --source-tree HASH --out DIR [OPTIONS]
        eon-bench response --eon PATH --out DIR [OPTIONS]
@@ -45,6 +46,7 @@ enum Command {
     Fixture(Vec<String>),
     PressureWorker(Vec<String>),
     Headless(headless::Options, bool),
+    Journey(journey::Options, bool),
     Terminals(terminals::Options, bool),
     TerminalWorkload(Vec<String>),
     Frames(frames::Options, bool),
@@ -120,6 +122,8 @@ fn main() -> ExitCode {
         Some("child") => child::options(rest).map(Command::Child),
         Some("headless" | "headless-inner") => headless::options(rest)
             .map(|options| Command::Headless(options, arguments[0] == "headless-inner")),
+        Some("journey" | "journey-inner") => journey::options(rest)
+            .map(|options| Command::Journey(options, arguments[0] == "journey-inner")),
         Some("response") => response::options(rest).map(Command::Response),
         Some("terminals" | "terminals-inner") => terminals::options(rest)
             .map(|options| Command::Terminals(options, arguments[0] == "terminals-inner")),
@@ -160,6 +164,8 @@ fn main() -> ExitCode {
         Command::Response(options) => response::run(&options),
         Command::Headless(options, false) => headless::run(rest, &options),
         Command::Headless(options, true) => headless::run_inner(&options),
+        Command::Journey(options, false) => journey::run(&options),
+        Command::Journey(options, true) => journey::run_inner(&options),
         Command::Fixture(arguments) => response::fixture(&arguments),
         Command::PressureWorker(arguments) => pressure::worker(&arguments),
         Command::Terminals(options, false) => terminals::run(rest, &options),

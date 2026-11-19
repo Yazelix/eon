@@ -3,11 +3,11 @@ use std::{
     collections::BTreeMap,
     fs::{self, File},
     os::unix::{
-        fs::{DirBuilderExt, FileTypeExt},
+        fs::{DirBuilderExt, FileExt, FileTypeExt},
         net::UnixStream,
     },
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -17,6 +17,43 @@ use rustix::process::Signal;
 type Result<T = ()> = std::result::Result<T, String>;
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+const OUTPUT_LIMIT: u64 = 4 * 1024 * 1024;
+
+fn capture_output(command: &mut Command, runtime: &Path) -> std::io::Result<Output> {
+    let spool = |name| {
+        let path = runtime.join(name);
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        fs::remove_file(path)?;
+        Ok::<_, std::io::Error>(file)
+    };
+    let stdout = spool("command.stdout")?;
+    let stderr = spool("command.stderr")?;
+    // A detached helper can keep its descriptors open after the command exits.
+    // Snapshot regular files instead of waiting for EOF on inherited pipes.
+    let status = command
+        .stdout(stdout.try_clone()?)
+        .stderr(stderr.try_clone()?)
+        .status()?;
+    let snapshot = |file: File| {
+        let len = file.metadata()?.len();
+        if len > OUTPUT_LIMIT {
+            return Err(std::io::Error::other("subprocess output exceeds 4 MiB"));
+        }
+        let mut bytes = vec![0; len as usize];
+        file.read_exact_at(&mut bytes, 0)?;
+        Ok(bytes)
+    };
+    Ok(Output {
+        status,
+        stdout: snapshot(stdout)?,
+        stderr: snapshot(stderr)?,
+    })
 }
 
 struct Roots(Vec<PathBuf>, bool);
@@ -80,6 +117,18 @@ fn process_state(pid: u32) -> Option<(String, bool, u32)> {
 }
 pub(crate) fn live_identity(pid: u32, identity: &str) -> bool {
     process_state(pid).is_some_and(|(now, running, _)| now == identity && running)
+}
+
+/// Only use for an inventory after entering the display suite's PID namespace.
+pub(crate) fn namespace_processes() -> Result<BTreeMap<u32, String>> {
+    Ok(fs::read_dir("/proc")
+        .map_err(failure)?
+        .filter_map(|entry| {
+            let pid = entry.ok()?.file_name().to_str()?.parse().ok()?;
+            let (start, live, _) = process_state(pid)?;
+            live.then_some((pid, start))
+        })
+        .collect())
 }
 /// Sends `signal` to `pid` only if `still_same` holds once a pidfd pins the
 /// process, so a reused PID is never signalled; without pidfds (an old
@@ -257,6 +306,26 @@ impl Headless {
         command.env_clear().envs(&self.env).stdin(Stdio::null());
         command
     }
+    pub(crate) fn output_until(
+        &self,
+        deadline: Instant,
+        program: &Path,
+        args: &[&str],
+    ) -> Result<Output> {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or("command deadline elapsed")?;
+        let mut command = self.command("timeout");
+        command
+            .args([
+                "--kill-after=0.2s",
+                &format!("{}s", remaining.as_secs_f64()),
+            ])
+            .arg(program)
+            .args(args);
+        capture_output(&mut command, Path::new(&self.env["XDG_RUNTIME_DIR"])).map_err(failure)
+    }
     pub(crate) fn spawn(&mut self, program: &str, args: &[&str], log: &str) -> Result {
         let output = File::create(self.out.join(log)).map_err(failure)?;
         self.spawn_logged(program, args, output.try_clone().map_err(failure)?, output)
@@ -394,19 +463,11 @@ impl Headless {
                 self.env
                     .insert("SWAYSOCK".into(), ipc.path().display().to_string());
                 // Socket creation can precede the IPC event loop becoming responsive.
-                let reply = self
-                    .command("timeout")
-                    .arg(format!(
-                        "{}s",
-                        deadline
-                            .checked_duration_since(Instant::now())
-                            .ok_or("private Sway readiness deadline elapsed")?
-                            .min(Duration::from_secs(1))
-                            .as_secs_f64()
-                    ))
-                    .args(["swaymsg", "-t", "get_outputs", "-r"])
-                    .output()
-                    .map_err(failure)?;
+                let reply = self.output_until(
+                    deadline.min(Instant::now() + Duration::from_secs(1)),
+                    Path::new("swaymsg"),
+                    &["-t", "get_outputs", "-r"],
+                )?;
                 fs::write(
                     self.out.join("sway-ipc.log"),
                     format!(
@@ -445,22 +506,26 @@ impl Headless {
         Ok(())
     }
     pub(crate) fn stop_eon(&mut self) -> Result {
+        self.stop_eon_report().map(|_| ())
+    }
+    pub(crate) fn stop_eon_report(&mut self) -> Result<Option<String>> {
         let Some(index) = self.eon_child else {
-            return Ok(());
+            return Ok(None);
         };
         let stopped = self
-            .command("timeout")
-            .arg("10s")
-            .arg(&self.eon)
-            .args(["window", "stop", "all", "--json"])
-            .output()
-            .map_err(failure)
+            .output_until(
+                Instant::now() + Duration::from_secs(10),
+                &self.eon,
+                &["window", "stop", "all", "--json"],
+            )
             .and_then(|output| {
                 if output.status.success() {
-                    Ok(())
+                    String::from_utf8(output.stdout).map(Some).map_err(failure)
                 } else {
                     Err(format!(
-                        "private Stop failed: {}",
+                        "private Stop failed ({}): {} {}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stdout),
                         String::from_utf8_lossy(&output.stderr)
                     ))
                 }
@@ -581,6 +646,25 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn command_output_does_not_wait_on_a_helpers_inherited_descriptors() {
+        let root = std::env::temp_dir().join(format!("bench-output-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 5 & printf '%s' \"$!\"; printf note >&2"]);
+        let out = capture_output(&mut command, &root);
+        fs::remove_dir(root).unwrap();
+        let out = out.unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stderr, b"note");
+        let pid = std::str::from_utf8(&out.stdout).unwrap().parse().unwrap();
+        let (identity, live, _) = process_state(pid).expect("helper is still alive");
+        assert!(live);
+        signal_pinned(pid, || live_identity(pid, &identity), Signal::KILL);
+    }
+
     #[test]
     fn an_exited_bus_is_a_startup_failure() {
         let mut child = Command::new("sh").args(["-c", "exit 1"]).spawn().unwrap();

@@ -65,6 +65,26 @@ pub struct Build {
     pub source: Option<Source>,
 }
 
+impl Build {
+    pub(crate) fn to_json(&self) -> Value {
+        object([
+            ("path", self.path.as_str().into()),
+            ("sha256", self.sha256.as_str().into()),
+            ("profile", self.profile.as_str().into()),
+            (
+                "source",
+                self.source.as_ref().map_or(Value::Null, |source| {
+                    object([
+                        ("commit", source.commit.as_str().into()),
+                        ("dirty", source.dirty.into()),
+                        ("from", source.from.as_str().into()),
+                    ])
+                }),
+            ),
+        ])
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Source {
     pub commit: String,
@@ -99,7 +119,6 @@ pub struct Sample {
 impl RunResult {
     pub fn to_json(&self) -> Value {
         let environment = &self.environment;
-        let build = &environment.build;
         let cpus = |cpus: &Option<Vec<u64>>| {
             cpus.as_ref().map_or(Value::Null, |cpus| {
                 Value::Array(cpus.iter().map(|&cpu| cpu.into()).collect())
@@ -146,24 +165,7 @@ impl RunResult {
                                 .collect(),
                         ),
                     ),
-                    (
-                        "build",
-                        object([
-                            ("path", build.path.as_str().into()),
-                            ("sha256", build.sha256.as_str().into()),
-                            ("profile", build.profile.as_str().into()),
-                            (
-                                "source",
-                                build.source.as_ref().map_or(Value::Null, |source| {
-                                    object([
-                                        ("commit", source.commit.as_str().into()),
-                                        ("dirty", source.dirty.into()),
-                                        ("from", source.from.as_str().into()),
-                                    ])
-                                }),
-                            ),
-                        ]),
-                    ),
+                    ("build", environment.build.to_json()),
                 ]),
             ),
             (
