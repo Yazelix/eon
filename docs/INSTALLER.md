@@ -324,6 +324,11 @@ Reports from other machines are welcome:
 
 ## Retained development proof
 
+The repeatable proof of installation, direct update and its refusals is the
+`update-direct` journey ([DEVELOPMENT.md](DEVELOPMENT.md#nix-free-direct-update)),
+which runs on each release candidate with a throwaway signer and a fake
+release network. The records below predate it.
+
 This proof used archives of the bundle's earlier Bubblewrap mechanism, which the
 installer no longer accepts; it awaits re-proof with the relinked payload.
 `eon-prove-thin-linux-bundle-installer-8r7n` records seven focused Rust checks,

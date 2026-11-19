@@ -1,0 +1,10 @@
+[package]
+name = "eon-fake-curl"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# Built static on its own (nix/fake-curl.nix), like the bundle launcher, so it
+# runs inside the bench's Nix-free jail; not a workspace member.
+[workspace]

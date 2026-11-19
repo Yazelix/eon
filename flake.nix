@@ -1580,6 +1580,7 @@
                   --set-default EON_BENCH_SH ${pkgs.runtimeShell} \
                   --set-default EON_BENCH_TAR ${pkgs.gnutar}/bin/tar \
                   --set-default EON_BENCH_ZSTD ${pkgs.zstd}/bin/zstd \
+                  --set-default EON_BENCH_FAKE_CURL ${import ./nix/fake-curl.nix { inherit pkgs; }}/bin/eon-fake-curl \
                   ${lib.concatStringsSep " " (lib.mapAttrsToList (name: value: "--set-default ${name} ${lib.escapeShellArg value}") benchTerminals.environment)} \
                 ''} \
                 --set-default EON_BENCH_KITTEN ${pkgs.kitty.kitten}/bin/kitten

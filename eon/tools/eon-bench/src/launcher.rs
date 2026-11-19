@@ -433,6 +433,14 @@ impl Headless {
             Route::Jail(jail) => jail.inherit(spawn),
         }
     }
+    /// Binds `source` read-only at `destination` in the bundle jail for
+    /// every later candidate call.
+    pub(crate) fn jail_bind(&mut self, source: &Path, destination: &Path) -> Result {
+        let Route::Jail(jail) = &mut self.route else {
+            return Err("jail binds need the bundle jail".into());
+        };
+        jail.bind(source, destination)
+    }
     /// Audits candidate process origins in the bundle jail (crate::bundle).
     pub(crate) fn audit_origins(&self, tree: &Path, required: &[&str]) -> Result<Value> {
         let Route::Jail(jail) = &self.route else {

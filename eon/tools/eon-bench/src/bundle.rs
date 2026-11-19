@@ -84,13 +84,14 @@ fn plain(path: &Path) -> Result<&str> {
 }
 
 impl HostSet {
-    /// Reads the host set on the host itself. Every error starts with
-    /// "--bundle needs" and names the missing prerequisite.
-    pub(crate) fn discover() -> Result<Self> {
-        Self::read_host().map_err(prerequisite)
+    /// Reads the host set on the host itself, with each of `tools` (host
+    /// programs a case declares, from `/usr/bin`) and its libraries. Every
+    /// error starts with "--bundle needs" and names the missing prerequisite.
+    pub(crate) fn discover(tools: &[&str]) -> Result<Self> {
+        Self::read_host(tools).map_err(prerequisite)
     }
 
-    fn read_host() -> Result<Self> {
+    fn read_host(tools: &[&str]) -> Result<Self> {
         fn needs(what: &str) -> impl Fn(String) -> String + '_ {
             move |error| format!("--bundle needs {what}: {error}")
         }
@@ -123,6 +124,11 @@ impl HostSet {
         set.add(Path::new(SHELL)).map_err(needs("the host sh"))?;
         set.add(Path::new(CACHE))
             .map_err(needs("the host loader cache"))?;
+        for tool in tools {
+            let needs = needs(tool);
+            let program = set.add(&Path::new("/usr/bin").join(tool)).map_err(&needs)?;
+            set.add_libraries(&loader, &program).map_err(&needs)?;
+        }
         let lavapipe = needs("the host's Mesa lavapipe driver");
         let icd = fs::read_to_string(ICD)
             .map_err(|error| format!("{ICD}: {error}"))
@@ -137,26 +143,34 @@ impl HostSet {
         let base = set.files.clone();
         let driver = libdir.join(library);
         set.driver = set.add(&driver).map_err(&lavapipe)?;
+        let driver = set.driver.clone();
+        set.add_libraries(&loader, &driver).map_err(&lavapipe)?;
+        set.lavapipe = set.files.difference(&base).cloned().collect();
+        Ok(set)
+    }
+
+    /// Adds every library `loader --list` resolves for `file`.
+    fn add_libraries(&mut self, loader: &Path, file: &Path) -> Result {
         let listed = Command::new("timeout")
             .arg("10s")
-            .arg(&loader)
+            .arg(loader)
             .arg("--list")
-            .arg(&set.driver)
+            .arg(file)
             .stdin(Stdio::null())
             .output()
             .map_err(failure)?;
         if !listed.status.success() {
-            return Err(lavapipe(format!(
-                "{} --list failed: {}",
+            return Err(format!(
+                "{} --list {} failed: {}",
                 loader.display(),
+                file.display(),
                 String::from_utf8_lossy(&listed.stderr).trim()
-            )));
+            ));
         }
         for library in listed_libraries(&String::from_utf8_lossy(&listed.stdout))? {
-            set.add(&library).map_err(&lavapipe)?;
+            self.add(&library)?;
         }
-        set.lavapipe = set.files.difference(&base).cloned().collect();
-        Ok(set)
+        Ok(())
     }
 
     /// Adds `path` and every link on the way to its file. Returns the file.
@@ -330,8 +344,9 @@ fn listed_libraries(text: &str) -> Result<Vec<PathBuf>> {
 #[derive(Debug)]
 pub(crate) struct Bundle {
     archive: PathBuf,
-    sha256: String,
-    bytes: u64,
+    /// The SHA-256 of the archive's bytes, as extracted.
+    pub(crate) sha256: String,
+    pub(crate) bytes: u64,
     pub(crate) tree: PathBuf,
     pub(crate) entry: PathBuf,
     pub(crate) product: PathBuf,
@@ -513,9 +528,9 @@ pub(crate) fn occupied(root: &Path) -> Result<Vec<u32>> {
     Ok(found)
 }
 
-/// Removes an extraction root, complete or partial. Its directories may be
-/// read-only, so each is made writable first, walking without following any
-/// link.
+/// Removes an extraction root, complete or partial, or a single file. Its
+/// directories may be read-only, so each is made writable first, walking
+/// without following any link.
 pub(crate) fn remove(root: &Path) -> Result<Value> {
     fn writable(path: &Path) -> std::io::Result<()> {
         let meta = fs::symlink_metadata(path)?;
@@ -528,8 +543,15 @@ pub(crate) fn remove(root: &Path) -> Result<Value> {
         )?;
         fs::read_dir(path)?.try_for_each(|entry| writable(&entry?.path()))
     }
+    let directory = fs::symlink_metadata(root).is_ok_and(|meta| meta.is_dir());
     writable(root)
-        .and_then(|()| fs::remove_dir_all(root))
+        .and_then(|()| {
+            if directory {
+                fs::remove_dir_all(root)
+            } else {
+                fs::remove_file(root)
+            }
+        })
         .map_err(|error| format!("removing {}: {error}", root.display()))?;
     if fs::symlink_metadata(root).is_ok() {
         return Err(format!("{} is still present", root.display()));
@@ -640,6 +662,17 @@ impl Jail {
 
     pub(crate) fn bwrap(&self) -> &Path {
         &self.bwrap
+    }
+
+    /// Binds `source` read-only at `destination` for every later call; the
+    /// holder and calls already running keep their mounts.
+    pub(crate) fn bind(&mut self, source: &Path, destination: &Path) -> Result {
+        self.mounts.extend([
+            "--ro-bind".into(),
+            plain(source)?.into(),
+            plain(destination)?.into(),
+        ]);
+        Ok(())
     }
 
     /// Runs `spawn` with the namespace descriptors a joining `bwrap` needs.
@@ -900,10 +933,19 @@ fn version(text: &str) -> Option<Vec<u32>> {
     text.split('.').map(|part| part.parse().ok()).collect()
 }
 
+/// What a case's jail holds beyond the closed base.
+pub(crate) struct Expect<'a> {
+    /// The programs on PATH besides `sh` and `dash`.
+    pub(crate) tools: &'a [&'a str],
+    /// Whether the case has a display: the Wayland socket must be present.
+    pub(crate) display: bool,
+}
+
 /// Judges `PROBE`'s output: glibc at or above `floor`, no `/nix`, only jail
-/// processes visible, exactly `sh` and `dash` on PATH, the lavapipe ICD, the
-/// Wayland socket and no Sway command socket.
-pub(crate) fn host_probe(text: &str, floor: &str) -> Result<Value> {
+/// processes visible, exactly `sh`, `dash` and `expect`'s tools on PATH, the
+/// lavapipe ICD, the Wayland socket when `expect` has a display, and no Sway
+/// command socket.
+pub(crate) fn host_probe(text: &str, floor: &str, expect: &Expect<'_>) -> Result<Value> {
     let loader = text.lines().next().unwrap_or_default();
     let glibc = loader
         .split("release version ")
@@ -941,15 +983,19 @@ pub(crate) fn host_probe(text: &str, floor: &str) -> Result<Value> {
             _ => {}
         }
     }
-    if tools != BTreeSet::from(["dash", "sh"]) {
+    let expected: BTreeSet<&str> = ["dash", "sh"]
+        .into_iter()
+        .chain(expect.tools.iter().copied())
+        .collect();
+    if tools != expected {
         return Err(format!(
-            "the jail's PATH holds {tools:?}, not only sh and dash"
+            "the jail's PATH holds {tools:?}, not exactly {expected:?}"
         ));
     }
     if !icd {
         return Err(format!("the jail has no lavapipe ICD {ICD}"));
     }
-    if !wayland {
+    if expect.display && !wayland {
         return Err("the jail has no Wayland socket".into());
     }
     Ok(object([
@@ -1031,26 +1077,48 @@ mod tests {
         pid 1 bwrap\npid 2 sh\npid 7 sh\nicd /usr/share/vulkan/icd.d/lvp_icd.json\n\
         wayland /run/user/1/b001/wayland-1\n";
 
+    const WINDOW: Expect<'static> = Expect {
+        tools: &[],
+        display: true,
+    };
+
     #[test]
     fn host_probe_requires_the_floor_and_a_closed_jail() {
-        assert!(host_probe(&format!("{UBUNTU}{JAIL}"), "2.39").is_ok());
-        assert!(host_probe(&format!("{FEDORA}{JAIL}"), "2.39").is_ok());
-        assert!(host_probe(&format!("{DEBIAN}{JAIL}"), "2.39").is_err());
-        assert!(host_probe(&format!("{UBUNTU}{JAIL}"), "2.40").is_err());
-        assert!(host_probe(JAIL, "2.39").is_err());
+        let probe = |text: &str, floor| host_probe(text, floor, &WINDOW);
+        assert!(probe(&format!("{UBUNTU}{JAIL}"), "2.39").is_ok());
+        assert!(probe(&format!("{FEDORA}{JAIL}"), "2.39").is_ok());
+        assert!(probe(&format!("{DEBIAN}{JAIL}"), "2.39").is_err());
+        assert!(probe(&format!("{UBUNTU}{JAIL}"), "2.40").is_err());
+        assert!(probe(JAIL, "2.39").is_err());
         for (extra, why) in [
             ("nix /proc/12/root/nix\n", "reaches /nix"),
             ("path /usr/bin/nix\n", "PATH"),
             ("pid 40 sway\n", "outside process"),
             ("ipc /run/user/1/b001-ipc/sway.sock\n", "command socket"),
         ] {
-            let error = host_probe(&format!("{UBUNTU}{JAIL}{extra}"), "2.39").unwrap_err();
+            let error = probe(&format!("{UBUNTU}{JAIL}{extra}"), "2.39").unwrap_err();
             assert!(error.contains(why), "{error}");
         }
         for missing in ["icd ", "wayland "] {
             let jail = JAIL.replace(missing, "other ");
-            assert!(host_probe(&format!("{UBUNTU}{jail}"), "2.39").is_err());
+            assert!(probe(&format!("{UBUNTU}{jail}"), "2.39").is_err());
         }
+    }
+
+    #[test]
+    fn host_probe_admits_exactly_the_declared_tools_and_needs_no_display_without_one() {
+        let installer = Expect {
+            tools: &["curl", "ssh-keygen", "timeout"],
+            display: false,
+        };
+        let tools = "path /usr/bin/curl\npath /usr/bin/ssh-keygen\npath /usr/bin/timeout\n";
+        let headless = JAIL.replace("wayland ", "other ");
+        assert!(host_probe(&format!("{UBUNTU}{headless}{tools}"), "2.39", &installer).is_ok());
+        let partial = tools.replace("path /usr/bin/timeout\n", "");
+        assert!(host_probe(&format!("{UBUNTU}{headless}{partial}"), "2.39", &installer).is_err());
+        let extra = format!("{tools}path /usr/bin/cat\n");
+        assert!(host_probe(&format!("{UBUNTU}{headless}{extra}"), "2.39", &installer).is_err());
+        assert!(host_probe(&format!("{UBUNTU}{JAIL}{tools}"), "2.39", &WINDOW).is_err());
     }
 
     #[test]
@@ -1286,7 +1354,7 @@ mod tests {
     /// an outer view that still sees it.
     #[test]
     fn joined_calls_share_one_closed_pid_namespace() {
-        let host = match HostSet::discover() {
+        let host = match HostSet::discover(&[]) {
             Ok(host) => host,
             Err(error) => {
                 assert!(error.starts_with("--bundle needs"), "{error}");
@@ -1381,7 +1449,7 @@ mod tests {
         assert!(jailed.len() >= 3, "{}", audit.to_pretty());
         assert!(probe.status.success(), "{probe:?}");
         let probe = String::from_utf8_lossy(&probe.stdout);
-        let checked = host_probe(&probe, "2.0");
+        let checked = host_probe(&probe, "2.0", &WINDOW);
         assert!(checked.is_ok(), "{checked:?}\n{probe}");
     }
 

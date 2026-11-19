@@ -1,5 +1,6 @@
 //! Installed Eon journeys on the shared private display.
 mod first_launch;
+mod update_direct;
 
 use std::{
     collections::BTreeMap,
@@ -23,24 +24,30 @@ type Result<T = ()> = std::result::Result<T, String>;
 
 const HELP: &str = "\
 eon-bench journey (--eon PATH | --bundle ARCHIVE) --case first-launch --out DIR
+eon-bench journey --bundle ARCHIVE --next NEXT --case update-direct --out DIR
 
 Exercise an installed Eon candidate in private 1280x800 headless Sway.
 PATH is a Nix candidate's bin/eon. ARCHIVE is the Nix-free release archive
 (eon-VERSION-x86_64-linux.tar.zst from .#manual-bundle): it runs extracted, in
 a jail with no /nix, on the host's glibc and Mesa lavapipe (a merged-/usr host).
-DIR must not exist. Linux only.
+update-direct installs ARCHIVE with its own installer, then updates it to NEXT,
+a newer build of the same source, through eon update and a fake release
+network (no window). DIR must not exist. Linux only.
 Writes result.json, capture-*.png and private launch logs.
 Exit 0 on a passing case and Stop, 1 on a run failure, 2 on invalid arguments.";
 
 const PARENT_PID_NS: &str = "EON_BENCH_JOURNEY_PARENT_PID_NS";
 const PRODUCT_ROOT: &str = "EON_BENCH_JOURNEY_PRODUCT_ROOT";
 const HOST_SET: &str = "EON_BENCH_JOURNEY_HOST_SET";
+const NEXT_SOURCE: &str = "EON_BENCH_JOURNEY_NEXT_SOURCE";
 const ARCHIVE: &str = "/bundle.tar.zst";
+const NEXT: &str = "/next.tar.zst";
 /// Lines of `eon.log` a failed wait carries.
 const LOG_TAIL: usize = 20;
 /// The extraction, under the evidence directory.
 const BUNDLE_ROOT: &str = "bundle";
-const RUN_LIMIT: Duration = Duration::from_secs(180);
+const FIRST_LAUNCH: &str = "first-launch";
+const UPDATE_DIRECT: &str = "update-direct";
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 const CAPTURE_LIMIT: Duration = Duration::from_secs(10);
 const EXTRACT_LIMIT: Duration = Duration::from_secs(60);
@@ -67,8 +74,17 @@ impl Input {
 
 pub struct Options {
     input: Input,
+    /// update-direct's newer archive.
+    next: Option<PathBuf>,
     out: PathBuf,
     case: String,
+}
+
+impl Options {
+    /// The whole journey's limit, setup and cleanup included.
+    fn run_limit(&self) -> Duration {
+        Duration::from_secs(if self.case == UPDATE_DIRECT { 900 } else { 180 })
+    }
 }
 
 pub fn options(args: &[String]) -> Result<Options> {
@@ -79,7 +95,10 @@ pub fn options(args: &[String]) -> Result<Options> {
     let mut values = BTreeMap::new();
     let mut args = args.iter();
     while let Some(flag) = args.next() {
-        if !matches!(flag.as_str(), "--eon" | "--bundle" | "--out" | "--case") {
+        if !matches!(
+            flag.as_str(),
+            "--eon" | "--bundle" | "--next" | "--out" | "--case"
+        ) {
             return Err(format!("unknown argument {flag}\n{HELP}"));
         }
         let value = args
@@ -91,7 +110,7 @@ pub fn options(args: &[String]) -> Result<Options> {
         }
     }
     let case = *values.get("--case").ok_or("--case is required")?;
-    if case != "first-launch" {
+    if !matches!(case, FIRST_LAUNCH | UPDATE_DIRECT) {
         return Err(format!("unknown journey case {case}\n{HELP}"));
     }
     let input = match (values.get("--eon"), values.get("--bundle")) {
@@ -99,9 +118,18 @@ pub fn options(args: &[String]) -> Result<Options> {
         (None, Some(archive)) => Input::Bundle(archive.into()),
         _ => return Err(format!("give exactly one of --eon and --bundle\n{HELP}")),
     };
+    let next = values.get("--next").map(PathBuf::from);
+    match (case, &input, &next) {
+        (UPDATE_DIRECT, Input::Bundle(_), Some(_)) | (FIRST_LAUNCH, _, None) => {}
+        (UPDATE_DIRECT, ..) => {
+            return Err(format!("update-direct needs --bundle and --next\n{HELP}"));
+        }
+        _ => return Err(format!("--next belongs to update-direct\n{HELP}")),
+    }
     Ok(Options {
         case: case.into(),
         input,
+        next,
         out: values.get("--out").ok_or("--out is required")?.into(),
     })
 }
@@ -171,12 +199,13 @@ pub fn run(options: &Options) -> Result {
                 )
             }
             Input::Bundle(archive) => {
-                eon = fs::canonicalize(archive)
-                    .map_err(|reason| format!("--bundle {}: {reason}", archive.display()))?;
-                if !eon.is_file() {
-                    return Err(format!("--bundle {} is not a file", eon.display()));
-                }
-                let host = HostSet::discover()?;
+                eon = input_archive("--bundle", archive)?;
+                let tools = if options.case == UPDATE_DIRECT {
+                    update_direct::HOST_TOOLS
+                } else {
+                    &[]
+                };
+                let host = HostSet::discover(tools)?;
                 let mut binds = host.outer_binds();
                 binds.push((eon.clone(), ARCHIVE.into()));
                 (
@@ -186,6 +215,15 @@ pub fn run(options: &Options) -> Result {
                 )
             }
         };
+        let mut binds = binds;
+        let mut inner = Vec::from(inner);
+        let mut next_source = None;
+        if let Some(next) = &options.next {
+            let next = input_archive("--next", next)?;
+            binds.push((next.clone(), NEXT.into()));
+            inner.extend(["--next".into(), NEXT.into()]);
+            next_source = Some(next);
+        }
         let log = fs::File::create(out.join("sandbox.log")).map_err(error)?;
         let mut command = isolation::journey(&out, &exe, &shell, &binds)?;
         command
@@ -198,6 +236,7 @@ pub fn run(options: &Options) -> Result {
                     "EON_BENCH_BWRAP",
                     "EON_BENCH_TAR",
                     "EON_BENCH_ZSTD",
+                    "EON_BENCH_FAKE_CURL",
                 ]
                 .into_iter()
                 .filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
@@ -207,14 +246,20 @@ pub fn run(options: &Options) -> Result {
             .args(["--setenv", PARENT_PID_NS])
             .arg(fs::read_link("/proc/self/ns/pid").map_err(error)?)
             .args(["--setenv", setenv.0])
-            .arg(setenv.1)
+            .arg(setenv.1);
+        if let Some(next) = next_source {
+            command
+                .args(["--setenv", NEXT_SOURCE])
+                .arg(next.into_os_string());
+        }
+        command
             .arg("--")
             .arg(exe)
             .args(["journey-inner", "--case", &options.case])
             .args(inner)
             .arg("--out")
             .arg(isolation::JOURNEY_EVIDENCE);
-        let ran = isolation::run_until(&mut command, Some(started + RUN_LIMIT))
+        let ran = isolation::run_until(&mut command, Some(started + options.run_limit()))
             .map_err(|reason| format!("{reason}; see sandbox.log"));
         // The sandbox's PID namespace is gone, so nothing runs from an
         // extraction the inner run kept or never reached removing, such as
@@ -314,6 +359,34 @@ impl<'a> Receipt<'a> {
         Ok(produced.expect("a passing step produced its value"))
     }
 
+    /// Removes `root`, a large tree its archive reproduces, once process
+    /// cleanup succeeded and no process runs from or maps it; otherwise the
+    /// row fails and keeps it for the outer run's `reclaim`.
+    fn remove_root(&mut self, name: &str, root: &Path, cleaned: bool) -> Result {
+        self.record(name, "cleanup", || {
+            let occupants = bundle::occupied(root)?;
+            if !cleaned || !occupants.is_empty() {
+                return Err(format!(
+                    "kept {} for the outer run: process cleanup {}, occupants {occupants:?}",
+                    root.display(),
+                    if cleaned { "succeeded" } else { "failed" }
+                ));
+            }
+            bundle::remove(root)
+        })
+    }
+
+    /// Writes the receipt; a run whose steps passed still fails when a
+    /// cleanup row did.
+    fn finish(self, out: &Path, result: Result) -> Result {
+        let failed = self.failed;
+        self.write(out)?;
+        if failed && result.is_ok() {
+            return Err("private cleanup failed; see result.json".into());
+        }
+        result
+    }
+
     fn write(self, out: &Path) -> Result {
         let value = object([
             ("schema", 1u64.into()),
@@ -344,17 +417,35 @@ fn log_tail(path: &Path, lines: usize) -> String {
     }
 }
 
-/// Removes an extraction the inner run left behind, once its sandbox is gone,
-/// and adds any removal failure to the run's result.
+/// Removes the extractions, prefix and scratch archive the inner run left
+/// behind, once its sandbox is gone, and adds any removal failure to the run's result.
 fn reclaim(out: &Path, ran: Result) -> Result {
-    let leftover = out.join(BUNDLE_ROOT);
-    match fs::symlink_metadata(&leftover).map(|_| bundle::remove(&leftover)) {
-        Ok(Err(removal)) => Err(match ran {
-            Ok(()) => removal,
-            Err(reason) => format!("{reason}; {removal}"),
-        }),
-        _ => ran,
+    [
+        BUNDLE_ROOT,
+        update_direct::NEXT_ROOT,
+        update_direct::PREFIX_ROOT,
+        update_direct::TAMPERED,
+    ]
+    .iter()
+    .map(|name| out.join(name))
+    .filter(|leftover| fs::symlink_metadata(leftover).is_ok())
+    .fold(ran, |ran, leftover| {
+        match (ran, bundle::remove(&leftover)) {
+            (ran, Ok(_)) => ran,
+            (Ok(()), Err(removal)) => Err(removal),
+            (Err(reason), Err(removal)) => Err(format!("{reason}; {removal}")),
+        }
+    })
+}
+
+/// A journey input archive, resolved for its read-only bind.
+fn input_archive(flag: &str, archive: &Path) -> Result<PathBuf> {
+    let path = fs::canonicalize(archive)
+        .map_err(|reason| format!("{flag} {}: {reason}", archive.display()))?;
+    if !path.is_file() {
+        return Err(format!("{flag} {} is not a file", path.display()));
     }
+    Ok(path)
 }
 
 fn source_receipt(root: &Path) -> Result<Value> {
@@ -466,6 +557,9 @@ fn verify_build(versions: &str, expected: Option<&str>) -> Result {
 
 pub fn run_inner(options: &Options) -> Result {
     require_isolation()?;
+    if options.case == UPDATE_DIRECT {
+        return update_direct::run(options);
+    }
     let mut receipt = Receipt::new(options, options.input.path(), None, Instant::now());
     let mut extraction = None;
     let mut extracted = None;
@@ -536,6 +630,10 @@ pub fn run_inner(options: &Options) -> Result {
                     let evidence = bundle::host_probe(
                         &String::from_utf8_lossy(&probe.stdout),
                         &opened.glibc_floor,
+                        &bundle::Expect {
+                            tools: &[],
+                            display: true,
+                        },
                     )
                     .map_err(|reason| format!("{reason}; probe: {}", describe(&probe)))?;
                     Ok((
@@ -613,24 +711,9 @@ pub fn run_inner(options: &Options) -> Result {
     // directly. The outer run removes a kept extraction once the journey
     // sandbox is gone.
     if let Some(root) = &extraction {
-        let _ = receipt.record("remove-bundle", "cleanup", || {
-            let occupants = bundle::occupied(root)?;
-            if !cleaned || !occupants.is_empty() {
-                return Err(format!(
-                    "kept {} for the outer run: process cleanup {}, occupants {occupants:?}",
-                    root.display(),
-                    if cleaned { "succeeded" } else { "failed" }
-                ));
-            }
-            bundle::remove(root)
-        });
+        let _ = receipt.remove_root("remove-bundle", root, cleaned);
     }
-    let failed = receipt.failed;
-    receipt.write(&options.out)?;
-    if failed && result.is_ok() {
-        return Err("private cleanup failed; see result.json".into());
-    }
-    result
+    receipt.finish(&options.out, result)
 }
 
 /// `eon doctor --json` on the healthy bundle (eon-6zoxr): no FAIL by check
@@ -692,6 +775,16 @@ fn startup_pending(generation: Option<&str>, reply: &Value) -> bool {
                 .and_then(Value::as_str),
             Some("missing-supervisor" | "supervisor-unavailable" | "registry-busy")
         )
+}
+
+/// The live candidate processes, as `PID@START`, that `baseline` (taken
+/// before the case's first candidate call) does not hold.
+fn survivors(baseline: &BTreeMap<u32, String>) -> Result<Vec<String>> {
+    Ok(launcher::namespace_processes()?
+        .into_iter()
+        .filter(|(pid, start)| baseline.get(pid) != Some(start))
+        .map(|(pid, start)| format!("{pid}@{start}"))
+        .collect())
 }
 
 fn succeeded(program: &Path, args: &[&str], output: Output) -> Result<Vec<u8>> {
@@ -872,12 +965,7 @@ impl Journey {
                 ));
             }
         }
-        let current = launcher::namespace_processes()?;
-        let survivors: Vec<_> = current
-            .iter()
-            .filter(|(pid, start)| baseline.get(pid) != Some(*start))
-            .map(|(pid, start)| format!("{pid}@{start}"))
-            .collect();
+        let survivors = survivors(baseline)?;
         if !survivors.is_empty() {
             return Err(format!(
                 "live candidate processes after Stop: {}; Stop reply: {reply:?}",

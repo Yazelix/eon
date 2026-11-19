@@ -831,6 +831,95 @@ renderer. Hardware GPUs and other distributions belong to the release's VM
 proof. A release proof runs `--bundle` on the exact frozen archive, because
 the archive embeds its source revision.
 
+#### Nix-free direct update
+
+`eon-bench journey --bundle A --next B --case update-direct --out DIR` proves
+that an installed Nix-free archive updates itself and refuses a bad release.
+A is the candidate archive; B is a second build of the same source and the
+same bundle attribute with Eon's patch version raised by one. The case starts
+no window: every step is a CLI call in the same jail as above, whose host set
+adds the installer's declared host boundary ([INSTALLER.md](INSTALLER.md)),
+`/usr/bin/ssh-keygen` and `/usr/bin/timeout` with the libraries the host
+loader lists for them.
+
+The release network is `eon-fake-curl` (`eon/tools/fake-curl`, built static by
+`nix/fake-curl.nix` and named by `EON_BENCH_FAKE_CURL`). The jail binds it at
+`/usr/bin/curl`, where the installer finds curl, and, after each install,
+over every `nix/store/*/bin/curl` in the selected payload, where the bundle
+launcher points `EON_CURL`. It serves the fixture's routes and logs each
+request; any argument its two callers do not pass today exits 2. The journey
+sandbox has no network, so nothing reaches GitHub. The release key is a
+throwaway ed25519 key made in the sandbox's private `/tmp` and deleted once
+the fixture is signed.
+
+B needs its own build. From a checkout at the frozen revision `rev`, with
+`attr` the release route's bundle (`manual-bundle-without-accelerando` by
+default, `manual-bundle` with the recorded Accelerando grant):
+
+```sh
+bash "$heavy_runner" nix build ".#$attr" --out-link "$journey_root/a"
+mkdir "$journey_root/next-src"
+git archive --format=tar "$rev" | tar -x -C "$journey_root/next-src"
+# Raise eon's patch version (0.1.28 to 0.1.29, say) in
+# "$journey_root/next-src/eon/crates/eon/Cargo.toml", then refresh its
+# Cargo.lock entry; nothing else may change.
+nix develop -c cargo metadata --offline --format-version 1 \
+  --manifest-path "$journey_root/next-src/Cargo.toml" >/dev/null
+bash "$heavy_runner" nix build "path:$journey_root/next-src#$attr" --out-link "$journey_root/b"
+bash "$heavy_runner" "$journey_root/bench/bin/eon-bench" journey \
+  --bundle "$journey_root/a/eon-VERSION-x86_64-linux.tar.zst" \
+  --next "$journey_root/b/eon-NEXT-x86_64-linux.tar.zst" \
+  --case update-direct --out "$journey_root/g4"
+```
+
+B's build reruns the Linux `eon-tests` check, which the bundle's source
+receipt depends on, so it costs about one package build. The case runs once
+per release proof, not at landings. A source copy has no git metadata, so B's
+receipt names no revision; the case refuses two receipts that name different
+revisions.
+
+The receipt's rows, in order:
+
+- `bundle` and `next` (`setup`): each archive extracted and identified: the
+  version from its top-level directory, the build and revision from its
+  source receipt, the SHA-256 of its bytes. B's extraction is removed at
+  once; B must be newer and a different build.
+- `host` (`setup`): the jail probe, with the installer tools and the fake
+  curl on `PATH` and no Wayland socket required.
+- `release` (`setup`): the keys, `allowed_signers` (`eon-release
+  namespaces="eon-bundle"`), installer-format `SHA256SUMS` for A and B signed
+  with `ssh-keygen -Y sign -n eon-bundle`, the GitHub release listing, and
+  three bad variants of B's release.
+- `install-a` (`cli`): A's own bundled `eon-install` installs A into
+  `/evidence/prefix` from A's signed release; `remove-installer-bundle` then
+  removes A's extraction.
+- `versions-a`, then `baseline`: the prefix exactly as A's installer left it,
+  itself included: every entry's type and mode, each link's target and each
+  file's SHA-256, by exact path.
+- `configure` (`[updates] bundle_prefix` and `allowed_signers` in
+  `config.toml`), and `check`: `eon update --check --json` reports B
+  `available` at its exact archive URL, with install capability.
+- Three `refusal` rows. Each runs `eon update --install --yes --json` against
+  one bad release: `SHA256SUMS.sig` from a key not in
+  `allowed_signers`; `SHA256SUMS` edited after signing; and B's archive with
+  a zstd skippable frame appended (the same tree, other bytes, so only the
+  installer's SHA-256 check can refuse it). Each must exit 1 and report
+  `verification-failed` with the selection unchanged; fetch both checksum
+  files, and the archive only in the third; and leave every entry of the
+  prefix, payload file contents included, as it was. The one allowed change is
+  the empty 0600 `.eon-update.lock` that `eon update --install` creates.
+  `eon versions` still runs A. `remove-tampered-archive` then removes the
+  tampered copy.
+- `install-b`, `versions-b` and `check-current`: B's payload must be absent
+  before its install, which then selects B
+  and keeps A's payload, the next `eon versions` runs B's version and build
+  as read from B's archive, and a fresh check reports `current`.
+- `survivors`, then `remove-*` rows for the prefix and any kept extraction.
+
+Not covered: the real bundled curl, TLS and the GitHub API; the release
+workflow's three-file `SHA256SUMS` and real signature, which the release
+proof checks on the published files; an update while an Eon window runs.
+
 ### Terminal comparison
 
 The recorded comparison uses these explicit flags (replace `STAGED_TREE_HASH`
