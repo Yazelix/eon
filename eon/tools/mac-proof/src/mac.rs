@@ -57,6 +57,15 @@ mod native {
         time::Duration,
     };
 
+    // SAFETY: libdispatch's C ABI, from <dispatch/queue.h> and <dispatch/object.h>:
+    // `dispatch_queue_t dispatch_queue_create(const char *label, dispatch_queue_attr_t attr)`
+    // and `void dispatch_release(dispatch_object_t object)`. In C, `dispatch_object_t` is a
+    // transparent union of object pointers, passed as its first pointer member, so a single
+    // pointer argument matches it; the queue type is a pointer too. The caller passes a
+    // NUL-terminated label that outlives the call and a null attribute (a serial queue),
+    // owns the returned queue, and releases that reference exactly once, after handing the
+    // queue to the display descriptor's `setQueue:`.
+    #[allow(unsafe_code)]
     #[link(name = "System")]
     unsafe extern "C" {
         fn dispatch_queue_create(label: *const c_char, attr: *const c_void) -> *mut AnyObject;
@@ -133,6 +142,7 @@ mod native {
             }
         }
         let allocate = |class: &AnyClass| -> Result<Allocated<AnyObject>, String> {
+            #[allow(unsafe_code)]
             // SAFETY: +alloc was checked before any message was sent.
             let object: Allocated<AnyObject> = unsafe { msg_send![class, alloc] };
             if Allocated::as_ptr(&object).is_null() {
@@ -143,23 +153,34 @@ mod native {
             }
             Ok(object)
         };
-        // SAFETY: every selector was checked above. The signatures follow the
-        // CoreGraphics classes: dimensions and hiDPI are unsigned int, geometry
-        // is CGSize/CGPoint by value, and applySettings: returns BOOL.
+        // Every `msg_send!` below sends a selector that `virtual_class` checked above, with
+        // the argument and return types of the CoreGraphics classes: dimensions, IDs and
+        // hiDPI are unsigned int, geometry is CGSize/CGPoint by value, applySettings:
+        // returns BOOL, and each init returns the object or nil.
+        let object = allocate(descriptor_class)?;
+        #[allow(unsafe_code)]
+        // SAFETY: init on a freshly allocated descriptor, per the note above.
+        let descriptor: Option<Retained<AnyObject>> = unsafe { msg_send![object, init] };
+        let descriptor =
+            descriptor.ok_or("virtual display: CGVirtualDisplayDescriptor init returned nil")?;
+        let name = CFString::from_str(VIRTUAL_DISPLAY_NAME);
+        let name: &AnyObject = name.as_ref();
+        #[allow(unsafe_code)]
+        // SAFETY: checked setters with the argument types in the note above.
         unsafe {
-            let descriptor: Option<Retained<AnyObject>> =
-                msg_send![allocate(descriptor_class)?, init];
-            let descriptor = descriptor
-                .ok_or("virtual display: CGVirtualDisplayDescriptor init returned nil")?;
-            let name = CFString::from_str(VIRTUAL_DISPLAY_NAME);
-            let name: &AnyObject = name.as_ref();
             let _: () = msg_send![&descriptor, setName: name];
             let _: () = msg_send![&descriptor, setVendorID: 0x454fu32];
             let _: () = msg_send![&descriptor, setProductID: 1u32];
             let _: () = msg_send![&descriptor, setSerialNum: 1u32];
-            if serial_number {
-                let _: () = msg_send![&descriptor, setSerialNumber: 1u32];
-            }
+        }
+        if serial_number {
+            #[allow(unsafe_code)]
+            // SAFETY: setSerialNumber: was checked above and takes an unsigned int.
+            let _: () = unsafe { msg_send![&descriptor, setSerialNumber: 1u32] };
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: checked setters with the argument types in the note above.
+        unsafe {
             let _: () = msg_send![&descriptor, setMaxPixelsWide: 2048u32];
             let _: () = msg_send![&descriptor, setMaxPixelsHigh: 1536u32];
             let _: () = msg_send![&descriptor, setSizeInMillimeters: CGSize::new(25.4 * 2048.0 / 220.0, 25.4 * 1536.0 / 220.0)];
@@ -167,42 +188,76 @@ mod native {
             let _: () = msg_send![&descriptor, setRedPrimary: CGPoint::new(0.6797, 0.3203)];
             let _: () = msg_send![&descriptor, setGreenPrimary: CGPoint::new(0.2559, 0.6983)];
             let _: () = msg_send![&descriptor, setBluePrimary: CGPoint::new(0.1494, 0.0557)];
-            let queue = dispatch_queue_create(c"mac-proof.virtual-display".as_ptr(), ptr::null());
-            if queue.is_null() {
-                return Err("virtual display: dispatch_queue_create returned nil".to_owned());
-            }
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: a static NUL-terminated label and a null (serial) attribute, per the
+        // extern block's note.
+        let queue =
+            unsafe { dispatch_queue_create(c"mac-proof.virtual-display".as_ptr(), ptr::null()) };
+        if queue.is_null() {
+            return Err("virtual display: dispatch_queue_create returned nil".to_owned());
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: `queue` is the live queue created above; the descriptor's checked
+        // setQueue: takes it, then this function releases its own reference exactly once.
+        unsafe {
             let _: () = msg_send![&descriptor, setQueue: queue];
             dispatch_release(queue);
-            let display: Option<Retained<AnyObject>> =
-                msg_send![allocate(display_class)?, initWithDescriptor: &*descriptor];
-            let display = display
-                .ok_or("virtual display: CGVirtualDisplay initWithDescriptor: returned nil")?;
-            let settings: Option<Retained<AnyObject>> = msg_send![allocate(settings_class)?, init];
-            let settings =
-                settings.ok_or("virtual display: CGVirtualDisplaySettings init returned nil")?;
-            let _: () = msg_send![&settings, setHiDPI: 1u32];
-            if rotation {
-                let _: () = msg_send![&settings, setRotation: 0u32];
-            }
-            let mode: Option<Retained<AnyObject>> = msg_send![allocate(mode_class)?, initWithWidth: 2048u32, height: 1536u32, refreshRate: 60.0f64];
-            let mode = mode.ok_or("virtual display: CGVirtualDisplayMode initWithWidth:height:refreshRate: returned nil")?;
-            let modes: Retained<AnyObject> = msg_send![array_class, arrayWithObject: &*mode];
-            let _: () = msg_send![&settings, setModes: &*modes];
-            let applied: bool = msg_send![&display, applySettings: &*settings];
-            if !applied {
-                return Err(
-                    "virtual display: CGVirtualDisplay applySettings: returned NO".to_owned(),
-                );
-            }
-            let id: u32 = msg_send![&display, displayID];
-            println!("display {id}");
-            io::stdout()
-                .flush()
-                .map_err(|error| format!("virtual display stdout: {error}"))?;
-            io::copy(&mut io::stdin().lock(), &mut io::sink())
-                .map_err(|error| format!("virtual display stdin: {error}"))?;
-            drop(display);
         }
+        let object = allocate(display_class)?;
+        #[allow(unsafe_code)]
+        // SAFETY: initWithDescriptor: on a freshly allocated display, with the configured
+        // descriptor, per the note above.
+        let display: Option<Retained<AnyObject>> =
+            unsafe { msg_send![object, initWithDescriptor: &*descriptor] };
+        let display =
+            display.ok_or("virtual display: CGVirtualDisplay initWithDescriptor: returned nil")?;
+        let object = allocate(settings_class)?;
+        #[allow(unsafe_code)]
+        // SAFETY: init on freshly allocated settings, per the note above.
+        let settings: Option<Retained<AnyObject>> = unsafe { msg_send![object, init] };
+        let settings =
+            settings.ok_or("virtual display: CGVirtualDisplaySettings init returned nil")?;
+        #[allow(unsafe_code)]
+        // SAFETY: setHiDPI: was checked above and takes an unsigned int.
+        let _: () = unsafe { msg_send![&settings, setHiDPI: 1u32] };
+        if rotation {
+            #[allow(unsafe_code)]
+            // SAFETY: setRotation: was checked above and takes an unsigned int.
+            let _: () = unsafe { msg_send![&settings, setRotation: 0u32] };
+        }
+        let object = allocate(mode_class)?;
+        #[allow(unsafe_code)]
+        // SAFETY: initWithWidth:height:refreshRate: on a freshly allocated mode, with two
+        // unsigned ints and a double, per the note above.
+        let mode: Option<Retained<AnyObject>> = unsafe {
+            msg_send![object, initWithWidth: 2048u32, height: 1536u32, refreshRate: 60.0f64]
+        };
+        let mode = mode.ok_or(
+            "virtual display: CGVirtualDisplayMode initWithWidth:height:refreshRate: returned nil",
+        )?;
+        #[allow(unsafe_code)]
+        // SAFETY: NSArray's arrayWithObject: with the mode, per the note above.
+        let modes: Retained<AnyObject> = unsafe { msg_send![array_class, arrayWithObject: &*mode] };
+        #[allow(unsafe_code)]
+        // SAFETY: the checked setModes: and applySettings:, per the note above.
+        let applied: bool = unsafe {
+            let _: () = msg_send![&settings, setModes: &*modes];
+            msg_send![&display, applySettings: &*settings]
+        };
+        if !applied {
+            return Err("virtual display: CGVirtualDisplay applySettings: returned NO".to_owned());
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: displayID was checked above and returns an unsigned int.
+        let id: u32 = unsafe { msg_send![&display, displayID] };
+        println!("display {id}");
+        io::stdout()
+            .flush()
+            .map_err(|error| format!("virtual display stdout: {error}"))?;
+        io::copy(&mut io::stdin().lock(), &mut io::sink())
+            .map_err(|error| format!("virtual display stdin: {error}"))?;
+        drop(display);
         Ok(())
     }
 
@@ -216,6 +271,7 @@ mod native {
         let screen = NSScreen::screens(mtm)
             .firstObject()
             .ok_or("backdrop has no main display")?;
+        #[allow(unsafe_code)]
         // SAFETY: AppKit runs on the main thread, with a valid screen frame
         // and the borderless, buffered window styles.
         let window = unsafe {
@@ -227,8 +283,11 @@ mod native {
                 false,
             )
         };
+        #[allow(unsafe_code)]
         // SAFETY: the retained window owns its release, including after close.
-        unsafe { window.setReleasedWhenClosed(false) };
+        unsafe {
+            window.setReleasedWhenClosed(false)
+        };
         window.setOpaque(true);
         window.setHasShadow(false);
         let [r, g, b] = rgb.map(|channel| f64::from(channel) / 255.0);
@@ -299,6 +358,7 @@ mod native {
         let list =
             CGWindowListCopyWindowInfo(CGWindowListOption::OptionOnScreenOnly, kCGNullWindowID)
                 .ok_or("the window list is unavailable")?;
+        #[allow(unsafe_code)]
         // SAFETY: the window list is an array of dictionaries keyed by
         // strings (CGWindow.h), and the keys are constant strings.
         let (list, owner, layer, bounds_key, number_key) = unsafe {
@@ -334,9 +394,12 @@ mod native {
                 continue;
             };
             let mut rect = CGRect::default();
+            #[allow(unsafe_code)]
             // SAFETY: `bounds` is an untyped dictionary, as the call takes,
             // and `rect` is a CGRect for the call to fill.
-            if unsafe { CGRectMakeWithDictionaryRepresentation(Some(&bounds), &mut rect) } {
+            let filled =
+                unsafe { CGRectMakeWithDictionaryRepresentation(Some(&bounds), &mut rect) };
+            if filled {
                 found.push(Window {
                     id,
                     bounds: [
@@ -368,14 +431,17 @@ mod native {
     /// Every mode of `display`, with the HiDPI ones that macOS lists only
     /// on request.
     fn modes(display: CGDirectDisplayID) -> Result<Vec<CFRetained<CGDisplayMode>>, String> {
+        #[allow(unsafe_code)]
         // SAFETY: the key is a constant string.
         let key: &CFString = unsafe { kCGDisplayShowDuplicateLowResolutionModes };
         let options =
             CFDictionary::<CFString, CFBoolean>::from_slices(&[key], &[CFBoolean::new(true)]);
+        #[allow(unsafe_code)]
         // SAFETY: the options map a string key to a boolean, as
         // CGDirectDisplay.h asks.
-        let list = unsafe { CGDisplayCopyAllDisplayModes(display, Some(options.as_opaque())) }
-            .ok_or_else(|| format!("display {display} lists no modes"))?;
+        let list = unsafe { CGDisplayCopyAllDisplayModes(display, Some(options.as_opaque())) };
+        let list = list.ok_or_else(|| format!("display {display} lists no modes"))?;
+        #[allow(unsafe_code)]
         // SAFETY: the list holds display modes (CGDirectDisplay.h).
         let list = unsafe { CFRetained::cast_unchecked::<CFArray<CGDisplayMode>>(list) };
         Ok(list.iter().collect())
@@ -385,6 +451,7 @@ mod native {
     pub fn displays() -> Result<Vec<Display>, String> {
         let mut ids = [0; 16];
         let mut count = 0;
+        #[allow(unsafe_code)]
         // SAFETY: `ids` has room for the 16 displays asked for, and `count`
         // is there for the call to fill.
         let error = unsafe { CGGetActiveDisplayList(16, ids.as_mut_ptr(), &mut count) };
@@ -415,23 +482,30 @@ mod native {
     fn configure(display: CGDirectDisplayID, mode: &CGDisplayMode) -> Result<(), String> {
         let failed = |call: &str, error: CGError| format!("{call}: CGError {}", error.0);
         let mut config = ptr::null_mut();
-        // SAFETY: `config` is there for the call to fill, and each later
-        // call takes the configuration it filled in, once completed or
-        // cancelled.
-        unsafe {
-            let error = CGBeginDisplayConfiguration(&mut config);
-            if error != CGError::Success {
-                return Err(failed("CGBeginDisplayConfiguration", error));
-            }
-            let error = CGConfigureDisplayWithDisplayMode(config, display, Some(mode), None);
-            if error != CGError::Success {
-                CGCancelDisplayConfiguration(config);
-                return Err(failed("CGConfigureDisplayWithDisplayMode", error));
-            }
-            let error = CGCompleteDisplayConfiguration(config, CGConfigureOption::ForAppOnly);
-            if error != CGError::Success {
-                return Err(failed("CGCompleteDisplayConfiguration", error));
-            }
+        #[allow(unsafe_code)]
+        // SAFETY: `config` is there for the call to fill.
+        let error = unsafe { CGBeginDisplayConfiguration(&mut config) };
+        if error != CGError::Success {
+            return Err(failed("CGBeginDisplayConfiguration", error));
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: `config` was filled by CGBeginDisplayConfiguration and is not yet
+        // completed or cancelled.
+        let error = unsafe { CGConfigureDisplayWithDisplayMode(config, display, Some(mode), None) };
+        if error != CGError::Success {
+            #[allow(unsafe_code)]
+            // SAFETY: `config` is still open; cancelling ends it and it is not used again.
+            unsafe {
+                CGCancelDisplayConfiguration(config)
+            };
+            return Err(failed("CGConfigureDisplayWithDisplayMode", error));
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: `config` is still open; completing ends it and it is not used again.
+        let error =
+            unsafe { CGCompleteDisplayConfiguration(config, CGConfigureOption::ForAppOnly) };
+        if error != CGError::Success {
+            return Err(failed("CGCompleteDisplayConfiguration", error));
         }
         Ok(())
     }
@@ -488,29 +562,44 @@ mod native {
     ) -> Result<(), String> {
         let failed = |call: &str, error: CGError| format!("{call}: CGError {}", error.0);
         let mut config = ptr::null_mut();
-        // SAFETY: config is filled by Begin, then used until completed or
-        // cancelled. Only the main display and the virtual master are changed.
-        unsafe {
-            let error = CGBeginDisplayConfiguration(&mut config);
+        #[allow(unsafe_code)]
+        // SAFETY: `config` is there for the call to fill.
+        let error = unsafe { CGBeginDisplayConfiguration(&mut config) };
+        if error != CGError::Success {
+            return Err(failed("CGBeginDisplayConfiguration", error));
+        }
+        if let Some(mode) = mode {
+            #[allow(unsafe_code)]
+            // SAFETY: `config` was filled by CGBeginDisplayConfiguration and is not yet
+            // completed or cancelled. Only the virtual master's mode changes.
+            let error =
+                unsafe { CGConfigureDisplayWithDisplayMode(config, master, Some(mode), None) };
             if error != CGError::Success {
-                return Err(failed("CGBeginDisplayConfiguration", error));
+                #[allow(unsafe_code)]
+                // SAFETY: `config` is still open; cancelling ends it and it is not used again.
+                unsafe {
+                    CGCancelDisplayConfiguration(config)
+                };
+                return Err(failed("CGConfigureDisplayWithDisplayMode", error));
             }
-            if let Some(mode) = mode {
-                let error = CGConfigureDisplayWithDisplayMode(config, master, Some(mode), None);
-                if error != CGError::Success {
-                    CGCancelDisplayConfiguration(config);
-                    return Err(failed("CGConfigureDisplayWithDisplayMode", error));
-                }
-            }
-            let error = CGConfigureDisplayMirrorOfDisplay(config, main, master);
-            if error != CGError::Success {
-                CGCancelDisplayConfiguration(config);
-                return Err(failed("CGConfigureDisplayMirrorOfDisplay", error));
-            }
-            let error = CGCompleteDisplayConfiguration(config, CGConfigureOption::ForAppOnly);
-            if error != CGError::Success {
-                return Err(failed("CGCompleteDisplayConfiguration", error));
-            }
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: `config` is still open. Only the main display mirrors the virtual master.
+        let error = unsafe { CGConfigureDisplayMirrorOfDisplay(config, main, master) };
+        if error != CGError::Success {
+            #[allow(unsafe_code)]
+            // SAFETY: `config` is still open; cancelling ends it and it is not used again.
+            unsafe {
+                CGCancelDisplayConfiguration(config)
+            };
+            return Err(failed("CGConfigureDisplayMirrorOfDisplay", error));
+        }
+        #[allow(unsafe_code)]
+        // SAFETY: `config` is still open; completing ends it and it is not used again.
+        let error =
+            unsafe { CGCompleteDisplayConfiguration(config, CGConfigureOption::ForAppOnly) };
+        if error != CGError::Success {
+            return Err(failed("CGCompleteDisplayConfiguration", error));
         }
         Ok(())
     }

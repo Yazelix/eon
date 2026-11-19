@@ -19,9 +19,14 @@ use std::{
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PATH_BYTES: u64 = 64 * 1024;
 
+// SAFETY: these are the C library's `uid_t getuid(void)` and `int kill(pid_t, int)`,
+// with `uid_t` a u32 and `pid_t` an i32 on macOS and Linux. Both take and return
+// integers only, with no pointer or memory precondition, so a call cannot break
+// memory safety and they are declared safe.
+#[allow(unsafe_code)]
 unsafe extern "C" {
-    fn getuid() -> u32;
-    fn kill(pid: i32, signal: i32) -> i32;
+    safe fn getuid() -> u32;
+    safe fn kill(pid: i32, signal: i32) -> i32;
 }
 
 struct Scratch(PathBuf);
@@ -71,8 +76,9 @@ fn run(command: &mut Command, deadline: Instant) -> io::Result<()> {
         }
     };
     if result.is_err() {
-        // SAFETY: this group was created for this child alone; it never joins Eon's group.
-        unsafe { kill(-(child.id() as i32), 9) };
+        // Kill the child's process group: `process_group(0)` made the child its leader, so
+        // descendants still in that group get the signal too. Eon's own group never does.
+        kill(-(child.id() as i32), 9);
     }
     let _ = child.wait();
     result
@@ -91,8 +97,7 @@ fn read_value(path: &Path) -> io::Result<Vec<u8>> {
 
 fn account_shell(scratch: &Path, deadline: Instant) -> io::Result<PathBuf> {
     let output = scratch.join("account");
-    // SAFETY: getuid has no arguments and no failure case.
-    let uid = unsafe { getuid() };
+    let uid = getuid();
     run(
         Command::new("/usr/bin/dscacheutil")
             .args(["-q", "user", "-a", "uid", &uid.to_string()])
@@ -168,8 +173,7 @@ fn append_diagnostic(directory: &Path, message: &str) -> io::Result<()> {
         .mode(0o700)
         .create(directory)?;
     let metadata = fs::symlink_metadata(directory)?;
-    // SAFETY: getuid has no arguments and no failure case.
-    let uid = unsafe { getuid() };
+    let uid = getuid();
     if !metadata.is_dir() || metadata.uid() != uid {
         return Err(io::Error::other("app log directory must be owned"));
     }

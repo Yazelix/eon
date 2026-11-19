@@ -13,3 +13,9 @@ sha2 = { version = "=0.11.0", default-features = false }
 tar = { version = "=0.4.46", default-features = false }
 tempfile = "=3.27.0"
 zstd = { version = "=0.14.2", default-features = false, features = ["vendored"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

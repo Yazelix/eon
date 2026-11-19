@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[path = "@launchModule@"]
 mod launch_environment;
 #[path = "@nativeModule@"]

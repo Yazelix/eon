@@ -1,5 +1,3 @@
-#![deny(unsafe_code)]
-
 //! Native presentation and interaction for one authoritative Orbit session.
 
 /// Maximum OSC 8 target size accepted by Venus link actions.

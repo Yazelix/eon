@@ -39,5 +39,8 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["metal"] }
 [dev-dependencies]
 accesskit_consumer = "=0.39.2"
 
+[lints.rust]
+unsafe_code = "deny"
+
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"

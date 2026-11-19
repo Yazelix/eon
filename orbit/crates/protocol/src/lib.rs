@@ -1,5 +1,3 @@
-#![forbid(unsafe_code)]
-
 //! Canonical owned values and codec for Orbit presentation frames.
 //!
 //! This crate deliberately contains no terminal, transport, renderer, or

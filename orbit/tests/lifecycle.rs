@@ -1,5 +1,3 @@
-#![deny(unsafe_code, clippy::undocumented_unsafe_blocks)]
-
 #[allow(unsafe_code)]
 #[path = "support/process.rs"]
 mod native_process;

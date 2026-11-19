@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Stands in for the makeWrapper scripts of the relinked bundle. A copy of this static
 //! program replaces each wrapper, applies that wrapper's environment relative to the tree
 //! it runs from, and runs the wrapped program with the same arguments, argv[0] included.

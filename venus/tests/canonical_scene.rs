@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use eon_workspace_protocol::v47::{Pane, Snapshot, Tab};
 use orbit_protocol::{
     Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, CursorViewport,

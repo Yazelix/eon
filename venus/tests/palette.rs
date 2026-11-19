@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use yazelix_venus::{Color, Palette, PaletteMode, contrast_ratio};
 
 #[test]

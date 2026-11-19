@@ -7,3 +7,9 @@ license = "Apache-2.0"
 publish = false
 
 [workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

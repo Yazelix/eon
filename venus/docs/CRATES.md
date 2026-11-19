@@ -238,12 +238,15 @@ dependency decision does not establish public-distribution proof.
   pin, already in Venus's macOS build through core-foundation, so the lock
   gains one edge and no package (`eon-mac-launch-kz4p.3`, the Eon Bar CPU and
   RAM labels in [PRESENTATION.md](PRESENTATION.md#eon-bar)).
-- **Owner consequence:** Venus's library root denies unsafe code instead of
-  forbidding it, and one macOS-only module in `src/system.rs` allows it: the
-  host port taken once per process, `host_statistics`, a zeroed
+- **Owner consequence:** Venus's manifest denies unsafe code for every target
+  instead of forbidding it. Six functions of the macOS-only `host` module in
+  `src/system.rs` allow it, each with its own attribute (`port`, `cpu_load`,
+  `cpu_name`, `load_average`, `per_cpu_load`, `memory`), so a new function there
+  does not inherit the allowance. They cover the host port taken once per process, `host_statistics`, a zeroed
   `vm_statistics64` for `host_statistics64`, `sysctlbyname("hw.memsize")` and
   `sysconf`, each with a safety note. Its results feed the same pure,
-  Linux-tested arithmetic. The binary root keeps forbidding unsafe code. libc
+  Linux-tested arithmetic. The binary and integration-test roots forbid unsafe
+  code. libc
   marks `mach_host_self` deprecated in favour of mach2; Venus allows that one
   call.
 - **Rejected:** mach2, a new package whose calls are just as unsafe;

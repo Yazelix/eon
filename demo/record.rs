@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use kinestra::{Error, Recorder, Result, Size};
 use serde_json::Value;
 use std::{

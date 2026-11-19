@@ -1,5 +1,3 @@
-#![deny(unsafe_code, clippy::undocumented_unsafe_blocks)]
-
 //! The real-PTY checks: each starts the Orbit at `ORBIT_BIN` on
 //! Orbit's command line, drives it through ORBS v14 and management
 //! messages encoded and decoded by the canonical `orbit-protocol` codec, and

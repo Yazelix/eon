@@ -1,4 +1,7 @@
 //! Real prompt scenarios for managed-command-path; script owns each isolated PTY.
+
+#![forbid(unsafe_code)]
+
 use std::{
     env, fs,
     io::{Read, Write},

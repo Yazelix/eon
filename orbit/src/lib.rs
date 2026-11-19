@@ -1,5 +1,3 @@
-#![deny(unsafe_code, clippy::undocumented_unsafe_blocks)]
-
 use std::{
     io,
     os::fd::RawFd,

@@ -5,3 +5,9 @@ edition = "2024"
 publish = false
 
 [dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

@@ -1,5 +1,4 @@
 #![cfg(target_os = "linux")]
-#![deny(unsafe_code)]
 
 #[allow(unsafe_code)]
 mod platform;

@@ -1,5 +1,7 @@
 //! Exact composition capture; filesystem and installed-build association belong to Eon.
 
+#![forbid(unsafe_code)]
+
 use std::{
     collections::BTreeMap,
     ffi::{OsStr, OsString},

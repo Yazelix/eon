@@ -1,4 +1,3 @@
-#![deny(unsafe_code)]
 #![cfg(target_os = "linux")]
 
 use fs2::FileExt;
