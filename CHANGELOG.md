@@ -5,13 +5,103 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+## v0.1.28 (2026-11-20)
+
+### Upgrading from v0.1.16
+
+Before upgrading, if you detached the window that bare `eon` opens, reopen it
+with `eon attach`, so that you can quit it from inside after the upgrade.
+Then, after `nix profile upgrade --refresh eon`:
+
+- Quit each v0.1.16 window from inside it, with Alt+Shift+Q or `eon quit` in
+  one of its terminals, then run `eon` for a fresh window. Quitting stops that
+  window's terminals and what runs in them, so save your work first. This
+  `eon` cannot stop a v0.1.16 window from outside: `eon window ls` shows its
+  Stop as unavailable, and `eon window stop` and `eon quit --all` fail on it
+  with `stop-unavailable`. It also cannot reopen a detached v0.1.16 `default`
+  window: `eon window attach` runs v0.1.16's `eon` in a form v0.1.16 rejects.
+  To reopen one, run the `executable` that `eon window ls --json` lists for it
+  as `EXECUTABLE attach`; if that file is gone, run `nix profile rollback`,
+  reopen the window with `eon attach` and quit it, then upgrade again. Until you quit it, the old window keeps
+  running as v0.1.16, and commands added since, such as `eon session`,
+  `eon events`, `eon pane history` and `eon window reload`, do not work on
+  it. Its terminals also keep their old Orbit hosts, so features such as
+  OSC 10/11 colours need terminals from a fresh window.
+- Rename two tables in `config.toml`: `[workspace]` is now `[session]`, and
+  `[popups.workspaces]` is now `[popups.sessions]`. Eon ignores an old table,
+  with one warning naming its replacement, so until you rename them their
+  settings (`number_keys`, `warning_close_last_tab`, `animate_working_badge`,
+  and the Sessions popup's `keybinding`, `label`, `command`, `enabled` and
+  `keep_alive`) fall back to their defaults (`eon-30skm`).
+- Change scripts and agents that call removed commands. `eon attach`,
+  `eon stop`, `--generation`, `eon windows`, `eon generations`,
+  `eon config-path` and `eon config-dir` fail as invalid commands (exit 2):
+  use `eon window attach [ID]`, `eon window stop ID|previous|all`,
+  `--window ID`, `eon window ls`, `eon config path` and `eon config dir`.
+  `eon workspace` and `eon workspaces` fail the same way and name their
+  replacements, `eon session` and `eon session ls`. `eon tab create
+  --directory DIRECTORY` is now `eon tab create --dir DIR`
+  (`eon-7cf0y.22`, `eon-30skm`, `eon-fv1j0`).
+- Change anything that reads `--json` output or error codes. The `workspace`
+  key is `session`, `eon session ls --json` lists `sessions`, and a pane or
+  popup names its terminal in `terminal` instead of `session`. Busy
+  terminals, attention queue entries and the target of `pane read` and
+  `pane send` name their `session` instead of `workspace`, and a Stop result
+  and `eonbase generations --json` list `terminals` instead of `sessions`.
+  Session IDs are `s1`, `s2`, ... instead of `w1`, `w2`, ..., and terminal
+  IDs are `terminal-1`, `terminal-2`, ... instead of `session-1`,
+  `session-2`, .... Error codes follow: `unknown-session` means an
+  unknown session, as `unknown-workspace` did; `ambiguous-session`,
+  `session-limit`, `session-close-failed` and `session-unavailable` replace
+  their `workspace` forms; and an unknown terminal reports `unknown-terminal`
+  and one that cannot start `terminal-start`, where v0.1.16 reported
+  `unknown-session` and `session-start`. `eon window stop --json` and
+  `eon quit --all --json` print one JSON array,
+  `[{"window": ID, "results": [...]}, ...]`, with an object per window
+  (`eon-30skm`, `eon-7cf0y.22`).
+- Add `--yes` where scripts close tabs or panes with `--json`. In v0.1.16,
+  `eon tab close --json` and `eon pane close --json` never asked. In this
+  release they exit 1 with `not-confirmed` when a terminal they would stop is
+  busy, and on every close in an eonbase window, where busy state is unknown
+  (`eon-agent-parity-a9g0.3`).
+- With the packaged Helix, or Neovim, Files Enter and `eon edit` open files
+  in the tab's Editor popup instead of a new pane, and `eon edit --json`
+  then names the popup in the tab's `selected_popup` instead of a `created`
+  pane. Set `[editor] open_in = "pane"` to keep opening new panes
+  (`eon-xodrj.5`).
+- Eon's Helix is built without Steel, so it ignores `helix.scm` and
+  `init.scm` in `$(eon config dir)/helix/`, and what they set up no longer
+  runs (`eon-xodrj.3`).
+- Alt+Shift+E opens the new Scrollback popup and Alt+Shift+O the new Editor
+  popup. A popup of yours already on either key, such as the Alt+Shift+O
+  example in v0.1.16's configuration guide, keeps it, and the built-in popup
+  stays without a key until you set its `keybinding` in `[popups.scrollback]`
+  or `[popups.editor]`. Both count toward the limit of 32 enabled popups, so a
+  v0.1.16 configuration with 31 or 32 enabled popups fails to load until you
+  set `enabled = false` on enough popups, one or two, to stay at 32 or fewer
+  (`eon-u5bvd.4`, `eon-xodrj.4`).
+- With no action needed, a fresh window looks different: the clock and the
+  version label, `EON α0.1.28`, sit in the bottom hints bar, panel headings
+  default to `connected`, the expanded pane's header is one band, the CPU,
+  RAM and disk chips lead with icons, and Eon Bar chips mark warning levels
+  with a dot.
+
+### Known limits
+
+- This release installs and updates through Nix. The Nix-free Linux archive
+  and installer are prepared for v0.2.0, the planned first beta; no GitHub
+  release carries them yet.
+- While a new terminal waits to become ready, other clients' changes, such as
+  a rename, focus or close from another pane or from the window, wait for it,
+  up to about 15 s. A start that never becomes ready fails at about 15 s
+  (v0.1.16: about 5 s) (`eon-6522z`).
+
+### Changes
+
 - Eon keeps answering while a new terminal starts. `eon session` and other
-  reads of the session or runtime no longer wait for the new terminal to
-  become ready, and other requests run in arrival order once it has. A
-  terminal that never becomes ready now fails at its 15-second bound, not
-  after 20 seconds (`eon-pimct`). Other clients' requests, such as a rename
-  or close from another pane, still wait while such a start runs, up to
-  about 15 seconds (`eon-6522z`).
+  reads of the session or runtime do not wait for the new terminal to become
+  ready, and other requests run in arrival order once the start ends
+  (`eon-pimct`).
 - Google quota chips work again with agy 1.5.6. Eon reads Google quota only
   from agy versions whose `/usage` command is verified, now 1.4.1 and 1.5.6.
   When Google quota is selected, `eon doctor` has a `quota` check that names
@@ -63,11 +153,16 @@ installation, and proven contract changes.
 - Alt+Shift+Y returns to Files even when Quick search is still starting under
   load. Eon waits for fzf to take the terminal before sending the leave key
   (`eon-gs2jh`).
+- Quick search runs fzf without `--listen`, so it no longer opens a local
+  socket through which a process that reached it could run shell commands.
+  Eon leaves Quick search by sending fzf the reserved key
+  Ctrl+Alt+Shift+PageDown through Orbit (`eon-260mh.2.4`, EON-C10).
 
-- Boat heavy jobs use the local per-job memory policy and run without swap.
-  Requests select the default VM or a qualified large VM by cap while
-  sharing one lease. Completion reports distinguish job-limit OOMs from
-  VM-wide OOMs and unknown causes (`eon-eon-agent-lr8sx.36`).
+- `eon agent slot run` gives a job routed to Boat the same memory class and
+  cap as a local heavy job. Capped Boat runs are not live yet: Boat's default
+  build image has no local Nix store, so such a job runs locally until a
+  qualified image exists (`eon-klt8h`). Boat stays opt-in
+  (`eon-eon-agent-lr8sx.36`).
 
 - OpenCode panes show their official mark in the Agents sidebar and attention
   inbox, with the label `OpenCode` and artwork suited to the row background
@@ -127,10 +222,6 @@ installation, and proven contract changes.
   so an agent can start a session in its project's tab. The active tab, the
   shown session and desktop focus stay as they are; an unknown TAB exits 3
   (`unknown-tab`) and changes nothing (`eon-89ho`).
-- Eon 0.1.28 uses EONW v47, which carries both pane creations on one request
-  with an optional tab. Windows started before this version need a restart to
-  use `--tab`; v46 requests are refused cleanly, never migrated. Existing live
-  windows keep running (`eon-89ho`).
 
 - The Editor popup starts on macOS when the runtime directory resolves through
   `/tmp` to `/private/tmp`. A runtime directory that is still too long reports
@@ -203,8 +294,8 @@ installation, and proven contract changes.
   another build. Quota remains readable through `eon session --json`
   (`eon-eon-agent-lr8sx.29`).
 
-- On Linux with agent configuration, Agent `auto` shares admission and rotation
-  with `eon agent launch --popup`, preserving resume commands and its own
+- On Linux with agent configuration, Agent `auto` shares admission and backend
+  selection with `eon agent launch --popup`, preserving resume commands and its own
   directory/terminal context. Managed refusal never falls back to an unmanaged
   backend. macOS and config-less users retain the built-in popup path; custom
   backends can set `popup_command` (`eon-eon-agent-lr8sx.28`).
@@ -232,14 +323,10 @@ installation, and proven contract changes.
   Configure the optional route under `[slots.boat]` in `agent.toml`
   (`eon-eon-agent-lr8sx.30`).
 
-- Eon 0.1.27 uses EONW v46. Windows started before this version need a
-  restart to use its Runtime popup support; v45 requests are refused cleanly,
-  never migrated. Existing live windows keep running (`eon-agent-parity-a9g0.1.3`).
 - Runtime can create a catalog popup in any addressed tab in the background
   and select an exact existing popup by ID without relaunching it or sending
   input. Both paths preserve covering transients; Scrollback obeys agent
-  terminal-access policy. The CLI show/focus forms remain pending in
-  `eon-agent-parity-a9g0.1.2`.
+  terminal-access policy.
 - Full-Eon windows retain a private atomic build/launcher record through
   supervisor loss. Routing uses that record, and cleanup preserves it while
   terminal or other runtime residue remains (`eon-t3fyd.14`). In-place Update
@@ -258,15 +345,10 @@ installation, and proven contract changes.
   CPU on isolated Sway, with interleaved candidate builds, dense Unicode
   scrolling and complete diagnostic accounting (`eon-benchmarks-xl2bp.10`).
 
-- Eon 0.1.26 uses EONW v45. Windows started before this version need a
-  restart; their EONW v44 supervisors reject the updated CLI's incompatible
-  requests cleanly (`eon-81emk`).
-
 - `eon session --json` reports native window focus and the keyboard-focused
   pane or popup. `eon pane send focused` explicitly targets the person's
   focused terminal, refusing unknown/unfocused state; delayed Enter requires
-  the same focused terminal. EONW v45 carries the focus and target values
-  (`eon-81emk`).
+  the same focused terminal (`eon-81emk`).
 
 - Background attention badges use gently pulsing round dots; Idle and
   Unavailable glyphs have smooth anti-aliased edges. The attention animation-off
@@ -281,8 +363,6 @@ installation, and proven contract changes.
   A suspend between the check and query can add one idle delay. GPU data parity
   is tracked by `eon-agent-parity-a9g0.12` (`eon-gpu-widget-eon-bar-ri16.1`).
 
-- Agents sidebar and attention inbox status glyphs and app marks are larger
-  and vertically centred across the full row (`eon-sidebar-app-icons-y99b7.9`).
 - `default` keeps addressing the sole running default-namespace window after
   a profile refresh. Window listing, session control, attach, reload and Stop
   prefer this build's running window, otherwise the only running generation;
@@ -301,13 +381,12 @@ installation, and proven contract changes.
   this initial mechanical move, with its clean port deferred
   (`eon-eon-agent-lr8sx.27`).
 
-- Selected Google quota windows show text chips in the Eon Bar, with their
-  exact model group, window position, remaining percentage and stale state.
-  Hover and accessibility include reset availability and local read time;
-  hidden groups remain in JSON (`eon-o9f3h.5`).
+- Selected Google quota windows show chips in the Eon Bar. Hover and
+  accessibility include reset availability and local read time; hidden
+  groups remain in JSON (`eon-o9f3h.5`).
 
-- Opt-in Google quota selectors collect agy 1.4.1 reports on a shared
-  five-minute schedule and retain last-good groups in workspace JSON across
+- Opt-in Google quota selectors collect agy reports on a shared
+  five-minute schedule and retain last-good groups in session JSON across
   failures and restarts (`eon-o9f3h.4`).
 
 - `[bar] widgets` accepts exact `google_quota:<scope>:5h` / `:7d`
@@ -315,13 +394,8 @@ installation, and proven contract changes.
   opt-in. Configuration
   schema exposes their accepted forms beside fixed names (`eon-o9f3h.3`).
 
-- Workspace JSON includes independent `google_quota` and
-  `google_quota_failure` fields for enabled Google collection. The canonical
-  EONW wire advances; older live windows keep
-  running and are reported as incompatible (`eon-o9f3h.1`).
-
-Eon remains in alpha. v0.2.0 is the planned first beta; its version and stage
-switch requires explicit approval of the release cut (`eon-igae.9`).
+- Session JSON includes independent `google_quota` and
+  `google_quota_failure` fields for enabled Google collection (`eon-o9f3h.1`).
 
 - In-window package updates use external PATH's installed `eon` when no
   update target is specified, so a window's pinned build no longer prevents
@@ -336,13 +410,12 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   report Orbit's exit status or signal, or unknown status when Orbit's exit
   cannot be observed (`eon-terminal-end-status-mapping-cxys`).
 
-- Eon 0.1.25 uses EONW v44. Inspection separates the runtime `generation`
-  from `created_build` and `active_build`; window inventory reports each
-  retained terminal's run, origin and protocol facts, with unknown recovered
-  launch facts null. Event consumers recognize `updating` as exit 1. This is
-  the data foundation for in-place Update; allocation still uses the build
-  digest and Update is not exposed. v44 needs a fresh matching-version window;
-  existing cross-version Routing and Reserved Stop remain (`eon-t3fyd.2`).
+- Inspection separates the runtime `generation` from `created_build` and
+  `active_build`; window inventory reports each retained terminal's run,
+  origin and protocol facts, with unknown recovered launch facts null. Event
+  consumers recognize `updating` as exit 1. This is the data foundation for
+  in-place Update; allocation still uses the build digest and Update is not
+  exposed (`eon-t3fyd.2`).
 - `eon keys [--json]` lists the effective keyboard and link shortcuts of the
   addressed Eon window without taking focus or changing state: `groups` matches
   `Alt+/`, `bindings` reports fixed action IDs, active chords and popup
@@ -353,14 +426,8 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   window's launch or last-reloaded value until reload (`EON-C10` Candidate,
   `eon-configurability-qkq8.4`).
 
-- The Editor key starts Neovim with an Eon-owned listener. `[editor] kind`
-  defaults to `"auto"`, recognizing the `nvim` basename; foreground wrappers
-  opt in with `"neovim"`. Neovim Files and `eon edit` still open new panes
-  while popup reuse is planned for a later release. Unsupported Editor
-  listener metadata refuses file routing
-  after supervisor recovery; save your work and restart that Editor popup.
-  Eon does not restart it automatically (`eon-xodrj.6.2.1`).
-- Files and `eon edit` open files in the owned Neovim Editor popup, retaining
+- The Editor key starts Neovim with an Eon-owned listener, and Files and
+  `eon edit` open files in that Neovim Editor popup, retaining
   its process and unsaved buffers. Reopening a buffer never reloads it;
   `FILE:LINE[:COL]` uses native Neovim byte columns, with literal filenames
   taking precedence. `kind = "auto"` recognizes `nvim`; foreground wrappers
@@ -399,9 +466,6 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   even when a preceding request's reply fails during disconnect. This preserves
   focus-out delivery for programs that save on focus loss (`eon-lobng`).
 
-- Quota, CPU, RAM and disk chips keep neutral values and show warning levels
-  with yellow, orange or red capsule outlines. Healthy and unknown readings
-  stay untinted (`eon-wuau8.8`).
 - Venus keeps cursor-only blink out of grid rebuilding and glyph preparation,
   including static cursors in other columns. Cursor appearance and cadence stay
   the same, and SGR-blinking text retains its phase (`eon-venus-blink-no-rebuild-h222`).
@@ -418,15 +482,12 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 - CPU, RAM and disk chip percentages align to the right padding while their
   icons and chip widths stay fixed (`eon-wuau8.5`).
 - Attention badges draw directly on opaque tab, bar and sidebar/inbox surfaces,
-  with every glyph colour adapted for contrast. Translucent rows use a quiet
-  rounded square instead of the near-black disc; stale dimming is preserved
+  with every glyph colour adapted for contrast; stale dimming is preserved
   (`eon-wuau8.7`).
 - `eon pane rename PANE NAME --tag TAG` sets a separate plain-text pane tag;
   `--tag ''` clears it, and name-only renames preserve it. Pane JSON and
   subscription snapshots, gaps and events expose nullable `tag`; tag changes
-  emit `pane-renamed` without changing selection or focus. Eon 0.1.24 uses
-  EONW v42 for the tag-bearing schema and requires a fresh matching-version
-  window. Existing windows retain their original build and live terminals
+  emit `pane-renamed` without changing selection or focus
   (`eon-xvz5c`, EON-C8/C10/C39).
 
 - Files Enter and `eon edit` open files in the packaged Helix Editor popup,
@@ -434,8 +495,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   the new-pane path, also used by other editors, directories, disabled Editor,
   an existing Editor without Eon's listener, and builds without Helix. Failed
   exchanges leave workspace topology and selection unchanged; uncertain opens
-  are never retried. Eon 0.1.23 uses EONW v41 to distinguish the edit result;
-  v41 commands require a window on this build (`eon-xodrj.5`).
+  are never retried (`eon-xodrj.5`).
 
 - The Agents sidebar scrolls overflowing rows with the mouse wheel and
   touchpad. A slim neutral thumb shows overflow and position; keyboard
@@ -454,8 +514,15 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 - Panel headings default to `"connected"`; `[panels] heading = "notch"` remains
   a supported choice. Omitted settings use connected on window open, reopen or
   reload (`eon-j7ii2`, Lucca's 2026-11-11 decision).
+- `eon window reload ID` replaces a running window's native client, Venus,
+  without stopping its terminals. After an upgrade it moves the window onto
+  the new build's Venus when that Venus's protocols match the window's. The
+  supervisor, terminals, running commands, layout and selection survive, and
+  if the new Venus fails to start, Eon restores the previous one. Reload does
+  not upgrade the window's supervisor or EONW, and it refuses while the
+  window lacks keyboard focus (`eon-u199d.1`, EON-C11).
 - `eon window reload ID --json` reports `"accepted":true` with
-  `"replaced":null` and `"config_reloaded":null`: EONW v41 confirms request
+  `"replaced":null` and `"config_reloaded":null`: EONW confirms request
   acceptance, but cannot confirm those effects. Text output states the same
   limit (`eon-u199d.5`, EON-C11).
 
@@ -501,10 +568,8 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   (`eon-ckaya`, EON-C9).
 - Top-bar readings share the interface font and reserve a stable width. Widgets
   and the session label use quiet filled capsules; Shortcuts is a plain `?`.
-  Lucca approved the font and capsules ("ok") and `?` ("ok, but im not so sure")
-  on 2026-11-10. The shared critical/pace red is slightly brighter, (255,75,75),
-  to keep 4.5:1 contrast on the capsule fill, approved by eon-overseer under
-  Lucca's standing delegation on 2026-11-11 (`eon-wuau8.2`, VEN-C21).
+  The shared critical/pace red is slightly brighter, (255,75,75), to keep
+  4.5:1 contrast on the capsule fill (`eon-wuau8.2`, VEN-C21).
 
 - Popup agents in Agents and the attention inbox carry two overlapping rounded
   squares to read as stacked windows. Their thin stroke follows `border_width`,
@@ -565,22 +630,21 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 - Alt+Shift+O opens the built-in Editor popup using `[editor] command`.
   Hiding it or changing the tab directory preserves the running editor and
   its buffers. The packaged Helix starts with a private listener socket
-  (`eon-xodrj.4`). Opening the popup from the CLI is tracked by
-  `eon-agent-parity-a9g0.1`. Configurations already at the 32-enabled-popup
+  (`eon-xodrj.4`). Configurations already at the 32-enabled-popup
   limit must disable Editor or another popup to load.
 - The Nix-free archive carries generated third-party notices. Its Helix build
   omits the Blueprint, Drools, GNU assembler, Hare, Jinja2, nginx and Prolog
   grammars, so those languages lack syntax highlighting in the archive. The
   Nix package keeps those grammars (`eon-igae.15.6`).
 
-- `eon column close PANE --yes [--json]` closes the pane's Stack through
-  EONW v39. Without `--yes`, it lists every terminal it would stop and
-  refuses, including idle and one-pane Stacks. Consent binds the generation,
+- `eon column close PANE --yes [--json]` closes the pane's Stack. Without
+  `--yes`, it lists every terminal it would stop and refuses, including idle
+  and one-pane Stacks. Consent binds the generation,
   exact run IDs and the close's consequence; a changed scope stops nothing.
   Column close never sweeps in a run that appeared later.
   `eon sidebar show|hide` and Agents Hide set
   Runtime's value directly, so concurrent hides cannot reopen it
-  (`eon-cq38r`). EONW v39 requires restarting windows for the updated CLI.
+  (`eon-cq38r`).
 
 - Popup and Agents sidebar headings have a Hide button in a second notch at
   the right of the heading. The popup's does what `eon popup hide POPUP` does;
@@ -640,7 +704,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 
 - `eon tab switch TAB [--json]` makes a tab of the session active, as clicking
   it does, from any tab and without moving desktop focus; a tab that is not live
-  exits 3 (`unknown-tab`). `eon focus` takes a pane and directions only; a tab
+  exits 3 (`unknown-tab`). `eon focus` takes a pane, popup or direction; a tab
   ID there exits 2 and names `eon tab switch` (`eon-cglv2.1`).
 - `eon-bench response --pressure cpu-half|cpu-all|disk|memory` runs each warm
   case under one bounded CPU, buffered-write plus fsync, or contained memory
@@ -729,8 +793,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
 - `eon-bench memory` measures display-free server, empty/filled terminal and
   native reference-client PSS for Eon, Nix-pinned tmux and Zellij, with
   isolated processes, raw PSS/RSS/anonymous-PSS evidence and median/p05–p95
-  tables. Venus client memory remains unmeasured; Eon codec-client attribution
-  is a separate diagnostic
+  tables. Eon codec-client attribution is a separate diagnostic
   (`eon-benchmarks-xl2bp.5`).
 
 - Commands offers **Check for updates** and **Install update**, with the CLI's
@@ -843,22 +906,18 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   seconds; registry reads share a lock. Registry setup failure leaves recovered
   work usable with its diagnostic. Registration does not prove
   liveness or recovery; an uncertain
-  creation needs inspection before any retry. EONW v38 carries the mapping
-  and typed targets; the Reserved Stop is unchanged. Eon is 0.1.22: restart
-  running windows to use v38 commands; their live terminals keep running on
-  the earlier build until you close them.
+  creation needs inspection before any retry.
 - Every Stop is now the Reserved Stop, one message whose bytes no later Eon
   changes, so `eon window stop`, `eon quit`, `eon quit --all` and Venus's Quit
   stop a window of another Eon build without running that build's `eon`,
   whether or not it is still installed (`eon-7cf0y.17`, EON-C11). The
   delegated Stop and `EON_STOP_DELEGATED` are gone; `eon window attach ID`
-  still runs another build's recorded `eon`, always as `window attach ID`. A
+  still runs another build's recorded `eon`, always as `window attach ID`,
+  which the `eon` of Eon 0.1.18 or older rejects for its default window. A
   window of Eon 0.1.20 or older predates the Reserved Stop: `eon window ls`
   shows its Stop as unavailable, and its Stop fails with `stop-unavailable`
   and says to quit it from inside its window (Alt+Shift+Q, or `eon quit` in
   one of its terminals).
-  EONW v37 carries the change and Eon is 0.1.21: restart running windows so
-  that any later build can stop them.
 - Venus and the documentation say session too (`eon-30skm`, slice 3): the
   Eon Bar label's accessible name reads "Session NAME, 2 of 3" and adds
   ", another session needs input", attention inbox rows in another session
@@ -884,7 +943,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   popup entries, the Sessions picker's prompt and the `eon` skill say
   session.
 - Workspaces become sessions, starting with the values Eon hands out
-  (`eon-30skm`, slice 1; the commands and JSON keys follow). Session IDs are
+  (`eon-30skm`, slice 1). Session IDs are
   `s1`, `s2`, ... instead of `w1`, `w2`, ..., and terminal IDs are
   `terminal-1`, `terminal-2`, ... instead of `session-1`, `session-2`, ...,
   so "session" has one meaning. Error codes follow: `unknown-session`,
@@ -894,10 +953,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   `[workspace]` table is now `[session]` and the Workspaces popup is
   `[popups.sessions]`, labelled Sessions and run as `eon-sessions`; an old
   `[workspace]` or `[popups.workspaces]` table is ignored with one warning
-  naming its replacement, so move its keys by hand. EONW v36 carries the new
-  values (no message layout changes) and Eon is 0.1.20: restart running
-  windows, whose terminals keep the old IDs, to use this release's `eon` on
-  them.
+  naming its replacement, so move its keys by hand.
 - On macOS, Command+Q in an Eon window quits the window as Option+Shift+Q
   does, asking first while a terminal runs something, instead of only closing
   Venus and leaving the terminals running; Shortcuts lists it beside
@@ -909,24 +965,17 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   `font_fallbacks`. Each chip is six cells wide instead of eight or nine, so
   the readings stay in narrower windows. Hover and screen readers still name
   each reading (`eon-igae.14.5`).
-- Eon is labelled alpha again; v0.2.0 enters beta. 1.0.0 has no
-  scheduled date.
+- Eon is labelled alpha again, and this release is an alpha; v0.2.0 is
+  planned as the first beta. 1.0.0 has no scheduled date.
 - Eon has one window family in the CLI. `eon attach`, `eon stop` and
   `--generation` are removed: use `eon window attach [ID]` and
   `eon window stop ID|previous|all`, which take a window ID as
   `eon window ls` shows it or any unique prefix of at least 4 characters, and
   `--window ID` now takes the same IDs and prefixes, `default` included, on
-  every workspace command. A window that another build started is stopped or
-  presented by running that build's `eon` in the form it takes:
-  `stop GENERATION --json` or `attach GENERATION` for EONW 34 or older,
-  `window stop ID --json` or `window attach ID` for later builds, with
-  `EON_STOP_DELEGATED` or `EON_ATTACH_DELEGATED` naming the generation, and
-  the advice for a missing recorded `eon` prints that command. EONW v35 marks
-  the change (no message changes), and Eon is 0.1.19. Windows started before
-  this release keep running and this `eon` stops and attaches them through
-  their recorded `eon`, but their own `eon` cannot stop or attach a window of
-  this release: restart old windows to use the new commands everywhere
-  (`eon-7cf0y.22`, EON-C10, EON-C11, EON-C23).
+  every session command. `eon window attach` presents a window that another
+  build started by running that build's `eon`, except the default window of
+  Eon 0.1.18 or older, and Stop reaches a window of Eon 0.1.21 or later
+  through the Reserved Stop (`eon-7cf0y.22`, EON-C10, EON-C11, EON-C23).
 - `eon config path` and `eon config dir` replace `eon config-path` and
   `eon config-dir`, which are removed, and `eon -V` and `eon --version` print
   `eon VERSION`. Error messages name the window instead of its generation,
@@ -972,11 +1021,11 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   caller whose window cannot be identified is refused), and a damaged
   generation directory or a window that cannot be inspected is reported,
   never stopped, and the other windows still stop. With `--json` each prints
-  one `{"window": ID, "results": [...]}` object per window, `window` being its
-  full ID, so `eon quit --all --json` names the default window `default`
+  one JSON array, `[{"window": ID, "results": [...]}, ...]`, with an object
+  per window, `window` being its full ID, so `eon quit --all --json` names the default window `default`
   instead of null. Stop and Quit questions, results and `eon quit`'s listing
   name windows by the ID `eon window ls` shows instead of a generation, as in
-  `Stop window 0a1b and 2 live terminals [session-1, session-2]? [y/N]`. The
+  `Stop window 0a1b and 2 live terminals [terminal-1, terminal-2]? [y/N]`. The
   detach notice and the log line after Eon Desktop exits name a
   default-namespace window by its generation's first 8 hex digits, as in
   `eon window stop 1a2b3c4d`, which `default` now also answers to, so the
@@ -989,10 +1038,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   draw their dots in the window's focus colour (`[terminal] focus_color`, or
   Venus's built-in focus colour) instead of a fixed blue. Where that colour
   would read below 3:1 contrast on what lies under the dots, they blend it
-  toward black or white just enough to reach 3:1. With a translucent terminal
-  background, the sidebar's working and background badges sit on the bar's
-  dark disc, as on a tab, since the desktop behind the window sets the card's
-  colour. A stale agent's badge stays dimmed below 3:1 on purpose. Needs
+  toward black or white just enough to reach 3:1. A stale agent's badge stays dimmed below 3:1 on purpose. Needs
   input, error and finished badges keep their own colours (`eon-i3th2`).
 - The bottom hints bar shows one keycap per set of modifiers, named in full
   (`Alt`, `Ctrl+Alt`, `Alt+Shift`, `Ctrl+Alt+Shift`), centred in the window,
@@ -1007,15 +1053,6 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   drop the written-out keys, and finally shorten the keycaps to `A`, `CA`,
   `AS` and `CAS`. Screen readers read each keycap as, for example, `Alt+Shift
   shortcuts` with its chords (`eon-e3a1z.1`, VEN-C21, EON-C32).
-- The bottom hints bar fits a 1280-pixel-wide window with Eon's packaged font
-  (DejaVu Sans) at the default size:
-  directions read `HJKL`, create hints drop their `+` (`pane`, `col`, `tab`,
-  `window`), the sidebar hint reads `side`, the Scrollback popup's `Scroll`,
-  and modifier badges drop their hyphens (`CA`, `AS`). The Alt+/, Alt+Q inbox,
-  Alt+Shift+Q quit and Ctrl+Alt+Shift tab-move hints leave the bar; those keys
-  still work and stay listed in Alt+/. Popup hints other than Git and Agent
-  show as width allows. The header `?` Shortcuts button always shows
-  (`eon-yvhke`, VEN-C32, EON-C21, VEN-C21).
 - Eon Bar hover tooltips show a short list, one fact per line, instead of
   one long sentence, and leave out what the chip already shows: a quota
   tooltip names its window, then when it resets in local time and the pace,
@@ -1058,9 +1095,7 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   with `unavailable` while that tab shows a transient popup, which it never
   closes, and `[agents] terminal_access` governs it. `docs/CONFIGURATION.md` explains a
   GUI editor's wait flag, saving edits under another name before the popup
-  ends, and the editor state files Eon leaves. EONW moves to v34: windows
-  started before this change keep running, but an `eon` from this version
-  cannot reach them; restart them to use it.
+  ends, and the editor state files Eon leaves.
 - Alt+Shift+E opens the scrollback of what the tab shows, its shown popup or
   else its selected pane, in the configured `[editor] command`: the retained
   history and then the screen, as plain text, from a private snapshot file
@@ -1074,14 +1109,10 @@ switch requires explicit approval of the release cut (`eon-igae.9`).
   lines, or the start of the newest line when that line alone is longer, and
   says so on standard error; `--json` reports them as `omitted_lines` and
   `cut_bytes`. `[agents] terminal_access` governs it as it
-  governs `eon pane read`. EONW moves to v33: windows started before this
-  change keep running, but an `eon` from this version cannot reach them;
-  restart them to use it.
+  governs `eon pane read`.
 - Orbit can export a terminal's retained history and its screen as plain text,
   oldest first, up to 8 MiB, with the oldest lines dropped and counted past
-  that (ORB-C17, `eon-u5bvd.2`). This is the first step of opening a pane's
-  scrollback in the configured editor; `eon pane history` and the window key
-  follow. Orbit's management protocol moves to generation 7; windows started
+  that (ORB-C17, `eon-u5bvd.2`). Orbit's management protocol moves to generation 7; windows started
   before this change keep their own supervisor and Orbit runs, as with every
   management change, and EONW is unchanged.
 
