@@ -3992,7 +3992,10 @@ popup or automatic tutorial launch.
     using Eon's fixed popup margins. The
     previous terminal is not composited underneath. Attach and recovery never
     create an automatic pair; recovering only a stale initial pending pair stops
-    it and applies the validated launch-directory fallback.
+    it and applies the validated launch-directory fallback. A pending tab's pair
+    whose supervisor was lost while a pick or dismissal committed it, or whose
+    pending mark could not be restored after its first pane failed to start,
+    recovers as a pane instead (EON-C15).
   - Left/right focus actions continue to traverse and wrap live tabs
     while the pair stays bound to its original tab. Another active tab shows
     its selected pane; returning shows the same pair for normal acceptance or

@@ -6,10 +6,14 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{self, Read, Write},
+    os::unix::net::UnixStream,
     os::unix::{ffi::OsStrExt, process::CommandExt},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::OnceLock,
+    process::{Child, ChildStdout, Command, Stdio},
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -2674,19 +2678,15 @@ fn remove_agent_environment(
             }
         }
     }
-    if set("CODEX_CI", "1") {
-        for name in CODEX_LOCALE {
-            if set(name, "C.UTF-8") {
-                match desktop(name) {
-                    Some(value) => {
-                        command.env(name, value);
-                    }
-                    None if *name != "LANG" => {
-                        command.env_remove(name);
-                    }
-                    None => {}
-                }
+    for name in codex_locale(&inherited) {
+        match desktop(name) {
+            Some(value) => {
+                command.env(name, value);
             }
+            None if name != "LANG" => {
+                command.env_remove(name);
+            }
+            None => {}
         }
     }
     for name in AGENT_SESSION_VARIABLES.iter().chain(&[
@@ -2698,76 +2698,278 @@ fn remove_agent_environment(
     command
 }
 
-/// The desktop session's value of a locale name: the systemd user manager's
-/// environment, read once per supervisor and only when a child needs it. Best effort;
-/// without systemd, or without its answer within a second, there is none.
+/// The locale names that Codex's tool runner set to `C.UTF-8` in `inherited`: a
+/// child takes each from the desktop session instead (EON-C9).
+fn codex_locale(inherited: &impl Fn(&str) -> Option<OsString>) -> Vec<&'static str> {
+    let set = |name: &str, value: &str| inherited(name).is_some_and(|inherited| inherited == value);
+    if !set("CODEX_CI", "1") {
+        return Vec::new();
+    }
+    CODEX_LOCALE
+        .iter()
+        .copied()
+        .filter(|name| set(name, "C.UTF-8"))
+        .collect()
+}
+
+/// The systemd user manager's environment, read once per supervisor, when a
+/// child first needs a desktop locale: `None` without systemd, an error when
+/// the read failed.
+static DESKTOP_ENVIRONMENT: OnceLock<Result<Option<String>, String>> = OnceLock::new();
+/// Whether `note_desktop_locale` noted the read's failure.
+static DESKTOP_FAILURE_NOTED: AtomicBool = AtomicBool::new(false);
+
+/// The desktop session's value of a locale name, if the user manager has one.
 fn desktop_locale(name: &str) -> Option<OsString> {
-    static ENVIRONMENT: OnceLock<String> = OnceLock::new();
-    ENVIRONMENT
-        .get_or_init(|| {
-            user_manager_environment(OsStr::new("systemctl"), Duration::from_secs(1))
-                .unwrap_or_default()
-        })
+    DESKTOP_ENVIRONMENT
+        .get_or_init(|| user_manager_environment(OsStr::new("systemctl"), Duration::from_secs(1)))
+        .as_ref()
+        .ok()?
+        .as_deref()?
         .lines()
         .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
         .map(OsString::from)
 }
 
+/// Notes in `log`, once per supervisor, that the desktop-locale read failed and
+/// what children get instead; the supervisor calls it every loop turn.
+pub(crate) fn note_desktop_locale(log: &DiagnosticLog) {
+    if let Some(Err(error)) = DESKTOP_ENVIRONMENT.get()
+        && !DESKTOP_FAILURE_NOTED.swap(true, Ordering::Relaxed)
+        && let Some(note) = desktop_locale_note(&|name| env::var_os(name), error)
+    {
+        log.note(&note);
+    }
+}
+
+/// The diagnostic for a failed desktop-locale read, naming what the children
+/// of a supervisor that inherited `inherited` get without it (EON-C9).
+fn desktop_locale_note(
+    inherited: &impl Fn(&str) -> Option<OsString>,
+    error: &str,
+) -> Option<String> {
+    let names = codex_locale(inherited);
+    let dropped = names
+        .iter()
+        .copied()
+        .filter(|name| *name != "LANG")
+        .collect::<Vec<_>>();
+    let mut outcome = Vec::new();
+    if !dropped.is_empty() {
+        outcome.push(format!("drop {}", dropped.join(" and ")));
+    }
+    if names.contains(&"LANG") {
+        outcome.push("keep LANG=C.UTF-8".to_owned());
+    }
+    (!outcome.is_empty()).then(|| {
+        format!(
+            "Cannot read the desktop session's locale, so terminals {} instead of taking the desktop's: {error}",
+            outcome.join(" and ")
+        )
+    })
+}
+
 /// The most `systemctl --user show-environment` may print, far above a real user
 /// manager's environment.
 const MAX_USER_MANAGER_BYTES: usize = 4 << 20;
+const USER_MANAGER_COMMAND: &str = "systemctl --user show-environment";
 
-/// Runs `systemctl --user show-environment` in its own process group, draining its
-/// output as it comes. The group is killed and reaped by the deadline whether or not it
-/// answered, so a stalled bus leaves no process, thread or socket behind; output past
-/// `MAX_USER_MANAGER_BYTES` counts as no answer.
-fn user_manager_environment(program: &OsStr, timeout: Duration) -> Option<String> {
-    let mut child = Command::new(program)
+/// `systemctl --user show-environment` in its own process group, its output piped.
+fn user_manager_command(program: &OsStr) -> Command {
+    let mut command = Command::new(program);
+    command
         .args(["--user", "--no-pager", "show-environment"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()
-        .ok()?;
-    let mut output = child.stdout.take().expect("piped user manager output");
-    let answer = (|| {
-        let flags = rustix::fs::fcntl_getfl(&output).ok()?;
-        rustix::fs::fcntl_setfl(&output, flags | rustix::fs::OFlags::NONBLOCK).ok()?;
-        let deadline = Instant::now() + timeout;
-        let mut bytes = Vec::new();
-        let mut eof = false;
-        while Instant::now() < deadline {
-            let mut chunk = [0; 8192];
-            match output.read(&mut chunk) {
-                Ok(0) => eof = true,
-                Ok(count) => {
-                    bytes.extend_from_slice(&chunk[..count]);
-                    if bytes.len() > MAX_USER_MANAGER_BYTES {
-                        return None;
-                    }
-                    continue;
+        .process_group(0);
+    command
+}
+
+/// The user manager's environment: `None` when `program` does not exist, an
+/// error when it fails, answers past `MAX_USER_MANAGER_BYTES` or with a NUL
+/// byte, or does not exit within `timeout`.
+fn user_manager_environment(program: &OsStr, timeout: Duration) -> Result<Option<String>, String> {
+    // A child the kernel reaps on its own may free its process group's ID
+    // before `read_user_manager` kills that group.
+    super::platform::require_waitable_children()
+        .map_err(|error| format!("cannot run {USER_MANAGER_COMMAND}: {error}"))?;
+    match user_manager_command(program).spawn() {
+        Ok(child) => read_user_manager(child, timeout).map(Some),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("cannot run {USER_MANAGER_COMMAND}: {error}")),
+    }
+}
+
+/// The thread `start_waiter` starts, which returns its wait's failure.
+type Waiter = thread::JoinHandle<rustix::io::Result<()>>;
+
+/// Starts a thread that waits for `pid`'s exit without reaping it, so the
+/// child keeps its process ID, and its group's, until the group is killed; it
+/// closes its end of the returned socket when the exit comes or the wait fails.
+fn start_waiter(pid: rustix::process::Pid) -> io::Result<(UnixStream, Waiter)> {
+    let (exited, notify) = UnixStream::pair()?;
+    let waiter = thread::Builder::new()
+        .name("eon-user-manager-wait".into())
+        .spawn(move || {
+            let result = loop {
+                match rustix::process::waitid(
+                    rustix::process::WaitId::Pid(pid),
+                    rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOWAIT,
+                ) {
+                    Err(rustix::io::Errno::INTR) => {}
+                    result => break result.map(drop),
                 }
-                Err(error)
-                    if error.kind() == io::ErrorKind::WouldBlock
-                        || error.kind() == io::ErrorKind::Interrupted => {}
-                Err(_) => return None,
-            }
-            if eof && let Some(status) = child.try_wait().ok()? {
-                return status
-                    .success()
-                    .then(|| String::from_utf8_lossy(&bytes).into_owned());
-            }
-            thread::sleep(Duration::from_millis(5));
+            };
+            drop(notify);
+            result
+        })?;
+    Ok((exited, waiter))
+}
+
+/// Joins `waiter`, if there is one, and returns its failure.
+fn joined(waiter: Option<Waiter>) -> Result<(), String> {
+    let Some(waiter) = waiter else {
+        return Ok(());
+    };
+    waiter
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        .map_err(|error| format!("cannot wait for {USER_MANAGER_COMMAND}: {error}"))
+}
+
+/// Reads `child`'s output as it comes until it exits, then kills its process
+/// group and reaps it. Exit decides, not the end of output, so a helper that
+/// holds the pipe open neither hides a failure nor delays a success; by the
+/// deadline the group is killed and reaped whether or not it answered, so a
+/// stalled bus leaves no process, thread or socket behind (EON-C9).
+fn read_user_manager(mut child: Child, timeout: Duration) -> Result<String, String> {
+    let deadline = Instant::now() + timeout;
+    let mut output = child.stdout.take().expect("piped user manager output");
+    let pid = rustix::process::Pid::from_child(&child);
+    let (answer, mut waiter) = match start_waiter(pid) {
+        Ok((exited, waiter)) => (
+            read_until_exit(&mut output, &exited, deadline, timeout),
+            Some(waiter),
+        ),
+        Err(error) => (
+            Err(format!("cannot wait for {USER_MANAGER_COMMAND}: {error}")),
+            None,
+        ),
+    };
+    if answer.is_ok() {
+        // The waiter reported. A failed wait means the child may be gone, and
+        // its group's ID with it, so nothing is killed.
+        joined(waiter.take())?;
+    }
+    // The child is unreaped, so the group's ID is still its own; the kill
+    // fails only when the group has no member left.
+    let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    joined(waiter)?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("cannot reap {USER_MANAGER_COMMAND}: {error}"))?;
+    let bytes = answer?;
+    if !status.success() {
+        return Err(format!("{USER_MANAGER_COMMAND} exited with {status}"));
+    }
+    // An environment holds no NUL byte, and a child given one would not start.
+    if bytes.contains(&0) {
+        return Err(format!("{USER_MANAGER_COMMAND} printed a NUL byte"));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// `output` until `exited` reports the child's exit, or an error at the
+/// deadline, past `MAX_USER_MANAGER_BYTES` or on a failed read.
+fn read_until_exit(
+    output: &mut ChildStdout,
+    exited: &UnixStream,
+    deadline: Instant,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    let unreadable = |error: io::Error| format!("cannot read {USER_MANAGER_COMMAND}: {error}");
+    let flags = rustix::fs::fcntl_getfl(&*output).map_err(|error| unreadable(error.into()))?;
+    rustix::fs::fcntl_setfl(&*output, flags | rustix::fs::OFlags::NONBLOCK)
+        .map_err(|error| unreadable(error.into()))?;
+    let mut bytes = Vec::new();
+    let mut open = true;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(no_answer(timeout));
         }
-        None
-    })();
-    let _ = rustix::process::kill_process_group(
-        rustix::process::Pid::from_child(&child),
-        rustix::process::Signal::KILL,
-    );
-    let _ = child.wait();
-    answer
+        let wait = rustix::event::Timespec::try_from(left).expect("a deadline within a second");
+        let (readable, done) = {
+            use rustix::event::{PollFd, PollFlags};
+            let mut ready = [
+                PollFd::new(exited, PollFlags::IN),
+                PollFd::new(&*output, PollFlags::IN),
+            ];
+            let watched = if open {
+                &mut ready[..]
+            } else {
+                &mut ready[..1]
+            };
+            match rustix::event::poll(watched, Some(&wait)) {
+                Ok(_) => {}
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(error) => return Err(unreadable(error.into())),
+            }
+            if Instant::now() >= deadline {
+                return Err(no_answer(timeout));
+            }
+            (
+                open && !ready[1].revents().is_empty(),
+                !ready[0].revents().is_empty(),
+            )
+        };
+        if readable || (done && open) {
+            open = !drain(output, &mut bytes, deadline, timeout)?;
+        }
+        if done {
+            return Ok(bytes);
+        }
+    }
+}
+
+fn no_answer(timeout: Duration) -> String {
+    format!(
+        "{USER_MANAGER_COMMAND} gave no answer within {} s",
+        timeout.as_secs()
+    )
+}
+
+/// Reads what `output` holds now into `bytes`: `true` at its end, an error at
+/// the deadline, past `MAX_USER_MANAGER_BYTES` or on a failed read, so a writer
+/// cannot hold the read past the deadline.
+fn drain(
+    output: &mut ChildStdout,
+    bytes: &mut Vec<u8>,
+    deadline: Instant,
+    timeout: Duration,
+) -> Result<bool, String> {
+    let mut chunk = [0; 8192];
+    loop {
+        if Instant::now() >= deadline {
+            return Err(no_answer(timeout));
+        }
+        match output.read(&mut chunk) {
+            Ok(0) => return Ok(true),
+            Ok(count) => {
+                bytes.extend_from_slice(&chunk[..count]);
+                if bytes.len() > MAX_USER_MANAGER_BYTES {
+                    return Err(format!(
+                        "{USER_MANAGER_COMMAND} printed more than {} MiB",
+                        MAX_USER_MANAGER_BYTES >> 20
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(format!("cannot read {USER_MANAGER_COMMAND}: {error}")),
+        }
+    }
 }
 
 pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
@@ -3285,11 +3487,11 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
-        animate_working_badge, attention_settings, command as managed_command, disk_path,
-        integration_mask, number_keys, pair_launch_flags, popup_catalog, prepare_popup_command,
-        prepend_path, print_defaults, read_shell_config, remove_agent_environment,
-        remove_agent_session, startup_animation, terminal_presentation, tool,
-        user_manager_environment, warning_close_last_tab,
+        animate_working_badge, attention_settings, command as managed_command, desktop_locale_note,
+        disk_path, integration_mask, number_keys, pair_launch_flags, popup_catalog,
+        prepare_popup_command, prepend_path, print_defaults, read_shell_config, read_user_manager,
+        remove_agent_environment, remove_agent_session, startup_animation, terminal_presentation,
+        tool, user_manager_command, user_manager_environment, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -6475,26 +6677,67 @@ label = "Browse"
         }
     }
 
+    /// Whether `pid` is gone or a zombie holding nothing, within two seconds:
+    /// a killed helper waits for its new parent to reap it.
+    fn gone(pid: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    Some(
+                        stat.rsplit(')')
+                            .next()?
+                            .split_whitespace()
+                            .next()?
+                            .to_owned(),
+                    )
+                });
+            if state.as_deref().is_none_or(|state| state == "Z") {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn the_user_manager_read_drains_its_output_and_leaves_nothing_by_its_deadline() {
         // Fails when the desktop-locale read only stops waiting (eon-yxo2y): a
         // systemctl stalled on a bus that accepts and never answers, and a helper it
-        // started, must both be gone by the deadline, and the launch goes on without a
-        // desktop locale.
+        // started, must both be gone by the deadline, and the read reports why there
+        // is no desktop locale (eon-0nn1p.4).
         let root = crate::supervisor::temporary_directory();
         let program = root.join("systemctl");
         let pids = root.join("pids");
         let script =
             |body: &str| crate::sessions::tests::script(&program, &format!("#!/bin/sh\n{body}\n"));
+        let read =
+            |timeout| user_manager_environment(program.as_os_str(), Duration::from_secs(timeout));
+        // The fake publishes both process IDs at once, and the deadline starts only
+        // then, so a loaded host cannot kill it before it is ready (eon-qpnwy).
         script(&format!(
-            "sleep 30 &\necho \"$$ $!\" > '{}'\nwait",
+            "sleep 30 &\necho \"$$ $!\" > '{0}.tmp'\nmv '{0}.tmp' '{0}'\nwait",
             pids.display()
         ));
+        let mut child = user_manager_command(program.as_os_str()).spawn().unwrap();
+        let ready_by = Instant::now() + Duration::from_secs(10);
+        while !pids.exists() {
+            if Instant::now() >= ready_by {
+                let _ = rustix::process::kill_process_group(
+                    rustix::process::Pid::from_child(&child),
+                    rustix::process::Signal::KILL,
+                );
+                let _ = child.wait();
+                panic!("the stalled fake did not publish its process IDs within 10 s");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
         let started = Instant::now();
-        assert_eq!(
-            user_manager_environment(program.as_os_str(), Duration::from_secs(1)),
-            None
-        );
+        let error = read_user_manager(child, Duration::from_secs(1)).unwrap_err();
+        assert!(error.ends_with("gave no answer within 1 s"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(3));
         let pids = fs::read_to_string(&pids).unwrap();
         let [child, helper] = pids.split_whitespace().collect::<Vec<_>>()[..] else {
@@ -6505,32 +6748,38 @@ label = "Browse"
             !Path::new(&format!("/proc/{child}")).exists(),
             "{child} outlives the read"
         );
-        // The killed helper may remain a zombie, holding nothing, until its new parent
-        // reaps it.
-        let gone = |pid: &str| {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                let state = fs::read_to_string(format!("/proc/{pid}/stat"))
-                    .ok()
-                    .and_then(|stat| {
-                        Some(
-                            stat.rsplit(')')
-                                .next()?
-                                .split_whitespace()
-                                .next()?
-                                .to_owned(),
-                        )
-                    });
-                if state.as_deref().is_none_or(|state| state == "Z") {
-                    return true;
-                }
-                if Instant::now() >= deadline {
-                    return false;
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-        };
         assert!(gone(helper), "{helper} outlives the read");
+
+        // Fails when the read waits for the end of output rather than the exit: a
+        // helper that keeps the pipe open turns a failure into a timeout and holds
+        // a success to the deadline, which the results below tell apart.
+        let helper = root.join("helper");
+        for (status, expected) in [("exit 1", None), ("echo LANG=pt_BR.UTF-8", Some(""))] {
+            script(&format!(
+                "sleep 30 &\necho \"$!\" > '{}'\n{status}",
+                helper.display()
+            ));
+            match (read(5), expected) {
+                (Err(error), None) => {
+                    assert!(error.ends_with("exited with exit status: 1"), "{error}")
+                }
+                (Ok(Some(answer)), Some(_)) => assert_eq!(answer, "LANG=pt_BR.UTF-8\n"),
+                (answer, _) => panic!("{status}: {answer:?}"),
+            }
+            let helper = fs::read_to_string(&helper).unwrap();
+            assert!(gone(helper.trim()), "{helper} outlives the read");
+        }
+        // Output in parts, and output that ends before a delayed exit, both arrive.
+        script("printf 'A=1\\n'; sleep 0.2; printf 'LANG=pt_BR.UTF-8\\n'");
+        assert_eq!(read(5).unwrap().as_deref(), Some("A=1\nLANG=pt_BR.UTF-8\n"));
+        script("printf 'LANG=pt_BR.UTF-8\\n'; exec >&-; sleep 0.2");
+        assert_eq!(read(5).unwrap().as_deref(), Some("LANG=pt_BR.UTF-8\n"));
+        // A child that closes its output and stalls is killed by the deadline.
+        script("exec >&-; exec sleep 30");
+        let started = Instant::now();
+        let error = read(1).unwrap_err();
+        assert!(error.ends_with("gave no answer within 1 s"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(3));
 
         // Fails when output is read only after the child exits: past the pipe's
         // capacity, the child blocks until the deadline and the locale is lost.
@@ -6538,7 +6787,7 @@ label = "Browse"
             "yes FILLER={} | head -n 20000\necho LANG=pt_BR.UTF-8",
             "x".repeat(64)
         ));
-        let large = user_manager_environment(program.as_os_str(), Duration::from_secs(5)).unwrap();
+        let large = read(5).unwrap().unwrap();
         assert!(large.len() > 1 << 20);
         assert_eq!(large.lines().last(), Some("LANG=pt_BR.UTF-8"));
         // Fails without the cap: finite output past it, from a child that exits
@@ -6547,31 +6796,76 @@ label = "Browse"
             "yes FILLER=x | head -c {}\necho LANG=pt_BR.UTF-8",
             (4 << 20) + 1
         ));
-        assert_eq!(
-            user_manager_environment(program.as_os_str(), Duration::from_secs(5)),
-            None
-        );
+        let error = read(5).unwrap_err();
+        assert!(error.ends_with("printed more than 4 MiB"), "{error}");
         // Output without end stops at the cap and gives no answer.
         script("yes FILLER=x");
-        assert_eq!(
-            user_manager_environment(program.as_os_str(), Duration::from_secs(5)),
-            None
-        );
+        let error = read(5).unwrap_err();
+        assert!(error.ends_with("printed more than 4 MiB"), "{error}");
 
         script("printf 'HOME=/home/person\\nLANG=pt_BR.UTF-8\\n'");
         assert_eq!(
-            user_manager_environment(program.as_os_str(), Duration::from_secs(5)).as_deref(),
+            read(5).unwrap().as_deref(),
             Some("HOME=/home/person\nLANG=pt_BR.UTF-8\n")
         );
+        // Fails when a NUL byte reaches a child's environment, where it would
+        // stop the child from starting.
+        script("printf 'LANG=pt_BR\\000.UTF-8\\n'");
+        let error = read(5).unwrap_err();
+        assert!(error.ends_with("printed a NUL byte"), "{error}");
         script("echo LANG=pt_BR.UTF-8; exit 1");
-        assert_eq!(
-            user_manager_environment(program.as_os_str(), Duration::from_secs(5)),
-            None
-        );
+        let error = read(5).unwrap_err();
+        assert!(error.ends_with("exited with exit status: 1"), "{error}");
+        // A program that cannot run is a failure; one that does not exist means
+        // there is no systemd, and no locale to report.
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o600)).unwrap();
+        let error = read(5).unwrap_err();
+        assert!(error.starts_with("cannot run systemctl"), "{error}");
         assert_eq!(
             user_manager_environment(root.join("missing").as_os_str(), Duration::from_secs(5)),
-            None
+            Ok(None)
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Fails when the failed-read diagnostic names a locale that children do not
+    /// get, such as `LANG=C.UTF-8` while the person's own `LANG` passes through.
+    #[test]
+    fn the_desktop_locale_note_names_what_terminals_get() {
+        let note = |pairs: &[(&str, &str)]| {
+            let inherited = |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| OsString::from(value))
+            };
+            desktop_locale_note(&inherited, "E")
+        };
+        let prefix = "Cannot read the desktop session's locale, so terminals";
+        let suffix = "instead of taking the desktop's: E";
+        assert_eq!(
+            note(&[
+                ("CODEX_CI", "1"),
+                ("LANG", "pt_BR.UTF-8"),
+                ("LC_ALL", "C.UTF-8")
+            ]),
+            Some(format!("{prefix} drop LC_ALL {suffix}"))
+        );
+        assert_eq!(
+            note(&[("CODEX_CI", "1"), ("LANG", "C.UTF-8")]),
+            Some(format!("{prefix} keep LANG=C.UTF-8 {suffix}"))
+        );
+        assert_eq!(
+            note(&[
+                ("CODEX_CI", "1"),
+                ("LANG", "C.UTF-8"),
+                ("LC_CTYPE", "C.UTF-8"),
+                ("LC_ALL", "C.UTF-8")
+            ]),
+            Some(format!(
+                "{prefix} drop LC_CTYPE and LC_ALL and keep LANG=C.UTF-8 {suffix}"
+            ))
+        );
+        assert_eq!(note(&[("LANG", "C.UTF-8")]), None);
     }
 }

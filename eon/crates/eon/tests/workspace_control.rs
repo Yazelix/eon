@@ -4459,6 +4459,63 @@ fn recovery_stops_a_pending_pair_and_keeps_a_committed_files() {
 }
 
 #[test]
+fn a_pick_that_cannot_clear_the_pair_marker_changes_nothing_and_a_later_pick_survives_a_crash() {
+    // Fails when a pick commits a pending tab although its pair's pending
+    // marker stays: a later recovery would stop the committed tab's Files
+    // instead of adopting it (eon-0nn1p.4, EON-C18).
+    let window = PairWindow::new();
+    let mut first = window.spawn(&[]);
+    let generation = window.generation();
+    assert!(pending_pair(&window.inspect("started")).is_some());
+    let pair = live_identity(&generation.join("terminal-2.sock"));
+    let marker = artifact_path(&generation.join("terminal-2.sock"), ".pending");
+    // A directory in the marker's place cannot be unlinked, as a marker in a
+    // directory that refuses changes could not.
+    fs::remove_file(&marker).unwrap();
+    fs::create_dir(&marker).unwrap();
+    fs::write(marker.join("held"), b"").unwrap();
+    let pick = || {
+        window.eon(&[
+            "tab",
+            "directory",
+            "t1",
+            "--",
+            window.home.to_str().unwrap(),
+        ])
+    };
+    let refused = pick();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("cannot clear pending pair marker"),
+        "{stderr}"
+    );
+    assert!(pending_pair(&window.inspect("refused")).is_some());
+    assert!(!generation.join("orbit.sock").exists());
+    assert!(process::exists(pair.process_id));
+
+    fs::remove_dir_all(&marker).unwrap();
+    fs::write(&marker, b"").unwrap();
+    assert!(pick().status.success());
+    live_identity(&generation.join("orbit.sock"));
+    assert!(!marker.exists());
+    window.crash(&mut first);
+
+    let mut replacement = window.spawn(&[]);
+    let recovered = window.inspect("recovered");
+    let sessions = recovered.tabs[0]
+        .panes()
+        .map(|pane| pane.session.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(sessions, ["terminal-1", "terminal-2"]);
+    assert_eq!(
+        live_identity(&generation.join("terminal-2.sock")).process_id,
+        pair.process_id
+    );
+    window.stop_generation(&mut replacement);
+}
+
+#[test]
 fn a_pending_pair_left_by_a_failed_rollback_is_stopped_by_recovery() {
     let window = PairWindow::new();
     // The pair publishes Ready after its start and rollback deadlines, so its
@@ -10381,6 +10438,104 @@ fn terminals_drop_the_launching_agents_tool_settings() {
         value("CURL_CA_BUNDLE"),
         None,
         "update-check certificates reach the terminal"
+    );
+
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_failed_desktop_locale_read_is_probed_and_noted_once() {
+    // Fails when a failed desktop-locale read is swallowed, and terminals start
+    // without the desktop's locale and nothing says why (eon-0nn1p.4, EON-C9).
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let state = root.join("state");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    // A stand-in systemd user manager, first on the supervisor's PATH, that
+    // counts its runs and fails.
+    let desktop = root.join("desktop");
+    let probes = root.join("probes");
+    fs::create_dir(&desktop).unwrap();
+    executable(
+        &desktop.join("systemctl"),
+        format!("#!/bin/sh\necho probe >> '{}'\nexit 1\n", probes.display()),
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let mut command = eon_command(&binary);
+    let path = command
+        .get_envs()
+        .find_map(|(name, value)| (name == "PATH").then_some(value))
+        .flatten()
+        .unwrap()
+        .to_owned();
+    let path = std::iter::once(desktop).chain(std::env::split_paths(&path));
+    let child = command
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("XDG_STATE_HOME", &state)
+        .env_remove("LC_CTYPE")
+        .envs([
+            ("CODEX_CI", "1"),
+            ("LANG", "pt_BR.UTF-8"),
+            ("LC_ALL", "C.UTF-8"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    wait_for_ready(&generation.join("eon.sock"));
+    // The reply follows a loop turn that saw the started children.
+    assert!(
+        invoke(&binary, &runtime, &config, &["session", "--json"])
+            .status
+            .success()
+    );
+    let environment = process::environ(live_identity(&generation.join("orbit.sock")).process_id);
+    let value = |name: &str| {
+        environment
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(format!("{name}=").as_bytes()))
+            .map(|value| String::from_utf8(value.to_vec()).unwrap())
+    };
+    // The person's own LANG passes through; Codex's LC_ALL is dropped.
+    assert_eq!(value("LANG").as_deref(), Some("pt_BR.UTF-8"));
+    assert_eq!(value("LC_ALL"), None);
+    // Venus and the terminal both started; the user manager ran once.
+    assert_eq!(log_lines(&probes), ["probe"]);
+    let notes = fs::read_dir(state.join("eon/logs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file())
+        .flat_map(|path| log_lines(&path))
+        .filter(|line| line.contains("Cannot read the desktop session's locale"))
+        .collect::<Vec<_>>();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].ends_with(
+            "so terminals drop LC_ALL instead of taking the desktop's: \
+             systemctl --user show-environment exited with exit status: 1"
+        ),
+        "{}",
+        notes[0]
     );
 
     fs::write(&stop, "").unwrap();

@@ -63,8 +63,14 @@ pub(crate) enum SessionOperation {
         tab: Option<String>,
     },
     Stop(String),
-    /// The pending pair `session` stays on as its committed tab's Files.
-    SettlePair(String),
+    /// Clears (`pending: false`) or restores (`pending: true`) the pending
+    /// mark of the pair `session`, which recovery reads to stop a pending
+    /// tab's pair (EON-C18). A commit clears it before anything changes and is
+    /// refused when it cannot; a pick whose first pane fails restores it.
+    MarkPair {
+        session: String,
+        pending: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1240,12 +1246,13 @@ impl WorkspaceSet {
 
     /// Dismisses every pending tab's pair, as presentation detachment does
     /// (EON-C18): each stays on as its tab's Files and the tab's first pane
-    /// starts. Every pair is attempted; the first failure is returned.
+    /// starts. Every pair is attempted; the first failure is returned, carrying
+    /// every later failure's detail.
     pub(crate) fn dismiss_pending_pairs(
         &mut self,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        let mut result = Ok(());
+        let mut result: Result<(), Failure> = Ok(());
         for index in 0..self.workspaces.len() {
             for target in self.workspaces[index].pending_pairs() {
                 let allowance = self.allowance(index);
@@ -1255,9 +1262,15 @@ impl WorkspaceSet {
                     &target,
                     &mut operate,
                 );
-                if result.is_ok() {
-                    result = dismissed;
-                }
+                // Every refusal is kept, so each pair left pending is named.
+                result = match (result, dismissed) {
+                    (Err(mut first), Err(next)) => {
+                        first.detail = format!("{}; {}", first.detail, next.detail);
+                        Err(first)
+                    }
+                    (Ok(()), dismissed) => dismissed,
+                    (first, Ok(())) => first,
+                };
             }
         }
         self.prune_empty();
@@ -2383,6 +2396,9 @@ impl Workspace {
             ids.check_pane_identity()?;
         }
         if self.definition(&popup.entry)?.keep_alive {
+            if pending {
+                self.settle_pair(tab_index, operate)?;
+            }
             if self.tabs[tab_index].selected_popup.as_deref() == Some(&popup.id) {
                 self.tabs[tab_index].selected_popup = None;
             }
@@ -2736,27 +2752,61 @@ impl Workspace {
     ) -> Result<(), Failure> {
         self.tabs[tab_index].pending = false;
         if let Err(detail) = self.start_pane(ids, allowance, tab_index, operate) {
-            // A tab whose first pane cannot start goes, its pair with it.
+            // A tab whose first pane cannot start goes, its pair with it. A
+            // pair that does not stop keeps its pending mark, so a recovery
+            // still stops it.
             while !self.tabs[tab_index].popups.is_empty()
                 && self.stop_popup(tab_index, 0, operate).is_ok()
             {}
+            let failure = action_error("terminal-start", detail);
+            let failure = self.restore_pair_marks(tab_index, operate, failure);
             self.remove_empty_tab(tab_index);
-            return Err(action_error("terminal-start", detail));
+            return Err(failure);
         }
-        self.settle_pair(tab_index, operate);
         Ok(())
     }
 
-    /// The pair of a tab that just committed stays on as its Files.
+    /// Clears the pending mark of a pending tab's pair before its commit
+    /// changes anything, so a recovery after the commit adopts the pair as the
+    /// tab's Files. A mark that stays refuses the commit (EON-C18).
     fn settle_pair(
         &self,
         tab_index: usize,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
-    ) {
+    ) -> Result<(), Failure> {
         for popup in &self.tabs[tab_index].popups {
-            // The supervisor logs a failure; it changes nothing else.
-            let _ = operate(SessionOperation::SettlePair(popup.session.id.clone()));
+            operate(SessionOperation::MarkPair {
+                session: popup.session.id.clone(),
+                pending: false,
+            })
+            .map_err(|detail| {
+                action_error(
+                    "terminal-start",
+                    format!("the tab's Files pair cannot be committed: {detail}"),
+                )
+            })?;
         }
+        Ok(())
+    }
+
+    /// Restores the pending mark that `settle_pair` cleared on each pair the
+    /// tab still has, after its commit failed; a mark that cannot be restored
+    /// is added to `failure`, and a recovery then adopts the pair as a pane.
+    fn restore_pair_marks(
+        &self,
+        tab_index: usize,
+        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
+        mut failure: Failure,
+    ) -> Failure {
+        for popup in &self.tabs[tab_index].popups {
+            if let Err(detail) = operate(SessionOperation::MarkPair {
+                session: popup.session.id.clone(),
+                pending: true,
+            }) {
+                failure.detail = format!("{}; {detail}", failure.detail);
+            }
+        }
+        failure
     }
 
     /// Refuses a caller's pane action, before anything changes, when dismissing
@@ -3100,14 +3150,16 @@ impl Workspace {
         ids.check_pane_identity()?;
         // A pick on a pending tab commits it: one first pane at the directory,
         // and the pair hides (EON-C18).
-        self.start_pane_at(ids, allowance, tab_index, &directory, operate)
-            .map_err(|detail| action_error("terminal-start", detail))?;
+        self.settle_pair(tab_index, operate)?;
+        if let Err(detail) = self.start_pane_at(ids, allowance, tab_index, &directory, operate) {
+            let failure = action_error("terminal-start", detail);
+            return Err(self.restore_pair_marks(tab_index, operate, failure));
+        }
         let tab = &mut self.tabs[tab_index];
         tab.directory = directory;
         tab.pending = false;
         tab.selected_popup = None;
         tab.covered_popup = None;
-        self.settle_pair(tab_index, operate);
         Ok(())
     }
 
@@ -5682,7 +5734,7 @@ mod tests {
         let popup = &pending.tabs[0].popups[0];
         let fail_start = |operation| match operation {
             SessionOperation::Start { .. } => Err("start failed".into()),
-            SessionOperation::Stop(_) | SessionOperation::SettlePair(_) => Ok(()),
+            SessionOperation::Stop(_) | SessionOperation::MarkPair { .. } => Ok(()),
         };
         let error = if exited {
             set.session_ended(&popup.session, SessionEnd::Exited, fail_start)
@@ -7606,7 +7658,7 @@ mod tests {
         *observed = match operation {
             SessionOperation::Start { .. } => observed.with(Run),
             SessionOperation::Stop(_) => observed.with(Close),
-            SessionOperation::SettlePair(_) => *observed,
+            SessionOperation::MarkPair { .. } => *observed,
         };
     }
 
@@ -10232,7 +10284,9 @@ mod tests {
                 .map(|operation| match operation {
                     SessionOperation::Start { directory, .. } => directory.clone(),
                     SessionOperation::Stop(id) => PathBuf::from(format!("stop {id}")),
-                    SessionOperation::SettlePair(id) => PathBuf::from(format!("settle {id}")),
+                    SessionOperation::MarkPair { session, pending } => {
+                        PathBuf::from(format!("mark {session} {pending}"))
+                    }
                 })
                 .collect::<Vec<_>>(),
             [
@@ -10288,7 +10342,7 @@ mod tests {
                     prepared,
                     |operation| match operation {
                         SessionOperation::Stop(_) => Err("stop failed".into()),
-                        SessionOperation::Start { .. } | SessionOperation::SettlePair(_) => {
+                        SessionOperation::Start { .. } | SessionOperation::MarkPair { .. } => {
                             Ok(())
                         }
                     }
@@ -10309,7 +10363,7 @@ mod tests {
                     invoke("git", Some(&live_git.id)),
                     prepared,
                     |operation| match operation {
-                        SessionOperation::Stop(_) | SessionOperation::SettlePair(_) => Ok(()),
+                        SessionOperation::Stop(_) | SessionOperation::MarkPair { .. } => Ok(()),
                         SessionOperation::Start { .. } => Err("start failed".into()),
                     }
                 )
@@ -10443,7 +10497,7 @@ mod tests {
                 invoke("agent", None),
                 prepared,
                 |operation| match operation {
-                    SessionOperation::Stop(_) | SessionOperation::SettlePair(_) => Ok(()),
+                    SessionOperation::Stop(_) | SessionOperation::MarkPair { .. } => Ok(()),
                     SessionOperation::Start { .. } => Err("start failed".into()),
                 },
             )
@@ -10510,7 +10564,7 @@ mod tests {
                 prepared,
                 |operation| match operation {
                     SessionOperation::Stop(_) => Err("stop failed".into()),
-                    SessionOperation::Start { .. } | SessionOperation::SettlePair(_) => Ok(()),
+                    SessionOperation::Start { .. } | SessionOperation::MarkPair { .. } => Ok(()),
                 },
             )
             .unwrap_err();
@@ -10618,15 +10672,84 @@ mod tests {
             );
             assert_eq!(workspace.snapshot(), pending);
         }
+        let settle = |pending| SessionOperation::MarkPair {
+            session: "terminal-2".into(),
+            pending,
+        };
+        let first_pane = SessionOperation::Start {
+            session: Session {
+                id: "terminal-1".into(),
+                endpoint: root.join("orbit.sock"),
+            },
+            directory: selected.clone(),
+            command: LaunchCommand::Pane,
+            tab: None,
+        };
+        // Fails when a pick commits although the pair's pending mark stays,
+        // which a recovery would then read as a pending tab (eon-0nn1p.4): it
+        // is refused before anything starts or changes.
+        let mut operations = Vec::new();
+        let refused = workspace
+            .dispatch(
+                "settle-fails",
+                None,
+                pick(&selected),
+                prepared,
+                |operation| {
+                    operations.push(operation.clone());
+                    match operation {
+                        SessionOperation::MarkPair { .. } => Err("cannot clear".into()),
+                        _ => Ok(()),
+                    }
+                },
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, "terminal-start");
+        assert!(
+            refused.detail.ends_with("cannot clear"),
+            "{}",
+            refused.detail
+        );
+        assert_eq!(operations, [settle(false)]);
+        assert_eq!(workspace.snapshot(), pending);
+        // Fails when a pick whose first pane cannot start leaves its still
+        // pending tab's pair unmarked.
+        let mut operations = Vec::new();
         assert_eq!(
             workspace
-                .dispatch("pick-fails", None, pick(&selected), prepared, |_| {
-                    Err("start failed".into())
+                .dispatch("pick-fails", None, pick(&selected), prepared, |operation| {
+                    operations.push(operation.clone());
+                    match operation {
+                        SessionOperation::Start { .. } => Err("start failed".into()),
+                        _ => Ok(()),
+                    }
                 })
                 .unwrap_err()
                 .code,
             "terminal-start"
         );
+        assert_eq!(
+            operations,
+            [settle(false), first_pane.clone(), settle(true)]
+        );
+        assert_eq!(workspace.snapshot(), pending);
+        // A mark that cannot be restored is named in the failure.
+        let failure = workspace
+            .dispatch(
+                "restore-fails",
+                None,
+                pick(&selected),
+                prepared,
+                |operation| match operation {
+                    SessionOperation::Start { .. } => Err("start failed".into()),
+                    SessionOperation::MarkPair { pending: true, .. } => {
+                        Err("cannot restore".into())
+                    }
+                    _ => Ok(()),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(failure.detail, "start failed; cannot restore");
         assert_eq!(workspace.snapshot(), pending);
         let mut operations = Vec::new();
         workspace
@@ -10635,21 +10758,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert_eq!(
-            operations,
-            [
-                SessionOperation::Start {
-                    session: Session {
-                        id: "terminal-1".into(),
-                        endpoint: root.join("orbit.sock"),
-                    },
-                    directory: selected.clone(),
-                    command: LaunchCommand::Pane,
-                    tab: None,
-                },
-                SessionOperation::SettlePair("terminal-2".into()),
-            ]
-        );
+        assert_eq!(operations, [settle(false), first_pane]);
         let tab = &workspace.snapshot().tabs[0];
         assert!(!tab.pending);
         assert_eq!(tab.directory, selected.as_os_str().as_bytes());
@@ -10726,13 +10835,144 @@ mod tests {
                 assert_eq!(operations, [start]);
                 assert!(tab.popups.is_empty());
             } else {
-                assert_eq!(
-                    operations,
-                    [start, SessionOperation::SettlePair(pair.session.clone())]
-                );
+                let settle = SessionOperation::MarkPair {
+                    session: pair.session.clone(),
+                    pending: false,
+                };
+                assert_eq!(operations, [settle, start]);
                 assert_eq!(tab.popups, [pair]);
             }
         }
+    }
+
+    /// Fails when a dismissal commits a pending tab although its pair's
+    /// pending mark stays (eon-0nn1p.4): the dismissal is refused before the
+    /// pair hides or a pane starts, so the tab is unchanged (EON-C18).
+    #[test]
+    fn a_dismissal_whose_pair_stays_marked_changes_nothing() {
+        let mut workspace = WorkspaceSet::pending(
+            "/runtime".into(),
+            "/start".into(),
+            Some("/".into()),
+            catalog(),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let pending = workspace.snapshot();
+        let pair = pending.tabs[0].popups[0].clone();
+        let mut operations = Vec::new();
+        let failure = workspace
+            .dispatch(
+                "hide",
+                None,
+                Action::DismissPopup(PopupTarget {
+                    tab: "t1".into(),
+                    instance: pair.id.clone(),
+                }),
+                prepared,
+                |operation| {
+                    operations.push(operation);
+                    Err("cannot clear".into())
+                },
+            )
+            .unwrap_err();
+        assert_eq!(failure.code, "terminal-start");
+        assert_eq!(
+            operations,
+            [SessionOperation::MarkPair {
+                session: pair.session.clone(),
+                pending: false,
+            }]
+        );
+        assert_eq!(workspace.snapshot(), pending);
+    }
+
+    /// Fails when a dismissal whose first pane cannot start, and whose pair
+    /// cannot be stopped either, leaves that pair without its pending mark: a
+    /// recovery would then adopt it instead of stopping it (eon-0nn1p.4).
+    #[test]
+    fn a_pair_that_survives_a_failed_dismissal_keeps_its_mark() {
+        let mut workspace = WorkspaceSet::pending(
+            "/runtime".into(),
+            "/start".into(),
+            Some("/".into()),
+            catalog(),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let pair = workspace.snapshot().tabs[0].popups[0].clone();
+        let mut operations = Vec::new();
+        let failure = workspace
+            .dispatch(
+                "hide",
+                None,
+                Action::DismissPopup(PopupTarget {
+                    tab: "t1".into(),
+                    instance: pair.id.clone(),
+                }),
+                prepared,
+                |operation| {
+                    operations.push(operation.clone());
+                    match operation {
+                        SessionOperation::Start { .. } => Err("start failed".into()),
+                        SessionOperation::Stop(_) => Err("stop failed".into()),
+                        SessionOperation::MarkPair { .. } => Ok(()),
+                    }
+                },
+            )
+            .unwrap_err();
+        assert_eq!(failure.code, "terminal-start");
+        let mark = |pending| SessionOperation::MarkPair {
+            session: pair.session.clone(),
+            pending,
+        };
+        assert!(matches!(operations[1], SessionOperation::Start { .. }));
+        assert_eq!(operations[0], mark(false));
+        assert_eq!(operations[2], SessionOperation::Stop(pair.session.clone()));
+        assert_eq!(operations[3..], [mark(true)]);
+    }
+
+    /// Fails when detachment names only the first pending pair whose mark
+    /// stays: each refusal leaves a pair pending, and each is reported.
+    #[test]
+    fn detachment_reports_every_pair_it_cannot_commit() {
+        let mut workspace = WorkspaceSet::pending(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            catalog(),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        workspace
+            .dispatch(
+                "t2",
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let failure = workspace
+            .dismiss_pending_pairs(|operation| match operation {
+                SessionOperation::MarkPair { session, .. } => Err(format!("{session} stays")),
+                _ => Ok(()),
+            })
+            .unwrap_err();
+        assert_eq!(failure.code, "terminal-start");
+        assert!(
+            failure.detail.contains("terminal-2 stays"),
+            "{}",
+            failure.detail
+        );
+        assert!(
+            failure.detail.contains("terminal-3 stays"),
+            "{}",
+            failure.detail
+        );
     }
 
     /// Detachment dismisses every pending pair in every workspace and keeps
@@ -10776,7 +11016,10 @@ mod tests {
         let settled = operations
             .iter()
             .filter_map(|operation| match operation {
-                SessionOperation::SettlePair(id) => Some(id.as_str()),
+                SessionOperation::MarkPair {
+                    session,
+                    pending: false,
+                } => Some(session.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>();

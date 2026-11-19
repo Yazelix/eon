@@ -373,6 +373,9 @@ pub(super) fn launch_current(
             TERMINAL_START_TIMEOUT,
         )
     })();
+    // A start that failed before the loop's first turn still names a failed
+    // desktop-locale read.
+    managed_environment::note_desktop_locale(&log);
     log.record(&match &result {
         Ok(code) => format!("supervisor exited with status {code}"),
         Err(error) => format!("supervisor failed: {error}"),
@@ -2064,6 +2067,7 @@ impl SupervisorState {
     /// once, with its action's change (EON-C39).
     fn tend(&mut self, now: Instant) {
         self.failed_starts.reap(&self.log);
+        managed_environment::note_desktop_locale(&self.log);
         self.pair_dispatches.reap();
         // Read first, so attention this turn sees the latest native focus.
         if let Some(venus) = &mut self.venus {
@@ -2955,14 +2959,21 @@ fn apply_session_operation(
             tab,
         } => (session, directory, command, tab),
         SessionOperation::Stop(id) => return stop_owned_session(sessions, &id, log).map(|_| ()),
-        SessionOperation::SettlePair(id) => {
-            if let Some(session) = sessions.iter().find(|session| session.id == id)
-                && let Err(error) = sessions::settle_pending_pair(&session.endpoint)
-            {
-                // Recovery would stop this Files instead of adopting it.
-                log.record(&error);
+        SessionOperation::MarkPair { session, pending } => {
+            let Some(pair) = sessions.iter().find(|item| item.id == session) else {
+                return Ok(());
+            };
+            if !pending {
+                return sessions::settle_pending_pair(&pair.endpoint);
             }
-            return Ok(());
+            return sessions::mark_pending_pair(&pair.endpoint).map_err(|error| {
+                // The workspace keeps the tab pending; a recovery adopts the
+                // unmarked pair as a pane (EON-C18).
+                log.note_once(&format!(
+                    "pair {session} stays pending without its mark, so a recovery adopts it as a pane: {error}"
+                ));
+                error
+            });
         }
     };
     let mut pending = false;
@@ -9927,24 +9938,45 @@ mod tests {
             let endpoint = session.endpoint.clone();
             let marker = sessions::pending_pair_marker(&endpoint);
             sessions::mark_pending_pair(&endpoint).unwrap();
-            // A commit settles the marker through the supervisor.
+            // A commit clears the marker through the supervisor, and a failed
+            // first pane restores it.
             let inputs = crate::fixtures::inputs();
             let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
             let mut owned = vec![session];
-            apply_session_operation(
-                &inputs,
-                &root,
-                &log,
-                "g1-00000000000000000000000000000001",
-                &mut owned,
-                &mut sessions::FailedStarts::default(),
-                &mut Vec::new(),
-                &mut Sockets::default(),
-                crate::workspace::SessionOperation::SettlePair("terminal-1".into()),
-                PairStart::Later,
-                None,
-            )
-            .unwrap();
+            let mark = |owned: &mut Vec<sessions::RunningSession>, pending| {
+                apply_session_operation(
+                    &inputs,
+                    &root,
+                    &log,
+                    "g1-00000000000000000000000000000001",
+                    owned,
+                    &mut sessions::FailedStarts::default(),
+                    &mut Vec::new(),
+                    &mut Sockets::default(),
+                    crate::workspace::SessionOperation::MarkPair {
+                        session: "terminal-1".into(),
+                        pending,
+                    },
+                    PairStart::Later,
+                    None,
+                )
+            };
+            // Fails when a marker that cannot be cleared is reported as
+            // cleared, which lets the workspace commit a tab that a recovery
+            // would then read as pending (eon-0nn1p.4).
+            fs::remove_file(&marker).unwrap();
+            fs::create_dir(&marker).unwrap();
+            fs::write(marker.join("held"), b"").unwrap();
+            let error = mark(&mut owned, false).unwrap_err();
+            assert!(
+                error.contains("cannot clear pending pair marker"),
+                "{error}"
+            );
+            assert!(marker.is_dir());
+            fs::remove_dir_all(&marker).unwrap();
+            mark(&mut owned, true).unwrap();
+            assert!(marker.is_file());
+            mark(&mut owned, false).unwrap();
             assert!(!marker.exists());
             session = owned.pop().unwrap();
             if pending {

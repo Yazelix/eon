@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A pick or dismissal that cannot clear its pending Files pair's marker is
+  refused and changes nothing, so a later supervisor recovery no longer stops
+  a committed tab's Files. EON-C18 now says that a pending pair whose
+  supervisor was lost while a pick or dismissal committed it, or whose mark
+  could not be restored after its first pane failed to start, recovers as a
+  pane instead of being stopped. Under Codex, a failed read of the desktop
+  session's locale is named once in the diagnostic log, with the locale
+  terminals get instead (`eon-0nn1p.4`).
 - On Linux, agents in unattended panes and popups can send one desktop
   notification when they fail, need input or finish. Error and needs-input
   notices request the desktop sound. Finished notices are silent. COSMIC
