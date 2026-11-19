@@ -50,6 +50,27 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+For eon-yp6vg.7.13 over `72982b81`, the shared workspace lock selects
+smallvec 1.16.2 and objc2 0.6.5. In both Linux variants, Eon and Orbit differ
+only in the normalized lock. Venus also selects the new smallvec version in
+the runtime, native and audited graphs. All other Rust producer graphs
+match the parent. The parent includes the eon-kx9uh renewal for the
+earlier review-tier lock edit.
+
+The six exact-vendor tree and actual-ELF replays match the saved producer
+observations. The pinned build logs and the selected trees preserve every
+existing exception's classification (Eon 9 host / 2 unselected, Orbit 6 / 1,
+Venus 15 / 4). The strict proposal renews six fingerprints and preserves
+every exception identity, reason and evidence anchor.
+
+These pre-renewal observations use vendor `/nix/store/ny3wxal34pixr94p3y2bmk5iwy72rbyb-cargo-vendor-dir` and the following
+notice inputs. The bead records the final package and archive gates.
+
+- Full: `/nix/store/ppfl0c6wqls4faji73si42ch143mqhbd-eon-archive-notice-input.json`.
+- Without Accelerando: `/nix/store/ny53i9nlhkz8s02q2yhjrq2vyxjqp61j-eon-archive-notice-input.json`.
+
+Historical (`eon-kx9uh`):
+
 For eon-kx9uh, the Eon, Orbit and Venus contexts changed through the lock
 alone. eon-3n73k.1 (`89dc5264`) gave the local `review-tier` package two
 dependencies that were already pinned, `serde_json` and `sha2`. The
@@ -239,6 +260,20 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-19 for `eon-yp6vg.7.13` to context
+`8edb0d3baf8191752824bd3ca58a29250017d18c8b94a146e0a6774f33c5f177`
+in both variants. Only the normalized workspace lock changes in this context.
+
+- Source: `/nix/store/7ij10akj8igf3738yj0hn0x3iyk40z0g-source`.
+- Full observation: `/nix/store/b7as1kbf3n8x3qmk1d4l43v6prq1jlbg-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/gbdmpqcmsxhzz1ikw54q5r7qzddqfk2l-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `4972b5307f2a60a59a6f1537ae4e5f228cd17b1e2633051f364f0561e085f3f7`.
+- Without Accelerando observation: `/nix/store/n7az9ygqyp6ldsap4lyj26jvcvns5g9h-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/bnvqnahz2bxqadj7l93yslqch2vx0pn7-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `f7dbbc424244bf007a514b207e3d18d6c56e5f0c1795c6f43d6189179a7cc699`.
+
+Historical (`eon-kx9uh`):
+
 Renewed on 2026-11-19 for `eon-kx9uh` to context
 `843c43c7a3b7e8a9923ec880b341586b00d15b8dcfc609d60fe3757183e088af`
 in both variants. Only the shared lock changes in this context: it gains
@@ -425,6 +460,17 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-19 for `eon-yp6vg.7.13` to context
+`dd3ec6664114f69250ad22d85b3459a2093a786efa762328705928a5d2af757b`
+in both variants. Only the normalized workspace lock changes in this context.
+
+- Source: `/nix/store/5731kkk7786cybwwx1118df6x6k3jw17-source`.
+- Both observations: `/nix/store/lxs2r9q8abnw2sw7mb8xq4qnlaah4bnl-orbit-cargo-notices-0.1.0`.
+  Binary: `/nix/store/fllk3igz8md5p8kcibipbr1m7zv6nq3w-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+  SHA-256: `49c5e6b7f9bbde1dff5d3d566e108b1a6cc8e52067da10a80fd34dbd88d47e05`.
+
+Historical (`eon-kx9uh`):
+
 Renewed on 2026-11-19 for `eon-kx9uh` to context
 `8af38403080d1b929c3f8ce6f53b8ff1036935011ee13317e56ff992c3a5c443`
 in both variants. Only the shared lock changes in this context: it gains
@@ -606,6 +652,20 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-19 for `eon-yp6vg.7.13` to context
+`9ae02fe985342587291f656aaef9b14e2a76b0969d6117db1da24fd698b5c753`
+in both variants. The lock and the selected smallvec version change in the runtime,
+native and audited graphs.
+
+- Source: `/nix/store/ha0w93jabhgn5c9vdpdzq2whdyazg6in-source`.
+- Full observation: `/nix/store/x0q0w1q8w5yp3wqck0ivf14r8w4s9zrd-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/1jvg3q87s9ag6v3212k3h837k4hmv9m8-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- Without Accelerando observation: `/nix/store/lh80kjxiwl97w07jzh2n92b3jv964ymz-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/72s5hgyvjp078gl4s3y0hjf587hfb1wx-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+- SHA-256 for both binaries: `3e128751102bbc6d2b18055cd5a66433df61358686d7fcc18829fbadb0f3b67a`.
+
+Historical (`eon-kx9uh`):
 
 Renewed on 2026-11-19 for `eon-kx9uh` to context
 `21358fd89d42ea77db8fc7629f268adb47f2bdea330f17f24b0704cf0f6f07f1`
