@@ -5920,7 +5920,7 @@ label = "Browse"
             command_environment(&command, "EON_QUICK_FZF_ARGS"),
             Some(Some(OsStr::new(
                 "--with-shell=/bin/sh -c\n\
-                 --bind=start:execute-silent(: > \"$EON_QUICK_MARKER\")\n\
+                 --bind=start:execute-silent(printf '%s' \"$EON_QUICK_TOKEN\" > \"$EON_QUICK_MARKER\")\n\
                  --bind=ctrl-alt-shift-page-down:become(exit 11)"
             )))
         );

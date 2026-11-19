@@ -29,18 +29,29 @@ local marker_at_spawn -- whether a marker existed as the last fzf started
 local report_fails = false
 local fzf_wait -- how the next fzf ends
 local zoxide_fails = false
+local during_close
+local before_sync
 
 ya = {
-  sync = function(f) return function(...) return f(state, ...) end end,
+  sync = function(f) return function(...)
+    if before_sync then
+      before_sync = nil
+      coroutine.yield("before sync")
+    end
+    return f(state, ...)
+  end end,
   notify = function(note) notes[#notes + 1] = note.content end,
   emit = function(name, args)
-    reports[#reports + 1] = { name, args[1], hidden }
+    reports[#reports + 1] = { name, args[1], hidden, args }
   end,
 }
 ui = {
   hide = function()
     hidden = true
-    return { drop = function() hidden = false end }
+    return { drop = function()
+      if during_close then during_close() end
+      hidden = false
+    end }
   end,
 }
 package.loaded["tab-folder"] = {
@@ -63,6 +74,7 @@ function builder:arg(arguments)
 end
 function builder:env(name, value)
   if self.name == "fzf" and name == "FZF_DEFAULT_OPTS" then fzf_options = value end
+  if self.name == "fzf" and name == "EON_QUICK_TOKEN" then self.token = value end
   return self
 end
 function builder:spawn()
@@ -82,7 +94,11 @@ function builder:spawn()
     -- A slow fzf: its start action creates the marker, and it ends only when
     -- resumed.
     wait_with_output = function()
-      if marker_set then io.open(marker, "w"):close() end
+      if marker_set then
+        local ready = assert(io.open(marker, "w"))
+        ready:write(self.token or "")
+        ready:close()
+      end
       coroutine.yield("fzf up")
       return wait()
     end,
@@ -101,7 +117,9 @@ os.getenv = function(name)
 end
 
 local M = dofile(plugin)
-local function invocation() return coroutine.create(function() M:entry() end) end
+local function invocation(token)
+  return coroutine.create(function() M:entry({ args = { token } }) end)
+end
 local function check(condition, message)
   if not condition then
     io.stderr:write("FAIL: " .. message .. "\n")
@@ -132,12 +150,28 @@ check(spawned == 1, "the second invocation starts no second fzf, started " .. sp
 check(coroutine.resume(first) and coroutine.status(first) == "dead", "the first ends")
 check(not exists(marker), "the marker is removed when fzf ends")
 
+local function request(token)
+  local path = marker .. "." .. token .. ".pending"
+  io.open(path, "w"):close()
+  return path
+end
+
+local cancelled = request("12-345-0")
+local claiming = invocation("12-345-0")
+before_sync = true
+check(select(2, coroutine.resume(claiming)) == "before sync", "the claim awaits Yazi")
+check(os.remove(cancelled), "hide retires the token before Yazi claims")
+check(coroutine.resume(claiming) and coroutine.status(claiming) == "dead" and not exists(marker),
+  "a cancelled claim cannot start fzf")
+
 -- Each exit frees the plugin: a failed Zoxide query, which also removes a
 -- marker an earlier fzf left...
 io.open(marker, "w"):close()
 zoxide_fails = true
-check(coroutine.resume(invocation()), "a failing invocation runs")
+local failed = request("12-345-4")
+check(coroutine.resume(invocation("12-345-4")), "a failing invocation runs")
 zoxide_fails = false
+check(not exists(failed), "a failed search settles its startup request")
 check(#notes == 1, "the failed query is reported")
 check(not exists(marker), "a failed query leaves no stale marker")
 -- ...and an error raised while fzf runs.
@@ -203,6 +237,47 @@ coroutine.resume(bare)
 for _, argument in ipairs(fzf_arguments) do
   check(argument:sub(1, 9) == "--header=", "no runtime argument without a marker: " .. argument)
 end
+marker_set = true
+fzf_wait = function() return { status = { code = 11, success = false }, stdout = "", stderr = "" } end
+local active = invocation()
+check(select(2, coroutine.resume(active)) == "fzf up", "the older search opens")
+local duplicate = request("12-345-1")
+check(coroutine.resume(invocation("12-345-1")), "a Runtime duplicate reaches the plugin")
+check(not exists(duplicate) and exists(marker), "rejection settles only the duplicate")
+local reopen = request("12-345-2")
+local count = #reports
+during_close = function()
+  check(not exists(marker), "fzf ended before reopen arrives")
+  check(coroutine.resume(invocation("12-345-2")), "reopen reaches the closing search")
+  check(coroutine.resume(invocation()), "plain duplicate reaches the closing search")
+  check(exists(reopen) and #reports == count, "reopen stays pending through teardown")
+end
+check(coroutine.resume(active), "the older search closes")
+during_close = nil
+check(#reports == count + 1 and reports[count + 1][1] == "plugin", "exactly one reopen is emitted")
+local reopen_args = reports[count + 1][4]
+check(reopen_args[1] == "quick-search" and reopen_args[2] == "12-345-2", "the queued token is preserved")
+local reopened = invocation(reopen_args[2])
+check(select(2, coroutine.resume(reopened)) == "fzf up", "the queued search opens")
+local ready = assert(io.open(marker))
+check(ready:read("a") == reopen_args[2], "fzf publishes the admitted token")
+ready:close()
+check(coroutine.resume(reopened) and not exists(reopen), "reopen settles its own token")
+
+local old = invocation("initial")
+check(select(2, coroutine.resume(old)) == "fzf up", "initial search opens with no token after recovery")
+local expired = request("12-345-3")
+count = #reports
+local before = spawned
+during_close = function()
+  check(coroutine.resume(invocation("12-345-3")), "a Runtime reopen waits for release")
+  check(os.remove(expired), "clear the pending request before re-emitting")
+end
+check(coroutine.resume(old), "initial search closes")
+during_close = nil
+check(#reports == count and spawned == before, "an expired reopen never opens")
+check(coroutine.resume(invocation("12-345-3")) and spawned == before, "late deliveries are inert")
+
 -- The leave key in Yazi's notation: C, A and S on PageDown, in any order.
 local function binds_leave_key(text)
   for token in text:gmatch("<([^>]+)>") do

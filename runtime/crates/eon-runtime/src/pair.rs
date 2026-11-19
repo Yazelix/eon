@@ -18,18 +18,22 @@ use orbit_protocol::{
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
-    os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    fs,
+    io::{self, Read},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{MetadataExt, OpenOptionsExt},
+    },
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::{Arc, Mutex, MutexGuard},
+    process::{Child, Command, Stdio},
+    sync::{Arc, LazyLock, Mutex, MutexGuard, mpsc},
     thread,
     time::{Duration, Instant},
 };
 
-/// How long after it can start quick search counts as shown before its fzf
-/// marks it up. fzf takes about 0.6 s to start; a key in that time acts on the
-/// screen that is coming, not on Files. Not user-visible, so fixed.
-const STARTUP_GRACE: Duration = Duration::from_secs(2);
+/// Failure recovery for a launcher or plugin that cannot settle its request.
+const START_RECOVERY: Duration = Duration::from_secs(45);
+pub(crate) const INITIAL_REQUEST: &str = "initial";
 
 /// How often a leave writes its key again while fzf has not ended: about ten
 /// times fzf's own leave (become, `sh`, exit). Internal recovery timing.
@@ -38,15 +42,6 @@ const RESEND: Duration = Duration::from_millis(250);
 /// How long a leave keeps writing its key before it gives up and says so.
 /// Internal recovery timing.
 const LEAVE_BOUND: Duration = Duration::from_secs(2);
-
-/// The longest the window's first pair waits for the other-windows notice
-/// before its Yazi starts (cli.rs `startup_notice`).
-const NOTICE_WAIT: Duration = Duration::from_secs(1);
-
-/// The longest the startup Anima in the window's first pair runs past its
-/// duration: eon-files stops it 2 s late and waits 0.25 s more for it to end
-/// (cli.rs `play_startup_anima`).
-const ANIMA_OVERRUN: Duration = Duration::from_millis(2250);
 
 /// The key that leaves quick search for Files: Ctrl+Alt+Shift+PageDown. It
 /// produces no text and no packaged Yazi binding uses it, so a copy that
@@ -65,12 +60,12 @@ pub(crate) fn leave_input() -> LeaseInput {
 
 /// The fzf arguments quick search adds, one per line in
 /// `EON_QUICK_FZF_ARGS`: fzf's start action, which runs once fzf holds the
-/// terminal in raw mode and before it reads input, creates the marker at
-/// `$EON_QUICK_MARKER`, and the leave key ends fzf with status 11. Both run
+/// terminal in raw mode and before it reads input, writes the request token
+/// to `$EON_QUICK_MARKER`, and the leave key ends fzf with status 11. Both run
 /// under `/bin/sh`, whatever the person's shell.
 pub(crate) const FZF_ARGUMENTS: [&str; 3] = [
     "--with-shell=/bin/sh -c",
-    "--bind=start:execute-silent(: > \"$EON_QUICK_MARKER\")",
+    "--bind=start:execute-silent(printf '%s' \"$EON_QUICK_TOKEN\" > \"$EON_QUICK_MARKER\")",
     "--bind=ctrl-alt-shift-page-down:become(exit 11)",
 ];
 
@@ -101,113 +96,208 @@ pub(crate) fn marker(endpoint: &Path) -> PathBuf {
     path.into()
 }
 
-/// The terminal endpoint whose pair marker is at `path`, if `path` names one;
-/// never a terminal endpoint itself.
-pub(crate) fn marker_endpoint(path: &Path) -> Option<PathBuf> {
-    let stem = path.as_os_str().as_bytes().strip_suffix(b".quick")?;
-    Some(PathBuf::from(OsStr::from_bytes(&[stem, b".sock"].concat())))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MarkerKind {
+    Ready,
+    Pending,
 }
 
-/// The marker's file identity, while it exists.
+/// Names one startup request so a late cleanup cannot remove a later one.
+fn pending_marker(marker: &Path, token: &str) -> PathBuf {
+    let mut path = marker.as_os_str().to_os_string();
+    path.push(format!(".{token}.pending"));
+    path.into()
+}
+
+pub(crate) fn marker_endpoint(path: &Path) -> Option<(PathBuf, MarkerKind)> {
+    let bytes = path.as_os_str().as_bytes();
+    let (stem, kind) = if let Some(stem) = bytes.strip_suffix(b".quick") {
+        (stem, MarkerKind::Ready)
+    } else {
+        let name = bytes.strip_suffix(b".pending")?;
+        let separator = name.iter().rposition(|&byte| byte == b'.')?;
+        let (prefix, token) = name.split_at(separator);
+        let token = &token[1..];
+        if token != INITIAL_REQUEST.as_bytes()
+            && (token.len() > 80
+                || token.split(|&byte| byte == b'-').count() != 3
+                || !token
+                    .split(|&byte| byte == b'-')
+                    .all(|part| !part.is_empty() && part.iter().all(u8::is_ascii_digit)))
+        {
+            return None;
+        }
+        (prefix.strip_suffix(b".quick")?, MarkerKind::Pending)
+    };
+    Some((
+        PathBuf::from(OsStr::from_bytes(&[stem, b".sock"].concat())),
+        kind,
+    ))
+}
+
+pub(crate) fn remove_marker(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(format!(
+            "cannot remove quick search marker {}: {error}",
+            path.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn marker_identity(marker: &Path) -> Option<(u64, u64)> {
-    let metadata = std::fs::symlink_metadata(marker).ok()?;
+    let metadata = fs::symlink_metadata(marker).ok()?;
     metadata
         .file_type()
         .is_file()
         .then(|| (metadata.dev(), metadata.ino()))
 }
 
-/// Per pair, by marker: when the startup grace of a requested quick search
-/// ends, until its fzf marks it up, the pair is hidden or picks, or it ends;
-/// and its leave, until fzf has ended or the leave gives up.
+fn ready_for(marker: &Path, token: &str) -> bool {
+    let Ok(file) = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(marker)
+    else {
+        return false;
+    };
+    let mut bytes = Vec::new();
+    file.take((token.len() + 1) as u64)
+        .read_to_end(&mut bytes)
+        .is_ok()
+        && bytes == token.as_bytes()
+}
+
+struct Startup {
+    token: String,
+    pending: PathBuf,
+    deadline: Option<Instant>,
+}
+
 #[derive(Default)]
 struct Pairs {
-    starting: HashMap<PathBuf, Instant>,
+    starting: HashMap<PathBuf, Startup>,
     leaving: HashMap<PathBuf, Leave>,
 }
 
-static PAIRS: Mutex<Option<Pairs>> = Mutex::new(None);
+static PAIRS: LazyLock<Mutex<Pairs>> = LazyLock::new(|| Mutex::new(Pairs::default()));
 
-fn pairs() -> impl std::ops::DerefMut<Target = Pairs> {
-    struct Guard(MutexGuard<'static, Option<Pairs>>);
-    impl std::ops::Deref for Guard {
-        type Target = Pairs;
-        fn deref(&self) -> &Pairs {
-            self.0.as_ref().expect("initialized")
-        }
-    }
-    impl std::ops::DerefMut for Guard {
-        fn deref_mut(&mut self) -> &mut Pairs {
-            self.0.as_mut().expect("initialized")
-        }
-    }
-    let mut guard = PAIRS
+fn pairs() -> MutexGuard<'static, Pairs> {
+    PAIRS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let now = Instant::now();
-    guard
-        .get_or_insert_with(Pairs::default)
-        .starting
-        .retain(|_, end| now < *end);
-    Guard(guard)
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// How long the window's first pair takes before its quick search can start:
-/// its startup Anima of `anima_seconds`, if any, then the notice.
-pub(crate) fn fresh_start(anima_seconds: Option<u64>) -> Duration {
-    NOTICE_WAIT
-        + anima_seconds.map_or(Duration::ZERO, |seconds| {
-            Duration::from_secs(seconds) + ANIMA_OVERRUN
-        })
+impl Pairs {
+    fn finish_start(&mut self, marker: &Path) -> Result<(), String> {
+        if let Some(startup) = self.starting.get(marker) {
+            remove_marker(&startup.pending)?;
+            self.starting.remove(marker);
+        }
+        Ok(())
+    }
+
+    fn hide(&mut self, marker: &Path, log: &DiagnosticLog) -> Option<LeaveStep> {
+        if let Err(error) = self.finish_start(marker) {
+            log.note_once(&error);
+        }
+        self.leaving.remove(marker).map(|_| LeaveStep::Done)
+    }
+
+    fn screen(&mut self, marker: &Path, now: Instant, log: &DiagnosticLog) -> Screen {
+        let ready = marker_identity(marker);
+        if let Some(startup) = self.starting.get(marker) {
+            let waiting = marker_identity(&startup.pending).is_some()
+                && !(ready.is_some() && ready_for(marker, &startup.token));
+            if waiting {
+                if startup.deadline.is_none_or(|deadline| now < deadline) {
+                    return ready.map_or(Screen::Starting, Screen::Quick);
+                }
+                log.note_once(&format!(
+                    "pair {}: quick search still pending after {} s without fzf readiness; clearing request {}",
+                    marker.display(),
+                    START_RECOVERY.as_secs(),
+                    startup.token,
+                ));
+            }
+            if let Err(error) = self.finish_start(marker) {
+                log.note_once(&error);
+            }
+        }
+        ready.map_or(Screen::Files, Screen::Quick)
+    }
 }
 
-/// Records that the pair at `marker` was asked for quick search, which can
-/// start after `delay`: started on it, or sent a switch to it. A leave still
-/// pending for it is over.
-pub(crate) fn quick_search_requested(marker: &Path, delay: Duration) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Screen {
+    Files,
+    Starting,
+    Quick((u64, u64)),
+}
+
+/// Registers a request before any asynchronous launch or dispatch.
+pub(crate) fn quick_search_requested(
+    marker: &Path,
+    token: &str,
+    admitted: Option<Instant>,
+) -> Result<(), String> {
     let mut pairs = pairs();
+    pairs.finish_start(marker)?;
+    let pending = pending_marker(marker, token);
+    fs::File::create_new(&pending).map_err(|error| {
+        format!(
+            "cannot record quick search request {}: {error}",
+            pending.display()
+        )
+    })?;
     pairs.leaving.remove(marker);
-    pairs
-        .starting
-        .insert(marker.to_path_buf(), Instant::now() + delay + STARTUP_GRACE);
+    pairs.starting.insert(
+        marker.to_path_buf(),
+        Startup {
+            token: token.to_owned(),
+            pending,
+            deadline: admitted.map(|now| now + START_RECOVERY),
+        },
+    );
+    Ok(())
 }
 
-/// Ends the startup grace of the pair at `marker`: its quick search is up,
-/// or it has ended.
-pub(crate) fn quick_search_settled(marker: &Path) {
-    pairs().starting.remove(marker);
+/// Starts the recovery clock once Orbit admits the initial launch.
+pub(crate) fn quick_search_admitted(marker: &Path, now: Instant) {
+    if let Some(startup) = pairs().starting.get_mut(marker) {
+        startup.deadline = Some(now + START_RECOVERY);
+    }
 }
 
-/// Whether any pair's quick search is starting or leaving.
+pub(crate) fn hide(marker: &Path, log: &DiagnosticLog) {
+    pairs().hide(marker, log);
+}
+
+pub(crate) fn quick_search_settled(marker: &Path) -> Result<(), String> {
+    pairs().finish_start(marker)
+}
+
+pub(crate) fn terminal_ended(endpoint: &Path) -> Result<(), String> {
+    let marker = marker(endpoint);
+    remove_marker(&marker)?;
+    let mut pairs = pairs();
+    pairs.finish_start(&marker)?;
+    pairs.leaving.remove(&marker);
+    Ok(())
+}
+
 pub(crate) fn any_pending() -> bool {
     let pairs = pairs();
     !pairs.starting.is_empty() || !pairs.leaving.is_empty()
 }
 
-/// Ends the startup grace of the pair at `marker` once its fzf has marked it
-/// up or the pair is not `shown`: a key can then no longer act on a quick
-/// search still to come.
-pub(crate) fn settle_starting(marker: &Path, shown: bool) {
-    let mut pairs = pairs();
-    if pairs.starting.contains_key(marker) && (!shown || marker_identity(marker).is_some()) {
-        pairs.starting.remove(marker);
+/// Whether the pair is on quick search and whether it is still starting.
+pub(crate) fn quick_search_state(marker: &Path, now: Instant, log: &DiagnosticLog) -> (bool, bool) {
+    match pairs().screen(marker, now, log) {
+        Screen::Files => (false, false),
+        Screen::Starting => (true, true),
+        Screen::Quick(_) => (true, false),
     }
-}
-
-/// The end of the startup grace of a quick search requested of `marker` whose
-/// fzf has not marked it up yet.
-pub(crate) fn starting(marker: &Path) -> Option<Instant> {
-    pairs().starting.get(marker).copied()
-}
-
-/// Whether quick search is shown: its fzf has marked it up, or it was
-/// requested within the startup grace and is still starting.
-pub(crate) fn quick_search_shown(marker: &Path) -> bool {
-    if marker_identity(marker).is_some() {
-        quick_search_settled(marker);
-        return true;
-    }
-    starting(marker).is_some()
 }
 
 /// A leave of quick search, until fzf has ended. It waits, while quick search
@@ -216,9 +306,7 @@ pub(crate) fn quick_search_shown(marker: &Path) -> bool {
 /// again every `RESEND`, until that marker is gone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Leave {
-    Waiting {
-        deadline: Instant,
-    },
+    Waiting,
     Sending {
         marker: (u64, u64),
         first: Instant,
@@ -244,11 +332,10 @@ pub(crate) enum LeaveStep {
 }
 
 impl Leave {
-    /// One turn of the leave, with the marker's identity as it is now.
-    fn step(&mut self, marker: Option<(u64, u64)>, now: Instant) -> LeaveStep {
+    fn step(&mut self, screen: Screen, now: Instant) -> LeaveStep {
         match *self {
-            Self::Waiting { deadline } => match marker {
-                Some(marker) => {
+            Self::Waiting => match screen {
+                Screen::Quick(marker) => {
                     *self = Self::Sending {
                         marker,
                         first: now,
@@ -258,8 +345,10 @@ impl Leave {
                     };
                     LeaveStep::Send
                 }
-                None if now >= deadline => LeaveStep::Expired("quick search never started".into()),
-                None => LeaveStep::Wait,
+                Screen::Starting => LeaveStep::Wait,
+                Screen::Files => {
+                    LeaveStep::Expired("quick search request ended without fzf readiness".into())
+                }
             },
             Self::Sending {
                 marker: seen,
@@ -268,7 +357,7 @@ impl Leave {
                 attempts,
                 written,
             } => {
-                if marker != Some(seen) {
+                if screen != Screen::Quick(seen) {
                     LeaveStep::Done
                 } else if now.duration_since(first) >= LEAVE_BOUND {
                     LeaveStep::Expired(format!(
@@ -308,33 +397,26 @@ fn leave_written(marker: &Path) {
     }
 }
 
-/// Asks the pair at `marker` to leave quick search for Files. A leave already
-/// pending stays as it is; one for a quick search still starting waits until
-/// the end of its startup grace for fzf to mark it up.
-pub(crate) fn leave_requested(marker: &Path) {
-    let mut pairs = pairs();
-    let deadline = pairs
-        .starting
-        .get(marker)
-        .copied()
-        .unwrap_or_else(Instant::now);
-    pairs
+/// A pending leave waits for the current request to reach fzf or end.
+fn leave_requested(marker: &Path) {
+    pairs()
         .leaving
         .entry(marker.to_path_buf())
-        .or_insert(Leave::Waiting { deadline });
+        .or_insert(Leave::Waiting);
 }
 
-/// Advances the leave of the pair at `marker`, if it has one, this turn. A
-/// pair no longer `shown` has nothing to leave. A finished or expired leave
-/// is forgotten.
-pub(crate) fn advance_leave(marker: &Path, shown: bool, now: Instant) -> Option<LeaveStep> {
+fn advance_leave(
+    marker: &Path,
+    shown: bool,
+    now: Instant,
+    log: &DiagnosticLog,
+) -> Option<LeaveStep> {
     let mut pairs = pairs();
-    let leave = pairs.leaving.get_mut(marker)?;
-    let step = if shown {
-        leave.step(marker_identity(marker), now)
-    } else {
-        LeaveStep::Done
-    };
+    if !shown {
+        return pairs.hide(marker, log);
+    }
+    let screen = pairs.screen(marker, now, log);
+    let step = pairs.leaving.get_mut(marker)?.step(screen, now);
     if matches!(step, LeaveStep::Done | LeaveStep::Expired(_)) {
         pairs.leaving.remove(marker);
     }
@@ -353,7 +435,7 @@ pub(crate) fn drive_leave(
     log: &DiagnosticLog,
 ) -> Option<LeaveStep> {
     let marker = marker(&session.endpoint);
-    let step = advance_leave(&marker, shown, now)?;
+    let step = advance_leave(&marker, shown, now, log)?;
     match &step {
         LeaveStep::Send => match sessions::send_input(session, leave_input(), 0, log) {
             Ok(_) => leave_written(&marker),
@@ -379,10 +461,21 @@ pub(crate) fn forget_leave(marker: &Path) {
 
 /// Forgets ended pairs in `runtime`; owned endpoints, including recovered
 /// ones, are direct children of this generation directory.
-pub(crate) fn retain_leaves(runtime: &Path, live: &[PathBuf]) {
-    pairs()
-        .leaving
-        .retain(|marker, _| marker.parent() != Some(runtime) || live.contains(marker));
+pub(crate) fn retain_live(runtime: &Path, live: &[PathBuf], log: &DiagnosticLog) {
+    let owned_and_gone =
+        |marker: &PathBuf| marker.parent() == Some(runtime) && !live.contains(marker);
+    let mut pairs = pairs();
+    pairs.leaving.retain(|marker, _| !owned_and_gone(marker));
+    pairs.starting.retain(|marker, startup| {
+        if !owned_and_gone(marker) {
+            return true;
+        }
+        if let Err(error) = remove_marker(&startup.pending) {
+            log.note_once(&error);
+            return true;
+        }
+        false
+    });
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,47 +514,137 @@ pub(crate) fn plan(
     }
 }
 
-/// Runs `switch` for the pair with client `id` and quick search `marker`
-/// beside the supervisor; a failure is logged and changes nothing else. A
-/// leave is written by the supervisor's turns (`advance_leave`).
-pub(crate) fn run(
-    switch: Switch,
-    ya: Option<&Path>,
-    id: u64,
-    marker: PathBuf,
-    log: &Arc<DiagnosticLog>,
-) {
-    match switch {
-        Switch::None => {}
-        Switch::LeaveQuickSearch => leave_requested(&marker),
-        Switch::ShowQuickSearch => {
-            // A second quick search would wait behind the shown one (EON-C18).
-            if quick_search_shown(&marker) {
-                return;
-            }
-            quick_search_requested(&marker, Duration::ZERO);
-            let Some(ya) = ya else {
-                return log.record("pair switch skipped: this Eon has no packaged ya");
-            };
-            let mut command = Command::new(ya);
-            command
-                .args(["emit-to", &id.to_string(), "plugin", "quick-search"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            let worker = Arc::clone(log);
-            if let Err(error) = thread::Builder::new().spawn(move || {
-                let failure = match command.status() {
-                    Ok(status) if status.success() => return,
-                    Ok(status) => format!("ya emit-to {status}"),
-                    Err(error) => error.to_string(),
+/// DDS jobs owned by one supervisor. Normal turns discard only finished
+/// workers. Shutdown cancels all workers before joining any of them.
+#[derive(Default)]
+pub(crate) struct Dispatches(Vec<(mpsc::Sender<()>, thread::JoinHandle<()>)>);
+
+impl Drop for Dispatches {
+    fn drop(&mut self) {
+        for (cancel, _) in &self.0 {
+            let _ = cancel.send(());
+        }
+        for (_, worker) in self.0.drain(..) {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Dispatches {
+    pub(crate) fn reap(&mut self) {
+        self.0.retain(|(_, worker)| !worker.is_finished());
+    }
+
+    /// Runs the accepted switch. A leave is driven by the supervisor's turns.
+    pub(crate) fn run(
+        &mut self,
+        switch: Switch,
+        ya: Option<&Path>,
+        id: u64,
+        marker: PathBuf,
+        log: &Arc<DiagnosticLog>,
+    ) {
+        match switch {
+            Switch::None => {}
+            Switch::LeaveQuickSearch => leave_requested(&marker),
+            Switch::ShowQuickSearch => {
+                let now = Instant::now();
+                if quick_search_state(&marker, now, log).0 {
+                    return;
+                }
+                let Some(ya) = ya else {
+                    return log.record("pair switch skipped: this Eon has no packaged ya");
                 };
-                worker.record(&format!("pair switch to quick search failed: {failure}"));
-            }) {
-                log.record(&format!("pair switch failed: {error}"));
+                let token = super::supervisor::request_id();
+                if let Err(error) = quick_search_requested(&marker, &token, Some(now)) {
+                    return log.record(&error);
+                }
+                let pending = pending_marker(&marker, &token);
+                let mut command = Command::new(ya);
+                command
+                    .args(["emit-to", &id.to_string(), "plugin", "quick-search", &token])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                self.start(command, pending, now + START_RECOVERY, log);
             }
         }
     }
+
+    fn start(
+        &mut self,
+        command: Command,
+        pending: PathBuf,
+        deadline: Instant,
+        log: &Arc<DiagnosticLog>,
+    ) {
+        self.reap();
+        let worker_log = Arc::clone(log);
+        let ticket = pending.clone();
+        let (cancel, cancelled) = mpsc::channel();
+        match thread::Builder::new().spawn(move || {
+            if let Err(error) = dispatch(command, deadline, &cancelled) {
+                fail_dispatch(&ticket, &error, &worker_log);
+            }
+        }) {
+            Ok(worker) => self.0.push((cancel, worker)),
+            Err(error) => fail_dispatch(&pending, &error.to_string(), log),
+        }
+    }
+}
+
+fn fail_dispatch(pending: &Path, error: &str, log: &DiagnosticLog) {
+    log.record(&format!(
+        "pair switch {} failed: {error}",
+        pending.display()
+    ));
+    if let Err(error) = remove_marker(pending) {
+        log.record(&error);
+    }
+}
+
+fn dispatch(
+    mut command: Command,
+    deadline: Instant,
+    cancelled: &mpsc::Receiver<()>,
+) -> Result<(), String> {
+    super::platform::require_waitable_children().map_err(|error| error.to_string())?;
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    wait_for_dispatch(&mut child, deadline, cancelled)
+}
+
+fn wait_for_dispatch(
+    child: &mut Child,
+    deadline: Instant,
+    cancelled: &mpsc::Receiver<()>,
+) -> Result<(), String> {
+    let failure = loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("ya emit-to {status}")),
+            Ok(None) => {}
+            Err(error) => return Err(format!("cannot wait for ya emit-to: {error}")),
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break "ya emit-to timed out";
+        }
+        match cancelled.recv_timeout(remaining.min(Duration::from_millis(25))) {
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            _ => break "ya emit-to cancelled",
+        }
+    };
+    // Automatic reaping was excluded before spawn. No other code waits for
+    // this child, so its PID remains ours after try_wait reported it live.
+    if let Err(error) = child.kill()
+        && error.raw_os_error() != Some(libc::ESRCH)
+    {
+        return Err(format!("{failure}, cannot stop ya: {error}"));
+    }
+    child
+        .wait()
+        .map_err(|error| format!("{failure}, cannot reap ya: {error}"))?;
+    Err(failure.to_owned())
 }
 
 #[cfg(test)]
@@ -522,7 +705,16 @@ mod tests {
         let endpoint = Path::new("/run/eon/w/0000000a/generations/g1/terminal-2.sock");
         let pair = marker(endpoint);
         assert_eq!(pair.file_name().unwrap(), "terminal-2.quick");
-        assert_eq!(marker_endpoint(&pair).as_deref(), Some(endpoint));
+        assert_eq!(
+            marker_endpoint(&pair),
+            Some((endpoint.into(), MarkerKind::Ready))
+        );
+        for token in [INITIAL_REQUEST, "14-123456789-0"] {
+            assert_eq!(
+                marker_endpoint(&pending_marker(&pair, token)),
+                Some((endpoint.into(), MarkerKind::Pending))
+            );
+        }
         for other in [
             "terminal-2.sock",
             "orbit.sock",
@@ -530,42 +722,164 @@ mod tests {
             "terminal-2.sock.record",
             "terminal-2.sock.management",
             "terminal-2.quick.sock",
+            "terminal-2.quick.pending",
+            "terminal-2.quick.fake.pending",
+            "terminal-2.quick.2--0.pending",
+            "terminal-2.quick.2-1-0.sock",
         ] {
             assert_eq!(marker_endpoint(&endpoint.with_file_name(other)), None);
         }
     }
 
-    /// A starting quick search stops counting as shown once its pair is
-    /// hidden, so Alt+Z, Esc, Alt+Z asks for quick search again, or once its
-    /// fzf marks it up, so a quick search left with Tab is not taken for
-    /// starting. Only a regular file is a marker.
     #[test]
-    fn hiding_the_pair_or_its_fzf_marking_it_up_ends_the_startup_grace() {
-        let root = scratch("settle");
+    fn startup_follows_the_request_through_anima_until_ready_or_ended() {
+        let root = scratch("startup");
         let path = root.join("terminal-2.quick");
-        assert!(!quick_search_shown(&path));
-        quick_search_requested(&path, Duration::ZERO);
-        assert!(quick_search_shown(&path));
-        settle_starting(&path, true);
-        assert!(quick_search_shown(&path));
-        settle_starting(&path, false);
-        assert!(!quick_search_shown(&path));
+        let now = Instant::now();
+        let admitted = now + Duration::from_secs(14);
+        let delayed = admitted + Duration::from_secs(34);
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        quick_search_requested(&path, INITIAL_REQUEST, None).unwrap();
+        leave_requested(&path);
+        quick_search_admitted(&path, admitted);
         assert_eq!(
-            plan(PROJECT_ENTRY, InvokeIntent::Toggle, false, false, false),
-            (InvokeIntent::Toggle, Switch::ShowQuickSearch)
+            advance_leave(&path, true, delayed, &log),
+            Some(LeaveStep::Wait)
         );
-        quick_search_requested(&path, Duration::ZERO);
-        std::fs::create_dir(&path).unwrap();
-        settle_starting(&path, true);
-        assert!(starting(&path).is_some(), "a directory marked it up");
-        std::fs::remove_dir(&path).unwrap();
-        std::fs::write(&path, b"").unwrap();
-        settle_starting(&path, true);
-        assert!(starting(&path).is_none());
-        assert!(quick_search_shown(&path));
-        std::fs::remove_file(&path).unwrap();
-        assert!(!quick_search_shown(&path));
-        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(quick_search_state(&path, delayed, &log), (true, true));
+
+        fs::create_dir(&path).unwrap();
+        assert_eq!(quick_search_state(&path, delayed, &log), (true, true));
+        fs::remove_dir(&path).unwrap();
+        fs::write(&path, INITIAL_REQUEST).unwrap();
+        assert_eq!(
+            advance_leave(&path, true, delayed, &log),
+            Some(LeaveStep::Send)
+        );
+        assert!(!pending_marker(&path, INITIAL_REQUEST).exists());
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            advance_leave(&path, true, delayed, &log),
+            Some(LeaveStep::Done)
+        );
+
+        let token = "1-1-1";
+        quick_search_requested(&path, token, Some(now)).unwrap();
+        leave_requested(&path);
+        assert!(matches!(
+            advance_leave(&path, true, now + START_RECOVERY, &log),
+            Some(LeaveStep::Expired(_))
+        ));
+        assert!(!pending_marker(&path, token).exists());
+        fs::write(&path, b"").unwrap();
+        assert_eq!(
+            quick_search_state(&path, now + START_RECOVERY, &log),
+            (true, false)
+        );
+        assert_eq!(advance_leave(&path, true, now + START_RECOVERY, &log), None);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_older_ready_marker_does_not_retire_a_newer_request() {
+        let root = scratch("stale-ready");
+        let path = root.join("terminal-2.quick");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let now = Instant::now();
+        let current = "1-1-1";
+        quick_search_requested(&path, current, Some(now)).unwrap();
+        let pending = pending_marker(&path, current);
+
+        fs::write(&path, INITIAL_REQUEST).unwrap();
+        assert_eq!(quick_search_state(&path, now, &log), (true, false));
+        assert!(pending.exists(), "the older fzf cleared the new request");
+        fs::remove_file(&path).unwrap();
+        assert_eq!(quick_search_state(&path, now, &log), (true, true));
+
+        fs::write(&path, current).unwrap();
+        assert_eq!(quick_search_state(&path, now, &log), (true, false));
+        assert!(!pending.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_dispatch_ends_only_its_own_request() {
+        let root = scratch("dispatch");
+        let path = root.join("terminal-2.quick");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let now = Instant::now();
+        let old = "1-1-0";
+        let current = "1-1-1";
+        quick_search_requested(&path, old, Some(now)).unwrap();
+        quick_search_requested(&path, current, Some(now)).unwrap();
+        leave_requested(&path);
+        fail_dispatch(&pending_marker(&path, old), "late failure", &log);
+        assert_eq!(advance_leave(&path, true, now, &log), Some(LeaveStep::Wait));
+
+        let mut command = Command::new("sh");
+        command.args(["-c", "exec sleep 300"]);
+        let (_sender, cancelled) = mpsc::channel();
+        let failure = dispatch(command, now, &cancelled).unwrap_err();
+        assert_eq!(failure, "ya emit-to timed out");
+        fail_dispatch(&pending_marker(&path, current), &failure, &log);
+        assert!(matches!(
+            advance_leave(&path, true, now, &log),
+            Some(LeaveStep::Expired(_))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shutting_down_dispatches_reaps_a_wedged_child() {
+        use std::os::{fd::OwnedFd, unix::net::UnixStream};
+
+        let root = scratch("shutdown-dispatch");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let pid_file = root.join("pid");
+        let pending = root.join("terminal-2.quick.1-1-1.pending");
+        fs::File::create_new(&pending).unwrap();
+        let (_keep_open, child_input) = UnixStream::pair().unwrap();
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "printf '%s\\n' \"$$\" > \"$1\"; exec cat", "sh"])
+            .arg(&pid_file)
+            .stdin(Stdio::from(OwnedFd::from(child_input)))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut dispatches = Dispatches::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        dispatches.start(
+            command,
+            pending.clone(),
+            Instant::now() + START_RECOVERY,
+            &log,
+        );
+        let pid = loop {
+            if let Ok(pid) = fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.trim().parse::<u32>()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "ya never reported its PID");
+            thread::yield_now();
+        };
+        assert!(crate::platform::process(pid).unwrap().is_some());
+        drop(dispatches);
+        assert!(crate::platform::process(pid).unwrap().is_none());
+        assert!(!pending.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_already_reaped_dispatch_reports_loss_of_ownership() {
+        use rustix::process::{Pid, WaitOptions, waitpid};
+        let mut child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let pid = Pid::from_raw(i32::try_from(child.id()).unwrap()).unwrap();
+        waitpid(Some(pid), WaitOptions::empty()).unwrap().unwrap();
+
+        let (_sender, cancelled) = mpsc::channel();
+        let error = wait_for_dispatch(&mut child, Instant::now(), &cancelled).unwrap_err();
+        assert!(error.starts_with("cannot wait for ya emit-to:"), "{error}");
     }
 
     /// A leave waits for fzf to mark itself up, then writes its key at once
@@ -575,25 +889,18 @@ mod tests {
     fn a_leave_sends_until_fzf_ends_and_never_reads_a_missing_marker_as_ended() {
         let start = Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
-        let up = Some((1, 7));
-        let mut leave = Leave::Waiting { deadline: at(2000) };
-        assert_eq!(leave.step(None, at(0)), LeaveStep::Wait);
-        assert_eq!(leave.step(None, at(1999)), LeaveStep::Wait);
+        let up = Screen::Quick((1, 7));
+        let mut leave = Leave::Waiting;
+        assert_eq!(leave.step(Screen::Starting, at(0)), LeaveStep::Wait);
         assert_eq!(leave.step(up, at(1999)), LeaveStep::Send);
         assert_eq!(leave.step(up, at(2100)), LeaveStep::Wait);
         assert_eq!(leave.step(up, at(2249)), LeaveStep::Send);
         assert_eq!(leave.step(up, at(2300)), LeaveStep::Wait);
-        assert_eq!(leave.step(None, at(2300)), LeaveStep::Done);
+        assert_eq!(leave.step(Screen::Files, at(2300)), LeaveStep::Done);
 
-        let mut leave = Leave::Waiting { deadline: at(0) };
+        let mut leave = Leave::Waiting;
         assert_eq!(leave.step(up, at(5)), LeaveStep::Send);
-        assert_eq!(leave.step(Some((1, 8)), at(10)), LeaveStep::Done);
-
-        let mut never = Leave::Waiting { deadline: at(100) };
-        assert_eq!(
-            never.step(None, at(100)),
-            LeaveStep::Expired("quick search never started".into())
-        );
+        assert_eq!(leave.step(Screen::Quick((1, 8)), at(10)), LeaveStep::Done);
     }
 
     /// A leave that never sees fzf end gives up after `LEAVE_BOUND`, having
@@ -602,8 +909,8 @@ mod tests {
     #[test]
     fn a_leave_gives_up_after_its_bound_and_says_so() {
         let start = Instant::now();
-        let up = Some((1, 7));
-        let mut leave = Leave::Waiting { deadline: start };
+        let up = Screen::Quick((1, 7));
+        let mut leave = Leave::Waiting;
         let mut sent = 0;
         let mut now = start;
         let expired = loop {
@@ -629,68 +936,88 @@ mod tests {
     }
 
     /// A leave asked for twice keeps its first state; one asked for while
-    /// quick search starts waits until its grace ends; asking for quick search
-    /// again, the pair hiding, or its terminal ending are each the end of it.
+    /// quick search starts waits for readiness. A replacement, a hide or a
+    /// terminal ending cancels the leave.
     #[test]
     fn a_pending_leave_is_kept_once_and_ended_by_hiding_or_a_new_quick_search() {
         let root = scratch("leave");
         let path = root.join("terminal-2.quick");
         let now = Instant::now();
-        assert_eq!(advance_leave(&path, true, now), None);
-        quick_search_requested(&path, Duration::from_secs(1));
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        assert_eq!(advance_leave(&path, true, now, &log), None);
+        quick_search_requested(&path, INITIAL_REQUEST, Some(now)).unwrap();
         leave_requested(&path);
-        assert_eq!(advance_leave(&path, true, now), Some(LeaveStep::Wait));
-        std::fs::write(&path, b"").unwrap();
-        assert_eq!(advance_leave(&path, true, now), Some(LeaveStep::Send));
+        assert_eq!(advance_leave(&path, true, now, &log), Some(LeaveStep::Wait));
+        fs::write(&path, INITIAL_REQUEST).unwrap();
+        assert_eq!(advance_leave(&path, true, now, &log), Some(LeaveStep::Send));
         leave_requested(&path);
-        assert_eq!(advance_leave(&path, true, now), Some(LeaveStep::Wait));
+        assert_eq!(advance_leave(&path, true, now, &log), Some(LeaveStep::Wait));
         assert!(any_pending());
-        assert_eq!(advance_leave(&path, false, now), Some(LeaveStep::Done));
-        assert_eq!(advance_leave(&path, true, now), None);
+        assert_eq!(
+            advance_leave(&path, false, now, &log),
+            Some(LeaveStep::Done)
+        );
+        assert_eq!(advance_leave(&path, true, now, &log), None);
+        fs::remove_file(&path).unwrap();
 
         leave_requested(&path);
-        quick_search_requested(&path, Duration::ZERO);
-        assert_eq!(advance_leave(&path, true, now), None);
-        quick_search_settled(&path);
+        quick_search_requested(&path, "1-1-1", Some(now)).unwrap();
+        assert_eq!(advance_leave(&path, true, now, &log), None);
+        assert!(pending_marker(&path, "1-1-1").exists());
+        leave_requested(&path);
+        assert_eq!(
+            advance_leave(&path, false, now, &log),
+            Some(LeaveStep::Done)
+        );
+        assert!(!pending_marker(&path, "1-1-1").exists());
+        assert_eq!(quick_search_state(&path, now, &log), (false, false));
 
         leave_requested(&path);
-        retain_leaves(&root, &[]);
-        assert_eq!(advance_leave(&path, true, now), None);
+        retain_live(&root, &[], &log);
+        assert_eq!(advance_leave(&path, true, now, &log), None);
         leave_requested(&path);
         forget_leave(&path);
-        assert_eq!(advance_leave(&path, true, now), None);
+        assert_eq!(advance_leave(&path, true, now, &log), None);
         std::fs::remove_dir_all(root).unwrap();
     }
 
     /// A supervisor prunes only its runtime, even with no live pairs; another
     /// runtime with the same path prefix keeps its pending leave unchanged.
     #[test]
-    fn pruning_ended_pairs_preserves_other_runtimes_leaves() {
+    fn pruning_ended_pairs_preserves_other_runtimes_requests_and_leaves() {
         let root = scratch("prune");
         let runtime = root.join("runtime");
         let live = runtime.join("terminal-2.quick");
         let ended = runtime.join("terminal-3.quick");
         let other = root.join("runtime-other/terminal-2.quick");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let now = Instant::now();
+        fs::create_dir(&runtime).unwrap();
+        fs::create_dir(other.parent().unwrap()).unwrap();
         for marker in [&live, &ended, &other] {
+            quick_search_requested(marker, INITIAL_REQUEST, Some(now)).unwrap();
             leave_requested(marker);
         }
         let live_leave = pairs().leaving[&live];
         let other_leave = pairs().leaving[&other];
 
-        retain_leaves(&runtime, std::slice::from_ref(&live));
+        retain_live(&runtime, std::slice::from_ref(&live), &log);
+        assert!(pending_marker(&live, INITIAL_REQUEST).exists());
+        assert!(!pending_marker(&ended, INITIAL_REQUEST).exists());
+        assert!(pending_marker(&other, INITIAL_REQUEST).exists());
         {
             let pairs = pairs();
             assert_eq!(pairs.leaving.get(&live), Some(&live_leave));
             assert!(!pairs.leaving.contains_key(&ended));
             assert_eq!(pairs.leaving.get(&other), Some(&other_leave));
         }
-        retain_leaves(&runtime, &[]);
+        retain_live(&runtime, &[], &log);
         {
             let pairs = pairs();
             assert!(!pairs.leaving.contains_key(&live));
             assert_eq!(pairs.leaving.get(&other), Some(&other_leave));
         }
-        forget_leave(&other);
+        terminal_ended(&other.with_extension("sock")).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -702,6 +1029,7 @@ mod tests {
         assert_eq!(FZF_ARGUMENTS[0], "--with-shell=/bin/sh -c");
         assert!(FZF_ARGUMENTS[1].starts_with("--bind=start:execute-silent("));
         assert!(FZF_ARGUMENTS[1].contains("\"$EON_QUICK_MARKER\""));
+        assert!(FZF_ARGUMENTS[1].contains("\"$EON_QUICK_TOKEN\""));
         assert_eq!(
             FZF_ARGUMENTS[2],
             "--bind=ctrl-alt-shift-page-down:become(exit 11)"

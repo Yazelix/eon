@@ -1533,6 +1533,7 @@ fn supervise(
         subscribers: Subscribers::new(generation),
         scrollback,
         editor_sockets,
+        pair_dispatches: pair::Dispatches::default(),
         log: Arc::clone(log),
     };
     let presentation = if startup_failed {
@@ -1790,6 +1791,7 @@ struct SupervisorState {
     /// Scrollback popups' private snapshots (EON-C10).
     scrollback: Snapshots,
     editor_sockets: Sockets,
+    pair_dispatches: pair::Dispatches,
     log: Arc<DiagnosticLog>,
 }
 
@@ -2064,6 +2066,7 @@ impl SupervisorState {
     /// once, with its action's change (EON-C39).
     fn tend(&mut self, now: Instant) {
         self.failed_starts.reap(&self.log);
+        self.pair_dispatches.reap();
         // Read first, so attention this turn sees the latest native focus.
         if let Some(venus) = &mut self.venus {
             venus.read_native_focus();
@@ -2087,23 +2090,19 @@ impl SupervisorState {
             }
             if let Some(workspaces) = &self.workspaces {
                 self.pane_labels.reconcile(&workspaces.pane_sessions());
-                // A starting quick search stops counting as shown once its fzf
-                // marks it up or its pair is hidden, and a pending leave writes
-                // its key until fzf ends (EON-C18). A leave whose terminal
-                // ended is forgotten.
+                // Follow startup and pending leaves through the pair's fzf
+                // readiness and exit (EON-C18).
                 if pair::any_pending() {
                     let mut live = Vec::new();
                     for (session, shown) in workspaces.pairs() {
                         if let Some(running) =
                             self.sessions.iter_mut().find(|item| item.id == session)
                         {
-                            let marker = pair::marker(&running.endpoint);
-                            pair::settle_starting(&marker, shown);
                             pair::drive_leave(running, shown, now, &self.log);
-                            live.push(marker);
+                            live.push(pair::marker(&running.endpoint));
                         }
                     }
-                    pair::retain_leaves(workspaces.runtime_directory(), &live);
+                    pair::retain_live(workspaces.runtime_directory(), &live, &self.log);
                 }
             }
         } else {
@@ -2847,6 +2846,10 @@ enum PairStart<'a> {
     Later,
 }
 
+fn is_packaged_files(argv: &[OsString]) -> bool {
+    argv == [OsStr::new("eon-files")]
+}
+
 /// The packaged Files pair's command for terminal `session`, from its
 /// configured `argv`. The product's Files is always the packaged `eon-files`
 /// (EON-C10); only test fixtures' stand-in commands run as given.
@@ -2856,7 +2859,7 @@ fn pair_command(
     session: &workspace::Session,
     start: PairStart<'_>,
 ) -> Result<Vec<OsString>, String> {
-    if argv != [OsStr::new("eon-files")] {
+    if !is_packaged_files(&argv) {
         return Ok(argv);
     }
     let runtime = session
@@ -2864,10 +2867,7 @@ fn pair_command(
         .parent()
         .ok_or("pair endpoint has no runtime directory")?;
     let mut command = argv;
-    let mut delay = Duration::ZERO;
     if let PairStart::Fresh(animation) = start {
-        // Its Yazi, and so quick search, starts once these end.
-        delay = pair::fresh_start(animation.map(|animation| animation.duration_seconds));
         if let Some(animation) = animation {
             command.extend([
                 OsString::from("--eon-anima"),
@@ -2883,7 +2883,6 @@ fn pair_command(
     let marker = pair::marker(&session.endpoint);
     if quick {
         command.push("--eon-quick".into());
-        pair::quick_search_requested(&marker, delay);
     }
     let id = pair::client_id(&session.endpoint);
     command.extend([
@@ -2962,6 +2961,7 @@ fn apply_session_operation(
         }
     };
     let mut pending = false;
+    let mut quick_start = None;
     let child = match command {
         LaunchCommand::Files {
             argv,
@@ -2969,6 +2969,9 @@ fn apply_session_operation(
             pending: marked,
         } => {
             pending = marked;
+            if quick && is_packaged_files(&argv) {
+                quick_start = Some(pair::marker(&session.endpoint));
+            }
             pair_command(argv, quick, &session, pair_start)?
         }
         LaunchCommand::Tool(argv) => argv,
@@ -2984,8 +2987,16 @@ fn apply_session_operation(
         LaunchCommand::Pane if session.id == "terminal-1" => initial_child.clone(),
         LaunchCommand::Pane => Vec::new(),
     };
-    if pending {
-        sessions::mark_pending_pair(&session.endpoint)?;
+    if let Some(marker) = &quick_start {
+        pair::quick_search_requested(marker, pair::INITIAL_REQUEST, None)?;
+    }
+    if pending && let Err(error) = sessions::mark_pending_pair(&session.endpoint) {
+        if let Some(marker) = &quick_start
+            && let Err(cleanup) = pair::quick_search_settled(marker)
+        {
+            log.record(&cleanup);
+        }
+        return Err(error);
     }
     let started = start_orbit(
         inputs,
@@ -3006,15 +3017,22 @@ fn apply_session_operation(
             // A rollback that could not confirm its cleanup may leave the pair
             // running: its marker stays, so a recovery stops it rather than
             // adopting it, and the record's cleanup removes the marker later.
-            if pending
-                && !sessions::launch_record_remains(&session.endpoint)
-                && let Err(marker) = sessions::settle_pending_pair(&session.endpoint)
-            {
-                log.record(&marker);
+            if !sessions::launch_record_remains(&session.endpoint) {
+                if pending && let Err(marker) = sessions::settle_pending_pair(&session.endpoint) {
+                    log.record(&marker);
+                }
+                if let Some(marker) = &quick_start
+                    && let Err(cleanup) = pair::quick_search_settled(marker)
+                {
+                    log.record(&cleanup);
+                }
             }
             return Err(error);
         }
     };
+    if let Some(marker) = &quick_start {
+        pair::quick_search_admitted(marker, Instant::now());
+    }
     // Before the reply that shows Venus the terminal (EON-C11).
     name_presentation(std::slice::from_mut(&mut running), venus, true, log);
     sessions.push(running);
@@ -4160,9 +4178,8 @@ fn dispatch_registered_request(
                             .endpoint;
                         let id = pair::client_id(endpoint);
                         let marker = pair::marker(endpoint);
-                        let quick = pair::quick_search_shown(&marker);
-                        // Only a quick search whose fzf has not marked it up yet.
-                        let starting = quick && pair::starting(&marker).is_some();
+                        let (quick, starting) =
+                            pair::quick_search_state(&marker, Instant::now(), &state.log);
                         let (dispatched, switch) =
                             pair::plan(entry, *intent, shown, quick, starting);
                         *intent = dispatched;
@@ -4304,6 +4321,14 @@ fn dispatch_registered_request(
                     },
                 ),
             };
+            if pair::any_pending() {
+                for (session, shown) in workspace.pairs() {
+                    if !shown && let Some(running) = sessions.iter().find(|item| item.id == session)
+                    {
+                        pair::hide(&pair::marker(&running.endpoint), log);
+                    }
+                }
+            }
             if let Some(snapshot) = snapshot {
                 settle_snapshot(
                     &mut state.scrollback,
@@ -4317,8 +4342,10 @@ fn dispatch_registered_request(
             if result.is_ok()
                 && let Some((directory, pair)) = visit
             {
-                if let Some(marker) = pair {
-                    pair::quick_search_settled(&marker);
+                if let Some(marker) = pair
+                    && let Err(error) = pair::quick_search_settled(&marker)
+                {
+                    log.record(&error);
                 }
                 record_visit(inputs, config, log, &directory);
             }
@@ -4326,7 +4353,9 @@ fn dispatch_registered_request(
                 && let Some((switch, id, session, marker)) = pair_switch
             {
                 let ya = inputs.managed.shell_bin.as_ref().map(|bin| bin.join("ya"));
-                pair::run(switch, ya.as_deref(), id, marker, log);
+                state
+                    .pair_dispatches
+                    .run(switch, ya.as_deref(), id, marker, log);
                 // A quick search already up is left in this turn, as the
                 // picker's Enter is pressed in it; one still starting waits
                 // for later turns.
@@ -4957,6 +4986,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: Snapshots::new(&root),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log,
         };
         assert!(
@@ -6692,6 +6722,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let subscribe = |state: &mut SupervisorState, caller: Option<&str>, filter| {
@@ -6911,6 +6942,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -7123,6 +7155,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -7252,6 +7285,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let mut fixture = FinishingWindow {
@@ -8392,6 +8426,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: Snapshots::new(&root.join("scrollback")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         }
     }
@@ -9032,6 +9067,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log,
         };
         let closes = (0..2)
@@ -9127,6 +9163,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log,
         };
         // The pending pair is a popup and not counted (EON-C18).
@@ -9145,6 +9182,81 @@ mod tests {
         assert_eq!(tab.selected_popup, None);
         assert_eq!(after.live_terminals, Some(2));
         assert_eq!(shown, Some(expected));
+    }
+
+    #[test]
+    fn hiding_files_cancels_startup_and_leave_in_the_action_reply() {
+        use eon_workspace_protocol::v47::{PopupTarget, Response};
+
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let pair_root = temporary_directory();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.orbit = std::env::var_os("ORBIT_BIN").unwrap().into();
+        let workspace = WorkspaceSet::pending(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            inputs.defaults.popups.clone(),
+            |_, _| Ok(Default::default()),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut files = leased_orbit(&pair_root, "exec sleep 30");
+        files.id = workspace.pairs().next().unwrap().0.to_owned();
+        let marker = crate::pair::marker(&files.endpoint);
+        crate::pair::quick_search_requested(
+            &marker,
+            crate::pair::INITIAL_REQUEST,
+            Some(Instant::now()),
+        )
+        .unwrap();
+        let pending = marker.with_extension("quick.initial.pending");
+        let action = Action::DismissPopup(PopupTarget {
+            tab: "t1".into(),
+            instance: "u1".into(),
+        });
+        let mut state = admission_state(&root, Some(workspace), vec![files]);
+        state.initial_child = ["/bin/sh", "-c", "exec sleep 30"]
+            .map(OsString::from)
+            .into();
+        state.pair_dispatches.run(
+            crate::pair::Switch::LeaveQuickSearch,
+            None,
+            0,
+            marker.clone(),
+            &state.log,
+        );
+        let (reply, _) = super::dispatch_control_request(
+            super::Request {
+                id: "dismiss-files".into(),
+                caller: None,
+                action,
+            },
+            &mut state,
+            &inputs,
+            &root,
+            &root,
+            ADMISSION_GENERATION,
+        );
+        let pending_at_reply = pending.exists();
+        let leave_at_reply =
+            crate::pair::drive_leave(&mut state.sessions[0], true, Instant::now(), &state.log);
+        stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(pair_root).unwrap();
+        let super::ControlResponse::Workspace(reply) = reply else {
+            panic!("hide returned a lifecycle reply");
+        };
+        assert!(
+            matches!(&reply, Response::Snapshot(snapshot) if snapshot.tabs[0].selected_popup.is_none()),
+            "{reply:?}"
+        );
+        assert!(
+            !pending_at_reply,
+            "the hide reply left the startup ticket live"
+        );
+        assert_eq!(leave_at_reply, None);
     }
 
     /// Kills a test-owned Orbit's worker, which sends Orbit down its failure
@@ -9195,12 +9307,24 @@ mod tests {
         // A dead worker sends Orbit down its failure path, which removes its
         // Live record and publishes no result: the run reconciles as ended.
         let first_orbit_log = sessions[0].orbit_log.clone().unwrap();
+        let ready = crate::pair::marker(&sessions[0].endpoint);
+        crate::pair::quick_search_requested(&ready, crate::pair::INITIAL_REQUEST, None).unwrap();
+        let pending = ready.with_extension("quick.initial.pending");
+        fs::write(&ready, b"").unwrap();
         kill_worker(&sessions[0]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let record = sessions::tests::record(&sessions[0]);
+        while record.exists() {
+            assert!(Instant::now() < deadline, "Orbit kept its Live record");
+            std::thread::yield_now();
+        }
         assert_eq!(
             stop_owned_session(&mut sessions, "terminal-1", &log),
             Ok(Some(1))
         );
         assert_eq!(sessions.len(), 2);
+        assert!(!pending.exists(), "dead Orbit left a pending fzf request");
+        assert!(!ready.exists(), "dead Orbit left an fzf ready marker");
         let owner_loss = fs::read_dir(roots[0].join("logs"))
             .unwrap()
             .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
@@ -9253,6 +9377,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -9467,6 +9592,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
@@ -9589,6 +9715,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
@@ -9654,6 +9781,7 @@ mod tests {
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
 
@@ -9781,44 +9909,6 @@ mod tests {
         );
     }
 
-    /// The window's first pair plays its startup Anima, then reads the
-    /// notice, before its Yazi can start quick search: a key pressed in that
-    /// time, and up to the startup grace after it, acts on the quick search
-    /// still to come (EON-C18).
-    #[test]
-    fn a_startup_pairs_quick_search_counts_as_starting_through_its_anima() {
-        let session = |name: &str| crate::workspace::Session {
-            id: "terminal-2".into(),
-            endpoint: format!("/runtime/{name}/terminal-2.sock").into(),
-        };
-        let animation = crate::managed_environment::StartupAnimation {
-            enabled: true,
-            style: "wave".into(),
-            duration_seconds: 3,
-        };
-        let files = || vec![OsString::from("eon-files")];
-        let grace = |session: &crate::workspace::Session| {
-            crate::pair::starting(&crate::pair::marker(&session.endpoint))
-                .unwrap()
-                .saturating_duration_since(Instant::now())
-        };
-        let animated = session("g-anima-on");
-        pair_command(files(), true, &animated, PairStart::Fresh(Some(&animation))).unwrap();
-        // Anima 3 s, its 2.25 s overrun bound, the 1 s notice, then 2 s.
-        assert!(
-            grace(&animated) > Duration::from_secs(8),
-            "{:?}",
-            grace(&animated)
-        );
-        let still = session("g-anima-off");
-        pair_command(files(), true, &still, PairStart::Fresh(None)).unwrap();
-        assert!(grace(&still) > Duration::from_millis(2500));
-        assert!(grace(&still) <= Duration::from_secs(3));
-        let later = session("g-later");
-        pair_command(files(), true, &later, PairStart::Later).unwrap();
-        assert!(grace(&later) <= Duration::from_secs(2));
-    }
-
     /// A pending tab's pair carries a marker until its tab commits: recovery
     /// stops a marked pair and reports it, so the launch-directory fallback
     /// applies, adopts an unmarked (committed) one as before, and removes
@@ -9857,6 +9947,12 @@ mod tests {
             }
             let stale = sessions::pending_pair_marker(&root.join("terminal-9.sock"));
             sessions::mark_pending_pair(&root.join("terminal-9.sock")).unwrap();
+            let ready = crate::pair::marker(&endpoint);
+            let abandoned = root.join("orbit.quick.12-345-1.pending");
+            let foreign = root.join("orbit.quick.extra.pending");
+            for path in [&ready, &abandoned, &foreign] {
+                fs::write(path, b"").unwrap();
+            }
             sessions::tests::release_lease(session);
             let (mut recovered, pair) = sessions::recover_sessions(
                 &root,
@@ -9874,6 +9970,9 @@ mod tests {
             assert_eq!(pair, pending);
             assert!(!marker.exists());
             assert!(!stale.exists());
+            assert!(!abandoned.exists());
+            assert!(foreign.exists());
+            assert_eq!(ready.exists(), !pending);
             if pending {
                 assert!(recovered.is_empty());
                 assert!(!endpoint.exists());
@@ -11244,6 +11343,7 @@ rows = 30
             subscribers: crate::subscriptions::Subscribers::new("g1-test"),
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
+            pair_dispatches: crate::pair::Dispatches::default(),
             log: DiagnosticLog::open_in(Ok(log_root.to_path_buf()), "g1-test", "eon"),
         }
     }

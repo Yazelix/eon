@@ -33,6 +33,7 @@ struct Pair {
     marker: PathBuf,
     id: u64,
     ya: PathBuf,
+    dispatches: Dispatches,
 }
 
 /// How a test's pair starts.
@@ -135,10 +136,13 @@ impl Pair {
             ),
         );
         if start.quick {
-            quick_search_requested(&marker, Duration::ZERO);
+            quick_search_requested(&marker, INITIAL_REQUEST, None).unwrap();
         }
         let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
         let session = leased_orbit(&root, &format!("exec '{}'", launch.display()));
+        if start.quick {
+            quick_search_admitted(&marker, Instant::now());
+        }
         Self {
             ya: bin.join("ya"),
             root,
@@ -146,6 +150,7 @@ impl Pair {
             log,
             marker,
             id,
+            dispatches: Dispatches::default(),
         }
     }
 
@@ -158,24 +163,62 @@ impl Pair {
     /// Reads the screen until `wanted` holds of it, a supervisor turn
     /// between reads.
     fn until(&mut self, what: &str, wanted: impl Fn(&str) -> bool) -> String {
+        self.wait_for(wanted)
+            .unwrap_or_else(|observed| self.fail(what, &observed, None))
+    }
+
+    fn wait_for(&mut self, wanted: impl Fn(&str) -> bool) -> Result<String, String> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             self.turn();
             let text = self.screen();
             if wanted(&text) {
-                return text;
+                return Ok(text);
             }
-            assert!(
-                Instant::now() < deadline,
-                "never {what}:\n{text}\nlog:\n{}",
-                self.diagnostics()
-            );
+            if Instant::now() >= deadline {
+                return Err(text);
+            }
             thread::sleep(Duration::from_millis(20));
         }
     }
 
+    fn fail(&self, expected: &str, observed: &str, baseline: Option<&str>) -> ! {
+        let difference = baseline.map_or_else(String::new, |baseline| {
+            let mut expected_rows = baseline.lines();
+            let mut observed_rows = observed.lines();
+            let mut rows = Vec::new();
+            for row in 1.. {
+                let lines = (expected_rows.next(), observed_rows.next());
+                match lines {
+                    (None, None) => break,
+                    (before, after) if before != after => {
+                        rows.push(format!("{row}: {before:?} -> {after:?}"));
+                    }
+                    _ => {}
+                }
+            }
+            format!(
+                "\nExpected Files:\n{baseline}\nChanged rows:\n{}",
+                rows.join("\n")
+            )
+        });
+        panic!(
+            "Expected {expected}\nObserved screen:\n{observed}{difference}\n{}",
+            self.diagnostics()
+        );
+    }
+
     fn diagnostics(&self) -> String {
-        let mut text = format!("eon calls: {:?}\n", self.eon_calls());
+        let markers: Vec<_> = fs::read_dir(&self.root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| marker_endpoint(&entry.path()).map(|_| entry.file_name()))
+            .collect();
+        let mut text = format!(
+            "pair markers: {markers:?}\neon calls: {:?}\n",
+            self.eon_calls()
+        );
         for entry in fs::read_dir(self.root.join("logs")).into_iter().flatten() {
             text += &fs::read_to_string(entry.unwrap().path()).unwrap_or_default();
         }
@@ -187,37 +230,37 @@ impl Pair {
     /// all three must be on the first entry row (alpha, previewing
     /// a-inside), and no plugin task may still count as running ("1 left").
     fn files_shown(&mut self) -> String {
-        self.until("Files", |text| {
-            text.lines()
-                .find(|line| line.matches('│').count() == 2)
-                .is_some_and(|row| {
-                    let columns: Vec<&str> = row.split('│').collect();
-                    columns[0].contains("files")
-                        && columns[1].contains("alpha")
-                        && columns[2].contains("a-inside")
-                })
-                && text.contains("Tab Search")
-                && text.contains("note.txt")
-                && !text.contains("Loading...")
-                && !text.contains("Quick search >")
-                && !text.trim_end().ends_with(" left")
-        })
+        self.until("settled Files with the alpha preview", Self::files_settled)
+    }
+
+    fn files_settled(text: &str) -> bool {
+        text.lines()
+            .find(|line| line.matches('│').count() == 2)
+            .is_some_and(|row| {
+                let columns: Vec<&str> = row.split('│').collect();
+                columns[0].contains("files")
+                    && columns[1].contains("alpha")
+                    && columns[2].contains("a-inside")
+            })
+            && text.contains("Tab Search")
+            && text.contains("note.txt")
+            && !text.contains("Loading...")
+            && !text.contains("Quick search >")
+            && !text.trim_end().ends_with(" left")
     }
 
     fn quick_search_shown(&mut self) -> String {
         self.until("quick search", |text| text.contains("Quick search >"))
     }
 
-    /// One supervisor turn for this shown pair: a quick search that is up
-    /// ends its startup grace, and a pending leave goes on.
+    /// One supervisor turn for this shown pair.
     fn turn(&mut self) -> Option<LeaveStep> {
-        settle_starting(&self.marker, true);
         drive_leave(&mut self.session, true, Instant::now(), &self.log)
     }
 
     /// Alt+Z on Files: `ya emit-to` asks the pair's Yazi for quick search.
     fn show_quick_search(&mut self) {
-        run(
+        self.dispatches.run(
             Switch::ShowQuickSearch,
             Some(&self.ya),
             self.id,
@@ -228,8 +271,8 @@ impl Pair {
 
     /// Alt+Shift+Y on quick search, then the supervisor's turns until the
     /// leave is over; returns the copies of the key it wrote.
-    fn leave(&mut self) -> u32 {
-        run(
+    fn leave(&mut self, what: &str, baseline: Option<&str>) -> u32 {
+        self.dispatches.run(
             Switch::LeaveQuickSearch,
             None,
             self.id,
@@ -244,10 +287,22 @@ impl Pair {
                 Some(LeaveStep::Wait) => {}
                 Some(LeaveStep::Done) | None => return copies,
                 Some(LeaveStep::Expired(detail)) => {
-                    panic!("{detail}\n{}\nlog:\n{}", self.screen(), self.diagnostics())
+                    let observed = self.screen();
+                    self.fail(
+                        &format!("{what}: fzf readiness and a completed leave ({detail})"),
+                        &observed,
+                        baseline,
+                    );
                 }
             }
-            assert!(Instant::now() < deadline, "the leave never ended");
+            if Instant::now() >= deadline {
+                let observed = self.screen();
+                self.fail(
+                    &format!("{what}: fzf readiness and a completed leave by the deadline"),
+                    &observed,
+                    baseline,
+                );
+            }
             thread::sleep(Duration::from_millis(25));
         }
     }
@@ -277,7 +332,8 @@ impl Pair {
 
     /// Reads the screen until it is `screen` again.
     fn back_to(&mut self, what: &str, screen: &str) {
-        self.until(what, |text| text == screen);
+        self.wait_for(|text| Self::files_settled(text) && text == screen)
+            .unwrap_or_else(|observed| self.fail(what, &observed, Some(screen)));
     }
 
     /// The leave key, written as a stale or forged copy would be, outside any
@@ -326,7 +382,6 @@ impl Pair {
         fs::read_to_string(self.root.join("eon.log"))
             .unwrap_or_default()
             .lines()
-            .filter(|line| !line.starts_with("session"))
             .map(str::to_owned)
             .collect()
     }
@@ -440,15 +495,23 @@ fn a_leave_right_after_open_reaches_files_every_time_under_load() {
             ..Start::default()
         },
     );
-    assert!(pair.leave() >= 1);
+    assert!(pair.leave("initial quick search", None) >= 1);
     let files = pair.files_shown();
     assert!(!pair.marker.exists());
     let _load = Load::start(2);
     for iteration in 0..200 {
         pair.show_quick_search();
-        let copies = pair.leave();
-        assert!(copies >= 1, "iteration {iteration}: no key written");
-        pair.back_to(&format!("iteration {iteration}: Files as it was"), &files);
+        let what = format!("iteration {iteration}: Files as it was");
+        let copies = pair.leave(&what, Some(&files));
+        if copies == 0 {
+            let observed = pair.screen();
+            pair.fail(
+                &format!("{what}: at least one leave key"),
+                &observed,
+                Some(&files),
+            );
+        }
+        pair.back_to(&what, &files);
         assert!(!pair.marker.exists(), "iteration {iteration}");
     }
     assert!(pair.eon_calls().is_empty(), "{:?}", pair.eon_calls());
@@ -469,7 +532,7 @@ fn a_leave_waits_for_a_slow_fzf() {
     let files = pair.files_shown();
     pair.show_quick_search();
     let started = Instant::now();
-    let copies = pair.leave();
+    let copies = pair.leave("slow fzf", Some(&files));
     assert!(started.elapsed() >= Duration::from_millis(900));
     assert!(copies >= 1);
     pair.back_to("Files as it was", &files);
@@ -542,7 +605,7 @@ fn a_forged_marker_draws_inert_copies_for_the_bound() {
     let mut pair = Pair::start("forged", Start::default());
     let files = pair.files_shown();
     fs::write(&pair.marker, b"").unwrap();
-    run(
+    pair.dispatches.run(
         Switch::LeaveQuickSearch,
         None,
         pair.id,
@@ -614,7 +677,7 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
     // A query typed, then Alt+Shift+Y.
     keyboard.text("bet");
     pair.until("the query", |text| text.contains("> bet"));
-    assert!(pair.leave() >= 1);
+    assert!(pair.leave("quick search with a query", None) >= 1);
     pair.files_shown();
     pair.until("alpha's preview", |text| text.contains("a-inside"));
 

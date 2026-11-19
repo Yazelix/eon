@@ -12,6 +12,10 @@ installation, and proven contract changes.
   See [configuration](docs/CONFIGURATION.md#agent-commands)
   (`eon-eon-agent-lr8sx.40.3`).
 
+- Alt+Shift+Y returns to Files even when Quick search is still starting under
+  load. Eon waits for fzf to take the terminal before sending the leave key
+  (`eon-gs2jh`).
+
 - Boat heavy jobs use the local per-job memory policy and run without swap.
   Requests select the default VM or a qualified large VM by cap while
   sharing one lease. Completion reports distinguish job-limit OOMs from

@@ -656,7 +656,7 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
     // after a cleanup failure never loses a known terminal outcome.
     if let Some(endpoint) = path.as_os_str().as_bytes().strip_suffix(b".record") {
         let endpoint = Path::new(OsStr::from_bytes(endpoint));
-        remove_pair_marker(endpoint)?;
+        super::pair::terminal_ended(endpoint)?;
         settle_pending_pair(endpoint)?;
     }
     fs::remove_file(path).map_err(|error| {
@@ -665,19 +665,6 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
             path.display()
         )
     })
-}
-
-/// Removes the quick search marker a pair leaves behind when its terminal
-/// ends while fzf runs (EON-C18).
-fn remove_pair_marker(endpoint: &Path) -> Result<(), String> {
-    let marker = super::pair::marker(endpoint);
-    match fs::remove_file(&marker) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(format!(
-            "cannot remove quick search marker {}: {error}",
-            marker.display()
-        )),
-        _ => Ok(()),
-    }
 }
 
 fn recorded_process_is_dead(identity: &LiveIdentity) -> Result<bool, String> {
@@ -770,8 +757,8 @@ pub(super) fn recover_sessions(
             operation_timeout(deadline, "stale pending pair cleanup")?,
         )?;
     }
-    // Any marker left belongs to a terminal that ended without this
-    // supervisor, as does any quick search socket beside no live terminal.
+    // Keep the ready marker of a live fzf. Startup requests belong to the
+    // previous supervisor and expire even when their terminal is adopted.
     let live = sessions
         .iter()
         .map(|session| session.endpoint.clone())
@@ -793,10 +780,10 @@ pub(super) fn recover_sessions(
                 )
             })?;
         }
-        if let Some(endpoint) = crate::pair::marker_endpoint(&path)
-            && !live.contains(&endpoint)
+        if let Some((endpoint, kind)) = crate::pair::marker_endpoint(&path)
+            && (kind == crate::pair::MarkerKind::Pending || !live.contains(&endpoint))
         {
-            remove_pair_marker(&endpoint)?;
+            crate::pair::remove_marker(&path)?;
         }
     }
     Ok((sessions, recovered_pair))
@@ -2355,6 +2342,7 @@ fn wait_and_finalize_tombstone(
             // publishes no result.
             if recorded_process_is_dead(&session.identity)? {
                 remove_dead_endpoints(&session.identity)?;
+                super::pair::terminal_ended(&session.endpoint)?;
                 let host_outcome = reap_child_process(
                     session.child.as_mut(),
                     session.identity.process_id,

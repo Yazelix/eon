@@ -7,6 +7,24 @@ use std::{
     time::Duration,
 };
 
+/// A private child's PID must stay reserved until its owner waits for it.
+pub(crate) fn require_waitable_children() -> io::Result<()> {
+    let mut action = std::mem::MaybeUninit::<libc::sigaction>::uninit();
+    // SAFETY: a null action queries the disposition and initializes the output on success.
+    let action = unsafe {
+        if libc::sigaction(libc::SIGCHLD, std::ptr::null(), action.as_mut_ptr()) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        action.assume_init()
+    };
+    if action.sa_sigaction == libc::SIG_IGN || action.sa_flags & libc::SA_NOCLDWAIT != 0 {
+        return Err(io::Error::other(
+            "SIGCHLD disposition automatically reaps children",
+        ));
+    }
+    Ok(())
+}
+
 /// System-wide monotonic time, including suspend, shared by replacement processes.
 pub(crate) fn boot_time() -> io::Result<Duration> {
     #[cfg(target_os = "linux")]

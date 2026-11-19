@@ -790,7 +790,7 @@
             EOF
             cat > "$out/init.lua" <<'EOF'
             -- A pending tab's pair, and the pair Alt+Z opens, start on quick search.
-            if os.getenv("EON_FILES_START") == "quick" then ya.emit("plugin", { "quick-search" }) end
+            if os.getenv("EON_FILES_START") == "quick" then ya.emit("plugin", { "quick-search", "initial" }) end
             for id = 1, 6 do
               Status:children_remove(id, id <= 3 and Status.LEFT or Status.RIGHT)
             end
@@ -829,21 +829,49 @@
               ya.notify({ title = "Quick search", content = tostring(content), timeout = 5, level = "error" })
             end
 
+            local function ticket(marker, token)
+              if marker and type(token) == "string" and #token <= 80
+                and (token == "initial" or token:match("^[0-9]+%-[0-9]+%-[0-9]+$")) then
+                return marker .. "." .. token .. ".pending"
+              end
+            end
+
+            local function pending(path)
+              local file = path and io.open(path)
+              if not file then return false end
+              file:close()
+              return true
+            end
+
             -- One quick search at a time: Yazi would queue a second behind the shown one and
             -- show it when the first ends.
-            local claim = ya.sync(function(state)
-              if state.searching then return false end
+            local claim = ya.sync(function(state, token, request)
+              -- The supervisor may have cancelled while this call waited for Yazi.
+              if token and token ~= "initial" and not pending(request) then return "cancelled" end
+              if state.searching then
+                if token and state.closing then
+                  state.reopen = token
+                  return "queued"
+                end
+                return "rejected"
+              end
               state.searching = true
-              return true
+              return "claimed"
             end)
-            local release = ya.sync(function(state) state.searching = nil end)
+            local closing = ya.sync(function(state, marker)
+              state.closing = true
+              if marker then os.remove(marker) end
+            end)
+            local release = ya.sync(function(state)
+              local reopen = state.reopen
+              state.searching, state.closing, state.reopen = nil, nil, nil
+              return reopen
+            end)
 
-            local function search()
+            local function search(marker, token)
               -- A marker an earlier fzf left says nothing: it goes before anything here can
               -- fail, so a failed search never leaves the runtime taking Files for quick
               -- search.
-              local marker = os.getenv("EON_QUICK_MARKER")
-              if marker == "" then marker = nil end
               if marker then os.remove(marker) end
               local history, err = Command("zoxide")
                 :arg({ "query", "--list", "--exclude", cwd() })
@@ -873,6 +901,7 @@
                   .. "--footer='Enter Use · Tab Browse from here · Esc Close' "
                   .. "--footer-border=none --color=footer:-1")
                 :env("FZF_DEFAULT_OPTS_FILE", "")
+                :env("EON_QUICK_TOKEN", token or "")
                 :stdin(history:take_stdout())
                 :stdout(Command.PIPED)
                 :stderr(Command.PIPED)
@@ -880,7 +909,7 @@
               local output, wait_err
               if child then output, wait_err = child:wait_with_output() end
               -- fzf has ended: quick search is no longer up.
-              if marker then os.remove(marker) end
+              closing(marker)
               -- A query that already ended on its own and failed left fzf an empty list.
               local ended = history:try_wait()
               -- No exit needs the rest of the history, so stop and reap the query.
@@ -916,13 +945,24 @@
               if target and key == "tab" then ya.emit("cd", { target, raw = true }) end
             end
 
-            function M:entry()
-              if not claim() then return end
-              local ok, err = pcall(search)
-              -- A search that raised still leaves quick search not up.
+            function M:entry(job)
               local marker = os.getenv("EON_QUICK_MARKER")
-              if not ok and marker and marker ~= "" then os.remove(marker) end
-              release()
+              if marker == "" then marker = nil end
+              local token = job and job.args[1]
+              local request = ticket(marker, token)
+              local claimed, disposition = pcall(claim, token, request)
+              if claimed and (disposition == "queued" or disposition == "cancelled") then return end
+              if not claimed or disposition == "rejected" then
+                if request then os.remove(request) end
+                if not claimed then fail(disposition) end
+                return
+              end
+
+              local ok, err = pcall(search, marker, token)
+              if not ok and marker then os.remove(marker) end
+              if request then os.remove(request) end
+              local reopen = release()
+              if pending(ticket(marker, reopen)) then ya.emit("plugin", { "quick-search", reopen }) end
               if not ok then fail(err) end
             end
 

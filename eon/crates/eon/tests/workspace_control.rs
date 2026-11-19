@@ -3182,6 +3182,27 @@ struct PairWindow {
 }
 
 impl PairWindow {
+    fn assert_quick_dispatches(&self, clients: &[u64]) {
+        let calls = wait_for_lines(&self.ya_log, clients.len());
+        assert_eq!(calls.len(), clients.len(), "{calls:?}");
+        let mut tokens = std::collections::HashSet::new();
+        for (call, client) in calls.iter().zip(clients) {
+            let prefix = format!("emit-to {client} plugin quick-search ");
+            let token = call
+                .strip_prefix(&prefix)
+                .unwrap_or_else(|| panic!("{call}"));
+            let parts: Vec<_> = token.split('-').collect();
+            assert_eq!(parts.len(), 3, "{call}");
+            assert!(
+                parts
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())),
+                "{call}"
+            );
+            assert!(tokens.insert(token), "reused request token: {call}");
+        }
+    }
+
     fn new() -> Self {
         let directory = temporary_directory();
         let root = fs::canonicalize(&directory).unwrap();
@@ -3928,8 +3949,22 @@ fn leave_keys(input_log: &Path, terminal: &str) -> usize {
 
 impl QuickSearch {
     fn up(window: &PairWindow, terminal: &str) -> Self {
-        let marker = window.generation().join(format!("{terminal}.quick"));
-        fs::write(&marker, b"").unwrap();
+        let generation = window.generation();
+        let marker = generation.join(format!("{terminal}.quick"));
+        let prefix = format!("{terminal}.quick.");
+        let token = fs::read_dir(generation)
+            .unwrap()
+            .find_map(|entry| {
+                let name = entry.unwrap().file_name();
+                Some(
+                    name.to_str()?
+                        .strip_prefix(&prefix)?
+                        .strip_suffix(".pending")?
+                        .to_owned(),
+                )
+            })
+            .unwrap_or_default();
+        fs::write(&marker, token).unwrap();
         let input_log = window.root.join("input.log");
         Self {
             before: leave_keys(&input_log, terminal),
@@ -3971,7 +4006,6 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     let mut supervisor = window.spawn(&[]);
     let launch = window.pair_launch("terminal-2");
     let id = launch.client_id();
-    let emit = format!("emit-to {id} plugin quick-search");
     assert!(
         window
             .eon(&[
@@ -3996,10 +4030,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     ));
     // Alt+Z on the hidden pair shows it and asks it for quick search.
     assert!(shown(&window.invoke_popup("z-show", "project", Some("u1"))));
-    assert_eq!(
-        wait_for_lines(&window.ya_log, 1),
-        std::slice::from_ref(&emit)
-    );
+    window.assert_quick_dispatches(&[id]);
 
     // While quick search is up, Alt+Z hides the pair and never emits again.
     let quick = QuickSearch::up(&window, "terminal-2");
@@ -4041,10 +4072,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
         "project",
         Some("u1")
     )));
-    assert_eq!(
-        wait_for_lines(&window.ya_log, 2),
-        [emit.clone(), emit.clone()]
-    );
+    window.assert_quick_dispatches(&[id, id]);
     thread::sleep(Duration::from_millis(300));
     assert_eq!(log_lines(&window.ya_log).len(), 2);
 
@@ -4076,10 +4104,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
         "project",
         Some("u2")
     )));
-    assert_eq!(
-        wait_for_lines(&window.ya_log, 3)[2],
-        format!("emit-to {} plugin quick-search", pending.client_id())
-    );
+    window.assert_quick_dispatches(&[id, id, pending.client_id()]);
     assert!(still_pending(&window.invoke_popup(
         "pending-z-starting",
         "project",
@@ -4106,7 +4131,7 @@ fn hiding_a_starting_quick_search_lets_the_next_key_ask_again() {
     let window = PairWindow::new();
     let mut supervisor = window.spawn(&[]);
     let launch = window.pair_launch("terminal-2");
-    let emit = format!("emit-to {} plugin quick-search", launch.client_id());
+    let id = launch.client_id();
     assert!(
         window
             .eon(&[
@@ -4132,10 +4157,7 @@ fn hiding_a_starting_quick_search_lets_the_next_key_ask_again() {
         "project",
         Some("u1")
     )));
-    assert_eq!(
-        wait_for_lines(&window.ya_log, 2),
-        [emit.clone(), emit.clone()]
-    );
+    window.assert_quick_dispatches(&[id, id]);
     // Esc, then Alt+Shift+Y: Files shows and no fzf is asked to leave.
     assert!(window.eon(&["popup", "hide", "u1"]).status.success());
     assert!(shown(&window.invoke_popup("y-show", "files", Some("u1"))));
