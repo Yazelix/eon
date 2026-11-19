@@ -92,15 +92,14 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: cut -f2 "$RUNNER_TEMP/darwin-roots" | cachix push eon-yazelix
 
-      - name: Retain release-tag roots forever
+      - name: Retain the latest Darwin release runtime
         if: env.PUSH_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/v')
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          while IFS=$'\t' read -r output path; do
-            cachix pin eon-yazelix "aarch64-darwin-$RELEASE_TAG-$output" "$path" --keep-forever
-          done < "$RUNNER_TEMP/darwin-roots"
+          path=$(awk -F '\t' '$1 == "default" { print $2 }' "$RUNNER_TEMP/darwin-roots")
+          test -n "$path"
+          cachix pin eon-yazelix latest-release-aarch64-darwin "$path" --keep-revisions 1
 
       - name: Report remaining disk
         if: always()
