@@ -5,6 +5,14 @@ see.
 
 ## Unreleased
 
+- `slot`: `[slots.boat]` and `slots.local_runner` need `eon agent`. When one
+  would act (a permitted Boat shape, a nonempty runner), `rota slot` warns
+  that it needs `eon agent` and runs every command on a local slot. `slot ls
+  --json` has no `boat_lease_held`, `boat_lease_pid`, `boat` or `boat_error`.
+- The local runner handoff variables are `ROTA_SLOT_QUEUED_NS`,
+  `ROTA_SLOT_CLASS`, `ROTA_SLOT_RUN_KEY` and `ROTA_SLOT_DELEGATE` (formerly
+  `EON_SLOT_*`, with no alias).
+
 - Project profiles: `[projects.NAME]` caps live agents in total (`max`), per
   role (`roles.ROLE.max`) and per backend (`backends.BACKEND.max`). It runs a
   role's `guard` in the working directory, and it inserts a role's `overlay`

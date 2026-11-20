@@ -359,10 +359,12 @@ on the calling machine. Its account credentials stay there.
 use a slot-only configuration override. Other agent commands keep their normal
 lookup; the override is not exported into the command's environment.
 
-`slots.local_runner = []` keeps native local admission. A trusted nonempty argv
+`slots.local_runner` and `[slots.boat]` act only under `eon agent`: standalone
+`rota` warns that they need `eon agent` and runs every slot command on a local
+slot. `slots.local_runner = []` keeps native local admission. A trusted nonempty argv
 prefix delegates local admission to that host-only command, without holding a
 native slot or remote lease. It receives original queue age/class through
-`EON_SLOT_QUEUED_NS`/`EON_SLOT_CLASS`, with `HEAVY_DIR` from `legacy_dir` and
+`ROTA_SLOT_QUEUED_NS`/`ROTA_SLOT_CLASS`, with `HEAVY_DIR` from `legacy_dir` and
 front/quiet flags. The delegate must preserve that age and acquire local
 capacity before executing its supplied payload. The payload verifies a captured
 remote source again after admission, then executes the original argv/cwd;
@@ -531,7 +533,7 @@ receipt alone does not establish that the lease is free. Listing fails rather
 than omitting a configured required local lock or an unreadable queue lock;
 an absent optional extra local slot is allowed.
 Queue/grant/exit records carry `run_key` (`<queued_ns>:<pid>`) for correlation
-with a delegated helper. Its internal `EON_SLOT_RUN_KEY` handoff is removed
+with a delegated helper. Its internal `ROTA_SLOT_RUN_KEY` handoff is removed
 before the payload runs, like the queue-age/class metadata. Helpers that log
 that key let a shared reader deduplicate ordinary native/helper exits while
 retaining native cancellation/error exits when a helper never writes one.

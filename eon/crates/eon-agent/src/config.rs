@@ -133,6 +133,25 @@ pub struct SlotClass {
 }
 
 impl SlotConfig {
+    /// The keys only a host's slot route acts on, when they would act: `[slots.boat]` that
+    /// permits a shape, and a nonempty `slots.local_runner`. An inert table is left out:
+    /// it keeps Boat off under `eon agent` too.
+    pub fn route_keys(&self) -> Vec<&'static str> {
+        let mut keys = Vec::new();
+        if !self.boat.allow_shapes.is_empty() {
+            keys.push("[slots.boat]");
+        }
+        if !self.local_runner.is_empty() {
+            keys.push("slots.local_runner");
+        }
+        keys
+    }
+
+    /// Whether a host's slot route has anything to do.
+    pub fn routed(&self) -> bool {
+        !self.route_keys().is_empty()
+    }
+
     fn validate(&self) -> Result<(), String> {
         let boat = &self.boat;
         if boat.allow_shapes.iter().collect::<BTreeSet<_>>().len() != boat.allow_shapes.len()

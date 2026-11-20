@@ -159,9 +159,9 @@ pub(in crate::slots) fn run(
     command.process_group(0);
     let run_id =
         crate::run::random().map_err(|_| io::Error::other("cannot create run identity"))?;
-    super::private_directory(&root.join("runs")).map_err(io::Error::other)?;
+    crate::slots::private::directory(&root.join("runs"), super::NOUN).map_err(io::Error::other)?;
     let directory = root.join("runs").join(&run_id);
-    super::private_directory(&directory).map_err(io::Error::other)?;
+    crate::slots::private::directory(&directory, super::NOUN).map_err(io::Error::other)?;
     let log = OpenOptions::new()
         .write(true)
         .create_new(true)

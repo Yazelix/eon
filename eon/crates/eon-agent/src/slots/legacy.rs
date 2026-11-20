@@ -112,6 +112,7 @@ pub(super) fn tickets(dir: Option<&Path>) -> Vec<Ticket> {
             fallback_reason: None,
             legacy: true,
             malformed: false,
+            kind: None,
         });
     }
     tickets

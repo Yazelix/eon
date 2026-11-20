@@ -447,13 +447,15 @@ cutover by running `rota slot run -- true` in the sandbox. See
 
 Eon's `eon agent slot --config FILE run -- COMMAND...` and `ls` use a dedicated
 slot configuration without exporting a config override to the child.
-`slots.local_runner = []` keeps native admission; a trusted nonempty command
-prefix owns local queueing. It receives original queue-age/class metadata and
+`slots.local_runner` and `[slots.boat]` belong to Eon's slot route and act only
+under `eon agent`. Standalone `rota` warns that they need `eon agent` and runs
+every slot command on a local slot. Under `eon agent`, `slots.local_runner = []`
+keeps native admission; a trusted nonempty command prefix owns local queueing. It receives original queue-age/class metadata and
 must acquire local capacity before its supplied payload runs. Captured remote
 source identity is checked before local admission and again before execution;
 a changed/unverifiable source refuses with125. No automatic post-start retry.
 
-The optional `[slots.boat]` route runs permitted headless builds with no caller credentials on a
+Under `eon agent`, the optional `[slots.boat]` route runs permitted headless builds with no caller credentials on a
 Boat VM using a separate lease; see Eon's [configuration reference](https://github.com/Yazelix/eon/blob/edge/docs/CONFIGURATION.md#remote-heavy-builds)
 for policy, budget, exact-tree transfer, results and failure behavior. The default
 allowlist is empty. Boat is a local prerequisite, not an injected VM credential.

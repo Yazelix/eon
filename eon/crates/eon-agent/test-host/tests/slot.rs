@@ -20,17 +20,32 @@ struct Fixture {
 // Keep subprocess-heavy cases from contending at idle priority under the build wrapper.
 static CASE: Mutex<()> = Mutex::new(());
 
+/// Removes the slot and handoff names a parent run may have exported, current and removed,
+/// so a suite started inside a slot or delegate behaves as a fresh one.
+fn scrub(command: &mut Command) -> &mut Command {
+    for name in ["ROTA_SLOT", "ROTA_SLOT_TOKEN"] {
+        command.env_remove(name);
+    }
+    for name in ["QUEUED_NS", "CLASS", "RUN_KEY", "DELEGATE"] {
+        command.env_remove(format!("ROTA_SLOT_{name}"));
+        command.env_remove(format!("EON_SLOT_{name}"));
+    }
+    command
+}
+
 fn delegate(f: &Fixture, pause: bool) {
     let helper = f.dir.path().join("fake/local.sh");
     fs::write(
         &helper,
         format!(
             r#"set -eu
+# No alias: the handoff uses only the ROTA_SLOT_* names.
+[ -z "${{EON_SLOT_QUEUED_NS+x}}${{EON_SLOT_CLASS+x}}${{EON_SLOT_RUN_KEY+x}}${{EON_SLOT_DELEGATE+x}}" ] || exit 88
 flock -n legacy/old-1.lock true
 flock -n state/slots/queue/.lock true
 [ ! -e state/slots/boat/lease.lock ] || flock -n state/slots/boat/lease.lock true
-printf '%s %s' "$EON_SLOT_QUEUED_NS" "$EON_SLOT_CLASS" > provider/handoff
-printf '%s' "$EON_SLOT_RUN_KEY" > provider/run-key
+printf '%s %s' "$ROTA_SLOT_QUEUED_NS" "$ROTA_SLOT_CLASS" > provider/handoff
+printf '%s' "$ROTA_SLOT_RUN_KEY" > provider/run-key
 touch provider/delegated
 {}
 exec "$@"
@@ -62,7 +77,7 @@ fn delegated_fallback_releases_capacity_and_preserves_exact_command() {
             "--",
             "sh",
             "-c",
-            "printf '%s' \"$1\"; test -z \"${EON_SLOT_QUEUED_NS+x}${EON_SLOT_CLASS+x}${EON_SLOT_RUN_KEY+x}\" || exit 89; exit 7",
+            "printf '%s' \"$1\"; test -z \"${ROTA_SLOT_QUEUED_NS+x}${ROTA_SLOT_CLASS+x}${ROTA_SLOT_RUN_KEY+x}\" || exit 89; exit 7",
             "sh",
             "literal $word with spaces",
         ])
@@ -97,7 +112,7 @@ fn delayed_delegate_waiters_keep_fifo_age_and_reject_recycled_pid() {
             "exec \"$@\"",
             r#"bash -c '
 mkdir -p legacy/queue
-ticket=legacy/queue/$EON_SLOT_QUEUED_NS.$$.run
+ticket=legacy/queue/$ROTA_SLOT_QUEUED_NS.$$.run
 stat=$(cat /proc/$$/stat); set -- ${stat##*) }
 printf "%s\n" "${20}" > "$ticket"
 echo "$ticket" > provider/ticket
@@ -233,11 +248,11 @@ fn delegated_nesting_reuses_verified_ownership_without_second_target_wait() {
     command
         .args([
             "5",
-            env!("CARGO_BIN_EXE_rota"),
+            env!("CARGO_BIN_EXE_rota-test-host"),
             "slot",
             "run",
             "--",
-            env!("CARGO_BIN_EXE_rota"),
+            env!("CARGO_BIN_EXE_rota-test-host"),
             "slot",
             "run",
             "--",
@@ -246,7 +261,7 @@ fn delegated_nesting_reuses_verified_ownership_without_second_target_wait() {
         .current_dir(f.dir.path())
         .env("CARGO_TARGET_DIR", &target)
         .env("ROTA_CONFIG", f.dir.path().join("config.toml"));
-    let result = command.output().unwrap();
+    let result = scrub(&mut command).output().unwrap();
     assert!(result.status.success(), "{result:?}");
     assert_eq!(
         fs::read_to_string(f.dir.path().join("provider/delegate-calls"))
@@ -532,10 +547,10 @@ fn delegated_terminal_signals_stop_foreground_group_and_keep_input() {
         let mut master = File::from(master);
         let tty = slave.try_clone().unwrap();
         let mut command = Command::new("sh");
-        command.args(["-c", "\"$@\" <&0 & owner=$!; echo $owner > provider/wrapper-pid; wait $owner; echo $? > provider/wrapper-status; while :; do sleep 1; done", "sh", env!("CARGO_BIN_EXE_rota"), "slot", "run", "--", "sh", "-c", "read token; test \"$token\" = start || exit 42; echo $$ > provider/command-pid; exec sleep 120"])
+        command.args(["-c", "\"$@\" <&0 & owner=$!; echo $owner > provider/wrapper-pid; wait $owner; echo $? > provider/wrapper-status; while :; do sleep 1; done", "sh", env!("CARGO_BIN_EXE_rota-test-host"), "slot", "run", "--", "sh", "-c", "read token; test \"$token\" = start || exit 42; echo $$ > provider/command-pid; exec sleep 120"])
             .env("ROTA_CONFIG", f.dir.path().join("config.toml"))
-            .env_remove("ROTA_SLOT").env_remove("ROTA_SLOT_TOKEN").env_remove("EON_SLOT_DELEGATE")
             .current_dir(f.dir.path()).stdin(slave.try_clone().unwrap()).stdout(slave.try_clone().unwrap()).stderr(slave);
+        scrub(&mut command);
         platform::session_on_exec(&mut command, tty);
         let _session = Session {
             child: command.spawn().unwrap(),
@@ -751,15 +766,18 @@ high = ['never-start-this', '{{prompt}}']
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    /// The test host, with Boat as its route.
     fn rota(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rota"));
+        self.program(env!("CARGO_BIN_EXE_rota-test-host"), args)
+    }
+
+    fn program(&self, binary: &str, args: &[&str]) -> Command {
+        let mut command = Command::new(binary);
         command
             .current_dir(self.dir.path())
             .env("ROTA_CONFIG", self.dir.path().join("config.toml"))
-            .env("ROTA_SLOT_POLL_MS", "50")
-            .env_remove("ROTA_SLOT")
-            .env_remove("ROTA_SLOT_TOKEN")
-            .args(args);
+            .env("ROTA_SLOT_POLL_MS", "50");
+        scrub(&mut command).args(args);
         command
     }
 
@@ -2835,4 +2853,201 @@ fn leftover_boat_snapshot_key_warns_and_changes_nothing() {
         new.contains(&format!("--from {PINNED} --no-snapshots")),
         "{new}"
     );
+}
+
+// The slot route seam (eon-eon-agent-lr8sx.40.4): a fake route in the test host.
+
+/// The test host's fake source (`test-host/main.rs`).
+const FAKE_SOURCE: &str = r#"{"a":[1,{"b":"é\n\"q\""}],"n":18446744073709551615,"z":{"y":true}}"#;
+
+/// Adds `slots.local_runner = ['sh', <script>]` running `body` before the handoff.
+fn local_runner(f: &Fixture, body: &str) {
+    let runner = f.dir.path().join("runner.sh");
+    fs::write(&runner, format!("set -eu\n{body}\nexec \"$@\"\n")).unwrap();
+    let config = f.dir.path().join("config.toml");
+    let text = fs::read_to_string(&config).unwrap().replace(
+        "[slots]\n",
+        &format!("[slots]\nlocal_runner = ['sh', '{}']\n", runner.display()),
+    );
+    fs::write(config, text).unwrap();
+}
+
+fn fake_route(f: &Fixture, mode: &str, args: &[&str]) -> Output {
+    f.rota(args)
+        .env("ROTA_TEST_ROUTE", "fake")
+        .env("ROTA_TEST_ROUTE_MODE", mode)
+        .env("ROTA_TEST_ROUTE_LOG", f.dir.path().join("route.log"))
+        .output()
+        .unwrap()
+}
+
+fn route_calls(f: &Fixture) -> Vec<String> {
+    fs::read_to_string(f.dir.path().join("route.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn fake_route_receives_its_source_byte_exact_on_both_local_paths() {
+    let source = |call: &str| format!("{call} {FAKE_SOURCE}");
+    for delegated in [false, true] {
+        let f = Fixture::new(1);
+        if delegated {
+            local_runner(&f, "");
+        }
+        let out = fake_route(&f, "", &["slot", "run", "--", "touch", "ran"]);
+        assert!(out.status.success(), "{out:?}");
+        assert!(f.dir.path().join("ran").exists());
+        let expected = if delegated {
+            // Fallback check, the runner through the route, then the check in the
+            // `_slot-local-exec` process after the source crossed the handoff file.
+            [
+                source("verify host"),
+                source("run_local host"),
+                source("verify exec"),
+            ]
+        } else {
+            [
+                source("verify host"),
+                source("verify host"),
+                source("run_local host"),
+            ]
+        };
+        assert_eq!(route_calls(&f), expected, "delegated={delegated}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr)
+                .contains("rota slot: where=local reason=fake-returned")
+        );
+    }
+}
+
+#[test]
+fn a_null_source_is_refused_before_anything_runs() {
+    for delegated in [false, true] {
+        let f = Fixture::new(1);
+        if delegated {
+            local_runner(&f, "touch runner-called");
+        }
+        let out = fake_route(&f, "null", &["slot", "run", "--", "touch", "ran"]);
+        assert_eq!(out.status.code(), Some(125), "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("route-source-null"));
+        assert!(!f.dir.path().join("ran").exists());
+        assert!(!f.dir.path().join("runner-called").exists());
+        assert_eq!(route_calls(&f), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn a_null_source_is_refused_whatever_the_route_returns() {
+    let f = Fixture::new(1);
+    let out = fake_route(&f, "null-exit", &["slot", "run", "--", "touch", "ran"]);
+    assert_eq!(out.status.code(), Some(125), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("route-source-null"));
+    let exits: Vec<_> = f
+        .events()
+        .into_iter()
+        .filter(|e| e["event"] == "exit")
+        .collect();
+    assert_eq!(exits.len(), 1);
+    assert_eq!(exits[0]["exit_code"], 125);
+}
+
+#[test]
+fn standalone_rota_refuses_a_delegated_source() {
+    // The runner hands the host's `_slot-local-exec` payload to standalone `rota`, which
+    // has no route to check the source with.
+    let f = Fixture::new(1);
+    local_runner(
+        &f,
+        &format!("shift\nexec '{}' \"$@\"", env!("CARGO_BIN_EXE_rota")),
+    );
+    let out = fake_route(&f, "", &["slot", "run", "--", "touch", "ran"]);
+    assert_eq!(out.status.code(), Some(125), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("local source needs the host's slot route"),
+        "{out:?}"
+    );
+    assert!(!f.dir.path().join("ran").exists());
+}
+
+#[test]
+fn a_route_that_returns_without_granting_does_not_hold_the_queue() {
+    let f = Fixture::new(1);
+    let out = fake_route(&f, "ungranted", &["slot", "run", "--", "touch", "ran"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(f.dir.path().join("ran").exists());
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("rota slot: where=local reason=fake-returned")
+    );
+}
+
+#[test]
+fn start_errors_exit_125_only_for_a_routed_fallback() {
+    let missing = "/nonexistent/rota-route-test-command";
+    {
+        // Each fixture holds the suite's case lock: end this one before the next.
+        let f = Fixture::new(1);
+        let standalone = f
+            .program(env!("CARGO_BIN_EXE_rota"), &["slot", "run", "--", missing])
+            .output()
+            .unwrap();
+        assert_eq!(
+            standalone.status.code(),
+            Some(1),
+            "no route: {standalone:?}"
+        );
+    }
+    for (mode, code) in [("declined", 1), ("kept", 125), ("", 125)] {
+        let f = Fixture::new(1);
+        let out = fake_route(&f, mode, &["slot", "run", "--", missing]);
+        assert_eq!(out.status.code(), Some(code), "{mode}: {out:?}");
+    }
+}
+
+#[test]
+fn a_routed_run_refuses_an_open_state_directory() {
+    let f = Fixture::new(1);
+    local_runner(&f, "touch runner-called");
+    let state = f.dir.path().join("state");
+    fs::create_dir_all(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = f.output(&["slot", "run", "--", "touch", "ran"]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unsafe-slot-state-directory"));
+    assert!(!f.dir.path().join("runner-called").exists());
+    assert!(!f.dir.path().join("ran").exists());
+}
+
+#[test]
+fn slot_delegate_reinvokes_the_host_without_a_prefix() {
+    let f = Fixture::new(1);
+    local_runner(&f, "printf '%s\\n' \"$@\" > argv");
+    let out = f.output(&["slot", "run", "--", "sh", "-c", "exit 7"]);
+    assert_eq!(out.status.code(), Some(7), "{out:?}");
+    let argv = fs::read_to_string(f.dir.path().join("argv")).unwrap();
+    let argv: Vec<_> = argv.lines().collect();
+    assert_eq!(argv[0], env!("CARGO_BIN_EXE_rota-test-host"));
+    assert_eq!(argv[1], "_slot-local-exec");
+    assert_eq!(argv[3..], ["--", "sh", "-c", "exit 7"]);
+}
+
+#[test]
+fn an_old_delegate_name_does_not_nest() {
+    // The runner hands the inner command only the removed EON_SLOT_DELEGATE name. The
+    // inner `slot run` must queue and delegate again rather than run as nested.
+    let f = Fixture::new(1);
+    local_runner(
+        &f,
+        "echo call >> runner-calls\nexport EON_SLOT_DELEGATE=\"$ROTA_SLOT_DELEGATE\"\nunset ROTA_SLOT_DELEGATE",
+    );
+    let host = env!("CARGO_BIN_EXE_rota-test-host");
+    let out = f.output(&["slot", "run", "--", host, "slot", "run", "--", "true"]);
+    assert!(out.status.success(), "{out:?}");
+    let calls = fs::read_to_string(f.dir.path().join("runner-calls")).unwrap();
+    assert_eq!(calls.lines().count(), 2, "the inner run delegated again");
+    let queued = f.events().iter().filter(|e| e["event"] == "queue").count();
+    assert_eq!(queued, 2, "the inner run queued");
 }

@@ -37,7 +37,7 @@ impl Machine {
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(super) enum Class {
+pub enum Class {
     Default,
     Nix,
     Rune,
@@ -60,7 +60,7 @@ pub(super) struct Request {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub(super) struct Limit {
+pub struct Limit {
     pub class: Class,
     pub cap_gib: u8,
 }

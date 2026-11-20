@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent slot run` hands a `slots.local_runner` command its queue metadata as
+  `ROTA_SLOT_QUEUED_NS`, `ROTA_SLOT_CLASS`, `ROTA_SLOT_RUN_KEY` and
+  `ROTA_SLOT_DELEGATE`. The `EON_SLOT_*` names are gone; a runner that reads
+  them must switch.
+- Standalone `rota` warns that `[slots.boat]` and `slots.local_runner` need
+  `eon agent`, and runs every slot command locally. Its `slot ls --json` no
+  longer prints `boat_lease_held`; `eon agent slot ls --json` keeps it.
+
 - `eon agent launch` and `run` follow project profiles: `[projects.NAME]` can
   cap live agents in total (`max`), per role (`roles.ROLE.max`) and per
   backend (`backends.BACKEND.max`). It can give a role a `guard` and give it

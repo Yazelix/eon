@@ -4,8 +4,10 @@ pub(super) mod local;
 pub(super) mod tree;
 
 use super::memory::{Cause, Limit, Machine, Observation, Report};
+use super::private;
+use super::{Fallback, Kind, Listing, Local, Placement, Remote, Request, Route, Stage};
 use crate::config::{BoatConfig, Shape};
-use crate::launch::{atomic_write, ensure_parent};
+use crate::launch::atomic_write;
 use crate::platform::{BOAT_SIGNAL as SIGNAL, BoatSignals as Signals};
 use fs2::FileExt;
 use image::{Image, Refusal};
@@ -21,44 +23,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+/// Boat's noun in private-state error tokens (`unsafe-boat-state-directory`, ...).
+pub(super) const NOUN: &str = "boat";
 const CONTROL: u64 = 30;
 const CLEANUP: u64 = 60;
 /// Boat's deadline starts before recovery, upload, Nix bootstrap and warmup; a `timeout`
 /// envelope must leave this much of it for them (a cold warmup measured about 23 minutes).
 const PREPARATION: u64 = 1800;
-pub(super) fn private_directory(path: &Path) -> Result<(), String> {
-    ensure_parent(&path.join("entry")).map_err(|_| "boat-state-directory")?;
-    check_private_directory(path)
-}
-
-fn check_private_directory(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| "boat-state-directory")?;
-    if !metadata.is_dir()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.mode() & 0o077 != 0
-    {
-        return Err("unsafe-boat-state-directory".into());
-    }
-    Ok(())
-}
-
-pub(super) fn read_private<T: serde::de::DeserializeOwned>(
-    path: &Path,
-) -> Result<Option<T>, String> {
-    match fs::symlink_metadata(path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Ok(meta)
-            if meta.is_file()
-                && meta.uid() == rustix::process::geteuid().as_raw()
-                && meta.mode() & 0o077 == 0
-                && meta.len() <= 65536 => {}
-        _ => return Err("unsafe-or-unreadable-boat-record".into()),
-    }
-    serde_json::from_slice(&fs::read(path).map_err(|_| "boat-record-read")?)
-        .map(Some)
-        .map_err(|_| "boat-record-format".into())
-}
-
 #[derive(Deserialize, Serialize)]
 pub(super) struct Record {
     schema: u8,
@@ -106,7 +77,7 @@ pub(super) struct Lease {
 impl Lease {
     pub fn claim(root: &Path) -> Result<Option<Self>, String> {
         let directory = root.join("boat");
-        private_directory(&directory)?;
+        private::directory(&directory, NOUN)?;
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -150,7 +121,7 @@ impl Lease {
 }
 
 pub(super) fn listing(root: &Path) -> Result<Option<Record>, String> {
-    let record: Option<Record> = read_private(&root.join("boat/current.json"))?;
+    let record: Option<Record> = private::read(&root.join("boat/current.json"), NOUN)?;
     if record.as_ref().is_some_and(|record| {
         record.schema != 1
             || record.location != "boat"
@@ -174,7 +145,7 @@ pub(super) fn lease_metadata(root: &Path) -> Result<Option<fs::Metadata>, String
         Ok(_) => (),
     }
     for path in [root.parent().unwrap_or(root), root, &directory] {
-        check_private_directory(path)?;
+        private::check(path, NOUN)?;
     }
     match fs::symlink_metadata(directory.join("lease.lock")) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -628,9 +599,9 @@ pub(super) fn run(
         Err(reason) => return fallback(reason),
     };
     let run_id = crate::run::random().map_err(|_| "run-id")?;
-    private_directory(&lease.root.join("runs"))?;
+    private::directory(&lease.root.join("runs"), NOUN)?;
     let directory = lease.root.join("runs").join(&run_id);
-    private_directory(&directory)?;
+    private::directory(&directory, NOUN)?;
     let live = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1366,6 +1337,250 @@ fn budget(limits: &Value, config: &BoatConfig, machine: Machine, now: u64) -> Re
     Ok(())
 }
 
+/// Eon's Boat route: permitted build shapes run on a Boat VM, everything else stays local.
+pub struct Boat;
+
+/// Boat runs only when its switch file exists (in the legacy queue directory when set).
+fn enabled(request: &Request<'_>) -> bool {
+    request
+        .config
+        .legacy_dir
+        .as_deref()
+        .unwrap_or(request.root)
+        .join("boat-on")
+        .try_exists()
+        .unwrap_or(false)
+}
+
+fn local(reason: impl Into<String>, kind: Kind) -> Placement {
+    Placement::Local(Some(Fallback {
+        reason: reason.into(),
+        kind,
+    }))
+}
+
+/// How the queue treats a reason a Boat run gave back: the policy reasons are expected
+/// and exit 1 on failure; anything else is Boat failing to run the command (exit 125).
+fn returned_kind(reason: &str) -> Kind {
+    match reason {
+        "policy-local" => Kind::Declined,
+        "boat-not-enabled" => Kind::Off,
+        "timing-local" => Kind::Kept,
+        _ if reason.starts_with("boat-capacity ") => Kind::Kept,
+        _ => Kind::Returned,
+    }
+}
+
+fn identity(source: Option<&Value>) -> Result<Option<tree::Identity>, String> {
+    source
+        .map(tree::Identity::deserialize)
+        .transpose()
+        .map_err(|_| "boat-source-format".into())
+}
+
+impl Route for Boat {
+    fn name(&self) -> &'static str {
+        "boat"
+    }
+
+    fn place(&self, request: &Request<'_>, stage: Stage) -> Placement {
+        let config = &request.config.boat;
+        if config.allow_shapes.is_empty() {
+            return Placement::Local(None);
+        }
+        if stage == Stage::Queued {
+            if shape(config, request.argv).is_none() {
+                return local("policy-local", Kind::Declined);
+            }
+            if request.quiet_exempt {
+                return local("timing-local", Kind::Kept);
+            }
+        }
+        if !enabled(request) {
+            return local("boat-not-enabled", Kind::Off);
+        }
+        let limit = request.limit;
+        let capacity = |reason: &str| {
+            local(
+                format!(
+                    "boat-capacity class={} cap={}G {reason}",
+                    limit.class.as_str(),
+                    limit.cap_gib
+                ),
+                Kind::Kept,
+            )
+        };
+        // Asking Boat whether a machine is free costs a provider call: only when the
+        // command queues or its memory limit (and so its machine) changed.
+        let check_machine = match stage {
+            Stage::Queued => true,
+            Stage::Waiting { limit_changed } => limit_changed,
+        };
+        match image::select(limit, config) {
+            Err(reason) => capacity(reason),
+            Ok(image) if qualification_blocked(request.root, image.machine) => {
+                capacity("qualification-stale")
+            }
+            Ok(image) if check_machine && !available(image.machine) => {
+                capacity("machine-unavailable")
+            }
+            Ok(_) => Placement::Remote,
+        }
+    }
+
+    fn run_remote(
+        &self,
+        request: &Request<'_>,
+        granted: &mut dyn FnMut(),
+        source: &mut Option<Value>,
+    ) -> Remote {
+        let config = &request.config.boat;
+        let mut prepared = match identity(source.as_ref()) {
+            Ok(prepared) => prepared,
+            Err(reason) => {
+                return Remote::Failed {
+                    reason,
+                    memory: None,
+                };
+            }
+        };
+        let Some(shape) = shape(config, request.argv) else {
+            return Remote::Wait;
+        };
+        let Ok(image) = image::select(request.limit, config) else {
+            return Remote::Wait;
+        };
+        if qualification_blocked(request.root, image.machine) || !enabled(request) {
+            return Remote::Wait;
+        }
+        let lease = match Lease::claim(request.root) {
+            Ok(Some(lease)) => lease,
+            Ok(None) => return Remote::Wait,
+            Err(reason) => {
+                return Remote::Failed {
+                    reason,
+                    memory: None,
+                };
+            }
+        };
+        granted();
+        let memory = |report: Option<Report>| report.and_then(|r| serde_json::to_value(r).ok());
+        match run(
+            lease,
+            config,
+            request.argv,
+            shape,
+            (request.limit, image),
+            &mut prepared,
+        ) {
+            Ok(Outcome::Complete(code, report)) => Remote::Exit {
+                code,
+                memory: memory(report),
+            },
+            Ok(Outcome::Uncertain(reason, report)) => Remote::Failed {
+                reason,
+                memory: memory(report),
+            },
+            Err(reason) => Remote::Failed {
+                reason,
+                memory: None,
+            },
+            Ok(Outcome::Local(reason)) => {
+                match prepared.map(serde_json::to_value).transpose() {
+                    Ok(value) => *source = value,
+                    Err(_) => {
+                        return Remote::Failed {
+                            reason: "boat-source-format".into(),
+                            memory: None,
+                        };
+                    }
+                }
+                Remote::Local(Fallback {
+                    kind: returned_kind(&reason),
+                    reason,
+                })
+            }
+        }
+    }
+
+    fn run_local(&self, run: Local<'_>) -> io::Result<std::process::ExitStatus> {
+        // Decode before `local::run` may return early for a terminal: a bad source never runs.
+        let prepared = identity(run.source).map_err(io::Error::other)?;
+        match run.fallback {
+            Some(fallback) if fallback.kind.routed() => local::run(
+                run.root,
+                run.command,
+                &fallback.reason,
+                prepared.as_ref().map(tree::Identity::tree),
+                run.program,
+            ),
+            _ => local::status(run.command),
+        }
+    }
+
+    fn verify(&self, source: &Value) -> Result<(), String> {
+        identity(Some(source))?
+            .ok_or_else(|| "boat-source-format".to_owned())?
+            .verify()
+    }
+
+    fn listing(
+        &self,
+        root: &Path,
+        lock_owner: &dyn Fn(&fs::Metadata) -> Option<Option<u32>>,
+    ) -> Result<Listing, String> {
+        let (record, mut error) = match listing(root) {
+            Ok(record) => (record, None),
+            Err(reason) => (None, Some(reason)),
+        };
+        let (lease_held, lease_pid) = match lease_metadata(root) {
+            Ok(metadata) => {
+                let owner = metadata.as_ref().and_then(lock_owner);
+                (Some(owner.is_some()), owner.flatten())
+            }
+            Err(reason) => {
+                error.get_or_insert(reason);
+                (None, None)
+            }
+        };
+        let mut out = Listing::default();
+        if lease_held == Some(true) {
+            out.lines
+                .push("boat lease held (including preflight)".into());
+        }
+        if let Some(reason) = &error {
+            out.lines.push(format!("boat record unavailable: {reason}"));
+        }
+        let format = |_| "boat-record-format".to_owned();
+        if let Some(active) = record.as_ref().filter(|record| record.phase != "stopped") {
+            out.lines.push(format!(
+                "boat held pid={} vm={} phase={} run={}",
+                active.pid,
+                active.vm_id.as_deref().unwrap_or("unknown"),
+                active.phase,
+                active.run_id
+            ));
+            out.holders
+                .push(serde_json::to_value(active).map_err(format)?);
+            out.busy.push(active.pid);
+        }
+        out.busy.extend(lease_pid);
+        out.fields
+            .insert("boat_lease_held".into(), lease_held.into());
+        if let Some(pid) = lease_pid {
+            out.fields.insert("boat_lease_pid".into(), pid.into());
+        }
+        if let Some(record) = record {
+            out.fields
+                .insert("boat".into(), serde_json::to_value(record).map_err(format)?);
+        }
+        if let Some(reason) = error {
+            out.fields.insert("boat_error".into(), reason.into());
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod script_tests;
 
@@ -1747,5 +1962,73 @@ mod tests {
         trial["trialComputeUsedSeconds"] = json!(90000);
         trial["wallet"] = json!({"balanceDollars": 10000});
         assert!(budget(&trial, &BoatConfig::default(), Machine::Default, 1).is_err());
+    }
+
+    #[test]
+    fn a_malformed_source_fails_verify() {
+        for source in [json!({"x": 1}), json!("tree"), Value::Null] {
+            let error = Boat.verify(&source).unwrap_err();
+            assert!(error.contains("boat-source-format"), "{source}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_source_fails_a_remote_run_before_the_grant() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = crate::config::SlotConfig::default();
+        config.boat.allow_shapes = vec![Shape::NixGate];
+        let argv = words(&["nix", "build", ".#default"]);
+        let request = Request {
+            config: &config,
+            root: directory.path(),
+            argv: &argv,
+            quiet_exempt: false,
+            limit: Limit {
+                class: super::super::Class::Nix,
+                cap_gib: 8,
+            },
+        };
+        let mut granted = false;
+        let mut source = Some(json!({"x": 1}));
+        let outcome = Boat.run_remote(&request, &mut || granted = true, &mut source);
+        assert!(
+            matches!(&outcome, Remote::Failed { reason, .. } if reason == "boat-source-format"),
+            "{outcome:?}"
+        );
+        assert!(!granted);
+    }
+
+    #[test]
+    fn a_malformed_source_never_runs_locally() {
+        // The decode comes before any local path, routed or plain, so a bad source never
+        // reaches the command whether or not a terminal is attached.
+        let directory = tempfile::tempdir().unwrap();
+        let sentinel = directory.path().join("ran");
+        let routed = Fallback {
+            reason: "boat-capacity full".into(),
+            kind: Kind::Kept,
+        };
+        let declined = Fallback {
+            reason: "policy-local".into(),
+            kind: Kind::Declined,
+        };
+        for (source, fallback) in [json!({"x": 1}), Value::Null]
+            .into_iter()
+            .flat_map(|source| [Some(&routed), Some(&declined), None].map(|f| (source.clone(), f)))
+        {
+            let mut command = Command::new("touch");
+            command.arg(&sentinel);
+            let error = Boat
+                .run_local(Local {
+                    root: directory.path(),
+                    command: &mut command,
+                    fallback,
+                    source: Some(&source),
+                    program: "rota",
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains("boat-source-format"), "{error}");
+            assert!(!sentinel.exists(), "{fallback:?}");
+        }
     }
 }

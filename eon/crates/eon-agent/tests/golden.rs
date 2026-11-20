@@ -94,41 +94,6 @@ fn rota_status_dry_run_and_decision_record_are_unchanged() {
 }
 
 #[test]
-fn rota_slot_delegate_reinvokes_rota_without_a_host_prefix() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = root();
-    let root = dir.path();
-    let runner = root.join("runner.sh");
-    fs::write(
-        &runner,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexec \"$@\"\n",
-            root.join("argv").display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&runner, fs::Permissions::from_mode(0o700)).unwrap();
-    // Slot state must be private (owner-only), as Boat checks.
-    fs::set_permissions(root.join("state"), fs::Permissions::from_mode(0o700)).unwrap();
-    let config = fs::read_to_string(root.join("config.toml")).unwrap();
-    fs::write(
-        root.join("config.toml"),
-        format!(
-            "{config}\n[slots]\nlocal_runner = ['{}']\n",
-            runner.display()
-        ),
-    )
-    .unwrap();
-    let output = rota(root, &["slot", "run", "--", "sh", "-c", "exit 7"]);
-    assert_eq!(output.status.code(), Some(7), "{output:?}");
-    let argv = fs::read_to_string(root.join("argv")).unwrap();
-    let argv: Vec<_> = argv.lines().collect();
-    assert_eq!(argv[0], env!("CARGO_BIN_EXE_rota"));
-    assert_eq!(argv[1], "_slot-local-exec");
-    assert_eq!(argv[3..], ["--", "sh", "-c", "exit 7"]);
-}
-
-#[test]
 fn rota_config_errors_name_rota() {
     let dir = root();
     let root = dir.path();

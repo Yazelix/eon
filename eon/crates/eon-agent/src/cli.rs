@@ -22,6 +22,8 @@ pub struct Host<'a> {
     pub report_config_file: bool,
     /// Quota facts for the native parsers (see [`readings::SessionReader`]).
     pub session: &'a readings::SessionReader<'a>,
+    /// The remote route for `slot run` (Eon's Boat); `None` runs every command locally.
+    pub route: Option<&'a dyn slots::Route>,
 }
 
 impl<'a> Host<'a> {
@@ -35,6 +37,7 @@ impl<'a> Host<'a> {
             slot_config_flag: false,
             report_config_file: false,
             session,
+            route: None,
         }
     }
 }
@@ -145,7 +148,7 @@ fn run(
         && internal == "_slot-local-exec"
         && separator == "--"
     {
-        return slots::delegate::execute(Path::new(path), argv);
+        return slots::delegate::execute(Path::new(path), argv, host.route);
     }
     if args.first().is_some_and(|s| s == "retire") {
         if args[1..] == ["--help"] || args[1..] == ["-h"] {
@@ -202,6 +205,16 @@ fn run(
             };
         if let Some(text) = config.slots.boat.tombstone() {
             let _ = writeln!(std::io::stderr(), "{}: warning: {text}", host.program);
+        }
+        let keys = config.slots.route_keys();
+        if host.route.is_none() && !keys.is_empty() {
+            let program = host.program;
+            let need = if keys.len() == 1 { "needs" } else { "need" };
+            let _ = writeln!(
+                std::io::stderr(),
+                "{program}: warning: {} {need} eon agent; {program} runs every slot command locally",
+                keys.join(" and ")
+            );
         }
         let options = slots::parse(rest, host.program)?;
         return slots::run(&config, options, host);

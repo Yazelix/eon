@@ -1,7 +1,12 @@
-mod boat;
+pub mod boat;
 pub(crate) mod delegate;
 mod legacy;
 pub(crate) mod memory;
+pub(crate) mod private;
+mod route;
+
+pub use memory::{Class, Limit};
+pub use route::{Fallback, Kind, Listing, Local, Placement, Remote, Request, Route, Stage};
 
 use crate::config::{Config, SlotConfig};
 use crate::launch::{Failure, atomic_write, ensure_parent, io_failure};
@@ -9,6 +14,7 @@ use crate::run::random;
 use crate::session::state_dir;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
@@ -304,6 +310,9 @@ struct Ticket {
     legacy: bool,
     #[serde(skip_deserializing, skip_serializing_if = "is_false")]
     malformed: bool,
+    /// How this process's route classed `fallback_reason`; never persisted.
+    #[serde(skip)]
+    kind: Option<Kind>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -317,6 +326,26 @@ impl Ticket {
 
     fn key(&self) -> (u64, u32) {
         (self.queued_ns, self.pid)
+    }
+
+    fn fallback(&self) -> Option<Fallback> {
+        Some(Fallback {
+            reason: self.fallback_reason.clone()?,
+            kind: self.kind?,
+        })
+    }
+
+    fn set_fallback(&mut self, fallback: Option<Fallback>) {
+        (self.fallback_reason, self.kind) = match fallback {
+            Some(Fallback { reason, kind }) => (Some(reason), Some(kind)),
+            None => (None, None),
+        };
+    }
+
+    /// A run through the route's local runner: its failures before the command starts
+    /// are the route's (exit 125), not the command's.
+    fn routed(&self) -> bool {
+        self.kind.is_some_and(Kind::routed)
     }
 }
 
@@ -503,27 +532,16 @@ struct Slots<'a> {
     program: &'a str,
     /// Arguments that re-invoke the host program from its executable.
     reinvoke: &'a [&'a str],
+    /// The host's remote route; `None` runs every command on a local slot.
+    route: Option<&'a dyn Route>,
     root: PathBuf,
     queue: PathBuf,
     warned: HashSet<PathBuf>,
 }
 
 impl Slots<'_> {
-    fn remote_enabled(&self) -> bool {
-        self.config
-            .legacy_dir
-            .as_deref()
-            .unwrap_or(&self.root)
-            .join("boat-on")
-            .try_exists()
-            .unwrap_or(false)
-    }
     fn failure(&self, ticket: &Ticket, error: impl std::fmt::Display) -> Failure {
-        let code = if ticket.remote
-            || ticket.fallback_reason.as_deref().is_some_and(|s| {
-                !["policy-local", "timing-local", "boat-not-enabled"].contains(&s)
-                    && !s.starts_with("boat-capacity ")
-            }) {
+        let code = if ticket.remote || ticket.kind == Some(Kind::Returned) {
             125
         } else {
             1
@@ -533,6 +551,35 @@ impl Slots<'_> {
         }
         (code, error.to_string())
     }
+
+    /// The `where` of a ticket: `local`, or the route that runs it remotely.
+    fn place_name(&self, ticket: &Ticket) -> &'static str {
+        match (ticket.remote, self.route) {
+            (false, _) => "local",
+            (true, Some(route)) => route.name(),
+            // A queue shared with a host whose route this program lacks.
+            (true, None) => "remote",
+        }
+    }
+
+    fn request<'b>(&'b self, options: &'b RunOptions<'_>, limit: Limit) -> Request<'b> {
+        Request {
+            config: self.config,
+            root: &self.root,
+            argv: options.argv,
+            quiet_exempt: options.quiet_exempt,
+            limit,
+        }
+    }
+
+    fn note_local(&self, reason: &str) {
+        let _ = writeln!(
+            io::stderr(),
+            "{} slot: where=local reason={reason}",
+            self.program
+        );
+    }
+
     fn queue_lock(&self, create: bool) -> io::Result<Option<File>> {
         let path = self.queue.join(".lock");
         let lock = if create {
@@ -641,6 +688,7 @@ impl Slots<'_> {
                             fallback_reason: None,
                             legacy: false,
                             malformed: true,
+                            kind: None,
                         });
                     }
                 }
@@ -716,7 +764,7 @@ impl Slots<'_> {
         ticket: &Ticket,
         slot: Option<u16>,
         code: Option<u8>,
-        memory: Option<&memory::Report>,
+        memory: Option<&Value>,
     ) {
         if let Err(e) = self.append_event(event, ticket, slot, code, memory) {
             let _ = writeln!(
@@ -733,7 +781,7 @@ impl Slots<'_> {
         ticket: &Ticket,
         slot: Option<u16>,
         code: Option<u8>,
-        memory: Option<&memory::Report>,
+        memory: Option<&Value>,
     ) -> io::Result<()> {
         let mut entry = serde_json::json!({
             "time": now_ns() / SECOND,
@@ -745,7 +793,7 @@ impl Slots<'_> {
             "command": ticket.argv.join(" ").chars().take(80).collect::<String>(),
             "front": ticket.front,
             "quiet_exempt": ticket.quiet_exempt,
-            "where": if ticket.remote { "boat" } else { "local" },
+            "where": self.place_name(ticket),
             "fallback_reason": ticket.fallback_reason,
         });
         if let Some(slot) = slot {
@@ -755,7 +803,7 @@ impl Slots<'_> {
             entry["exit_code"] = code.into();
         }
         if let Some(memory) = memory {
-            entry["memory"] = serde_json::to_value(memory)?;
+            entry["memory"] = memory.clone();
         }
         let mut line = serde_json::to_vec(&entry)?;
         line.push(b'\n');
@@ -807,49 +855,23 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
         .map_err(io_failure)?
         .ok_or_else(|| io_failure(format!("cannot read {} process identity", slots.program)))?;
     let nesting_token = random()?;
-    let shape = boat::shape(&slots.config.boat, options.argv);
     let initial_limit = memory.limit();
-    let selected = boat::image::select(initial_limit, &slots.config.boat);
-    let capacity_reason = |limit: memory::Limit, reason: &str| {
-        format!(
-            "boat-capacity class={} cap={}G {reason}",
-            limit.class.as_str(),
-            limit.cap_gib
-        )
+    let placement = match slots.route {
+        Some(route) => route.place(&slots.request(options, initial_limit), Stage::Queued),
+        None => Placement::Local(None),
     };
-    let fallback_reason = if slots.config.boat.allow_shapes.is_empty() {
-        None
-    } else if shape.is_none() {
-        Some("policy-local".into())
-    } else if options.quiet_exempt {
-        Some("timing-local".into())
-    } else if !slots.remote_enabled() {
-        Some("boat-not-enabled".into())
-    } else {
-        match selected {
-            Err(reason) => Some(capacity_reason(initial_limit, reason)),
-            Ok(image) if boat::qualification_blocked(&slots.root, image.machine) => {
-                Some(capacity_reason(initial_limit, "qualification-stale"))
-            }
-            Ok(image) if !boat::available(image.machine) => {
-                Some(capacity_reason(initial_limit, "machine-unavailable"))
-            }
-            Ok(_) => None,
-        }
+    let (remote, fallback) = match placement {
+        Placement::Remote => (true, None),
+        Placement::Local(fallback) => (false, fallback),
     };
-    let remote = shape.is_some() && fallback_reason.is_none();
-    if let Some(reason) = &fallback_reason
-        && (reason == "timing-local" || reason.starts_with("boat-capacity "))
+    if let Some(fallback) = &fallback
+        && fallback.kind == Kind::Kept
     {
-        let _ = writeln!(
-            io::stderr(),
-            "{} slot: where=local reason={reason}",
-            slots.program
-        );
+        slots.note_local(&fallback.reason);
     }
     let (mut ticket, pending) = {
         let _queue = slots.queue_lock(true).map_err(|e| slots.refuse_queue(e))?;
-        let ticket = Ticket {
+        let mut ticket = Ticket {
             queued_ns: now_ns(),
             pid,
             class: class.into(),
@@ -858,10 +880,12 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             front: options.front,
             quiet_exempt: options.quiet_exempt,
             remote,
-            fallback_reason,
+            fallback_reason: None,
             legacy: false,
             malformed: false,
+            kind: None,
         };
+        ticket.set_fallback(fallback);
         let pending = slots.enqueue(&ticket).map_err(|e| slots.refuse_queue(e))?;
         slots.log("queue", &ticket, None, None);
         (ticket, pending)
@@ -871,40 +895,27 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
         .and_then(|ms| ms.parse::<u64>().ok())
         .filter(|ms| (1..=5_000).contains(ms))
         .map_or(Duration::from_secs(5), Duration::from_millis);
-    let mut source: Option<boat::tree::Identity> = None;
-    let mut observed = (initial_limit, selected);
+    let mut source: Option<Value> = None;
+    let mut observed = initial_limit;
     let (holder, slot_lock, holder_lock) = loop {
         let limit = memory.limit();
-        let selected = boat::image::select(limit, &slots.config.boat);
-        let new_policy = (limit, selected) != observed;
-        let local_reason = if !ticket.remote {
-            None
-        } else if !slots.remote_enabled() {
-            Some("boat-not-enabled".into())
-        } else {
-            match selected {
-                Err(reason) => Some(capacity_reason(limit, reason)),
-                Ok(image) if boat::qualification_blocked(&slots.root, image.machine) => {
-                    Some(capacity_reason(limit, "qualification-stale"))
-                }
-                Ok(image) if new_policy && !boat::available(image.machine) => {
-                    Some(capacity_reason(limit, "machine-unavailable"))
-                }
-                Ok(_) => None,
-            }
-        };
-        observed = (limit, selected);
-        if let Some(reason) = local_reason {
+        let limit_changed = limit != observed;
+        observed = limit;
+        if ticket.remote
+            && let Some(route) = slots.route
+            && let Placement::Local(fallback) = route.place(
+                &slots.request(options, limit),
+                Stage::Waiting { limit_changed },
+            )
+        {
             let _queue = slots
                 .queue_lock(true)
                 .map_err(|e| slots.failure(&ticket, e))?;
             ticket.remote = false;
-            let _ = writeln!(
-                io::stderr(),
-                "{} slot: where=local reason={reason}",
-                slots.program
-            );
-            ticket.fallback_reason = Some(reason);
+            if let Some(fallback) = &fallback {
+                slots.note_local(&fallback.reason);
+            }
+            ticket.set_fallback(fallback);
             fs::write(
                 &pending.path,
                 serde_json::to_vec(&ticket).map_err(|e| slots.failure(&ticket, e))?,
@@ -912,9 +923,12 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             .map_err(|e| slots.failure(&ticket, e))?;
             slots.log("fallback", &ticket, None, None);
         }
-        if !ticket.remote && !slots.config.local_runner.is_empty() {
+        if !ticket.remote
+            && !slots.config.local_runner.is_empty()
+            && let Some(route) = slots.route
+        {
             drop(pending);
-            let result = delegate::run(&slots, &ticket, source.as_ref());
+            let result = delegate::run(&slots, route, &ticket, source.as_ref());
             slots.log(
                 "exit",
                 &ticket,
@@ -924,9 +938,11 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             return result;
         }
         {
-            let _queue = slots
-                .queue_lock(true)
-                .map_err(|e| slots.failure(&ticket, e))?;
+            let mut queue = Some(
+                slots
+                    .queue_lock(true)
+                    .map_err(|e| slots.failure(&ticket, e))?,
+            );
             let now = now_ns();
             let policy = legacy::policy(slots.config).map_err(|e| slots.failure(&ticket, e))?;
             let tickets = slots.tickets(None);
@@ -938,37 +954,63 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 .iter()
                 .find(|item| std::ptr::eq(item.ticket, &ticket))
                 .expect("rank includes the in-memory ticket");
-            if ticket.remote {
+            if ticket.remote
+                && let Some(route) = slots.route
+            {
                 let remote_head = ranked.iter().find(|item| {
                     item.ticket.remote
                         && (now / SECOND >= policy.quiet_until || item.ticket.quiet_exempt)
                 });
                 let quiet = now / SECOND < policy.quiet_until && !ticket.quiet_exempt;
-                if !quiet
-                    && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket))
-                    && let Some(shape) = shape
-                    && let Ok(image) = selected
-                    && !boat::qualification_blocked(&slots.root, image.machine)
-                    && slots.remote_enabled()
-                    && let Some(lease) =
-                        boat::Lease::claim(&slots.root).map_err(|e| slots.failure(&ticket, e))?
-                {
-                    drop(ranked);
-                    drop(_queue);
-                    slots.log("grant", &ticket, None, None);
-                    match boat::run(
-                        lease,
-                        &slots.config.boat,
-                        options.argv,
-                        shape,
-                        (limit, image),
+                if !quiet && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket)) {
+                    let outcome = route.run_remote(
+                        &slots.request(options, limit),
+                        &mut || {
+                            queue.take();
+                            slots.log("grant", &ticket, None, None);
+                        },
                         &mut source,
-                    ) {
-                        Ok(boat::Outcome::Local(reason)) => {
+                    );
+                    if !matches!(outcome, Remote::Wait) {
+                        // A route that returns without `granted` must not keep the lock
+                        // the fallback below takes again.
+                        queue.take();
+                    }
+                    if source.as_ref().is_some_and(Value::is_null) {
+                        // Refused whatever the outcome: a null that waited could otherwise
+                        // reach a delegate payload, where it reads back as no source.
+                        slots.log("exit", &ticket, None, Some(125));
+                        return Err((125, NULL_SOURCE.into()));
+                    }
+                    match outcome {
+                        Remote::Wait => (),
+                        Remote::Exit { code, memory } => {
+                            slots.log_with_memory(
+                                "exit",
+                                &ticket,
+                                None,
+                                Some(code),
+                                memory.as_ref(),
+                            );
+                            return Ok(code);
+                        }
+                        Remote::Failed { reason, memory } => {
+                            slots.log_with_memory(
+                                "exit",
+                                &ticket,
+                                None,
+                                Some(125),
+                                memory.as_ref(),
+                            );
+                            return Err((125, reason));
+                        }
+                        Remote::Local(fallback) => {
+                            drop(ranked);
+                            let reason = fallback.reason.clone();
                             ticket.remote = false;
-                            ticket.fallback_reason = Some(reason.clone());
+                            ticket.set_fallback(Some(fallback));
                             if let Some(source) = &source
-                                && let Err(reason) = source.verify()
+                                && let Err(reason) = verify(slots.route, source)
                             {
                                 ticket.fallback_reason = Some(reason.clone());
                                 slots.log("exit", &ticket, None, Some(125));
@@ -985,31 +1027,10 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                             )
                             .map_err(|e| slots.failure(&ticket, e))?;
                             slots.log("fallback", &ticket, None, None);
-                            let _ = writeln!(
-                                io::stderr(),
-                                "{} slot: where=local reason={reason}",
-                                slots.program
-                            );
-                        }
-                        result => {
-                            let (code, memory) = match &result {
-                                Ok(boat::Outcome::Complete(code, memory)) => {
-                                    (*code, memory.as_ref())
-                                }
-                                Ok(boat::Outcome::Uncertain(_, memory)) => (125, memory.as_ref()),
-                                _ => (125, None),
-                            };
-                            slots.log_with_memory("exit", &ticket, None, Some(code), memory);
-                            return match result {
-                                Ok(boat::Outcome::Complete(code, _)) => Ok(code),
-                                Ok(boat::Outcome::Uncertain(reason, _)) | Err(reason) => {
-                                    Err((125, reason))
-                                }
-                                _ => unreachable!(),
-                            };
+                            slots.note_local(&reason);
+                            continue;
                         }
                     }
-                    continue;
                 }
             }
             let mut grant = None;
@@ -1066,22 +1087,20 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
     let mut child = command(slots.config, options, slot, &nesting_token);
     let status = source
         .as_ref()
-        .map_or(Ok(()), |source| source.verify().map_err(|e| (125, e)))
+        .map_or(Ok(()), |source| {
+            verify(slots.route, source).map_err(|e| (125, e))
+        })
         .and_then(|()| {
-            match holder
-                .ticket
-                .fallback_reason
-                .as_deref()
-                .filter(|reason| *reason != "policy-local")
-            {
-                Some(reason) => boat::local::run(
-                    &slots.root,
-                    &mut child,
-                    reason,
-                    source.as_ref().map(boat::tree::Identity::tree),
-                    slots.program,
-                ),
-                None => child.status(),
+            let fallback = holder.ticket.fallback();
+            match (&fallback, slots.route) {
+                (Some(fallback), Some(route)) if fallback.kind.routed() => route.run_local(Local {
+                    root: &slots.root,
+                    command: &mut child,
+                    fallback: Some(fallback),
+                    source: source.as_ref(),
+                    program: slots.program,
+                }),
+                _ => child.status(),
             }
             .map(|status| {
                 status
@@ -1091,12 +1110,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             })
             .map_err(|e| {
                 let failure = io_failure(format!("cannot start {}: {e}", options.argv[0]));
-                if holder
-                    .ticket
-                    .fallback_reason
-                    .as_deref()
-                    .is_some_and(|s| s != "policy-local")
-                {
+                if holder.ticket.routed() {
                     (125, failure.1)
                 } else {
                     failure
@@ -1138,19 +1152,12 @@ fn list(
     let policy = legacy::policy(slots.config).map_err(io_failure)?;
     let tickets = slots.tickets(Some(&locks));
     let ranked = rank(&tickets, &policy, now);
-    let (remote, mut boat_error) = match boat::listing(&slots.root) {
-        Ok(remote) => (remote, None),
-        Err(reason) => (None, Some(reason)),
-    };
-    let (lease_held, lease_pid) = match boat::lease_metadata(&slots.root) {
-        Ok(metadata) => {
-            let owner = metadata.as_ref().and_then(|meta| locks.get(&lock_id(meta)));
-            (Some(owner.is_some()), owner.copied().flatten())
-        }
-        Err(reason) => {
-            boat_error.get_or_insert(reason);
-            (None, None)
-        }
+    let lock_owner = |metadata: &fs::Metadata| locks.get(&lock_id(metadata)).copied();
+    let route = match slots.route {
+        Some(route) => route
+            .listing(&slots.root, &lock_owner)
+            .map_err(io_failure)?,
+        None => Listing::default(),
     };
     let mut holders = Vec::new();
     for slot in 1..=slots.config.count + 1 {
@@ -1198,53 +1205,27 @@ fn list(
                 holder["where"] = "local".into();
             }
         }
-        if let Some(remote) = remote.as_ref().filter(|record| record.phase != "stopped") {
-            holders.push(serde_json::to_value(remote).map_err(io_failure)?);
-        }
+        holders.extend(route.holders);
         let waiters: Vec<_> = ranked
             .iter()
-            .filter(|item| {
-                lease_pid != Some(item.ticket.pid)
-                    && !remote.as_ref().is_some_and(|record| {
-                        record.phase != "stopped" && record.pid == item.ticket.pid
-                    })
-            })
+            .filter(|item| !route.busy.contains(&item.ticket.pid))
             .map(|item| {
                 let mut entry = serde_json::to_value(item.ticket)?;
-                entry["where"] = if item.ticket.remote { "boat" } else { "local" }.into();
+                entry["where"] = slots.place_name(item.ticket).into();
                 entry["slots"] = serde_json::to_value(&item.slots)?;
                 Ok(entry)
             })
             .collect::<Result<_, serde_json::Error>>()
             .map_err(io_failure)?;
-        let mut output = serde_json::json!({"holders": holders, "waiters": waiters, "boat_lease_held": lease_held});
-        if let Some(pid) = lease_pid {
-            output["boat_lease_pid"] = pid.into();
-        }
-        if let Some(remote) = remote {
-            output["boat"] = serde_json::to_value(remote).map_err(io_failure)?;
-        }
-        if let Some(reason) = boat_error {
-            output["boat_error"] = reason.into();
-        }
+        let mut output = serde_json::json!({"holders": holders, "waiters": waiters});
+        output
+            .as_object_mut()
+            .expect("a JSON object")
+            .extend(route.fields);
         writeln!(out, "{output}").map_err(io_failure)?;
     } else {
-        if lease_held == Some(true) {
-            writeln!(out, "boat lease held (including preflight)").map_err(io_failure)?;
-        }
-        if let Some(reason) = boat_error {
-            writeln!(out, "boat record unavailable: {reason}").map_err(io_failure)?;
-        }
-        if let Some(remote) = remote.as_ref().filter(|record| record.phase != "stopped") {
-            writeln!(
-                out,
-                "boat held pid={} vm={} phase={} run={}",
-                remote.pid,
-                remote.vm_id.as_deref().unwrap_or("unknown"),
-                remote.phase,
-                remote.run_id
-            )
-            .map_err(io_failure)?;
+        for line in &route.lines {
+            writeln!(out, "{line}").map_err(io_failure)?;
         }
         for (slot, holder) in holders {
             match holder {
@@ -1270,6 +1251,20 @@ fn list(
     Ok(0)
 }
 
+/// A route handed back a `null` source, which the payload file cannot tell from none.
+const NULL_SOURCE: &str = "route-source-null";
+
+/// Checks a prepared source through the route that made it. A source only exists when a
+/// route handed one back, so a missing route or a `null` source is refused.
+pub(crate) fn verify(route: Option<&dyn Route>, source: &Value) -> Result<(), String> {
+    if source.is_null() {
+        return Err(NULL_SOURCE.into());
+    }
+    route
+        .ok_or("local source needs the host's slot route")?
+        .verify(source)
+}
+
 fn describe(ticket: &Ticket, age_ns: u64) -> String {
     format!(
         "pid={} class={} age={}s {} {}",
@@ -1288,17 +1283,20 @@ pub fn run(
 ) -> Result<u8, Failure> {
     let root = state_dir(&config.state_file).join("slots");
     if matches!(options, Options::Run(_))
-        && (!config.slots.boat.allow_shapes.is_empty() || !config.slots.local_runner.is_empty())
+        && let Some(route) = host.route
+        && config.slots.routed()
     {
-        boat::private_directory(&state_dir(&config.state_file)).map_err(io_failure)?;
-        for child in ["", "queue", "holders", "boat"] {
-            boat::private_directory(&root.join(child)).map_err(io_failure)?;
+        private::directory(&state_dir(&config.state_file), "slot").map_err(io_failure)?;
+        for child in ["", "queue", "holders"] {
+            private::directory(&root.join(child), "slot").map_err(io_failure)?;
         }
+        private::directory(&root.join(route.name()), route.name()).map_err(io_failure)?;
     }
     let slots = Slots {
         config: &config.slots,
         program: host.program,
         reinvoke: host.reinvoke,
+        route: host.route,
         queue: root.join("queue"),
         root,
         warned: HashSet::new(),
@@ -1334,6 +1332,7 @@ mod tests {
             config: &config,
             program: "rota",
             reinvoke: &[],
+            route: None,
             root: directory.path().to_path_buf(),
             queue: directory.path().join("queue"),
             warned: HashSet::new(),
@@ -1378,6 +1377,7 @@ mod tests {
             fallback_reason: None,
             legacy: false,
             malformed: false,
+            kind: None,
         }
     }
 
