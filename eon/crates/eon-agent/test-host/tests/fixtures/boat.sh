@@ -48,7 +48,7 @@ limits)
   case "$mode" in paid*) tier=paid; status=active; plan=box_20 ;; standard*) tier=standard; status=active; plan=box_20 ;; esac
   if [ "$mode" = paid-mismatch ]; then active_plan=box_100; fi
   if [ -e "$root/attached" ]; then
-    [ "$mode" != post-reserve-loss ] || used=90000
+    case "$mode" in post-reserve-loss*) used=90000 ;; esac
     if [ "$mode" = post-plan-loss ]; then tier=paid; status=active; plan=box_20; active_plan=box_100; fi
   fi
   printf '{"canStart":true,"activeSandboxes":0,"keepGoing":{"enabled":false},"nextStartDollars":0,"machineTypes":[{"type":"default","available":true},{"type":"large","available":%s}],"starts":{"minute":{"remaining":3},"hour":{"remaining":20},"day":{"remaining":74}},"planIncluded":{"vmHoursRemaining":555,"periodEnd":"2099-01-01T00:00:00.000Z"},"subscriptionRemainingSeconds":1998000,"accessTier":"%s","subscriptionStatus":"%s","sandboxPlanKey":"%s","activeSandboxPlanKey":"%s","trialComputeCapSeconds":90000,"trialComputeUsedSeconds":%s,"subscriptionTrialEndsAt":"2099-01-01T00:00:00.000Z"}\n' "$large" "$tier" "$status" "$plan" "$active_plan" "$used"
@@ -139,15 +139,100 @@ exec)
       ;;
     --attach)
       touch "$root/attached"
-      # shellcheck disable=SC2028 # the JSON string holds a literal \n escape
-      echo '{"type":"stdout","data":"remote stdout\n"}'
-      # shellcheck disable=SC2028 # the JSON string holds a literal \n escape
-      echo '{"type":"stderr","data":"remote stderr\n"}'
-      case "$mode" in post-*) sleep 35 ;; esac
-      while [ -e "$root/hold" ]; do sleep 0.05; done
+      n=$(( $(cat "$root/attach-count" 2>/dev/null || echo 0) + 1 ))
+      echo "$n" > "$root/attach-count"
+      # Data frames hold literal \n escapes, as Boat's JSON does.
+      frame() { printf '{"type":"%s","data":"%s"}\n' "$1" "$2"; }
+      finish() { touch "$root/finished"; echo '{"type":"exit","status":"exited","exitCode":0}'; exit 0; }
+      case "$mode" in
+        attach-drop|attach-drop-exited|attach-big-frame)
+          if [ "$n" = 1 ]; then
+            frame stdout 'line1\nline2\n'
+            frame stderr 'err1\n'
+            if [ "$mode" = attach-big-frame ]; then
+              printf '{"event":"error","error":"%s"}\n' "$(head -c 1048576 /dev/zero | tr '\0' e)"
+              printf 'boat: first\nsecond \033[2J\n' >&2
+            else
+              echo '{"event":"error","error":"stream reset","code":"stream_reset"}'
+              echo 'boat: reading the output failed' >&2
+            fi
+            [ "$mode" != attach-drop-exited ] || touch "$root/finished"
+            exit 1
+          fi
+          # The replay arrives in other chunk sizes, then the rest of the output.
+          frame stdout 'li'; frame stdout 'ne1\nline2\n'; frame stderr 'err1\n'
+          frame stdout 'line3\n'
+          finish ;;
+        attach-zero-early|attach-error-zero)
+          frame stdout 'line1\n'
+          if [ "$n" = 1 ]; then
+            if [ "$mode" = attach-error-zero ]; then
+              echo '{"event":"error","error":"stream lost"}'
+              echo '{"type":"exit","status":"exited","exitCode":0}'
+            fi
+            exit 0
+          fi
+          frame stdout 'line3\n'
+          finish ;;
+        attach-quiet|status-outage)
+          frame stdout 'line1\n'
+          limit=6; [ "$mode" != status-outage ] || limit=3
+          [ "$n" -ge "$limit" ] || exit 1
+          frame stdout 'line3\n'
+          finish ;;
+        status-blip)
+          # One status read fails at the drop; the next attach then holds past patience.
+          frame stdout 'line1\n'
+          [ "$n" -ge 2 ] || exit 1
+          for _ in $(seq 15); do frame stdout '.'; sleep 2; done
+          frame stdout 'line3\n'
+          finish ;;
+        status-slow-running)
+          # The second status read starts before patience and answers running after it.
+          frame stdout 'line1\n'
+          [ "$n" -ge 3 ] || exit 1
+          frame stdout 'line3\n'
+          finish ;;
+        attach-trickle)
+          for i in $(seq 1 "$n"); do frame stdout "tick$i\\n"; done
+          [ "$n" -ge 5 ] || exit 1
+          finish ;;
+        post-reserve-loss-drops)
+          frame stdout "tick$n\\n"; sleep 0.5; exit 1 ;;
+      esac
+      frame stdout 'remote stdout\n'
+      frame stderr 'remote stderr\n'
+      # Waits print a frame every 2 s: the test host's 20 s patience watches silence.
+      case "$mode" in post-*) for _ in $(seq 18); do frame stdout '.'; sleep 2; done ;; esac
+      ticks=0
+      while [ -e "$root/hold" ]; do
+        sleep 0.05; ticks=$((ticks + 1))
+        if [ "$ticks" -ge 40 ]; then ticks=0; frame stdout '.'; fi
+      done
       if [ "$mode" = disconnected ]; then touch "$root/old-command"; exit 1; fi
+      finish
       ;;
-    --kill) rm -f "$root/hold"; echo '{"success":true}' ;;
+    --status)
+      printf 'status\n' >> "$root/status-calls"
+      if [ "$mode" = disconnected ]; then echo '{"ok":false}'; exit 1; fi
+      calls=$(wc -l < "$root/status-calls")
+      fail=
+      case "$mode" in
+        status-outage) [ "$calls" -gt 2 ] || fail=1 ;;
+        status-blip|status-slow-running) [ "$calls" != 1 ] || fail=1 ;;
+      esac
+      if [ -n "$fail" ]; then echo '{"event":"error","error":"api unavailable"}'; exit 1; fi
+      [ "$mode" != status-slow-running ] || [ "$calls" != 2 ] || sleep 22
+      if [ -e "$root/finished" ]; then
+        echo '{"type":"command.status","running":false,"exitCode":0}'
+      else
+        echo '{"type":"command.status","running":true,"exitCode":null}'
+      fi
+      ;;
+    --kill)
+      printf 'kill\n' >> "$root/kills"
+      [ ! -e "$root/slow-kill" ] || sleep 40
+      rm -f "$root/hold"; echo '{"success":true}' ;;
     --)
       if [[ " $* " == *' -- env -i PATH=/usr/bin:/bin LC_ALL=C bash --noprofile --norc -c '*' eon-image 7a5da4f0f0a1bf9de41b47695ae48f94ed115b7145cba5b941bcee2019dd708f ' ]]; then
         case "$mode" in
@@ -166,28 +251,35 @@ exec)
   ;;
 scp)
   case "$1" in
-    *:*/result.json) cp "$root/result.json" "$2" ;;
-    *:*/output.log) cp "$root/output.log" "$2" ;;
+    # The result exists once the command has finished, as run.sh writes it last.
+    *:*/result.json) [ -e "$root/finished" ] || exit 1; cp "$root/result.json" "$2" ;;
+    *:*/output.log) [ ! -e "$root/log-copy-fails" ] || exit 1; cp "$root/output.log" "$2" ;;
     *) exit 91 ;;
   esac
   ;;
 stop)
   if [ "$mode" = delayed-stop ]; then echo stopping > "$root/state"; echo 6 > "$root/stop-polls";
-  elif [ "$mode" = stuck-stop ]; then echo stopping > "$root/state"; echo 1000 > "$root/stop-polls";
+  elif [ "$mode" = stuck-stop ] || [ -e "$root/slow-retire" ]; then echo stopping > "$root/state"; echo 1000 > "$root/stop-polls";
   else echo stopped > "$root/state"; fi
   rm -f "$root/hold"
   echo '{"success":true}'
   ;;
 delete)
   [ "$1" = --yes ]; [ "$2" = "$id" ]
+  [ ! -e "$root/slow-retire" ] || sleep 10
   touch "$root/deleted"
   rm -f "$root/old-command"
   echo deleted > "$root/state"
   echo '{"success":true}'
   ;;
-usage) echo '{"seconds":1,"dollars":0.00001,"running":false}' ;;
+usage)
+  [ ! -e "$root/usage-fails" ] || exit 1
+  [ ! -e "$root/slow-retire" ] || sleep 10
+  echo '{"seconds":1,"dollars":0.00001,"running":false}' ;;
 list)
-  if [ "$mode" = reconcile-unreachable ]; then exit 1; fi
+  if [ "$mode" = reconcile-unreachable ] || [ -e "$root/list-fails" ]; then exit 1; fi
+  # The deleted run's VM still listed: its deletion stays unconfirmed.
+  if [ -e "$root/list-keeps" ]; then echo '{"sandboxes":[{"id":"bx_test"}]}'; exit 0; fi
   if [ "$mode" = reconcile-hold ]; then
     touch "$root/preflight"
     while :; do sleep 1; done

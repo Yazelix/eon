@@ -40,7 +40,7 @@ fn main() -> ExitCode {
             slot_config_flag: true,
             report_config_file: true,
             session: &session,
-            route: Some(&rota::slots::boat::Boat),
+            route: Some(&rota::slots::boat::Boat::EON),
         };
         return rota::cli::main(arguments.into_iter().skip(2), &host);
     }

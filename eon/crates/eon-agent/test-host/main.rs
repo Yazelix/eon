@@ -107,6 +107,9 @@ mod fake {
 }
 
 #[cfg(target_os = "linux")]
+static BOAT: rota::slots::boat::Boat = rota::slots::boat::Boat::with_patience(20);
+
+#[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {
     let session = |_: std::time::Instant| Err("native quota requires eon agent".into());
     let fake;
@@ -117,7 +120,8 @@ fn main() -> std::process::ExitCode {
             };
             &fake
         }
-        _ => &rota::slots::boat::Boat,
+        // Boat with a 20 s patience, so lost-attach tests need not wait ten minutes.
+        _ => &BOAT,
     };
     rota::cli::main(
         std::env::args_os().skip(1),

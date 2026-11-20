@@ -5,6 +5,29 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A Boat run under `eon agent slot run` survives a dropped `boat exec --attach`
+  stream. Eon checks the command's status and re-attaches while it runs; if
+  it has ended, its real exit code comes back. Before, the healthy run was
+  killed as `remote-result-unknown`.
+  - After a loss, only the status, the run deadline, the credit guard or a
+    signal can end the run. Status reads that fail without a break for 10
+    minutes give `remote-attach-lost exit=N status=unreadable` (`exit=none` when
+    the last attach could not run).
+  - Each re-attach is marked by one line in the live log and on stderr; stdout
+    carries only the command's output.
+  - A new private `boat.log` beside each run's logs records attach exit codes,
+    error and heartbeat frames, status reads, why a run gave up and the cleanup
+    steps. The Boat CLI's own stderr during an attach reaches the terminal with
+    control characters escaped.
+  - VM retirement gives stop, final usage and delete each their own time
+    budget. A slow stop no longer leaves the VM up as `cleanup-unknown` or
+    hides the run's own reason. A cleanup failure is recorded next to that
+    reason.
+  - `duration_seconds` is the run's time up to its result. Reconciling an
+    earlier run no longer overwrites it, or its recorded usage.
+  - A signal ends startup reconciliation of a leftover VM at once, where
+    before it could wait up to 45 seconds.
+
 - `eon agent slot run` hands a `slots.local_runner` command its queue metadata as
   `ROTA_SLOT_QUEUED_NS`, `ROTA_SLOT_CLASS`, `ROTA_SLOT_RUN_KEY` and
   `ROTA_SLOT_DELEGATE`. The `EON_SLOT_*` names are gone; a runner that reads

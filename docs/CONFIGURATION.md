@@ -458,8 +458,12 @@ the ordinary `eon-test` isolation harness.
 reserve. Admission uses the smaller of included plan time and any trial cap;
 wallet credit never authorizes a paid start. Keep-going must be off. The
 whole run's lifetime must fit above the reserve and before the trial/billing
-boundary. `timeout_seconds` accepts 120–7200 and includes setup and cleanup;
-use 7200 for a first cold gate. `jobs` accepts 1–4 for either supported machine;
+boundary. `timeout_seconds` accepts 120–7200 and is also the VM's lifetime,
+after which Boat stops it, so it bounds billed time. The run itself, setup
+included, ends 60 seconds before it. Teardown after that (kill, log and result
+copies, stop, final usage, delete) can take up to 240 seconds more, each step
+on its own bounded budget. The credit guards reserve those 240 seconds.
+Use 7200 for a first cold gate. `jobs` accepts 1–4 for either supported machine;
 explicit permitted command flags retain their own values.
 
 Boat uses the same heavy memory classes as local admission. Defaults are 6G
@@ -494,6 +498,23 @@ upload; local checkout/smudge filters cannot inject data into the upload.
 Remote runs hold one separate Boat lease, leaving local heavy capacity free.
 Quiet policy still applies. Before remote execution, policy/connectivity or
 budget refusal falls back through the local slot queue and reports a reason.
+A dropped output stream does not end a remote run. When `boat exec --attach`
+fails, Eon reads the command's status with `boat exec --status`, and
+re-attaches while it still runs. Waits between attempts grow from 1 to 30
+seconds, and an attempt held for a minute resets them. If the command has
+ended, Eon reads its result as usual. After a loss, only that status, the run
+deadline, the credit guard or a signal can end the run: output silence no
+longer can. The run is killed as `remote-attach-lost exit=N status=unreadable`
+only when every status read fails for 10 minutes. While a read is failing, the
+status is read again every 30 seconds, also during a later attach. `N` is the
+last attach's exit code, or `none` when that attach could not run or was
+killed. Before any loss, 10
+minutes without output still ends the run as `remote-no-progress`. A
+re-attach replays the output from its start. Eon skips the bytes it already
+showed, as a best effort, and marks each re-attach with one
+`[eon agent: Boat stream re-attached at stdout=N stderr=M; ...]` line in the
+live log and on rota's stderr; stdout carries only the command's own bytes.
+The complete log is copied from the VM afterwards.
 After execution might have started, lost contact reports uncertainty and
 cleans up the owned VM without automatically running a local duplicate.
 Unresolved prior work blocks new remote starts while a new invocation can use
@@ -542,7 +563,13 @@ listing preserves their inherited FIFO age while still rejecting PID reuse.
 Queue/grant/exit records also include `where` and local
 fallback reasons. Complete remote logs and schema-1 receipts live under
 `slots/runs/<id>/` beside the configured `state_file`; they are private and
-not printed by listing. A cleanup failure leaves a visible record that must
+not printed by listing. `boat.log` there records Boat's side of the run, one
+timestamped and escaped line per event: each attach attempt and its exit code,
+every non-output frame (heartbeats, error frames, exit frames), the Boat CLI's
+own stderr, each status read, why the run gave up (`give-up <reason>`), and
+the kill, copy, stop, usage and delete steps. It is capped at 2 MiB. The Boat
+CLI's stderr during an attach also reaches the terminal, with control
+characters escaped as `\xNN` so it cannot drive the terminal. A cleanup failure leaves a visible record that must
 be reconciled before another remote VM starts.
 An unreadable or incompatible Boat journal appears as `boat_error` in JSON
 listing and a reason in text; local holders and waiters remain visible.
@@ -553,7 +580,8 @@ packs and nonstandard paid plans cannot bypass the included-credit guard.
 Unknown identity/schema and near-reserve credit choose local before execution;
 after execution may have begun, budget loss/provider stop is unresolved125,
 with no local retry. Each start reads fresh limits. Cleanup always runs.
-Private records retain `kill_sent`, monotonic `duration_seconds`, VM `usage`,
+Private records retain `kill_sent`, monotonic `duration_seconds` (the run's
+time up to its result, without teardown or later reconciliation), VM `usage`,
 and observed `trial_seconds_used` with `trial_usage_reason`. Trial counter
 deltas are account-wide observations, not exact per-VM metering. Unknown/tier
 resets remain null. `queue_wait_avoided_seconds` is null with

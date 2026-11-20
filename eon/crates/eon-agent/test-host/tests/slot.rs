@@ -1029,6 +1029,17 @@ fn review_crash_recovery_deletes_uncertain_vm_instead_of_reviving_old_work() {
     );
     assert!(!f.dir.path().join("provider/old-command").exists());
     assert_eq!(f.list()["boat"]["vm_id"], "bx_next");
+    // A run lost mid-way keeps a null duration: reconciliation time is not run time.
+    let old: Value = serde_json::from_slice(
+        &fs::read(
+            f.root()
+                .join("runs/11111111111111111111111111111111/receipt.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(old["duration_seconds"], Value::Null);
+    assert_eq!(old["reason"], "recovered-after-wrapper-loss");
     let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
     assert!(calls.find("delete\n").unwrap() < calls.find("new\n").unwrap());
     assert!(!calls.lines().any(|line| line == "resume"));
@@ -1839,12 +1850,426 @@ fn lost_boat_contact_after_start_stops_vm_without_duplicate_local_run() {
     assert_eq!(result.status.code(), Some(125));
     assert!(!f.dir.path().join("local-ran").exists());
     assert_eq!(f.list()["boat"]["phase"], "stopped");
+    // Status stayed unreadable past the test host's 20 s patience: a specific reason.
+    assert_eq!(
+        f.list()["boat"]["reason"],
+        "remote-attach-lost exit=1 status=unreadable"
+    );
+    assert!(provider_lines(&f, "status-calls") >= 2);
+    assert_eq!(provider_lines(&f, "kills"), 1);
+    let evidence = run_file(&f, "boat.log");
+    let give_up = evidence
+        .find("give-up remote-attach-lost exit=1 status=unreadable")
+        .expect(&evidence);
+    assert!(give_up < evidence.find("kill ok").expect(&evidence));
     assert!(
         fs::read_to_string(f.dir.path().join("provider/calls"))
             .unwrap()
             .lines()
             .any(|line| line == "stop")
     );
+}
+
+/// A file of the latest Boat run's private directory, lossy, or empty when absent.
+fn run_file(f: &Fixture, name: &str) -> String {
+    let run = f.list()["boat"]["run_id"].as_str().unwrap().to_owned();
+    String::from_utf8_lossy(
+        &fs::read(f.root().join("runs").join(run).join(name)).unwrap_or_default(),
+    )
+    .into_owned()
+}
+
+fn provider_lines(f: &Fixture, name: &str) -> usize {
+    fs::read_to_string(f.dir.path().join("provider").join(name))
+        .map_or(0, |text| text.lines().count())
+}
+
+const REATTACHED: &str = "[eon agent: Boat stream re-attached at ";
+
+#[test]
+fn boat_lost_attach_reattaches_and_returns_the_real_exit_code() {
+    // (mode, attach attempts): the stream fails mid-run while the command still runs, or
+    // the command ends during the gap; either way its own exit code comes back.
+    for (mode, attempts) in [
+        ("attach-drop", 2),
+        ("attach-drop-exited", 1),
+        ("attach-zero-early", 2),
+        ("attach-error-zero", 2),
+        ("attach-big-frame", 2),
+    ] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        fs::write(f.dir.path().join("provider/code"), "7").unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(7), "{mode}: {stderr}");
+        let record = f.list()["boat"].clone();
+        assert_eq!(record["exit_code"], 7, "{mode}");
+        assert_eq!(record["kill_sent"], false, "{mode}");
+        assert_eq!(record["reason"], Value::Null, "{mode}");
+        assert_eq!(record["phase"], "stopped", "{mode}");
+        assert_eq!(provider_lines(&f, "kills"), 0, "{mode}");
+        assert_eq!(provider_lines(&f, "attach-count"), 1, "{mode}");
+        assert_eq!(
+            fs::read_to_string(f.dir.path().join("provider/attach-count"))
+                .unwrap()
+                .trim(),
+            attempts.to_string(),
+            "{mode}"
+        );
+        let live = run_file(&f, "live.log");
+        let evidence = run_file(&f, "boat.log");
+        // Each line once in the live log and on rota's own streams, the re-attach marked.
+        assert_eq!(live.matches("line1").count(), 1, "{mode}: {live}");
+        assert_eq!(stdout.matches("line1").count(), 1, "{mode}: {stdout}");
+        assert_eq!(live.matches(REATTACHED).count(), attempts - 1, "{mode}");
+        // Stdout carries only command bytes; rota's stderr holds the marker.
+        assert_eq!(stdout.matches(REATTACHED).count(), 0, "{mode}");
+        assert_eq!(stderr.matches(REATTACHED).count(), attempts - 1, "{mode}");
+        assert!(evidence.contains("attach start attempt=1 "), "{mode}");
+        if attempts == 2 {
+            assert_eq!(live.matches("line3").count(), 1, "{mode}");
+            assert!(evidence.contains("reattach stdout="), "{mode}");
+            assert!(evidence.contains("status {\"type\":\"command.status\",\"running\":true"));
+        }
+        match mode {
+            "attach-drop" => {
+                assert!(evidence.contains(
+                    r#"frame {"event":"error","error":"stream reset","code":"stream_reset"}"#
+                ));
+                assert!(evidence.contains("attach exit=1"));
+                assert!(evidence.contains("stderr boat: reading the output failed"));
+                assert!(!live.contains("reading the output failed"));
+                assert_eq!(live.matches("err1").count(), 1);
+                assert_eq!(stderr.matches("err1").count(), 1, "{stderr}");
+                // The marker reaches rota's stderr before the replayed bytes, and
+                // stdout is exactly the command's output.
+                assert!(!stderr[stderr.find(REATTACHED).unwrap()..].contains("err1"));
+                assert_eq!(stdout.matches("line1\nline2\n").count(), 1, "{stdout}");
+                assert_eq!(stdout.matches("line3\n").count(), 1, "{stdout}");
+            }
+            "attach-drop-exited" => {
+                assert!(evidence.contains("status {\"type\":\"command.status\",\"running\":false"));
+            }
+            "attach-error-zero" => {
+                assert!(evidence.contains("stream lost"));
+                assert!(evidence.contains("attach exit=0"));
+            }
+            "attach-big-frame" => {
+                // The terminal gets provider diagnostics with their controls escaped.
+                assert!(!stderr.contains('\u{1b}'), "{stderr}");
+                assert!(stderr.contains(r"second \x1b[2J"), "{stderr}");
+                assert!(evidence.contains("...[truncated "));
+                assert!(
+                    evidence.contains(r"stderr second \x1b[2J\x0a"),
+                    "{evidence}"
+                );
+                assert!(!evidence.contains('\u{1b}'));
+            }
+            _ => (),
+        }
+    }
+}
+
+#[test]
+fn boat_lost_attach_never_kills_on_silence_while_status_runs() {
+    // The test host's patience is 20 s. After a loss only the process status decides:
+    // attach-quiet re-attaches 5 times with nothing new, waiting 1 + 2 + 4 + 8 + 16 = 31 s,
+    // past the patience; status-outage reads an unreadable status twice (1 + 2 = 3 s,
+    // under it) and then running; attach-trickle brings one new line per attempt, and
+    // its waits still grow (1 + 2 + 4 + 8 = 15 s) because no attempt held 60 s.
+    for (mode, attempts, waited) in [
+        ("attach-quiet", 6, 31),
+        ("status-outage", 3, 3),
+        ("attach-trickle", 5, 15),
+    ] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        fs::write(f.dir.path().join("provider/code"), "7").unwrap();
+        let started = Instant::now();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(7),
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(started.elapsed() >= Duration::from_secs(waited), "{mode}");
+        assert_eq!(provider_lines(&f, "kills"), 0, "{mode}");
+        assert_eq!(f.list()["boat"]["kill_sent"], false, "{mode}");
+        assert_eq!(
+            fs::read_to_string(f.dir.path().join("provider/attach-count"))
+                .unwrap()
+                .trim(),
+            attempts.to_string(),
+            "{mode}"
+        );
+        let live = run_file(&f, "live.log");
+        assert_eq!(
+            live.matches("line3").count(),
+            usize::from(mode != "attach-trickle")
+        );
+        if mode == "attach-trickle" {
+            for tick in 1..=5 {
+                assert_eq!(live.matches(&format!("tick{tick}\n")).count(), 1, "{live}");
+            }
+        }
+        if mode == "status-outage" {
+            let evidence = run_file(&f, "boat.log");
+            assert_eq!(evidence.matches("result absent").count(), 2, "{evidence}");
+        }
+    }
+}
+
+#[test]
+fn boat_one_failed_status_read_never_kills_a_later_held_attach() {
+    // One failed read at the drop, then an attach that holds for 30 s, past the test
+    // host's 20 s patience. The failure is read again during that attach (running).
+    unbroken_failed_reads_alone_give_up("status-blip");
+}
+
+#[test]
+fn boat_a_status_read_answering_running_after_patience_continues_the_run() {
+    // A read that starts before the 20 s patience and answers running after it.
+    unbroken_failed_reads_alone_give_up("status-slow-running");
+}
+
+fn unbroken_failed_reads_alone_give_up(mode: &str) {
+    let f = Fixture::boat_fixture();
+    fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+    fs::write(f.dir.path().join("provider/code"), "7").unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "{mode}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let record = f.list()["boat"].clone();
+    assert_eq!(record["kill_sent"], false, "{mode}");
+    assert_eq!(record["reason"], Value::Null, "{mode}");
+    assert_eq!(provider_lines(&f, "kills"), 0, "{mode}");
+    let evidence = run_file(&f, "boat.log");
+    assert!(!evidence.contains("give-up"), "{mode}: {evidence}");
+    if mode == "status-blip" {
+        // The second read came during the held attach, before that attach's exit.
+        let attempt = evidence.find("attach start attempt=2").unwrap();
+        let read = attempt + evidence[attempt..].find("status {").expect(&evidence);
+        assert!(read < evidence.find("attach exit=0").unwrap(), "{evidence}");
+    }
+}
+
+#[test]
+fn boat_budget_is_observed_across_attach_drops() {
+    // Every attach drops within a second, yet the 30 s budget clock spans the attempts.
+    let f = Fixture::boat_fixture();
+    fs::write(
+        f.dir.path().join("provider/mode"),
+        "post-reserve-loss-drops",
+    )
+    .unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(125), "{out:?}");
+    let record = f.list()["boat"].clone();
+    assert_eq!(record["reason"], "remote-budget-observation-or-reserve");
+    assert_eq!(record["kill_sent"], true);
+    assert_eq!(provider_lines(&f, "kills"), 1);
+    assert!(!f.dir.path().join("local-ran").exists());
+}
+
+#[test]
+fn boat_signal_during_lost_attach_reports_interrupted() {
+    let f = Fixture::boat_fixture();
+    fs::write(f.dir.path().join("provider/mode"), "disconnected").unwrap();
+    let mut run = Running(
+        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    until(|| (provider_lines(&f, "status-calls") > 0).then_some(()));
+    rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM).unwrap();
+    assert_eq!(run.wait().code(), Some(143));
+    let record = f.list()["boat"].clone();
+    assert_eq!(record["reason"], "interrupted");
+    assert_eq!(record["phase"], "stopped");
+    assert!(f.dir.path().join("provider/deleted").exists());
+    assert!(!f.dir.path().join("local-ran").exists());
+}
+
+#[test]
+fn boat_slow_kill_does_not_starve_the_log_copy() {
+    let f = Fixture::boat_fixture();
+    fs::write(f.dir.path().join("provider/mode"), "disconnected").unwrap();
+    for flag in ["slow-kill", "log-copy-fails"] {
+        fs::write(f.dir.path().join("provider").join(flag), "").unwrap();
+    }
+    let started = Instant::now();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(125), "{out:?}");
+    let record = f.list()["boat"].clone();
+    // The 30 s the kill spent is teardown, not run time.
+    let duration = record["duration_seconds"].as_u64().unwrap();
+    assert!(duration + 25 <= started.elapsed().as_secs(), "{duration}");
+    assert_eq!(
+        record["reason"],
+        "remote-attach-lost exit=1 status=unreadable"
+    );
+    assert_eq!(record["phase"], "stopped");
+    assert_eq!(record["kill_sent"], true);
+    let evidence = run_file(&f, "boat.log");
+    let kill = evidence
+        .find("kill error=boat-client-timeout")
+        .expect(&evidence);
+    let copy = evidence
+        .find("copy output.log error=boat-command-failed")
+        .expect(&evidence);
+    // The copy ran after the kill used up its own budget, and failed on its own.
+    assert!(kill < copy);
+    assert!(evidence.contains("delete ok"));
+}
+
+#[test]
+fn boat_slow_retirement_keeps_the_run_reason() {
+    // Stop never completes within its 45 s wait, and usage and delete take 10 s each. One
+    // shared 60 s cleanup budget (the old code) ran out about 5 s before the delete was
+    // confirmed; each step now has its own. Load only widens that margin.
+    let f = Fixture::boat_fixture();
+    fs::write(f.dir.path().join("provider/mode"), "incomplete-log").unwrap();
+    fs::write(f.dir.path().join("provider/slow-retire"), "").unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(125), "{out:?}");
+    let record = f.list()["boat"].clone();
+    assert_eq!(record["phase"], "stopped");
+    assert_eq!(record["reason"], "remote-log-incomplete");
+    assert!(record["usage"].is_object());
+    assert!(f.dir.path().join("provider/deleted").exists());
+    let evidence = run_file(&f, "boat.log");
+    assert!(
+        evidence.contains("stop error=stop-unconfirmed"),
+        "{evidence}"
+    );
+    assert!(evidence.contains("usage ok"));
+    assert!(evidence.contains("delete ok"));
+}
+
+#[test]
+fn boat_unconfirmed_deletion_keeps_125_and_both_reasons() {
+    // (mode, flag, reason): unknown cleanup exits 125 before any local fallback and
+    // keeps the run's own reason beside the cleanup's.
+    for (mode, flag, reason) in [
+        (
+            "disconnected",
+            "list-fails",
+            "remote-attach-lost exit=1 status=unreadable; cleanup boat-command-failed",
+        ),
+        ("", "list-keeps", "remote-cleanup-unknown"),
+        ("", "list-fails", "boat-command-failed"),
+        (
+            "marker-mismatch",
+            "list-fails",
+            "; cleanup boat-command-failed",
+        ),
+    ] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        fs::write(f.dir.path().join("provider").join(flag), "").unwrap();
+        fs::write(f.dir.path().join("provider/code"), "7").unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125), "{mode} {flag}: {out:?}");
+        assert!(!f.dir.path().join("local-ran").exists(), "{mode} {flag}");
+        let record = f.list()["boat"].clone();
+        assert_eq!(record["phase"], "cleanup-unknown", "{mode} {flag}");
+        let recorded = record["reason"].as_str().unwrap();
+        if reason.starts_with(';') {
+            assert!(
+                recorded.ends_with(reason) && recorded.len() > reason.len(),
+                "{recorded}"
+            );
+        } else {
+            assert_eq!(recorded, reason, "{mode} {flag}");
+        }
+    }
+}
+
+#[test]
+fn review_canceling_reconciliation_of_a_started_vm_returns_promptly() {
+    let f = Fixture::boat_fixture();
+    f.pending_boat(false);
+    let current = f.root().join("boat/current.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&current).unwrap()).unwrap();
+    record["phase"] = "running".into();
+    record["vm_id"] = "bx_test".into();
+    fs::write(current, serde_json::to_vec(&record).unwrap()).unwrap();
+    fs::write(f.dir.path().join("provider/state"), "running").unwrap();
+    fs::write(f.dir.path().join("provider/mode"), "stuck-stop").unwrap();
+    let mut run = Running(
+        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    until(|| calls(&f).iter().any(|c| c == "stop").then_some(()));
+    let signaled = Instant::now();
+    rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM).unwrap();
+    assert_eq!(run.wait().code(), Some(143));
+    // The stop wait alone is 45 s; a signal ends it at once.
+    assert!(signaled.elapsed() < Duration::from_secs(10));
+    assert!(!f.dir.path().join("local-ran").exists());
+    assert!(!calls(&f).iter().any(|c| c == "new"));
+}
+
+#[test]
+fn review_reconciliation_keeps_the_run_duration_and_its_usage() {
+    let f = Fixture::boat_fixture();
+    f.pending_boat(false);
+    let current = f.root().join("boat/current.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&current).unwrap()).unwrap();
+    record["phase"] = "cleanup-unknown".into();
+    record["vm_id"] = "bx_test".into();
+    record["duration_seconds"] = 885.into();
+    record["usage"] = serde_json::json!({"seconds": 885, "dollars": 0.01, "running": false});
+    fs::write(current, serde_json::to_vec(&record).unwrap()).unwrap();
+    fs::write(f.dir.path().join("provider/usage-fails"), "").unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let old: Value = serde_json::from_slice(
+        &fs::read(
+            f.root()
+                .join("runs/11111111111111111111111111111111/receipt.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(old["phase"], "stopped");
+    assert_eq!(old["duration_seconds"], 885);
+    assert_eq!(old["usage"]["seconds"], 885);
 }
 
 #[test]

@@ -1,4 +1,5 @@
 //! Opt-in build execution; the local slot scheduler remains the admission owner.
+mod attach;
 pub(super) mod image;
 pub(super) mod local;
 pub(super) mod tree;
@@ -14,19 +15,26 @@ use image::{Image, Refusal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 /// Boat's noun in private-state error tokens (`unsafe-boat-state-directory`, ...).
 pub(super) const NOUN: &str = "boat";
 const CONTROL: u64 = 30;
+/// Sizes the run deadline (`timeout_seconds - CLEANUP`) and the `timeout` envelope.
 const CLEANUP: u64 = 60;
+/// The stop step of retirement: the stop request, then a wait of `STOP_WAIT` for it.
+const STOP_STEP: u64 = 60;
+const STOP_WAIT: u64 = 45;
+/// The longest teardown after the deadline: kill, log copy and result copy (one
+/// CONTROL each), then stop, usage and delete. The budget guards reserve it; billed time
+/// stays bounded by the VM's TTL (`timeout_seconds`), when Boat auto-stops it.
+const TEARDOWN: u64 = 3 * CONTROL + STOP_STEP + CONTROL + 2 * CONTROL;
 /// Boat's deadline starts before recovery, upload, Nix bootstrap and warmup; a `timeout`
 /// envelope must leave this much of it for them (a cold warmup measured about 23 minutes).
 const PREPARATION: u64 = 1800;
@@ -167,7 +175,38 @@ struct Client {
     machine: Machine,
 }
 
+/// Where a provider call's output goes.
+enum Output<'a> {
+    /// Keep up to 1 MiB of stdout for the caller; stderr is drained.
+    Saved,
+    /// Stream both pipes to the live log and rota's stdout/stderr, under `Guard`.
+    Log(&'a File, &'a attach::Guard),
+    /// `exec --attach` frames: data to the stream, the rest and the CLI's own stderr to
+    /// the evidence, under the run's shared `Guard`.
+    Attach(
+        &'a mut attach::Stream,
+        &'a attach::Evidence,
+        &'a attach::Guard,
+        &'a mut attach::Attempt,
+    ),
+}
+
 impl Client {
+    /// A client for one cleanup step with its own budget. A cancelable step honours a
+    /// signal (startup reconciliation); otherwise cleanup runs to its budget.
+    fn cleanup(machine: Machine, seconds: u64, cancelable: bool) -> Self {
+        Self {
+            deadline: Instant::now() + Duration::from_secs(seconds),
+            cleanup: !cancelable,
+            reserve_seconds: 0.0,
+            machine,
+        }
+    }
+
+    fn canceled(&self) -> bool {
+        !self.cleanup && SIGNAL.load(Ordering::Relaxed) != 0
+    }
+
     fn command(&self, json: bool, args: &[&str]) -> Command {
         let mut cmd = Command::new("boat");
         cmd.env_remove("SSH_AUTH_SOCK");
@@ -191,167 +230,146 @@ impl Client {
         &self,
         json: bool,
         args: &[&str],
-        stream: Option<&File>,
+        output: Output<'_>,
     ) -> Result<(u8, Vec<u8>), String> {
         if Instant::now() >= self.deadline {
             return Err("boat-client-timeout".into());
         }
-        let logs = [
-            stream.map(File::try_clone).transpose(),
-            stream.map(File::try_clone).transpose(),
-        ];
-        let [stdout_log, stderr_log] = logs;
-        let logs = [
-            stdout_log.map_err(|_| "boat-live-log")?,
-            stderr_log.map_err(|_| "boat-live-log")?,
-        ];
-        let frames =
-            stream.is_some() && args.first() == Some(&"exec") && args.contains(&"--attach");
+        let logs = match &output {
+            Output::Log(file, _) => Some([
+                file.try_clone().map_err(|_| "boat-live-log")?,
+                file.try_clone().map_err(|_| "boat-live-log")?,
+            ]),
+            _ => None,
+        };
+        let guard = match &output {
+            Output::Saved => None,
+            Output::Log(_, guard) | Output::Attach(_, _, guard, _) => Some(*guard),
+        };
+        let attach = matches!(output, Output::Attach(..));
         let mut child = self
-            .command(json || frames, args)
+            .command(json || attach, args)
             .spawn()
             .map_err(|_| "boat-unreachable")?;
-        let last_output = Arc::new(AtomicU64::new(super::now_ns() / super::SECOND));
-        let mut readers = Vec::new();
-        for ((mut input, stderr), log) in [
-            (
-                Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
-                false,
-            ),
-            (
-                Box::new(child.stderr.take().unwrap()) as Box<dyn Read + Send>,
-                true,
-            ),
-        ]
-        .into_iter()
-        .zip(logs)
-        {
-            let last_output = last_output.clone();
-            readers.push(std::thread::spawn(move || {
-                let mut saved = Vec::new();
-                let mut log = log;
-                if frames && !stderr {
-                    let mut input = io::BufReader::new(input);
-                    let mut line = Vec::new();
-                    while input.read_until(b'\n', &mut line).is_ok_and(|n| n > 0) {
-                        if let Ok(frame) = serde_json::from_slice::<Value>(&line)
-                            && let Some(data) = frame["data"].as_str()
-                        {
-                            if !data.is_empty()
-                                && matches!(frame["type"].as_str(), Some("stdout" | "stderr"))
-                            {
-                                last_output
-                                    .store(super::now_ns() / super::SECOND, Ordering::Relaxed);
-                            }
-                            if let Some(log) = &mut log {
-                                let _ = log.write_all(data.as_bytes());
-                            }
-                            if frame["type"] == "stderr" {
-                                let _ = io::stderr().write_all(data.as_bytes());
-                            } else if frame["type"] == "stdout" {
-                                let _ = io::stdout().write_all(data.as_bytes());
-                            }
-                        }
-                        line.clear();
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        std::thread::scope(|scope| {
+            let (stdout, stderr) = match (output, logs) {
+                (Output::Attach(stream, evidence, guard, attempt), _) => (
+                    scope.spawn(move || {
+                        attach::frames(stdout, stream, evidence, guard, attempt);
+                        Vec::new()
+                    }),
+                    scope.spawn(move || {
+                        attach::cli_stderr(stderr, evidence, &mut io::stderr());
+                        Vec::new()
+                    }),
+                ),
+                (_, Some([out_log, err_log])) => (
+                    scope.spawn(move || raw(stdout, Some((out_log, false)), guard)),
+                    scope.spawn(move || raw(stderr, Some((err_log, true)), guard)),
+                ),
+                _ => (
+                    scope.spawn(move || raw(stdout, None, None)),
+                    scope.spawn(move || {
+                        raw(stderr, None, None);
+                        Vec::new()
+                    }),
+                ),
+            };
+            let deadline = self
+                .deadline
+                .min(Instant::now() + Duration::from_secs(CONTROL));
+            let result: Result<u8, String> = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        break Ok(status
+                            .code()
+                            .unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
+                            as u8);
                     }
-                    return saved;
+                    Ok(None) => (),
+                    Err(_) => break Err("boat-client-wait".into()),
                 }
-                let mut buffer = [0u8; 16384];
-                while let Ok(n) = input.read(&mut buffer) {
-                    if n == 0 {
-                        break;
-                    }
-                    last_output.store(super::now_ns() / super::SECOND, Ordering::Relaxed);
-                    if let Some(log) = &mut log {
-                        let _ = log.write_all(&buffer[..n]);
-                        if stderr {
-                            let _ = io::stderr().write_all(&buffer[..n]);
-                        } else {
-                            let _ = io::stdout().write_all(&buffer[..n]);
-                        }
-                    } else if !stderr && saved.len() < 1024 * 1024 {
-                        saved.extend_from_slice(&buffer[..n.min(1024 * 1024 - saved.len())]);
-                    }
+                // A streamed call runs under its guard; a control call is short and bounded.
+                let stop = match guard {
+                    Some(guard) => guard.check(self).err(),
+                    None if self.canceled() => Some("interrupted".into()),
+                    None if Instant::now() >= deadline => Some("boat-client-timeout".into()),
+                    None => None,
+                };
+                if let Some(reason) = stop {
+                    break Err(reason);
                 }
-                saved
-            }));
-        }
-        let deadline = if stream.is_some() {
-            self.deadline
-        } else {
-            self.deadline
-                .min(Instant::now() + Duration::from_secs(CONTROL))
-        };
-        let mut next_budget = Instant::now() + Duration::from_secs(CONTROL);
-        let result: Result<u8, String> = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    break Ok(status
-                        .code()
-                        .unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
-                        as u8);
-                }
-                Ok(None) => (),
-                Err(_) => break Err("boat-client-wait".into()),
+                std::thread::sleep(Duration::from_millis(100));
+            };
+            if result.is_err() {
+                // This group belongs to our unreaped direct child, not a process-name match.
+                let _ = rustix::process::kill_process_group(
+                    rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
+                    rustix::process::Signal::KILL,
+                );
+                let _ = child.wait();
             }
-            if stream.is_some() && !self.cleanup && Instant::now() >= next_budget {
-                let limits = self.json(&["limits", "--all"]);
-                let safe = limits.as_ref().is_ok_and(|limits| {
-                    billing_policy(limits).is_ok()
-                        && limits["keepGoing"]["enabled"] == false
-                        && remaining(limits).is_ok_and(|seconds| {
-                            seconds > self.reserve_seconds + self.machine.weight() * CLEANUP as f64
-                        })
-                });
-                if !safe {
-                    break Err("remote-budget-observation-or-reserve".into());
-                }
-                next_budget = Instant::now() + Duration::from_secs(CONTROL);
-            }
-            let canceled = !self.cleanup && SIGNAL.load(Ordering::Relaxed) != 0;
-            let stalled = stream.is_some()
-                && (super::now_ns() / super::SECOND)
-                    .saturating_sub(last_output.load(Ordering::Relaxed))
-                    >= 600;
-            if canceled || stalled || Instant::now() >= deadline {
-                break Err(if canceled {
-                    "interrupted"
-                } else if stalled {
-                    "remote-no-progress"
-                } else {
-                    "boat-client-timeout"
-                }
-                .into());
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        };
-        if result.is_err() {
-            // This group belongs to our unreaped direct child, not a process-name match.
-            let _ = rustix::process::kill_process_group(
-                rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
-                rustix::process::Signal::KILL,
-            );
-            let _ = child.wait();
-        }
-        let stdout = readers.remove(0).join().map_err(|_| "boat-client-output")?;
-        for reader in readers {
-            let _ = reader.join();
-        }
-        Ok((result?, stdout))
+            let saved = stdout.join().map_err(|_| "boat-client-output")?;
+            let _ = stderr.join();
+            Ok((result?, saved))
+        })
     }
 
     fn json(&self, args: &[&str]) -> Result<Value, String> {
-        let (code, bytes) = self.invoke(true, args, None)?;
+        let (code, bytes) = self.invoke(true, args, Output::Saved)?;
         decode(code, &bytes, args[0])
     }
 
-    fn success(&self, args: &[&str], log: Option<&File>) -> Result<(), String> {
-        if self.invoke(false, args, log)?.0 == 0 {
-            Ok(())
-        } else {
-            Err("boat-command-failed".into())
+    fn success(&self, args: &[&str]) -> Result<(), String> {
+        status_ok(self.invoke(false, args, Output::Saved)?.0)
+    }
+
+    /// A streamed call to the live log, with a fresh guard of its own.
+    fn logged(&self, args: &[&str], live: &File, patience: u64) -> Result<(), String> {
+        let guard = attach::Guard::new(patience);
+        status_ok(self.invoke(false, args, Output::Log(live, &guard))?.0)
+    }
+}
+
+fn status_ok(code: u8) -> Result<(), String> {
+    if code == 0 {
+        Ok(())
+    } else {
+        Err("boat-command-failed".into())
+    }
+}
+
+/// Copies one pipe: to a log and rota's matching stream (any output is progress for the
+/// guard), or, without a log, keeps up to 1 MiB of it.
+fn raw(mut input: impl Read, log: Option<(File, bool)>, guard: Option<&attach::Guard>) -> Vec<u8> {
+    let mut saved = Vec::new();
+    let mut buffer = [0u8; 16384];
+    let mut log = log;
+    while let Ok(n) = input.read(&mut buffer) {
+        if n == 0 {
+            break;
+        }
+        if let Some(guard) = guard {
+            guard.output();
+        }
+        match &mut log {
+            Some((log, stderr)) => {
+                let _ = log.write_all(&buffer[..n]);
+                if *stderr {
+                    let _ = io::stderr().write_all(&buffer[..n]);
+                } else {
+                    let _ = io::stdout().write_all(&buffer[..n]);
+                }
+            }
+            None if saved.len() < 1024 * 1024 => {
+                saved.extend_from_slice(&buffer[..n.min(1024 * 1024 - saved.len())]);
+            }
+            None => (),
         }
     }
+    saved
 }
 
 fn decode(code: u8, bytes: &[u8], operation: &str) -> Result<Value, String> {
@@ -418,25 +436,25 @@ fn pinned_row(client: &Client, image: &Image) -> Result<(), String> {
 
 /// Asks the VM to stop and waits, bounded, for it to report stopped, so its final usage
 /// is complete. Deletion follows either way, so a VM that never stops is still retired.
-fn stop_vm(client: &Client, id: &str) {
-    let _ = client.json(&["stop", id]);
-    let stop_deadline = (Instant::now() + Duration::from_secs(45)).min(
-        client
-            .deadline
-            .checked_sub(Duration::from_secs(15))
-            .unwrap_or_else(Instant::now),
-    );
-    while Instant::now() < stop_deadline {
+fn stop_vm(client: &Client, id: &str) -> Result<(), String> {
+    let started = Instant::now();
+    let requested = client.json(&["stop", id]);
+    let wait_until = (started + Duration::from_secs(STOP_WAIT)).min(client.deadline);
+    while Instant::now() < wait_until && !client.canceled() {
         if let Ok(info) = client.json(&["info", id])
             && matches!(
                 sandbox(&info)["state"].as_str(),
                 Some("stopped" | "archived")
             )
         {
-            return;
+            return Ok(());
         }
-        std::thread::sleep(Duration::from_secs(1));
+        let next = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < next && !client.canceled() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
+    Err(requested.err().unwrap_or_else(|| "stop-unconfirmed".into()))
 }
 
 fn safe_id(id: &str) -> bool {
@@ -458,11 +476,41 @@ fn delete_vm(client: &Client, id: &str) -> Result<(), String> {
     }
 }
 
-/// Stop for final usage, then delete once: no VM outlives its run, so none can be resumed.
-fn retire(client: &Client, id: &str, started: u64) -> (Option<Value>, Result<(), String>) {
-    stop_vm(client, id);
-    let usage = usage(client, id, started);
-    (usage, delete_vm(client, id))
+/// Stop for final usage, then delete once: no VM outlives its run, so none can be
+/// resumed. Each step has its own budget, so a slow stop cannot starve the delete.
+fn retire(
+    machine: Machine,
+    cancelable: bool,
+    (id, started): (&str, u64),
+    log: Option<&attach::Evidence>,
+) -> (Option<Value>, Result<(), String>) {
+    let step = |name: &str, seconds: u64, run: &dyn Fn(&Client) -> Result<(), String>| {
+        let began = Instant::now();
+        let result = run(&Client::cleanup(machine, seconds, cancelable));
+        if let Some(log) = log {
+            log.control(format!(
+                "{name} {} elapsed={}",
+                result
+                    .as_ref()
+                    .err()
+                    .map_or("ok".into(), |e| format!("error={e}")),
+                began.elapsed().as_secs()
+            ));
+        }
+        result
+    };
+    let _ = step("stop", STOP_STEP, &|client| stop_vm(client, id));
+    let usage = std::cell::RefCell::new(None);
+    let _ = step("usage", CONTROL, &|client| {
+        *usage.borrow_mut() = self::usage(client, id, started);
+        usage
+            .borrow()
+            .as_ref()
+            .map(|_| ())
+            .ok_or_else(|| "usage-unavailable".into())
+    });
+    let deleted = step("delete", 2 * CONTROL, &|client| delete_vm(client, id));
+    (usage.into_inner(), deleted)
 }
 
 fn usage(client: &Client, id: &str, started: u64) -> Option<Value> {
@@ -510,13 +558,16 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
         .as_deref()
         .filter(|id| safe_id(id))
         .ok_or("remote-create-unknown")?;
-    let (usage, retired) = retire(client, id, old.started);
-    old.usage = usage;
+    // Startup reconciliation runs under the run client and stays cancelable.
+    let (usage, retired) = retire(client.machine, !client.cleanup, (id, old.started), None);
+    if usage.is_some() {
+        old.usage = usage;
+    }
     retired?;
     old.phase = "stopped".into();
     old.reason
         .get_or_insert_with(|| "recovered-after-wrapper-loss".into());
-    old.duration_seconds = Some((super::now_ns() / super::SECOND).saturating_sub(old.started));
+    // `duration_seconds` stays the run's own: reconciliation time is not run time.
     lease.save(&old)
 }
 
@@ -553,6 +604,7 @@ pub(super) fn run(
     shape: Shape,
     memory: (Limit, &'static Image),
     identity: &mut Option<tree::Identity>,
+    patience: u64,
 ) -> Result<Outcome, String> {
     let (limit, image) = memory;
     let machine = image.machine;
@@ -608,6 +660,14 @@ pub(super) fn run(
         .mode(0o600)
         .open(directory.join("live.log"))
         .map_err(|_| "boat-live-log")?;
+    let evidence = attach::Evidence::new(
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(directory.join("boat.log"))
+            .ok(),
+    );
     let mut record = Record {
         schema: 1,
         run_id: run_id.clone(),
@@ -672,13 +732,7 @@ pub(super) fn run(
         Err(reason) => {
             record.reason = Some(reason);
             let saved = lease.save(&record);
-            let cleanup = Client {
-                deadline: Instant::now() + Duration::from_secs(CLEANUP),
-                cleanup: true,
-                reserve_seconds: 0.0,
-                machine,
-            };
-            let recovered = recover(&cleanup, &lease);
+            let recovered = recover(&Client::cleanup(machine, CLEANUP, false), &lease);
             saved?;
             return fallback(
                 recovered
@@ -692,13 +746,7 @@ pub(super) fn run(
         .filter(|id| safe_id(id))
         .map(str::to_owned);
     let Some(id) = id else {
-        let cleanup = Client {
-            deadline: Instant::now() + Duration::from_secs(CLEANUP),
-            cleanup: true,
-            reserve_seconds: 0.0,
-            machine,
-        };
-        let recovered = recover(&cleanup, &lease);
+        let recovered = recover(&Client::cleanup(machine, CLEANUP, false), &lease);
         return fallback(
             recovered
                 .err()
@@ -762,12 +810,12 @@ pub(super) fn run(
                         "eon-image",
                         image.recipe_sha256,
                     ],
-                    None,
+                    Output::Saved,
                 )
                 .map(|(code, _)| code),
         )?;
         client
-            .success(
+            .logged(
                 &[
                     "exec",
                     &id,
@@ -778,13 +826,14 @@ pub(super) fn run(
                     "-c",
                     include_str!("boat/probe.sh"),
                 ],
-                Some(&live),
+                &live,
+                patience,
             )
             .map_err(|_| "vm-credential-probe-failed")?;
         record.credentials_absent = true;
         lease.save(&record)?;
-        client.success(&["exec", &id, "--", "bash", "-c", "set -eu; rm -rf /home/user/eon /home/user/eon-run; mkdir -p /home/user/eon /home/user/eon-run"], None)?;
-        client.success(
+        client.success(&["exec", &id, "--", "bash", "-c", "set -eu; rm -rf /home/user/eon /home/user/eon-run; mkdir -p /home/user/eon /home/user/eon-run"])?;
+        client.logged(
             &[
                 "push",
                 &id,
@@ -792,7 +841,8 @@ pub(super) fn run(
                 "--to",
                 "/home/user/eon",
             ],
-            Some(&live),
+            &live,
+            patience,
         )?;
         let jobs = config.jobs.to_string();
         let gate_warm = if shape == Shape::NixGate { "1" } else { "0" };
@@ -844,33 +894,47 @@ pub(super) fn run(
         record.phase = "running".into();
         lease.save(&record)?;
         released = true;
-        client.success(&["exec", &id, "--", "touch", "/home/user/eon-run/go"], None)?;
+        client.success(&["exec", &id, "--", "touch", "/home/user/eon-run/go"])?;
         let process = record.command_pid.unwrap().to_string();
-        let attach = client.success(&["exec", &id, "--attach", &process], Some(&live));
-        if let Err(reason) = attach {
-            record.kill_sent = true;
-            lease.save(&record)?;
-            let _ = client.json(&["exec", &id, "--kill", &process]);
-            return Err(if reason == "remote-budget-observation-or-reserve" {
-                reason
-            } else {
-                "remote-result-unknown".into()
-            });
-        }
-        Ok::<_, String>(())
+        let mut stream = attach::Stream::new(
+            attach::Sink::new(Box::new(live.try_clone().map_err(|_| "boat-live-log")?)),
+            attach::Sink::new(Box::new(io::stdout())),
+            attach::Sink::new(Box::new(io::stderr())),
+        );
+        attach::follow(
+            &client,
+            &attach::Guard::new(patience),
+            (&id, &process),
+            &mut stream,
+            &evidence,
+            &directory.join("result.json"),
+        )
     })();
-    let cleanup = Client {
-        deadline: Instant::now() + Duration::from_secs(CLEANUP),
-        cleanup: true,
-        reserve_seconds: 0.0,
-        machine,
+    // Run time ends with execution; teardown and any later reconciliation are not part of it.
+    let ran = wall_started.elapsed().as_secs();
+    if let Err(reason) = &execution {
+        evidence.control(format!("give-up {reason}"));
+    }
+    // Each step below has its own budget, so a slow kill cannot cut a copy short.
+    let step = |name: &str, args: &[&str]| {
+        let result = Client::cleanup(machine, CONTROL, false)
+            .invoke(false, args, Output::Saved)
+            .and_then(|(code, _)| status_ok(code));
+        evidence.control(format!(
+            "{name} {}",
+            result
+                .as_ref()
+                .err()
+                .map_or("ok".into(), |e| format!("error={e}"))
+        ));
+        result
     };
     if execution.is_err()
         && let Some(process) = record.command_pid
     {
         record.kill_sent = true;
         if lease.save(&record).is_ok() {
-            let _ = cleanup.json(&["exec", &id, "--kill", &process.to_string()]);
+            let _ = step("kill", &["exec", &id, "--kill", &process.to_string()]);
         }
     }
     let output_path = directory.join("output.log");
@@ -879,26 +943,26 @@ pub(super) fn run(
         if !released {
             return Err("remote-log-not-started".to_owned());
         }
-        cleanup.success(
+        step(
+            "copy output.log",
             &[
                 "scp",
                 &format!("{id}:/home/user/eon-run/output.log"),
                 output_path.to_str().ok_or("log-path")?,
             ],
-            None,
         )?;
         fs::set_permissions(&output_path, fs::Permissions::from_mode(0o600))
             .map_err(|_| "boat-log-permissions".to_owned())
     })();
     let execution = execution.and_then(|()| {
         let result_path = directory.join("result.json");
-        cleanup.success(
+        step(
+            "copy result.json",
             &[
                 "scp",
                 &format!("{id}:/home/user/eon-run/result.json"),
                 result_path.to_str().ok_or("result-path")?,
             ],
-            None,
         )?;
         let result: Value =
             serde_json::from_slice(&fs::read(&result_path).map_err(|_| "remote-result-read")?)
@@ -978,18 +1042,13 @@ pub(super) fn run(
             .map(|_| "job-limit-oom".into())
     });
     record.phase = "stopping".into();
+    record.duration_seconds = Some(ran);
     let record_saved = lease.save(&record);
-    let cleanup = Client {
-        deadline: Instant::now() + Duration::from_secs(CLEANUP),
-        cleanup: true,
-        reserve_seconds: 0.0,
-        machine,
-    };
-    let (usage, retired) = retire(&cleanup, &id, started);
+    let (usage, retired) = retire(machine, false, (&id, started), Some(&evidence));
     record.usage = usage;
     if let (Ok(before), Ok(after)) = (
         allowance_before.as_ref(),
-        cleanup.json(&["limits", "--all"]),
+        Client::cleanup(machine, CONTROL, false).json(&["limits", "--all"]),
     ) {
         if billing_policy(before) == Ok(true) && billing_policy(&after) == Ok(true) {
             record.trial_seconds_used = before["trialComputeUsedSeconds"]
@@ -1009,16 +1068,28 @@ pub(super) fn run(
             record.trial_usage_reason = Some("standard-plan-run".into());
         }
     }
-    if retired.is_ok() {
-        record.phase = "stopped".into();
-    } else {
-        record.phase = "cleanup-unknown".into();
+    match &retired {
+        Ok(()) => record.phase = "stopped".into(),
+        Err(cleanup) => {
+            // Unknown cleanup keeps the run's own reason and says why cleanup is unknown.
+            record.phase = "cleanup-unknown".into();
+            record.reason = Some(match record.reason.take() {
+                Some(run) => format!("{run}; cleanup {cleanup}"),
+                None => cleanup.clone(),
+            });
+        }
     }
-    record.duration_seconds = Some(wall_started.elapsed().as_secs());
     let saved = lease.save(&record);
     record_saved?;
     saved?;
-    retired?;
+    // Unknown cleanup exits 125 before a signal status or any local fallback (EON-C43).
+    if retired.is_err() {
+        let reason = record.reason.clone().unwrap_or_default();
+        return match record.memory {
+            Some(memory) => Ok(Outcome::Uncertain(reason, Some(memory))),
+            None => Err(reason),
+        };
+    }
     let signal = SIGNAL.load(Ordering::Relaxed);
     if signal != 0 {
         return Ok(Outcome::Complete((128 + signal) as u8, None));
@@ -1322,7 +1393,7 @@ fn budget(limits: &Value, config: &BoatConfig, machine: Machine, now: u64) -> Re
         }
     }
     let required = machine.weight()
-        * (config.reserve_hours * 3600.0 + config.timeout_seconds as f64 + CLEANUP as f64);
+        * (config.reserve_hours * 3600.0 + config.timeout_seconds as f64 + TEARDOWN as f64);
     if remaining(limits)? < required {
         return Err("budget-reserve-or-trial-cap".into());
     }
@@ -1338,7 +1409,21 @@ fn budget(limits: &Value, config: &BoatConfig, machine: Machine, now: u64) -> Re
 }
 
 /// Eon's Boat route: permitted build shapes run on a Boat VM, everything else stays local.
-pub struct Boat;
+pub struct Boat {
+    /// Seconds of output silence on the first, unbroken attach, and of unreadable
+    /// process status after the stream was lost, before the run is killed.
+    patience: u64,
+}
+
+impl Boat {
+    /// Eon's route.
+    pub const EON: Boat = Boat { patience: 600 };
+
+    /// A route with another patience, for test hosts that cannot wait ten minutes.
+    pub const fn with_patience(seconds: u64) -> Self {
+        Self { patience: seconds }
+    }
+}
 
 /// Boat runs only when its switch file exists (in the legacy queue directory when set).
 fn enabled(request: &Request<'_>) -> bool {
@@ -1472,6 +1557,7 @@ impl Route for Boat {
             shape,
             (request.limit, image),
             &mut prepared,
+            self.patience,
         ) {
             Ok(Outcome::Complete(code, report)) => Remote::Exit {
                 code,
@@ -1942,9 +2028,9 @@ mod tests {
         }
         assert!(timestamp(&json!("2026-02-30T00:00:00.000Z")).is_none());
         let mut boundary = good;
-        boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 60);
+        boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 240);
         assert!(budget(&boundary, &config, Machine::Default, 1).is_ok());
-        boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 59);
+        boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 239);
         assert!(budget(&boundary, &config, Machine::Default, 1).is_err());
     }
 
@@ -1965,9 +2051,14 @@ mod tests {
     }
 
     #[test]
+    fn eon_waits_ten_minutes_of_silence_or_unreadable_status() {
+        assert_eq!(Boat::EON.patience, 600);
+    }
+
+    #[test]
     fn a_malformed_source_fails_verify() {
         for source in [json!({"x": 1}), json!("tree"), Value::Null] {
-            let error = Boat.verify(&source).unwrap_err();
+            let error = Boat::EON.verify(&source).unwrap_err();
             assert!(error.contains("boat-source-format"), "{source}: {error}");
         }
     }
@@ -1990,7 +2081,7 @@ mod tests {
         };
         let mut granted = false;
         let mut source = Some(json!({"x": 1}));
-        let outcome = Boat.run_remote(&request, &mut || granted = true, &mut source);
+        let outcome = Boat::EON.run_remote(&request, &mut || granted = true, &mut source);
         assert!(
             matches!(&outcome, Remote::Failed { reason, .. } if reason == "boat-source-format"),
             "{outcome:?}"
@@ -2018,7 +2109,7 @@ mod tests {
         {
             let mut command = Command::new("touch");
             command.arg(&sentinel);
-            let error = Boat
+            let error = Boat::EON
                 .run_local(Local {
                     root: directory.path(),
                     command: &mut command,
