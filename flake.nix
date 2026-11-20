@@ -1305,7 +1305,7 @@
             doIncludeCrossToolchainEnv = false;
             CARGO_PROFILE = "dev";
             CARGO_PROFILE_DEV_DEBUG = "line-tables-only";
-            cargoExtraArgs = "--locked --offline --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} -p eon -p eon-runtime -p rota-cli";
+            cargoExtraArgs = "--locked --offline --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} -p eon -p eon-runtime -p rota-cli -p eon-boat";
             nativeBuildInputs = [ rustPlatform.cargoSetupHook ];
           };
           # Release artifacts cannot cover dev-profile tests; cache their dependencies separately.
@@ -1349,7 +1349,7 @@
             postCheck = ''
               cargo nextest run --cargo-profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} \
                 --config-file ${./.config/nextest.toml} --no-fail-fast --run-ignored only \
-                -E 'not (package(rota-cli) & (binary(run) | test(=run::tests::stop_reports_survivors_then_empties_the_scope) | test(=run::tests::only_processes_in_the_scope_are_held) | test(=run::tests::a_taken_unit_name_is_never_signalled) | test(=active_legacy_and_native_waiters_run_exclusively_and_finish) | test(=cleanup::tests::nondumpable_child) | test(=cleanup::tests::interrupted_removal_child) | test(=cleanup::tests::mount_boundary_child)))' \
+                -E 'not ((package(rota-cli) & (binary(run) | test(=run::tests::stop_reports_survivors_then_empties_the_scope) | test(=run::tests::only_processes_in_the_scope_are_held) | test(=run::tests::a_taken_unit_name_is_never_signalled) | test(=cleanup::tests::nondumpable_child) | test(=cleanup::tests::interrupted_removal_child) | test(=cleanup::tests::mount_boundary_child))) | (package(eon-boat) & test(=active_legacy_and_native_waiters_run_exclusively_and_finish)))' \
                 --test-threads 1 --no-tests fail --success-output immediate
               cargo test --profile "$CARGO_PROFILE" ${eonTestArgs.cargoExtraArgs} --doc
               export TMPDIR="$eonTestBuildTmpdir"

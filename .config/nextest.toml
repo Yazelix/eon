@@ -41,5 +41,5 @@ success-output = "final"
 
 # Rota's slot suite uses one process-wide mutex under libtest.
 [[profile.default.overrides]]
-filter = 'package(/^rota-cli$/) & binary(/^slot$/)'
+filter = 'package(/^eon-boat$/) & binary(/^slot$/)'
 test-group = "rota-slots"

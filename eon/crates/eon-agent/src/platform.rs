@@ -8,14 +8,14 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 pub(crate) static RUN_STOP: AtomicBool = AtomicBool::new(false);
-pub(crate) static BOAT_SIGNAL: AtomicI32 = AtomicI32::new(0);
+pub(crate) static ROUTE_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
 extern "C" fn request_stop(_: libc::c_int) {
     RUN_STOP.store(true, Ordering::SeqCst);
 }
 
 extern "C" fn cancel(signal: libc::c_int) {
-    BOAT_SIGNAL.store(signal, Ordering::Relaxed);
+    ROUTE_SIGNAL.store(signal, Ordering::Relaxed);
 }
 
 pub(crate) fn install_run_signals() {
@@ -25,11 +25,11 @@ pub(crate) fn install_run_signals() {
     }
 }
 
-pub(crate) struct BoatSignals(Vec<(i32, libc::sighandler_t)>);
+pub(crate) struct RouteSignals(Vec<(i32, libc::sighandler_t)>);
 
-impl BoatSignals {
+impl RouteSignals {
     pub(crate) fn install() -> Self {
-        BOAT_SIGNAL.store(0, Ordering::Relaxed);
+        ROUTE_SIGNAL.store(0, Ordering::Relaxed);
         Self(
             [libc::SIGINT, libc::SIGTERM, libc::SIGHUP]
                 .into_iter()
@@ -44,7 +44,7 @@ impl BoatSignals {
     }
 }
 
-impl Drop for BoatSignals {
+impl Drop for RouteSignals {
     fn drop(&mut self) {
         for (signal, previous) in &self.0 {
             // SAFETY: no safe disposition API exists; restore the value returned by signal.

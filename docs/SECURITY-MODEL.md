@@ -184,8 +184,8 @@ uses that configured launch route instead
 agent configuration contains agy permission-bypass and Codex
 approval-and-sandbox-bypass flags.
 These are example configuration choices, not flags imposed on every launch
-(`eon/crates/eon-agent/config.example.toml:51`,
-`eon/crates/eon-agent/config.example.toml:113`). The example Codex commands also
+(`eon/crates/eon-agent/config.example.toml:44`,
+`eon/crates/eon-agent/config.example.toml:106`). The example Codex commands also
 omit `--no-daemon`. Eon's usage guide records that a shared daemon can retain
 another terminal's routing environment, including the authority to quit that
 window without asking (`docs/USAGE.md:1518`,
@@ -205,7 +205,7 @@ allow-list or broker task-scoped credentials
 can reach the backend; accessible home-directory credentials are a separate
 filesystem exposure. The Boat client's removal of `SSH_AUTH_SOCK` applies to
 its own client commands, not to all local launches
-(`eon/crates/eon-agent/src/slots/boat.rs:292`).
+(`eon/crates/eon-boat/src/lib.rs:215`).
 
 When `trusted_settings` is configured, launch adds its working directory to
 agy's `trustedWorkspaces` before executing the backend. The write is atomic;
@@ -449,8 +449,8 @@ isolation between unrestricted same-user programs.
 Give agents credentials scoped to the repository, actions and duration their
 task needs. Existing backend `unset_env` and `env` settings can reduce ambient
 environment exposure, but cannot hide credential files or revoke inherited
-authority (`eon/crates/eon-agent/src/config.rs:174`,
-`eon/crates/eon-agent/src/config.rs:203`). Treat terminal text, titles and
+authority (`eon/crates/eon-agent/src/config.rs:208`,
+`eon/crates/eon-agent/src/config.rs:210`). Treat terminal text, titles and
 attention reports as untrusted data. Verify installer bytes before execution
 and keep the independently trusted signer record outside the managed prefix.
 

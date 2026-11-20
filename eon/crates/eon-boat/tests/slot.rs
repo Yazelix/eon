@@ -2563,9 +2563,9 @@ fn nested_run_reuses_the_slot() {
         "--",
         "sh",
         "-c",
-        "exec \"$1\" slot run -- sh -c 'test \"$ROTA_SLOT\" = 1'",
+        "ROTA_TEST_ROUTE=none exec \"$1\" slot run -- sh -c 'test \"$ROTA_SLOT\" = 1'",
         "sh",
-        env!("CARGO_BIN_EXE_rota"),
+        env!("CARGO_BIN_EXE_rota-test-host"),
     ]);
     run.success();
     assert_eq!(f.grants(), [(run.pid(), 1)]);
@@ -2610,7 +2610,7 @@ fn nested_runs_reuse_a_pid_one_holder_across_namespaces() {
     }
 
     let f = Fixture::new(1);
-    let binary = env!("CARGO_BIN_EXE_rota");
+    let binary = env!("CARGO_BIN_EXE_rota-test-host");
     let script = r#"test "$PPID" = 1
         "$1" slot run -- sh -c 'test "$ROTA_SLOT" = 1'
         exec bwrap --die-with-parent --dev-bind / / --unshare-pid --as-pid-1 --proc /proc -- \
@@ -2619,6 +2619,7 @@ fn nested_runs_reuse_a_pid_one_holder_across_namespaces() {
         Command::new("bwrap")
             .current_dir(f.dir.path())
             .env("ROTA_CONFIG", f.dir.path().join("config.toml"))
+            .env("ROTA_TEST_ROUTE", "none")
             .env_remove("ROTA_SLOT")
             .env_remove("ROTA_SLOT_TOKEN")
             .args(sandbox)
@@ -3386,7 +3387,10 @@ fn standalone_rota_refuses_a_delegated_source() {
     let f = Fixture::new(1);
     local_runner(
         &f,
-        &format!("shift\nexec '{}' \"$@\"", env!("CARGO_BIN_EXE_rota")),
+        &format!(
+            "shift\nROTA_TEST_ROUTE=none exec '{}' \"$@\"",
+            env!("CARGO_BIN_EXE_rota-test-host")
+        ),
     );
     let out = fake_route(&f, "", &["slot", "run", "--", "touch", "ran"]);
     assert_eq!(out.status.code(), Some(125), "{out:?}");
@@ -3416,7 +3420,11 @@ fn start_errors_exit_125_only_for_a_routed_fallback() {
         // Each fixture holds the suite's case lock: end this one before the next.
         let f = Fixture::new(1);
         let standalone = f
-            .program(env!("CARGO_BIN_EXE_rota"), &["slot", "run", "--", missing])
+            .program(
+                env!("CARGO_BIN_EXE_rota-test-host"),
+                &["slot", "run", "--", missing],
+            )
+            .env("ROTA_TEST_ROUTE", "none")
             .output()
             .unwrap();
         assert_eq!(

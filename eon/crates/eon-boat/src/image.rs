@@ -3,13 +3,14 @@
 //! An image enters this table only after its own qualification (credential audit,
 //! capped build, restored clone). It is code, not configuration, so an operator
 //! setting cannot route builds to an image nobody qualified.
-use super::super::memory::{Limit, Machine};
 use crate::config::BoatConfig;
+use crate::memory::Machine;
+use rota::slots::Limit;
 use serde_json::Value;
 use std::fmt;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(in crate::slots) struct Image {
+pub(crate) struct Image {
     pub name: &'static str,
     pub snapshot_id: &'static str,
     pub source_vm: &'static str,
@@ -35,10 +36,7 @@ const QUALIFIED: &[Image] = &[Image {
 pub(super) const MARKER: &str = include_str!("image.sh");
 
 /// The smallest qualified image whose machine ceiling covers `limit`, or the capacity reason.
-pub(in crate::slots) fn select(
-    limit: Limit,
-    config: &BoatConfig,
-) -> Result<&'static Image, &'static str> {
+pub(crate) fn select(limit: Limit, config: &BoatConfig) -> Result<&'static Image, &'static str> {
     select_from(limit.cap_gib, config, QUALIFIED)
 }
 
@@ -138,8 +136,8 @@ pub(super) fn marker_status(code: Result<u8, String>) -> Result<(), Refusal> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::memory::Class;
     use super::*;
+    use rota::slots::Class;
     use serde_json::json;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::process::Command;

@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Deserialize, Serialize)]
-pub(in crate::slots) struct Identity {
+pub(crate) struct Identity {
     root: PathBuf,
     tree: String,
     cwd: String,
@@ -105,7 +105,7 @@ fn text(bytes: Vec<u8>) -> Result<String, String> {
 }
 
 impl Source {
-    pub(in crate::slots) fn identity(&self) -> Identity {
+    pub(crate) fn identity(&self) -> Identity {
         Identity {
             root: self.root.clone(),
             tree: self.tree.clone(),

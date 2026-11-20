@@ -1,12 +1,14 @@
-pub mod boat;
 pub(crate) mod delegate;
 mod legacy;
 pub(crate) mod memory;
-pub(crate) mod private;
+pub mod private;
 mod route;
 
 pub use memory::{Class, Limit};
-pub use route::{Fallback, Kind, Listing, Local, Placement, Remote, Request, Route, Stage};
+pub use route::{
+    Fallback, Kind, Listing, Local, Placement, Remote, Request, Route, Signals, Stage, foreground,
+    foreground_on_exec,
+};
 
 use crate::config::{Config, SlotConfig};
 use crate::launch::{Failure, atomic_write, ensure_parent, io_failure};
@@ -25,7 +27,8 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const SECOND: u64 = 1_000_000_000;
+/// Nanoseconds per second, the unit of [`now_ns`].
+pub const SECOND: u64 = 1_000_000_000;
 const TEMP_PREFIX: &str = ".ticket-";
 const NESTING_TOKEN: &str = "ROTA_SLOT_TOKEN";
 
@@ -87,7 +90,8 @@ pub fn parse<'a>(args: &'a [String], program: &str) -> Result<Options<'a>, Failu
     Err(bad())
 }
 
-fn now_ns() -> u64 {
+/// Wall-clock time in nanoseconds since the Unix epoch (0 before it, saturating).
+pub fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

@@ -918,6 +918,7 @@ dependencies = [
 name = "eon"
 version = "0.1.28"
 dependencies = [
+ "eon-boat",
  "eon-manifest",
  "eon-runtime",
  "eon-workspace-protocol",
@@ -939,6 +940,21 @@ dependencies = [
  "rustix 1.1.4",
  "wayland-client",
  "wayland-protocols-wlr",
+]
+
+[[package]]
+name = "eon-boat"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "libc",
+ "rota-cli",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]

@@ -6,11 +6,15 @@
 //! commands it keeps local through it.
 use super::memory::Limit;
 use crate::config::SlotConfig;
+use crate::platform::{ROUTE_SIGNAL, RouteSignals};
+use rustix::process::Pid;
 use serde_json::Value;
-use std::fs;
+use std::fs::{self, File};
 use std::io;
+use std::os::fd::AsFd;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
+use std::sync::atomic::Ordering;
 
 /// A host's remote route for `slot run`.
 ///
@@ -20,6 +24,15 @@ use std::process::{Command, ExitStatus};
 /// [`Route::run_local`]. A source is any JSON value except `null`; it reaches the route
 /// again as `serde_json` re-reads its own text, so routes keep floats out of it.
 pub trait Route {
+    /// Reads and checks the route's own keys (the core keeps `[slots.boat]` as an opaque
+    /// table) from the whole configuration file's `text`, right after the core has parsed
+    /// it, for every command. An error refuses the file (exit 2); slot commands print the
+    /// warnings.
+    fn check_config(&self, text: &str) -> Result<Vec<String>, String> {
+        let _ = text;
+        Ok(Vec::new())
+    }
+
     /// The `where` value of the commands it runs (`slot ls`, the event log), and the name
     /// of its state directory under the slot root.
     fn name(&self) -> &'static str;
@@ -155,4 +168,36 @@ pub struct Listing {
     pub fields: serde_json::Map<String, Value>,
     /// PIDs the route is running or holding capacity for; they are not listed as waiters.
     pub busy: Vec<u32>,
+}
+
+/// SIGINT, SIGTERM and SIGHUP caught while a route runs a command. One process-wide
+/// handler: [`Signals::install`] clears the caught signal and installs it, and dropping the
+/// guard restores the previous dispositions. Guards are used one at a time, never nested
+/// or concurrently.
+pub struct Signals {
+    _installed: RouteSignals,
+}
+
+impl Signals {
+    pub fn install() -> Self {
+        Self {
+            _installed: RouteSignals::install(),
+        }
+    }
+
+    /// The last signal caught since [`Signals::install`], or 0.
+    pub fn caught() -> i32 {
+        ROUTE_SIGNAL.load(Ordering::Relaxed)
+    }
+}
+
+/// Makes `group` the foreground process group of the terminal `tty`, ignoring SIGTTOU
+/// for the call.
+pub fn foreground(tty: impl AsFd, group: Pid) -> io::Result<()> {
+    crate::platform::foreground(tty, group)
+}
+
+/// Makes `command`'s child the foreground process group of `tty` just before it runs.
+pub fn foreground_on_exec(command: &mut Command, tty: &File) -> io::Result<()> {
+    crate::platform::foreground_on_exec(command, tty)
 }

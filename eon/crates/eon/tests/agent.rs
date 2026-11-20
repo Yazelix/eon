@@ -491,3 +491,120 @@ mod golden {
         assert_eq!(argv[4..], ["--", "sh", "-c", "exit 7"]);
     }
 }
+
+/// `eon agent` runs slot commands through Boat (from the `eon-boat` crate): a permitted
+/// shape meets Boat's switch, Boat's `slot ls` fields appear, and Boat checks its own keys in
+/// `[slots.boat]` on every command while rota keeps the table opaque.
+#[test]
+fn boat_route_is_wired_into_eon_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // A routed run keeps its state (here the root) owner-only.
+    fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
+    let path = root.join("override.toml");
+    let with_boat = |boat: &str| {
+        config(&path, "fake");
+        let text = fs::read_to_string(&path).unwrap();
+        let text = text.replacen(
+            "[[backends]]",
+            &format!("[slots.boat]\n{boat}\n[[backends]]"),
+            1,
+        );
+        fs::write(&path, text).unwrap();
+    };
+
+    with_boat("allow_shapes = ['nix-gate']");
+    // No `boat-on` switch: Boat keeps the permitted gate local and runs it through its
+    // own local path, without calling the Boat CLI.
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    // A sibling test's fork can inherit a writer this process opens, and exec then fails
+    // with ETXTBSY, so a child process writes the stub.
+    let mut writer = Command::new("sh")
+        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(bin.join("nix"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(
+        &mut writer.stdin.take().unwrap(),
+        b"#!/bin/sh\nprintf 'stub %s' \"$*\"\n",
+    )
+    .unwrap();
+    assert!(writer.wait().unwrap().success());
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .env_clear()
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("HOME", root)
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .env("EON_CONFIG_HOME", root.join("eon"))
+        .env("ROTA_CONFIG", &path)
+        .current_dir(root)
+        .args(["agent", "slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"stub build .#default");
+    let log = fs::read_to_string(root.join("slots/log.jsonl")).unwrap();
+    let events: Vec<serde_json::Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["fallback_reason"] == "boat-not-enabled"),
+        "{log}"
+    );
+    let output = run(root, &["slot", "ls", "--json"]);
+    assert!(output.status.success(), "{output:?}");
+    let listing: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(listing["boat_lease_held"], false, "{listing}");
+
+    let config = path.to_str().unwrap();
+    // Boat refuses its own bad keys on slot and non-slot commands alike (exit 2).
+    for (boat, message) in [
+        (
+            "allow_shapes = ['nix-gate']\njobs = 9",
+            "invalid slots.boat policy",
+        ),
+        (
+            "allow_shapes = ['nix-gate']\nbogus = 1",
+            "unknown field `bogus`",
+        ),
+    ] {
+        with_boat(boat);
+        // Both ways a file is loaded: the primary lookup and `slot --config FILE`.
+        for args in [
+            &["slot", "ls"][..],
+            &["slot", "--config", config, "ls"],
+            &["status"],
+        ] {
+            let output = run(root, args);
+            assert_eq!(output.status.code(), Some(2), "{boat} {args:?}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(message), "{boat} {args:?}: {stderr}");
+        }
+    }
+
+    // The removed snapshot key warns on slot commands only.
+    with_boat("allow_shapes = ['nix-gate']\nsnapshot = ''");
+    let tombstone = "eon agent: warning: slots.boat.snapshot is removed and ignored";
+    for args in [&["slot", "ls"][..], &["slot", "--config", config, "ls"]] {
+        let output = run(root, args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(tombstone),
+            "{args:?}: {output:?}"
+        );
+    }
+    let output = run(root, &["status"]);
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("snapshot"),
+        "{output:?}"
+    );
+}

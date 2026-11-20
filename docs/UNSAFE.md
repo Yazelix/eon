@@ -53,7 +53,7 @@ only for tests.
 | `orbit/tests/real_pty/main.rs` | none | mod native_process | Declares the shared process helpers. |
 | `orbit/tests/support/process.rs` | 4 test blocks | none | macOS libproc and `mkfifo`, `getrusage`, and Linux `PTRACE_SEIZE`. |
 | `eon/crates/eon/tests/process/mod.rs` | 5 test blocks | module | Session and terminal setup before `exec`, plus macOS libproc and `sysctl` queries. |
-| `eon/crates/eon-agent/test-host/tests/slot.rs` | 1 test block | mod platform | Terminal setup before `exec`. |
+| `eon/crates/eon-boat/tests/slot.rs` | 1 test block | mod platform | Terminal setup before `exec`. |
 
 ### Tools (not shipped)
 

@@ -502,7 +502,7 @@ fn scoped(unit: Option<&str>, argv: Vec<String>) -> Vec<String> {
 }
 
 /// 128 random bits from the kernel, as hex.
-pub(crate) fn random() -> Result<String, Failure> {
+pub fn random() -> Result<String, Failure> {
     let mut bytes = [0u8; 16];
     let filled = rustix::rand::getrandom(&mut bytes, rustix::rand::GetRandomFlags::empty())
         .map_err(io_failure)?;

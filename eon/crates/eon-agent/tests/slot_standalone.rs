@@ -2,7 +2,7 @@
 #![cfg(target_os = "linux")]
 //! Standalone `rota` has no slot route: the keys only a route acts on (`[slots.boat]`,
 //! `slots.local_runner`) warn that they need `eon agent`, and every command runs on a local
-//! slot. The suites with a route live in `test-host/`.
+//! slot. The suites with a route live in Eon's `eon-boat` crate.
 
 use fs2::FileExt;
 use serde_json::Value;
@@ -105,7 +105,7 @@ fn rota(root: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-const BOAT_KEYS: &str = "[slots.boat]\nallow_shapes = ['nix-gate']";
+const BOAT_KEYS: &str = "[slots.boat]\nallow_shapes = ['any-shape']";
 const RUNNER_KEY: &str = "local_runner = ['<ROOT>/fake/runner']";
 
 /// The warning lines of a run's stderr (the slot line follows them).

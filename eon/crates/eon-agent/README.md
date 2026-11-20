@@ -460,12 +460,11 @@ Boat VM using a separate lease; see Eon's [configuration reference](https://gith
 for policy, budget, exact-tree transfer, results and failure behavior. The default
 allowlist is empty. Boat is a local prerequisite, not an injected VM credential.
 
-Run this crate's tests through `nix develop -c eon-test -p rota-cli`.
-Run `cargo fmt --check` and `cargo clippy --locked -p rota-cli --all-targets -- -D warnings`
-inside the pinned development shell before review.
-The slot namespace test requires Bubblewrap with working PID namespaces and fails
-if its probe cannot run. On hosts that cannot run this probe,
-`ROTA_TEST_ALLOW_NO_BWRAP=1 cargo test` permits an explicit skip with a diagnostic.
+In the Eon repository, run this crate's tests through Eon's test wrapper (see
+Eon's [development guide](https://github.com/Yazelix/eon/blob/edge/docs/DEVELOPMENT.md)),
+and run `cargo fmt --check` and `cargo clippy --locked -p rota-cli --all-targets -- -D warnings`
+inside the pinned development shell before review. The slot suites that need a
+route, Boat's among them, live in Eon's `eon-boat` crate.
 
 ## Retiring build output
 

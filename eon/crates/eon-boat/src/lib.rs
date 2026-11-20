@@ -1,17 +1,21 @@
 //! Opt-in build execution; the local slot scheduler remains the admission owner.
+#![cfg(target_os = "linux")]
 mod attach;
-pub(super) mod image;
-pub(super) mod local;
-pub(super) mod tree;
+mod config;
+pub(crate) mod image;
+pub(crate) mod local;
+mod memory;
+pub(crate) mod tree;
 
-use super::memory::{Cause, Limit, Machine, Observation, Report};
-use super::private;
-use super::{Fallback, Kind, Listing, Local, Placement, Remote, Request, Route, Stage};
-use crate::config::{BoatConfig, Shape};
-use crate::launch::atomic_write;
-use crate::platform::{BOAT_SIGNAL as SIGNAL, BoatSignals as Signals};
+pub use config::{BoatConfig, Shape};
 use fs2::FileExt;
 use image::{Image, Refusal};
+use memory::{Cause, Machine, Observation, Report};
+use rota::launch::atomic_write;
+use rota::slots::private;
+use rota::slots::{
+    Fallback, Kind, Limit, Listing, Local, Placement, Remote, Request, Route, Signals, Stage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
@@ -20,11 +24,10 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 /// Boat's noun in private-state error tokens (`unsafe-boat-state-directory`, ...).
-pub(super) const NOUN: &str = "boat";
+pub(crate) const NOUN: &str = "boat";
 const CONTROL: u64 = 30;
 /// Sizes the run deadline (`timeout_seconds - CLEANUP`) and the `timeout` envelope.
 const CLEANUP: u64 = 60;
@@ -39,7 +42,7 @@ const TEARDOWN: u64 = 3 * CONTROL + STOP_STEP + CONTROL + 2 * CONTROL;
 /// envelope must leave this much of it for them (a cold warmup measured about 23 minutes).
 const PREPARATION: u64 = 1800;
 #[derive(Deserialize, Serialize)]
-pub(super) struct Record {
+pub(crate) struct Record {
     schema: u8,
     pub run_id: String,
     pub pid: u32,
@@ -77,7 +80,7 @@ pub(super) struct Record {
     queue_wait_reason: Option<String>,
 }
 
-pub(super) struct Lease {
+pub(crate) struct Lease {
     _lock: File,
     root: PathBuf,
 }
@@ -128,7 +131,7 @@ impl Lease {
     }
 }
 
-pub(super) fn listing(root: &Path) -> Result<Option<Record>, String> {
+pub(crate) fn listing(root: &Path) -> Result<Option<Record>, String> {
     let record: Option<Record> = private::read(&root.join("boat/current.json"), NOUN)?;
     if record.as_ref().is_some_and(|record| {
         record.schema != 1
@@ -145,7 +148,7 @@ pub(super) fn listing(root: &Path) -> Result<Option<Record>, String> {
 }
 
 /// Observe the existing lease inode only: listing must never claim or create it.
-pub(super) fn lease_metadata(root: &Path) -> Result<Option<fs::Metadata>, String> {
+pub(crate) fn lease_metadata(root: &Path) -> Result<Option<fs::Metadata>, String> {
     let directory = root.join("boat");
     match fs::symlink_metadata(&directory) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -204,7 +207,7 @@ impl Client {
     }
 
     fn canceled(&self) -> bool {
-        !self.cleanup && SIGNAL.load(Ordering::Relaxed) != 0
+        !self.cleanup && Signals::caught() != 0
     }
 
     fn command(&self, json: bool, args: &[&str]) -> Command {
@@ -538,7 +541,7 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
         if matched.is_empty()
             && old
                 .expires_at
-                .is_some_and(|expires| super::now_ns() / super::SECOND > expires)
+                .is_some_and(|expires| rota::slots::now_ns() / rota::slots::SECOND > expires)
         {
             old.phase = "stopped".into();
             old.reason = Some("expired-create-absent".into());
@@ -571,7 +574,7 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
     lease.save(&old)
 }
 
-pub(super) enum Outcome {
+pub(crate) enum Outcome {
     Complete(u8, Option<Report>),
     Local(String),
     Uncertain(String, Option<Report>),
@@ -589,7 +592,7 @@ fn fallback(reason: String) -> Result<Outcome, String> {
             "REQUEST: Boat included credit/plan needs owner attention ({reason}); using queued local admission, no billing action"
         );
     }
-    let signal = SIGNAL.load(Ordering::Relaxed);
+    let signal = Signals::caught();
     Ok(if signal == 0 {
         Outcome::Local(reason)
     } else {
@@ -597,7 +600,7 @@ fn fallback(reason: String) -> Result<Outcome, String> {
     })
 }
 
-pub(super) fn run(
+pub(crate) fn run(
     lease: Lease,
     config: &BoatConfig,
     argv: &[String],
@@ -610,7 +613,7 @@ pub(super) fn run(
     let machine = image.machine;
     let _signals = Signals::install();
     let wall_started = Instant::now();
-    let started = super::now_ns() / super::SECOND;
+    let started = rota::slots::now_ns() / rota::slots::SECOND;
     let client = Client {
         deadline: Instant::now() + Duration::from_secs(config.timeout_seconds - CLEANUP),
         cleanup: false,
@@ -641,7 +644,7 @@ pub(super) fn run(
             &client.json(&["limits", "--all"])?,
             config,
             machine,
-            super::now_ns() / super::SECOND,
+            rota::slots::now_ns() / rota::slots::SECOND,
         )?;
         pinned_row(&client, image)?;
         Ok::<_, String>(env_version)
@@ -650,7 +653,7 @@ pub(super) fn run(
         Ok(version) => version,
         Err(reason) => return fallback(reason),
     };
-    let run_id = crate::run::random().map_err(|_| "run-id")?;
+    let run_id = rota::run::random().map_err(|_| "run-id")?;
     private::directory(&lease.root.join("runs"), NOUN)?;
     let directory = lease.root.join("runs").join(&run_id);
     private::directory(&directory, NOUN)?;
@@ -680,7 +683,9 @@ pub(super) fn run(
         base: source.base.clone(),
         started,
         // Include both bounded admission/create requests before the provider TTL.
-        expires_at: Some(super::now_ns() / super::SECOND + config.timeout_seconds + 2 * CONTROL),
+        expires_at: Some(
+            rota::slots::now_ns() / rota::slots::SECOND + config.timeout_seconds + 2 * CONTROL,
+        ),
         duration_seconds: None,
         exit_code: None,
         memory: None,
@@ -703,7 +708,14 @@ pub(super) fn run(
     if let Err(reason) = allowance_before
         .as_ref()
         .map_err(Clone::clone)
-        .and_then(|limits| budget(limits, config, machine, super::now_ns() / super::SECOND))
+        .and_then(|limits| {
+            budget(
+                limits,
+                config,
+                machine,
+                rota::slots::now_ns() / rota::slots::SECOND,
+            )
+        })
     {
         record.phase = "stopped".into();
         record.reason = Some(reason.clone());
@@ -824,7 +836,7 @@ pub(super) fn run(
                     "--noprofile",
                     "--norc",
                     "-c",
-                    include_str!("boat/probe.sh"),
+                    include_str!("probe.sh"),
                 ],
                 &live,
                 patience,
@@ -867,22 +879,18 @@ pub(super) fn run(
             "--noprofile",
             "--norc",
             "-c",
-            concat!(
-                include_str!("boat/scope.sh"),
-                "\n",
-                include_str!("boat/run.sh")
-            ),
+            concat!(include_str!("scope.sh"), "\n", include_str!("run.sh")),
             "eon-build",
             &source.tree,
             &source.cwd,
             &jobs,
             &run_id,
             gate_warm,
-            include_str!("boat/dependencies.nix"),
+            include_str!("dependencies.nix"),
             &cap,
             &high,
             &margin,
-            include_str!("boat/read-kernel.py"),
+            include_str!("read-kernel.py"),
         ];
         args.extend(argv.iter().map(String::as_str));
         let command = client.json(&args)?;
@@ -1090,7 +1098,7 @@ pub(super) fn run(
             None => Err(reason),
         };
     }
-    let signal = SIGNAL.load(Ordering::Relaxed);
+    let signal = Signals::caught();
     if signal != 0 {
         return Ok(Outcome::Complete((128 + signal) as u8, None));
     }
@@ -1112,7 +1120,7 @@ pub(super) fn run(
 
 /// The Boat shape `argv` is permitted as, or `None` when it must run locally. One
 /// `timeout DURATION` envelope may wrap a shape; the original argv still runs as given.
-pub(super) fn shape(config: &BoatConfig, argv: &[String]) -> Option<Shape> {
+pub(crate) fn shape(config: &BoatConfig, argv: &[String]) -> Option<Shape> {
     let command = match argv {
         [program, duration, command @ ..] if program == "timeout" => {
             // Boat's deadline also covers preparation, so the envelope must fit inside it.
@@ -1353,7 +1361,7 @@ fn type_available(limits: &Value, machine: Machine) -> bool {
     })
 }
 
-pub(super) fn available(machine: Machine) -> bool {
+pub(crate) fn available(machine: Machine) -> bool {
     let client = Client {
         deadline: Instant::now() + Duration::from_secs(CONTROL),
         cleanup: false,
@@ -1370,7 +1378,7 @@ fn qualification_path(root: &Path, machine: Machine) -> PathBuf {
         .join(format!("{}_qualification_hold.json", machine.as_str()))
 }
 
-pub(super) fn qualification_blocked(root: &Path, machine: Machine) -> bool {
+pub(crate) fn qualification_blocked(root: &Path, machine: Machine) -> bool {
     !fs::symlink_metadata(qualification_path(root, machine))
         .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
 }
@@ -1468,8 +1476,18 @@ impl Route for Boat {
         "boat"
     }
 
+    fn check_config(&self, text: &str) -> Result<Vec<String>, String> {
+        let config = BoatConfig::from_text(text)?;
+        Ok(config.tombstone().into_iter().map(Into::into).collect())
+    }
+
     fn place(&self, request: &Request<'_>, stage: Stage) -> Placement {
-        let config = &request.config.boat;
+        // Unreadable here only for a caller that skipped `check_config`: fail closed, and
+        // let `run_remote` refuse the command with the reason.
+        let Ok(config) = BoatConfig::from_table(&request.config.boat) else {
+            return Placement::Remote;
+        };
+        let config = &config;
         if config.allow_shapes.is_empty() {
             return Placement::Local(None);
         }
@@ -1519,7 +1537,13 @@ impl Route for Boat {
         granted: &mut dyn FnMut(),
         source: &mut Option<Value>,
     ) -> Remote {
-        let config = &request.config.boat;
+        let Ok(config) = BoatConfig::from_table(&request.config.boat) else {
+            return Remote::Failed {
+                reason: "boat-config-invalid".into(),
+                memory: None,
+            };
+        };
+        let config = &config;
         let mut prepared = match identity(source.as_ref()) {
             Ok(prepared) => prepared,
             Err(reason) => {
@@ -2066,8 +2090,10 @@ mod tests {
     #[test]
     fn a_malformed_source_fails_a_remote_run_before_the_grant() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = crate::config::SlotConfig::default();
-        config.boat.allow_shapes = vec![Shape::NixGate];
+        let mut config = rota::config::SlotConfig::default();
+        config
+            .boat
+            .insert("allow_shapes".into(), vec!["nix-gate"].into());
         let argv = words(&["nix", "build", ".#default"]);
         let request = Request {
             config: &config,
@@ -2075,7 +2101,7 @@ mod tests {
             argv: &argv,
             quiet_exempt: false,
             limit: Limit {
-                class: super::super::Class::Nix,
+                class: rota::slots::Class::Nix,
                 cap_gib: 8,
             },
         };
@@ -2087,6 +2113,51 @@ mod tests {
             "{outcome:?}"
         );
         assert!(!granted);
+    }
+
+    #[test]
+    fn an_unreadable_boat_table_fails_closed_before_the_grant() {
+        let directory = tempfile::tempdir().unwrap();
+        let argv = words(&["nix", "build", ".#default"]);
+        for (key, value) in [
+            ("jobs", toml::Value::from(9)),
+            ("allow_shapes", toml::Value::from("nix-gate")),
+            ("unknown", toml::Value::from(1)),
+        ] {
+            let mut config = rota::config::SlotConfig::default();
+            config
+                .boat
+                .insert("allow_shapes".into(), vec!["nix-gate"].into());
+            config.boat.insert(key.into(), value);
+            let request = Request {
+                config: &config,
+                root: directory.path(),
+                argv: &argv,
+                quiet_exempt: false,
+                limit: Limit {
+                    class: rota::slots::Class::Nix,
+                    cap_gib: 8,
+                },
+            };
+            for stage in [
+                Stage::Queued,
+                Stage::Waiting {
+                    limit_changed: true,
+                },
+            ] {
+                assert!(
+                    matches!(Boat::EON.place(&request, stage), Placement::Remote),
+                    "{key}"
+                );
+            }
+            let mut granted = false;
+            let outcome = Boat::EON.run_remote(&request, &mut || granted = true, &mut None);
+            assert!(
+                matches!(&outcome, Remote::Failed { reason, memory: None } if reason == "boat-config-invalid"),
+                "{key}: {outcome:?}"
+            );
+            assert!(!granted, "{key}");
+        }
     }
 
     #[test]

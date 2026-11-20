@@ -9,9 +9,11 @@ see.
   would act (a permitted Boat shape, a nonempty runner), `rota slot` warns
   that it needs `eon agent` and runs every command on a local slot. `slot ls
   --json` has no `boat_lease_held`, `boat_lease_pid`, `boat` or `boat_error`.
+  rota keeps `[slots.boat]` as an opaque table for `eon agent`: it no longer
+  checks the table's values or warns about its removed `snapshot` key.
 - The local runner handoff variables are `ROTA_SLOT_QUEUED_NS`,
-  `ROTA_SLOT_CLASS`, `ROTA_SLOT_RUN_KEY` and `ROTA_SLOT_DELEGATE` (formerly
-  `EON_SLOT_*`, with no alias).
+  `ROTA_SLOT_CLASS`, `ROTA_SLOT_RUN_KEY` and `ROTA_SLOT_DELEGATE`; the names
+  Eon used before have no alias.
 
 - Project profiles: `[projects.NAME]` caps live agents in total (`max`), per
   role (`roles.ROLE.max`) and per backend (`backends.BACKEND.max`). It runs a

@@ -1,5 +1,5 @@
-use super::super::memory::Class;
 use super::{Cause, Limit, Machine, Observation};
+use rota::slots::Class;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::os::unix::net::UnixListener;
@@ -85,7 +85,7 @@ fn runner_with_limits(
     assert!(bash.status.success());
     let bash = String::from_utf8(bash.stdout).unwrap();
     let shim = bin.join("scope-fixture");
-    let body = include_str!("../../../tests/fixtures/boat-scope.sh");
+    let body = include_str!("../tests/fixtures/boat-scope.sh");
     fs::write(&shim, format!("#!{}\n{body}", bash.trim())).unwrap();
     fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
     for name in [

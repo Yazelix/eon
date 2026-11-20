@@ -1,7 +1,7 @@
 //! Private evidence for noninteractive, policy-eligible local fallbacks.
 
-use super::super::{SECOND, now_ns};
-use crate::launch::atomic_write;
+use rota::launch::atomic_write;
+use rota::slots::{SECOND, Signals, now_ns};
 use rustix::process::{Pid, Signal};
 use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
@@ -19,14 +19,14 @@ fn wait(child: &mut Child) -> io::Result<ExitStatus> {
     let mut deadline = None;
     loop {
         if let Some(status) = child.try_wait()? {
-            let signal = super::SIGNAL.load(Ordering::Relaxed);
+            let signal = Signals::caught();
             return Ok(if signal == 0 {
                 status
             } else {
                 ExitStatus::from_raw(signal)
             });
         }
-        let signal = super::SIGNAL.load(Ordering::Relaxed);
+        let signal = Signals::caught();
         if signal != 0 && forwarded == 0 {
             forwarded = signal;
             deadline = Some(Instant::now() + Duration::from_secs(super::CLEANUP));
@@ -86,18 +86,18 @@ impl Foreground {
 impl Drop for Foreground {
     fn drop(&mut self) {
         if let Some(previous) = self.previous {
-            let _ = crate::platform::foreground(&self.tty, previous);
+            let _ = rota::slots::foreground(&self.tty, previous);
         }
     }
 }
 
-pub(in crate::slots) fn status(command: &mut Command) -> io::Result<ExitStatus> {
-    let _signals = super::Signals::install();
+pub(crate) fn status(command: &mut Command) -> io::Result<ExitStatus> {
+    let _signals = Signals::install();
     let terminal = Foreground::open()?;
     command.process_group(0);
     if let Some(terminal) = &terminal {
         // Give the child its terminal before exec: it must not race into SIGTTIN/EIO.
-        crate::platform::foreground_on_exec(command, &terminal.tty)?;
+        rota::slots::foreground_on_exec(command, &terminal.tty)?;
     }
     wait(&mut command.spawn()?)
 }
@@ -145,7 +145,7 @@ fn copy_output(
     }
 }
 
-pub(in crate::slots) fn run(
+pub(crate) fn run(
     root: &Path,
     command: &mut Command,
     reason: &str,
@@ -155,13 +155,12 @@ pub(in crate::slots) fn run(
     if io::stdin().is_terminal() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return status(command);
     }
-    let _signals = super::Signals::install();
+    let _signals = Signals::install();
     command.process_group(0);
-    let run_id =
-        crate::run::random().map_err(|_| io::Error::other("cannot create run identity"))?;
-    crate::slots::private::directory(&root.join("runs"), super::NOUN).map_err(io::Error::other)?;
+    let run_id = rota::run::random().map_err(|_| io::Error::other("cannot create run identity"))?;
+    rota::slots::private::directory(&root.join("runs"), super::NOUN).map_err(io::Error::other)?;
     let directory = root.join("runs").join(&run_id);
-    crate::slots::private::directory(&directory, super::NOUN).map_err(io::Error::other)?;
+    rota::slots::private::directory(&directory, super::NOUN).map_err(io::Error::other)?;
     let log = OpenOptions::new()
         .write(true)
         .create_new(true)

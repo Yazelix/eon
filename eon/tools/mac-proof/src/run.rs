@@ -22,7 +22,7 @@ const NATIVE: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
 /// its verified empty test result is not-applicable. Listing a package removes it
 /// from the macOS proof. The tests in `macos_tests` keep this list equal to the
 /// gated packages without macOS tests, so a new one fails on Linux until listed.
-const LINUX_ONLY_TEST_PACKAGES: &[&str] = &["agent-jail", "rota-cli"];
+const LINUX_ONLY_TEST_PACKAGES: &[&str] = &["agent-jail", "eon-boat", "rota-cli"];
 /// Names of the processes an Eon run or its tests start.
 const EON_PROCESSES: &[&str] = &[
     "eon",
@@ -1062,12 +1062,12 @@ esac
         let mut context = stub(&root);
         let no_tests = "error: no tests to run\n";
         let other = "error: different failure\n";
-        let listed = ["agent-jail", "rota-cli"];
+        let listed = ["agent-jail", "eon-boat", "rota-cli"];
         assert_eq!(LINUX_ONLY_TEST_PACKAGES, listed);
         // (metadata, listed exit and output, unlisted exit and output,
         //  listed status, unlisted status, unlisted failure contains the hint)
         let all = serde_json::json!({"packages": [
-            {"name": "agent-jail"}, {"name": "rota-cli"}, {"name": "plain"}
+            {"name": "agent-jail"}, {"name": "eon-boat"}, {"name": "rota-cli"}, {"name": "plain"}
         ]});
         let cases = [
             (
@@ -1114,7 +1114,9 @@ esac
                 false,
             ),
             (
-                serde_json::json!({"packages": [{"name": "agent-jail"}, {"name": "plain"}]}),
+                serde_json::json!({"packages": [
+                    {"name": "agent-jail"}, {"name": "eon-boat"}, {"name": "plain"}
+                ]}),
                 4,
                 no_tests,
                 0,
@@ -1125,7 +1127,8 @@ esac
             ),
             (
                 serde_json::json!({"packages": [
-                    {"name": "agent-jail"}, {"name": "rota-cli"}, {"version": "1"}
+                    {"name": "agent-jail"}, {"name": "eon-boat"}, {"name": "rota-cli"},
+                    {"version": "1"}
                 ]}),
                 4,
                 no_tests,
@@ -1219,7 +1222,7 @@ esac
             );
         }
         let calls = fs::read_to_string(root.join("calls")).unwrap();
-        for name in ["agent-jail", "rota-cli", "plain"] {
+        for name in ["agent-jail", "eon-boat", "rota-cli", "plain"] {
             assert_eq!(
                 calls
                     .lines()

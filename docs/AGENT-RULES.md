@@ -303,10 +303,10 @@ The protocol crates stay standalone, with no workspace-inherited settings, so
 projects outside this repository can use them. The managed-agent core
 `rota-cli` (`eon/crates/eon-agent`, library `rota`) is standalone too: it
 depends on no Eon crate and uses no workspace-inherited settings, and Eon
-hosts it as `eon agent` through `rota::cli::Host`. Eon's Boat crate may depend
-on it, and `eon` on both. Its source lives only in this repository. It
-publishes as the crate `rota-cli` with binary `rota` (EON-C40, Standalone rota
-distribution).
+hosts it as `eon agent` through `rota::cli::Host`. Eon's Boat crate `eon-boat`
+(`eon/crates/eon-boat`) may depend on it, and `eon` on both. Its source lives
+only in this repository. It publishes as the crate `rota-cli` with binary
+`rota` (EON-C40, Standalone rota distribution).
 
 Yazelix Nova remains an independent product line. Do not make Eon a successor
 repository, compatibility layer, or release channel for Nova.

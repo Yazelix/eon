@@ -8,13 +8,18 @@ product line.
 ## Agent manager tests
 
 The `rota-cli` package (`eon/crates/eon-agent`) keeps rota's library and test-driver name `rota`.
-Its ordinary tests run through `nix develop -c eon-test -p rota-cli`.
+Its ordinary tests run through `nix develop -c eon-test -p rota-cli`. Eon's
+Boat route (`eon/crates/eon-boat`) holds Boat and the slot suites that need a
+route; they run through `nix develop -c eon-test -p eon-boat`.
+Its slot namespace test needs Bubblewrap with working PID namespaces and fails if
+its probe cannot run; on a host without them, `ROTA_TEST_ALLOW_NO_BWRAP=1` lets
+it skip with a diagnostic.
 Twenty existing headless cleanup/execution tests need a real systemd user
 manager and cgroup v2. They are marked ignored because eon-test's isolated
 namespaces hide the bus and cannot supply delegated cgroups. The Nix check
 runs the crate's ordinary tests and excludes the facility tests from its
 ignored-test step; this does not prove the facility tests. One existing slot
-test also needs the host PID namespace: /proc/locks in a nested PID namespace
+test (in `eon-boat`) also needs the host PID namespace: /proc/locks in a nested PID namespace
 hides the legacy helper's lock after the helper exits. That test uses the same
 facility route. Three pre-existing ignored cleanup helpers are called by their
 parent tests, never as standalone tests; both routes exclude those helper names.
@@ -43,7 +48,7 @@ bash "$heavy_runner" nix develop -c env -i PATH="$PATH" \
   XDG_RUNTIME_DIR="$manager_runtime" DBUS_SESSION_BUS_ADDRESS="$manager_bus" \
   CARGO_HOME="$task_cargo" CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
   CARGO_BUILD_JOBS=6 CARGO_PROFILE_DEV_DEBUG=line-tables-only \
-  cargo nextest run --locked --offline -p rota-cli \
+  cargo nextest run --locked --offline -p rota-cli -p eon-boat \
   --run-ignored only --test-threads 1 --no-tests fail \
   -E 'not (test(=cleanup::tests::nondumpable_child) | test(=cleanup::tests::interrupted_removal_child) | test(=cleanup::tests::mount_boundary_child))'
 ```
@@ -214,7 +219,7 @@ derivation evaluation fails, paths are evaluated individually; checks that
 still fail evaluation run their own build. It runs `eon-test` once per
 workspace package, including compilation of the Linux-only packages' Darwin
 stubs and test targets. Only packages listed in mac-proof's
-`LINUX_ONLY_TEST_PACKAGES` (`agent-jail`, `rota-cli`) may report
+`LINUX_ONLY_TEST_PACKAGES` (`agent-jail`, `eon-boat`, `rota-cli`) may report
 `not-applicable`, and only on exit 4 with nextest's `no tests to run` diagnostic.
 If a listed package gains macOS tests, or its name disappears from workspace
 metadata, the run fails so the exclusion must be removed. An unlisted package

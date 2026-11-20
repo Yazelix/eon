@@ -770,6 +770,7 @@ mod dependency_direction {
         ("yazelix-venus", PROTOCOLS),
         ("eon-runtime", PROTOCOLS),
         ("rota-cli", &[]),
+        ("eon-boat", &["rota-cli"]),
         (
             "eon-manifest",
             &["eon-runtime", "orbit-protocol", "eon-workspace-protocol"],
@@ -779,6 +780,7 @@ mod dependency_direction {
             &[
                 "eon-runtime",
                 "eon-manifest",
+                "eon-boat",
                 "rota-cli",
                 "orbit-protocol",
                 "eon-workspace-protocol",

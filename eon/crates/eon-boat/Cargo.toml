@@ -1,0 +1,43 @@
+[package]
+name = "eon-boat"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "eon_boat"
+
+# Boat's slot suite needs a host with a route: rota's own host plus Boat, the fake route,
+# or no route (`ROTA_TEST_ROUTE`), as `eon agent` and standalone `rota` run it.
+[[bin]]
+name = "rota-test-host"
+path = "test-host/main.rs"
+test = false
+doc = false
+
+[dependencies]
+rota = { package = "rota-cli", path = "../eon-agent", version = "=0.1.0" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = "=0.8.23"
+fs2 = "=0.4.3"
+libc = "=0.2.189"
+tempfile = "=3.27.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "=1.1.4", default-features = false, features = ["fs", "process", "std", "termios"] }
+
+[dev-dependencies]
+sha2 = { version = "=0.10.9", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix = { version = "=1.1.4", default-features = false, features = ["pty"] }
+
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

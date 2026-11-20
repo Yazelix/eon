@@ -1,7 +1,8 @@
 //! Following a detached Boat command until it ends. A lost `exec --attach` stream is
 //! not a lost result: liveness comes only from Boat's own process status and the run
 //! deadline, never from what the stream delivered (eon-lnfc7).
-use super::{CONTROL, Client, Output, SIGNAL, billing_policy, remaining};
+use super::{CONTROL, Client, Output, billing_policy, remaining};
+use rota::slots::Signals;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{self, BufRead, Write};
@@ -83,7 +84,7 @@ impl Guard {
     }
 
     fn reason(&self, client: &Client) -> Option<String> {
-        if !client.cleanup && SIGNAL.load(Ordering::Relaxed) != 0 {
+        if !client.cleanup && Signals::caught() != 0 {
             return Some("interrupted".into());
         }
         if Instant::now() >= client.deadline {

@@ -8,6 +8,7 @@ members = [
     "runtime/crates/eon-workspace-protocol",
     "eon/crates/eon",
     "eon/crates/eon-agent",
+    "eon/crates/eon-boat",
     "eon/crates/eon-manifest",
     "eon/tools/mac-proof",
     "eon/tools/eon-bench",

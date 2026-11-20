@@ -1,6 +1,6 @@
-//! A test-only rota host with a slot route, for tests that need one. It is the `rota`
-//! host plus Boat (by default) or a fake route (`ROTA_TEST_ROUTE=fake`). Its source sits
-//! outside the package's `include`, so `cargo package` drops this target.
+//! A test-only rota host for the slot suite. It is the `rota` host plus Boat (by default),
+//! a fake route (`ROTA_TEST_ROUTE=fake`), or no route (`ROTA_TEST_ROUTE=none`, which is
+//! standalone `rota`).
 #![forbid(unsafe_code)]
 
 #[cfg(target_os = "linux")]
@@ -107,26 +107,27 @@ mod fake {
 }
 
 #[cfg(target_os = "linux")]
-static BOAT: rota::slots::boat::Boat = rota::slots::boat::Boat::with_patience(20);
+static BOAT: eon_boat::Boat = eon_boat::Boat::with_patience(20);
 
 #[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {
     let session = |_: std::time::Instant| Err("native quota requires eon agent".into());
     let fake;
-    let route: &dyn rota::slots::Route = match std::env::var("ROTA_TEST_ROUTE").as_deref() {
+    let route: Option<&dyn rota::slots::Route> = match std::env::var("ROTA_TEST_ROUTE").as_deref() {
         Ok("fake") => {
             fake = fake::Fake {
                 mode: std::env::var("ROTA_TEST_ROUTE_MODE").unwrap_or_default(),
             };
-            &fake
+            Some(&fake)
         }
+        Ok("none") => None,
         // Boat with a 20 s patience, so lost-attach tests need not wait ten minutes.
-        _ => &BOAT,
+        _ => Some(&BOAT),
     };
     rota::cli::main(
         std::env::args_os().skip(1),
         &rota::cli::Host {
-            route: Some(route),
+            route,
             ..rota::cli::Host::rota(&session)
         },
     )
