@@ -87,8 +87,9 @@ fn context(path: &Path, error: std::io::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustix::fs::{AtFlags, CWD, FileType, Mode, Timespec, Timestamps, mknodat, utimensat};
+    use rustix::fs::{AtFlags, CWD, Timespec, Timestamps, utimensat};
     use std::os::unix::fs::symlink;
+    use std::os::unix::net::UnixListener;
 
     fn tree() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -176,12 +177,17 @@ mod tests {
     }
 
     #[test]
-    fn a_fifo_is_refused() {
+    fn a_socket_is_refused() {
+        // A socket stands for every refused kind (FIFOs and devices take the same branch);
+        // unlike a FIFO or device node, std can make one on Linux and macOS alike.
         let dir = tree();
-        let fifo = dir.path().join("a/pipe");
-        mknodat(CWD, &fifo, FileType::Fifo, Mode::RUSR | Mode::WUSR, 0).unwrap();
+        let _socket = UnixListener::bind(dir.path().join("a/sock")).unwrap();
         let error = hash(dir.path()).unwrap_err().0;
-        assert!(error.contains("a/pipe"), "{error}");
+        assert!(error.contains("a/sock"), "{error}");
+        assert!(
+            error.contains("not a directory, regular file or symlink"),
+            "{error}"
+        );
     }
 
     #[test]
