@@ -693,11 +693,13 @@ PTY pixel size rule needs no wire change.
   [`terminfo/eon-darwin.terminfo`](../terminfo/eon-darwin.terminfo) on macOS;
   Eon installs the entry.
 - **Boundary:** Other distribution formats remain outside this contract's proof.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-khndw` commit
+  (`5f54ea1`) for the Linux underlines
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
-    `tests/lifecycle.rs` unmodified)
+    `tests/lifecycle.rs` unmodified). For the Linux underlines: the exact
+    candidate and Linux environment, as `eon-khndw` records
   - **Evidence:**
     - `orbit-terminfo` checks that the Nix build's `tic`-compiled entry, with
       only the package's `share/terminfo`, resolves through `infocmp -x eon`
@@ -708,15 +710,15 @@ PTY pixel size rule needs no wire change.
       `COLORTERM=truecolor` and only the package's terminfo, and that `clear`
       exits 0 and blanks the next frame. The host sets `TERM` and `COLORTERM`
       when it spawns the child in [`src/pty.rs`](../src/pty.rs).
-- **Linux underline checks (`eon-khndw`):**
-  - `orbit-terminfo` expands every style and RGB channel boundaries from the
-    compiled entry; `orbit-terminal-identity` sends its `tput` output through
-    a real PTY and reads a curly RGB underline, independent foreground and
-    reset from the canonical frame.
-  - [`styled_underlines_keep_independent_colors_and_resets`](../src/frame.rs)
-    covers styles 0–5, both RGB separator forms and style/colour resets.
-  - The bead records the exact candidate, Linux environment and isolated
-    native Helix/Neovim diagnostic captures for installed proof.
+    - Linux underlines, at the `eon-khndw` commit:
+      - `orbit-terminfo` expands every style and RGB channel boundaries from
+        the compiled entry; `orbit-terminal-identity` sends its `tput` output
+        through a real PTY and reads a curly RGB underline, independent
+        foreground and reset from the canonical frame.
+      - [`styled_underlines_keep_independent_colors_and_resets`](../src/frame.rs)
+        covers styles 0–5, both RGB separator forms and style/colour resets.
+      - Isolated native Helix/Neovim diagnostic captures for installed proof,
+        as `eon-khndw` records.
 - **Open proof:** The macOS clause has no native run. From Linux,
   `orbit-terminfo-darwin` (`eon-mac-launch-kz4p.20`) builds the macOS entry and
   checks that it starts with the legacy magic 0432, fits the legacy reader's
@@ -839,13 +841,6 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C13 — Same-boot management ownership
 
-- **Amendment 2026-11-11:** Approved by Lucca, relayed by eon-overseer,
-  in `eon-g3vdz` / `eon-l4e7s`: distinguish the fifteen-second new-terminal
-  budget from five-second recovery and fresh five-second rollback. Ready
-  marking and management-only cleanup authority remain unchanged. Proof
-  is limited to the beads' exact-tree checks and isolated Linux observations;
-  these consumer-budget checks do not broaden Orbit's proved platform scope.
-
 - **Status:** Proved
 - **Consumer:** One local Eon launcher and one later replacement on the same boot
   and login.
@@ -926,7 +921,13 @@ PTY pixel size rule needs no wire change.
   the `eon-7cf0y.8` commit for management v5 (the `ProgramStatus`
   foreground), the `eon-buys1.1` commit for management v6 (the lease
   input quiet window), and the `eon-u5bvd.2` commit for management v7
-  (`ReadHistory`)
+  (`ReadHistory`). Amended on 2026-11-11 (approved by Lucca, relayed by
+  eon-overseer, in `eon-g3vdz` / `eon-l4e7s`): distinguish the
+  fifteen-second new-terminal budget from five-second recovery and fresh
+  five-second rollback. Ready marking and management-only cleanup authority
+  remain unchanged. Proof is limited to the beads' exact-tree checks and
+  isolated Linux observations; these consumer-budget checks do not broaden
+  Orbit's proved platform scope.
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer;
@@ -1057,7 +1058,7 @@ PTY pixel size rule needs no wire change.
 
 ## ORB-C15 — Program status records
 
-- **Status:** Candidate (eon-v0gvq management v8 census awaits installed proof)
+- **Status:** Partially proved
 - **Consumer:**
   - a program in an Orbit terminal that speaks the Program Status Protocol
     (OSC 7501, rev 0.4), such as Claude Code 2.1.295 or later, or Codex 0.163
@@ -1331,6 +1332,11 @@ PTY pixel size rule needs no wire change.
       terminal busy within about 1 s, inside the 3 s stale bound, so the
       reply no longer read `child`; the terminal read idle again when the
       command returned, and a Nushell builtin left it idle.
+- **Open proof:** The `eon-v0gvq` management v8 census (the background
+  process identities, their completeness flag and the foreground group
+  leader identity) awaits installed proof, and the `eon-v0gvq` commit
+  (`6bae3c6`) is not yet recorded as a proof revision, with its automated
+  check evidence, under Proof and Evidence.
 
 ## ORB-C16 — Static graphics resource plane
 

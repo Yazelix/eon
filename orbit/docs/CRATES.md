@@ -31,7 +31,7 @@ dependency gate, and Beads retain the full candidate evidence.
   the binding is abandoned with no successor; (4) upstream offers Zig-free consumption,
   such as prebuilt archives in a tagged release, favoring staying through the binding's
   `pkg-config` feature.
-- **Far-future possibility:** Lucca (2026-11-13, `orb-quh`) on rio-vt:
+  **Far-future possibility:** Lucca (2026-11-13, `orb-quh`) on rio-vt:
   "either forking it or starting from scratch into eon-vt, with the win of letting
   us have more control, and using rust instead of zig". **Far future, may never
   happen.** `libghostty-vt` remains selected.
