@@ -103,7 +103,7 @@ Then, after `nix profile upgrade --refresh eon`:
   ready, and other requests run in arrival order once the start ends
   (`eon-pimct`).
 - Google quota chips work again with agy 1.5.6. Eon reads Google quota only
-  from agy versions whose `/usage` command is verified, now 1.4.1 and 1.5.6.
+  from agy versions whose `/usage` command is verified: 1.4.1 and 1.5.6.
   When Google quota is selected, `eon doctor` has a `quota` check that names
   an agy version Eon does not support, and the supported ones, instead of
   leaving the chip missing with no reason (`eon-9iriq`).
@@ -731,7 +731,7 @@ Then, after `nix profile upgrade --refresh eon`:
   Eon Bar and the hints bar, with a measured label column and dense rows.
   Shortcuts flow into up to three columns, so every binding shows without
   scrolling in a normal window. Left and Right, and Up and Down, share one row
-  each. The attention inbox keeps its rows and width but now also sits between
+  each. The attention inbox keeps its rows and width and also sits between
   the bars, so it is shorter than before (`eon-8s8s7`).
 
 - `eon-bench gate` checks local Orbit and rendered Eon completion timings
@@ -839,7 +839,7 @@ Then, after `nix profile upgrade --refresh eon`:
   `edge` branch has a newer revision, and whether Eon may install it, without
   changing anything. Tag pins, Home Manager, NixOS, nix-darwin and unmanaged
   installs get their reason and manual next step; offline or rate-limited
-  checks fail rather than report a guess. `--profile ABS --entry NAME` names
+  checks fail without guessing a result. `--profile ABS --entry NAME` names
   one profile entry. The Nix package carries a source receipt tying the
   build to its revision; builds without one never report an update as
   available.
@@ -876,11 +876,11 @@ Then, after `nix profile upgrade --refresh eon`:
   with the square of its size over macOS's 8 KiB socket pieces, and now reads
   it in time that grows with its size (`eon-mac-launch-kz4p.56`).
 - An `eon` session command or `eon quit` that reaches a window of another
-  EONW version now runs as that window's own `eon`, with the same arguments,
+  EONW version runs as that window's own `eon`, with the same arguments,
   input and output, instead of failing with a version error, while that
   build is still installed (`eon-rcxu5`, EON-C11 Routing). An `EON_TERMINAL`
   that names an ended terminal, as a resumed agent's restored shell can keep,
-  now fails with `unknown-caller` (exit 3) naming the terminal and the window
+  fails with `unknown-caller` (exit 3) naming the terminal and the window
   it ran in, and says to run `eon` from a live Eon terminal's shell, instead
   of reporting another window's version.
 - The keys popup that opens over a hints bar keycap is shorter
@@ -932,7 +932,7 @@ Then, after `nix profile upgrade --refresh eon`:
 - The workspace commands are now session commands (`eon-30skm`, slice 2):
   `eon session` inspects, `eon session ls` lists, and
   `eon session new|switch|rename|close SESSION` replace `eon workspace` and
-  `eon workspaces`, which now fail as invalid commands (exit 2) naming their
+  `eon workspaces`, which fail as invalid commands (exit 2) naming their
   replacement. JSON follows:
   the projected `workspace` is `session`, `eon session ls --json` lists
   `sessions`, and each pane and popup names its terminal in `terminal`
@@ -999,10 +999,10 @@ Then, after `nix profile upgrade --refresh eon`:
   hover popup no longer repeats the keycap's name above its keys
   (`eon-e3a1z.3`, VEN-C21).
 - The clock moves from the Eon Bar to the left end of the bottom hints bar,
-  keeping its format and hover, which now opens above it. It hides
+  keeping its format and hover, which opens above it. It hides
   with the bar (Alt+Shift+B), and in narrow windows after the version label,
   before any hint drops. The Eon Bar's quota chips and CPU, RAM and disk readings get
-  its room; narrow windows now hide the Eon logo, then disk, RAM and CPU, then
+  its room; narrow windows hide the Eon logo, then disk, RAM and CPU, then
   quota chips. `[bar] widgets` still lists `clock`, but its place in the list
   no longer moves it (`eon-e3a1z.2`, EON-C32, VEN-C21).
 - The JSON replies of `eon pane create` and `eon tab create`, in every form,
@@ -1019,8 +1019,8 @@ Then, after `nix profile upgrade --refresh eon`:
   one included; `eon quit --all` covers the same windows. Each window is
   stopped by its own validated Stop, the caller's window last (inside Eon, a
   caller whose window cannot be identified is refused), and a damaged
-  generation directory or a window that cannot be inspected is reported,
-  never stopped, and the other windows still stop. With `--json` each prints
+  generation directory or a window that cannot be inspected is reported and
+  skipped, and the other windows still stop. With `--json` each prints
   one JSON array, `[{"window": ID, "results": [...]}, ...]`, with an object
   per window, `window` being its full ID, so `eon quit --all --json` names the default window `default`
   instead of null. Stop and Quit questions, results and `eon quit`'s listing
