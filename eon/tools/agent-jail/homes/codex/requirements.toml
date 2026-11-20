@@ -1,0 +1,47 @@
+# /etc/codex/requirements.toml in the bench jail: constraints no config
+# layer can lift, and the required (managed) hooks.
+allow_managed_hooks_only = true
+allowed_web_search_modes = ["disabled"]
+allowed_sandbox_modes = ["danger-full-access"]
+allowed_approval_policies = ["never"]
+check_for_update_on_startup = false
+
+[features]
+hooks = true
+unified_exec = false
+shell_snapshot = false
+view_image = false
+image_generation = false
+apps = false
+plugins = false
+remote_plugin = false
+tool_suggest = false
+code_mode_host = true
+multi_agent = false
+goals = false
+sleep_tool = false
+browser_use = false
+computer_use = false
+memories = false
+skill_mcp_dependency_install = false
+
+[mcp_servers]
+
+[hooks]
+managed_dir = "/etc/codex"
+
+[[hooks.PreToolUse]]
+matcher = "*"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/bench/jail/agent-jail jail-hook codex"
+timeout = 30
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/bench/jail/agent-jail dcg-hook codex"
+timeout = 30

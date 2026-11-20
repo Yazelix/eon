@@ -1,0 +1,55 @@
+{
+  "managedSourcesBehavior": "merge",
+  "allowManagedHooksOnly": true,
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "allowedMcpServers": [],
+  "disableClaudeAiConnectors": true,
+  "permissions": {
+    "blockReadsOutsideWorkingDirectories": true,
+    "blockWritesOutsideWorkingDirectories": true,
+    "deny": [
+      "WebSearch",
+      "WebFetch",
+      "Read(//home/bench/**)",
+      "Edit(//home/bench/**)",
+      "Read(//proc/**)",
+      "Edit(//proc/**)",
+      "Read(//etc/claude-code/**)",
+      "Edit(//etc/claude-code/**)",
+      "Read(//bench/jail/**)",
+      "Edit(//bench/jail/**)",
+      "Read(//bench/sock/**)",
+      "Edit(//bench/sock/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": false
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bench/jail/agent-jail dcg-hook claude",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bench/jail/agent-jail jail-hook claude",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}

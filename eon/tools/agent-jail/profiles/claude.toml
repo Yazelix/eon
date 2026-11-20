@@ -1,0 +1,34 @@
+# Claude Code in the bench jail. Policy lives in the managed settings of
+# homes/claude; argv repeats the web-tool and MCP refusals. The runner fills
+# only the {slots}; enter and init refuse any other argv.
+harness = "claude"
+binary = "claude"
+exe = "pinned"
+allowlist = "claude"
+store = "host-probe-only"
+argv = [
+  "--print", "{prompt}",
+  "--model", "{model}",
+  "--effort", "{effort}",
+  "--permission-mode", "bypassPermissions",
+  "--disallowedTools", "WebSearch,WebFetch",
+  "--strict-mcp-config",
+  "--mcp-config", "/bench/jail/empty-mcp.json",
+  "--no-session-persistence",
+  "--output-format", "stream-json",
+  "--verbose",
+]
+web_tools_denied = ["WebFetch", "WebSearch"]
+web_tools_mechanism = ["managed-settings.permissions.deny", "argv --disallowedTools"]
+mode = "bypassPermissions"
+
+[env]
+CLAUDE_CONFIG_DIR = "/home/bench/.claude"
+CLAUDE_CODE_SHELL = "/bin/bash"
+DISABLE_AUTOUPDATER = "1"
+DISABLE_UPDATES = "1"
+DISABLE_TELEMETRY = "1"
+DISABLE_ERROR_REPORTING = "1"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+CLAUDE_CODE_SKIP_PROMPT_HISTORY = "1"

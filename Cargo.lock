@@ -122,6 +122,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-jail"
+version = "0.1.0"
+dependencies = [
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

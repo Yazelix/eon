@@ -1,0 +1,32 @@
+# Codex CLI in the bench jail. Policy lives in /etc/codex (requirements.toml
+# and managed_config.toml from homes/codex); argv repeats the key values as
+# -c overrides. The runner fills only the {slots}; enter and init refuse
+# any other argv.
+harness = "codex"
+binary = "codex"
+# The pinned binary's release directory (two levels up) is bound here.
+exe = "/bench/tools/codex/bin/codex"
+release_mount = "/bench/tools/codex"
+allowlist = "codex"
+store = "host-probe-only"
+argv = [
+  "exec",
+  "--skip-git-repo-check",
+  "--ephemeral",
+  "--json",
+  "--model", "{model}",
+  "-c", "model_reasoning_effort=\"{effort}\"",
+  "-c", "web_search=\"disabled\"",
+  "-c", "sandbox_mode=\"danger-full-access\"",
+  "-c", "approval_policy=\"never\"",
+  "--",
+  "{prompt}",
+]
+web_tools_denied = ["web_search"]
+web_tools_mechanism = ["requirements.allowed_web_search_modes", "managed_config.web_search", "argv -c web_search"]
+mode = "approval_policy=never,sandbox_mode=danger-full-access"
+
+[env]
+CODEX_HOME = "/home/bench/.codex"
+CODEX_SQLITE_HOME = "/home/bench/.codex/sqlite"
+CODEX_REFRESH_TOKEN_URL_OVERRIDE = "https://refresh.invalid/oauth/token"

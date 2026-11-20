@@ -760,6 +760,7 @@ mod dependency_direction {
         ("archive-notices", &[]),
         ("review-tier", &[]),
         ("agent-bench", &[]),
+        ("agent-jail", &[]),
         ("orbit-protocol", &[]),
         ("eon-workspace-protocol", &[]),
         ("yazelix-orbit", &["orbit-protocol"]),

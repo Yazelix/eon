@@ -1,0 +1,78 @@
+{
+  "schema": "agent-jail-home/1",
+  "harness": "codex",
+  "entries": [
+    {
+      "path": "/etc/codex/requirements.toml",
+      "kind": "settings",
+      "mode": "ro",
+      "source": "requirements.toml",
+      "sha256": "3ce3720a18608906e05e1373fa7282a156320fdfd8d9e009540e3c7ac90660a6"
+    },
+    {
+      "path": "/etc/codex/managed_config.toml",
+      "kind": "settings",
+      "mode": "ro",
+      "source": "managed_config.toml",
+      "sha256": "35a72f4eea8031946f4b94da834140eaf2d7290b87fd2aa666204cc1361310f0"
+    },
+    {
+      "path": "/home/bench/.codex",
+      "kind": "dir",
+      "mode": "ro",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.codex/sessions",
+      "kind": "state",
+      "mode": "rw",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.codex/log",
+      "kind": "state",
+      "mode": "rw",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.codex/tmp",
+      "kind": "state",
+      "mode": "rw",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.codex/sqlite",
+      "kind": "state",
+      "mode": "rw",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.codex/.tmp",
+      "kind": "state",
+      "mode": "rw",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.codex/.cache",
+      "kind": "state",
+      "mode": "rw",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.codex/installation_id",
+      "kind": "state",
+      "mode": "rw",
+      "source": "installation_id",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "auth": "/home/bench/.codex/auth.json",
+  "managed": [
+    "/etc/codex/requirements.toml",
+    "/etc/codex/managed_config.toml"
+  ],
+  "skills": [],
+  "plugins": [],
+  "mcp": [],
+  "instructions": []
+}

@@ -1,0 +1,34 @@
+# /etc/codex/managed_config.toml in the bench jail: the highest config
+# layer, above the -c overrides.
+web_search = "disabled"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+check_for_update_on_startup = false
+allow_login_shell = false
+
+[analytics]
+enabled = false
+
+[otel]
+metrics_exporter = "none"
+
+[apps._default]
+enabled = false
+
+[features]
+unified_exec = false
+shell_snapshot = false
+view_image = false
+image_generation = false
+apps = false
+plugins = false
+remote_plugin = false
+tool_suggest = false
+code_mode_host = true
+multi_agent = false
+goals = false
+sleep_tool = false
+browser_use = false
+computer_use = false
+memories = false
+skill_mcp_dependency_install = false

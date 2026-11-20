@@ -1,0 +1,42 @@
+# Host tools agent-jail runs, by absolute path and SHA-256. A path starting
+# with `~/` resolves under the invoking user's home from the password
+# database, never from $HOME. `enter` refuses a missing file or a hash
+# mismatch; there is no PATH lookup and no environment override, so
+# changing a pin is a reviewed change. M3 replaces these with the task store.
+
+[tools.bwrap]
+path = "/nix/store/m50dfhnbbqpvj79i444kcdd2zsfwr4hk-bubblewrap-0.13.1/bin/bwrap"
+sha256 = "b45d70ccbdae62bb863c8ad5b6d3d60c2d01dbfe88ca7517edc7ce5ad86497d3"
+
+[tools.dcg]
+path = "/nix/store/sg5z4ia0jhbsyizzd8n92j5jk5gdk5l6-dcg-0.16.0/bin/dcg"
+version = "0.16.0"
+sha256 = "f98166f7f0cf3dc1ec9483fedb2af9d9bc27248f5806ac2b7c83ff97e2e2b324"
+
+[tools.claude]
+path = "/nix/store/vxsk0qch7jk7lfr6y2mfshmlglzq7p6d-claude-code-2.1.326/bin/claude"
+sha256 = "679dbb3f76f0756d2c55e8e3e8f4e51232213beda0ee9fbcb023668223df5e7c"
+
+[tools.codex]
+path = "~/.codex/packages/standalone/releases/0.170.0-x86_64-unknown-linux-musl/bin/codex"
+sha256 = "880819aab735adcf16f36cd628940b9f1e652a36c01d10a5d32f83cc84902971"
+
+[tools.ca-bundle]
+path = "/etc/ssl/certs/ca-certificates.crt"
+sha256 = "any"
+
+# Packages whose bin/ entries become the inner layer's tools. Every name is
+# a wrapper on the outer layer's PATH; the first package holding a name wins.
+[inner]
+packages = [
+  "/nix/store/gik3rh1vz2jlgnifb9dh6vc6sxwwz9jj-bash-5.3p9",
+  "/nix/store/9ypz3flqsrl5xl495mm8h645gadjsxi1-coreutils-9.11",
+  "/nix/store/bcnisk3ydfgv26v2gw3zlky24g00yww2-git-2.54.0",
+  "/nix/store/whbrk657qmih065xal60m4khwf6cb9pj-ripgrep-15.2.0",
+  "/nix/store/gn94gpcp5q08x4v6g8mvw8v4r65rcjzk-gnugrep-3.12",
+  "/nix/store/kgxafhycw2kybbqih759ykc2043qyi5j-gnused-4.9",
+  "/nix/store/wp1cshqv98i8abs8rcx91s54igqgll0f-gawk-5.4.0",
+  "/nix/store/c1cjgg6p8m8fssivzrc2p13mwwml3p3v-findutils-4.10.0",
+  "/nix/store/ww555mznia5v7sz2w85lblg4amvhkhv1-diffutils-3.12",
+  "/nix/store/qmjllrv5znaiy0bfj63160rxc8qs8nxl-curl-8.23.0-bin",
+]

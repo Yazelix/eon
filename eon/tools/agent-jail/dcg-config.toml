@@ -1,0 +1,23 @@
+# dcg configuration for the bench jail (agent-jail). Read-only at
+# /bench/jail/dcg/config.toml; agent-jail's dcg shim passes it through
+# DCG_CONFIG with a clean environment.
+
+[general]
+color = "never"
+verbose = false
+check_updates = false
+self_heal_hook = false
+
+[packs]
+enabled = []
+disabled = []
+custom_paths = []
+
+[interactive]
+enabled = false
+
+[history]
+enabled = false
+
+[response]
+enabled = false

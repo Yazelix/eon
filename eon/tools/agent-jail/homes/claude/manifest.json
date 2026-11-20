@@ -1,0 +1,41 @@
+{
+  "schema": "agent-jail-home/1",
+  "harness": "claude",
+  "entries": [
+    {
+      "path": "/etc/claude-code/managed-settings.json",
+      "kind": "settings",
+      "mode": "ro",
+      "source": "managed-settings.json",
+      "sha256": "f2ba948e7d783e8e14c594f9391bb85400474ddcd06a959a2e63704decba04cc"
+    },
+    {
+      "path": "/home/bench/.claude",
+      "kind": "state",
+      "mode": "rw",
+      "type": "dir"
+    },
+    {
+      "path": "/home/bench/.claude/settings.json",
+      "kind": "state",
+      "mode": "rw",
+      "source": "settings.json",
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    {
+      "path": "/home/bench/.claude/.claude.json",
+      "kind": "state",
+      "mode": "rw",
+      "source": "claude.json",
+      "sha256": "38ea124b982c27158540d639e498a00c7bd0b9af2b019601c08ae20b4e45381e"
+    }
+  ],
+  "auth": "/home/bench/.claude/.credentials.json",
+  "managed": [
+    "/etc/claude-code/managed-settings.json"
+  ],
+  "skills": [],
+  "plugins": [],
+  "mcp": [],
+  "instructions": []
+}

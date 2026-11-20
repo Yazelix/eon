@@ -1,0 +1,106 @@
+outer: only lo
+outer: tcp 140.82.112.3:443
+outer: tcp [2606:4700::1111]:443
+outer: udp 1.1.1.1:53
+outer: resolve github.com
+outer: abstract @/tmp/.X11-unix/X0
+outer: absent /home/lucca
+outer: absent /home/lucca/pjs/eon/eon
+outer: absent /home/lucca/.cache/eon-agents
+outer: absent /home/lucca/.secrets
+outer: absent /mnt/build
+outer: absent /run/user/1000
+outer: absent /nix/var/nix/daemon-socket
+outer: absent /bench/bin/br
+outer: absent /bench/bin/nix
+outer: unset SSH_AUTH_SOCK
+outer: unset GPG_AGENT_INFO
+outer: unset DBUS_SESSION_BUS_ADDRESS
+outer: unset WAYLAND_DISPLAY
+outer: unset DISPLAY
+outer: unset XDG_RUNTIME_DIR
+outer: CapEff
+outer: bridge CONNECT own host
+outer: bridge CONNECT github.com
+outer: bridge CONNECT IP literal
+outer: bridge CONNECT own host port 80
+outer: bridge plain GET
+outer: peer straight to /bench/sock/proxy
+outer: peer through the bridge
+outer: peer reads the harness's memory
+outer: outer curl github.com direct
+outer: outer curl own host through the bridge
+outer: outer git ls-remote
+outer: auth readable by the harness
+outer: write /agent-jail-probe
+outer: write /etc/codex/agent-jail-probe
+outer: write /home/bench/agent-jail-probe
+outer: write /bench/jail/agent-jail-probe
+outer: write /bench/workspace/.claude/agent-jail-probe
+outer: write /bench/workspace/.codex/agent-jail-probe
+outer: open /etc/codex/requirements.toml for writing
+outer: open /etc/codex/managed_config.toml for writing
+outer: rename /home/bench/.codex
+outer: rename /etc/codex
+outer: rename /home/bench
+outer: rename /home
+outer: rename /bin
+outer: rename /etc
+outer: inner layer ran
+inner: only lo
+inner: tcp 140.82.112.3:443
+inner: tcp [2606:4700::1111]:443
+inner: udp 1.1.1.1:53
+inner: resolve github.com
+inner: abstract @/tmp/.X11-unix/X0
+inner: absent /home/lucca
+inner: absent /home/lucca/pjs/eon/eon
+inner: absent /home/lucca/.cache/eon-agents
+inner: absent /home/lucca/.secrets
+inner: absent /mnt/build
+inner: absent /run/user/1000
+inner: absent /nix/var/nix/daemon-socket
+inner: absent /bench/bin/br
+inner: absent /bench/bin/nix
+inner: unset SSH_AUTH_SOCK
+inner: unset GPG_AGENT_INFO
+inner: unset DBUS_SESSION_BUS_ADDRESS
+inner: unset WAYLAND_DISPLAY
+inner: unset DISPLAY
+inner: unset XDG_RUNTIME_DIR
+inner: CapEff
+inner: tcp to the bridge
+inner: write /dev/null
+inner: bash -c with a /dev/null redirect
+inner: unset HTTPS_PROXY
+inner: unset HTTP_PROXY
+inner: unset ALL_PROXY
+inner: unset NO_PROXY
+inner: unset https_proxy
+inner: unset http_proxy
+inner: unset all_proxy
+inner: unset no_proxy
+inner: /bench/sock empty
+inner: /bench/jail-private empty
+inner: auth reads 0 bytes
+inner: policy /etc/codex/requirements.toml hidden
+inner: policy /etc/codex/managed_config.toml hidden
+inner: no sockets
+inner: write /bench/jail/agent-jail-probe
+inner: write /bench/workspace/.claude/agent-jail-probe
+inner: write /bench/workspace/.codex/agent-jail-probe
+inner: where
+outer: bash -c lands in the inner layer
+outer: the stand-in itself is outer
+host: proxy log allow
+host: proxy log bad-request
+host: proxy log deny-host
+host: proxy log deny-owner
+host: proxy log deny-peer
+host: proxy log has no other lines (none from the inner layer)
+host: stand-in exit and token scan
+outer: workspace link to the credential is not followed
+inner: workspace links resolve in the inner layer
+outer: codex apply_patch reads no file through a workspace link
+outer: codex apply_patch writes no file through a workspace link
+outer: codex apply_patch creates no file through a dangling workspace link
