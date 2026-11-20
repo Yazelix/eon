@@ -1825,6 +1825,12 @@ pub(crate) fn terminal_session(identity: &str) -> Option<&str> {
 pub(super) struct FailedStarts(Vec<(Child, ReadyClaim)>);
 
 impl FailedStarts {
+    /// Retains `child` as a failed start whose Ready claim is `record`.
+    #[cfg(test)]
+    pub(super) fn retained(child: Child, record: &Path) -> Self {
+        Self(vec![(child, ReadyClaim::create(record).unwrap())])
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -4313,6 +4319,20 @@ pub(crate) mod tests {
         kill_process(Pid::from_raw(orbit).unwrap(), Signal::TERM).unwrap();
         kill_process(Pid::from_raw(orbit).unwrap(), Signal::CONT).unwrap();
         session.child.as_mut().unwrap().wait().unwrap();
+    }
+
+    /// Keeps `status` as the answer a terminal access drained for the
+    /// poller, with its original `deadline`.
+    pub(crate) fn keep_status(
+        session: &mut RunningSession,
+        status: &orbit_protocol::management::ProgramStatus,
+        deadline: Instant,
+    ) {
+        let reply = management::encode_server_message(&ManagementServerMessage::ProgramStatus(
+            status.clone(),
+        ))
+        .unwrap();
+        session.answered_status = Some((reply, deadline));
     }
 
     /// Marks a run ended before the supervisor reaps it.

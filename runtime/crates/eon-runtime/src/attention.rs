@@ -457,6 +457,32 @@ impl Attention {
 
     /// Sends due requests and reads replies without blocking. A miss, a Busy
     /// refusal or a bad reply keeps the last good result.
+    /// Holds a helper sample of `status`, as `run` of `session` replied at
+    /// `replied`, whose result only the returned sender delivers. Its
+    /// deadline is `replied`: a `poll` applies a delivered result first, and
+    /// expires the sample without one.
+    #[cfg(test)]
+    pub(crate) fn hold_sample(
+        &mut self,
+        session: &str,
+        run: &str,
+        status: ProgramStatus,
+        replied: Instant,
+    ) -> (u64, std::sync::mpsc::SyncSender<(u64, bool)>) {
+        let (worker, results) = helpers::Worker::manual();
+        self.helper_worker = Some(worker);
+        self.helper_sample += 1;
+        self.helper_pending.push(HelperPending {
+            sample: self.helper_sample,
+            session: session.into(),
+            run: run.into(),
+            status,
+            replied,
+            deadline: replied,
+        });
+        (self.helper_sample, results)
+    }
+
     pub(super) fn poll(
         &mut self,
         targets: &[Target],

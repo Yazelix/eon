@@ -28,8 +28,8 @@ use super::{
 };
 use crate::workspace::{IDS_PER_SUPERVISOR, MAX_RECENT_REQUESTS};
 use eon_workspace_protocol::v47::{
-    FILES_ENTRY, MAX_DETAIL_BYTES, MAX_DIRECTORY_BYTES, MAX_ENTRIES, MAX_SESSIONS, MAX_TABS,
-    MAX_WORKSPACES, Sidebar,
+    FILES_ENTRY, MAX_COMMAND_ARGUMENT_BYTES, MAX_COMMAND_ARGUMENTS, MAX_DETAIL_BYTES,
+    MAX_DIRECTORY_BYTES, MAX_ENTRIES, MAX_SESSIONS, MAX_TABS, MAX_WORKSPACES, Sidebar,
 };
 use orbit_protocol::management::{
     self, Foreground, MAX_ID_BYTES, MAX_MESSAGE_BYTES, MAX_PROGRAM_RECORDS,
@@ -54,6 +54,7 @@ const _: () = {
     assert!(IDS_PER_SUPERVISOR == 1 << 20 && MAX_RECENT_REQUESTS == 256);
     assert!(MAX_MESSAGE_BYTES == 4096 && MAX_PROGRAM_RECORDS == 256);
     assert!(MAX_TERMINAL_TITLE_BYTES == 64 && MAX_DETAIL_BYTES == 1024);
+    assert!(MAX_COMMAND_ARGUMENTS == 256 && MAX_COMMAND_ARGUMENT_BYTES == 32 * 1024);
 };
 
 /// The independently held identity an Update target expects.
@@ -75,6 +76,19 @@ pub(crate) struct Update {
     pub recent_sessions: Vec<String>,
     pub terminal_extras: Vec<TerminalExtra>,
     pub attention: Option<Attention>,
+    pub supervisor: Supervisor,
+}
+
+/// The supervisor's own facts, which the target cannot derive.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Supervisor {
+    /// The lifetime's start in Unix milliseconds, as inspection reports it.
+    pub started_at_ms: u64,
+    /// The launch command (`eon run -- CMD`) a pending first tab keeps for
+    /// its first pane; empty once a pane used it. Arguments may be empty.
+    pub initial_command: Vec<Vec<u8>>,
+    /// terminal-1's natural exit status, the window's eventual exit status.
+    pub initial_status: Option<u8>,
 }
 
 /// `next_session` is Runtime's `next_workspace`; `next_terminal` its
@@ -445,7 +459,7 @@ impl Update {
         if let Some(attention) = &self.attention {
             attention.validate(&slots)?;
         }
-        Ok(())
+        self.supervisor.validate()
     }
 
     fn validate_recent(&self, core: &Core) -> Result<()> {
@@ -535,6 +549,7 @@ impl Update {
         if let Some(attention) = &self.attention {
             attention.write(&mut out)?;
         }
+        self.supervisor.write(&mut out)?;
         Ok(out.0)
     }
 
@@ -624,6 +639,7 @@ impl Update {
         } else {
             None
         };
+        let supervisor = Supervisor::read(&mut input)?;
         input.finish()?;
         Ok(Self {
             captured_monotonic_ns,
@@ -636,6 +652,7 @@ impl Update {
             recent_sessions,
             terminal_extras,
             attention,
+            supervisor,
         })
     }
 }
@@ -947,6 +964,46 @@ fn stamp(value: u64) -> Result<()> {
 }
 
 pub(crate) mod model;
+
+impl Supervisor {
+    pub(crate) fn validate(&self) -> Result<()> {
+        count(
+            "initial command",
+            self.initial_command.len(),
+            MAX_COMMAND_ARGUMENTS,
+        )?;
+        for argument in &self.initial_command {
+            if argument.len() > MAX_COMMAND_ARGUMENT_BYTES || argument.contains(&0) {
+                return Err(Error::Invalid("initial command"));
+            }
+        }
+        Ok(())
+    }
+
+    fn write(&self, out: &mut Encoder) -> Result<()> {
+        out.u64(self.started_at_ms)?;
+        out.list(&self.initial_command, |out, argument| out.raw(argument))?;
+        out.u8(u8::from(self.initial_status.is_some()))?;
+        if let Some(status) = self.initial_status {
+            out.u8(status)?;
+        }
+        Ok(())
+    }
+
+    fn read(input: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            started_at_ms: input.u64()?,
+            initial_command: input.list("initial command", MAX_COMMAND_ARGUMENTS, |input| {
+                Ok(input.raw(MAX_COMMAND_ARGUMENT_BYTES)?.to_vec())
+            })?,
+            initial_status: if input.boolean()? {
+                Some(input.u8()?)
+            } else {
+                None
+            },
+        })
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod tests;

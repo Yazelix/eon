@@ -1,7 +1,9 @@
 //! Attention's part of an Update checkpoint: each terminal's last good reply,
 //! its records and raises, recovered baselines, the poll schedule, the sidebar
 //! and the epoch. Instants travel as distances from the capture anchor.
-// Consumed by `checkpoint::update::model` and its tests until eon-t3fyd.6 (S3b).
+// Consumed by `checkpoint::update::model`, whose capture the supervisor's
+// export uses once S4a (eon-t3fyd.7) calls it, and whose restore is
+// eon-8bfip's (S3b-2); until then its tests consume it.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{Attention, NoticeDispatch, PendingNotices, Raise, Record, Terminal};

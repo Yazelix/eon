@@ -1,6 +1,8 @@
 //! A running terminal's part of an Update checkpoint: whether this Runtime
 //! started it with the default shell and the Venus process it last named.
-// Consumed by `checkpoint::update::model` and its tests until eon-t3fyd.6 (S3b).
+// Consumed by `checkpoint::update::model`, whose capture the supervisor's
+// export uses once S4a (eon-t3fyd.7) calls it, and whose restore is
+// eon-8bfip's (S3b-2); until then its tests consume it.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{AttachName, Naming, RunningSession};

@@ -59,6 +59,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod update;
+
 pub(super) use eon_workspace_protocol::{
     PRESENTATION_ADMISSION_TIMEOUT, SESSION_CLEANUP_TIMEOUT, TERMINAL_START_TIMEOUT,
 };
@@ -920,12 +922,21 @@ impl PresentationProcess {
         Ok(process)
     }
 
+    /// Whether the child has exited, without reporting it or waiting for
+    /// its relay; std keeps the status for `exited`.
+    fn has_exited(&mut self) -> Result<bool, String> {
+        self.try_wait().map(|status| status.is_some())
+    }
+
+    fn try_wait(&mut self) -> Result<Option<ExitStatus>, String> {
+        self.child
+            .try_wait()
+            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))
+    }
+
     /// Reports how Eon Desktop exited, if it has, recording it once.
     fn exited(&mut self) -> Result<Option<ExitStatus>, String> {
-        let status = self
-            .child
-            .try_wait()
-            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?;
+        let status = self.try_wait()?;
         if let Some(status) = status
             && !self.reported
         {
@@ -8569,7 +8580,7 @@ mod tests {
 
     /// A supervisor state over `workspaces` and `sessions`, with no Venus,
     /// registry worker or subscriber, whose snapshots live under `root`.
-    fn admission_state(
+    pub(super) fn admission_state(
         root: &Path,
         workspaces: Option<WorkspaceSet>,
         sessions: Vec<sessions::RunningSession>,

@@ -1,6 +1,7 @@
 //! Shared EONR v1 topology; bytes grant no process, filesystem or registry authority.
 // Preparatory owner for recovery and Update; its tests and the owner adapters'
-// tests consume the codec until eon-t3fyd.6 (S3b) calls it.
+// tests consume the codec until S4a (eon-t3fyd.7) calls the supervisor's
+// export and eon-8bfip (S3b-2) restores it.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use eon_workspace_protocol::v47::{

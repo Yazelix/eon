@@ -3049,6 +3049,15 @@ popup or automatic tutorial launch.
     EON-C10's identity/inventory clause. Creation build is fixed; active build
     identifies the controlling Runtime. Planned Update preserves the lifetime,
     local session IDs and membership; it introduces no cross-window sessions.
+  - Planned Update (`eon-t3fyd`) carries a running window's state across the
+    replacement as one checkpoint of validated logical state, taken only when
+    no work is in flight: an accepted request, a terminal start, a registry
+    change, a pending management reply or helper sample, or a Stop. Otherwise
+    the checkpoint is refused and nothing changes. It is not an EONW snapshot
+    and holds no in-memory layout, process handle, descriptor or terminal
+    contents. Changes to its schema version it; EONW-only changes do not. It is
+    transient, read once by the replacing Runtime, and adds no durable recovery
+    database or retained old-schema reader.
   - Bare full-Eon launch selects the sole live lifetime recorded for the invoked
     active build. With none live it considers recoverable records for that build
     and applies EON-C15 to the sole validated candidate before allocating a

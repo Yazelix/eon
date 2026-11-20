@@ -115,6 +115,11 @@ impl StartPump {
         self.capture.is_some()
     }
 
+    /// Whether it holds no client and no start capture.
+    pub(super) fn is_idle(&self) -> bool {
+        self.held.is_empty() && self.capture.is_none()
+    }
+
     /// The oldest held client, which the loop serves before any new one.
     pub(super) fn next_held(&mut self) -> Option<Client> {
         self.held.pop_front()

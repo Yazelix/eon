@@ -291,6 +291,42 @@ pub(crate) fn any_pending() -> bool {
     !pairs.starting.is_empty() || !pairs.leaving.is_empty()
 }
 
+/// Holds `marker`'s pair as starting until `forget`.
+#[cfg(test)]
+pub(crate) fn hold_starting(marker: &Path) {
+    pairs().starting.insert(
+        marker.to_owned(),
+        Startup {
+            token: "test".into(),
+            pending: marker.with_extension("pending"),
+            deadline: None,
+        },
+    );
+}
+
+/// Holds `marker`'s pair as leaving until `forget`.
+#[cfg(test)]
+pub(crate) fn hold_leaving(marker: &Path) {
+    pairs().leaving.insert(marker.to_owned(), Leave::Waiting);
+}
+
+#[cfg(test)]
+pub(crate) fn forget(marker: &Path) {
+    let mut pairs = pairs();
+    pairs.starting.remove(marker);
+    pairs.leaving.remove(marker);
+}
+
+/// Whether a pair whose marker lies in `runtime` is starting or leaving.
+pub(crate) fn any_pending_in(runtime: &Path) -> bool {
+    let pairs = pairs();
+    pairs
+        .starting
+        .keys()
+        .chain(pairs.leaving.keys())
+        .any(|marker| marker.parent() == Some(runtime))
+}
+
 /// Whether the pair is on quick search and whether it is still starting.
 pub(crate) fn quick_search_state(marker: &Path, now: Instant, log: &DiagnosticLog) -> (bool, bool) {
     match pairs().screen(marker, now, log) {
@@ -531,6 +567,20 @@ impl Drop for Dispatches {
 }
 
 impl Dispatches {
+    /// One dispatch that runs until it is cancelled.
+    #[cfg(test)]
+    pub(crate) fn running() -> Self {
+        let (cancel, cancelled) = mpsc::channel::<()>();
+        let worker = thread::spawn(move || {
+            let _ = cancelled.recv();
+        });
+        Self(vec![(cancel, worker)])
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub(crate) fn reap(&mut self) {
         self.0.retain(|(_, worker)| !worker.is_finished());
     }

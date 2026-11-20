@@ -151,6 +151,11 @@ pub(super) struct Worker {
 }
 
 impl Worker {
+    /// Whether no operation awaits its completion.
+    pub(super) fn is_idle(&self) -> bool {
+        !self.in_flight
+    }
+
     pub(super) fn start(registry: Registry) -> Result<Self, Failure> {
         #[cfg(test)]
         if registry.fault == Some(Fault::WorkerSpawn) {

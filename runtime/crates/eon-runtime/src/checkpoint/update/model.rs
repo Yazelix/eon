@@ -1,6 +1,7 @@
 //! The complete logical Runtime state of an Update: the three owners' parts
-//! composed into one checkpoint, and back. The supervisor assembly (settling,
-//! the anchor and the elapsed gap) is S3b's (eon-t3fyd.6).
+//! composed into one checkpoint, and back. The supervisor's own part (the
+//! settled boundary, the anchor, the elapsed gap and its own facts) is in
+//! `supervisor/update.rs` (export) and eon-8bfip (S3b-2, restore).
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::Update;

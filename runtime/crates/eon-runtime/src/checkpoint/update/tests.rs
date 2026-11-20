@@ -315,6 +315,12 @@ fn fixture() -> (Core, Update) {
             epoch_age_ns: 9_000_000_000,
             epoch_wall_ms: 1_763_600_000_000,
         }),
+        supervisor: Supervisor {
+            started_at_ms: 1_763_590_000_000,
+            // Empty and non-UTF-8 arguments are commands too.
+            initial_command: vec![b"sh".to_vec(), b"-c".to_vec(), Vec::new(), vec![0xff, b'x']],
+            initial_status: Some(130),
+        },
     };
     (core, update)
 }
@@ -456,7 +462,9 @@ fn update_section_framing_refuses_missing_optional_trailing_and_bad_tags() {
         tag[at] = 2;
         red_payload(invalid("presence/boolean tag"), tag);
     }
-    let sidebar = payload().len() - 17;
+    // The sidebar tag sits 17 bytes before the attention part's end, which
+    // the 26-byte supervisor record follows.
+    let sidebar = payload().len() - 17 - 26;
     let mut tag = payload();
     tag[sidebar] = 3;
     red_payload(invalid("sidebar"), tag);
@@ -1158,4 +1166,36 @@ fn update_single_byte_mutations_never_panic() {
             let _ = decode(&mutated, &scope());
         }
     }
+}
+
+#[test]
+fn update_supervisor_record_bounds_its_initial_command() {
+    let arguments = |count: usize, bytes: usize| vec![vec![b'a'; bytes]; count];
+    green(|_, update| update.supervisor.initial_command = arguments(MAX_COMMAND_ARGUMENTS, 1));
+    green(|_, update| {
+        update.supervisor.initial_command = arguments(1, MAX_COMMAND_ARGUMENT_BYTES);
+    });
+    green(|_, update| update.supervisor = Supervisor::default());
+    red(invalid("initial command"), |_, update| {
+        update.supervisor.initial_command = arguments(MAX_COMMAND_ARGUMENTS + 1, 0);
+    });
+    red_bound(invalid("initial command"), |_, update| {
+        update.supervisor.initial_command = arguments(1, MAX_COMMAND_ARGUMENT_BYTES + 1);
+    });
+    red(invalid("initial command"), |_, update| {
+        update.supervisor.initial_command[0] = b"s\0h".to_vec();
+    });
+}
+
+#[test]
+fn update_supervisor_record_refuses_bad_tags_and_trailing_bytes() {
+    // The payload ends with the status's presence tag (1) and value (130).
+    let mut tagged = payload();
+    let at = tagged.len() - 2;
+    assert_eq!(tagged[at..], [1, 130]);
+    tagged[at] = 2;
+    red_payload(invalid("presence/boolean tag"), tagged);
+    let mut trailing = payload();
+    trailing.push(0);
+    red_payload(invalid("trailing bytes"), trailing);
 }

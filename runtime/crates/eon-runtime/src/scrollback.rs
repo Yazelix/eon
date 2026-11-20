@@ -206,6 +206,30 @@ impl Snapshots {
         }
     }
 
+    /// Owns `directory` for `terminal`, whose failed start at `endpoint` may
+    /// still run it.
+    #[cfg(test)]
+    pub(crate) fn own_uncertain(&mut self, terminal: &str, directory: PathBuf, endpoint: PathBuf) {
+        self.owned
+            .push((terminal.into(), directory, Some(endpoint)));
+    }
+
+    /// Keeps `directory` as a removal to retry.
+    #[cfg(test)]
+    pub(crate) fn retry_removal(&mut self, directory: PathBuf) {
+        self.stale.push(directory);
+    }
+
+    /// Whether every snapshot has a certain owner and no removal waits for a
+    /// retry.
+    pub(crate) fn is_settled(&self) -> bool {
+        self.stale.is_empty()
+            && self
+                .owned
+                .iter()
+                .all(|(_, _, uncertain)| uncertain.is_none())
+    }
+
     /// Removes the store once it holds nothing, as a supervisor leaves its
     /// runtime directory.
     pub(crate) fn remove_empty_root(&self) {

@@ -946,6 +946,26 @@ impl Sockets {
         }
     }
 
+    /// Tracks the listener of the terminal at `endpoint`.
+    #[cfg(test)]
+    pub(super) fn tracking(endpoint: PathBuf) -> Self {
+        let mut sockets = Self::default();
+        sockets.track(endpoint);
+        sockets
+    }
+
+    /// Whether no removal waits for a retry and every listener's terminal
+    /// is a live row; a listener kept only by a failed start's launch record
+    /// is not settled.
+    pub(super) fn is_settled(&self, sessions: &[RunningSession]) -> bool {
+        self.listeners.iter().all(|listener| {
+            listener.retry_at.is_none()
+                && sessions
+                    .iter()
+                    .any(|session| session.endpoint == listener.endpoint && !session.is_finished())
+        })
+    }
+
     fn remove_empty_root(&self, directory: &Path) {
         if self.listeners.is_empty() {
             let _ = fs::remove_dir(directory);

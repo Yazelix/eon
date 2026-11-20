@@ -44,6 +44,15 @@ impl Worker {
         Some(Self { sender, receiver })
     }
 
+    /// A worker that samples nothing: its results are what the returned
+    /// sender delivers.
+    #[cfg(test)]
+    pub(super) fn manual() -> (Self, SyncSender<(u64, bool)>) {
+        let (sender, _) = mpsc::sync_channel(16);
+        let (results, receiver) = mpsc::sync_channel(16);
+        (Self { sender, receiver }, results)
+    }
+
     pub fn submit(&self, sample: u64, status: ProgramStatus, deadline: Instant) -> bool {
         self.sender.try_send((sample, status, deadline)).is_ok()
     }

@@ -1,6 +1,8 @@
 //! The window topology's part of an Update checkpoint: sessions, tabs, panes,
 //! popups, identity counters, replay rings and recency.
-// Consumed by `checkpoint::update::model` and its tests until eon-t3fyd.6 (S3b).
+// Consumed by `checkpoint::update::model`, whose capture the supervisor's
+// export uses once S4a (eon-t3fyd.7) calls it, and whose restore is
+// eon-8bfip's (S3b-2); until then its tests consume it.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{
@@ -24,7 +26,8 @@ use std::{
 impl WorkspaceSet {
     /// The core, stamped `revision`, and the topology's part of the Update
     /// section; `terminal_extras` and `attention` stay empty for
-    /// `checkpoint::update::model::capture` to fill. `run` names the live run
+    /// `checkpoint::update::model::capture` to fill, and `supervisor` for the
+    /// supervisor's export. `run` names the live run
     /// of a terminal ID. Refuses state an Update does not carry.
     pub(crate) fn checkpoint(
         &self,
@@ -188,6 +191,7 @@ impl WorkspaceSet {
             recent_sessions: self.recent_workspaces.iter().cloned().collect(),
             terminal_extras: Vec::new(),
             attention: None,
+            supervisor: Default::default(),
         };
         Ok((core, update))
     }
