@@ -191,8 +191,9 @@ Other output and record formats are unchanged.
 admission and popup resume commands, with no prompt-file operand. Ordinary
 launch still requires its prompt file. Each backend may set an optional
 `popup_command = ["my-agent", "--resume"]` alongside `name`, `roles` and
-`guard`. Its argv must have a nonempty executable, contain no NUL or
-`{prompt}`, and may use a whole `{cwd}` argument. It runs under that backend's
+`guard`. Its argv must have a nonempty executable, contain no NUL, `{prompt}`,
+`{name}`, `{add_dirs}` or `{overlay}`, and may use `{cwd}` inside any argument
+but the program. It runs under that backend's
 existing environment, checks, limits and preparation.
 
 Optional top-level `popup_backend = "main"` pins popup starts to a configured
@@ -256,6 +257,97 @@ On a real popup-mode failure with terminal input and stderr, the diagnostic
 stays in that terminal until Enter or EOF, then returns its original status.
 It uses the existing fixed `Press Enter to close` dismissal wording. Dry-run,
 nonterminal invocations and ordinary launch still return immediately.
+
+### Agent projects
+
+`[projects.NAME]` holds `retire`'s directories (`repo`, `agents_root`, `done`)
+and, optionally, a profile that `launch` and `run` follow (EON-C40 clause 6):
+
+```toml
+[projects.tide]
+repo = "/home/me/src/tide"
+agents_root = "/home/me/.cache/tide-agents"
+max = 2                          # live implement and review agents in total
+
+[projects.tide.backends.codex]   # a configured backend's name
+max = 1
+
+[projects.tide.roles.implement]  # implement, review or lead
+max = 2                          # not allowed on lead
+guard = ["/usr/local/bin/machine-free"]
+
+[projects.tide.roles.implement.overlay]  # by command executable name
+codex = ["-s", "danger-full-access", "-a", "never"]
+claude = []
+```
+
+Every profile key is optional, and an absent one changes nothing:
+
+| Key | Default when absent |
+| --- | --- |
+| `projects.NAME.max` (at least 1) | no total cap |
+| `projects.NAME.backends.BACKEND.max` (at least 1) | no cap on that backend |
+| `projects.NAME.roles.ROLE.max` (at least 1; not `lead`) | no cap on that role |
+| `projects.NAME.roles.ROLE.guard` (argv) | no guard |
+| `projects.NAME.roles.ROLE.overlay` (executable = argv) | no overlay; the role picks any backend, unchanged |
+| `[[backends]] add_dir` (argv with one `{dir}`) | none; that backend's launch commands take no `{add_dirs}` and no `--add-dir` |
+
+- **Selection.** `--project NAME` selects a project from anywhere, and an
+  unknown name is refused (exit 2). Without it, the project is the one whose
+  `repo` holds the working directory (for `run`, `--cwd`): any folder of the
+  checkout, or of a linked worktree, a submodule or a worktree of a bare
+  repository, found from `.git` files without running git. `repo` is compared
+  after resolving symlinks. Two projects on one repository are allowed for
+  `retire`, but selecting by folder then refuses and asks for `--project`. A
+  folder in no project selects none and behaves as before. The person's popup
+  (`--popup`, which refuses `--project`, `--name` and `--add-dir`) never
+  selects a project. The selected project is named on stderr and in the
+  decision record.
+- **Live agents.** An agent counts as live while the process its admission
+  started still runs as the same user: the agent itself for `launch`, the
+  supervising `run` or its run's leader for `run`, each recorded by PID and
+  start time in `agents/` beside `state_file` before it starts. Processes an
+  agent leaves behind do not count. Records of finished agents are removed by
+  later admissions. Leads write no record and are never capped.
+- **Holds.** The total `max` and the role's `max` hold before any backend is
+  read, naming the live PIDs. Then the role's `guard` runs in the working
+  directory with a fixed 15 second limit, like backend guards. A failing guard
+  holds with the first non-blank line of its stderr, cut to 200 characters with
+  control characters replaced. This is the one probe output copied to
+  diagnostics. Finally, a backend at its project `backends.NAME.max` is skipped
+  with that reason. A hold exits 3 and is written to the decision log with
+  `project` and `hold`.
+- **Overlays.** A role's overlay adds arguments at the `{overlay}` argument of
+  every command that role reaches whose executable it names: level commands of
+  backends serving the role, the implement fallback, and `run.commands.ROLE`.
+  Every account running that executable gets the same overlay, so none is
+  pinned. A role with overlays picks only executables it names; `claude = []`
+  allows claude unchanged. Configuration refuses an overlay whose commands lack
+  `{overlay}`, and overlay arguments may use `{cwd}` and `{name}` (and run's
+  `{brief}`, `{report}` and `{effort}`).
+
+Launch level commands accept these placeholders:
+- `{prompt}`: exactly one whole argument.
+- `{cwd}`: the working directory, filled inside any argument.
+- `{name}`: the `--name NAME` value (1-64 letters, digits, `.`, `_` or `-`),
+  filled inside any argument.
+- `{add_dirs}`: one whole argument. It repeats the backend's `add_dir` template
+  once per `--add-dir DIR`, for example:
+
+  ```toml
+  [[backends]]
+  name = "main"
+  add_dir = ["--add-dir", "{dir}"]   # or ["--add-dir={dir}"]; exactly one {dir}
+  [backends.commands]
+  high = ["claude", "-n", "{name}", "{overlay}", "{add_dirs}", "--", "{prompt}"]
+  ```
+- `{overlay}`: one whole argument.
+
+`run` commands take the same `{name}`, `{add_dirs}` (through
+`[backends.run] add_dir`) and `{overlay}`. No placeholder may be the program.
+A backend whose command needs `--name`, takes no `--add-dir`, or has no overlay
+for the project role is skipped with that reason; when none remains the command
+is refused (exit 2), since waiting cannot change configuration.
 
 ### Remote heavy builds
 

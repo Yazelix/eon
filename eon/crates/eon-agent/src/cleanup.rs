@@ -16,6 +16,7 @@ mod tests;
 use self::fs::{Dir, Stat, event, invalid};
 use crate::config::Config;
 use crate::launch::Failure;
+use crate::projects::Project;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -37,14 +38,6 @@ Bind-mount aliases of agent directories are unsupported and may not be detected.
 /// The retire help text, naming the host program.
 pub fn help(program: &str) -> String {
     HELP.replacen("{program}", program, 1)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Project {
-    pub repo: PathBuf,
-    pub agents_root: PathBuf,
-    pub done: Option<Done>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -457,7 +450,7 @@ fn done(project: &Project, options: &Options) -> io::Result<bool> {
         .command
         .iter()
         .map(|s| {
-            crate::run::fill(
+            crate::command::fill(
                 s,
                 &[
                     ("{bead}", bead),

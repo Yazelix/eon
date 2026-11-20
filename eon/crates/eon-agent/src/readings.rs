@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::process::CommandExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -130,6 +130,89 @@ fn probe_killing(
         }
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// The longest guard reason, in characters.
+pub const REASON_CHARS: usize = 200;
+
+/// The first non-blank line of `bytes`, at most [`REASON_CHARS`] characters, with control
+/// characters replaced so a guard cannot write escape sequences to the person's terminal.
+pub fn reason_line(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+        .take(REASON_CHARS)
+        .collect()
+}
+
+/// Runs a project guard in `cwd` in its own process group, with stdin and stdout null and
+/// stderr in an anonymous file, so a descendant holding stderr open cannot block it. Exit 0
+/// passes; otherwise the error says why, with the first stderr line when there is one.
+pub fn guard(argv: &[String], seconds: u64, cwd: &Path) -> Result<(), String> {
+    guard_killing(argv, seconds, cwd, kill_group)
+}
+
+fn guard_killing(
+    argv: &[String],
+    seconds: u64,
+    cwd: &Path,
+    kill: fn(&mut Child),
+) -> Result<(), String> {
+    let stderr = tempfile::tempfile().map_err(|e| format!("could not start: {e}"))?;
+    let mut child = Command::new(&argv[0])
+        .args(&argv[1..])
+        .process_group(0)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(
+            stderr
+                .try_clone()
+                .map_err(|e| format!("could not start: {e}"))?,
+        )
+        .spawn()
+        .map_err(|e| format!("could not start: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                kill(&mut child);
+                let reaped = reap_within(&mut child, REAP);
+                return Err(match reaped {
+                    true => format!("timed out after {seconds}s"),
+                    false => format!("timed out after {seconds}s; still running after SIGKILL"),
+                });
+            }
+            Err(e) => {
+                kill(&mut child);
+                let _ = reap_within(&mut child, REAP);
+                return Err(format!("cannot wait: {e}"));
+            }
+        }
+    };
+    if status.success() {
+        return Ok(());
+    }
+    let mut head = Vec::new();
+    let mut file = stderr;
+    let _ = std::io::Seek::rewind(&mut file);
+    let _ = file.take(4096).read_to_end(&mut head);
+    let line = reason_line(&head);
+    let how = match (status.code(), status.signal()) {
+        (Some(code), _) => format!("failed (exit {code})"),
+        (None, Some(signal)) => format!("killed by signal {signal}"),
+        (None, None) => format!("failed ({status})"),
+    };
+    Err(match line.as_str() {
+        "" => how,
+        line => format!("{how}: {line}"),
+    })
 }
 
 fn canonical_equal(a: impl AsRef<Path>, b: impl AsRef<Path>) -> bool {
@@ -1789,6 +1872,89 @@ mod tests {
         assert_eq!(
             running_in(proc, uid, &scan_cap()),
             Err("cannot inspect matching process working directory".into())
+        );
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    fn sh(script: &str) -> Vec<String> {
+        ["sh", "-c", script].map(String::from).into()
+    }
+
+    #[test]
+    fn reason_line_is_the_first_nonblank_line_bounded_and_without_controls() {
+        assert_eq!(reason_line(b""), "");
+        assert_eq!(reason_line(b"\n  \n\t\n"), "");
+        assert_eq!(reason_line(b"\n\n  machine busy  \nsecond"), "machine busy");
+        // ESC, other C0, DEL and C1 controls become U+FFFD.
+        assert_eq!(
+            reason_line("a\x1b[31mred\x07\x7f\u{9b}b".as_bytes()),
+            "a\u{fffd}[31mred\u{fffd}\u{fffd}\u{fffd}b"
+        );
+        // Cut by characters, never inside a UTF-8 sequence; invalid bytes are replaced.
+        let long = "é".repeat(300);
+        let line = reason_line(long.as_bytes());
+        assert_eq!(line.chars().count(), REASON_CHARS);
+        assert!(line.chars().all(|c| c == 'é'));
+        assert_eq!(reason_line(b"x\xffy"), "x\u{fffd}y");
+    }
+
+    #[test]
+    fn guard_reports_exit_signal_timeout_and_spawn_failures() {
+        let cwd = tempfile::tempdir().unwrap();
+        let cwd = fs::canonicalize(cwd.path()).unwrap();
+        assert_eq!(guard(&sh("pwd > here"), 15, &cwd), Ok(()));
+        assert_eq!(
+            fs::read_to_string(cwd.join("here")).unwrap().trim_end(),
+            cwd.to_str().unwrap()
+        );
+        assert_eq!(
+            guard(&sh("echo; echo machine busy >&2; exit 4"), 15, &cwd),
+            Err("failed (exit 4): machine busy".into())
+        );
+        assert_eq!(
+            guard(&sh("exit 1"), 15, &cwd),
+            Err("failed (exit 1)".into())
+        );
+        assert_eq!(
+            guard(&sh("kill -9 $$"), 15, &cwd),
+            Err("killed by signal 9".into())
+        );
+        let missing = guard(&["/nonexistent/guard".to_string()], 15, &cwd).unwrap_err();
+        assert!(missing.starts_with("could not start: "), "{missing}");
+        let started = Instant::now();
+        assert_eq!(
+            guard(&sh("sleep 30"), 1, &cwd),
+            Err("timed out after 1s".into())
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_descendant_holding_stderr_cannot_block_the_guard() {
+        let cwd = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        // The background sleep keeps the guard's stderr open after the guard exits.
+        assert_eq!(
+            guard(
+                &sh("echo held >&2; sleep 20 & echo $! > pid; exit 3"),
+                15,
+                cwd.path()
+            ),
+            Err("failed (exit 3): held".into())
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let pid: i32 = fs::read_to_string(cwd.path().join("pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let _ = rustix::process::kill_process(
+            rustix::process::Pid::from_raw(pid).unwrap(),
+            rustix::process::Signal::KILL,
         );
     }
 }

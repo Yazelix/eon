@@ -1,6 +1,11 @@
+use crate::command::{self, valid_name};
 use crate::config::{Backend, Config, Role, Run, RunEnv, Stdin};
-use crate::launch::{Failure, io_failure, lock, log, print_readings, record_admission};
+use crate::launch::{
+    Entry, Failure, io_failure, lock, log, print_readings, project_holds, record_admission,
+    supported, unsupported_refusal,
+};
 use crate::platform::RUN_STOP as STOP;
+use crate::projects;
 use crate::session::{self, SCHEMA, Session};
 use crate::{decision, readings};
 use std::fs::{self, File, OpenOptions};
@@ -42,6 +47,7 @@ pub struct RunOptions {
     pub timeout: u64,
     pub name: String,
     pub add_dirs: Vec<PathBuf>,
+    pub project: Option<String>,
 }
 
 pub fn parse_timeout(text: &str) -> Option<u64> {
@@ -64,19 +70,11 @@ pub fn parse_timeout(text: &str) -> Option<u64> {
         .filter(|s| (1..=MAX_TIMEOUT).contains(s))
 }
 
-fn valid_name(name: &str) -> bool {
-    (1..=64).contains(&name.len())
-        && !name.starts_with(['.', '-'])
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-}
-
 pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
     let bad = |message: &str| (2, message.to_string());
     let mut role = Role::Implement;
-    let (mut only, mut cwd, mut brief, mut effort, mut timeout, mut name) =
-        (None, None, None, None, None, None);
+    let (mut only, mut cwd, mut brief, mut effort, mut timeout, mut name, mut project) =
+        (None, None, None, None, None, None, None);
     let mut add_dirs = Vec::new();
     let mut i = 0;
     while let Some(arg) = args.get(i) {
@@ -89,6 +87,7 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
             "--timeout",
             "--name",
             "--add-dir",
+            "--project",
         ];
         if !flags.contains(&arg.as_str()) {
             return Err(bad("unknown run option"));
@@ -118,12 +117,11 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
             }
             "--name" => {
                 if !valid_name(value) {
-                    return Err(bad(
-                        "bad --name (use 1-64 letters, digits, '.', '_' or '-', not starting with '.' or '-')",
-                    ));
+                    return Err(bad(command::BAD_NAME));
                 }
                 name = Some(value.clone());
             }
+            "--project" => project = Some(value.clone()),
             _ => add_dirs.push(PathBuf::from(value)),
         }
         i += 2;
@@ -142,48 +140,26 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
         timeout,
         name,
         add_dirs,
+        project,
     })
 }
 
-/// Replaces each `{name}` in one left-to-right pass, so substituted text is never rescanned.
-pub fn fill(arg: &str, values: &[(&str, &str)]) -> String {
-    let mut out = String::new();
-    let mut rest = arg;
-    'scan: while let Some(at) = rest.find('{') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at..];
-        for (name, value) in values {
-            if let Some(after) = rest.strip_prefix(name) {
-                out.push_str(value);
-                rest = after;
-                continue 'scan;
-            }
-        }
-        out.push('{');
-        rest = &rest[1..];
-    }
-    out.push_str(rest);
-    out
-}
-
-pub fn argv(run: &Run, role: Role, values: &[(&str, &str)], add_dirs: &[&str]) -> Vec<String> {
-    let mut argv = Vec::new();
-    for arg in &run.commands[&role] {
-        if arg != "{add_dirs}" {
-            argv.push(fill(arg, values));
-            continue;
-        }
-        for dir in add_dirs {
-            for part in run.add_dir.iter().flatten() {
-                argv.push(if part == "{dir}" {
-                    dir.to_string()
-                } else {
-                    part.clone()
-                });
-            }
-        }
-    }
-    argv
+/// The run command for `role`, expanded: `values` fill inside arguments, `{add_dirs}` repeats
+/// `run.add_dir` once per directory and `{overlay}` takes the project role's overlay.
+pub fn argv(
+    run: &Run,
+    role: Role,
+    values: &[(&str, &str)],
+    add_dirs: &[&str],
+    overlay: &[String],
+) -> Vec<String> {
+    let values = command::Values {
+        fills: values,
+        template: run.add_dir.as_deref(),
+        add_dirs,
+        overlay,
+    };
+    command::argv(command::expand(&run.commands[&role], &values), "")
 }
 
 /// Why `backend` cannot take this run, or `None` when it can.
@@ -200,10 +176,7 @@ pub fn unsupported(backend: &Backend, options: &RunOptions) -> Option<String> {
     {
         return Some(format!("effort {effort} is not in efforts"));
     }
-    if !options.add_dirs.is_empty() && !command.iter().any(|a| a == "{add_dirs}") {
-        return Some(format!("the {role} command takes no --add-dir"));
-    }
-    None
+    command::unsupported(command, &[], !options.add_dirs.is_empty(), true, role)
 }
 
 pub fn scrubbed(settings: &RunEnv, key: &str) -> bool {
@@ -575,13 +548,10 @@ pub fn run(
     if !cwd.is_dir() {
         return Err((2, "--cwd must be a directory".into()));
     }
-    let mut add_dirs = Vec::new();
-    for dir in &options.add_dirs {
-        let dir = fs::canonicalize(dir).map_err(|e| input("--add-dir", e))?;
-        if !dir.is_dir() {
-            return Err((2, "--add-dir must be a directory".into()));
-        }
-        add_dirs.push(dir);
+    let add_dirs = command::canonical_dirs(&options.add_dirs)?;
+    let project = projects::select(config, options.project.as_deref(), &cwd)?;
+    if let Some(selected) = &project {
+        eprintln!("{}: {}", host.program, selected.line());
     }
     let indices: Vec<usize> = match &options.only {
         Some(name) => {
@@ -605,31 +575,48 @@ pub fn run(
             "no backend has a headless command for these options".into(),
         ));
     }
-    // Wait for other rota selections instead of failing a batch of runs.
-    let lock = lock(config, true, host.program)?;
-    let mut ledger = crate::admissions::Ledger::load(&config.state_file);
     // Candidates are read in configured order until one admits; the rest are not checked.
     let mut readings: Vec<_> = config
         .backends
         .iter()
         .map(|_| readings::not_checked())
         .collect();
+    let (normal, reasons) = supported(config, &indices, &mut readings, |index| {
+        let command = &config.backends[index].run.as_ref()?.commands[&options.role];
+        projects::overlay(project.as_ref(), options.role, command).err()
+    });
+    if normal.is_empty() {
+        return Err(unsupported_refusal("run", &reasons));
+    }
+    // Wait for other rota selections instead of failing a batch of runs.
+    let lock = lock(config, true, host.program)?;
+    let mut ledger = crate::admissions::Ledger::load(&config.state_file);
+    let entry = Entry {
+        role: options.role,
+        level: None,
+        cwd: &cwd,
+        project: project.as_ref().map(|p| p.name),
+    };
+    let (scanner, live) = project_holds(config, project.as_ref(), &entry, &readings, false)?;
     let candidates = decision::Candidates {
-        normal: indices.clone(),
+        normal,
         fallback: None,
     };
     let pick = decision::select(config, &candidates, options.role, &mut readings, |index| {
+        let backend = &config.backends[index];
+        if let Some(reason) = project
+            .as_ref()
+            .and_then(|p| projects::backend_hold(p, options.role, &backend.name, &live))
+        {
+            return decision::Reading {
+                problem: Some(reason),
+                ..decision::Reading::default()
+            };
+        }
         let mode = readings::QuotaMode::Admit;
-        readings::check(&config.backends[index], &cwd, mode, &ledger, host.session)
+        readings::check(backend, &cwd, mode, &ledger, host.session)
     });
-    log(
-        config,
-        options.role,
-        None,
-        &cwd,
-        &readings,
-        pick.as_ref().ok(),
-    )?;
+    log(config, &entry, &readings, pick.as_ref().ok(), None)?;
     print_readings(config, &indices, &readings, options.role, host.program);
     let pick = pick.map_err(|e| (e.code, e.message))?;
     let backend = &config.backends[pick.index];
@@ -639,7 +626,7 @@ pub fn run(
         readings::probe(backend, prepare, 30, &cwd).map_err(io_failure)?;
     }
     if let Err(problem) = readings::recheck_cap(backend, &mut readings[pick.index]) {
-        log(config, options.role, None, &cwd, &readings, None)?;
+        log(config, &entry, &readings, None, None)?;
         return Err((3, problem));
     }
     // The run gets its own scope, so rota can stop and wait for every process it starts.
@@ -663,6 +650,16 @@ pub fn run(
         );
         return Err((1, message));
     }
+    let mut admitted = match (&project, &scanner) {
+        (Some(selected), Some(scanner)) => Some(projects::Admitted::write(
+            &config.state_file,
+            selected.name,
+            options.role,
+            &backend.name,
+            scanner,
+        )?),
+        _ => None,
+    };
     record_admission(&mut ledger, backend, options.role, &readings[pick.index])?;
     let (id, run_dir) = session::claim(&config.state_file, &options.name).map_err(io_failure)?;
     let run_dir = fs::canonicalize(&run_dir).map_err(io_failure)?;
@@ -675,9 +672,15 @@ pub fn run(
         ("{cwd}", utf8(&cwd)?),
         ("{report}", utf8(&report)?),
         ("{effort}", effort.as_str()),
+        (command::NAME, options.name.as_str()),
     ];
+    let overlay = projects::overlay(project.as_ref(), options.role, &run.commands[&options.role])
+        .map_err(|e| (2, e))?;
     let unit = format!("rota-{id}-{}.scope", random()?);
-    let argv = scoped(Some(&unit), argv(run, options.role, &values, &dirs));
+    let argv = scoped(
+        Some(&unit),
+        argv(run, options.role, &values, &dirs, overlay),
+    );
     let mut scope = Scope::new(unit.clone());
     let output = OpenOptions::new()
         .write(true)
@@ -708,6 +711,13 @@ pub fn run(
     };
     let deadline = Instant::now() + Duration::from_secs(options.timeout);
     let leader = child.id() as i32;
+    // The leader keeps the slot live even if this supervisor dies first.
+    if let (Some(admitted), Some(scanner)) = (&mut admitted, &scanner)
+        && let Ok(process) = scanner.identity(child.id())
+        && let Err(e) = admitted.add(process)
+    {
+        eprintln!("{}: {}", host.program, e.1);
+    }
     let record = Session {
         schema: SCHEMA,
         id: id.clone(),
@@ -747,6 +757,9 @@ pub fn run(
         return Err((code, format!("{problem}; {message} (unit {unit})")));
     }
     drop(registry);
+    if let Some(admitted) = admitted {
+        admitted.keep();
+    }
     drop(lock);
     // From here on a closed stdout must not unwind past the live run.
     let _ = writeln!(
@@ -816,7 +829,7 @@ mod tests {
     #[test]
     fn run_arguments() {
         let line = "--brief b.md --name eon-x.review_2 --timeout 90m --role review \
-                    --add-dir /a --add-dir /b --effort xhigh --cwd /w";
+                    --add-dir /a --add-dir /b --effort xhigh --cwd /w --project tide";
         let parsed = parse(&args(line)).unwrap();
         assert_eq!(parsed.role, Role::Review);
         assert_eq!(parsed.timeout, 5400);
@@ -824,10 +837,11 @@ mod tests {
         assert_eq!(parsed.add_dirs, [PathBuf::from("/a"), PathBuf::from("/b")]);
         assert_eq!(parsed.effort.as_deref(), Some("xhigh"));
         assert_eq!(parsed.cwd, Some(PathBuf::from("/w")));
+        assert_eq!(parsed.project.as_deref(), Some("tide"));
         let parsed = parse(&args("--brief b --name n --timeout 5")).unwrap();
         assert_eq!(
-            (parsed.role, parsed.cwd, parsed.effort),
-            (Role::Implement, None, None)
+            (parsed.role, parsed.cwd, parsed.effort, parsed.project),
+            (Role::Implement, None, None, None)
         );
         for bad in [
             "--brief b --name n",
@@ -839,6 +853,7 @@ mod tests {
             "--brief b --name n --timeout 5 --sandbox read-only",
             "--brief b --name n --timeout 5 extra",
             "--brief b --name n --timeout",
+            "--brief b --name n --timeout 5 --project",
         ] {
             assert_eq!(parse(&args(bad)).unwrap_err().0, 2, "{bad}");
         }
@@ -867,18 +882,16 @@ mod tests {
     #[test]
     fn placeholders_fill_in_one_pass_and_add_dirs_repeat() {
         let values = [("{cwd}", "/w/{effort}"), ("{effort}", "xhigh")];
-        assert_eq!(fill("effort={effort}", &values), "effort=xhigh");
-        assert_eq!(fill("{cwd}/{x}", &values), "/w/{effort}/{x}");
         let config = Config::parse(include_str!("../config.example.toml"), "rota").unwrap();
         let run = config.backends[2].run.as_ref().unwrap();
-        let built = argv(run, Role::Implement, &values, &["/d1", "/d2"]);
+        let built = argv(run, Role::Implement, &values, &["/d1", "/d2"], &[]);
         let at = built.iter().position(|a| a == "workspace-write").unwrap();
         assert_eq!(
             built[at + 1..at + 5],
             ["--add-dir", "/d1", "--add-dir", "/d2"]
         );
         assert!(built.contains(&"model_reasoning_effort=xhigh".to_string()));
-        let none = argv(run, Role::Implement, &values, &[]);
+        let none = argv(run, Role::Implement, &values, &[], &[]);
         assert_eq!(none.len(), built.len() - 4);
         assert!(!none.iter().any(|a| a.contains("add_dirs")));
     }

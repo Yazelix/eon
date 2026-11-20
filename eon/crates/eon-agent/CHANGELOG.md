@@ -5,6 +5,31 @@ see.
 
 ## Unreleased
 
+- Project profiles: `[projects.NAME]` caps live agents in total (`max`), per
+  role (`roles.ROLE.max`) and per backend (`backends.BACKEND.max`). It runs a
+  role's `guard` in the working directory, and it inserts a role's `overlay`
+  (keyed by command executable) at a command's `{overlay}`.
+  - `launch` and `run` select a project with `--project NAME` or by the working
+    directory's repository (including linked worktrees). The popup never
+    selects one.
+  - Admissions record their process (PID and start time) under `agents/`
+    beside `state_file`, and caps count records whose process still runs.
+  - Holds name the live PIDs or the guard's first stderr line, and decision
+    records gain `project` and `hold`.
+  - Leads are never capped.
+- `launch --name NAME` fills `{name}`. `launch --add-dir DIR` repeats the
+  backend's new `add_dir` template at `{add_dirs}`. `run` fills `{name}` with
+  its `--name`.
+  - A backend whose command needs an option that was not given is skipped with
+    its reason, and the command is refused (exit 2) when none remains.
+  - Launch commands fill `{cwd}` inside any argument, not only as a whole
+    argument.
+  - Configuration refuses `{prompt}` inside another argument, `{dir}` outside
+    an `add_dir` template, and any placeholder in the program.
+  - `--popup` refuses `--project`, `--name` and `--add-dir`.
+- Upgrade every binary that reads a shared configuration before adding these
+  keys: older builds refuse them.
+
 - `parser = "codexbar"` reads Codex and Claude five-hour and weekly limits
   and Claude's named model weeklies through CodexBar CLI. `status --json`
   includes the provider identity when available. Upgrade every binary using

@@ -14,9 +14,9 @@ Build with `cargo build --release` (Linux, Rust 1.96 or later). Copy
 paths, commands, models and example percentages.
 
 ```text
-rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--dry-run] <prompt-file>
 rota launch --popup [--only BACKEND] [--dry-run]
-rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
 rota ps [--json] [--all]
 rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
 rota slot ls [--json]
@@ -361,13 +361,35 @@ Custom popup and headless argv remain your explicit command choices too.
   refusal are explicit log decisions. `trusted_settings` atomically appends the
   folder to `trustedWorkspaces`, preserving other JSON keys and the file mode.
   `prepare` is an optional list of checked commands run just before exec.
+- Level commands (`[backends.commands]`) take one whole `{prompt}` argument,
+  `{cwd}` and `{name}` (from `launch --name`) inside any argument, `{add_dirs}`
+  (repeating the backend's own optional `add_dir` template once per
+  `launch --add-dir DIR`) and `{overlay}`. None may be the program. A backend
+  whose command needs `--name`, or lacks `{add_dirs}` when `--add-dir` is
+  given, is skipped with that reason, and the launch is refused (exit 2) when
+  no backend remains. `popup_command` takes none of `{prompt}`, `{name}`,
+  `{add_dirs}` or `{overlay}`.
+- `[projects.P]` profiles (`max`, `[projects.P.backends.B] max`,
+  `[projects.P.roles.R]` with `max`, `guard` and `overlay`) apply to launches
+  and runs selected with `--project P` or made in P's `repo` (any folder or
+  linked worktree). Caps count live agents: an admission records its process
+  (PID and start time) in `agents/` beside `state_file`, and a record counts
+  while that process, or a run's leader, still runs. A reached cap or a failing
+  guard holds (exit 3) before any quota is read, naming the live PIDs or the
+  guard's first stderr line. Overlays are keyed by the command's executable and
+  apply to every backend the role reaches that runs it; a role with overlays
+  picks only executables it names. Leads and the popup are never capped. The
+  full rules are in Eon's
+  [agent projects](https://github.com/Yazelix/eon/blob/edge/docs/CONFIGURATION.md#agent-projects) section.
 - `[backends.run]` makes a backend usable by `rota run`. `commands.implement`
   and `commands.review` are argv arrays; a role with a command can run headless
   even when `roles` leaves it out, and its quota limits apply. There is no
   `commands.lead`. `{brief}`,
-  `{cwd}`, `{report}` and `{effort}` are replaced inside any argument;
-  `{add_dirs}` is a whole argument, never the first, that repeats `add_dir` (an
-  argv fragment with one `{dir}` argument) once per `--add-dir`. `stdin` is `"brief"` or `"null"`;
+  `{cwd}`, `{report}`, `{effort}` and `{name}` (the `--name` value) are replaced
+  inside any argument; `{add_dirs}` is a whole argument, never the first, that
+  repeats `add_dir` (an argv fragment with one `{dir}` in total, such as
+  `["--add-dir", "{dir}"]` or `["--add-dir={dir}"]`) once per `--add-dir`, and
+  `{overlay}` takes the project role's overlay. `stdin` is `"brief"` or `"null"`;
   with `"null"` every command must name `{brief}`. `--effort` must be one of
   `efforts` and defaults to `default_effort`.
 - `[run]` changes the environment of headless runs only, never of checks.
@@ -432,7 +454,7 @@ source identity is checked before local admission and again before execution;
 a changed/unverifiable source refuses with125. No automatic post-start retry.
 
 The optional `[slots.boat]` route runs permitted headless builds with no caller credentials on a
-Boat VM using a separate lease; see Eon's [configuration reference](../../../docs/CONFIGURATION.md#remote-heavy-builds)
+Boat VM using a separate lease; see Eon's [configuration reference](https://github.com/Yazelix/eon/blob/edge/docs/CONFIGURATION.md#remote-heavy-builds)
 for policy, budget, exact-tree transfer, results and failure behavior. The default
 allowlist is empty. Boat is a local prerequisite, not an injected VM credential.
 

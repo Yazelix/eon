@@ -1,4 +1,6 @@
+use crate::command::{self, Part};
 use crate::config::{Backend, Config, Level, Role};
+use crate::projects::{self, Selected};
 use crate::readings::QuotaMode;
 use crate::{admissions, decision, readings};
 use fs2::FileExt;
@@ -19,6 +21,9 @@ pub struct Options {
     pub dry_run: bool,
     pub popup: bool,
     pub prompt_file: PathBuf,
+    pub project: Option<String>,
+    pub name: Option<String>,
+    pub add_dirs: Vec<PathBuf>,
 }
 
 pub fn parse(args: &[String]) -> Result<Options, Failure> {
@@ -30,12 +35,15 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
         dry_run: false,
         popup: false,
         prompt_file: PathBuf::new(),
+        project: None,
+        name: None,
+        add_dirs: Vec::new(),
     };
     let mut i = 0;
     let mut role_or_level = false;
     while let Some(arg) = args.get(i) {
         match arg.as_str() {
-            "--role" | "--level" | "--only" => {
+            "--role" | "--level" | "--only" | "--project" | "--name" | "--add-dir" => {
                 i += 1;
                 let value = args.get(i).ok_or_else(|| bad("option needs a value"))?;
                 match arg.as_str() {
@@ -56,6 +64,14 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
                             _ => return Err(bad("bad --level")),
                         }
                     }
+                    "--project" => options.project = Some(value.clone()),
+                    "--name" => {
+                        if !command::valid_name(value) {
+                            return Err(bad(command::BAD_NAME));
+                        }
+                        options.name = Some(value.clone());
+                    }
+                    "--add-dir" => options.add_dirs.push(PathBuf::from(value)),
                     _ => options.only = Some(value.clone()),
                 }
             }
@@ -71,8 +87,15 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
         i += 1;
     }
     if options.popup {
-        if args.len() != i || role_or_level {
-            return Err(bad("--popup takes no prompt file, --role or --level"));
+        if args.len() != i
+            || role_or_level
+            || options.project.is_some()
+            || options.name.is_some()
+            || !options.add_dirs.is_empty()
+        {
+            return Err(bad(
+                "--popup takes no prompt file, --role, --level, --project, --name or --add-dir",
+            ));
         }
     } else if args.len() != i + 1 {
         return Err(bad("launch needs exactly one prompt file"));
@@ -148,10 +171,18 @@ fn shell_quote(text: &str) -> String {
 }
 
 pub fn display_command(backend: &Backend, level: Level, cwd: &str, prompt_file: &str) -> String {
-    display_argv(backend, &backend.commands[&level], cwd, prompt_file)
+    let values = command::Values {
+        fills: &[("{cwd}", cwd)],
+        template: None,
+        add_dirs: &[],
+        overlay: &[],
+    };
+    let parts = command::expand(&backend.commands[&level], &values);
+    display(backend, &parts, prompt_file)
 }
 
-fn display_argv(backend: &Backend, argv: &[String], cwd: &str, prompt_file: &str) -> String {
+/// A shell line for dry runs: the prompt is shown as `"$(cat FILE)"`, never its content.
+fn display(backend: &Backend, parts: &[Part], prompt_file: &str) -> String {
     let mut args = Vec::new();
     if !backend.env.is_empty() || !backend.unset_env.is_empty() {
         args.push("env".into());
@@ -162,24 +193,37 @@ fn display_argv(backend: &Backend, argv: &[String], cwd: &str, prompt_file: &str
             args.push(shell_quote(&format!("{key}={value}")));
         }
     }
-    for arg in argv {
-        args.push(match arg.as_str() {
-            "{prompt}" => format!("\"$(cat {})\"", shell_quote(prompt_file)),
-            "{cwd}" => shell_quote(cwd),
-            _ => shell_quote(arg),
+    for part in parts {
+        args.push(match part {
+            Part::Prompt => format!("\"$(cat {})\"", shell_quote(prompt_file)),
+            Part::Text(arg) => shell_quote(arg),
         });
     }
     args.join(" ")
 }
 
+/// What a decision record says about the request.
+pub struct Entry<'a> {
+    pub role: Role,
+    pub level: Option<Level>,
+    pub cwd: &'a Path,
+    /// The selected project, when there is one.
+    pub project: Option<&'a str>,
+}
+
 pub fn log(
     config: &Config,
-    role: Role,
-    level: Option<Level>,
-    cwd: &Path,
+    entry: &Entry<'_>,
     readings: &[decision::Reading],
     pick: Option<&decision::Pick>,
+    hold: Option<&str>,
 ) -> Result<(), Failure> {
+    let Entry {
+        role,
+        level,
+        cwd,
+        project,
+    } = *entry;
     ensure_parent(&config.log_file).map_err(io_failure)?;
     let mut file = OpenOptions::new()
         .create(true)
@@ -187,13 +231,19 @@ pub fn log(
         .mode(0o600)
         .open(&config.log_file)
         .map_err(io_failure)?;
-    let entry = serde_json::json!({
+    let mut entry = serde_json::json!({
         "time": SystemTime::now().duration_since(UNIX_EPOCH).map_err(io_failure)?.as_secs(),
         "folder": cwd, "role": role, "level": level,
         "pick": pick.map(|p| &config.backends[p.index].name),
         "decision": match pick { Some(p) if p.fallback => "FALLBACK", Some(_) => "pick", None => "REFUSAL" },
         "readings": config.backends.iter().zip(readings).map(|(b,r)| serde_json::json!({"backend": b.name, "reading": r, "availability": decision::availability(b,r,role).err()})).collect::<Vec<_>>()
     });
+    if let Some(project) = project {
+        entry["project"] = project.into();
+    }
+    if let Some(hold) = hold {
+        entry["hold"] = hold.into();
+    }
     writeln!(file, "{entry}").map_err(io_failure)?;
     file.sync_data().map_err(io_failure)
 }
@@ -262,6 +312,78 @@ pub fn record_admission(
     })
 }
 
+/// Keeps the candidates these options can use; each other one gets its reason as the
+/// reading's problem, so status output and the decision record say why it was skipped.
+/// Returns the kept indices and the `backend: reason` texts.
+pub fn supported(
+    config: &Config,
+    indices: &[usize],
+    readings: &mut [decision::Reading],
+    reason: impl Fn(usize) -> Option<String>,
+) -> (Vec<usize>, Vec<String>) {
+    let mut kept = Vec::new();
+    let mut reasons = Vec::new();
+    for &index in indices {
+        match reason(index) {
+            None => kept.push(index),
+            Some(why) => {
+                reasons.push(format!("{}: {why}", config.backends[index].name));
+                readings[index] = decision::Reading {
+                    problem: Some(why),
+                    ..decision::Reading::default()
+                };
+            }
+        }
+    }
+    (kept, reasons)
+}
+
+/// The refusal when static reasons leave no candidate: waiting cannot change configuration.
+pub fn unsupported_refusal(what: &str, reasons: &[String]) -> Failure {
+    (
+        2,
+        format!("no backend can take this {what}: {}", reasons.join("; ")),
+    )
+}
+
+/// The project's total and role caps and its role guard, checked before any backend is read
+/// (EON-C40 clause 6). A hold is logged unless `dry_run`. Returns the scanner and live records
+/// a work admission needs; a lead gets neither, since leads are not counted.
+pub fn project_holds(
+    config: &Config,
+    project: Option<&Selected<'_>>,
+    entry: &Entry<'_>,
+    readings: &[decision::Reading],
+    dry_run: bool,
+) -> Result<(Option<projects::Scanner>, Vec<projects::Record>), Failure> {
+    let Some(selected) = project else {
+        return Ok((None, Vec::new()));
+    };
+    let held = |message: String| -> Failure {
+        if !dry_run && let Err(e) = log(config, entry, readings, None, Some(&message)) {
+            return e;
+        }
+        (3, message)
+    };
+    let mut found = (None, Vec::new());
+    if entry.role != Role::Lead {
+        let scanner = projects::Scanner::system()
+            .map_err(|e| held(format!("cannot scan /proc for project caps: {e}")))?;
+        let live = projects::scan(
+            &projects::records_dir(&config.state_file),
+            &scanner,
+            !dry_run,
+        )
+        .map_err(held)?;
+        if let Some(message) = projects::hold(selected, entry.role, &live) {
+            return Err(held(message));
+        }
+        found = (Some(scanner), live);
+    }
+    projects::guard(selected, entry.role, entry.cwd).map_err(held)?;
+    Ok(found)
+}
+
 pub fn print_readings(
     config: &Config,
     indices: &[usize],
@@ -314,12 +436,29 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         })
         .transpose()?
         .unwrap_or("");
+    let add_dirs = command::canonical_dirs(&options.add_dirs)?;
+    let dirs: Vec<&str> = add_dirs
+        .iter()
+        .map(|d| {
+            d.to_str()
+                .ok_or_else(|| (2, "--add-dir must be UTF-8".to_string()))
+        })
+        .collect::<Result<_, _>>()?;
+    // The person's Agent popup is never a project's agent.
+    let project = if options.popup {
+        None
+    } else {
+        projects::select(config, options.project.as_deref(), &cwd)?
+    };
+    if let Some(selected) = &project {
+        eprintln!("{}: {}", host.program, selected.line());
+    }
     let popup_backend = if options.popup {
         config.popup_backend.as_deref()
     } else {
         None
     };
-    let candidates =
+    let mut candidates =
         decision::candidates(config, options.role, options.only.as_deref(), popup_backend)
             .map_err(|e| (e.code, e.message))?;
     let indices: Vec<_> = candidates
@@ -328,24 +467,66 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         .copied()
         .chain(candidates.fallback)
         .collect();
-    // Serialize rota launches from scan through exec.
-    let _lock = if options.dry_run {
-        None
-    } else {
-        Some(lock(config, false, host.program)?)
-    };
-    let mut ledger = admissions::Ledger::load(&config.state_file);
-    let mode = match (options.role, options.dry_run) {
-        (Role::Lead, _) => QuotaMode::Skip,
-        (_, true) => QuotaMode::Read,
-        (_, false) => QuotaMode::Admit,
-    };
     // Candidates are read in configured order until one admits; the rest are not checked.
     let mut readings: Vec<_> = config
         .backends
         .iter()
         .map(|_| readings::not_checked())
         .collect();
+    let argv_of = |backend: &Backend| {
+        if options.popup {
+            backend.popup_command()
+        } else {
+            Some(backend.commands[&options.level].clone())
+        }
+    };
+    let level_name = match options.level {
+        Level::Medium => "medium",
+        Level::High => "high",
+    };
+    // Reasons these options can never use a backend, decided before anything is read.
+    let (kept, reasons) = supported(config, &indices, &mut readings, |index| {
+        let backend = &config.backends[index];
+        let argv = argv_of(backend)?;
+        let overlay = match projects::overlay(project.as_ref(), options.role, &argv) {
+            Ok(overlay) => overlay,
+            Err(why) => return Some(why),
+        };
+        command::unsupported(
+            &argv,
+            overlay,
+            !dirs.is_empty(),
+            options.name.is_some(),
+            level_name,
+        )
+    });
+    if !reasons.is_empty() {
+        candidates.normal.retain(|i| kept.contains(i));
+        candidates.fallback = candidates.fallback.filter(|i| kept.contains(i));
+        if candidates.normal.is_empty() && candidates.fallback.is_none() {
+            return Err(unsupported_refusal("launch", &reasons));
+        }
+    }
+    // Serialize rota launches from scan through exec.
+    let _lock = if options.dry_run {
+        None
+    } else {
+        Some(lock(config, false, host.program)?)
+    };
+    let entry = Entry {
+        role: options.role,
+        level: Some(options.level),
+        cwd: &cwd,
+        project: project.as_ref().map(|p| p.name),
+    };
+    let (scanner, live) =
+        project_holds(config, project.as_ref(), &entry, &readings, options.dry_run)?;
+    let mut ledger = admissions::Ledger::load(&config.state_file);
+    let mode = match (options.role, options.dry_run) {
+        (Role::Lead, _) => QuotaMode::Skip,
+        (_, true) => QuotaMode::Read,
+        (_, false) => QuotaMode::Admit,
+    };
     let result = decision::select(config, &candidates, options.role, &mut readings, |index| {
         let backend = &config.backends[index];
         if options.popup && backend.popup_command().is_none() {
@@ -353,20 +534,20 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
                 problem: Some("no popup_command for this executable".into()),
                 ..decision::Reading::default()
             }
+        } else if let Some(reason) = project
+            .as_ref()
+            .and_then(|p| projects::backend_hold(p, options.role, &backend.name, &live))
+        {
+            decision::Reading {
+                problem: Some(reason),
+                ..decision::Reading::default()
+            }
         } else {
             readings::check(backend, &cwd, mode, &ledger, host.session)
         }
     });
     if !options.dry_run {
-        let level = Some(options.level);
-        log(
-            config,
-            options.role,
-            level,
-            &cwd,
-            &readings,
-            result.as_ref().ok(),
-        )?;
+        log(config, &entry, &readings, result.as_ref().ok(), None)?;
     }
     print_readings(config, &indices, &readings, options.role, host.program);
     let pick = result.map_err(|e| (e.code, e.message))?;
@@ -378,18 +559,19 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         );
     }
     println!("pick: {}", backend.name);
-    let command = if options.popup {
-        backend
-            .popup_command()
-            .expect("selection checked popup command")
-    } else {
-        backend.commands[&options.level].clone()
+    let command = argv_of(backend).expect("selection checked popup command");
+    let overlay =
+        projects::overlay(project.as_ref(), options.role, &command).map_err(|e| (2, e))?;
+    let name = options.name.as_deref().unwrap_or_default();
+    let values = command::Values {
+        fills: &[("{cwd}", cwd_text), (command::NAME, name)],
+        template: backend.add_dir.as_deref(),
+        add_dirs: &dirs,
+        overlay,
     };
+    let parts = command::expand(&command, &values);
     if options.dry_run {
-        println!(
-            "command: {}",
-            display_argv(backend, &command, cwd_text, prompt_path)
-        );
+        println!("command: {}", display(backend, &parts, prompt_path));
         return Ok(());
     }
     if let Some(path) = &backend.trusted_settings {
@@ -398,29 +580,24 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
     for prepare in &backend.prepare {
         readings::probe(backend, prepare, 30, &cwd).map_err(io_failure)?;
     }
-    let argv: Vec<_> = command
-        .iter()
-        .map(|a| match a.as_str() {
-            "{prompt}" => brief
-                .as_ref()
-                .expect("only ordinary launch has a prompt")
-                .1
-                .clone(),
-            "{cwd}" => cwd_text.into(),
-            _ => a.clone(),
-        })
-        .collect();
+    let prompt = brief.as_ref().map_or("", |(_, prompt)| prompt.as_str());
+    let argv = command::argv(parts, prompt);
     if let Err(problem) = readings::recheck_cap(backend, &mut readings[pick.index]) {
-        log(
-            config,
-            options.role,
-            Some(options.level),
-            &cwd,
-            &readings,
-            None,
-        )?;
+        log(config, &entry, &readings, None, None)?;
         return Err((3, problem));
     }
+    // Written before exec, so the agent counts from the moment it is admitted; a failed
+    // exec drops it.
+    let _admitted = match (&project, &scanner) {
+        (Some(selected), Some(scanner)) => Some(projects::Admitted::write(
+            &config.state_file,
+            selected.name,
+            options.role,
+            &backend.name,
+            scanner,
+        )?),
+        _ => None,
+    };
     record_admission(&mut ledger, backend, options.role, &readings[pick.index])?;
     let error = readings::command(backend, &argv).current_dir(&cwd).exec();
     Err(io_failure(format!(
@@ -450,6 +627,21 @@ mod tests {
         assert_eq!(parsed.role, Role::Review);
         assert_eq!(parsed.level, Level::Medium);
         assert!(parsed.dry_run);
+        let named = parse(&args(&[
+            "--project",
+            "tide",
+            "--name",
+            "tide-1",
+            "--add-dir",
+            "/a",
+            "--add-dir",
+            "/b",
+            "task",
+        ]))
+        .unwrap();
+        assert_eq!(named.project.as_deref(), Some("tide"));
+        assert_eq!(named.name.as_deref(), Some("tide-1"));
+        assert_eq!(named.add_dirs, [PathBuf::from("/a"), PathBuf::from("/b")]);
         let lead = parse(&["--role".to_string(), "lead".into(), "task".into()]).unwrap();
         assert_eq!(lead.role, Role::Lead);
         for args in [
@@ -459,6 +651,10 @@ mod tests {
             vec!["--level", "bad", "task"],
             vec!["--wat", "task"],
             vec!["one", "two"],
+            vec!["--name", "-bad", "task"],
+            vec!["--popup", "--project", "p"],
+            vec!["--popup", "--name", "n"],
+            vec!["--popup", "--add-dir", "/x"],
         ] {
             assert_eq!(
                 parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())

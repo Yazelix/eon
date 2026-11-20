@@ -92,9 +92,9 @@ running Eon window. Configure its separate
 [agent.toml](CONFIGURATION.md#agent-commands) first.
 
 ```text
-eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>
+eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--dry-run] <prompt-file>
 eon agent launch --popup [--only BACKEND] [--dry-run]
-eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
 eon agent ps [--json] [--all]
 eon agent slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
 eon agent slot ls [--json]
@@ -111,6 +111,16 @@ backends that opt in with `roles = ["lead"]`; `run` refuses it. Dry-run prints
 its decision and command without spending an observation or writing logs, locks
 or trust settings. Status runs read-only checks without refresh and adds a
 `lead` column.
+
+A launch or run in a configured project's repository (any folder or linked
+worktree of it), or with `--project NAME`, follows that project's profile: its
+caps on live agents in total, per role and per backend, its role guards and its
+role overlays (see [agent projects](CONFIGURATION.md#agent-projects)). A reached
+cap or a failing guard holds before any quota is read, naming the live PIDs or
+the guard's reason. `--name NAME` fills `{name}` and each `--add-dir DIR` repeats
+the backend's `add_dir` template at `{add_dirs}`; a backend whose command needs
+an option that was not given is skipped with its reason. The popup never
+selects a project, and lead launches are never capped.
 JSON status includes the config file used. Exit codes retain rota's meanings:
 2 for invalid input/config, 3 for admission refusal and 1 for operational error.
 Headless run passes through the agent's status after cleanup, with 124 for a

@@ -41,7 +41,7 @@ pub struct Config {
     pub slots: SlotConfig,
     pub backends: Vec<Backend>,
     #[serde(default)]
-    pub projects: BTreeMap<String, crate::cleanup::Project>,
+    pub projects: BTreeMap<String, crate::projects::Project>,
     #[serde(default)]
     pub cleanup: crate::cleanup::Cleanup,
 }
@@ -242,6 +242,8 @@ pub struct Backend {
     pub roles: Vec<Role>,
     pub commands: BTreeMap<Level, Vec<String>>,
     pub popup_command: Option<Vec<String>>,
+    /// The `{add_dirs}` template of the level commands; `run` commands use `run.add_dir`.
+    pub add_dir: Option<Vec<String>>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
@@ -406,15 +408,15 @@ impl Backend {
 }
 
 fn run_valid(run: &Run) -> bool {
-    let most_add_dirs = usize::from(run.add_dir.is_some());
+    let shape = crate::command::Shape {
+        prompt: false,
+        add_dirs: run.add_dir.is_some(),
+        overlay_and_name: true,
+    };
     !run.commands.is_empty()
         && run.commands.values().all(|c| {
             command_valid(c)
-                && c[0] != "{add_dirs}"
-                && c.iter()
-                    .filter(|a| a.contains("{add_dirs}"))
-                    .all(|a| a == "{add_dirs}")
-                && c.iter().filter(|a| *a == "{add_dirs}").count() <= most_add_dirs
+                && crate::command::problem(c, shape).is_none()
                 && (run.stdin == Stdin::Brief || c.iter().any(|a| a.contains("{brief}")))
         })
         && run.efforts.iter().all(|e| {
@@ -423,9 +425,10 @@ fn run_valid(run: &Run) -> bool {
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         })
         && run.efforts.contains(&run.default_effort)
-        && run.add_dir.as_ref().is_none_or(|f| {
-            f.iter().filter(|a| *a == "{dir}").count() == 1 && f.iter().all(|a| !a.contains('\0'))
-        })
+        && run
+            .add_dir
+            .as_ref()
+            .is_none_or(|template| crate::command::template_valid(template))
 }
 
 impl Config {
@@ -450,6 +453,7 @@ impl Config {
     fn validate(&self, program: &str) -> Result<(), String> {
         self.slots.validate()?;
         crate::cleanup::validate(self)?;
+        crate::projects::validate(self)?;
         if self.state_file.as_os_str().is_empty()
             || self.log_file.as_os_str().is_empty()
             || self.state_file == self.log_file
@@ -485,10 +489,37 @@ impl Config {
             if b.roles.iter().collect::<BTreeSet<_>>().len() != b.roles.len() {
                 return fail("duplicate role");
             }
+            let shape = crate::command::Shape {
+                prompt: true,
+                add_dirs: b.add_dir.is_some(),
+                overlay_and_name: true,
+            };
+            for (level, argv) in &b.commands {
+                if let Some(problem) = crate::command::problem(argv, shape) {
+                    let level = match level {
+                        Level::Medium => "medium",
+                        Level::High => "high",
+                    };
+                    return Err(format!("{}: {level} command: {problem}", b.name));
+                }
+            }
+            if b.add_dir
+                .as_ref()
+                .is_some_and(|template| !crate::command::template_valid(template))
+            {
+                return fail("add_dir needs exactly one {dir} and no NUL or other placeholder");
+            }
+            let popup = crate::command::Shape {
+                prompt: false,
+                add_dirs: false,
+                overlay_and_name: false,
+            };
             if b.popup_command.as_ref().is_some_and(|command| {
-                !command_valid(command) || command.iter().any(|arg| arg.contains("{prompt}"))
+                !command_valid(command) || crate::command::problem(command, popup).is_some()
             }) {
-                return fail("popup_command needs a nonempty executable, no NUL or {prompt}");
+                return fail(
+                    "popup_command needs a nonempty executable, no NUL, and no {prompt}, {add_dirs}, {overlay} or {name}",
+                );
             }
             if b.account_check.as_ref().is_some_and(|c| !command_valid(c))
                 || b.prepare.iter().any(|c| !command_valid(c))
@@ -544,7 +575,7 @@ impl Config {
             }
             if b.run.as_ref().is_some_and(|r| !run_valid(r)) {
                 return fail(
-                    "run needs commands, efforts containing default_effort, the brief on stdin or as {brief}, and add_dir with one {dir} for a whole {add_dirs} argument",
+                    "run needs commands, efforts containing default_effort, the brief on stdin or as {brief}, and add_dir with one {dir} for a whole {add_dirs} argument; {overlay} is one whole argument, {dir} only in add_dir, and no placeholder is the program",
                 );
             }
             for limit in b.limits.values() {
@@ -755,6 +786,89 @@ mod tests {
             );
         }
         assert!(Config::parse(&format!("typo = true\n{EXAMPLE}"), "rota").is_err());
+    }
+
+    #[test]
+    fn launch_placeholders_and_the_level_add_dir_template() {
+        let claude = "medium = [\"claude\", \"{prompt}\"]\nhigh = [\"claude\", \"{prompt}\"]";
+        assert_eq!(EXAMPLE.matches(claude).count(), 2);
+        let keys = "name = \"secondary\"\n";
+        assert_eq!(EXAMPLE.matches(keys).count(), 1);
+        let with = |commands: &str, template: &str| {
+            EXAMPLE
+                .replacen(keys, &format!("{keys}{template}"), 1)
+                .replacen(
+                    &format!("[backends.commands]\n{claude}"),
+                    &format!("[backends.commands]\n{commands}"),
+                    1,
+                )
+        };
+        let good = "medium = [\"claude\", \"-n\", \"x-{name}\", \"{overlay}\", \"{add_dirs}\", \"--\", \"{prompt}\"]\n\
+                    high = [\"claude\", \"{prompt}\"]";
+        let config =
+            Config::parse(&with(good, "add_dir = [\"--add-dir={dir}\"]\n"), "rota").unwrap();
+        assert_eq!(
+            config.backends[1].add_dir.as_deref().unwrap(),
+            ["--add-dir={dir}"]
+        );
+        for (commands, template, error) in [
+            (
+                good,
+                "",
+                "secondary: medium command: {add_dirs} needs an add_dir template with one {dir}",
+            ),
+            (
+                good,
+                "add_dir = [\"--add-dir\"]\n",
+                "secondary: add_dir needs exactly one {dir}",
+            ),
+            (
+                "medium = [\"claude\", \"x{prompt}\", \"{prompt}\"]\nhigh = [\"claude\", \"{prompt}\"]",
+                "",
+                "secondary: medium command: needs exactly one whole {prompt} argument",
+            ),
+            (
+                "medium = [\"claude\", \"{dir}\", \"{prompt}\"]\nhigh = [\"claude\", \"{prompt}\"]",
+                "",
+                "secondary: medium command: {dir} belongs only in an add_dir template",
+            ),
+            (
+                "medium = [\"claude\", \"{prompt}\"]\nhigh = [\"{overlay}\", \"{prompt}\"]",
+                "",
+                "secondary: high command: a placeholder cannot be the program",
+            ),
+            (
+                "medium = [\"claude\", \"{prompt}\"]\nhigh = [\"{name}\", \"{prompt}\"]",
+                "",
+                "secondary: high command: a placeholder cannot be the program",
+            ),
+            (
+                "medium = [\"{cwd}/x\", \"{prompt}\"]\nhigh = [\"claude\", \"{prompt}\"]",
+                "",
+                "secondary: medium command: a placeholder cannot be the program",
+            ),
+            (
+                claude,
+                "popup_command = [\"claude\", \"{overlay}\"]\n",
+                "secondary: popup_command needs a nonempty executable",
+            ),
+            (
+                claude,
+                "popup_command = [\"{cwd}/claude\"]\n",
+                "secondary: popup_command needs a nonempty executable",
+            ),
+        ] {
+            let found = Config::parse(&with(commands, template), "rota").unwrap_err();
+            assert!(found.starts_with(error), "{error}\n=> {found}");
+        }
+        // No run placeholder chooses the run's program either.
+        let run = "implement = [\"codex\", \"exec\"";
+        assert_eq!(EXAMPLE.matches(run).count(), 1);
+        for program in ["{effort}", "{cwd}/codex", "{brief}", "{report}", "{name}"] {
+            let text = EXAMPLE.replace(run, &format!("implement = [\"{program}\", \"exec\""));
+            let found = Config::parse(&text, "rota").unwrap_err();
+            assert!(found.contains("run needs commands"), "{program}: {found}");
+        }
     }
 
     #[test]

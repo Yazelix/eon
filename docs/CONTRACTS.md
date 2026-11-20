@@ -7118,6 +7118,12 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   `native_quota_store_admits_one_launch_on_a_stale_claude_reading`; that
   bead's commit is its revision.
 
+  Amended on 2026-11-20 by `eon-eon-agent-lr8sx.39.3` (approved by eon-lead
+  under Lucca's delegation): clause 6 below is replaced. It is proved by
+  `tests/projects.rs` and the `projects::tests`, `command::tests` and
+  `readings::guard_tests` unit tests in `eon/crates/eon-agent`; that bead's
+  commit is its revision.
+
   Amended on 2026-11-17 (`eon-eon-agent-lr8sx.39`; approved by eon-lead
   under Lucca's delegation; its policy clauses carry Lucca's 2026-11-16
   rules). Each clause takes effect when the named child lands and is proven
@@ -7175,11 +7181,31 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
      still apply. It is admitted only by `launch` in the calling terminal,
      refused for `run` and `--pane`, and recorded in the decision log. It
      marks lead launches by convention, not as a security boundary.
-  6. **Projects** (`.39.3`). `[projects.NAME]`, selected by `--project NAME`
-     or by the working directory's repository, sets live-agent caps in total,
-     per role and per backend; guards per role; and per-role command overlays,
-     which apply to every backend that role can pick. Launch commands accept
-     `{name}` and `{add_dirs}` as `run` commands do.
+  6. **Projects** (`.39.3`). `[projects.NAME]` extends the table `retire` uses.
+     `launch` and `run` select it with `--project NAME`, or else by the working
+     directory's repository: the main checkout of the git repository or linked
+     worktree holding it, matched against the project's `repo`. An unknown
+     `--project` is refused; a directory in no project's repository selects
+     none and behaves as before. The person's Agent popup (`--popup`) never
+     selects a project. A profile sets live-agent caps in total, per role and
+     per backend. A live agent is one that `launch` or `run` admitted for the
+     project and whose process, identified by its PID and start time at
+     admission (the agent itself for `launch`; the supervising `run` or its
+     run's leader for `run`), still runs as the same user; leads are neither
+     counted nor capped, and a cap hold names the live PIDs. A reached total or
+     role cap holds before any quota is read, and a backend at its project cap
+     is skipped with that reason. A role's guard runs in the working directory
+     before selection and holds with its reason when it fails: the first
+     non-blank line of its error output, cut to 200 characters with control
+     characters replaced, the one probe output copied to diagnostics. A role's
+     command overlays are keyed by the command's executable name, so one overlay
+     applies to every backend the role can pick that runs that executable and
+     never pins an account; a role with overlays picks only backends whose
+     executable it names. An overlay is inserted at the command's `{overlay}`
+     argument. Launch and `run` commands both accept `{name}` (from `--name`)
+     and `{add_dirs}` (from `--add-dir`); launch commands expand it through the
+     backend's `add_dir` template, and `run` commands through `[backends.run]
+     add_dir` as before.
   7. **Waiting and exits** (`.39.4`). `launch` and `run` accept
      `--wait DURATION`: admission retries with new readings until it admits or
      the deadline passes, with no ordering among waiters. A hold (quota, a

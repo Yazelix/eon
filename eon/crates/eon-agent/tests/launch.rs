@@ -23,7 +23,12 @@ fn shipped_example_commands_preserve_backend_permissions_and_tui_isolation() {
     for backend in &mut backends {
         let backend = backend.as_table_mut().unwrap();
         // Keep the shipped work argv, replacing only admission and environment fixtures.
-        backend.retain(|key, _| matches!(key, "name" | "commands" | "popup_command" | "run"));
+        backend.retain(|key, _| {
+            matches!(
+                key,
+                "name" | "commands" | "popup_command" | "add_dir" | "run"
+            )
+        });
         backend.insert("roles".into(), vec!["implement"].into());
         backend.insert("guard".into(), vec!["true"].into());
         backend.insert("allow_unknown_quota".into(), true.into());
@@ -49,6 +54,13 @@ fn shipped_example_commands_preserve_backend_permissions_and_tui_isolation() {
             .unwrap()
     };
     let mut failures = Vec::new();
+    // Project overlays join these commands, so they may not add a bypass either.
+    let overlays: Vec<Vec<String>> = original
+        .projects
+        .values()
+        .flat_map(|project| project.roles.values())
+        .flat_map(|role| role.overlay.values().cloned())
+        .collect();
     for backend in &original.backends {
         let mut commands: Vec<_> = backend.commands.values().cloned().collect();
         commands.extend(backend.popup_command());
@@ -64,7 +76,7 @@ fn shipped_example_commands_preserve_backend_permissions_and_tui_isolation() {
                 assert!(!argv.iter().any(|arg| arg == "--no-daemon"));
             }
         }
-        for argv in &commands {
+        for argv in commands.iter().chain(&overlays) {
             let bypass = argv.iter().any(|arg| {
                 arg.starts_with("--dangerously")
                     || matches!(
@@ -111,10 +123,12 @@ fn shipped_example_commands_preserve_backend_permissions_and_tui_isolation() {
             assert!(output.status.success(), "{}: {output:?}", backend.name);
             let stdout = String::from_utf8(output.stdout).unwrap();
             assert!(stdout.starts_with(&format!("pick: {}\ncommand: ", backend.name)));
-            for arg in argv
-                .iter()
-                .filter(|arg| !matches!(arg.as_str(), "{prompt}" | "{cwd}"))
-            {
+            for arg in argv.iter().filter(|arg| {
+                !matches!(
+                    arg.as_str(),
+                    "{prompt}" | "{cwd}" | "{overlay}" | "{add_dirs}"
+                )
+            }) {
                 assert!(stdout.contains(arg), "{} {key}: {stdout}", backend.name);
             }
         }

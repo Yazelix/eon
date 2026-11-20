@@ -5,6 +5,27 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent launch` and `run` follow project profiles: `[projects.NAME]` can
+  cap live agents in total (`max`), per role (`roles.ROLE.max`) and per
+  backend (`backends.BACKEND.max`). It can give a role a `guard` and give it
+  `overlay` arguments keyed by command executable, inserted at the command's
+  `{overlay}`.
+  - A launch selects the project with `--project NAME`, or by running in its
+    repository or a linked worktree of it.
+  - A reached cap or a failing guard holds (exit 3) before any quota is read.
+    The hold names the live PIDs or the guard's first stderr line.
+  - Leads and the Agent popup are never capped.
+  - Launch commands gain `{name}` (`--name`), `{add_dirs}` (repeatable
+    `--add-dir`, through a new backend-level `add_dir` template) and
+    `{overlay}`. `run` commands gain `{name}` and `{overlay}`.
+  - Launch commands fill `{cwd}` inside any argument, where before only a whole
+    `{cwd}` argument was filled.
+  - Configuration now refuses `{prompt}` inside another argument, `{dir}`
+    outside an `add_dir` template, and any placeholder in the program.
+  - Upgrade every binary that reads a shared configuration before adding
+    these keys, because older builds refuse them (EON-C40 clause 6,
+    `eon-eon-agent-lr8sx.39.3`).
+
 - `eon agent` and rota refuse `limits.ROLE.allow_missing`: a configuration
   that sets it fails to load, and the error points to `[backends.quota]
   absent_windows`. `status --json` no longer has a `warnings` array per

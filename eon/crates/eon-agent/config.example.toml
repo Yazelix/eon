@@ -172,14 +172,27 @@ allow_unknown_quota = true
 medium = ["claude", "{prompt}"]
 high = ["claude", "{prompt}"]
 
-# Cleanup only: directories follow NAME, NAME-target and NAME-work conventions.
+# A project: retire's directories (NAME, NAME-target and NAME-work under agents_root), and a
+# profile for agents launched or run in it. A launch selects it with --project alpha, or by
+# running in repo (any subfolder or linked worktree of it). The popup never selects one.
 [projects.alpha]
 repo = "/PATH/TO/repo"
 agents_root = "/PATH/TO/agents"
+max = 2 # live implement and review agents in total; leads are not counted
 [projects.alpha.done]
 command = ["br", "show", "{bead}", "--json"]
 pointers = ["/0/status", "/status"]
 equals = "closed"
+[projects.alpha.backends.code]
+max = 1 # live agents of this project on backend code
+[projects.alpha.roles.implement]
+max = 1
+guard = ["test", "-f", "/PATH/TO/machine-free"] # runs in the working directory; exit 0 admits
+# Overlays add arguments by the command's executable, at its {overlay} argument, for every
+# backend the role can pick that runs it. A role with overlays picks only those executables:
+# [projects.alpha.roles.review.overlay]
+# claude = ["--settings", "/PATH/TO/review-settings.json"]
+# codex = []
 
 [cleanup]
 min_idle = "2h"

@@ -40,9 +40,9 @@ impl<'a> Host<'a> {
 }
 
 const COMMANDS: [&str; 8] = [
-    "launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--dry-run] <prompt-file>",
+    "launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--dry-run] <prompt-file>",
     "launch --popup [--only BACKEND] [--dry-run]",
-    "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...",
+    "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...",
     "ps [--json] [--all]",
     "slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...",
     "slot ls [--json]",

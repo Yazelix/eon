@@ -51,6 +51,9 @@ impl Fixture {
                     pointers: vec!["/status".into()],
                     equals: "closed".into(),
                 }),
+                max: None,
+                roles: Default::default(),
+                backends: Default::default(),
             },
         );
         config.cleanup.store_prefixes = vec!["/fictional/store".into()];
