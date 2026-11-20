@@ -1,5 +1,6 @@
 //! Shared EONR v1 topology; bytes grant no process, filesystem or registry authority.
-// Preparatory owner for recovery and eon-t3fyd.5.2; its tests consume the codec now.
+// Preparatory owner for recovery and Update; its tests consume the codec until
+// eon-vwe03 (adapters) and eon-t3fyd.6 (S3b) call it.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use eon_workspace_protocol::v47::{
@@ -113,6 +114,11 @@ pub(super) enum Error {
     UnsupportedVersion(u16),
     UnknownRequiredSection(String),
     ScopeMismatch(&'static str),
+    UnsupportedUpdateSchema {
+        found: u16,
+        floor: u16,
+        current: u16,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -128,6 +134,15 @@ impl std::fmt::Display for Error {
             Self::ScopeMismatch(field) => {
                 write!(f, "checkpoint {field} does not match expected scope")
             }
+            Self::UnsupportedUpdateSchema {
+                found,
+                floor,
+                current,
+            } => write!(
+                f,
+                "unsupported Update checkpoint schema {found}: this build accepts schemas \
+                 {floor} through {current}; move the window's sessions to a new window by hand"
+            ),
         }
     }
 }
@@ -273,16 +288,13 @@ impl Checkpoint {
                 count("popups", tab.popups.len(), MAX_ENTRIES)?;
                 let mut entries = HashSet::new();
                 for popup in &tab.popups {
-                    local_id(&mut ids, &popup.id, "u", "popup id")?;
-                    crate::managed_environment::validate_popup_id(&popup.entry)
-                        .map_err(|_| Error::Invalid("popup entry"))?;
-                    unique(&mut entries, &popup.entry, "duplicate popup entry")?;
-                    text("popup label", &popup.label, MAX_LABEL_BYTES)?;
-                    if popup.label.chars().any(char::is_control) {
-                        return Err(Error::Invalid("popup label"));
-                    }
-                    path("popup directory", &popup.launch_directory)?;
-                    validate_run(&popup.run, self.core.terminal_id_high_water, &mut terminals)?;
+                    validate_popup(
+                        popup,
+                        self.core.terminal_id_high_water,
+                        &mut ids,
+                        &mut entries,
+                        &mut terminals,
+                    )?;
                 }
                 reference("selected pane", tab.selected_pane.as_deref(), |id| {
                     tab.columns.iter().any(|column| column.expanded == id)
@@ -327,13 +339,7 @@ impl Checkpoint {
                     })?;
                     out.text(&column.expanded)
                 })?;
-                out.list(&tab.popups, |out, popup| {
-                    out.text(&popup.id)?;
-                    out.text(&popup.entry)?;
-                    out.text(&popup.label)?;
-                    out.raw(&popup.launch_directory)?;
-                    write_run(out, &popup.run)
-                })?;
+                out.list(&tab.popups, write_popup)?;
                 out.optional_text(tab.selected_pane.as_deref())?;
                 out.optional_text(tab.selected_popup.as_deref())
             })?;
@@ -347,10 +353,7 @@ impl Checkpoint {
         out.list(&self.sections, |out, section| {
             out.text(&section.name)?;
             out.u8(u8::from(section.required))?;
-            out.u32(
-                u32::try_from(section.payload.len()).map_err(|_| Error::Invalid("section size"))?,
-            )?;
-            out.bytes(&section.payload)
+            out.blob(&section.payload)
         })
     }
 }
@@ -426,6 +429,27 @@ fn validate_run<'a>(run: &'a Run, high_water: u64, seen: &mut HashSet<&'a str>) 
     count("terminal slots", seen.len(), MAX_SESSIONS)
 }
 
+/// One popup slot's shared-record rules, for a core popup and for every
+/// popup an extension section carries beside the core.
+fn validate_popup<'a>(
+    popup: &'a Popup,
+    high_water: u64,
+    ids: &mut HashSet<&'a str>,
+    entries: &mut HashSet<&'a str>,
+    terminals: &mut HashSet<&'a str>,
+) -> Result<()> {
+    local_id(ids, &popup.id, "u", "popup id")?;
+    crate::managed_environment::validate_popup_id(&popup.entry)
+        .map_err(|_| Error::Invalid("popup entry"))?;
+    unique(entries, &popup.entry, "duplicate popup entry")?;
+    text("popup label", &popup.label, MAX_LABEL_BYTES)?;
+    if popup.label.chars().any(char::is_control) {
+        return Err(Error::Invalid("popup label"));
+    }
+    path("popup directory", &popup.launch_directory)?;
+    validate_run(&popup.run, high_water, terminals)
+}
+
 fn validate_sections(sections: &[Section]) -> Result<()> {
     count("sections", sections.len(), MAX_SECTIONS)?;
     let mut names = HashSet::new();
@@ -455,6 +479,24 @@ fn read_run(input: &mut Decoder<'_>) -> Result<Run> {
         },
         terminal_id: input.text("terminal id", MAX_ID_BYTES)?,
         run_id: input.text("run id", MAX_ID_BYTES)?,
+    })
+}
+
+fn write_popup(out: &mut Encoder, popup: &Popup) -> Result<()> {
+    out.text(&popup.id)?;
+    out.text(&popup.entry)?;
+    out.text(&popup.label)?;
+    out.raw(&popup.launch_directory)?;
+    write_run(out, &popup.run)
+}
+
+fn read_popup(input: &mut Decoder<'_>) -> Result<Popup> {
+    Ok(Popup {
+        id: input.text("popup id", MAX_ID_BYTES)?,
+        entry: input.text("popup entry", MAX_ENTRY_ID_BYTES)?,
+        label: input.text("popup label", MAX_LABEL_BYTES)?,
+        launch_directory: input.raw(MAX_DIRECTORY_BYTES)?.to_vec(),
+        run: read_run(input)?,
     })
 }
 
@@ -488,15 +530,7 @@ fn read_tab(input: &mut Decoder<'_>) -> Result<Tab> {
         })
     })?;
     let length = input.slot_count("popups", MAX_ENTRIES)?;
-    let popups = input.items(length, |input| {
-        Ok(Popup {
-            id: input.text("popup id", MAX_ID_BYTES)?,
-            entry: input.text("popup entry", MAX_ENTRY_ID_BYTES)?,
-            label: input.text("popup label", MAX_LABEL_BYTES)?,
-            launch_directory: input.raw(MAX_DIRECTORY_BYTES)?.to_vec(),
-            run: read_run(input)?,
-        })
-    })?;
+    let popups = input.items(length, read_popup)?;
     Ok(Tab {
         id,
         directory,
@@ -535,6 +569,17 @@ impl Encoder {
     }
     fn text(&mut self, value: &str) -> Result<()> {
         self.raw(value.as_bytes())
+    }
+    fn blob(&mut self, bytes: &[u8]) -> Result<()> {
+        self.u32(u32::try_from(bytes.len()).map_err(|_| Error::Invalid("blob size"))?)?;
+        self.bytes(bytes)
+    }
+    fn optional_raw(&mut self, value: Option<&[u8]>) -> Result<()> {
+        self.u8(u8::from(value.is_some()))?;
+        if let Some(value) = value {
+            self.raw(value)?;
+        }
+        Ok(())
     }
     fn optional_text(&mut self, value: Option<&str>) -> Result<()> {
         self.u8(u8::from(value.is_some()))?;
@@ -602,6 +647,13 @@ impl<'a> Decoder<'a> {
         text(field, value, maximum)?;
         Ok(value.into())
     }
+    fn optional_raw(&mut self, maximum: usize) -> Result<Option<Vec<u8>>> {
+        if self.boolean()? {
+            Ok(Some(self.raw(maximum)?.to_vec()))
+        } else {
+            Ok(None)
+        }
+    }
     fn optional_text(&mut self, field: &'static str, maximum: usize) -> Result<Option<String>> {
         if self.boolean()? {
             Ok(Some(self.text(field, maximum)?))
@@ -660,6 +712,8 @@ impl<'a> Decoder<'a> {
         Ok(())
     }
 }
+
+mod update;
 
 #[cfg(test)]
 mod tests;

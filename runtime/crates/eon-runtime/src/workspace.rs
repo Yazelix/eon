@@ -22,9 +22,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MAX_RECENT_REQUESTS: usize = 256;
+pub(super) const MAX_RECENT_REQUESTS: usize = 256;
 // Fixed partitions keep every supervisor's local identities disjoint (EON-C15).
-const IDS_PER_SUPERVISOR: usize = 1 << 20;
+pub(super) const IDS_PER_SUPERVISOR: usize = 1 << 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Session {
