@@ -382,9 +382,52 @@ Run the same checks locally before opening a pull request: the `nix build` and
 
 `eon-yazelix` is a public Cachix cache donated and managed by
 [bioinformatist](https://github.com/bioinformatist), separate from Lucca's cache
-storage. It accelerates the existing Nix path; it is not a release channel or a
-requirement for source builds. Cache misses still build from the pinned sources.
+storage. It speeds up the Nix path and is neither a release channel nor a
+requirement for source builds: a cache miss builds from the pinned sources.
 Consumers choose whether to trust this third-party binary provider.
+
+### What the cache holds
+
+Two GitHub Actions workflows in the public `Yazelix/eon` repository push to the
+cache, with the cache owner's write token from the `cachix` environment:
+[`cachix.yml`](../.github/workflows/cachix.yml) for Linux and
+[`cachix-darwin.yml`](../.github/workflows/cachix-darwin.yml) for Apple Silicon.
+Nothing else in the repository writes to it, and pull requests and forks cannot
+publish.
+
+The Linux workflow runs on every push to `edge`, every `v*` tag push and every
+manual dispatch. It pushes the `x86_64-linux` packages `default`, `eonbase` and
+`no-helix`, their shared `eon-rust` output, the `eon-tests` check output and
+`helix-grammar-sources`, each with its runtime closure. The Darwin workflow runs
+on `v*` tag pushes and manual dispatches, and uploads only while the repository
+variable `EON_DARWIN_CACHE_PUSH` is `true`. It pushes the `aarch64-darwin`
+packages `default` and `helix-grammar-sources` with their closures. Manual
+dispatch works only from `edge` or a `v*` tag. The flake defines packages only
+for the product targets in `components/eon-v5.json`, `x86_64-linux` and
+`aarch64-darwin`; on `aarch64-linux` or an Intel Mac (`x86_64-darwin`) it has
+no Eon package to build or fetch. Cachix also skips paths that `cache.nixos.org`
+already serves (see [Publishing](#publishing)), so keep that cache configured
+alongside this one.
+
+Two workflow pins keep paths in the cache:
+
+- `helix-grammar-sources-<helix rev>` keeps each Helix revision's grammar
+  sources forever. Every Linux run writes it.
+- `latest-release-<platform>` holds the default runtime of the newest
+  `vX.Y.Z` release, one revision per pin. When a newer release takes the pin,
+  the older release loses it. `latest-release-x86_64-linux` moves on every
+  newest-release Linux run; `latest-release-aarch64-darwin` moves only while
+  Darwin publishing is on.
+
+The workflows leave any older per-tag Darwin pins,
+`aarch64-darwin-<tag>-<root>`, to the cache owner. Paths outside the pins'
+closures, including `edge` builds, releases older than the newest and whatever
+the `eonbase` and `no-helix` packages and the test output do not share with the
+pinned runtime, stay only until Cachix evicts them.
+[Publishing](#publishing), [Darwin publishing](#darwin-publishing) and
+[Release retention](#release-retention) give the details.
+
+### Using the cache
 
 The flake advertises these additive settings, leaving existing caches intact:
 
@@ -410,14 +453,75 @@ them explicitly with `cachix use eon-yazelix`. Setup depends on your installatio
   activation is needed.
 
 Flake input consumers must configure their consuming installation; an input's
-`nixConfig` does not configure the parent flake. Historical tags do not acquire
-the new hints or guaranteed cache coverage.
+`nixConfig` does not configure the parent flake.
+
+### User-level `substituters`
+
+A plain `substituters =` line replaces the list Nix has read so far, while
+`extra-substituters` appends to it. Nix reads the system configuration
+(`/etc/nix/nix.conf` and its includes) before the user's
+`~/.config/nix/nix.conf`, so a plain `substituters =` in the user file drops
+every cache the system configuration lists, including `eon-yazelix` when
+`cachix use` or an administrator added it there. Nix reports nothing about the
+dropped caches. The flake's `extra-substituters` still append on top, but only
+when Nix accepts the flake's settings, through `accept-flake-config = true` or
+the prompt. Otherwise Nix prints
+`warning: ignoring untrusted flake configuration setting 'extra-substituters'`
+and builds Eon from source.
+
+How much of that list takes effect depends on trust:
+
+- Single-user Nix, and a multi-user daemon that trusts the user
+  (`nix store info` prints `Trusted: 1`), use the user's list and keys as they
+  are.
+- For an untrusted user (`Trusted: 0`), the daemon keeps only the entries of the
+  user's list that its own `substituters` or `trusted-substituters` also name,
+  and uses that shorter list for the user's commands. A plain `substituters =`
+  without `eon-yazelix` therefore drops the cache even when the administrator
+  configured it. A cache the daemon does not already name is dropped with
+  `warning: ignoring untrusted substituter 'https://eon-yazelix.cachix.org', you are not a trusted user.`
+  For these users the daemon also ignores user-level keys and checks
+  signatures against its own `trusted-public-keys`.
+
+Add the cache in the user file with the additive settings instead:
+
+```ini
+extra-substituters = https://eon-yazelix.cachix.org
+extra-trusted-public-keys = eon-yazelix.cachix.org-1:kPIp7u0Gjoz0GNzmRqeaqs798vU2raSOUpK+3xi7oK0=
+```
+
+If you keep a plain `substituters =` on purpose, for example to drop another
+cache, add `https://eon-yazelix.cachix.org` to that line and keep the
+`extra-trusted-public-keys` line. As an untrusted user, these lines take effect
+only when the daemon's configuration already names the cache and its key; if it
+does not, ask an administrator (see the multi-user item above).
+
+Run the checks as the user who installs Eon. Root and `sudo` read root's
+configuration, which can list the cache while yours lacks it:
+
+```sh
+nix config show substituters
+nix config show trusted-public-keys
+nix store info
+```
+
+`nix config show` prints the client's settings from the configuration files,
+without any flake's settings: the first command must list
+`https://eon-yazelix.cachix.org` and the second its `eon-yazelix.cachix.org-1:`
+key. It cannot show what the daemon keeps. On single-user Nix, or with
+`Trusted: 1`, Nix uses that list. With `Trusted: 0`, the cache applies only if
+the daemon's own configuration names it, which an administrator can confirm.
+For a direct check, run `nix build --dry-run github:Yazelix/eon/main` (or the
+reference you install) as the installing user before installing. Eon's own
+paths under "will be fetched" mean the cache serves them. The same paths under
+"will be built", or the `ignoring untrusted substituter` warning, mean the
+daemon does not use the cache or the cache lacks that revision.
 
 ### Publishing
 
-Before activating `.github/workflows/cachix.yml`, a repository maintainer must
-add the cache owner's per-cache write token as the `CACHIX_AUTH_TOKEN` secret of
-the `cachix` Actions environment, not as a repository secret. The environment's
+Publishing uses the cache owner's per-cache write token, which a repository
+maintainer stores as the `CACHIX_AUTH_TOKEN` secret of the `cachix` Actions
+environment rather than as a repository secret. The environment's
 deployment rules allow only the `edge` branch and `v*` tags, and both Cachix
 workflows run their jobs in it, so a dispatch from any other branch fails before
 a step runs and a branch-modified workflow never receives the token. While a
@@ -492,10 +596,10 @@ sources. Logs and the job summary report the exact revision, roots, individual
 closure sizes and deduplicated combined closure NAR bytes. These uncompressed
 sizes do not measure compressed incremental Cachix storage.
 
-Publishing defaults to off. The repository variable setting
-`EON_DARWIN_CACHE_PUSH=true` enables uploads to `eon-yazelix`. A maintainer must
-resolve the cache owner's consent and capacity question in
-[issue #8](https://github.com/Yazelix/eon/issues/8) before enabling it. The
+Publishing is off unless the repository variable `EON_DARWIN_CACHE_PUSH` is
+`true`, which enables uploads to `eon-yazelix`. A maintainer sets it only with
+the cache owner's consent on storage and capacity
+([issue #8](https://github.com/Yazelix/eon/issues/8)). The
 workflow runs in the `cachix` environment and uses its `CACHIX_AUTH_TOKEN`
 secret only in gated credential, upload and pin steps; enabled publishing fails
 early if that secret is absent. With the variable absent or set to `false`, a
@@ -529,7 +633,7 @@ sources keep their own `helix-grammar-sources-<helix rev>` pins, which every
 Linux run writes (see [Publishing](#publishing)).
 See [Cachix pins](https://docs.cachix.org/pins).
 
-“Newest” means the greatest top-level release tag, `v` and three dot-separated
+"Newest" means the greatest top-level release tag, `v` and three dot-separated
 numbers, on the repository when the pin step checks, by Git's version sort.
 Other `v*` tags, such as `v0.3.0-rc1` or `vendor-x`, never count and never pin.
 The step checks once and then writes its one pin. A run for any other tag,
@@ -553,11 +657,10 @@ wrote it; otherwise rerun the job for the newest tag. There is no explicit
 unpin, cache clearing, cross-platform wait or additional download-verification
 job.
 
-Existing per-tag Darwin pins, `aarch64-darwin-<tag>-<root>`, are not removed by
-these workflows. A cache owner must review any remaining consumers and retire
-those legacy pins separately if desired; until then they can retain
-additional storage. This policy does not assert current billed usage or reclaim
-space immediately.
+The workflows leave the per-tag Darwin pins, `aarch64-darwin-<tag>-<root>`,
+alone. They hold storage until the cache owner checks their consumers and
+decides to retire them. This policy does not assert current billed usage or
+reclaim space immediately.
 
 Historical cold-store mac-proof runs `42898289714` and `42342668048` took
 49–53 minutes for the default package, building 620–624 derivations and

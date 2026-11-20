@@ -167,8 +167,9 @@ eon window stop ID       # end one window's terminals
 graph.
 
 An optional, third-party [binary cache](docs/DISTRIBUTION.md#optional-binary-cache)
-can avoid local builds for the `edge` builds it holds; tags have no guaranteed
-coverage.
+can avoid local builds for the `edge` and release builds it holds. It pins the
+newest Linux release's default package (and the Mac one while Mac publishing
+is on) plus the Helix grammar sources; Cachix may evict other builds.
 
 ## Status and limits
 
