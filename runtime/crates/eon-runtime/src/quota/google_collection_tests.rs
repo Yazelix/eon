@@ -628,12 +628,27 @@ fn google_supervisors_share_schedule_and_backoff() {
     assert!(time(&first[1]).duration_since(time(&first[0])).unwrap() >= Duration::from_millis(600));
     let path = store.join("google.schedule");
     let maximum = Duration::from_secs(20);
-    let schedule = || update_schedule(&Mutex::default(), Some(&path), maximum, |_, _| false).0;
+    let schedule = || {
+        update_schedule(
+            &Mutex::default(),
+            Some(&path),
+            maximum,
+            &Clock::System,
+            |_, _| false,
+        )
+        .0
+    };
     let force_due = || {
-        update_schedule(&Mutex::default(), Some(&path), maximum, |schedule, _| {
-            schedule.next_at = 0;
-            true
-        });
+        update_schedule(
+            &Mutex::default(),
+            Some(&path),
+            maximum,
+            &Clock::System,
+            |schedule, _| {
+                schedule.next_at = 0;
+                true
+            },
+        );
     };
     fs::write(&mode, "error").unwrap();
     // The first provider error retries after one 600 ms interval plus up to a fifth; later ones

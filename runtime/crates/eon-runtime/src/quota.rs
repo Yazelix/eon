@@ -555,15 +555,12 @@ fn update_schedule(
     memory: &Mutex<Schedule>,
     path: Option<&Path>,
     maximum: Duration,
+    clock: &Clock,
     update: impl FnOnce(&mut Schedule, u64) -> bool,
 ) -> (Schedule, bool) {
     let mut memory = memory.lock().expect("quota schedule");
     let mut file = path.and_then(|path| open_schedule(path).ok());
-    let now = milliseconds(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default(),
-    );
+    let now = clock.now_ms();
     // Without a usable file the in-memory schedule stands (EON-C27).
     if let Some(file) = &mut file
         && let Some(schedule) = load_schedule(file, now, maximum)
@@ -583,15 +580,92 @@ fn update_schedule(
     (memory.clone(), file.is_some())
 }
 
+/// Where a provider worker reads the schedule's time and waits for its next read: the system
+/// clock, or in tests a manual one that moves only when the test advances it.
+#[derive(Clone)]
+enum Clock {
+    System,
+    #[cfg(test)]
+    Manual(Arc<tests::ManualClock>),
+}
+
+impl Clock {
+    /// Milliseconds since the epoch.
+    fn now_ms(&self) -> u64 {
+        match self {
+            Self::System => milliseconds(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default(),
+            ),
+            #[cfg(test)]
+            Self::Manual(clock) => clock.now_ms(),
+        }
+    }
+
+    /// Enrols a worker before its thread starts; the worker waits through the returned
+    /// `Parking`, and dropping it withdraws the worker.
+    fn register(&self) -> Parking {
+        match self {
+            Self::System => Parking::System,
+            #[cfg(test)]
+            Self::Manual(clock) => Parking::Manual(Arc::clone(clock), clock.register()),
+        }
+    }
+
+    /// Wakes the workers waiting on this clock to see a stop just sent.
+    fn wake(&self) {
+        #[cfg(test)]
+        if let Self::Manual(clock) = self {
+            clock.wake();
+        }
+    }
+}
+
+/// A worker's place on its clock.
+enum Parking {
+    System,
+    #[cfg(test)]
+    Manual(Arc<tests::ManualClock>, u64),
+}
+
+impl Parking {
+    /// Waits `wait`, or until a stop arrives or its sender is gone (true).
+    fn wait(&self, stopped: &mpsc::Receiver<()>, wait: Duration) -> bool {
+        match self {
+            Self::System => !matches!(
+                stopped.recv_timeout(wait),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            #[cfg(test)]
+            Self::Manual(clock, id) => clock.wait(*id, stopped, wait),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for Parking {
+    fn drop(&mut self) {
+        if let Self::Manual(clock, id) = self {
+            clock.withdraw(*id);
+        }
+    }
+}
+
 struct Provider {
     quota: Arc<Mutex<Option<CodexQuota>>>,
     /// The last read's failure, until a read succeeds.
     failure: Arc<Mutex<Option<QuotaFailure>>>,
     stop: mpsc::Sender<()>,
+    clock: Clock,
     worker: Option<thread::JoinHandle<()>>,
 }
 
 impl Provider {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a slot's settings plus the program, store and clock each worker needs"
+    )]
     fn start(
         program: PathBuf,
         provider: &'static str,
@@ -600,12 +674,15 @@ impl Provider {
         schedule_memory: Arc<Mutex<Schedule>>,
         store: Option<PathBuf>,
         shared_schedule: bool,
+        clock: Clock,
     ) -> Self {
         let quota = Arc::new(Mutex::new(None));
         let shared = Arc::clone(&quota);
         let failure = Arc::new(Mutex::new(None));
         let failed = Arc::clone(&failure);
         let (stop, stopped) = mpsc::channel();
+        let parking = clock.register();
+        let worker_clock = clock.clone();
         let worker = thread::Builder::new()
             .name(format!("eon-{provider}-quota"))
             .spawn(move || {
@@ -630,6 +707,7 @@ impl Provider {
                         &schedule_memory,
                         schedule_path.as_deref(),
                         maximum,
+                        &worker_clock,
                         |schedule, now| {
                             wait = Duration::from_millis(schedule.next_at.saturating_sub(now));
                             if !wait.is_zero() {
@@ -664,10 +742,7 @@ impl Provider {
                             }
                             wait = wait.min(interval / 30);
                         }
-                        if !matches!(
-                            stopped.recv_timeout(wait),
-                            Err(mpsc::RecvTimeoutError::Timeout)
-                        ) {
+                        if parking.wait(&stopped, wait) {
                             break;
                         }
                         continue;
@@ -680,6 +755,7 @@ impl Provider {
                                 &schedule_memory,
                                 schedule_path.as_deref(),
                                 maximum,
+                                &worker_clock,
                                 |schedule, now| {
                                     schedule.next_at = now.saturating_add(milliseconds(interval));
                                     true
@@ -732,6 +808,7 @@ impl Provider {
                         &schedule_memory,
                         schedule_path.as_deref(),
                         maximum,
+                        &worker_clock,
                         |schedule, now| {
                             record_read(
                                 schedule,
@@ -754,6 +831,7 @@ impl Provider {
             quota,
             failure,
             stop,
+            clock,
             worker,
         }
     }
@@ -770,6 +848,7 @@ impl Provider {
 impl Drop for Provider {
     fn drop(&mut self) {
         let _ = self.stop.send(());
+        self.clock.wake();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -801,6 +880,8 @@ pub(crate) struct Quotas {
     google_program: PathBuf,
     /// Where each provider's last good reading is kept, if anywhere.
     store: Option<PathBuf>,
+    /// The clock every provider worker schedules its reads by.
+    clock: Clock,
     codex: Slot,
     claude: Slot,
     google: Slot,
@@ -828,6 +909,17 @@ impl Quotas {
         store: Option<PathBuf>,
         widgets: &[String],
     ) -> Self {
+        Self::start_with_clock(program, google_program, unit, store, widgets, Clock::System)
+    }
+
+    fn start_with_clock(
+        program: &Path,
+        google_program: &Path,
+        unit: Duration,
+        store: Option<PathBuf>,
+        widgets: &[String],
+        clock: Clock,
+    ) -> Self {
         let slot = |provider, widgets, units, shared_schedule| Slot {
             provider,
             widgets,
@@ -840,6 +932,7 @@ impl Quotas {
             program: program.to_path_buf(),
             google_program: google_program.to_path_buf(),
             store,
+            clock,
             codex: slot(
                 "codex",
                 &["codex_quota_5h", "codex_quota_7d"],
@@ -882,6 +975,7 @@ impl Quotas {
                         .as_ref()
                         .map(|store| store.join(format!("{}.json", slot.provider))),
                     slot.shared_schedule,
+                    self.clock.clone(),
                 ));
             }
         }
@@ -994,14 +1088,13 @@ fn schedule_failure(path: &Path, deadline: Instant) -> Result<Option<QuotaFailur
             Err(fs::TryLockError::Error(error)) => return Err(unknown(error.to_string())),
         }
     }
-    let now = milliseconds(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default(),
-    );
-    load_schedule(&mut file, now, longest_wait(UNIT * SHARED_UNITS))
-        .map(|schedule| schedule.failure)
-        .ok_or_else(|| unknown("unreadable or invalid".into()))
+    load_schedule(
+        &mut file,
+        Clock::System.now_ms(),
+        longest_wait(UNIT * SHARED_UNITS),
+    )
+    .map(|schedule| schedule.failure)
+    .ok_or_else(|| unknown("unreadable or invalid".into()))
 }
 
 fn quota_command(program: &Path, provider: &str) -> Command {
@@ -1118,6 +1211,7 @@ fn run_command(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::{collections::HashMap, sync::Condvar};
 
     const NOW: u64 = 1791936000;
     #[test]
@@ -1463,6 +1557,7 @@ mod tests {
             Arc::default(),
             None,
             false,
+            Clock::System,
         );
         *provider.quota.lock().unwrap() = Some(quota.clone());
         // Several 20 ms intervals of failed reads leave a recent reading fresh, and say why.
@@ -1593,73 +1688,250 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn claude_waits_300_units_after_a_failed_read_while_codex_reads_every_60() {
-        let root = super::super::supervisor::temporary_directory();
-        let program = root.join("backend");
-        let log = root.join("reads");
-        fs::create_dir(&log).unwrap();
-        // Each read leaves a file whose kernel mtime marks its start; every Claude read fails, as
-        // a rate-limited OAuth read does.
+    /// Virtual time for the provider workers of one `Quotas`: it moves only when a test calls
+    /// `advance_to`, and `settle` returns once every worker has evaluated its schedule at the
+    /// current time and parked, so no read can start until the next advance.
+    pub(super) struct ManualClock {
+        state: Mutex<ManualState>,
+        changed: Condvar,
+    }
+
+    struct ManualState {
+        now: u64,
+        next_id: u64,
+        /// Each live worker, and the deadline it is parked until (None while it runs).
+        workers: HashMap<u64, Option<u64>>,
+    }
+
+    impl ManualClock {
+        fn starting_at(now: u64) -> Arc<Self> {
+            Arc::new(Self {
+                state: Mutex::new(ManualState {
+                    now,
+                    next_id: 0,
+                    workers: HashMap::new(),
+                }),
+                changed: Condvar::new(),
+            })
+        }
+
+        fn lock(&self) -> std::sync::MutexGuard<'_, ManualState> {
+            self.state.lock().expect("manual clock")
+        }
+
+        pub(super) fn now_ms(&self) -> u64 {
+            self.lock().now
+        }
+
+        /// A new worker counts as running from before its thread starts.
+        pub(super) fn register(&self) -> u64 {
+            let mut state = self.lock();
+            let id = state.next_id;
+            state.next_id += 1;
+            state.workers.insert(id, None);
+            id
+        }
+
+        pub(super) fn withdraw(&self, id: u64) {
+            self.lock().workers.remove(&id);
+            self.changed.notify_all();
+        }
+
+        pub(super) fn wake(&self) {
+            let _state = self.lock();
+            self.changed.notify_all();
+        }
+
+        /// Parks worker `id` until the clock reaches `wait` from now (false) or a stop arrives
+        /// (true). The stop channel is checked under the lock `wake` takes, so none is lost.
+        pub(super) fn wait(&self, id: u64, stopped: &mpsc::Receiver<()>, wait: Duration) -> bool {
+            let mut state = self.lock();
+            let deadline = state.now + milliseconds(wait).max(1);
+            state.workers.insert(id, Some(deadline));
+            self.changed.notify_all();
+            loop {
+                let stop = !matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty));
+                if stop || state.now >= deadline {
+                    state.workers.insert(id, None);
+                    return stop;
+                }
+                state = self.changed.wait(state).expect("manual clock");
+            }
+        }
+
+        fn advance_to(&self, now: u64) {
+            let mut state = self.lock();
+            assert!(now >= state.now, "the manual clock only moves forward");
+            state.now = now;
+            self.changed.notify_all();
+        }
+
+        /// Waits until every live worker is parked past the current time.
+        fn settle(&self) {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut state = self.lock();
+            loop {
+                let now = state.now;
+                if state
+                    .workers
+                    .values()
+                    .all(|parked| parked.is_some_and(|until| until > now))
+                {
+                    return;
+                }
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(
+                    !left.is_zero(),
+                    "workers never settled at {now}: {:?}",
+                    state.workers
+                );
+                state = self
+                    .changed
+                    .wait_timeout(state, left)
+                    .expect("manual clock")
+                    .0;
+            }
+        }
+    }
+
+    /// A backend at `root`/backend that logs each read's provider to `root`/calls, then runs
+    /// `body`.
+    fn logging_backend(root: &Path, body: &str) {
+        let calls = root.join("calls");
         script(
-            &program,
-            &format!(": > '{}'/\"$3.$$\"\n[ \"$3\" = codex ]", log.display()),
+            &root.join("backend"),
+            &format!("echo \"$3\" >> '{}'\n{body}", calls.display()),
         );
-        let gaps = |provider: &str| {
-            let mut starts = fs::read_dir(&log)
-                .unwrap()
-                .map(|entry| entry.unwrap())
-                .filter(|entry| {
-                    let name = entry.file_name();
-                    name.to_string_lossy().split('.').next() == Some(provider)
-                })
-                .map(|entry| entry.metadata().unwrap().modified().unwrap())
-                .collect::<Vec<_>>();
-            starts.sort();
-            starts
-                .windows(2)
-                .map(|pair| pair[1].duration_since(pair[0]).unwrap())
-                .collect::<Vec<_>>()
+    }
+
+    /// Workers on a manual clock at the production unit, reading through `logging_backend`, and
+    /// a count of (Claude, Codex) reads since this start.
+    fn virtual_quotas(
+        root: &Path,
+        store: Option<PathBuf>,
+        widgets: &[String],
+    ) -> (
+        Arc<ManualClock>,
+        Quotas,
+        impl Fn() -> (usize, usize) + use<>,
+    ) {
+        let calls = root.join("calls");
+        let _ = fs::remove_file(&calls);
+        let clock = ManualClock::starting_at(T0);
+        let quotas = Quotas::start_with_clock(
+            &root.join("backend"),
+            Path::new("/absent/agy"),
+            UNIT,
+            store,
+            widgets,
+            Clock::Manual(Arc::clone(&clock)),
+        );
+        let reads = move || {
+            let calls = fs::read_to_string(&calls).unwrap_or_default();
+            let count = |provider| calls.lines().filter(|line| *line == provider).count();
+            (count("claude"), count("codex"))
         };
-        let unit = Duration::from_millis(20);
-        let mut quotas = Quotas::start_every(
-            &program,
-            unit,
+        (clock, quotas, reads)
+    }
+
+    /// The manual clock's start, in milliseconds.
+    const T0: u64 = NOW * 1000;
+
+    /// Advances to each `(seconds after T0, Claude reads, Codex reads)` and checks the counts
+    /// once every worker has settled there.
+    fn expect_reads(
+        clock: &ManualClock,
+        reads: &impl Fn() -> (usize, usize),
+        steps: &[(u64, usize, usize)],
+    ) {
+        for &(at, claude, codex) in steps {
+            clock.advance_to(T0 + at * 1000);
+            clock.settle();
+            assert_eq!(
+                reads(),
+                (claude, codex),
+                "(Claude, Codex) reads at T0+{at} s"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_retries_once_soon_then_backs_off_without_a_usable_schedule() {
+        let root = super::super::supervisor::temporary_directory();
+        let blocked = root.join("not-a-directory");
+        fs::write(&blocked, "").unwrap();
+        let widgets = ["codex_quota_5h", "claude_quota_5h"].map(String::from);
+        // Every read of either provider is a provider error, as a rate-limited read is.
+        logging_backend(&root, "printf '%s' '[{\"error\":{\"code\":3}}]'; exit 3");
+        for store in [None, Some(blocked.clone())] {
+            let (clock, mut quotas, reads) = virtual_quotas(&root, store.clone(), &widgets);
+            clock.settle();
+            assert_eq!(reads(), (1, 1), "{store:?}");
+            assert_eq!(
+                quotas.claude.failure().unwrap().reason,
+                Failure::ProviderError
+            );
+            // Hidden and shown again, both keep their in-memory spacing.
+            quotas.show(&[]);
+            clock.settle();
+            quotas.show(&widgets);
+            clock.settle();
+            assert_eq!(reads(), (1, 1));
+            // Claude retries once within one 300 s interval plus a fifth of jitter, then waits
+            // 6 and 12 intervals; Codex reads every 60 s through the same provider errors.
+            expect_reads(
+                &clock,
+                &reads,
+                &[
+                    (59, 1, 1),
+                    (60, 1, 2),
+                    (120, 1, 3),
+                    (299, 1, 4),
+                    (360, 2, 5),
+                    (2159, 2, 6),
+                    (2160, 3, 6),
+                    (5759, 3, 7),
+                    (5760, 4, 7),
+                ],
+            );
+            // With every chip hidden, nothing is read, though Codex is due.
+            quotas.show(&[]);
+            expect_reads(&clock, &reads, &[(9360, 4, 7)]);
+            // Shown again, Codex is due; Claude still waits 24 intervals from its last read.
+            quotas.show(&widgets);
+            clock.settle();
+            assert_eq!(reads(), (4, 8));
+            drop(quotas);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_failures_other_than_provider_errors_keep_the_300_unit_interval() {
+        let root = super::super::supervisor::temporary_directory();
+        let (codex, _) = fresh("codex");
+        // Claude's read fails without a provider error; Codex's succeeds.
+        logging_backend(
+            &root,
+            &format!("[ \"$3\" = codex ] && printf '%s' '{codex}'"),
+        );
+        let (clock, mut quotas, reads) = virtual_quotas(
+            &root,
             None,
             &["codex_quota_5h", "claude_quota_5h"].map(String::from),
         );
-        let deadline = Instant::now() + unit * 1000;
-        while gaps("claude").is_empty() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(5));
-        }
-        // Hidden briefly and shown again, Claude still waits 300 units from its last read.
+        clock.settle();
+        assert_eq!(reads(), (1, 1));
+        assert_eq!(quotas.claude.failure().unwrap().reason, Failure::ExitStatus);
+        assert!(quotas.codex.failure().is_none());
+        expect_reads(&clock, &reads, &[(299, 1, 2), (300, 2, 2)]);
+        // Switched from the 5h to the 7d chip while hidden, Claude still waits 300 s from its
+        // last read.
         quotas.show(&["codex_quota_5h"].map(String::from));
-        thread::sleep(unit * 100);
+        expect_reads(&clock, &reads, &[(359, 2, 3)]);
         quotas.show(&["codex_quota_5h", "claude_quota_7d"].map(String::from));
-        let deadline = Instant::now() + unit * 1000;
-        while gaps("claude").len() < 2 && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(5));
-        }
-        // With every chip hidden, no provider is read, though Codex was due every 60 units.
-        quotas.show(&[]);
-        let reads = fs::read_dir(&log).unwrap().count();
-        thread::sleep(unit * 100);
-        assert_eq!(fs::read_dir(&log).unwrap().count(), reads);
+        expect_reads(&clock, &reads, &[(359, 2, 3), (599, 2, 4), (600, 3, 4)]);
         drop(quotas);
-        let claude = gaps("claude");
-        assert!(
-            claude.len() == 2 && claude.iter().all(|gap| *gap >= unit * 300),
-            "Claude read gaps {claude:?}"
-        );
-        // The upper bound leaves 60 units of slack for process startup under load.
-        let codex = gaps("codex");
-        assert!(
-            codex.len() >= 3
-                && codex
-                    .iter()
-                    .all(|gap| *gap >= unit * 60 && *gap < unit * 120),
-            "Codex read gaps {codex:?}"
-        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1873,7 +2145,13 @@ mod tests {
             next_at: u64::MAX,
             ..Schedule::default()
         });
-        let (bounded, _) = update_schedule(&ahead, None, Duration::from_secs(1), |_, _| false);
+        let (bounded, _) = update_schedule(
+            &ahead,
+            None,
+            Duration::from_secs(1),
+            &Clock::System,
+            |_, _| false,
+        );
         assert!(bounded.next_at < u64::MAX);
         let root = super::super::supervisor::temporary_directory();
         let path = root.join("schedule");
@@ -1945,6 +2223,7 @@ mod tests {
             &memory,
             Some(&path.join("unavailable")),
             Duration::from_secs(7200),
+            &Clock::System,
             |_, _| false,
         );
         assert!(!shared);
@@ -1956,10 +2235,13 @@ mod tests {
                 .unwrap()
                 .contains("write_failed")
         );
-        let (repaired, shared) =
-            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
-                false
-            });
+        let (repaired, shared) = update_schedule(
+            &memory,
+            Some(&path),
+            Duration::from_secs(7200),
+            &Clock::System,
+            |_, _| false,
+        );
         assert!(shared);
         assert_eq!(repaired.next_at, retained.next_at);
         assert_eq!(repaired.failure, retained.failure);
@@ -1976,10 +2258,13 @@ mod tests {
             ..Schedule::default()
         };
         fs::write(&path, serde_json::to_vec(&peer).unwrap()).unwrap();
-        let (adopted, shared) =
-            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
-                false
-            });
+        let (adopted, shared) = update_schedule(
+            &memory,
+            Some(&path),
+            Duration::from_secs(7200),
+            &Clock::System,
+            |_, _| false,
+        );
         assert!(shared);
         assert_eq!(adopted.next_at, peer.next_at);
         assert!(adopted.failure.is_none());
@@ -1988,19 +2273,25 @@ mod tests {
         // A corrupt file leaves the in-memory schedule in place rather than resetting it.
         memory.lock().unwrap().failures = 3;
         fs::write(&path, "partial").unwrap();
-        let (kept, shared) =
-            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
-                false
-            });
+        let (kept, shared) = update_schedule(
+            &memory,
+            Some(&path),
+            Duration::from_secs(7200),
+            &Clock::System,
+            |_, _| false,
+        );
         assert!(shared);
         assert_eq!(kept.failures, 3);
         // A peer that keeps the lock leaves it on the in-memory schedule, not the file's.
         fs::write(&path, serde_json::to_vec(&peer).unwrap()).unwrap();
         let held = open_schedule(&path).unwrap();
-        let (locked_out, shared) =
-            update_schedule(&memory, Some(&path), Duration::from_secs(7200), |_, _| {
-                false
-            });
+        let (locked_out, shared) = update_schedule(
+            &memory,
+            Some(&path),
+            Duration::from_secs(7200),
+            &Clock::System,
+            |_, _| false,
+        );
         assert!(!shared);
         assert_eq!(locked_out.failures, 3);
         drop(held);
@@ -2019,11 +2310,17 @@ mod tests {
             at: epoch_seconds().unwrap(),
             reason: Failure::ProviderError,
         };
-        update_schedule(&memory, Some(&schedule_path), maximum, |schedule, now| {
-            schedule.next_at = now + 20_000;
-            schedule.failure = Some(failure);
-            true
-        });
+        update_schedule(
+            &memory,
+            Some(&schedule_path),
+            maximum,
+            &Clock::System,
+            |schedule, now| {
+                schedule.next_at = now + 20_000;
+                schedule.failure = Some(failure);
+                true
+            },
+        );
         let (fixture, now) = fresh("claude");
         let mut reading = normalize(&serde_json::to_vec(&fixture).unwrap(), "claude", now)
             .unwrap()
@@ -2073,64 +2370,22 @@ mod tests {
         save(&path, None);
         thread::sleep(Duration::from_millis(200));
         assert!(quotas.iter().all(|q| q.claude.snapshot().is_some()));
-        update_schedule(&memory, Some(&schedule_path), maximum, |schedule, _| {
-            schedule.failure = None;
-            true
-        });
+        update_schedule(
+            &memory,
+            Some(&schedule_path),
+            maximum,
+            &Clock::System,
+            |schedule, _| {
+                schedule.failure = None;
+                true
+            },
+        );
         wait(&|| {
             quotas
                 .iter()
                 .all(|q| q.claude.snapshot().is_none() && q.claude.failure().is_none())
         });
         drop(quotas);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn claude_retries_once_soon_then_backs_off_without_a_usable_schedule() {
-        let root = super::super::supervisor::temporary_directory();
-        let program = root.join("backend");
-        let calls = root.join("calls");
-        let blocked = root.join("not-a-directory");
-        fs::write(&blocked, "").unwrap();
-        script(
-            &program,
-            &format!(
-                "echo \"$3\" >> '{}'\nprintf '%s' '[{{\"error\":{{\"code\":3}}}}]'; exit 3",
-                calls.display()
-            ),
-        );
-        let widgets = ["codex_quota_5h", "claude_quota_5h"].map(String::from);
-        let reads = |provider| {
-            fs::read_to_string(&calls)
-                .unwrap_or_default()
-                .lines()
-                .filter(|line| *line == provider)
-                .count()
-        };
-        for store in [None, Some(blocked.clone())] {
-            let _ = fs::remove_file(&calls);
-            let mut quotas =
-                Quotas::start_every(&program, Duration::from_millis(1), store, &widgets);
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while quotas.claude.failure().is_none() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(5));
-            }
-            assert_eq!(
-                quotas.claude.failure().unwrap().reason,
-                Failure::ProviderError
-            );
-            assert_eq!(reads("claude"), 1);
-            // Shown again, the chip keeps its in-memory spacing: one retry after one 300 ms
-            // interval plus jitter, then six intervals before the next.
-            quotas.show(&[]);
-            quotas.show(&widgets);
-            thread::sleep(Duration::from_millis(1000));
-            assert_eq!(reads("claude"), 2);
-            // Codex keeps its 60-unit spacing after the same provider error.
-            assert!(reads("codex") >= 3, "codex reads: {}", reads("codex"));
-            drop(quotas);
-        }
         fs::remove_dir_all(root).unwrap();
     }
 
