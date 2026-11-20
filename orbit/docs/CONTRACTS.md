@@ -1637,12 +1637,16 @@ PTY pixel size rule needs no wire change.
   - The text cannot prove ORB-C6 fidelity.
   - Orbit identifies no agent; Eon owns agent policy.
 - **Proof:** the `eon-agent-parity-a9g0.15` commit (`9c90032`), proved
-  installed by the `eon-agent-parity-a9g0.19` commit
+  installed by the `eon-agent-parity-a9g0.19` commit, with the `eon-u5bvd.2`
+  commit (`9a2031d`) for `ReadHistory`
   - **Environment:** x86_64 Linux; `nix build --keep-going` of every
     `orbit-*` check on tree `7b02ce4` and 53 real-PTY checks again on
     `a75917e`, as `eon-agent-parity-a9g0.15` records; sandboxed
     `nix develop -c eon-test` on that bead's final tree; the isolated
-    installed Eon recorded under ORB-C3
+    installed Eon recorded under ORB-C3. For `ReadHistory`: `nix build
+    --keep-going` of every `orbit-*` check on that commit's tree; sandboxed
+    `nix develop -c eon-test`, with a release Orbit for the real-PTY runs,
+    as `eon-u5bvd.2` records
   - **Evidence:**
     - Real-PTY checks
       [`orbit-visible-text`](../tests/real_pty/visible_text.rs) and
@@ -1661,31 +1665,26 @@ PTY pixel size rule needs no wire change.
       109 ms, each at a later revision; while the flood ran, Venus drew
       keystrokes in the pane beside it within 82 to 86 ms (bounded by the
       screen captures that measured it).
-- **Proof (`ReadHistory`):** the `eon-u5bvd.2` commit
-  - **Environment:** x86_64 Linux; `nix build --keep-going` of every
-    `orbit-*` check on that commit's tree; sandboxed `nix develop -c
-    eon-test`, with a release Orbit for the real-PTY runs, as
-    `eon-u5bvd.2` records
-  - **Evidence:**
-    - Real-PTY check
-      [`orbit-history-text`](../tests/real_pty/history_text.rs): history then
-      the live area, a wrapped line joined, wide and combining text kept,
-      the alternate screen alone and the primary history back, the client's
-      scroll position and the PTY untouched, a held update waited for; a
-      16 MiB history of four-byte characters at 200 columns read as 7.45 MB
-      in 87 to 156 ms; a 3.75 MB answer left unread did not hold the PTY or
-      the client and lost the lease within its bound; and keystroke echo in
-      another Orbit stayed at most 12.9 ms, below the slowest read, during
-      back-to-back full reads of up to 181 ms, idle and with 12 CPU burners
-      (load 7.95 to 10.17)
-    - [`orbit-lease-input`](../tests/real_pty/lease_input.rs), which refuses
-      a pipelined `ReadHistory` under the lease
-    - The unit tests in [`src/history.rs`](../src/history.rs) (order,
-      unwrap, a combining mark on a space, eviction, the alternate screen, the 8 MiB bound and the cut
-      newest line) and the management protocol tests in
-      [`crates/protocol/tests/management.rs`](../crates/protocol/tests/management.rs)
-    - Law [`management_read_needs_a_live_settled_lease`](../LAWS.bend)
-      (`orbit-laws`), which covers both reads
+    - `ReadHistory`, at the `eon-u5bvd.2` commit:
+      - Real-PTY check
+        [`orbit-history-text`](../tests/real_pty/history_text.rs): history then
+        the live area, a wrapped line joined, wide and combining text kept,
+        the alternate screen alone and the primary history back, the client's
+        scroll position and the PTY untouched, a held update waited for; a
+        16 MiB history of four-byte characters at 200 columns read as 7.45 MB
+        in 87 to 156 ms; a 3.75 MB answer left unread did not hold the PTY or
+        the client and lost the lease within its bound; and keystroke echo in
+        another Orbit stayed at most 12.9 ms, below the slowest read, during
+        back-to-back full reads of up to 181 ms, idle and with 12 CPU burners
+        (load 7.95 to 10.17)
+      - [`orbit-lease-input`](../tests/real_pty/lease_input.rs), which refuses
+        a pipelined `ReadHistory` under the lease
+      - The unit tests in [`src/history.rs`](../src/history.rs) (order,
+        unwrap, a combining mark on a space, eviction, the alternate screen, the 8 MiB bound and the cut
+        newest line) and the management protocol tests in
+        [`crates/protocol/tests/management.rs`](../crates/protocol/tests/management.rs)
+      - Law [`management_read_needs_a_live_settled_lease`](../LAWS.bend)
+        (`orbit-laws`), which covers both reads
 
 ## Focused terminal conformance corpus
 
