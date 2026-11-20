@@ -9,7 +9,9 @@
 //! terminal's editor starts. A starting supervisor removes the directories
 //! of supervisors no longer running, except one whose recorded terminal it
 //! adopts in recovery: it takes that one over and removes it when the
-//! terminal ends. A removal that fails is retried on later turns.
+//! terminal ends. Its own `<pid>-<start>` on disk is the same process from
+//! before an in-place Update's exec, which it treats the same way, numbering
+//! new snapshots past them. A removal that fails is retried on later turns.
 
 use super::{
     diagnostics::DiagnosticLog,
@@ -63,7 +65,25 @@ pub(crate) struct Snapshots {
 }
 
 impl Snapshots {
-    /// The store under `runtime`, which nothing creates before a snapshot.
+    /// The store under `runtime` as a supervisor starts, owning each snapshot
+    /// directory whose recorded terminal is in `adopted` and whose writer is
+    /// this process (before an exec) or no longer runs, and removing the
+    /// others of those writers. A running supervisor's directories stay.
+    pub(crate) fn adopt<'a>(
+        runtime: &Path,
+        adopted: impl IntoIterator<Item = &'a str>,
+        log: &DiagnosticLog,
+    ) -> Self {
+        let mut store = Self::new(runtime);
+        let adopted = adopted.into_iter().collect::<Vec<_>>();
+        if let Err(error) = store.adopt_directories(&adopted) {
+            log.record(&format!("cannot sweep stale scrollback snapshots: {error}"));
+        }
+        store
+    }
+
+    /// An empty store under `runtime`, which nothing creates before a
+    /// snapshot; a starting supervisor uses `adopt`.
     pub(crate) fn new(runtime: &Path) -> Self {
         let pid = std::process::id();
         let prefix = match platform::process(pid) {
@@ -80,21 +100,7 @@ impl Snapshots {
         }
     }
 
-    /// Removes, as a supervisor starts, every snapshot directory whose
-    /// supervisor is no longer running, except those whose recorded terminal
-    /// is in `adopted`, which this supervisor takes over.
-    pub(crate) fn sweep<'a>(
-        &mut self,
-        adopted: impl IntoIterator<Item = &'a str>,
-        log: &DiagnosticLog,
-    ) {
-        let adopted = adopted.into_iter().collect::<Vec<_>>();
-        if let Err(error) = self.sweep_stale(&adopted) {
-            log.record(&format!("cannot sweep stale scrollback snapshots: {error}"));
-        }
-    }
-
-    fn sweep_stale(&mut self, adopted: &[&str]) -> Result<(), String> {
+    fn adopt_directories(&mut self, adopted: &[&str]) -> Result<(), String> {
         let entries = match fs::read_dir(&self.root) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             entries => {
@@ -102,12 +108,16 @@ impl Snapshots {
                 entries.map_err(|error| format!("cannot list {}: {error}", self.root.display()))?
             }
         };
+        let mut highest = None;
         let mut errors = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|error| error.to_string())?;
             let path = entry.path();
-            if writer_running(&entry.file_name().to_string_lossy()) {
-                continue;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            match self.own_number(&name) {
+                Some(number) => highest = highest.max(Some(number)),
+                None if writer_running(&name) => continue,
+                None => {}
             }
             match owner(&path) {
                 Some(terminal) if adopted.contains(&terminal.as_str()) => {
@@ -121,12 +131,27 @@ impl Snapshots {
                 }
             }
         }
+        // New snapshots never reuse a number this process wrote before.
+        if let Some(highest) = highest {
+            match u64::checked_add(highest, 1) {
+                Some(next) => self.next = self.next.max(next),
+                None => self.prefix = Err("scrollback snapshot numbers are exhausted".into()),
+            }
+        }
         self.remove_empty_root();
         if errors.is_empty() {
             Ok(())
         } else {
             Err(errors.join("; "))
         }
+    }
+
+    /// The `<n>` of a directory this process wrote, as `<pid>-<start>-<n>`.
+    fn own_number(&self, name: &str) -> Option<u64> {
+        name.strip_prefix(self.prefix.as_deref().ok()?)?
+            .strip_prefix('-')?
+            .parse()
+            .ok()
     }
 
     /// Writes `history` of the pane or popup `target` to a new snapshot,
@@ -140,7 +165,10 @@ impl Snapshots {
         let prefix = self.prefix.as_ref().map_err(Clone::clone)?;
         prepare_runtime(&self.root)?;
         let directory = self.root.join(format!("{prefix}-{}", self.next));
-        self.next += 1;
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or("scrollback snapshot numbers are exhausted")?;
         fs::DirBuilder::new()
             .mode(0o700)
             .create(&directory)
@@ -326,6 +354,7 @@ fn remove(directory: &Path) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{ALTERNATE_NOTICE, OWNER, Snapshots, contents};
+    use crate::platform;
     use crate::{diagnostics::DiagnosticLog, supervisor::temporary_directory};
     use orbit_protocol::management::{HistoryText, Screen};
     use std::{
@@ -426,7 +455,7 @@ pub(crate) mod tests {
     /// running supervisor's. An owned snapshot goes when its terminal ends,
     /// and the store with the last one.
     #[test]
-    fn the_start_sweep_keeps_adopted_and_running_snapshots_and_ends_remove_them() {
+    fn adoption_keeps_adopted_and_running_snapshots_and_ends_remove_them() {
         let runtime = temporary_directory();
         let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "eon");
         let mut writer = Snapshots::new(&runtime);
@@ -451,6 +480,16 @@ pub(crate) mod tests {
             moved
         };
         let [adopted, ended, unowned] = [&adopted, &ended, &unowned].map(|path| dead(path));
+        // The test runner stands for another supervisor that still runs.
+        let running = {
+            let parent = std::os::unix::process::parent_id();
+            let start = platform::process(parent).unwrap().unwrap().start;
+            let name = running.file_name().unwrap().to_str().unwrap();
+            let number = name.rsplit('-').next().unwrap();
+            let moved = snapshots.join(format!("{parent}-{start}-{number}"));
+            fs::rename(&running, &moved).unwrap();
+            moved
+        };
         let junk = snapshots.join("junk");
         fs::create_dir(&junk).unwrap();
         assert_eq!(
@@ -458,8 +497,7 @@ pub(crate) mod tests {
             "terminal-3"
         );
 
-        let mut store = Snapshots::new(&runtime);
-        store.sweep(["terminal-1", "terminal-3"], &log);
+        let mut store = Snapshots::adopt(&runtime, ["terminal-1", "terminal-3"], &log);
         assert!(adopted.exists() && running.exists());
         assert!(!ended.exists() && !unowned.exists() && !junk.exists());
 
@@ -475,6 +513,48 @@ pub(crate) mod tests {
         snapshot.mark("terminal-9").unwrap();
         last.own(snapshot, "terminal-9".into(), None);
         last.retain(|_, _| false, &log);
+        assert!(!snapshots.exists());
+        fs::remove_dir_all(runtime).unwrap();
+    }
+
+    /// After an in-place Update's exec the process is the same, so its own
+    /// directories are the previous owner's: an adopted popup's stays owned
+    /// and goes when the popup ends, an unadopted one goes now, and new
+    /// snapshots are numbered past every number it wrote before. A dead
+    /// supervisor's directory of an adopted popup is owned too.
+    #[test]
+    fn adoption_takes_over_this_process_s_own_snapshots_after_an_exec() {
+        let runtime = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "eon");
+        let mut before = Snapshots::new(&runtime);
+        let mut write = |terminal: &str| {
+            let snapshot = before.write("u1", &history(Screen::Primary, 0, 0)).unwrap();
+            snapshot.mark(terminal).unwrap();
+            snapshot.directory.clone()
+        };
+        let [live, gone, last] = ["terminal-3", "terminal-4", "terminal-5"].map(&mut write);
+        // The highest own number, of a terminal no longer adopted.
+        assert!(last.ends_with(format!("{}-3", before.prefix.clone().unwrap())));
+        let snapshots = runtime.join("snapshots");
+        let dead = snapshots.join(format!("{}-1-1", u32::MAX));
+        fs::create_dir(&dead).unwrap();
+        fs::write(dead.join(OWNER), "terminal-6").unwrap();
+
+        let mut store = Snapshots::adopt(&runtime, ["terminal-3", "terminal-6"], &log);
+        assert!(live.exists() && dead.exists());
+        assert!(!gone.exists() && !last.exists());
+        assert!(store.is_settled());
+        let next = store.write("u2", &history(Screen::Primary, 0, 0)).unwrap();
+        assert!(
+            next.directory
+                .ends_with(format!("{}-4", store.prefix.clone().unwrap())),
+            "{}",
+            next.directory.display()
+        );
+        store.discard(next).unwrap();
+        store.retain(|terminal, _| terminal == "terminal-6", &log);
+        assert!(!live.exists() && dead.exists());
+        store.retain(|_, _| false, &log);
         assert!(!snapshots.exists());
         fs::remove_dir_all(runtime).unwrap();
     }

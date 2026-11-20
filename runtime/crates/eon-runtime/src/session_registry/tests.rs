@@ -956,3 +956,65 @@ fn c38_readers_share_the_lock_and_initial_registration_retries_busy() {
     assert!(registered.id.ends_with("0000000000000002"));
     assert_eq!(registry.list().unwrap().len(), 2);
 }
+
+/// The busy retry's bound and backoff on a fake clock that only the pauses
+/// advance, so no attempt depends on scheduling.
+#[test]
+fn busy_retry_backs_off_to_its_ceiling_and_stops_at_the_limit() {
+    let start = Instant::now();
+    let now = std::cell::Cell::new(start);
+    let mut pauses = Vec::new();
+    let mut attempts = 0;
+    let result: Result<(), Failure> = retry_with(
+        || {
+            attempts += 1;
+            Err(Failure::busy())
+        },
+        BUSY_RETRY_LIMIT,
+        || now.get(),
+        |pause| {
+            pauses.push(pause.as_millis());
+            now.set(now.get() + pause);
+            Ok(())
+        },
+    );
+    assert!(
+        result.unwrap_err().busy,
+        "the busy failure stands at the limit"
+    );
+    // 20 + 40 + 80, eighteen pauses of 100 and the last 60 that ends at the
+    // two-second limit.
+    let mut expected = vec![20, 40, 80];
+    expected.extend([100; 18]);
+    expected.push(60);
+    assert_eq!(pauses, expected);
+    assert_eq!(now.get() - start, BUSY_RETRY_LIMIT);
+    assert_eq!(attempts, pauses.len() + 1);
+
+    // A result other than busy ends the retry at once, success or failure.
+    let mut busy = 2;
+    let mut slept = 0;
+    let result = retry_with(
+        || {
+            if busy == 0 {
+                return Ok("done");
+            }
+            busy -= 1;
+            Err(Failure::busy())
+        },
+        BUSY_RETRY_LIMIT,
+        || now.get(),
+        |_| {
+            slept += 1;
+            Ok(())
+        },
+    );
+    assert_eq!((result.unwrap(), slept), ("done", 2));
+    let result: Result<(), Failure> = retry_with(
+        || Err(Failure::new("unreadable")),
+        BUSY_RETRY_LIMIT,
+        || now.get(),
+        |_| panic!("a failure that is not busy is not retried"),
+    );
+    assert_eq!(result.unwrap_err().detail, "unreadable");
+}

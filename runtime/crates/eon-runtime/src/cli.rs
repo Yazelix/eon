@@ -13,8 +13,8 @@ use super::{
     running::running_notice,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, terminal_session},
     supervisor::{
-        LaunchMode, LaunchOptions, configuration_directory, launch_current, prepare_configuration,
-        runtime_directory,
+        LaunchMode, LaunchOptions, WORKSPACE_APPLICATION_ID, WORKSPACE_DECORATIONS,
+        configuration_directory, launch_current, prepare_configuration, runtime_directory,
     },
     windows,
     workspace::{
@@ -837,8 +837,8 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             LaunchMode::Workspace,
             &[],
             true,
-            false,
-            "eon",
+            WORKSPACE_DECORATIONS,
+            WORKSPACE_APPLICATION_ID,
             &LaunchOptions::default(),
         ),
         [flag, ..] if flag == "--dir" || flag == "--no-anima" => {
@@ -850,8 +850,8 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
                 LaunchMode::Workspace,
                 &[],
                 true,
-                false,
-                "eon",
+                WORKSPACE_DECORATIONS,
+                WORKSPACE_APPLICATION_ID,
                 &options,
             )
         }
@@ -925,8 +925,8 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
                 LaunchMode::Workspace,
                 child,
                 false,
-                false,
-                "eon",
+                WORKSPACE_DECORATIONS,
+                WORKSPACE_APPLICATION_ID,
                 &options,
             )
         }

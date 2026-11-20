@@ -187,6 +187,11 @@ pub(super) struct LaunchOptions {
     pub(super) no_anima: bool,
 }
 
+/// Full Eon's window identity and decorations on every launch, and on an
+/// in-place Update's target, which the launch does not pass it.
+pub(super) const WORKSPACE_APPLICATION_ID: &str = "eon";
+pub(super) const WORKSPACE_DECORATIONS: bool = false;
+
 /// Why bare `eon --dir` presents nothing: it names a fresh window's
 /// first tab, and this window already runs (EON-C18).
 const RUNNING_WINDOW_DIRECTORY: &str = "this Eon window is already running, so --dir has no fresh first tab to start; use `eon tab create --dir DIR` for a tab there or `eon window new --dir DIR` for a new window";
@@ -215,21 +220,6 @@ pub(super) fn launch_current(
         "eon"
     });
     prepare_runtime(&root)?;
-    let configure = |log: Option<&DiagnosticLog>| {
-        let config = configuration_directory()?;
-        let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults, log)?;
-        let bar = window_bar(mode, &config, inputs, log)?;
-        let popups = (mode == LaunchMode::Workspace)
-            .then(|| managed_environment::popup_catalog(&config, &inputs.defaults, log))
-            .transpose()?;
-        let startup_animation = (mode == LaunchMode::Workspace)
-            .then(|| managed_environment::startup_animation(&config, &inputs.defaults, log))
-            .transpose()?
-            .flatten()
-            .filter(|_| !options.no_anima && options.directory.is_none());
-        Ok::<_, String>((config, terminal, bar, popups, startup_animation))
-    };
-    let mut prepared = None;
     let mut missing_deadline = None;
     let (generation, lifecycle_lock, namespace_lock) = loop {
         let namespace_lock = (mode == LaunchMode::Workspace)
@@ -248,7 +238,14 @@ pub(super) fn launch_current(
             (None, Some(lock)) => match lock.select(&build)? {
                 Some(id) => id,
                 None => {
-                    prepared = Some(configure(None)?);
+                    // A configuration the window cannot show allocates no lifetime.
+                    DisplaySettings::read(
+                        mode,
+                        &configuration_directory()?,
+                        inputs,
+                        options,
+                        None,
+                    )?;
                     lock.allocate(inputs)?
                 }
             },
@@ -350,19 +347,13 @@ pub(super) fn launch_current(
     let socket = runtime.join("eon.sock");
     let log = DiagnosticLog::open(&generation, mode.name());
     let result = (|| {
-        let (config, terminal, bar, popups, startup_animation) = match prepared {
-            Some(settings) => settings,
-            None => configure(Some(&log))?,
-        };
+        let settings =
+            WindowSettings::read(configuration_directory()?, mode, inputs, options, &log)?;
         prepare_generation_runtime(&root, &generation)?;
-        prepare_configuration(&config)?;
+        prepare_configuration(&settings.config)?;
         supervise(
             inputs,
-            &config,
-            terminal,
-            &bar,
-            popups,
-            startup_animation,
+            settings,
             lifecycle_lock,
             namespace_lock,
             &runtime,
@@ -485,6 +476,109 @@ pub(super) fn present_at(
             Err(format!("cannot present Eon Desktop: {}", failure.detail))
         }
         _ => Err("supervisor returned the wrong EONW result for presentation".into()),
+    }
+}
+
+/// Every value a window reads from configuration as it starts, read by
+/// one function so a launch and an in-place Update's target read them
+/// alike.
+pub(super) struct WindowSettings {
+    config: PathBuf,
+    display: DisplaySettings,
+    warning_close_last_tab: bool,
+    animate_working_badge: bool,
+    number_keys: bool,
+    agents: managed_environment::Agents,
+    /// Full Eon's sidebar; eonbase has no attention (EON-C31).
+    sidebar: Option<bool>,
+    notices: managed_environment::AttentionNotifications,
+}
+
+/// What the window shows, which a launch checks before it allocates a
+/// lifetime.
+struct DisplaySettings {
+    terminal: managed_environment::TerminalConfig,
+    bar: managed_environment::Bar,
+    /// Full Eon only.
+    popups: Option<managed_environment::PopupCatalog>,
+    startup_animation: Option<managed_environment::StartupAnimation>,
+}
+
+impl DisplaySettings {
+    fn read(
+        mode: LaunchMode,
+        config: &Path,
+        inputs: &Inputs,
+        options: &LaunchOptions,
+        log: Option<&DiagnosticLog>,
+    ) -> Result<Self, String> {
+        let workspace = mode == LaunchMode::Workspace;
+        Ok(Self {
+            terminal: managed_environment::terminal_presentation(config, &inputs.defaults, log)?,
+            bar: window_bar(mode, config, inputs, log)?,
+            popups: workspace
+                .then(|| managed_environment::popup_catalog(config, &inputs.defaults, log))
+                .transpose()?,
+            startup_animation: workspace
+                .then(|| managed_environment::startup_animation(config, &inputs.defaults, log))
+                .transpose()?
+                .flatten()
+                .filter(|_| !options.no_anima && options.directory.is_none()),
+        })
+    }
+}
+
+impl WindowSettings {
+    /// The settings in `config`, the configuration directory.
+    pub(super) fn read(
+        config: PathBuf,
+        mode: LaunchMode,
+        inputs: &Inputs,
+        options: &LaunchOptions,
+        log: &DiagnosticLog,
+    ) -> Result<Self, String> {
+        let defaults = &inputs.defaults;
+        let log = Some(log);
+        let display = DisplaySettings::read(mode, &config, inputs, options, log)?;
+        let warning_close_last_tab =
+            managed_environment::warning_close_last_tab(&config, defaults, log)?;
+        let animate_working_badge =
+            managed_environment::animate_working_badge(&config, defaults, log)?;
+        let number_keys = managed_environment::number_keys(&config, defaults, log)?;
+        let agents = managed_environment::agents(&config, defaults, log)?;
+        let (sidebar, notices) = if mode == LaunchMode::Workspace {
+            // Each edit rereads `[editor]`; a malformed one fails the start as
+            // other settings do. An editor that resolves to nothing fails only
+            // the edit.
+            managed_environment::editor_setting(&config, defaults, log)?;
+            managed_environment::shell_command(&config, defaults, log)?;
+            let (sidebar, notices) =
+                managed_environment::attention_settings(&config, defaults, log)?;
+            (Some(sidebar), notices)
+        } else {
+            (None, Default::default())
+        };
+        Ok(Self {
+            config,
+            display,
+            warning_close_last_tab,
+            animate_working_badge,
+            number_keys,
+            agents,
+            sidebar,
+            notices,
+        })
+    }
+
+    /// The popup catalog; eonbase has none.
+    fn popup_catalog(&self, inputs: &Inputs) -> managed_environment::PopupCatalog {
+        self.display
+            .popups
+            .clone()
+            .unwrap_or_else(|| managed_environment::PopupCatalog {
+                geometry: inputs.defaults.popups.geometry,
+                entries: Vec::new(),
+            })
     }
 }
 
@@ -1104,11 +1198,7 @@ impl Drop for GenerationCleanup<'_> {
 #[allow(clippy::too_many_arguments)]
 fn supervise(
     inputs: &Inputs,
-    config: &Path,
-    terminal: managed_environment::TerminalConfig,
-    bar: &managed_environment::Bar,
-    popups: Option<managed_environment::PopupCatalog>,
-    startup_animation: Option<managed_environment::StartupAnimation>,
+    settings: WindowSettings,
     lifecycle_lock: LifecycleLock,
     namespace_lock: Option<super::generation::NamespaceLock>,
     runtime: &Path,
@@ -1173,30 +1263,13 @@ fn supervise(
     if mode == LaunchMode::Workspace {
         workspace::validate_initial_directory(&launch_directory)?;
     }
-    let warning_close_last_tab =
-        managed_environment::warning_close_last_tab(config, &inputs.defaults, Some(log))?;
-    let animate_working_badge =
-        managed_environment::animate_working_badge(config, &inputs.defaults, Some(log))?;
-    let number_keys = managed_environment::number_keys(config, &inputs.defaults, Some(log))?;
-    let agents = managed_environment::agents(config, &inputs.defaults, Some(log))?;
-    // Each edit rereads `[editor]`; a malformed one fails the start as other settings do.
-    // An editor that resolves to nothing fails only the edit.
-    if mode == LaunchMode::Workspace {
-        managed_environment::editor_setting(config, &inputs.defaults, Some(log))?;
-        managed_environment::shell_command(config, &inputs.defaults, Some(log))?;
-    }
+    let config = settings.config.as_path();
+    let terminal = &settings.display.terminal;
+    let bar = &settings.display.bar;
+    let startup_animation = settings.display.startup_animation.as_ref();
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
-    let (mut attention, notice_settings) = if mode == LaunchMode::Workspace {
-        let (sidebar, notices) =
-            managed_environment::attention_settings(config, &inputs.defaults, Some(log))?;
-        (Some(Attention::new(sidebar)), notices)
-    } else {
-        (None, Default::default())
-    };
-    let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
-        geometry: inputs.defaults.popups.geometry,
-        entries: Vec::new(),
-    });
+    let mut attention = settings.sidebar.map(Attention::new);
+    let popup_catalog = settings.popup_catalog(inputs);
     let mut failed_starts = sessions::FailedStarts::default();
     let (mut sessions, recovered_pair) = recover_sessions(
         runtime,
@@ -1224,8 +1297,11 @@ fn supervise(
             attention.recover(session.run_id());
         }
     }
-    let mut scrollback = Snapshots::new(runtime);
-    scrollback.sweep(sessions.iter().map(|session| session.id.as_str()), log);
+    let scrollback = Snapshots::adopt(
+        runtime,
+        sessions.iter().map(|session| session.id.as_str()),
+        log,
+    );
     let mut editor_sockets = Sockets::recover(runtime, &sessions, log);
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
     // Clients that connect while the first terminals start are held for the loop.
@@ -1398,13 +1474,13 @@ fn supervise(
             config,
             &presentation_socket,
             mode,
-            &terminal,
+            terminal,
             bar,
             application_id,
             decorations,
-            warning_close_last_tab,
-            animate_working_badge,
-            number_keys,
+            settings.warning_close_last_tab,
+            settings.animate_working_badge,
+            settings.number_keys,
         );
         Some(
             PresentationProcess::start(
@@ -1479,7 +1555,7 @@ fn supervise(
                             &mut initial_child,
                             &mut editor_sockets,
                             operation,
-                            PairStart::Fresh(startup_animation.as_ref()),
+                            PairStart::Fresh(startup_animation),
                             admitted.as_ref().and_then(|venus| venus.name),
                         )
                     },
@@ -1520,40 +1596,36 @@ fn supervise(
         }
     };
     let registration_pending = recovering && registry_worker.is_some();
-    let mut state = SupervisorState {
-        failed_starts,
-        start_pump,
-        registry_worker,
-        registry_pending: registration_pending
-            .then(|| RegistryPending::Recovery(workspaces.as_ref().unwrap().snapshot().workspace)),
-        started_at,
-        window,
-        running,
-        component_generation: generation.to_owned(),
-        created_build: identity.created_build,
-        active_build: identity.active_build,
-        application_id: application_id.into(),
-        decorations,
-        workspaces,
-        sessions,
-        venus: None,
-        venus_path: None,
-        initial_child,
-        initial_status: startup_failed.then_some(1),
-        stopping: startup_failed.then_some(StopReason::BootstrapFailure),
-        reconciliation: None,
-        quotas: (mode == LaunchMode::Workspace)
-            .then(|| quota::Quotas::start(&inputs.codexbar, &bar.widgets)),
-        attention,
-        pane_labels: super::pane_labels::Labels::default(),
-        agents,
-        notices: notification::Notices::new(notice_settings),
-        subscribers: Subscribers::new(generation),
-        scrollback,
-        editor_sockets,
-        pair_dispatches: pair::Dispatches::default(),
-        log: Arc::clone(log),
-    };
+    let mut state = SupervisorState::assemble(
+        Carried {
+            registry_worker,
+            registry_pending: registration_pending.then(|| {
+                RegistryPending::Recovery(workspaces.as_ref().unwrap().snapshot().workspace)
+            }),
+            started_at,
+            window,
+            running,
+            component_generation: generation.to_owned(),
+            created_build: identity.created_build,
+            active_build: identity.active_build,
+            application_id: application_id.into(),
+            decorations,
+            workspaces,
+            sessions,
+            failed_starts,
+            start_pump,
+            initial_child,
+            initial_status: startup_failed.then_some(1),
+            stopping: startup_failed.then_some(StopReason::BootstrapFailure),
+            attention,
+            scrollback,
+            editor_sockets,
+            log: Arc::clone(log),
+        },
+        &settings,
+        mode,
+        inputs,
+    );
     let presentation = if startup_failed {
         drop(admitted);
         Ok(None)
@@ -1567,13 +1639,13 @@ fn supervise(
                     config,
                     &presentation_socket,
                     mode,
-                    &terminal,
+                    terminal,
                     bar,
                     application_id,
                     decorations,
-                    warning_close_last_tab,
-                    animate_working_badge,
-                    number_keys,
+                    settings.warning_close_last_tab,
+                    settings.animate_working_badge,
+                    settings.number_keys,
                 ),
                 false,
                 None,
@@ -1823,6 +1895,103 @@ struct SupervisorState {
     editor_sockets: Sockets,
     pair_dispatches: pair::Dispatches,
     log: Arc<DiagnosticLog>,
+}
+
+/// What a supervisor brings to its state, as opposed to what `assemble`
+/// recreates the same way for every start: a launch builds these while its
+/// first terminals start, and an in-place Update's target restores them from
+/// its checkpoint.
+struct Carried {
+    registry_worker: Option<session_registry::Worker>,
+    registry_pending: Option<RegistryPending>,
+    started_at: u64,
+    window: Option<String>,
+    running: Option<Running>,
+    component_generation: String,
+    created_build: String,
+    active_build: String,
+    application_id: String,
+    decorations: bool,
+    workspaces: Option<WorkspaceSet>,
+    sessions: Vec<RunningSession>,
+    failed_starts: sessions::FailedStarts,
+    start_pump: StartPump,
+    initial_child: Vec<OsString>,
+    initial_status: Option<i32>,
+    stopping: Option<StopReason>,
+    attention: Option<Attention>,
+    scrollback: Snapshots,
+    editor_sockets: Sockets,
+    log: Arc<DiagnosticLog>,
+}
+
+impl SupervisorState {
+    /// The one constructor of a supervisor's state: `carried`, and every
+    /// other owner recreated from `settings`. A new field joins `Carried` or
+    /// is recreated here.
+    fn assemble(
+        carried: Carried,
+        settings: &WindowSettings,
+        mode: LaunchMode,
+        inputs: &Inputs,
+    ) -> Self {
+        let Carried {
+            registry_worker,
+            registry_pending,
+            started_at,
+            window,
+            running,
+            component_generation,
+            created_build,
+            active_build,
+            application_id,
+            decorations,
+            workspaces,
+            sessions,
+            failed_starts,
+            start_pump,
+            initial_child,
+            initial_status,
+            stopping,
+            attention,
+            scrollback,
+            editor_sockets,
+            log,
+        } = carried;
+        Self {
+            registry_worker,
+            registry_pending,
+            started_at,
+            window,
+            running,
+            subscribers: Subscribers::new(&component_generation),
+            component_generation,
+            created_build,
+            active_build,
+            application_id,
+            decorations,
+            workspaces,
+            sessions,
+            failed_starts,
+            start_pump,
+            venus: None,
+            venus_path: None,
+            initial_child,
+            initial_status,
+            stopping,
+            reconciliation: None,
+            quotas: (mode == LaunchMode::Workspace)
+                .then(|| quota::Quotas::start(&inputs.codexbar, &settings.display.bar.widgets)),
+            attention,
+            pane_labels: super::pane_labels::Labels::default(),
+            agents: settings.agents,
+            notices: notification::Notices::new(settings.notices),
+            scrollback,
+            editor_sockets,
+            pair_dispatches: pair::Dispatches::default(),
+            log,
+        }
+    }
 }
 
 enum RegistryPending {
@@ -5237,13 +5406,17 @@ mod tests {
             let log = DiagnosticLog::open_in(Ok(worker_root.join("logs")), GENERATION, "eonbase");
             let lock =
                 super::lock_supervisor_lifecycle(&worker_root.join("lifecycle.lock")).unwrap();
+            let settings = super::WindowSettings::read(
+                worker_root.clone(),
+                LaunchMode::Terminal,
+                &inputs,
+                &super::LaunchOptions::default(),
+                &log,
+            )
+            .unwrap();
             super::supervise(
                 &inputs,
-                &worker_root,
-                inputs.defaults.terminal.clone(),
-                &super::window_bar(LaunchMode::Terminal, &worker_root, &inputs, None).unwrap(),
-                None,
-                None,
+                settings,
                 lock,
                 None,
                 &worker_runtime,
@@ -6218,25 +6391,32 @@ mod tests {
         } else {
             LaunchMode::Workspace
         };
-        let result = super::supervise(
-            &inputs,
-            &root,
-            inputs.defaults.terminal.clone(),
-            &super::window_bar(mode, &root, &inputs, None).unwrap(),
-            Some(inputs.defaults.popups.clone()),
-            None,
-            lock,
-            None,
-            &root.join("a").join(&generation),
-            &[],
-            None,
-            &generation,
+        // As in a launch, a configuration the start cannot read is the
+        // start's failure.
+        let result = super::WindowSettings::read(
+            root.clone(),
             mode,
-            "",
-            false,
+            &inputs,
+            &super::LaunchOptions::default(),
             &log,
-            super::TERMINAL_START_TIMEOUT,
-        );
+        )
+        .and_then(|settings| {
+            super::supervise(
+                &inputs,
+                settings,
+                lock,
+                None,
+                &root.join("a").join(&generation),
+                &[],
+                None,
+                &generation,
+                mode,
+                "",
+                false,
+                &log,
+                super::TERMINAL_START_TIMEOUT,
+            )
+        });
         fs::write(
             root.join("startup-result"),
             match result {

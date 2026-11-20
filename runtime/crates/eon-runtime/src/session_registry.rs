@@ -216,6 +216,34 @@ impl Worker {
     }
 }
 
+/// How long a busy registry is retried before the busy failure stands.
+const BUSY_RETRY_LIMIT: Duration = Duration::from_secs(2);
+/// The first pause after a busy attempt; each later pause doubles, up to
+/// `MAX_BUSY_BACKOFF`.
+const FIRST_BUSY_BACKOFF: Duration = Duration::from_millis(20);
+const MAX_BUSY_BACKOFF: Duration = Duration::from_millis(100);
+
+/// Runs `operation` until it is not busy or `limit` has passed on `clock`,
+/// pausing through `pause` between attempts; the last pause ends at the limit.
+fn retry_with<T>(
+    mut operation: impl FnMut() -> Result<T, Failure>,
+    limit: Duration,
+    mut clock: impl FnMut() -> Instant,
+    mut pause: impl FnMut(Duration) -> Result<(), Failure>,
+) -> Result<T, Failure> {
+    let deadline = clock() + limit;
+    let mut backoff = FIRST_BUSY_BACKOFF;
+    loop {
+        match operation() {
+            Err(error) if error.busy && clock() < deadline => {
+                pause(backoff.min(deadline.saturating_duration_since(clock())))?;
+                backoff = (backoff * 2).min(MAX_BUSY_BACKOFF);
+            }
+            result => return result,
+        }
+    }
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fault {
@@ -235,30 +263,28 @@ pub(crate) enum Fault {
 impl Registry {
     pub(super) fn perform(&self, operation: Operation) -> Completion {
         match operation {
-            Operation::Register => {
-                let deadline = Instant::now() + Duration::from_secs(2);
-                let mut backoff = Duration::from_millis(20);
-                loop {
-                    match self.create(None) {
-                        Err(error) if error.busy && Instant::now() < deadline => {
-                            #[cfg(test)]
-                            if self.fault == Some(Fault::ObserveBusyRetry) {
-                                fs::write(self.root.join(".tmp-test-retrying"), b"retry")
-                                    .map_err(|error| Failure::at(&self.root, error))?;
-                            }
-                            thread::sleep(
-                                backoff.min(deadline.saturating_duration_since(Instant::now())),
-                            );
-                            backoff = (backoff * 2).min(Duration::from_millis(100));
-                        }
-                        result => return result.map(Some),
-                    }
-                }
-            }
+            Operation::Register => self.retry_busy(|| self.create(None)).map(Some),
             Operation::Create { name } => self.create(name.as_deref()).map(Some),
             Operation::Rename { id, name } => self.rename(&id, name.as_deref()),
         }
     }
+    /// `operation`, retried while another holder makes the registry busy, for
+    /// up to `BUSY_RETRY_LIMIT`; after that the busy failure stands.
+    pub(super) fn retry_busy<T>(
+        &self,
+        operation: impl FnMut() -> Result<T, Failure>,
+    ) -> Result<T, Failure> {
+        retry_with(operation, BUSY_RETRY_LIMIT, Instant::now, |pause| {
+            #[cfg(test)]
+            if self.fault == Some(Fault::ObserveBusyRetry) {
+                fs::write(self.root.join(".tmp-test-retrying"), b"retry")
+                    .map_err(|error| Failure::at(&self.root, error))?;
+            }
+            thread::sleep(pause);
+            Ok(())
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn in_test_directory(root: PathBuf) -> Self {
         Self { root, fault: None }
