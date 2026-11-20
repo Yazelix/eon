@@ -1,0 +1,26 @@
+[package]
+name = "agent-bench"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+# Record parsing and `Value`; its string escaper is RFC 8785's, so src/jcs.rs reuses it.
+serde_json = "=1.0.151"
+# Record, declaration and object-set digests.
+sha2 = "=0.10.9"
+# utimensat with SYMLINK_NOFOLLOW: one safe call normalizes the mtime of files, directories
+# and symlinks in a synthetic workspace; std cannot set a symlink's times.
+rustix = { version = "=1.1.4", default-features = false, features = ["fs", "std"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

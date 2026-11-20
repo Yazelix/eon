@@ -13,6 +13,7 @@ members = [
     "eon/tools/eon-bench",
     "eon/tools/archive-notices",
     "eon/tools/review-tier",
+    "eon/tools/agent-bench",
 ]
 resolver = "3"
 

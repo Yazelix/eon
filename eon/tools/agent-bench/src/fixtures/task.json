@@ -1,0 +1,67 @@
+{
+  "schema": "eon-bench-task/1",
+  "repo": "eon",
+  "role": "builder",
+  "task_id": "eon-7aw48",
+  "tier_introduced": "micro",
+  "base_commit": "7777777777777777777777777777777777777777",
+  "snapshot_object_set_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "landed_commit": "9999999999999999999999999999999999999999",
+  "landed_at": "2026-11-10T12:00:00Z",
+  "task_text": {
+    "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "source_commit": "7777777777777777777777777777777777777777",
+    "cutoff": "2026-11-09T08:30:00Z",
+    "cutoff_evidence": "launch record",
+    "addendum_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "key": {
+    "files": [
+      {
+        "path": "venus/src/scene/tests/bar.rs",
+        "sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+      }
+    ],
+    "f2p": [
+      "scene::tests::bar::quota_pace_threshold"
+    ],
+    "p2p": [
+      "scene::tests::bar::renders_bar"
+    ]
+  },
+  "env": {
+    "dev_shell": "devShells.x86_64-linux.default",
+    "closure_sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "lockfiles": [
+      {
+        "path": "Cargo.lock",
+        "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+      }
+    ],
+    "warm_target_sha256": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+  },
+  "test": {
+    "command": [
+      "eon-test",
+      "-p",
+      "yazelix-venus"
+    ],
+    "junit_path": "target/nextest/default/junit.xml"
+  },
+  "scope_paths": [
+    "venus/src"
+  ],
+  "protected_paths": [
+    "venus/src/scene/tests"
+  ],
+  "scorer": {
+    "commit": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+    "command": [
+      "agent-bench",
+      "score"
+    ]
+  },
+  "key_edits_sha256": "0707070707070707070707070707070707070707070707070707070707070707",
+  "wall_cap_s": 3600,
+  "key_author_family": "claude"
+}

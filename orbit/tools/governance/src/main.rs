@@ -759,6 +759,7 @@ mod dependency_direction {
     const ALLOWED_WORKSPACE_DEPENDENCIES: &[(&str, &[&str])] = &[
         ("archive-notices", &[]),
         ("review-tier", &[]),
+        ("agent-bench", &[]),
         ("orbit-protocol", &[]),
         ("eon-workspace-protocol", &[]),
         ("yazelix-orbit", &["orbit-protocol"]),

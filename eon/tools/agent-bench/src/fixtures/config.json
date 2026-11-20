@@ -1,0 +1,66 @@
+{
+  "schema": "eon-bench-config/1",
+  "bench": {
+    "version": "0.1.0",
+    "commit": "1111111111111111111111111111111111111111"
+  },
+  "role": "builder",
+  "model": {
+    "family": "claude",
+    "id": "claude-opus-5-5"
+  },
+  "harness": {
+    "name": "claude-code",
+    "version": "3.2.1",
+    "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "effort": {
+    "value": "high"
+  },
+  "prompt": {
+    "role_wrapper_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "fleet_rules": [
+      {
+        "name": "common-rules",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "name": "builder-ownership-line",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    ],
+    "repo_overlays": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ]
+  },
+  "harness_home": {
+    "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "permissions": {
+    "mode": "bypassPermissions",
+    "sandbox": "bench-jail",
+    "web_tools": "denied",
+    "proxy_allowlist_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "limits": {
+    "wall_cap_multiplier": 1.5,
+    "max_turns": 200
+  },
+  "tools": {
+    "rota_commit": "2222222222222222222222222222222222222222",
+    "rota_backend_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "rtk": {
+      "enabled": true,
+      "version": "0.9.0"
+    },
+    "dcg": {
+      "version": "1.4.2",
+      "config_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "heavy_sh_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "jail_profile_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  }
+}

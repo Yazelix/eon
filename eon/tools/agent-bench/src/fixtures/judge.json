@@ -1,0 +1,62 @@
+{
+  "schema": "eon-bench-config/1",
+  "bench": {
+    "version": "0.1.0",
+    "commit": "1111111111111111111111111111111111111111"
+  },
+  "role": "judge",
+  "model": {
+    "family": "codex",
+    "id": "gpt-6.2-sol"
+  },
+  "harness": {
+    "name": "codex",
+    "version": "0.98.0",
+    "binary_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "effort": {
+    "value": "xhigh"
+  },
+  "prompt": {
+    "role_wrapper_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "fleet_rules": [
+      {
+        "name": "common-rules",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "name": "builder-ownership-line",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    ],
+    "repo_overlays": []
+  },
+  "harness_home": {
+    "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "permissions": {
+    "mode": "bypassPermissions",
+    "sandbox": "bench-jail",
+    "web_tools": "denied",
+    "proxy_allowlist_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "limits": {
+    "wall_cap_multiplier": 1,
+    "max_turns": null
+  },
+  "tools": {
+    "rota_commit": "2222222222222222222222222222222222222222",
+    "rota_backend_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "rtk": {
+      "enabled": false,
+      "version": null
+    },
+    "dcg": {
+      "version": "1.4.2",
+      "config_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "heavy_sh_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "jail_profile_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "rubric_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+}
