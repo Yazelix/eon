@@ -2173,6 +2173,8 @@ documents the current methods.
   [src/boundary.schema](../src/boundary.schema) and fails while the committed
   [src/boundary.rs](../src/boundary.rs) or
   [src/boundary.bend](../src/boundary.bend) is stale.
+- `orbit-governance` runs the governance tool over `orbit/docs/` and
+  `.beads/issues.jsonl` ([Governance check](DEVELOPMENT.md#governance-check)).
 - `orbit-terminfo` checks the package's `eon` entry, and
   `orbit-terminfo-darwin` the macOS entry
   ([Terminal identity](#terminal-identity)).

@@ -41,6 +41,7 @@ attrs = [
   ".#checks.x86_64-linux.eon-tests",
   ".#checks.x86_64-linux.managed-command-path",
   ".#checks.x86_64-linux.orbit-boundary",
+  ".#checks.x86_64-linux.orbit-governance",
   ".#checks.x86_64-linux.unsafe-policy",
   ".#checks.x86_64-linux.lint",
   ".#checks.x86_64-linux.pin-latest-release",

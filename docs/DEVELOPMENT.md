@@ -1336,6 +1336,14 @@ shell=bash`; silence a finding only with a `# shellcheck disable=SCnnnn #
 reason` comment on the line before it. `nix build --no-link
 .#checks.x86_64-linux.pin-latest-release` runs the release pin script against
 real Git tags and a stub `cachix`.
+`nix build --no-link .#checks.x86_64-linux.orbit-governance` checks Orbit's
+contract and crate records and every bead's `ORB-C` references, so a bead
+that names an unknown contract fails it with
+`<bead-id>: unknown contract reference ORB-C<N>`. Correct or remove the
+reference with `br update`, mark a speculative proposal deferred, or index
+the approved contract; [Orbit's governance
+check](../orbit/docs/DEVELOPMENT.md#governance-check) lists every error and
+its fix.
 
 [`components/eon-v5.json`](../components/eon-v5.json) is the canonical
 distribution-neutral component graph. Validate it with:

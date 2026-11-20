@@ -20,8 +20,8 @@ the clang at `BEND_CLANG`; `nix develop` supplies all three.
 `nix develop -c eon-test` runs Orbit's unit tests and its
 black-box suite, [tests/lifecycle.rs](../tests/lifecycle.rs), with the rest of
 the workspace in the isolated sandbox that `nix/test-sandbox.nix` defines.
-`nix flake check -L` runs Orbit's Bend proofs, its boundary and terminfo checks
-and every real-PTY check; [BEHAVIOR.md](BEHAVIOR.md#check) describes them and
+`nix flake check -L` runs Orbit's Bend proofs, its boundary, terminfo and
+[governance](#governance-check) checks and every real-PTY check; [BEHAVIOR.md](BEHAVIOR.md#check) describes them and
 how to run the real-PTY checks without Nix's sandbox. After a change to
 [src/session.bend](../src/session.bend) or a law's automaton, regenerate the
 per-fact lemmas in `proof/` with [tools/step-proof.rs](../tools/step-proof.rs),
@@ -78,6 +78,30 @@ reference, crate, closure, portability, or protocol-exception prose;
 that an agent read a reference, that evidence is truthful, or that a runtime
 contract actually passes. It deliberately does not parse `.agent-protocols.*`
 or generated `AGENTS.md`: Starcompass owns that interpretation.
+
+`nix flake check` runs the tool as the `orbit-governance` check
+(`nix build --no-link .#checks.x86_64-linux.orbit-governance` alone), over
+`orbit/docs/` and `.beads/issues.jsonl`; an edit to either reruns only the
+check, not the tool's build. Because it reads the whole shared tracker, any
+bead can fail it, often not the one a landing changed:
+
+- `error: <bead-id>: unknown contract reference ORB-C<N>`: a bead that is not
+  deferred names an unindexed `ORB-C` ID in its description, design,
+  acceptance criteria, notes or close reason. Correct or remove the reference
+  with `br update`, mark a speculative proposal's bead deferred, or, once the
+  contract is approved, index it in `CONTRACTS.md`. The same error with
+  `orbit/docs/CONTRACTS.md` or `orbit/docs/CRATES.md` in place of the bead ID
+  is an unindexed reference in that record.
+- `error: orbit/docs/CONTRACTS.md: Proved ORB-C<N> requires a full proof
+  commit or its owning Bead` or `error: orbit/docs/CRATES.md: selected <X>
+  decision lacks an existing evidence Bead`, when the cited bead was deleted
+  or renamed: restore the bead or update the record's citation.
+- `error: .beads/issues.jsonl:<line>: invalid issue JSON: ...`: the tracker
+  export is malformed; `br doctor` diagnoses it.
+
+Nix prints only the tail of a failing build's log; `nix log` on the check, or
+`cargo run --locked --quiet -p orbit-governance` from the repository root,
+lists every error.
 
 The tool's test, run by `nix develop -c eon-test`, also enforces the workspace
 dependency direction in the root [agent

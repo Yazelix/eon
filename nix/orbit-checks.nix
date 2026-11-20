@@ -1,12 +1,13 @@
 # Orbit's checks (orbit/docs/DEVELOPMENT.md): the Bend laws, the generated
-# boundary, the terminfo entry, and the real-PTY checks. Each real-PTY check
-# runs one test of the package's real-PTY test binary (orbit/tests/real_pty)
-# against the package.
+# boundary, the terminfo entry, the governance records, and the real-PTY
+# checks. Each real-PTY check runs one test of the package's real-PTY test
+# binary (orbit/tests/real_pty) against the package.
 {
   pkgs,
   bend,
   orbitPackage,
   darwinTerminfo,
+  orbitGovernance,
 }:
 let
   inherit (pkgs) lib;
@@ -32,6 +33,15 @@ let
       ../orbit/PROOF.bend
       ../orbit/proof
       bendFiles
+    ];
+  };
+  # The records orbit-governance reads: Orbit's contract and crate records,
+  # and the shared tracker, whose beads may name contracts.
+  governanceRecords = fileset.toSource {
+    root = ../.;
+    fileset = fileset.unions [
+      ../orbit/docs
+      ../.beads/issues.jsonl
     ];
   };
 
@@ -327,6 +337,14 @@ realPtyChecks
     ./generate ${boundarySource}/src/boundary.schema generated
     diff -u ${boundarySource}/src/boundary.rs generated/boundary.rs
     diff -u ${boundarySource}/src/boundary.bend generated/boundary.bend
+    touch "$out"
+  '';
+  # Orbit's contract and crate records are well formed, and no record or
+  # bead names an unknown contract (orbit/docs/DEVELOPMENT.md#governance-check).
+  orbit-governance = pkgs.runCommand "orbit-governance" { } ''
+    set -o pipefail
+    ${orbitGovernance}/bin/orbit-governance ${governanceRecords} | tee governance.log
+    grep -Fx 'governance: ok' governance.log
     touch "$out"
   '';
   orbit-laws = pkgs.runCommand "orbit-laws" {

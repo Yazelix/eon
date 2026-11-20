@@ -532,8 +532,22 @@
                 install -Dm444 ${bend}/LICENSE "$out/share/licenses/orbit/bend/LICENSE"
               '';
             };
+          # Orbit's repository-governance tool (orbit/docs/DEVELOPMENT.md), for
+          # the orbit-governance check. Its source holds no records, so a Beads
+          # or orbit/docs edit reruns only the check. eon-test runs its tests.
+          orbitGovernance = rustPlatform.buildRustPackage {
+            pname = "orbit-governance";
+            inherit ((builtins.fromTOML (builtins.readFile ./orbit/tools/governance/Cargo.toml)).package) version;
+            src = packageSource [ ./orbit/tools/governance ];
+            cargoLock = workspaceCargoLock;
+            cargoBuildFlags = [
+              "--package"
+              "orbit-governance"
+            ];
+            doCheck = false;
+          };
           orbitChecks = import ./nix/orbit-checks.nix {
-            inherit pkgs bend orbitPackage darwinTerminfo;
+            inherit pkgs bend orbitPackage darwinTerminfo orbitGovernance;
           };
 
           venusRuntimeLibraries = [
