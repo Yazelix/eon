@@ -50,8 +50,8 @@
 //! # What may appear
 //!
 //! The issues file is public, so a record holds no free text: every string is
-//! a value `record-policy.toml` lists, a workspace package name at
-//! `landing.base`, a bead ID present in the tracker, an object ID, or a
+//! a value `record-policy.toml` lists, a workspace package name in the tree
+//! its proof ran on (so a landing may name a crate it adds), a bead ID present in the tracker, an object ID, or a
 //! digits-only version. `render` enforces that against the policy compiled
 //! into the tool. `check` reads a landed record for its format and its
 //! landing's identity only, so a later policy edit never fails history.
@@ -108,7 +108,8 @@ pub fn render(git: &Git, input: &Path) -> Result<String> {
     }
     let working = fs::read_to_string(git.root().join(repo::TRACKER)).unwrap_or_default();
     let facts = Facts {
-        packages: repo::workspace_packages(git, &landing.base)?,
+        candidate_packages: repo::workspace_packages(git, &candidate.tree)?,
+        landed_packages: repo::workspace_packages(git, &landing.proof_tree)?,
         beads: repo::issues(&working, &validate::named_beads(&record))?
             .into_iter()
             .map(|(id, issue)| (id, issue.is_open()))
@@ -340,11 +341,47 @@ mod tests {
             repo.write(path, &format!("{path}\n"));
         }
         repo.write("docs/AGENT-RULES.md", "rules\n");
-        repo.write("Cargo.toml", "[workspace]\nmembers = [\"crate-a\"]\n");
+        repo.write("Cargo.toml", &workspace(&["crate-a"]));
         repo.write("crate-a/Cargo.toml", "[package]\nname = \"crate-a\"\n");
         repo.write("crate-a/src/lib.rs", "pub fn one() {}\n");
         repo.write(repo::TRACKER, &tracker(&[bead("t-1", "open", "", &[])]));
         repo.commit("base")
+    }
+
+    /// A workspace manifest, one member per line, so changes that add
+    /// different members touch different lines.
+    fn workspace(members: &[&str]) -> String {
+        let lines: String = members
+            .iter()
+            .map(|member| format!("    \"{member}\",\n"))
+            .collect();
+        format!("[workspace]\nmembers = [\n{lines}]\n")
+    }
+
+    /// A step adding the crate `name` as the last workspace member after
+    /// `before`.
+    fn add_crate(repo: &Repo, before: &[&str], name: &str) {
+        let mut members = before.to_vec();
+        members.push(name);
+        repo.write("Cargo.toml", &workspace(&members));
+        repo.write(
+            &format!("{name}/Cargo.toml"),
+            &format!("[package]\nname = \"{name}\"\n"),
+        );
+        repo.write(&format!("{name}/src/lib.rs"), "pub fn one() {}\n");
+    }
+
+    /// A passing proof of `check` on the `on` tree naming `target`.
+    fn package_proof(on: &str, check: &str, target: &str) -> String {
+        let counts = if check == "eon-test" {
+            "passed = 1\nfailed = 0\nskipped = 0\n"
+        } else {
+            ""
+        };
+        format!(
+            "[[proof]]\non = \"{on}\"\ncheck = \"{check}\"\ntarget = \"{target}\"\n\
+             platform = \"x86_64-linux\"\nexit = 0\n{counts}"
+        )
     }
 
     fn code_input(base: &str, proof_tree: &str, extra: &str) -> String {
@@ -503,6 +540,57 @@ round1_blockers = 0
         assert!(error.contains("is not an ancestor"), "{error}");
     }
 
+    #[test]
+    fn a_landing_may_name_the_crate_it_adds() {
+        let repo = Repo::new("adds-crate");
+        let base = base(&repo);
+        add_crate(&repo, &["crate-a"], "crate-b");
+        let proof_tree = repo.stage_tree();
+        let named = |target: &str| {
+            let extra = package_proof("candidate", "eon-test", target)
+                + &package_proof("landed", "clippy", target);
+            render(
+                &repo.git,
+                &repo.input(&code_input(&base, &proof_tree, &extra)),
+            )
+        };
+        assert!(named("crate-b").unwrap().starts_with(HEADER));
+        let error = named("crate-c").unwrap_err().to_string();
+        for on in ["candidate", "landed"] {
+            assert!(
+                error.contains(&format!(
+                    "\"crate-c\" is not a workspace package in the {on} tree"
+                )),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_proof_names_packages_of_its_own_tree() {
+        // The candidate adds crate-b; edge adds crate-e meanwhile, so only
+        // the proof tree has crate-e.
+        let reviewed = |repo: &Repo| add_crate(repo, &["crate-a"], "crate-b");
+        let edge = |repo: &Repo| add_crate(repo, &["crate-a"], "crate-e");
+        let landed = |repo: &Repo| add_crate(repo, &["crate-a", "crate-e"], "crate-b");
+        let named = |name: &str, extra: &str| {
+            let repo = Repo::new(name);
+            render_steps_with(&repo, &reviewed, &edge, &landed, extra)
+        };
+        let both = package_proof("candidate", "eon-test", "crate-b")
+            + &package_proof("landed", "clippy", "crate-b");
+        assert!(named("own-tree-b", &both).unwrap().starts_with(HEADER));
+        let landed_e = package_proof("landed", "clippy", "crate-e");
+        assert!(named("own-tree-e", &landed_e).unwrap().starts_with(HEADER));
+        refused(
+            named(
+                "own-tree-ce",
+                &package_proof("candidate", "eon-test", "crate-e"),
+            ),
+            "\"crate-e\" is not a workspace package in the candidate tree",
+        );
+    }
+
     const CHANGELOG: &str = "# Changelog\n\n## Unreleased\n\n- old entry\n";
     const TEXT: &str = "a\nb\nc\nd\ne\nf\n";
 
@@ -516,6 +604,17 @@ round1_blockers = 0
         edge: &dyn Fn(&Repo),
         landed: &dyn Fn(&Repo),
     ) -> Result<String> {
+        render_steps_with(repo, reviewed, edge, landed, DEFAULT_BUILD)
+    }
+
+    /// [`render_steps`] with `extra` input after the fixed proofs.
+    fn render_steps_with(
+        repo: &Repo,
+        reviewed: &dyn Fn(&Repo),
+        edge: &dyn Fn(&Repo),
+        landed: &dyn Fn(&Repo),
+        extra: &str,
+    ) -> Result<String> {
         repo.write("CHANGELOG.md", CHANGELOG);
         repo.write("crate-a/src/text.rs", TEXT);
         let candidate_base = base(repo);
@@ -528,7 +627,7 @@ round1_blockers = 0
         let landing_base = repo.commit("edge");
         landed(repo);
         let proof_tree = repo.stage_tree();
-        let input = code_input(&landing_base, &proof_tree, DEFAULT_BUILD).replace(
+        let input = code_input(&landing_base, &proof_tree, extra).replace(
             &format!("[candidate]\nbase = \"{landing_base}\"\ntree = \"{proof_tree}\""),
             &format!("[candidate]\nbase = \"{candidate_base}\"\ntree = \"{candidate_tree}\""),
         );

@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet};
 const TEXT: &str = include_str!("../../record-policy.toml");
 
 const TIERS: [&str; 3] = ["high", "medium", "low"];
-const TREES: [&str; 2] = ["candidate", "landed"];
 const STAGES: [&str; 2] = ["plan", "code"];
 const VERDICTS: [&str; 2] = ["approve", "changes-needed"];
 
@@ -52,8 +51,12 @@ impl Policy {
 /// What validation needs from the repository and the tracker.
 #[derive(Debug, Default)]
 pub struct Facts {
-    /// Workspace package names at `landing.base`.
-    pub packages: BTreeSet<String>,
+    /// Workspace package names in `candidate.tree`, where `candidate`
+    /// proofs ran.
+    pub candidate_packages: BTreeSet<String>,
+    /// Workspace package names in `landing.proof_tree`, where `landed`
+    /// proofs ran.
+    pub landed_packages: BTreeSet<String>,
     /// Whether each bead the record names is open; absent means it is not in
     /// the tracker.
     pub beads: BTreeMap<String, bool>,
@@ -129,12 +132,19 @@ pub fn problems(record: &Record, policy: &Policy, facts: &Facts) -> Vec<String> 
 
 fn proof_problems(proof: &Proof, policy: &Policy, facts: &Facts) -> Vec<String> {
     let mut problems = Vec::new();
-    if !TREES.contains(&proof.on.as_str()) {
-        problems.push(format!(
-            "`on` must be candidate or landed, not {:?}",
-            proof.on
-        ));
-    }
+    // A proof's package must exist in the tree it ran on, so a landing may
+    // name a crate it adds.
+    let packages = match proof.on.as_str() {
+        "candidate" => Some(&facts.candidate_packages),
+        "landed" => Some(&facts.landed_packages),
+        _ => {
+            problems.push(format!(
+                "`on` must be candidate or landed, not {:?}",
+                proof.on
+            ));
+            None
+        }
+    };
     if !policy.platforms.contains(&proof.platform) {
         problems.push(format!("unknown platform {:?}", proof.platform));
     }
@@ -146,9 +156,13 @@ fn proof_problems(proof: &Proof, policy: &Policy, facts: &Facts) -> Vec<String> 
         }
         (Some(_), None) => problems.push(format!("{} needs a target", proof.check)),
         (Some(TargetKind::Package), Some(target)) => {
-            if target != "workspace" && !facts.packages.contains(target) {
+            if let Some(packages) = packages
+                && target != "workspace"
+                && !packages.contains(target)
+            {
                 problems.push(format!(
-                    "{target:?} is not a workspace package at the landing base"
+                    "{target:?} is not a workspace package in the {} tree",
+                    proof.on
                 ));
             }
         }
@@ -252,8 +266,10 @@ mod tests {
     use super::*;
 
     fn facts() -> Facts {
+        let packages: BTreeSet<String> = ["eon", "eon-runtime"].map(String::from).into();
         Facts {
-            packages: ["eon", "eon-runtime"].map(String::from).into(),
+            candidate_packages: packages.clone(),
+            landed_packages: packages,
             beads: BTreeMap::new(),
         }
     }
@@ -398,5 +414,41 @@ mod tests {
         let mut record = input();
         record.review[0].rounds.pop();
         assert_eq!(problems_of(&record, &facts), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_proof_names_packages_of_its_own_tree() {
+        let mut facts = facts();
+        facts.candidate_packages.insert("only-candidate".into());
+        facts.landed_packages.insert("only-landed".into());
+        let named = |on: &str, target: &str| {
+            let mut record = input();
+            record.proof[0].on = on.into();
+            record.proof[0].target = Some(target.into());
+            problems_of(&record, &facts)
+        };
+        assert_eq!(named("candidate", "only-candidate"), Vec::<String>::new());
+        assert_eq!(named("landed", "only-landed"), Vec::<String>::new());
+        assert_eq!(
+            named("landed", "only-candidate"),
+            ["proof 1: \"only-candidate\" is not a workspace package in the landed tree"]
+        );
+        assert_eq!(
+            named("candidate", "only-landed"),
+            ["proof 1: \"only-landed\" is not a workspace package in the candidate tree"]
+        );
+        for on in ["candidate", "landed"] {
+            assert_eq!(
+                named(on, "nowhere"),
+                [format!(
+                    "proof 1: \"nowhere\" is not a workspace package in the {on} tree"
+                )]
+            );
+        }
+        // An unknown tree is reported once, with no package verdict beside it.
+        assert_eq!(
+            named("base", "nowhere"),
+            ["proof 1: `on` must be candidate or landed, not \"base\""]
+        );
     }
 }
