@@ -56,7 +56,7 @@ pub fn mounts_under(mountinfo: &str, root: &str) -> Vec<(String, MountFlags, boo
 }
 
 /// mountinfo escapes space, tab, newline and backslash as `\NNN` octal.
-fn unescape(text: &str) -> String {
+pub(crate) fn unescape(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;

@@ -1,11 +1,17 @@
-//! The post-run token scan: after the harness exits, every regular file
-//! under the run directory is searched (by `lstat`, following no links) for
-//! the bound credentials' tokens in plain, base64, hex and reversed form,
-//! for Claude token prefixes, and for JWTs that carry a Codex account ID.
-//! A hit deletes the file and quarantines the run.
+//! The search engine and its two users. The post-run token scan: after
+//! the harness exits, every regular file and symbolic link target under
+//! the run directory is searched (by `lstat`, following no links), and any
+//! other special file but an overlay whiteout is a hit, for the bound credentials'
+//! tokens in plain, base64, hex and reversed form, for Claude token
+//! prefixes, and for JWTs that carry a Codex account ID; a hit deletes the
+//! file and quarantines the run. And `scan-tree`, which searches the trees
+//! a jail mounts from the host for a task's fingerprints (and optionally the
+//! credentials). The engine checks a two-byte prefix table before its
+//! four-byte index, so multi-gigabyte trees stay minutes long.
 
 use std::collections::HashMap;
 use std::io::Read;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -34,12 +40,12 @@ pub struct Finding {
     pub form: String,
 }
 
-struct Pattern {
-    credential: String,
-    form: String,
-    bytes: Vec<u8>,
-    /// Token characters that must follow `bytes` (0: none).
-    body: usize,
+/// What the engine looks for: `bytes`, then `body` token characters.
+pub struct Pattern {
+    pub label: String,
+    pub form: String,
+    pub bytes: Vec<u8>,
+    pub body: usize,
 }
 
 const STANDARD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -100,7 +106,8 @@ fn base64_alignments(value: &[u8], alphabet: &[u8; 64]) -> Vec<String> {
         .collect()
 }
 
-fn patterns(secrets: &[Secret]) -> Vec<Pattern> {
+/// Every form of every secret, then the token prefixes.
+pub fn patterns(secrets: &[Secret]) -> Vec<Pattern> {
     let mut out = Vec::new();
     for secret in secrets.iter().filter(|secret| secret.value.len() >= 12) {
         let value = secret.value.as_bytes();
@@ -119,14 +126,14 @@ fn patterns(secrets: &[Secret]) -> Vec<Pattern> {
             }
         }
         out.extend(forms.into_iter().map(|(form, bytes)| Pattern {
-            credential: secret.name.clone(),
+            label: secret.name.clone(),
             form,
             bytes,
             body: 0,
         }));
     }
     out.extend(PREFIXES.iter().map(|prefix| Pattern {
-        credential: format!("prefix {prefix}"),
+        label: format!("prefix {prefix}"),
         form: "plain".into(),
         bytes: prefix.as_bytes().to_vec(),
         body: PREFIX_BODY,
@@ -134,69 +141,217 @@ fn patterns(secrets: &[Secret]) -> Vec<Pattern> {
     out
 }
 
-/// Searches `root` and returns every finding; never follows a link.
-pub fn scan(root: &Path, secrets: &[Secret], account_ids: &[String]) -> Result<Vec<Finding>> {
-    let patterns = patterns(secrets);
-    let mut index: HashMap<[u8; 4], Vec<usize>> = HashMap::new();
-    for (number, pattern) in patterns.iter().enumerate() {
-        let key: [u8; 4] = pattern.bytes[..4].try_into().map_err(|_| "short pattern")?;
-        index.entry(key).or_default().push(number);
+/// What `mode` and `rdev` (from `lstat`) make a file that is not a regular
+/// file, a directory or a symbolic link: a hit, since it may carry or hide
+/// anything, unless it is an overlay whiteout (a 0:0 character device).
+pub fn special_file(mode: u32, rdev: u64) -> Option<&'static str> {
+    use rustix::fs::FileType;
+    match FileType::from_raw_mode(mode) {
+        FileType::RegularFile | FileType::Directory | FileType::Symlink => None,
+        FileType::CharacterDevice if rdev == 0 => None,
+        FileType::CharacterDevice => Some("character device"),
+        FileType::BlockDevice => Some("block device"),
+        FileType::Fifo => Some("fifo"),
+        FileType::Socket => Some("socket"),
+        FileType::Unknown => Some("unknown file type"),
     }
-    let longest = patterns
-        .iter()
-        .map(|pattern| pattern.bytes.len())
-        .max()
-        .unwrap_or(4)
-        .max(4096);
-    let mut findings = Vec::new();
-    // Anything the scan cannot read (a jailed command can chmod 000 its own
-    // files) quarantines the run: it may hold a token in any form.
-    let unreadable = |path: &Path, err: std::io::Error| Finding {
-        path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
-        credential: "unreadable".into(),
-        form: err.kind().to_string(),
-    };
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(directory) = stack.pop() {
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(err) => {
-                findings.push(unreadable(&directory, err));
-                continue;
-            }
+}
+
+/// One hit: the file, the pattern's label and form. A file or directory
+/// the engine cannot read is a hit labelled `unreadable`: it may hold
+/// anything. A special file is labelled `special-file`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Hit {
+    pub path: PathBuf,
+    pub label: String,
+    pub form: String,
+}
+
+/// The search engine: a 64 KiB two-byte prefix table ahead of a four-byte
+/// index over the patterns, plus JWTs carrying any of `account_ids`.
+pub struct Engine {
+    patterns: Vec<Pattern>,
+    first: Vec<bool>,
+    index: HashMap<[u8; 4], Vec<usize>>,
+    overlap: usize,
+    account_ids: Vec<String>,
+}
+
+fn pair(bytes: &[u8]) -> usize {
+    (usize::from(bytes[0]) << 8) | usize::from(bytes[1])
+}
+
+impl Engine {
+    pub fn new(patterns: Vec<Pattern>, account_ids: Vec<String>) -> Result<Self> {
+        let mut first = vec![false; 1 << 16];
+        let mut index: HashMap<[u8; 4], Vec<usize>> = HashMap::new();
+        for (number, pattern) in patterns.iter().enumerate() {
+            let key: [u8; 4] = pattern
+                .bytes
+                .get(..4)
+                .and_then(|key| key.try_into().ok())
+                .ok_or(format!("pattern {} is shorter than 4 bytes", pattern.label))?;
+            first[pair(&key)] = true;
+            index.entry(key).or_default().push(number);
+        }
+        if !account_ids.is_empty() {
+            first[pair(b"eyJ")] = true;
+        }
+        let overlap = patterns
+            .iter()
+            .map(|pattern| pattern.bytes.len() + pattern.body)
+            .max()
+            .unwrap_or(4)
+            .max(4096);
+        Ok(Self {
+            patterns,
+            first,
+            index,
+            overlap,
+            account_ids,
+        })
+    }
+
+    /// Searches `root` (a directory, or one regular file), following no
+    /// link but searching its target text, and returns every hit, sorted.
+    pub fn tree(&self, root: &Path) -> Vec<Hit> {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::MetadataExt;
+        let mut hits = Vec::new();
+        let unreadable = |path: &Path, err: std::io::Error| Hit {
+            path: path.to_path_buf(),
+            label: "unreadable".into(),
+            form: err.kind().to_string(),
         };
-        for entry in entries {
-            let path = match entry {
-                Ok(entry) => entry.path(),
-                Err(err) => {
-                    findings.push(unreadable(&directory, err));
-                    continue;
-                }
-            };
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(path) = stack.pop() {
             let metadata = match std::fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
                 Err(err) => {
-                    findings.push(unreadable(&path, err));
+                    hits.push(unreadable(&path, err));
                     continue;
                 }
             };
-            if metadata.is_dir() {
-                stack.push(path);
-            } else if metadata.is_file() {
-                let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
-                match scan_file(&path, &patterns, &index, longest, account_ids) {
-                    Ok(hits) => {
-                        findings.extend(hits.into_iter().map(|(credential, form)| Finding {
-                            path: relative.clone(),
-                            credential,
-                            form,
-                        }))
+            let found = |found: Vec<(String, String)>| {
+                found.into_iter().map(|(label, form)| Hit {
+                    path: path.clone(),
+                    label,
+                    form,
+                })
+            };
+            if let Some(kind) = special_file(metadata.mode(), metadata.rdev()) {
+                hits.push(Hit {
+                    path: path.clone(),
+                    label: "special-file".into(),
+                    form: kind.into(),
+                });
+            } else if metadata.file_type().is_symlink() {
+                match std::fs::read_link(&path) {
+                    Ok(target) => {
+                        let mut text = Vec::new();
+                        self.search(target.as_os_str().as_bytes(), &mut text);
+                        hits.extend(found(text));
                     }
-                    Err(err) => findings.push(unreadable(&path, err)),
+                    Err(err) => hits.push(unreadable(&path, err)),
+                }
+            } else if metadata.is_file() {
+                match self.file(&path) {
+                    Ok(text) => hits.extend(found(text)),
+                    Err(err) => hits.push(unreadable(&path, err)),
+                }
+            } else if metadata.is_dir() {
+                match std::fs::read_dir(&path) {
+                    Ok(entries) => {
+                        for entry in entries {
+                            match entry {
+                                Ok(entry) => stack.push(entry.path()),
+                                Err(err) => hits.push(unreadable(&path, err)),
+                            }
+                        }
+                    }
+                    Err(err) => hits.push(unreadable(&path, err)),
                 }
             }
         }
+        hits.sort();
+        hits.dedup();
+        hits
     }
+
+    fn file(&self, path: &Path) -> std::io::Result<Vec<(String, String)>> {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(path)?;
+        let mut hits = Vec::new();
+        let mut window: Vec<u8> = Vec::new();
+        let mut chunk = vec![0u8; 4 << 20];
+        loop {
+            let count = file.read(&mut chunk)?;
+            if count == 0 {
+                break;
+            }
+            window.extend_from_slice(&chunk[..count]);
+            self.search(&window, &mut hits);
+            if window.len() > self.overlap {
+                window.drain(..window.len() - self.overlap);
+            }
+        }
+        hits.sort();
+        hits.dedup();
+        Ok(hits)
+    }
+
+    fn search(&self, bytes: &[u8], hits: &mut Vec<(String, String)>) {
+        for start in 0..bytes.len().saturating_sub(3) {
+            if !self.first[pair(&bytes[start..])] {
+                continue;
+            }
+            let key: [u8; 4] = [
+                bytes[start],
+                bytes[start + 1],
+                bytes[start + 2],
+                bytes[start + 3],
+            ];
+            if let Some(candidates) = self.index.get(&key) {
+                for &number in candidates {
+                    let pattern = &self.patterns[number];
+                    let body = &bytes[start + pattern.bytes.len().min(bytes.len() - start)..];
+                    let token_body = body.len() >= pattern.body
+                        && body[..pattern.body].iter().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+                        });
+                    if bytes[start..].starts_with(&pattern.bytes) && token_body {
+                        hits.push((pattern.label.clone(), pattern.form.clone()));
+                    }
+                }
+            }
+            if !self.account_ids.is_empty()
+                && key[..3] == *b"eyJ"
+                && let Some(account) = jwt_account(&bytes[start..], &self.account_ids)
+            {
+                hits.push((format!("jwt for account {account}"), "jwt".into()));
+            }
+        }
+    }
+}
+
+/// The post-run token scan of `root`; never follows a link.
+pub fn scan(root: &Path, secrets: &[Secret], account_ids: &[String]) -> Result<Vec<Finding>> {
+    let engine = Engine::new(patterns(secrets), account_ids.to_vec())?;
+    let mut findings: Vec<Finding> = engine
+        .tree(root)
+        .into_iter()
+        .map(|hit| Finding {
+            path: hit
+                .path
+                .strip_prefix(root)
+                .unwrap_or(&hit.path)
+                .to_path_buf(),
+            credential: hit.label,
+            form: hit.form,
+        })
+        .collect();
     findings.sort_by(|left, right| {
         (&left.path, &left.credential).cmp(&(&right.path, &right.credential))
     });
@@ -204,72 +359,82 @@ pub fn scan(root: &Path, secrets: &[Secret], account_ids: &[String]) -> Result<V
     Ok(findings)
 }
 
-fn scan_file(
-    path: &Path,
-    patterns: &[Pattern],
-    index: &HashMap<[u8; 4], Vec<usize>>,
-    overlap: usize,
-    account_ids: &[String],
-) -> std::io::Result<Vec<(String, String)>> {
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-        .open(path)?;
-    let mut hits = Vec::new();
-    let mut window: Vec<u8> = Vec::new();
-    let mut chunk = vec![0u8; 4 << 20];
-    loop {
-        let count = file.read(&mut chunk)?;
-        if count == 0 {
-            break;
-        }
-        window.extend_from_slice(&chunk[..count]);
-        search(&window, patterns, index, account_ids, &mut hits);
-        if window.len() > overlap {
-            window.drain(..window.len() - overlap);
-        }
-    }
-    hits.sort();
-    hits.dedup();
-    Ok(hits)
+/// The kinds a needles file line may name.
+pub const NEEDLE_KINDS: &[&str] = &["commit", "canary", "identifier"];
+
+/// Parses a needles file: one `<kind> <text>` per line.
+pub fn needles(text: &str) -> Result<Vec<Pattern>> {
+    text.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let (kind, needle) = line
+                .split_once(' ')
+                .ok_or(format!("needle line {line:?} is not <kind> <text>"))?;
+            if !NEEDLE_KINDS.contains(&kind) {
+                return Err(format!("needle kind {kind} is not one of {NEEDLE_KINDS:?}"));
+            }
+            if needle.len() < 4 {
+                return Err(format!("needle {needle:?} is shorter than 4 bytes"));
+            }
+            Ok(Pattern {
+                label: kind.to_owned(),
+                form: needle.to_owned(),
+                bytes: needle.as_bytes().to_vec(),
+                body: 0,
+            })
+        })
+        .collect()
 }
 
-use std::os::unix::fs::OpenOptionsExt;
+/// One `scan-tree` hit as printed: never a secret's value.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct TreeHit {
+    pub path: PathBuf,
+    pub kind: String,
+    pub needle: String,
+}
 
-fn search(
-    bytes: &[u8],
-    patterns: &[Pattern],
-    index: &HashMap<[u8; 4], Vec<usize>>,
+/// `agent-jail scan-tree`: searches every path for the needles and the
+/// credentials' secrets (named, never shown).
+pub fn scan_tree(
+    mut needles: Vec<Pattern>,
+    secrets: &[Secret],
     account_ids: &[String],
-    hits: &mut Vec<(String, String)>,
-) {
-    for start in 0..bytes.len().saturating_sub(3) {
-        let key: [u8; 4] = [
-            bytes[start],
-            bytes[start + 1],
-            bytes[start + 2],
-            bytes[start + 3],
-        ];
-        if let Some(candidates) = index.get(&key) {
-            for &number in candidates {
-                let pattern = &patterns[number];
-                let body = &bytes[start + pattern.bytes.len().min(bytes.len() - start)..];
-                let token_body = body.len() >= pattern.body
-                    && body[..pattern.body]
-                        .iter()
-                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
-                if bytes[start..].starts_with(&pattern.bytes) && token_body {
-                    hits.push((pattern.credential.clone(), pattern.form.clone()));
-                }
-            }
-        }
-        if !account_ids.is_empty()
-            && key[..3] == *b"eyJ"
-            && let Some(account) = jwt_account(&bytes[start..], account_ids)
-        {
-            hits.push((format!("jwt for account {account}"), "jwt".into()));
-        }
+    paths: &[PathBuf],
+) -> Result<Vec<TreeHit>> {
+    // The needles are what the gate is for (the landed diff, the commit, the canary);
+    // credentials only add to them, so an empty needles list fails whatever else is given.
+    if needles.is_empty() {
+        return Err("scan-tree has no needle to look for".into());
     }
+    if !secrets.is_empty() || !account_ids.is_empty() {
+        needles.extend(patterns(secrets).into_iter().map(|pattern| Pattern {
+            form: format!("{} {}", pattern.label, pattern.form),
+            label: "credential".into(),
+            ..pattern
+        }));
+    }
+    let engine = Engine::new(needles, account_ids.to_vec())?;
+    Ok(paths
+        .iter()
+        .flat_map(|path| engine.tree(path))
+        .map(|hit| {
+            let (kind, needle) = match hit.label.as_str() {
+                kind if NEEDLE_KINDS.contains(&kind)
+                    || matches!(kind, "credential" | "unreadable" | "special-file") =>
+                {
+                    (hit.label, hit.form)
+                }
+                // A JWT carrying an account ID: its label names the account's digest.
+                _ => ("credential".to_owned(), hit.label),
+            };
+            TreeHit {
+                path: hit.path,
+                kind,
+                needle,
+            }
+        })
+        .collect())
 }
 
 /// The account ID a JWT at the start of `bytes` carries, if it is one of
@@ -298,13 +463,14 @@ struct Report<'a> {
     not_deleted: &'a [String],
 }
 
-/// Deletes every file with a finding and records the paths and credential
+/// Deletes every file, link or special file with a finding (never a
+/// directory, never a link's target) and records the paths and credential
 /// names in `meta/token-scan.json`.
 pub fn quarantine(root: &Path, findings: &[Finding], report: &Path) -> Result {
     let mut not_deleted = Vec::new();
     for finding in findings {
         let path = root.join(&finding.path);
-        if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file())
+        if std::fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_dir())
             && let Err(err) = std::fs::remove_file(&path)
         {
             not_deleted.push(format!("{}: {err}", finding.path.display()));
@@ -445,6 +611,94 @@ mod tests {
     }
 
     #[test]
+    fn special_files_are_hits_except_whiteouts() {
+        use rustix::fs::{FileType, makedev};
+        let mode = |kind: FileType| kind.as_raw_mode() | 0o644;
+        for kind in [
+            FileType::RegularFile,
+            FileType::Directory,
+            FileType::Symlink,
+        ] {
+            assert_eq!(special_file(mode(kind), 0), None, "{kind:?}");
+        }
+        // An overlay whiteout is a 0:0 character device; any other is a hit.
+        assert_eq!(special_file(mode(FileType::CharacterDevice), 0), None);
+        assert_eq!(
+            special_file(mode(FileType::CharacterDevice), makedev(1, 3)),
+            Some("character device")
+        );
+        assert_eq!(
+            special_file(mode(FileType::CharacterDevice), makedev(0, 1)),
+            Some("character device")
+        );
+        for (kind, name) in [
+            (FileType::BlockDevice, "block device"),
+            (FileType::Fifo, "fifo"),
+            (FileType::Socket, "socket"),
+        ] {
+            assert_eq!(special_file(mode(kind), 0), Some(name));
+        }
+    }
+
+    #[test]
+    fn link_targets_are_searched_and_special_files_quarantine() {
+        let root = crate::test_dir("scan-special");
+        let upper = root.join("overlay/target/upper");
+        std::fs::create_dir_all(&upper).unwrap();
+        std::fs::create_dir(root.join("workspace")).unwrap();
+        let prefixed = format!("sk-ant-oat01-{}", "Ab9_-".repeat(10));
+        std::os::unix::fs::symlink(&prefixed, root.join("workspace/leak")).unwrap();
+        std::os::unix::fs::symlink(format!("x/{TOKEN}"), upper.join("leak")).unwrap();
+        std::os::unix::fs::symlink("../clean/target", root.join("workspace/clean")).unwrap();
+        crate::mknod(&upper.join("fifo"), rustix::fs::FileType::Fifo, 0).unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(root.join("socket")).unwrap();
+        // Unlinking a lower-layer file leaves a whiteout; Linux lets anyone
+        // make one, but a sandbox may not.
+        let whiteout = crate::mknod(
+            &upper.join("deleted"),
+            rustix::fs::FileType::CharacterDevice,
+            0,
+        );
+        if let Err(err) = &whiteout {
+            eprintln!("no whiteout here ({err}); its classification is unit-tested");
+        }
+
+        let findings = scan(&root, &secrets(), &[]).unwrap();
+        let found: Vec<(String, &str)> = findings
+            .iter()
+            .map(|f| (f.path.display().to_string(), f.credential.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("overlay/target/upper/fifo".to_owned(), "special-file"),
+                (
+                    "overlay/target/upper/leak".to_owned(),
+                    "fixture.accessToken"
+                ),
+                ("socket".to_owned(), "special-file"),
+                ("workspace/leak".to_owned(), "prefix sk-ant-oat"),
+            ]
+        );
+        quarantine(&root, &findings, &root.join("token-scan.json")).unwrap();
+        for gone in [
+            "workspace/leak",
+            "overlay/target/upper/leak",
+            "overlay/target/upper/fifo",
+            "socket",
+        ] {
+            assert!(
+                std::fs::symlink_metadata(root.join(gone)).is_err(),
+                "{gone}"
+            );
+        }
+        assert!(std::fs::symlink_metadata(root.join("workspace/clean")).is_ok());
+        if whiteout.is_ok() {
+            assert!(std::fs::symlink_metadata(upper.join("deleted")).is_ok());
+        }
+    }
+
+    #[test]
     fn jwts_carrying_an_account_id_are_found() {
         let root = crate::test_dir("scan-jwt");
         let payload = base64_encode(br#"{"chatgpt_account_id":"acct-1234-5678"}"#, URL_SAFE);
@@ -466,5 +720,86 @@ mod tests {
         big.extend_from_slice(TOKEN.as_bytes());
         std::fs::write(root.join("big"), big).unwrap();
         assert_eq!(scan(&root, &secrets(), &[]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn scan_tree_finds_needles_and_names_credentials_without_values() {
+        let root = crate::test_dir("scan-tree");
+        let commit = "c9de7044aa11bb22cc33dd44ee55ff6677889900";
+        let found = needles(&format!(
+            "commit {commit}\ncanary AGENT-BENCH-CANARY-1234\nidentifier parse_rota_overrides\n"
+        ))
+        .unwrap();
+        std::fs::create_dir_all(root.join("tree/deep")).unwrap();
+        std::fs::write(root.join("tree/deep/log"), format!("built from {commit}")).unwrap();
+        // A needle across the engine's 4 MiB chunk boundary.
+        let mut big = vec![b'x'; (4 << 20) - 7];
+        big.extend_from_slice(b"parse_rota_overrides");
+        std::fs::write(root.join("tree/big"), big).unwrap();
+        std::fs::write(root.join("tree/clean"), "nothing").unwrap();
+        std::fs::write(
+            root.join("single"),
+            format!("{TOKEN} AGENT-BENCH-CANARY-1234"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(root.join("single"), root.join("tree/link")).unwrap();
+        let hits = scan_tree(
+            found,
+            &secrets(),
+            &[],
+            &[root.join("tree"), root.join("single")],
+        )
+        .unwrap();
+        let summary: Vec<(String, &str, &str)> = hits
+            .iter()
+            .map(|hit| {
+                (
+                    hit.path.strip_prefix(&root).unwrap().display().to_string(),
+                    hit.kind.as_str(),
+                    hit.needle.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("tree/big".to_owned(), "identifier", "parse_rota_overrides"),
+                ("tree/deep/log".to_owned(), "commit", commit),
+                ("single".to_owned(), "canary", "AGENT-BENCH-CANARY-1234"),
+                (
+                    "single".to_owned(),
+                    "credential",
+                    "fixture.accessToken plain"
+                ),
+            ]
+        );
+        let printed = serde_json::to_string(&hits).unwrap();
+        assert!(!printed.contains(TOKEN), "{printed}");
+        // A clean tree passes; bad needle files are refused.
+        assert!(
+            scan_tree(
+                needles("canary ZZZZ-not-here").unwrap(),
+                &[],
+                &[],
+                &[root.join("tree/deep")]
+            )
+            .unwrap()
+            .is_empty()
+        );
+        // A search for nothing cannot pass, and credentials do not stand in for needles.
+        assert!(scan_tree(Vec::new(), &[], &[], &[root.join("tree")]).is_err());
+        assert!(scan_tree(Vec::new(), &secrets(), &[], &[root.join("tree")]).is_err());
+        assert!(
+            scan_tree(
+                needles("\n\n").unwrap(),
+                &secrets(),
+                &[],
+                &[root.join("tree")]
+            )
+            .is_err()
+        );
+        assert!(needles("secret abcdef").is_err());
+        assert!(needles("commit abc").is_err());
+        assert!(needles("commitabcdef").is_err());
     }
 }

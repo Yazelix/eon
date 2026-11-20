@@ -4,9 +4,9 @@
 use crate::pooling::PoolKind;
 use crate::record::Kind;
 use crate::store::Store;
-use crate::{Error, Result, diff, workspace};
+use crate::{Error, Result, diff, fingerprints, task_env, tree, workspace};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "\
 usage:
@@ -15,7 +15,14 @@ usage:
   agent-bench pool declare --store DIR --kind config|task --pair OLD NEW [--pair OLD NEW]... --reason TEXT --signed-by NAME
   agent-bench pool show --store DIR CONFIG TASK    (prints {\"rows\": [...], \"excluded\": [...]})
   agent-bench workspace create --source REPO --base COMMIT --out DIR [--drop NAME]...
-  agent-bench workspace check DIR --object-set SHA256
+  agent-bench workspace check DIR --object-set SHA256 [--task FILE --task-env DIR --private-layer DIR...]
+      (--task, --task-env and at least one --private-layer go together: they add the task
+      environment's checks against task.json)
+  agent-bench tree-hash DIR    (prints the tree's content hash)
+  agent-bench fingerprints --source REPO --base COMMIT --landed COMMIT --canary FILE --out FILE
+      (writes the needles file; prints {\"needles\": N, \"identifiers\": I, \"excluded_crates\": [...]})
+  agent-bench task-env warm --agent-jail BIN --profile NAME --task-env DIR --run DIR --object-set SHA256 --wall-cap MINUTES
+      (runs the warm build through agent-jail, then writes and prints warm.json)
 
 Hashes may be given as unique hex prefixes. Run `agent-bench help` for this text.";
 
@@ -45,25 +52,65 @@ pub fn run(args: &[String], out: &mut dyn Write) -> std::result::Result<(), Fail
             writeln!(out, "{USAGE}")?;
             Ok(())
         }
-        ["record", rest @ ..] => record(&parse(rest, &["--store"], &[], 1)?, out),
-        ["config", "diff", rest @ ..] => config_diff(&parse(rest, &["--store"], &[], 2)?, out),
+        ["record", rest @ ..] => record(&parse(rest, &["--store"], &[], &[], 1)?, out),
+        ["config", "diff", rest @ ..] => config_diff(&parse(rest, &["--store"], &[], &[], 2)?, out),
         ["pool", "declare", rest @ ..] => pool_declare(
             &parse(
                 rest,
                 &["--store", "--kind", "--reason", "--signed-by"],
+                &[],
                 &["--pair"],
                 0,
             )?,
             out,
         ),
-        ["pool", "show", rest @ ..] => pool_show(&parse(rest, &["--store"], &[], 2)?, out),
+        ["pool", "show", rest @ ..] => pool_show(&parse(rest, &["--store"], &[], &[], 2)?, out),
         ["workspace", "create", rest @ ..] => workspace_create(
-            &parse(rest, &["--source", "--base", "--out"], &["--drop"], 0)?,
+            &parse(rest, &["--source", "--base", "--out"], &[], &["--drop"], 0)?,
             out,
         ),
-        ["workspace", "check", rest @ ..] => {
-            workspace_check(&parse(rest, &["--object-set"], &[], 1)?, out)
+        ["workspace", "check", rest @ ..] => workspace_check(
+            &parse(
+                rest,
+                &["--object-set"],
+                &["--task", "--task-env"],
+                &["--private-layer"],
+                1,
+            )?,
+            out,
+        ),
+        ["tree-hash", rest @ ..] => {
+            let args = parse(rest, &[], &[], &[], 1)?;
+            writeln!(out, "{}", tree::hash(Path::new(&args.positional[0]))?)?;
+            Ok(())
         }
+        ["fingerprints", rest @ ..] => write_fingerprints(
+            &parse(
+                rest,
+                &["--source", "--base", "--landed", "--canary", "--out"],
+                &[],
+                &[],
+                0,
+            )?,
+            out,
+        ),
+        ["task-env", "warm", rest @ ..] => task_env_warm(
+            &parse(
+                rest,
+                &[
+                    "--agent-jail",
+                    "--profile",
+                    "--task-env",
+                    "--run",
+                    "--object-set",
+                    "--wall-cap",
+                ],
+                &[],
+                &[],
+                0,
+            )?,
+            out,
+        ),
         _ => Err(Failure::Usage("unknown command".into())),
     }
 }
@@ -71,18 +118,22 @@ pub fn run(args: &[String], out: &mut dyn Write) -> std::result::Result<(), Fail
 /// Parsed arguments: single-valued options, repeatable options, positionals.
 struct Args {
     single: Vec<(String, String)>,
-    /// `--pair` takes two values; `--drop` one.
+    /// `--pair` takes two values; the others one.
     repeated: Vec<(String, Vec<String>)>,
     positional: Vec<String>,
 }
 
 impl Args {
     fn get(&self, name: &str) -> &str {
+        self.optional(name)
+            .expect("required options are checked in parse")
+    }
+
+    fn optional(&self, name: &str) -> Option<&str> {
         self.single
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
-            .expect("required options are checked in parse")
     }
 
     fn all(&self, name: &str) -> Vec<&Vec<String>> {
@@ -98,13 +149,16 @@ impl Args {
     }
 }
 
-/// Every option in `single` is required exactly once; `repeated` options may repeat.
+/// Every option in `required` is given exactly once, every one in `optional` at most once;
+/// `repeated` options may repeat.
 fn parse(
     words: &[&str],
-    single: &[&str],
+    required: &[&str],
+    optional: &[&str],
     repeated: &[&str],
     positionals: usize,
 ) -> std::result::Result<Args, Failure> {
+    let single = [required, optional].concat();
     let usage = |text: String| Err(Failure::Usage(text));
     let mut args = Args {
         single: Vec::new(),
@@ -137,7 +191,7 @@ fn parse(
             index += 1;
         }
     }
-    for name in single {
+    for name in required {
         if !args.single.iter().any(|(n, _)| n == name) {
             return usage(format!("missing {name}"));
         }
@@ -244,10 +298,30 @@ fn workspace_create(args: &Args, out: &mut dyn Write) -> std::result::Result<(),
 }
 
 fn workspace_check(args: &Args, out: &mut dyn Write) -> std::result::Result<(), Failure> {
-    let report = workspace::check(
-        &PathBuf::from(&args.positional[0]),
-        args.get("--object-set"),
-    )?;
+    let layers: Vec<PathBuf> = args
+        .all("--private-layer")
+        .into_iter()
+        .map(|v| PathBuf::from(&v[0]))
+        .collect();
+    let task_env = match (args.optional("--task"), args.optional("--task-env")) {
+        (Some(task), Some(dir)) if !layers.is_empty() => Some((task, dir)),
+        (None, None) if layers.is_empty() => None,
+        _ => {
+            return Err(Failure::Usage(
+                "--task, --task-env and at least one --private-layer go together".into(),
+            ));
+        }
+    };
+    let object_set = args.get("--object-set");
+    let mut report = workspace::check(&PathBuf::from(&args.positional[0]), object_set)?;
+    if let Some((task, dir)) = task_env {
+        let input = std::fs::read(task).map_err(|error| Error(format!("{task}: {error}")))?;
+        let task =
+            crate::record::task(&input).map_err(|error| Error(format!("{task}: {}", error.0)))?;
+        report
+            .violations
+            .extend(task_env::check(&task, Path::new(dir), object_set, &layers));
+    }
     for violation in &report.violations {
         writeln!(out, "{violation}")?;
     }
@@ -263,4 +337,35 @@ fn workspace_check(args: &Args, out: &mut dyn Write) -> std::result::Result<(), 
             report.violations.len()
         )))
     }
+}
+
+fn write_fingerprints(args: &Args, out: &mut dyn Write) -> std::result::Result<(), Failure> {
+    let summary = fingerprints::write(
+        Path::new(args.get("--source")),
+        args.get("--base"),
+        args.get("--landed"),
+        Path::new(args.get("--canary")),
+        Path::new(args.get("--out")),
+    )?;
+    writeln!(
+        out,
+        "{}",
+        serde_json::to_string(&summary).map_err(Error::from)?
+    )?;
+    Ok(())
+}
+
+fn task_env_warm(args: &Args, out: &mut dyn Write) -> std::result::Result<(), Failure> {
+    task_env::warm(
+        task_env::WarmBuild {
+            agent_jail: std::process::Command::new(args.get("--agent-jail")),
+            profile: args.get("--profile"),
+            task_env: Path::new(args.get("--task-env")),
+            run: Path::new(args.get("--run")),
+            object_set: args.get("--object-set"),
+            wall_cap: args.get("--wall-cap"),
+        },
+        out,
+    )?;
+    Ok(())
 }

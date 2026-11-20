@@ -1,9 +1,11 @@
 //! The structural probe. `agent-jail probe` runs the jail with a stand-in
 //! harness (`probe-harness`, the harness PID) that checks the outer layer,
 //! starts non-harness outer processes (`probe-peer`) for the owner checks,
-//! and runs `probe-inner` through `/bin/sh` for the inner layer. Each check
-//! prints one JSON line; the host adds the proxy-log expectations and
-//! writes `meta/probe.json`.
+//! and runs `probe-inner` through `/bin/sh` for the inner layer, which also
+//! tries to fetch with a real Nix client and with Cargo, each next to a
+//! positive control with the same client and flags. Each check prints one
+//! JSON line; the host adds the proxy-log expectations and writes
+//! `meta/probe.json`.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
@@ -15,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::manifest::Home;
+use crate::spec::{Spec, StoreSpec};
+use crate::task_env::{STORE, Store};
 use crate::{BIN_DIR, HOME, JAIL_DIR, PRIVATE_DIR, Result, SOCK_DIR, WORKSPACE};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -161,8 +165,101 @@ fn abstract_x11() -> std::io::Result<()> {
     std::os::unix::net::UnixStream::connect_addr(&address).map(drop)
 }
 
-/// Checks both layers share: the network, host paths, sockets, variables.
-fn common(reporter: &Reporter) {
+/// The Nix client variables neither layer may carry.
+pub const NIX_CLIENT_VARS: &[&str] = &[
+    "NIX_REMOTE",
+    "NIX_CONFIG",
+    "NIX_PATH",
+    "NIX_STORE_DIR",
+    "NIX_STATE_DIR",
+    "NIX_CONF_DIR",
+    "NIX_USER_CONF_FILES",
+    "NIX_DAEMON_SOCKET_PATH",
+    "NIX_SSL_CERT_FILE",
+];
+
+/// The store mount check on a `/proc/self/mountinfo` text: exactly one
+/// mount at /nix/store, which is the task store (or for the host-test
+/// store the host's own), and no other mount whose root lies in the host's
+/// /nix/store unless the spec allows that root.
+pub fn store_mounts(mountinfo: &str, store: &StoreSpec) -> std::result::Result<(), String> {
+    let mounts: Vec<(String, String)> = mountinfo
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(' ').collect();
+            Some((
+                crate::seal::unescape(fields.get(3)?),
+                crate::seal::unescape(fields.get(4)?),
+            ))
+        })
+        .collect();
+    let host_store = |root: &str| root == STORE || root.starts_with(&format!("{STORE}/"));
+    let mut problems = Vec::new();
+    let at_store: Vec<&String> = mounts
+        .iter()
+        .filter(|(_, point)| point == STORE)
+        .map(|(root, _)| root)
+        .collect();
+    match (at_store.as_slice(), &store.store) {
+        ([root], Store::Task { .. }) if host_store(root) => {
+            problems.push(format!("/nix/store is the host store ({root})"));
+        }
+        ([root], Store::HostTest) if root.as_str() != STORE => {
+            problems.push(format!("/nix/store mounts {root}, not the host store"));
+        }
+        ([_], _) => {}
+        (roots, _) => problems.push(format!("{} mounts at /nix/store", roots.len())),
+    }
+    for (root, point) in &mounts {
+        if point != STORE && host_store(root) && !store.allowed_roots.contains(root) {
+            problems.push(format!("{point} is bound from the host store's {root}"));
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("; "))
+    }
+}
+
+/// Excluded packages in `store` or on `PATH`; a store or PATH entry it
+/// cannot read is an error, never a clean answer.
+fn excluded_found(store: &Path, exclude: &[String]) -> std::result::Result<Vec<String>, String> {
+    let mut found = Vec::new();
+    if exclude.is_empty() {
+        return Ok(found);
+    }
+    let unreadable = |path: &Path, err: std::io::Error| format!("{}: {err}", path.display());
+    for entry in std::fs::read_dir(store).map_err(|err| unreadable(store, err))? {
+        let name = entry
+            .map_err(|err| unreadable(store, err))?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if exclude
+            .iter()
+            .any(|pname| crate::task_env::is_package(&name, pname))
+        {
+            found.push(store.join(name).display().to_string());
+        }
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    for dir in path.split(':').filter(|dir| !dir.is_empty()) {
+        for pname in exclude {
+            let tool = Path::new(dir).join(pname);
+            match std::fs::symlink_metadata(&tool) {
+                Ok(_) => found.push(tool.display().to_string()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(unreadable(&tool, err)),
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Checks both layers share: the network, host paths, sockets, variables,
+/// the store.
+fn common(reporter: &Reporter, spec: Option<&Spec>) {
     let interfaces: Vec<String> = std::fs::read_to_string("/proc/net/dev")
         .unwrap_or_default()
         .lines()
@@ -188,6 +285,7 @@ fn common(reporter: &Reporter) {
         "/mnt/build",
         "/run/user/1000",
         "/nix/var/nix/daemon-socket",
+        "/nix/var",
         "/bench/bin/br",
         "/bench/bin/nix",
     ] {
@@ -206,7 +304,10 @@ fn common(reporter: &Reporter) {
         "WAYLAND_DISPLAY",
         "DISPLAY",
         "XDG_RUNTIME_DIR",
-    ] {
+    ]
+    .iter()
+    .chain(NIX_CLIENT_VARS)
+    {
         let set = std::env::var_os(name).is_some();
         reporter.report(
             &format!("unset {name}"),
@@ -221,6 +322,26 @@ fn common(reporter: &Reporter) {
         "0000000000000000",
         caps.clone(),
         caps == "0000000000000000",
+    );
+    write_fails(reporter, &format!("{STORE}/agent-jail-probe"));
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    let mounts = spec
+        .ok_or("no spec".to_owned())
+        .and_then(|spec| store_mounts(&mountinfo, &spec.store));
+    reporter.report(
+        "no host store mount",
+        "the task store at /nix/store, nothing bound from the host store",
+        format!("{mounts:?}"),
+        mounts.is_ok(),
+    );
+    let found = spec
+        .ok_or("no spec".to_owned())
+        .and_then(|spec| excluded_found(Path::new(STORE), &spec.store.exclude));
+    reporter.report(
+        "no excluded package in the store or on PATH",
+        "[]",
+        format!("{found:?}"),
+        found.is_ok_and(|found| found.is_empty()),
     );
 }
 
@@ -248,7 +369,15 @@ pub fn probe_harness(profile: &str) -> i32 {
     let Ok(host) = model_host(profile) else {
         return 1;
     };
-    common(&reporter);
+    let spec = Spec::read().ok();
+    common(&reporter, spec.as_ref());
+    let open = crate::fds::open_beyond(&[]);
+    reporter.report(
+        "no inherited descriptor >= 3",
+        "[]",
+        format!("{open:?}"),
+        matches!(&open, Ok(open) if open.is_empty()),
+    );
 
     // The harness's own route out, and the proxy's refusals.
     let line = status_line(through_bridge(&format!(
@@ -323,7 +452,6 @@ pub fn probe_harness(profile: &str) -> i32 {
         );
     }
     // Real tools run directly in the outer layer, not through a wrapper.
-    let spec = crate::spec::Spec::read().ok();
     let real = |name: &str| {
         spec.as_ref()
             .and_then(|spec| spec.tools.get(&format!("{BIN_DIR}/{name}")).cloned())
@@ -486,8 +614,22 @@ pub fn probe_inner(profile: &str) -> i32 {
     let Ok(home) = Home::shipped(&harness) else {
         return 1;
     };
-    common(&reporter);
+    let spec = Spec::read().ok();
+    common(&reporter, spec.as_ref());
     reporter.fails("tcp to the bridge", tcp(crate::BRIDGE));
+    let path = std::env::var("PATH").unwrap_or_default();
+    let want = spec
+        .as_ref()
+        .map(crate::wrapper::inner_path)
+        .unwrap_or_default();
+    reporter.report(
+        "PATH is the wrapper directory then the dev shell's",
+        &want,
+        path.clone(),
+        !want.is_empty() && path == want,
+    );
+    store_fetches(&reporter, spec.as_ref().map(|spec| spec.store.nix.as_str()));
+    cargo_fetches(&reporter);
     // Functional: the shells harness commands run in need a usable /dev.
     let dev_null = std::fs::OpenOptions::new()
         .write(true)
@@ -579,6 +721,220 @@ pub fn probe_inner(profile: &str) -> i32 {
     let marker = where_marker(&harness);
     reporter.report("where", "inner", marker, marker == "inner");
     0
+}
+
+/// Where the probe's Nix keeps its own throwaway store: a store directory
+/// of its own, so Nix builds without its sandbox (a store rooted elsewhere
+/// would force one, which can see no /tmp file and cannot mount /proc in a
+/// nested jail); only the network differs between check and control.
+const PROBE_NIX_STORE: &str = "local?store=/tmp/agent-jail-probe-nix/store&state=/tmp/agent-jail-probe-nix/state&log=/tmp/agent-jail-probe-nix/log";
+/// The probe's Nix keeps its cache beside its store, off the read-only home.
+const PROBE_NIX_ENV: &[(&str, &str)] = &[("XDG_CACHE_HOME", "/tmp/agent-jail-probe-nix/cache")];
+/// The control's fixed-output file and its bytes.
+const PROBE_FOD: &str = "/tmp/agent-jail-probe-fod";
+const PROBE_FOD_TEXT: &[u8] = b"agent-jail probe fixed-output file\n";
+
+/// Runs `program` with `args` (and extra `env`) for up to `seconds`;
+/// returns its exit code and its standard output followed by its error.
+fn output(
+    program: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+    cwd: Option<&Path>,
+    seconds: u64,
+) -> (i32, String) {
+    let mut command = Command::new(program);
+    command.args(args).envs(env.iter().copied());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    match crate::capture(&mut command, b"", Duration::from_secs(seconds)) {
+        Ok((code, out, err)) => (code, format!("{out}{err}")),
+        Err(err) => (-1, format!("{program}: {err}")),
+    }
+}
+
+/// The last lines of `text`, for a check's observation.
+fn tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(4)..].join(" | ")
+}
+
+/// A network failure in a fetch client's words, not a refusal of its own.
+fn network_error(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    !lower.contains("experimental")
+        && [
+            "resolve host",
+            "could not resolve",
+            "couldn't resolve",
+            "unable to download",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+/// The pinned Nix: two fetches that must fail on the network, each with a
+/// control that must succeed, and the default store, which must reach
+/// neither a daemon nor the read-only /nix/store.
+fn store_fetches(reporter: &Reporter, nix: Option<&str>) {
+    let nix = nix.unwrap_or("/nonexistent/nix");
+    let flags = [
+        "--extra-experimental-features",
+        "nix-command flakes",
+        "--option",
+        "sandbox",
+        "false",
+        "--option",
+        "download-attempts",
+        "1",
+        "--store",
+        PROBE_NIX_STORE,
+    ];
+    let fetch = |url: &str, sha256: &str| {
+        let expr =
+            format!("(import <nix/fetchurl.nix> {{ url = \"{url}\"; sha256 = \"{sha256}\"; }})");
+        let mut args = flags.to_vec();
+        args.extend([
+            "build",
+            "--impure",
+            "--no-link",
+            "--print-out-paths",
+            "--expr",
+            &expr,
+        ]);
+        output(nix, &args, PROBE_NIX_ENV, None, 300)
+    };
+    let (code, text) = fetch(
+        "https://github.com/Yazelix/eon/archive/refs/heads/edge.tar.gz",
+        &"0".repeat(64),
+    );
+    reporter.report(
+        "store nix fetchurl from the network",
+        "a download or resolve error",
+        format!("exit {code}: {}", tail(&text)),
+        code != 0 && network_error(&text),
+    );
+    let control = std::fs::write(PROBE_FOD, PROBE_FOD_TEXT).map(|()| {
+        fetch(
+            &format!("file://{PROBE_FOD}"),
+            &crate::sha256_hex(PROBE_FOD_TEXT),
+        )
+    });
+    let (code, text) = control.unwrap_or_else(|err| (-1, err.to_string()));
+    reporter.report(
+        "store nix fetchurl from a file (control)",
+        "the file's store path",
+        format!("exit {code}: {}", tail(&text)),
+        code == 0 && text.contains("/tmp/agent-jail-probe-nix/store/"),
+    );
+    let mut args = flags.to_vec();
+    args.extend(["flake", "metadata", "github:Yazelix/eon"]);
+    let (code, text) = output(nix, &args, PROBE_NIX_ENV, None, 300);
+    reporter.report(
+        "store nix flake metadata github:Yazelix/eon",
+        "a download or resolve error",
+        format!("exit {code}: {}", tail(&text)),
+        code != 0 && network_error(&text),
+    );
+    let mut args = flags.to_vec();
+    args.extend(["eval", "--expr", "1 + 1"]);
+    let (code, text) = output(nix, &args, PROBE_NIX_ENV, None, 120);
+    reporter.report(
+        "store nix eval (control)",
+        "2",
+        format!("exit {code}: {}", tail(&text)),
+        code == 0 && text.lines().next() == Some("2"),
+    );
+    // Without a daemon socket or a /nix/var, Nix either fails or falls
+    // back to a chroot store in the jail's own home; both reach nothing.
+    let (code, text) = output(
+        nix,
+        &[
+            "--extra-experimental-features",
+            "nix-command",
+            "store",
+            "info",
+        ],
+        &[],
+        None,
+        120,
+    );
+    let refused = code != 0
+        && !text.contains("experimental")
+        && [
+            "daemon-socket",
+            "Read-only file system",
+            "Permission denied",
+            "cannot connect",
+        ]
+        .iter()
+        .any(|needle| text.contains(needle));
+    let private = code == 0 && text.contains(&format!("{HOME}/.local/share/nix/root"));
+    reporter.report(
+        "default store has no daemon and no writable /nix/store",
+        "an error, or a chroot store in the jail home",
+        format!("exit {code}: {}", tail(&text)),
+        refused || private,
+    );
+}
+
+/// Writes a one-dependency crate at `dir` and runs `cargo fetch` there.
+fn cargo_fetch(dir: &Path, dependency: &str, env: &[(&str, &str)]) -> (i32, String) {
+    let written = std::fs::create_dir_all(dir.join("src"))
+        .and_then(|()| std::fs::write(dir.join("src/lib.rs"), ""))
+        .and_then(|()| {
+            std::fs::write(
+                dir.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"agent-jail-probe\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dependencies]\n{dependency}\n\n[workspace]\n"
+                ),
+            )
+        });
+    match written {
+        Ok(()) => output("cargo", &["fetch"], env, Some(dir), 300),
+        Err(err) => (-1, err.to_string()),
+    }
+}
+
+/// Cargo in the jail is offline by default and has only the Cargo home's
+/// crates; with the network asked for, it meets no network.
+fn cargo_fetches(reporter: &Reporter) {
+    let root = Path::new("/tmp/agent-jail-probe-cargo");
+    let absent = "serde = \"=1.0.0\"";
+    let (code, text) = cargo_fetch(&root.join("absent"), absent, &[]);
+    reporter.report(
+        "cargo fetch of an uncached version offline",
+        "an offline resolution error",
+        format!("exit {code}: {}", tail(&text)),
+        code != 0 && text.contains("offline"),
+    );
+    let (code, text) = cargo_fetch(
+        &root.join("cached"),
+        "serde = { version = \"=1.0.229\", default-features = false }",
+        &[],
+    );
+    reporter.report(
+        "cargo fetch of a cached crate offline (control)",
+        "exit 0",
+        format!("exit {code}: {}", tail(&text)),
+        code == 0,
+    );
+    let (code, text) = cargo_fetch(
+        &root.join("online"),
+        absent,
+        &[
+            ("CARGO_NET_OFFLINE", "false"),
+            ("CARGO_NET_RETRY", "0"),
+            ("CARGO_HTTP_TIMEOUT", "10"),
+        ],
+    );
+    reporter.report(
+        "cargo fetch with CARGO_NET_OFFLINE=false",
+        "a network error",
+        format!("exit {code}: {}", tail(&text)),
+        code != 0 && network_error(&text),
+    );
 }
 
 /// `inner` when every functional sign of the inner layer holds.
@@ -801,9 +1157,12 @@ pub fn run(options: &crate::enter::Options, host: &crate::enter::Host) -> Result
     checks.push(Check {
         layer: "host".into(),
         name: "stand-in exit and token scan".into(),
-        expected: "exit 0, not quarantined".into(),
-        observed: format!("exit {}, quarantined {}", outcome.exit, outcome.quarantined),
-        pass: outcome.exit == 0 && !outcome.quarantined,
+        expected: "exit 0, not quarantined, private layers deleted".into(),
+        observed: format!(
+            "exit {}, quarantined {}, layers left {:?}",
+            outcome.exit, outcome.quarantined, outcome.overlay_left
+        ),
+        pass: outcome.exit == 0 && !outcome.quarantined && outcome.overlay_left.is_empty(),
     });
     let harness = crate::profile::load(&options.profile)?.profile.harness;
     checks.push(same_checks(&checks, expected_checks(&harness)));
@@ -821,6 +1180,25 @@ pub fn run(options: &crate::enter::Options, host: &crate::enter::Host) -> Result
 mod tests {
     use super::*;
 
+    #[test]
+    fn an_unreadable_store_fails_the_exclusion_check() {
+        let exclude = vec!["agent-jail-no-such-tool".to_owned()];
+        let dir = crate::test_dir("probe-excluded");
+        assert!(excluded_found(&dir.join("absent"), &exclude).is_err());
+        std::fs::write(dir.join("file"), "").unwrap();
+        assert!(excluded_found(&dir.join("file"), &exclude).is_err());
+        let store = dir.join("store");
+        std::fs::create_dir(&store).unwrap();
+        assert_eq!(excluded_found(&store, &exclude), Ok(Vec::new()));
+        std::fs::create_dir(
+            store.join("0123456789abcdfghijklmnpqrsvwxyz-agent-jail-no-such-tool-0.7.2"),
+        )
+        .unwrap();
+        assert_eq!(excluded_found(&store, &exclude).unwrap().len(), 1);
+        // Nothing excluded: nothing to look for.
+        assert_eq!(excluded_found(&dir.join("absent"), &[]), Ok(Vec::new()));
+    }
+
     fn check(layer: &str, name: &str) -> Check {
         Check {
             layer: layer.into(),
@@ -829,6 +1207,100 @@ mod tests {
             observed: String::new(),
             pass: true,
         }
+    }
+
+    fn store_spec(store: Store, allowed: &[&str]) -> StoreSpec {
+        StoreSpec {
+            store,
+            exclude: vec![],
+            allowed_roots: allowed.iter().map(|root| (*root).to_owned()).collect(),
+            nix: String::new(),
+        }
+    }
+
+    fn line(root: &str, point: &str) -> String {
+        format!("36 35 98:0 {root} {point} ro,nosuid - ext4 /dev/x ro\n")
+    }
+
+    #[test]
+    fn store_mount_fixtures() {
+        let task = Store::Task {
+            env_sha256: "0".repeat(64),
+        };
+        let task_store = line("/eon-agents/env/store/nix/store", "/nix/store");
+        let jail = line("/eon-agents/target/agent-jail", "/bench/jail/agent-jail")
+            + &line("/eon-agents/env/store/nix/store/x-bash/bin/bash", "/bin/sh");
+        assert_eq!(
+            store_mounts(
+                &(task_store.clone() + &jail),
+                &store_spec(task.clone(), &[])
+            ),
+            Ok(())
+        );
+        // A stray single-file bind out of the host store.
+        let stray = line("/nix/store/y-coreutils/bin/env", "/usr/bin/env");
+        assert!(
+            store_mounts(
+                &(task_store.clone() + &stray),
+                &store_spec(task.clone(), &[])
+            )
+            .unwrap_err()
+            .contains("/usr/bin/env")
+        );
+        // The host store itself at /nix/store, or no store, or two.
+        let host = line("/nix/store", "/nix/store");
+        assert!(
+            store_mounts(&host, &store_spec(task.clone(), &[]))
+                .unwrap_err()
+                .contains("host store")
+        );
+        assert!(
+            store_mounts(&jail, &store_spec(task.clone(), &[]))
+                .unwrap_err()
+                .contains("0 mounts")
+        );
+        assert!(
+            store_mounts(
+                &(task_store.clone() + &host),
+                &store_spec(task.clone(), &[])
+            )
+            .is_err()
+        );
+        // agent-jail installed in the store is the one named exception.
+        let installed = line(
+            "/nix/store/z-agent-jail/bin/agent-jail",
+            "/bench/jail/agent-jail",
+        );
+        let spec = store_spec(task, &["/nix/store/z-agent-jail/bin/agent-jail"]);
+        assert_eq!(store_mounts(&(task_store + &installed), &spec), Ok(()));
+        // The host-test store: exactly the host store, plus allowed files.
+        let tests = store_spec(Store::HostTest, &["/nix/store/y-coreutils/bin/env"]);
+        assert_eq!(store_mounts(&(host.clone() + &stray), &tests), Ok(()));
+        let other = line("/nix/store/w-curl/bin/curl", "/bench/bin/curl");
+        assert!(
+            store_mounts(&(host + &other), &tests)
+                .unwrap_err()
+                .contains("curl")
+        );
+        assert!(
+            store_mounts(&line("/x/store", "/nix/store"), &tests)
+                .unwrap_err()
+                .contains("not the host store")
+        );
+    }
+
+    #[test]
+    fn network_errors_are_told_from_refusals() {
+        assert!(network_error(
+            "error: unable to download 'https://x': Could not resolve hostname (6)"
+        ));
+        assert!(network_error(
+            "[6] Couldn't resolve host name (Could not resolve host: index.crates.io)"
+        ));
+        assert!(!network_error(
+            "error: experimental Nix feature 'flakes' is disabled; unable to download"
+        ));
+        assert!(!network_error("error: you're using offline mode"));
     }
 
     #[test]

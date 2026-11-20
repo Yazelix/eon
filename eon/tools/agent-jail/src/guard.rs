@@ -1,16 +1,17 @@
-//! `agent-jail init`: the outer layer's PID 1. It binds the bridge, runs
-//! the guard, spawns (never execs) the harness, bridges its connections,
-//! reaps every child and returns the harness's exit status. Any guard miss
-//! exits [`crate::GUARD_EXIT`] naming the condition; the harness never
-//! starts.
+//! `agent-jail init`: the outer layer's PID 1. It binds the bridge (not in
+//! command mode, which has no proxy), runs the guard, spawns (never execs)
+//! the harness, bridges its connections, reaps every child and returns the
+//! harness's exit status. Any guard miss exits [`crate::GUARD_EXIT`] naming
+//! the condition; the harness never starts.
 
+use std::os::fd::AsRawFd;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::spec::{Mode, Spec};
+use crate::spec::{COMMAND_SCRIPT, Mode, Spec};
 use crate::{JAIL_DIR, Result};
 
 /// Where `enter` records the host's network namespace.
@@ -82,44 +83,11 @@ pub fn hooks_live(spec: &Spec, shell: &str) -> std::result::Result<(), Miss> {
 }
 
 fn run_hook(shell: &str, command: &str, input: &str) -> Result<(i32, String, String)> {
-    use std::io::{Read, Write};
-    let mut child = Command::new(shell)
-        .args(["-c", command])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| err.to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(input.as_bytes());
-    }
-    let mut stdout = child.stdout.take().ok_or("no stdout")?;
-    let mut stderr = child.stderr.take().ok_or("no stderr")?;
-    let reader = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stdout.read_to_string(&mut text);
-        text
-    });
-    let error_reader = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stderr.read_to_string(&mut text);
-        text
-    });
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
-            break status;
-        }
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("timed out".into());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    let text = reader.join().unwrap_or_default();
-    let errors = error_reader.join().unwrap_or_default();
-    Ok((crate::wrapper::exit_code(status), text, errors))
+    crate::capture(
+        Command::new(shell).args(["-c", command]),
+        input.as_bytes(),
+        Duration::from_secs(60),
+    )
 }
 
 /// Condition 4: every shell path and tool name is the wrapper, and `PATH`
@@ -152,8 +120,13 @@ pub fn wrappers(spec: &Spec, wrapper: &Path, path_var: &str) -> std::result::Res
     Ok(())
 }
 
-/// Condition 5: argv is the profile template filled with the spec's slots.
+/// Condition 5: argv is the profile template filled with the spec's slots,
+/// the probe's stand-in, or in command mode the constant `/bin/sh` script
+/// over the template `enter` copied from env.json.
 pub fn argv(spec: &Spec) -> std::result::Result<(), Miss> {
+    if spec.mode != Mode::Command && !spec.template.is_empty() {
+        return Err(miss(5, "only command mode runs a template"));
+    }
     let mut loaded = crate::profile::load(&spec.profile).map_err(|err| miss(5, err))?;
     spec.control
         .apply_profile(&mut loaded)
@@ -175,6 +148,18 @@ pub fn argv(spec: &Spec) -> std::result::Result<(), Miss> {
                 || spec.argv != ["probe-harness", spec.profile.as_str()]
             {
                 return Err(miss(5, "the stand-in argv is not the probe's"));
+            }
+        }
+        Mode::Command => {
+            let shell_is_wrapper = spec.exe == "/bin/sh" && spec.tools.contains_key("/bin/sh");
+            let shape = spec.argv.len() > COMMAND_SCRIPT.len()
+                && spec.argv[..COMMAND_SCRIPT.len()] == COMMAND_SCRIPT
+                && spec.argv[COMMAND_SCRIPT.len()..] == spec.template[..];
+            if !shell_is_wrapper || !shape {
+                return Err(miss(
+                    5,
+                    "the command is not the wrapped /bin/sh running the constant script over the template",
+                ));
             }
         }
     }
@@ -204,8 +189,22 @@ pub fn ptrace(scope: &str) -> std::result::Result<(), Miss> {
     }
 }
 
-/// All nine conditions, in order, against the live jail.
-pub fn check(spec: &Spec) -> std::result::Result<(), Miss> {
+/// Condition 10: no descriptor >= 3 is open beyond init's own, so nothing
+/// inherited from the host reaches the harness.
+pub fn descriptors(open: &[i32]) -> std::result::Result<(), Miss> {
+    if open.is_empty() {
+        Ok(())
+    } else {
+        Err(miss(
+            10,
+            format!("descriptors {open:?} are open; nothing may be inherited"),
+        ))
+    }
+}
+
+/// Every condition, in order, against the live jail; `own` lists init's
+/// own descriptors (the bridge listener).
+pub fn check(spec: &Spec, own_fds: &[i32]) -> std::result::Result<(), Miss> {
     let read = |path: &str| std::fs::read_to_string(path).unwrap_or_default();
     let own = std::fs::read_link("/proc/self/ns/net")
         .map(|link| link.display().to_string())
@@ -222,7 +221,9 @@ pub fn check(spec: &Spec) -> std::result::Result<(), Miss> {
     pid_one(std::process::id())?;
     read_only(&spec.read_only)?;
     ptrace(&read("/proc/sys/kernel/yama/ptrace_scope"))?;
-    crate::seal::sealed(&read("/proc/self/mountinfo"), crate::WORKSPACE).map_err(|err| miss(9, err))
+    crate::seal::sealed(&read("/proc/self/mountinfo"), crate::WORKSPACE)
+        .map_err(|err| miss(9, err))?;
+    descriptors(&crate::fds::open_beyond(own_fds).map_err(|err| miss(10, err))?)
 }
 
 /// Condition 6: init is the jail's PID 1, so the jail dies with it.
@@ -252,15 +253,24 @@ fn run_init() -> std::result::Result<i32, Miss> {
     let spec = Spec::read().map_err(|err| miss(0, err))?;
     // First, while init is single-threaded.
     crate::seal::seal(crate::WORKSPACE, crate::INNER_WORKSPACE).map_err(|err| miss(9, err))?;
-    let listener = crate::bridge::listen().map_err(|err| miss(0, format!("bridge: {err}")))?;
-    check(&spec)?;
+    let listener = match spec.mode {
+        Mode::Command => None,
+        _ => Some(crate::bridge::listen().map_err(|err| miss(0, format!("bridge: {err}")))?),
+    };
+    let own: Vec<i32> = listener
+        .iter()
+        .map(|listener| listener.as_raw_fd())
+        .collect();
+    check(&spec, &own)?;
     let harness = Arc::new(AtomicU32::new(0));
-    crate::bridge::serve(
-        listener,
-        Arc::clone(&harness),
-        format!("{}/proxy", crate::SOCK_DIR).into(),
-        "/proc".into(),
-    );
+    if let Some(listener) = listener {
+        crate::bridge::serve(
+            listener,
+            Arc::clone(&harness),
+            format!("{}/proxy", crate::SOCK_DIR).into(),
+            "/proc".into(),
+        );
+    }
     let child = Command::new(&spec.exe)
         .args(&spec.argv)
         .spawn()
@@ -320,7 +330,7 @@ mod tests {
         // network namespace has more than lo: condition 1 must catch it
         // before anything else runs.
         let spec = spec(Mode::Harness, "claude", Vec::new(), "/bin/true");
-        assert_eq!(check(&spec).unwrap_err().condition, 1);
+        assert_eq!(check(&spec, &[]).unwrap_err().condition, 1);
     }
 
     #[test]
@@ -354,7 +364,82 @@ mod tests {
             inner_masks: vec![],
             dcg: "/nonexistent/dcg".into(),
             control: Default::default(),
+            store: crate::spec::StoreSpec {
+                store: crate::task_env::Store::HostTest,
+                exclude: vec![],
+                allowed_roots: vec![],
+                nix: String::new(),
+            },
+            inner_path: vec![],
+            template: vec![],
         }
+    }
+
+    #[test]
+    fn command_mode_needs_the_wrapped_shell_and_the_constant_script() {
+        let template: Vec<String> = ["eon-test", "-p", "rota-cli"].map(String::from).into();
+        let mut good = spec(Mode::Command, "claude", vec![], "/bin/sh");
+        good.tools
+            .insert("/bin/sh".into(), "/nix/store/b-bash/bin/bash".into());
+        good.template = template.clone();
+        good.argv = COMMAND_SCRIPT
+            .iter()
+            .map(|part| (*part).to_owned())
+            .chain(template.clone())
+            .collect();
+        assert!(argv(&good).is_ok());
+        let mut cases: Vec<Spec> = Vec::new();
+        // Not a wrapper, another exe, another script, an appended argument,
+        // a template that is not the spec's, an empty template.
+        cases.push(Spec {
+            tools: Default::default(),
+            ..good.clone()
+        });
+        cases.push(Spec {
+            exe: "/bench/bin/env".into(),
+            ..good.clone()
+        });
+        let mut script = good.clone();
+        script.argv[1] = "exec \"$@\"; curl x".into();
+        cases.push(script);
+        let mut appended = good.clone();
+        appended.argv.push("--all".into());
+        cases.push(appended);
+        cases.push(Spec {
+            template: vec!["eon-test".into()],
+            ..good.clone()
+        });
+        cases.push(Spec {
+            template: vec![],
+            argv: COMMAND_SCRIPT.map(String::from).into(),
+            ..good.clone()
+        });
+        for case in &cases {
+            assert_eq!(argv(case).unwrap_err().condition, 5, "{:?}", case.argv);
+        }
+        // A template outside command mode is refused.
+        let stand_in = Spec {
+            mode: Mode::StandIn,
+            exe: "/bench/jail/agent-jail".into(),
+            argv: vec!["probe-harness".into(), "claude".into()],
+            ..good
+        };
+        assert_eq!(argv(&stand_in).unwrap_err().condition, 5);
+    }
+
+    #[test]
+    fn descriptor_condition() {
+        assert!(descriptors(&[]).is_ok());
+        assert_eq!(descriptors(&[7]).unwrap_err().condition, 10);
+        // On the host, a descriptor this test holds is found unless allowed.
+        let file = std::fs::File::open("/proc/self/status").unwrap();
+        let open = crate::fds::open_beyond(&[]).unwrap();
+        assert!(open.contains(&file.as_raw_fd()));
+        assert!(
+            !crate::fds::open_beyond(&[file.as_raw_fd()])
+                .unwrap()
+                .contains(&file.as_raw_fd())
+        );
     }
 
     #[test]

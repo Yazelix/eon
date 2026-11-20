@@ -1,8 +1,10 @@
-# Host tools agent-jail runs, by absolute path and SHA-256. A path starting
-# with `~/` resolves under the invoking user's home from the password
-# database, never from $HOME. `enter` refuses a missing file or a hash
-# mismatch; there is no PATH lookup and no environment override, so
-# changing a pin is a reviewed change. M3 replaces these with the task store.
+# Tools agent-jail runs, by absolute path and SHA-256. A /nix/store pin
+# resolves inside the task store (`task-env store` copies every store pin
+# there), and its hash is checked on that copy. A path starting with `~/`
+# resolves under the invoking user's home from the password database, never
+# from $HOME. `enter` refuses a missing file or a hash mismatch; there is no
+# PATH lookup and no environment override, so changing a pin is a reviewed
+# change.
 
 [tools.bwrap]
 path = "/nix/store/m50dfhnbbqpvj79i444kcdd2zsfwr4hk-bubblewrap-0.13.1/bin/bwrap"
@@ -12,6 +14,17 @@ sha256 = "b45d70ccbdae62bb863c8ad5b6d3d60c2d01dbfe88ca7517edc7ce5ad86497d3"
 path = "/nix/store/sg5z4ia0jhbsyizzd8n92j5jk5gdk5l6-dcg-0.16.0/bin/dcg"
 version = "0.16.0"
 sha256 = "f98166f7f0cf3dc1ec9483fedb2af9d9bc27248f5806ac2b7c83ff97e2e2b324"
+
+# The host shell that closes inherited descriptors before bwrap starts.
+[tools.bash]
+path = "/nix/store/gik3rh1vz2jlgnifb9dh6vc6sxwwz9jj-bash-5.3p9/bin/bash"
+sha256 = "936880b83e6ee40d503c02f9bc6e16cc71a7a480b0971b88f9ad1d588afdc0a1"
+
+# A real Nix client, in the store only so the probe can show it fetches
+# nothing; it is never on a jail PATH.
+[tools.nix]
+path = "/nix/store/x7lhwl9cs30dyxjf113qfijsykcdv41z-determinate-nix-3.21.2/bin/nix"
+sha256 = "897333fcdb6e71b729468b1d35f565219afd2c3f9f970f1720fc6f973086c553"
 
 [tools.claude]
 path = "/nix/store/vxsk0qch7jk7lfr6y2mfshmlglzq7p6d-claude-code-2.1.326/bin/claude"

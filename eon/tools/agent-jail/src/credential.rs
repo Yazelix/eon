@@ -26,20 +26,42 @@ pub struct Checked {
     pub minutes_left: i64,
 }
 
+fn parse(harness: &str, text: &str) -> Result<Value> {
+    serde_json::from_str(text).map_err(|_| format!("{harness}: the credential file is not JSON"))
+}
+
+/// Every token string in a parsed credential file, and Codex's account ID.
+fn found(harness: &str, json: &Value) -> (Vec<Secret>, Vec<String>) {
+    let mut secrets = Vec::new();
+    collect(json, harness, &mut secrets);
+    let account_ids = json
+        .pointer("/tokens/account_id")
+        .and_then(Value::as_str)
+        .filter(|_| harness == "codex")
+        .map(str::to_owned)
+        .into_iter()
+        .collect();
+    (secrets, account_ids)
+}
+
+/// The needles a scan looks for in `text` (the credential file of
+/// `harness`): its tokens and account IDs, without the gate's expiry check.
+pub fn secrets(harness: &str, text: &str) -> Result<(Vec<Secret>, Vec<String>)> {
+    Ok(found(harness, &parse(harness, text)?))
+}
+
 /// Checks `text` (the credential file of `harness`) at `now` (Unix seconds)
 /// for a run of `wall_cap` minutes.
 pub fn gate(harness: &str, text: &str, now: i64, wall_cap: i64) -> Result<Checked> {
-    let json: Value = serde_json::from_str(text)
-        .map_err(|_| format!("{harness}: the credential file is not JSON"))?;
-    let mut secrets = Vec::new();
-    collect(&json, harness, &mut secrets);
-    let (expiry, account_ids) = match harness {
+    let json = parse(harness, text)?;
+    let (secrets, account_ids) = found(harness, &json);
+    let expiry = match harness {
         "claude" => {
             let expires_ms = json
                 .pointer("/claudeAiOauth/expiresAt")
                 .and_then(Value::as_i64)
                 .ok_or("claude: the credential file has no claudeAiOauth.expiresAt")?;
-            (expires_ms / 1000, Vec::new())
+            expires_ms / 1000
         }
         "codex" => {
             let access = json
@@ -49,14 +71,7 @@ pub fn gate(harness: &str, text: &str, now: i64, wall_cap: i64) -> Result<Checke
             let exp = jwt_claim(access, "exp")
                 .and_then(|claim| claim.as_i64())
                 .ok_or("codex: the access token has no exp claim")?;
-            let account = json
-                .pointer("/tokens/account_id")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            (
-                exp - CODEX_REFRESH_LEAD_SECONDS,
-                account.into_iter().collect(),
-            )
+            exp - CODEX_REFRESH_LEAD_SECONDS
         }
         other => return Err(format!("no credential gate for harness {other}")),
     };

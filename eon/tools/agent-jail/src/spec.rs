@@ -28,6 +28,28 @@ pub enum Mode {
     Harness,
     /// The probe's stand-in harness: `agent-jail probe-harness <profile>`.
     StandIn,
+    /// Trusted host work (the warm build, the scorer): a test template run
+    /// through `/bin/sh` with no credential, proxy or bridge.
+    Command,
+}
+
+/// `/bin/sh` runs a command template as positional arguments of this
+/// constant script, so no template text is ever parsed by a shell.
+pub const COMMAND_SCRIPT: [&str; 3] = ["-c", "exec \"$@\"", "agent-jail-command"];
+
+/// What the jail's store is, for the probe's store checks.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreSpec {
+    pub store: crate::task_env::Store,
+    /// Packages that must be in neither the store nor any PATH.
+    pub exclude: Vec<String>,
+    /// Mount roots under the host's /nix/store the jail may hold: the
+    /// agent-jail binary when it is a store path and, for the host-test
+    /// store, the single files bound out of it.
+    pub allowed_roots: Vec<String>,
+    /// The pinned nix the probe tries to fetch with.
+    pub nix: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -70,6 +92,11 @@ pub struct Spec {
     /// The probe control variant, `none` for real runs.
     #[serde(default)]
     pub control: crate::control::Control,
+    pub store: StoreSpec,
+    /// The dev shell's PATH dirs, after `/bench/bin` on the inner PATH.
+    pub inner_path: Vec<String>,
+    /// Command mode's template, from env.json (empty otherwise).
+    pub template: Vec<String>,
 }
 
 impl Spec {

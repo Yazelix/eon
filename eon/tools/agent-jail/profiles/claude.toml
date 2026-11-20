@@ -5,7 +5,6 @@ harness = "claude"
 binary = "claude"
 exe = "pinned"
 allowlist = "claude"
-store = "host-probe-only"
 argv = [
   "--print", "{prompt}",
   "--model", "{model}",

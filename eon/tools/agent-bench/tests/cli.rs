@@ -49,6 +49,38 @@ fn usage_errors_exit_2() {
         &["config", "diff", "--store", "s", "a"],
         &["pool", "declare", "--store", "s", "--kind", "config"],
         &["workspace", "check", "dir"],
+        // The task group goes together.
+        &[
+            "workspace",
+            "check",
+            "dir",
+            "--object-set",
+            "x",
+            "--task",
+            "t",
+        ],
+        &[
+            "workspace",
+            "check",
+            "dir",
+            "--object-set",
+            "x",
+            "--task",
+            "t",
+            "--task-env",
+            "e",
+        ],
+        &[
+            "workspace",
+            "check",
+            "dir",
+            "--object-set",
+            "x",
+            "--private-layer",
+            "p",
+        ],
+        &["tree-hash"],
+        &["task-env", "warm", "--agent-jail", "j"],
         &[
             "workspace",
             "create",
@@ -68,7 +100,28 @@ fn usage_errors_exit_2() {
     }
     let help = bench(&["help"]);
     assert_eq!(code(&help), 0);
-    assert!(stdout(&help).contains("agent-bench workspace check"));
+    for command in [
+        "agent-bench workspace check",
+        "--private-layer DIR",
+        "agent-bench tree-hash DIR",
+        "agent-bench fingerprints",
+        "agent-bench task-env warm",
+    ] {
+        assert!(stdout(&help).contains(command), "{command}");
+    }
+}
+
+#[test]
+fn tree_hash_prints_the_digest() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f"), "x").unwrap();
+    let output = bench(&["tree-hash", path(dir.path())]);
+    assert_eq!(code(&output), 0, "{output:?}");
+    let digest = stdout(&output);
+    assert_eq!(digest.trim().len(), 64);
+    assert!(digest.ends_with('\n'));
+    let missing = bench(&["tree-hash", path(&dir.path().join("missing"))]);
+    assert_eq!(code(&missing), 1);
 }
 
 #[test]
@@ -183,7 +236,10 @@ fn git(dir: &Path, args: &[&str]) {
 #[test]
 fn workspace_create_and_check() {
     let dir = tempfile::tempdir().unwrap();
-    let source = dir.path().join("source");
+    // Canonical: the check refuses private layers under a symlink, and macOS's temp dir is
+    // behind one (`/var -> /private/var`).
+    let root = dir.path().canonicalize().unwrap();
+    let source = root.as_path().join("source");
     std::fs::create_dir_all(source.join(".beads")).unwrap();
     git(&source, &["init", "-q"]);
     std::fs::write(source.join("a.txt"), "a\n").unwrap();
@@ -191,7 +247,7 @@ fn workspace_create_and_check() {
     git(&source, &["add", "-A"]);
     git(&source, &["commit", "-q", "-m", "one"]);
 
-    let out = dir.path().join("ws");
+    let out = root.as_path().join("ws");
     let output = bench(&[
         "workspace",
         "create",
@@ -216,9 +272,40 @@ fn workspace_create_and_check() {
     ]);
     assert_eq!((code(&output), stdout(&output)), (0, "ok\n".to_owned()));
 
+    // With the task group, an empty task environment fails the task-environment checks.
+    let mut task: serde_json::Value = serde_json::from_str(TASK).unwrap();
+    task["snapshot_object_set_sha256"] = serde_json::json!(object_set);
+    let task_file = root.as_path().join("task.json");
+    std::fs::write(&task_file, serde_json::to_vec(&task).unwrap()).unwrap();
+    let layer = root.as_path().join("upper");
+    std::fs::create_dir(&layer).unwrap();
+    let output = bench(&[
+        "workspace",
+        "check",
+        path(&out),
+        "--object-set",
+        &object_set,
+        "--task",
+        path(&task_file),
+        "--task-env",
+        path(&root.as_path().join("task-env")),
+        "--private-layer",
+        path(&layer),
+    ]);
+    assert_eq!(code(&output), 1, "{output:?}");
+    let text = stdout(&output);
+    for needle in ["env.json", "warm.json", "target:", "cargo:"] {
+        assert!(text.contains(needle), "{needle}: {text}");
+    }
+    assert!(!text.contains("snapshot_object_set_sha256"), "{text}");
+    assert!(!text.contains("private layer"), "{text}");
+
     // A clone of the source fails with its violations listed.
-    let clone = dir.path().join("clone");
-    git(dir.path(), &["clone", "-q", path(&source), path(&clone)]);
+    let clone = root.as_path().join("clone");
+    git(
+        root.as_path(),
+        &["clone", "-q", path(&source), path(&clone)],
+    );
     let output = bench(&[
         "workspace",
         "check",

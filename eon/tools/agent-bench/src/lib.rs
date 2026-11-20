@@ -14,22 +14,31 @@
 //! - [`diff`]: changed leaf paths between two records (`agent-bench config diff`).
 //! - [`workspace`]: a synthetic workspace (one commit in a fresh repository, no history, refs or
 //!   tracker data) and the check a workspace passes before an agent starts in it.
+//! - [`tree`]: a content hash of a directory tree (`agent-bench tree-hash`).
+//! - [`task_env`]: the task environment's half of the launched-workspace check, and the warm
+//!   build that fills its target cache (`agent-bench task-env warm`).
+//! - [`fingerprints`]: the needles the fingerprint scan looks for in every mounted host path.
 //!
 //! Row schemas (`eon-bench-run/1`, `eon-bench-grade/1`) are not hashed. They may gain fields
 //! until the runner writes the first real row; after that, a field change bumps the schema.
 
 pub mod cli;
 pub mod diff;
+pub mod fingerprints;
 mod git;
 pub mod jcs;
 pub mod pooling;
 pub mod record;
 pub mod rows;
 pub mod store;
+pub mod task_env;
 mod time;
+pub mod tree;
 pub mod workspace;
 
 use std::fmt;
+use std::fs::{self, File, OpenOptions};
+use std::path::Path;
 
 /// An error with its message; the CLI prints it and exits 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,13 +74,37 @@ macro_rules! fail {
 }
 pub(crate) use fail;
 
+/// Lowercase hex of `bytes`.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// Lowercase hex SHA-256 of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex(&Sha256::digest(bytes))
+}
+
+/// Writes `bytes` to `path` through a temporary file in the same directory and a rename, so
+/// a reader sees the whole file or none.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let temporary = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    fs::write(&temporary, bytes)?;
+    fs::rename(&temporary, path)?;
+    Ok(())
+}
+
+/// Holds an exclusive `flock` on `path` (created if absent) until the file is dropped.
+pub(crate) fn lock(path: &Path) -> Result<File> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|error| Error(format!("{}: {error}", path.display())))?;
+    file.lock()?;
+    Ok(file)
 }
 
 /// The 12-digit form shown in tables.

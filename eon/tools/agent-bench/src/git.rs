@@ -73,3 +73,53 @@ pub fn line(dir: &Path, args: &[&str]) -> Result<String> {
         Err(_) => fail!("git {} printed non-UTF-8 output", args.join(" ")),
     }
 }
+
+/// Resolves `rev` in `dir` to a full commit id, refusing anything that looks like an option.
+pub fn commit(dir: &Path, rev: &str) -> Result<String> {
+    if rev.starts_with('-') {
+        fail!("{rev:?} is not a revision");
+    }
+    line(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{rev}^{{commit}}"),
+        ],
+    )
+}
+
+/// One `ls-tree -z` entry.
+pub struct Entry {
+    pub mode: String,
+    pub kind: String,
+    pub oid: String,
+    pub path: String,
+}
+
+/// Parses `ls-tree -z` output.
+pub fn entries(listing: &[u8]) -> Result<Vec<Entry>> {
+    let mut out = Vec::new();
+    for item in listing.split(|b| *b == 0).filter(|i| !i.is_empty()) {
+        let Ok(item) = std::str::from_utf8(item) else {
+            fail!("a path in the tree is not UTF-8");
+        };
+        let Some((meta, path)) = item.split_once('\t') else {
+            fail!("unexpected ls-tree line {item:?}");
+        };
+        let mut fields = meta.split(' ');
+        let (Some(mode), Some(kind), Some(oid), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            fail!("unexpected ls-tree line {item:?}");
+        };
+        out.push(Entry {
+            mode: mode.into(),
+            kind: kind.into(),
+            oid: oid.into(),
+            path: path.into(),
+        });
+    }
+    Ok(out)
+}

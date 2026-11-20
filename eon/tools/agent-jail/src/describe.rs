@@ -1,6 +1,5 @@
 //! `agent-jail describe <profile>`: the jail's part of a bench config
-//! record (eon-2r02l.1, M8). It refuses a probe-only profile unless asked
-//! with `--probe-only`, which marks the record `bench_ready: false`.
+//! record (eon-2r02l.1, M8).
 
 use serde_json::{Value, json};
 
@@ -26,17 +25,11 @@ pub fn jail_profile_sha256(name: &str) -> Result<String> {
     Ok(crate::sha256_hex(lines.join("\n").as_bytes()))
 }
 
-pub fn describe(name: &str, probe_only: bool) -> Result<Value> {
+pub fn describe(name: &str) -> Result<Value> {
     let loaded = crate::profile::load(name)?;
-    if loaded.probe_only() && !probe_only {
-        return Err(format!(
-            "profile {name} is probe-only in M2 (the host store is visible); describe it with --probe-only"
-        ));
-    }
     let home = Home::shipped(&loaded.profile.harness)?;
     let profile = &loaded.profile;
     Ok(json!({
-        "bench_ready": !loaded.probe_only(),
         "permissions": {
             "mode": profile.mode,
             "sandbox": "agent-jail-inner/1",
@@ -62,11 +55,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn probe_only_profiles_need_the_flag() {
+    fn records_carry_every_digest() {
         for name in ["claude", "codex"] {
-            assert!(describe(name, false).unwrap_err().contains("--probe-only"));
-            let record = describe(name, true).unwrap();
-            assert_eq!(record["bench_ready"], false);
+            let record = describe(name).unwrap();
+            assert!(record.get("bench_ready").is_none());
             assert_eq!(record["permissions"]["sandbox"], "agent-jail-inner/1");
             for pointer in [
                 "/permissions/proxy_allowlist_sha256",

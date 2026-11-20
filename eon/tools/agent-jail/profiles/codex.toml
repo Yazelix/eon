@@ -8,7 +8,6 @@ binary = "codex"
 exe = "/bench/tools/codex/bin/codex"
 release_mount = "/bench/tools/codex"
 allowlist = "codex"
-store = "host-probe-only"
 argv = [
   "exec",
   "--skip-git-repo-check",

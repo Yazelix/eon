@@ -2,7 +2,9 @@
 //! name on the outer layer's `PATH`. It moves the command into the inner
 //! layer, a nested bwrap with its own network and PID namespaces, private
 //! `/tmp`, `/run` and home, no proxy variables and no credential, where the
-//! real tools are bound over the wrapper paths, so nothing re-wraps.
+//! real tools are bound over the wrapper paths, so nothing re-wraps. Its
+//! `PATH` adds the dev shell's store dirs after `/bench/bin`, so the dev
+//! tools run only where commands already run, without wrappers.
 
 use std::ffi::OsString;
 use std::os::fd::AsRawFd;
@@ -57,6 +59,7 @@ pub fn inner_args(
     for name in PROXY_VARS {
         args.extend(["--unsetenv".into(), (*name).into()]);
     }
+    args.extend(["--setenv".into(), "PATH".into(), inner_path(spec).into()]);
     for (wrapper, real) in &spec.tools {
         args.extend(["--ro-bind".into(), real.into(), wrapper.into()]);
     }
@@ -73,8 +76,15 @@ pub fn inner_args(
     Ok(args)
 }
 
-/// Runs the wrapper for `exe` and returns the exit status: the tool's, or
-/// [`SETUP_FAILED`] when the inner layer never started it.
+/// The inner layer's `PATH`: the wrappers' directory (real tools there),
+/// then the dev shell's dirs.
+pub fn inner_path(spec: &Spec) -> String {
+    std::iter::once(crate::BIN_DIR)
+        .chain(spec.inner_path.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 /// The arguments the real tool gets: git started by the harness itself
 /// never runs repository-configured hooks or fsmonitor programs.
 pub fn tool_args(exe: &str, args: Vec<OsString>) -> Vec<OsString> {
@@ -88,6 +98,8 @@ pub fn tool_args(exe: &str, args: Vec<OsString>) -> Vec<OsString> {
     fixed
 }
 
+/// Runs the wrapper for `exe` and returns the exit status: the tool's, or
+/// [`SETUP_FAILED`] when the inner layer never started it.
 pub fn run(exe: &str, argv0: OsString, args: Vec<OsString>) -> i32 {
     match start(exe, argv0, tool_args(exe, args)) {
         Ok(code) => code,
@@ -157,6 +169,14 @@ mod tests {
             inner_masks: vec!["/tmp".into(), "/home/bench".into()],
             dcg: String::new(),
             control: Default::default(),
+            store: crate::spec::StoreSpec {
+                store: crate::task_env::Store::HostTest,
+                exclude: vec![],
+                allowed_roots: vec![],
+                nix: String::new(),
+            },
+            inner_path: vec!["/nix/store/r-rust/bin".into()],
+            template: vec![],
         }
     }
 
@@ -203,6 +223,7 @@ mod tests {
             "--tmpfs /home/bench",
             "--ro-bind /dev/null /home/bench/.claude/.credentials.json",
             "--unsetenv HTTPS_PROXY",
+            "--setenv PATH /bench/bin:/nix/store/r-rust/bin",
             "--ro-bind /nix/store/b/bin/bash /bin/sh",
             "--ro-bind /nix/store/c/bin/coreutils /bench/bin/ls",
             "--argv0 sh -- /bin/sh",

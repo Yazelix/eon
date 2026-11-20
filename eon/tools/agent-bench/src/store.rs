@@ -44,10 +44,7 @@ impl Store {
             }
             return Ok(());
         }
-        let temporary = dir.join(format!(".{hash}.{}.tmp", std::process::id()));
-        fs::write(&temporary, canonical)?;
-        fs::rename(&temporary, &path)?;
-        Ok(())
+        crate::write_atomic(&path, canonical.as_bytes())
     }
 
     /// Reads `<dir>/<hash>.json` and checks that its bytes hash to its name.
@@ -157,13 +154,7 @@ impl Store {
     /// Holds the store's exclusive lock until the returned file is dropped.
     pub(crate) fn lock(&self) -> Result<File> {
         fs::create_dir_all(&self.root)?;
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.root.join(".lock"))?;
-        file.lock()?;
-        Ok(file)
+        crate::lock(&self.root.join(".lock"))
     }
 
     /// Reads a JSONL file's lines (missing file: none).

@@ -31,11 +31,20 @@
   },
   "env": {
     "dev_shell": "devShells.x86_64-linux.default",
-    "closure_sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "exclude": [
+      "br",
+      "bv"
+    ],
+    "pass": [
+      "GHOSTTY_*",
+      "EON_*"
+    ],
+    "env_sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
     "lockfiles": [
       {
         "path": "Cargo.lock",
-        "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        "base_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+        "landed_sha256": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
       }
     ],
     "warm_target_sha256": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
@@ -43,6 +52,12 @@
   "test": {
     "command": [
       "eon-test",
+      "-p",
+      "yazelix-venus"
+    ],
+    "build": [
+      "eon-test",
+      "list",
       "-p",
       "yazelix-venus"
     ],

@@ -302,7 +302,8 @@ pub fn evaluate(id: &str, evidence: &Evidence) -> Verdict {
     let base = !evidence.outcome.quarantined
         && evidence.auth_unchanged
         && policy_ok
-        && !evidence.outcome.killed_at_cap;
+        && !evidence.outcome.killed_at_cap
+        && !evidence.outcome.killed_at_disk_floor;
     let no_search = signs.is_empty() && refused.is_empty();
     let curl_failed = transcript.matches("curl: (").count();
     let pass = base
@@ -438,6 +439,8 @@ pub fn run(
             mode: Mode::Harness,
             slots: case_slots,
             control: case.control,
+            template: None,
+            base_rw: false,
         };
         let outcome = crate::enter::enter(&options, host)?;
         let meta = run.join("meta");
@@ -486,10 +489,13 @@ mod tests {
     fn outcome() -> Outcome {
         Outcome {
             control: Control::None,
+            store: crate::task_env::Store::HostTest,
             exit: 0,
             killed_at_cap: false,
+            killed_at_disk_floor: false,
             quarantined: false,
-            minutes_left: 100,
+            minutes_left: Some(100),
+            overlay_left: Vec::new(),
         }
     }
 

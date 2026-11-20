@@ -317,12 +317,24 @@ pub struct Key {
 #[serde(deny_unknown_fields)]
 pub struct Env {
     pub dev_shell: Text,
-    /// Digest of the sorted closure path list.
-    pub closure_sha256: Digest,
+    /// Package names left out of the task store and PATH.
+    pub exclude: Vec<Text>,
+    /// Name patterns of the dev shell's variables the jail keeps.
+    pub pass: Vec<Text>,
+    /// SHA-256 of the task environment's `env.json` (closure, variables, test templates).
+    pub env_sha256: Digest,
     /// Lockfiles staged into the task's offline Cargo home.
-    pub lockfiles: Vec<PathDigest>,
-    /// Content hash of the task's warm target cache, identical for every arm.
+    pub lockfiles: Vec<Lockfile>,
+    /// Tree hash ([`crate::tree`]) of the task's warm target cache, identical for every arm.
     pub warm_target_sha256: Digest,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lockfile {
+    pub path: Text,
+    pub base_sha256: Digest,
+    pub landed_sha256: Digest,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -330,6 +342,8 @@ pub struct Env {
 pub struct Test {
     /// Argv template, at least the program.
     pub command: Vec<Text>,
+    /// The warm build's argv template, at least the program.
+    pub build: Vec<Text>,
     pub junit_path: Text,
 }
 
@@ -420,6 +434,14 @@ pub fn hash(input: &[u8]) -> Result<Hashed> {
     })
 }
 
+/// Parses and validates a task record.
+pub fn task(input: &[u8]) -> Result<Task> {
+    match hash(input)?.record {
+        Record::Task(task) => Ok(task),
+        Record::Config(_) => fail!("not a task record"),
+    }
+}
+
 fn parse(value: Value) -> Result<Record> {
     let Some(object) = value.as_object() else {
         fail!("a record is a JSON object");
@@ -476,6 +498,9 @@ fn validate_task(task: &Task) -> Result<()> {
     if task.test.command.is_empty() {
         fail!("test.command needs at least the program");
     }
+    if task.test.build.is_empty() {
+        fail!("test.build needs at least the program");
+    }
     if task.scorer.command.is_empty() {
         fail!("scorer.command needs at least the program");
     }
@@ -496,7 +521,7 @@ pub(crate) mod tests {
     /// here means every stored hash changes too.
     const GOLDEN_CONFIG: &str = "0a463fa2288e89c6aecd89bb1819ace99c8ea073e9440b3feb43c43509101100";
     const GOLDEN_JUDGE: &str = "5b0e5dd30093f54cb9ab26b19bc448dfcf9743ae263ca9fcb9e167a6f5c4a789";
-    const GOLDEN_TASK: &str = "900fc6635e4f76dd18bb782dd6c895a03e1b4e0d75694a22cbe7e7b05091c277";
+    const GOLDEN_TASK: &str = "4b99405a84bf4646a1dddc5013b03778d7e4bafd0dafd887fa4de6bb3154f430";
 
     fn value(text: &str) -> Value {
         serde_json::from_str(text).unwrap()
@@ -800,6 +825,12 @@ pub(crate) mod tests {
             }),
             ("empty test command", task.clone(), |v| {
                 v["test"]["command"] = json!([])
+            }),
+            ("empty test build", task.clone(), |v| {
+                v["test"]["build"] = json!([])
+            }),
+            ("old lockfile shape", task.clone(), |v| {
+                v["env"]["lockfiles"] = json!([{"path": "Cargo.lock", "sha256": "0".repeat(64)}])
             }),
             ("zero wall cap", task.clone(), |v| {
                 v["wall_cap_s"] = json!(0)

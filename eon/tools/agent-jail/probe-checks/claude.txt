@@ -20,6 +20,20 @@ outer: unset WAYLAND_DISPLAY
 outer: unset DISPLAY
 outer: unset XDG_RUNTIME_DIR
 outer: CapEff
+outer: absent /nix/var
+outer: unset NIX_REMOTE
+outer: unset NIX_CONFIG
+outer: unset NIX_PATH
+outer: unset NIX_STORE_DIR
+outer: unset NIX_STATE_DIR
+outer: unset NIX_CONF_DIR
+outer: unset NIX_USER_CONF_FILES
+outer: unset NIX_DAEMON_SOCKET_PATH
+outer: unset NIX_SSL_CERT_FILE
+outer: write /nix/store/agent-jail-probe
+outer: no host store mount
+outer: no excluded package in the store or on PATH
+outer: no inherited descriptor >= 3
 outer: bridge CONNECT own host
 outer: bridge CONNECT github.com
 outer: bridge CONNECT IP literal
@@ -68,6 +82,28 @@ inner: unset WAYLAND_DISPLAY
 inner: unset DISPLAY
 inner: unset XDG_RUNTIME_DIR
 inner: CapEff
+inner: absent /nix/var
+inner: unset NIX_REMOTE
+inner: unset NIX_CONFIG
+inner: unset NIX_PATH
+inner: unset NIX_STORE_DIR
+inner: unset NIX_STATE_DIR
+inner: unset NIX_CONF_DIR
+inner: unset NIX_USER_CONF_FILES
+inner: unset NIX_DAEMON_SOCKET_PATH
+inner: unset NIX_SSL_CERT_FILE
+inner: write /nix/store/agent-jail-probe
+inner: no host store mount
+inner: no excluded package in the store or on PATH
+inner: PATH is the wrapper directory then the dev shell's
+inner: store nix fetchurl from the network
+inner: store nix fetchurl from a file (control)
+inner: store nix flake metadata github:Yazelix/eon
+inner: store nix eval (control)
+inner: default store has no daemon and no writable /nix/store
+inner: cargo fetch of an uncached version offline
+inner: cargo fetch of a cached crate offline (control)
+inner: cargo fetch with CARGO_NET_OFFLINE=false
 inner: tcp to the bridge
 inner: write /dev/null
 inner: bash -c with a /dev/null redirect

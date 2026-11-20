@@ -1,7 +1,9 @@
 //! `agent-jail enter`: the host side. It checks the credential's lifetime,
 //! builds a fresh run directory and home, starts the allowlist proxy, runs
-//! the outer bwrap with init as PID 1, enforces the wall cap, then scans the
-//! run for token material.
+//! the outer bwrap with init as PID 1 on the task store, enforces the wall
+//! cap and the disk floor, then opens up the private overlay layers, scans
+//! the run for token material and deletes the layers. `command` mode is the
+//! same jail without a credential, a proxy or a bridge.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -9,7 +11,7 @@ use std::io::Read;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -19,7 +21,9 @@ use crate::manifest::Home;
 use crate::pins::Pins;
 use crate::profile::Loaded;
 use crate::proxy::{Limits, Proxy, Resolver};
-use crate::spec::{Mode, Spec};
+use crate::scan::{Finding, Secret};
+use crate::spec::{COMMAND_SCRIPT, Mode, Spec, StoreSpec};
+use crate::task_env::{CARGO_HOME, STORE, Store, TARGET_DIR, TaskEnv, Template};
 use crate::{BIN_DIR, HOME, JAIL_DIR, PRIVATE_DIR, Result, SHELL_PATHS, SOCK_DIR, WORKSPACE};
 
 /// Workspace paths a harness reads as project configuration; read-only.
@@ -36,6 +40,10 @@ pub struct Options {
     pub slots: BTreeMap<String, String>,
     /// A probe control variant; refused without `probe`.
     pub control: crate::control::Control,
+    /// Command mode's env.json template.
+    pub template: Option<Template>,
+    /// Command mode only: bind the task env's bases read-write (the warm build).
+    pub base_rw: bool,
 }
 
 /// The host facts a run uses. The CLI fills these from the pins and fixed
@@ -51,37 +59,93 @@ pub struct Host {
     pub limits: Limits,
     /// Unix seconds, for the credential gate.
     pub now: i64,
+    /// The store, Cargo home and target bases the jail mounts.
+    pub task: TaskEnv,
+    /// The free space the run's filesystem must keep; the jail dies below it.
+    pub disk_floor: DiskFloor,
+}
+
+/// Free bytes a run's filesystem must keep, and how often [`wait_capped`]
+/// checks them after its first check at the start.
+#[derive(Clone, Copy, Debug)]
+pub struct DiskFloor {
+    pub bytes: u64,
+    pub every: Duration,
+}
+
+impl DiskFloor {
+    /// `bytes`, checked every [`DISK_CHECK`].
+    pub const fn new(bytes: u64) -> Self {
+        Self {
+            bytes,
+            every: DISK_CHECK,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct Outcome {
     pub control: crate::control::Control,
+    pub store: Store,
     pub exit: i32,
     pub killed_at_cap: bool,
+    pub killed_at_disk_floor: bool,
     pub quarantined: bool,
-    pub minutes_left: i64,
+    /// The credential's minutes left; none in command mode.
+    pub minutes_left: Option<i64>,
+    /// Why `<run>/overlay` survived its deletion, if it did.
+    pub overlay_left: Vec<String>,
 }
 
 /// The outer bwrap flags that make the jail's lifetime init's: init is the
 /// PID namespace's PID 1 and dies with `enter`'s bwrap child.
 pub const OUTER_LIFETIME: &[&str] = &["--unshare-pid", "--as-pid-1", "--die-with-parent"];
 
+/// How the outer bwrap ended.
+pub struct Waited {
+    pub status: std::process::ExitStatus,
+    pub killed_at_cap: bool,
+    pub killed_at_disk_floor: bool,
+}
+
+/// How often the disk floor is checked.
+pub const DISK_CHECK: Duration = Duration::from_secs(10);
+
 /// Waits for the outer bwrap, killing it once `cap` has passed since
-/// `started`. Its `--die-with-parent` takes init with it, and init is the
-/// PID namespace's PID 1, so the whole jail goes.
+/// `started`, or when `floor`'s filesystem has fewer free bytes than it
+/// asks (checked at once, then every [`DiskFloor::every`]; an upper layer
+/// can fill the disk). Its `--die-with-parent` takes init with it, and init
+/// is the PID namespace's PID 1, so the whole jail goes.
 pub fn wait_capped(
     child: &mut std::process::Child,
     started: Instant,
     cap: Duration,
-) -> Result<(std::process::ExitStatus, bool)> {
-    let mut killed_at_cap = false;
+    floor: Option<(&Path, DiskFloor)>,
+) -> Result<Waited> {
+    let (mut killed_at_cap, mut killed_at_disk_floor) = (false, false);
+    let mut checked: Option<Instant> = None;
     loop {
         if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
-            return Ok((status, killed_at_cap));
+            return Ok(Waited {
+                status,
+                killed_at_cap,
+                killed_at_disk_floor,
+            });
         }
         if started.elapsed() > cap && !killed_at_cap {
             killed_at_cap = true;
             let _ = child.kill();
+        }
+        if let Some((path, floor)) = floor
+            && !killed_at_disk_floor
+            && checked.is_none_or(|checked| checked.elapsed() >= floor.every)
+        {
+            checked = Some(Instant::now());
+            // An unreadable filesystem counts as full.
+            if crate::free_bytes(path).unwrap_or(0) < floor.bytes {
+                killed_at_disk_floor = true;
+                let _ = child.kill();
+            }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -124,48 +188,12 @@ pub fn harness_exe(loaded: &Loaded) -> String {
         .to_owned()
 }
 
-/// The ELF interpreter of `path`, if it names one (`PT_INTERP`).
-pub fn elf_interpreter(path: &Path) -> Result<Option<String>> {
-    let bytes = std::fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let field = |offset: usize, size: usize| -> Result<u64> {
-        let slice = bytes
-            .get(offset..offset + size)
-            .ok_or("truncated ELF header")?;
-        Ok(slice
-            .iter()
-            .rev()
-            .fold(0u64, |acc, byte| (acc << 8) | u64::from(*byte)))
-    };
-    if bytes.get(..5) != Some(b"\x7fELF\x02".as_slice()) || bytes.get(5) != Some(&1) {
-        return Err(format!(
-            "{} is not a little-endian 64-bit ELF file",
-            path.display()
-        ));
-    }
-    let (phoff, phentsize, phnum) = (field(0x20, 8)?, field(0x36, 2)?, field(0x38, 2)?);
-    for index in 0..phnum {
-        let header = usize::try_from(phoff + index * phentsize).map_err(|err| err.to_string())?;
-        if field(header, 4)? == 3 {
-            let offset = usize::try_from(field(header + 8, 8)?).map_err(|err| err.to_string())?;
-            let size = usize::try_from(field(header + 32, 8)?).map_err(|err| err.to_string())?;
-            let raw = bytes
-                .get(offset..offset + size)
-                .ok_or("truncated PT_INTERP")?;
-            return Ok(Some(
-                String::from_utf8_lossy(raw)
-                    .trim_end_matches('\0')
-                    .to_owned(),
-            ));
-        }
-    }
-    Ok(None)
-}
-
-/// The jail mounts only `/nix/store`, so agent-jail must be static or load
-/// from the store (built in the repository's dev shell).
+/// The jail mounts only the task store at /nix/store, so agent-jail must
+/// be static or load from the store (built in the repository's dev shell);
+/// `task-env store` copies what it loads.
 pub fn check_self_exe(path: &Path) -> Result {
-    match elf_interpreter(path)? {
-        Some(interpreter) if !interpreter.starts_with("/nix/store/") => Err(format!(
+    match crate::elf::read(path)?.interpreter {
+        Some(interpreter) if !interpreter.starts_with(&format!("{STORE}/")) => Err(format!(
             "{} loads {interpreter}, which the jail does not mount; build agent-jail in the dev shell (nix develop)",
             path.display()
         )),
@@ -264,7 +292,117 @@ pub fn inner_masks() -> Vec<String> {
     .into()
 }
 
+/// A writable mount of a task env base: an overlay with the run's private
+/// upper and work layers, or (the warm build) the base itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Layer {
+    Overlay {
+        lower: PathBuf,
+        upper: PathBuf,
+        work: PathBuf,
+    },
+    Base(PathBuf),
+}
+
+/// The run's private layers, under `<run>/overlay`.
+pub const LAYERS: [&str; 2] = ["cargo", "target"];
+
+/// The Cargo home and target mounts of a run: overlays over the task env's
+/// bases, or with `base_rw` the bases read-write.
+pub fn layers(task: &TaskEnv, run: &Path, base_rw: bool) -> Vec<(Layer, &'static str)> {
+    [(task.cargo(), CARGO_HOME), (task.target(), TARGET_DIR)]
+        .into_iter()
+        .zip(LAYERS)
+        .map(|((base, dest), name)| {
+            let layer = if base_rw {
+                Layer::Base(base.to_path_buf())
+            } else {
+                let private = run.join("overlay").join(name);
+                Layer::Overlay {
+                    lower: base.to_path_buf(),
+                    upper: private.join("upper"),
+                    work: private.join("work"),
+                }
+            };
+            (layer, dest)
+        })
+        .collect()
+}
+
+pub fn layer_args(layer: &Layer, dest: &str) -> Vec<String> {
+    let path = |path: &Path| path.display().to_string();
+    match layer {
+        Layer::Overlay { lower, upper, work } => vec![
+            "--overlay-src".into(),
+            path(lower),
+            "--overlay".into(),
+            path(upper),
+            path(work),
+            dest.into(),
+        ],
+        Layer::Base(base) => vec!["--bind".into(), path(base), dest.into()],
+    }
+}
+
+/// `<run>/overlay` may hold only `{cargo,target}/{upper,work}`, each an
+/// empty directory, with no link on the way; absent parts are fine, and
+/// only a missing path is absent.
+pub fn check_overlay(run: &Path) -> Result {
+    let overlay = run.join("overlay");
+    crate::task_env::refuse_links(&overlay)?;
+    match std::fs::symlink_metadata(&overlay) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(format!("{}: {err}", overlay.display())),
+        Ok(_) => {}
+    }
+    let entries = |dir: &Path| -> Result<Vec<PathBuf>> {
+        let metadata =
+            std::fs::symlink_metadata(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+        if !metadata.is_dir() {
+            return Err(format!("{} is not a directory", dir.display()));
+        }
+        std::fs::read_dir(dir)
+            .map_err(|err| format!("{}: {err}", dir.display()))?
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.path())
+                    .map_err(|err| err.to_string())
+            })
+            .collect()
+    };
+    let named = |path: &Path, names: &[&str]| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| names.contains(&name))
+    };
+    for layer in entries(&overlay)? {
+        if !named(&layer, &LAYERS) {
+            return Err(format!(
+                "{} is not a private layer; the run refuses it",
+                layer.display()
+            ));
+        }
+        for part in entries(&layer)? {
+            if !named(&part, &["upper", "work"]) {
+                return Err(format!(
+                    "{} is not a private layer; the run refuses it",
+                    part.display()
+                ));
+            }
+            if !entries(&part)?.is_empty() {
+                return Err(format!(
+                    "{} is not empty; every run needs fresh private layers",
+                    part.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The outer bwrap's arguments, ending with `-- /bench/jail/agent-jail init`.
+/// Nothing is bound from the host's /nix/store: the store is the task's,
+/// and bwrap, env and every inner tool resolve inside it.
 #[allow(clippy::too_many_arguments)]
 pub fn outer_args(
     loaded: &Loaded,
@@ -274,6 +412,8 @@ pub fn outer_args(
     tools: &BTreeMap<String, String>,
     env: &BTreeMap<String, String>,
     info_fd: i32,
+    layers: &[(Layer, &str)],
+    auth: &Path,
 ) -> Result<Vec<String>> {
     let path = |path: &Path| path.display().to_string();
     let mut args: Vec<String> = OUTER_LIFETIME.iter().map(|arg| (*arg).to_owned()).collect();
@@ -288,17 +428,17 @@ pub fn outer_args(
             "--clearenv",
             "--hostname",
             "bench",
-            "--ro-bind",
-            "/nix/store",
-            "/nix/store",
-            "--dev",
-            "/dev",
-            "--proc",
-            "/proc",
-            "--tmpfs",
-            "/tmp",
-            "--tmpfs",
-            "/run",
+        ]
+        .map(String::from),
+    );
+    args.extend([
+        "--ro-bind".into(),
+        path(host.task.store_dir()),
+        STORE.into(),
+    ]);
+    args.extend(
+        [
+            "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run",
         ]
         .map(String::from),
     );
@@ -311,7 +451,7 @@ pub fn outer_args(
     ]);
     args.extend([
         "--ro-bind".into(),
-        path(host.pins.tool("bwrap")?),
+        path(&host.pins.host("bwrap")?),
         format!("{JAIL_DIR}/bwrap"),
     ]);
     args.extend(["--tmpfs".into(), PRIVATE_DIR.into()]);
@@ -328,13 +468,16 @@ pub fn outer_args(
             format!("{WORKSPACE}/{name}"),
         ]);
     }
+    for (layer, dest) in layers {
+        args.extend(layer_args(layer, dest));
+    }
     if let Some((release, mount)) = release_dir(loaded, host)? {
         // The real release for the inner layer (masked there), then the
         // harness's view of it, whose other executables become wrappers.
         args.extend(["--ro-bind".into(), path(&release), RELEASE_COPY.into()]);
         args.extend(["--ro-bind".into(), path(&release), mount]);
     }
-    args.extend(home.mounts(&run.join("home"), &host.auth));
+    args.extend(home.mounts(&run.join("home"), auth));
     for name in ["passwd", "group", "hosts"] {
         args.extend([
             "--ro-bind".into(),
@@ -344,7 +487,7 @@ pub fn outer_args(
     }
     args.extend([
         "--ro-bind".into(),
-        path(host.pins.tool("ca-bundle")?),
+        path(&run.join("jail").join(CA_COPY)),
         "/etc/ssl/certs/ca-certificates.crt".into(),
     ]);
     for wrapper in tools.keys() {
@@ -353,7 +496,14 @@ pub fn outer_args(
     let env_tool = tools
         .get(&format!("{BIN_DIR}/env"))
         .ok_or("the inner packages provide no env")?;
-    args.extend(["--ro-bind".into(), env_tool.clone(), "/usr/bin/env".into()]);
+    args.extend([
+        "--ro-bind".into(),
+        path(&crate::pins::host_path(
+            host.task.store_dir(),
+            Path::new(env_tool),
+        )),
+        "/usr/bin/env".into(),
+    ]);
     for (name, value) in env {
         args.extend(["--setenv".into(), name.clone(), value.clone()]);
     }
@@ -367,9 +517,16 @@ pub fn outer_args(
     Ok(args)
 }
 
-/// The harness's environment: the profile's plus the jail's own.
-pub fn environment(loaded: &Loaded) -> BTreeMap<String, String> {
-    let mut env = loaded.profile.env.clone();
+/// The host CA bundle's copy in `<run>/jail` (followed once on the host).
+pub const CA_COPY: &str = "ca-certificates.crt";
+/// The empty file command mode mounts where the credential would be.
+pub const NO_CREDENTIAL: &str = "no-credential";
+
+/// The harness's environment: env.json's variables, then the profile's,
+/// then the jail's own, which always win. Command mode has no proxy.
+pub fn environment(loaded: &Loaded, task: &TaskEnv, mode: Mode) -> BTreeMap<String, String> {
+    let mut env = task.variables().clone();
+    env.extend(loaded.profile.env.clone());
     let proxy = format!("http://{}", crate::BRIDGE);
     for (name, value) in [
         ("HOME", HOME),
@@ -378,13 +535,24 @@ pub fn environment(loaded: &Loaded) -> BTreeMap<String, String> {
         ("PATH", BIN_DIR),
         ("SHELL", "/bin/bash"),
         ("TMPDIR", "/tmp"),
+        // The Nix cc wrapper's purity check needs the build's top directory; `nix develop`
+        // sets it to its temp dir, and the dev shell's own value (`/build`) never exists here.
+        ("NIX_BUILD_TOP", "/tmp"),
         ("LANG", "C.UTF-8"),
         ("TERM", "dumb"),
         ("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt"),
-        ("NO_PROXY", ""),
-        ("no_proxy", ""),
+        ("CARGO_HOME", CARGO_HOME),
+        ("CARGO_TARGET_DIR", TARGET_DIR),
+        ("CARGO_NET_OFFLINE", "true"),
+        ("CARGO_INCREMENTAL", "0"),
     ] {
         env.insert(name.into(), value.into());
+    }
+    if mode == Mode::Command {
+        return env;
+    }
+    for name in ["NO_PROXY", "no_proxy"] {
+        env.insert(name.into(), String::new());
     }
     for name in [
         "HTTPS_PROXY",
@@ -406,7 +574,14 @@ fn write(path: &Path, text: &str) -> Result {
     std::fs::write(path, text).map_err(|err| format!("{}: {err}", path.display()))
 }
 
-/// Prepares the run directory and returns the spec, the gate result and
+/// What the post-run scan looks for.
+pub struct Scan {
+    pub secrets: Vec<Secret>,
+    pub account_ids: Vec<String>,
+    pub minutes_left: Option<i64>,
+}
+
+/// Prepares the run directory and returns the spec, the scan's needles and
 /// the bwrap arguments (with `info_fd` as the info descriptor).
 fn prepare(
     options: &Options,
@@ -414,7 +589,7 @@ fn prepare(
     loaded: &Loaded,
     home: &Home,
     info_fd: i32,
-) -> Result<(Spec, crate::credential::Checked, Vec<String>)> {
+) -> Result<(Spec, Scan, Vec<String>)> {
     let run = &options.run;
     for fresh in ["home", "meta", "sock", "jail"] {
         if std::fs::symlink_metadata(run.join(fresh)).is_ok() {
@@ -424,27 +599,48 @@ fn prepare(
             ));
         }
     }
-    let mut credential = String::new();
-    File::open(&host.auth)
-        .and_then(|file| file.take(1 << 20).read_to_string(&mut credential))
-        .map_err(|_| {
-            format!(
-                "{}: cannot read the credential file",
-                loaded.profile.harness
-            )
-        })?;
-    let checked = crate::credential::gate(
-        &loaded.profile.harness,
-        &credential,
-        host.now,
-        options.wall_cap,
-    )?;
-    drop(credential);
+    check_overlay(run)?;
+    let scan = if options.mode == Mode::Command {
+        Scan {
+            secrets: Vec::new(),
+            account_ids: Vec::new(),
+            minutes_left: None,
+        }
+    } else {
+        let mut credential = String::new();
+        File::open(&host.auth)
+            .and_then(|file| file.take(1 << 20).read_to_string(&mut credential))
+            .map_err(|_| {
+                format!(
+                    "{}: cannot read the credential file",
+                    loaded.profile.harness
+                )
+            })?;
+        let checked = crate::credential::gate(
+            &loaded.profile.harness,
+            &credential,
+            host.now,
+            options.wall_cap,
+        )?;
+        Scan {
+            secrets: checked.secrets,
+            account_ids: checked.account_ids,
+            minutes_left: Some(checked.minutes_left),
+        }
+    };
 
     for dir in ["meta", "sock", "jail", "workspace"] {
         refuse_link(&run.join(dir))?;
         std::fs::create_dir_all(run.join(dir))
             .map_err(|err| format!("{}: {err}", run.join(dir).display()))?;
+    }
+    let layers = layers(&host.task, run, options.base_rw);
+    for (layer, _) in &layers {
+        if let Layer::Overlay { upper, work, .. } = layer {
+            for dir in [upper, work] {
+                std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+            }
+        }
     }
     home.build(&run.join("home"))?;
     for name in PROJECT_CONFIG {
@@ -462,19 +658,36 @@ fn prepare(
         }
     }
 
+    let template: Vec<String> = options
+        .template
+        .map(|which| host.task.template(which).to_vec())
+        .unwrap_or_default();
     let (exe, argv) = match options.mode {
         Mode::Harness => (harness_exe(loaded), loaded.fill(&options.slots)?),
         Mode::StandIn => (
             format!("{JAIL_DIR}/agent-jail"),
             vec!["probe-harness".into(), loaded.name.clone()],
         ),
+        Mode::Command => {
+            if template.is_empty() {
+                return Err("env.json's template is empty".into());
+            }
+            (
+                "/bin/sh".to_owned(),
+                COMMAND_SCRIPT
+                    .iter()
+                    .map(|part| (*part).to_owned())
+                    .chain(template.clone())
+                    .collect(),
+            )
+        }
     };
     let mut tools = tool_map(&host.pins)?;
     if let Some((release, mount)) = release_dir(loaded, host)? {
         tools.extend(release_tools(&release, &mount, &harness_exe(loaded))?);
     }
     let mut read_only = home.read_only();
-    read_only.extend(["/".into(), JAIL_DIR.into(), SOCK_DIR.into()]);
+    read_only.extend(["/".into(), JAIL_DIR.into(), SOCK_DIR.into(), STORE.into()]);
     // The directories holding policy files (condition 7), not only the files.
     for (path, _) in home.policy() {
         if let Some(parent) = Path::new(&path)
@@ -490,6 +703,17 @@ fn prepare(
             .iter()
             .map(|name| format!("{WORKSPACE}/{name}")),
     );
+    // Mount roots in the host store the probe may meet: agent-jail itself
+    // when installed there, and for the host-test store every single file
+    // bound out of it.
+    let mut allowed_roots = Vec::new();
+    if host.self_exe.starts_with(STORE) {
+        allowed_roots.push(host.self_exe.display().to_string());
+    }
+    if *host.task.store() == Store::HostTest {
+        allowed_roots.extend(tools.values().cloned());
+        allowed_roots.push(host.pins.tool("bwrap")?.display().to_string());
+    }
     let spec = Spec {
         profile: loaded.name.clone(),
         mode: options.mode,
@@ -504,6 +728,14 @@ fn prepare(
         inner_masks: inner_masks(),
         dcg: host.pins.tool("dcg")?.display().to_string(),
         control: options.control,
+        store: StoreSpec {
+            store: host.task.store().clone(),
+            exclude: host.task.exclude().to_vec(),
+            allowed_roots,
+            nix: host.pins.tool("nix")?.display().to_string(),
+        },
+        inner_path: host.task.path().to_vec(),
+        template,
     };
     let jail = run.join("jail");
     write(
@@ -515,6 +747,15 @@ fn prepare(
         &jail.join("dcg/config.toml"),
         include_str!("../dcg-config.toml"),
     )?;
+    let bundle = host.pins.host("ca-bundle")?;
+    std::fs::copy(&bundle, jail.join(CA_COPY))
+        .map_err(|err| format!("{}: {err}", bundle.display()))?;
+    let auth = if options.mode == Mode::Command {
+        write(&jail.join(NO_CREDENTIAL), "")?;
+        jail.join(NO_CREDENTIAL)
+    } else {
+        host.auth.clone()
+    };
     let netns = std::fs::read_link("/proc/self/ns/net")
         .map_err(|err| format!("host network namespace: {err}"))?;
     write(&jail.join("host-netns"), &netns.display().to_string())?;
@@ -538,10 +779,12 @@ fn prepare(
         host,
         run,
         &tools,
-        &environment(loaded),
+        &environment(loaded, &host.task, options.mode),
         info_fd,
+        &layers,
+        &auth,
     )?;
-    Ok((spec, checked, args))
+    Ok((spec, scan, args))
 }
 
 /// Reads bwrap's info JSON until `child-pid` parses; bwrap may keep the
@@ -570,8 +813,10 @@ fn read_child_pid(mut reader: std::io::PipeReader, timeout: Duration) -> Option<
         .and_then(|pid| u32::try_from(pid).ok())
 }
 
-/// Runs one jailed harness and returns its outcome.
+/// Runs one jail and returns its outcome.
 pub fn enter(options: &Options, host: &Host) -> Result<Outcome> {
+    // First, before this opens anything: what the host left open for us.
+    let inherited = crate::fds::inherited()?;
     let mut loaded = crate::profile::load(&options.profile)?;
     if options.control != crate::control::Control::None {
         if !options.probe || options.mode != Mode::Harness {
@@ -579,63 +824,105 @@ pub fn enter(options: &Options, host: &Host) -> Result<Outcome> {
         }
         options.control.apply_profile(&mut loaded)?;
     }
-    if loaded.probe_only() && !options.probe {
-        return Err(format!(
-            "profile {} is probe-only in M2 (the host store is visible); pass --probe",
-            loaded.name
-        ));
-    }
     if options.wall_cap <= 0 {
         return Err("--wall-cap must be a positive number of minutes".into());
     }
+    if (options.mode == Mode::Command) != options.template.is_some() {
+        return Err("a template runs only in command mode, and command mode runs one".into());
+    }
+    if options.base_rw && options.template != Some(Template::Build) {
+        return Err("--base-rw runs only command --template build".into());
+    }
     check_self_exe(&host.self_exe)?;
+    host.task.check_tools(&host.self_exe)?;
+    // Exclusive for the warm build, shared for every other run, so no
+    // --base-rw changes a lower layer under a mounted overlay.
+    let _lock = host.task.lock(options.base_rw)?;
+    if options.base_rw {
+        host.task.check_base_rw()?;
+    }
     let mut home = Home::shipped(&loaded.profile.harness)?;
     options.control.apply_home(&mut home)?;
     refuse_link(&options.run)?;
     std::fs::create_dir_all(&options.run)
         .map_err(|err| format!("{}: {err}", options.run.display()))?;
     let (info_read, info_write) = std::io::pipe().map_err(|err| err.to_string())?;
-    let (_spec, checked, args) = prepare(options, host, &loaded, &home, info_write.as_raw_fd())?;
+    let (_spec, scan, args) = prepare(options, host, &loaded, &home, info_write.as_raw_fd())?;
 
     let meta = options.run.join("meta");
-    let listener = UnixListener::bind(options.run.join("sock/proxy"))
-        .map_err(|err| format!("proxy socket: {err}"))?;
-    let log = File::create(meta.join("proxy.jsonl")).map_err(|err| err.to_string())?;
-    let proxy = Proxy::new(
-        loaded.allowlist.clone(),
-        log,
-        host.limits,
-        host.resolver.clone(),
-    );
-    proxy.serve(listener);
-
-    let stdout = File::create(meta.join("harness.out")).map_err(|err| err.to_string())?;
-    let stderr = File::create(meta.join("harness.err")).map_err(|err| err.to_string())?;
+    // Bound and spawned while enter is single-threaded, so clearing the
+    // info pipe's close-on-exec races no other spawn; the proxy starts after.
+    let listener = if options.mode == Mode::Command {
+        None
+    } else {
+        Some(
+            UnixListener::bind(options.run.join("sock/proxy"))
+                .map_err(|err| format!("proxy socket: {err}"))?,
+        )
+    };
+    // Every fallible step happens before the spawn: from the spawn on,
+    // nothing returns before `supervise` has scanned the run.
+    let create = |name: &str| File::create(meta.join(name)).map_err(|err| format!("{name}: {err}"));
+    let stdout = create("harness.out")?;
+    let stderr = create("harness.err")?;
+    let proxy_log = if listener.is_some() {
+        Some(create("proxy.jsonl")?)
+    } else {
+        None
+    };
     rustix::io::fcntl_setfd(info_write.as_fd(), rustix::io::FdFlags::empty())
         .map_err(|err| err.to_string())?;
-    let spawned = Command::new(host.pins.tool("bwrap")?)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr)
-        .spawn();
+    let spawned = crate::fds::launcher(
+        &host.pins.host("bash")?,
+        &inherited,
+        &host.pins.host("bwrap")?,
+        &args,
+    )
+    .stdin(Stdio::null())
+    .stdout(stdout)
+    .stderr(stderr)
+    .spawn();
     let _ = rustix::io::fcntl_setfd(info_write.as_fd(), rustix::io::FdFlags::CLOEXEC);
     drop(info_write);
-    let mut child = spawned.map_err(|err| format!("cannot start bwrap: {err}"))?;
+    let child = spawned.map_err(|err| format!("cannot start bwrap: {err}"))?;
     let started = Instant::now();
-    if let Some(pid) = read_child_pid(info_read, Duration::from_secs(10)) {
+    let proxy = match listener.zip(proxy_log) {
+        Some((listener, log)) => {
+            let proxy = Proxy::new(
+                loaded.allowlist.clone(),
+                log,
+                host.limits,
+                host.resolver.clone(),
+            );
+            proxy.serve(listener);
+            Some(proxy)
+        }
+        None => None,
+    };
+    if let Some(pid) = read_child_pid(info_read, Duration::from_secs(10))
+        && let Some(proxy) = &proxy
+    {
         proxy.set_init_pid(pid);
     }
     let cap = Duration::from_secs(u64::try_from(options.wall_cap).unwrap_or(1) * 60);
-    let (status, killed_at_cap) = wait_capped(&mut child, started, cap)?;
-    let findings = crate::scan::scan(&options.run, &checked.secrets, &checked.account_ids)?;
-    crate::scan::quarantine(&options.run, &findings, &meta.join("token-scan.json"))?;
+    let (waited, findings, overlay_left) = supervise(
+        child,
+        started,
+        cap,
+        host.disk_floor,
+        &options.run,
+        &scan,
+        !options.base_rw,
+    )?;
     let outcome = Outcome {
         control: options.control,
-        exit: crate::wrapper::exit_code(status),
-        killed_at_cap,
+        store: host.task.store().clone(),
+        exit: crate::wrapper::exit_code(waited.status),
+        killed_at_cap: waited.killed_at_cap,
+        killed_at_disk_floor: waited.killed_at_disk_floor,
         quarantined: !findings.is_empty(),
-        minutes_left: checked.minutes_left,
+        minutes_left: scan.minutes_left,
+        overlay_left,
     };
     write(
         &meta.join("run.json"),
@@ -644,43 +931,439 @@ pub fn enter(options: &Options, host: &Host) -> Result<Outcome> {
     Ok(outcome)
 }
 
+/// Everything after the spawn: waits for the jail under `cap` and `floor`,
+/// then finishes the run. Waiting can fail only while the jail may still
+/// run, so a failure kills and reaps it first, and the run is always
+/// scanned before any error returns.
+fn supervise(
+    mut child: std::process::Child,
+    started: Instant,
+    cap: Duration,
+    floor: DiskFloor,
+    run: &Path,
+    scan: &Scan,
+    overlays: bool,
+) -> Result<(Waited, Vec<Finding>, Vec<String>)> {
+    let waited = wait_capped(&mut child, started, cap, Some((run, floor)));
+    if waited.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let finished = finish(run, scan, overlays);
+    let waited = waited?;
+    let (findings, overlay_left) = finished?;
+    Ok((waited, findings, overlay_left))
+}
+
+/// After the jail: opens up the private layers (the harness could write
+/// there too, so they are scanned like the rest of the run), scans the run
+/// and quarantines, then deletes the layers. With `overlays` (every run but
+/// --base-rw) `<run>/overlay` must be a directory. An error opening up is a
+/// finding and never skips the scan; one deleting is returned for run.json.
+fn finish(run: &Path, scan: &Scan, overlays: bool) -> Result<(Vec<Finding>, Vec<String>)> {
+    let overlay = run.join("overlay");
+    let finding = |form: String| Finding {
+        path: PathBuf::from("overlay"),
+        credential: "open-up".into(),
+        form,
+    };
+    let mut findings = Vec::new();
+    if overlays {
+        match std::fs::symlink_metadata(&overlay) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => findings.push(finding(format!("{} is not a directory", overlay.display()))),
+            Err(err) => findings.push(finding(format!("{}: {err}", overlay.display()))),
+        }
+    }
+    findings.extend(crate::run_dir::open_up(&overlay).into_iter().map(finding));
+    // The proxy socket is the one special file enter makes; the scan
+    // reports it if it stays, and any other.
+    let _ = std::fs::remove_file(run.join("sock/proxy"));
+    findings.extend(crate::scan::scan(run, &scan.secrets, &scan.account_ids)?);
+    crate::scan::quarantine(run, &findings, &run.join("meta/token-scan.json"))?;
+    let overlay_left = match std::fs::remove_dir_all(&overlay) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+            vec![format!("{}: {err}", overlay.display())]
+        }
+        _ => Vec::new(),
+    };
+    Ok((findings, overlay_left))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A minimal little-endian ELF64 file with one PT_INTERP segment.
-    fn elf(interpreter: &str) -> Vec<u8> {
-        let mut bytes = vec![0u8; 0x40 + 0x38];
-        bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
-        bytes[0x20..0x28].copy_from_slice(&0x40u64.to_le_bytes());
-        bytes[0x36..0x38].copy_from_slice(&0x38u16.to_le_bytes());
-        bytes[0x38..0x3a].copy_from_slice(&1u16.to_le_bytes());
-        let header = 0x40;
-        bytes[header..header + 4].copy_from_slice(&3u32.to_le_bytes());
-        let offset = bytes.len() as u64;
-        bytes[header + 8..header + 16].copy_from_slice(&offset.to_le_bytes());
-        let text = format!("{interpreter}\0");
-        bytes[header + 32..header + 40].copy_from_slice(&(text.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(text.as_bytes());
-        bytes
-    }
-
     #[test]
-    fn elf_interpreters_are_read() {
+    fn agent_jail_must_load_from_the_store() {
         let dir = crate::test_dir("elf");
+        let elf = crate::elf::tests::elf;
         let store = dir.join("store");
-        std::fs::write(&store, elf("/nix/store/x-glibc/lib/ld-linux-x86-64.so.2")).unwrap();
-        assert_eq!(
-            elf_interpreter(&store).unwrap().as_deref(),
-            Some("/nix/store/x-glibc/lib/ld-linux-x86-64.so.2")
-        );
+        std::fs::write(
+            &store,
+            elf(Some("/nix/store/x-glibc/lib/ld-linux-x86-64.so.2"), &[]),
+        )
+        .unwrap();
         assert!(check_self_exe(&store).is_ok());
         let host = dir.join("host");
-        std::fs::write(&host, elf("/lib64/ld-linux-x86-64.so.2")).unwrap();
+        std::fs::write(&host, elf(Some("/lib64/ld-linux-x86-64.so.2"), &[])).unwrap();
         assert!(check_self_exe(&host).unwrap_err().contains("nix develop"));
         let not_elf = dir.join("x");
         std::fs::write(&not_elf, "#!/bin/sh\n").unwrap();
-        assert!(elf_interpreter(&not_elf).is_err());
+        assert!(check_self_exe(&not_elf).is_err());
+    }
+
+    /// A host on a fixture task env whose pins point at fake store files.
+    fn fixture_host(dir: &Path) -> Host {
+        let hash = crate::task_env::tests::HASH;
+        let task = crate::task_env::tests::fixture(&dir.join("env"), &["cc", "tool"]);
+        let jail = |name: &str| PathBuf::from(format!("/nix/store/{hash}-tool/bin/{name}"));
+        let ca = dir.join("ca.crt");
+        std::fs::write(&ca, "").unwrap();
+        let tools: BTreeMap<String, PathBuf> = ["bwrap", "dcg", "bash", "nix"]
+            .map(|name| (name.to_owned(), jail(name)))
+            .into_iter()
+            .chain([("ca-bundle".to_owned(), ca)])
+            .collect();
+        let inner: BTreeMap<String, PathBuf> = ["bash", "env", "ls"]
+            .map(|name| (name.to_owned(), jail(name)))
+            .into();
+        Host {
+            pins: Pins {
+                store: task.store_dir().to_path_buf(),
+                tools,
+                inner,
+            },
+            self_exe: dir.join("agent-jail"),
+            auth: dir.join("credential.json"),
+            resolver: Proxy::system_resolver(),
+            limits: Limits::default(),
+            now: 0,
+            task,
+            disk_floor: DiskFloor::new(0),
+        }
+    }
+
+    #[test]
+    fn the_outer_layer_mounts_the_task_store_and_overlays_only() {
+        let dir = crate::test_dir("outer-args");
+        let host = fixture_host(&dir);
+        let loaded = crate::profile::load("claude").unwrap();
+        let home = Home::shipped("claude").unwrap();
+        let run = dir.join("run");
+        let tools = tool_map(&host.pins).unwrap();
+        let env = environment(&loaded, &host.task, Mode::Harness);
+        let args = outer_args(
+            &loaded,
+            &home,
+            &host,
+            &run,
+            &tools,
+            &env,
+            9,
+            &layers(&host.task, &run, false),
+            &host.auth,
+        )
+        .unwrap();
+        let joined = args.join(" ");
+        let store = host.task.store_dir().display().to_string();
+        let hash = crate::task_env::tests::HASH;
+        for needle in [
+            format!("--ro-bind {store} /nix/store"),
+            format!(
+                "--overlay-src {0}/env/cargo --overlay {1}/overlay/cargo/upper {1}/overlay/cargo/work /bench/cargo",
+                dir.display(),
+                run.display()
+            ),
+            format!(
+                "--overlay-src {0}/env/target --overlay {1}/overlay/target/upper {1}/overlay/target/work /bench/target",
+                dir.display(),
+                run.display()
+            ),
+            format!("--ro-bind {store}/{hash}-tool/bin/bwrap /bench/jail/bwrap"),
+            format!("--ro-bind {store}/{hash}-tool/bin/env /usr/bin/env"),
+            format!(
+                "--ro-bind {}/jail/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt",
+                run.display()
+            ),
+        ] {
+            assert!(joined.contains(&needle), "{needle} missing from {joined}");
+        }
+        // No bind source anywhere is a host store path.
+        for pair in args.windows(2) {
+            if matches!(pair[0].as_str(), "--ro-bind" | "--bind" | "--overlay-src") {
+                assert!(
+                    !pair[1].starts_with("/nix/store"),
+                    "{} binds {}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+        }
+        // The warm build binds the bases themselves.
+        let base = layers(&host.task, &run, true);
+        let target = format!("{}/env/target", dir.display());
+        assert_eq!(
+            layer_args(&base[1].0, base[1].1),
+            ["--bind", target.as_str(), "/bench/target"]
+        );
+    }
+
+    #[test]
+    fn variables_follow_env_json_then_the_profile_then_the_jail() {
+        let dir = crate::test_dir("environment");
+        let host = fixture_host(&dir);
+        let (_, mut file) = crate::task_env::EnvFile::read(host.task.dir()).unwrap();
+        file.variables.extend(
+            [
+                ("CODEX_HOME", "/nix/store/x"),
+                ("CARGO_NET_OFFLINE", "false"),
+                ("PATH", "/nix/store/y"),
+            ]
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        );
+        std::fs::write(
+            host.task.dir().join("env.json"),
+            crate::task_env::json_bytes(&file).unwrap(),
+        )
+        .unwrap();
+        let task = TaskEnv::load(host.task.dir()).unwrap();
+        let codex = crate::profile::load("codex").unwrap();
+        let env = environment(&codex, &task, Mode::Harness);
+        assert_eq!(env["CC"], file.variables["CC"]);
+        assert_eq!(env["CODEX_HOME"], "/home/bench/.codex");
+        assert_eq!(env["PATH"], BIN_DIR);
+        assert_eq!(env["CARGO_NET_OFFLINE"], "true");
+        assert_eq!(env["CARGO_HOME"], "/bench/cargo");
+        assert_eq!(env["CARGO_TARGET_DIR"], "/bench/target");
+        assert_eq!(env["CARGO_INCREMENTAL"], "0");
+        assert_eq!(env["NIX_BUILD_TOP"], "/tmp");
+        assert_eq!(env["HTTPS_PROXY"], "http://127.0.0.1:3128");
+        let command = environment(&codex, &task, Mode::Command);
+        for name in crate::spec::PROXY_VARS {
+            assert!(!command.contains_key(*name), "{name}");
+        }
+    }
+
+    #[test]
+    fn private_layers_must_be_absent_or_empty() {
+        let run = crate::test_dir("private-layers");
+        assert!(check_overlay(&run).is_ok());
+        for part in ["cargo/upper", "cargo/work", "target/upper"] {
+            std::fs::create_dir_all(run.join("overlay").join(part)).unwrap();
+        }
+        assert!(check_overlay(&run).is_ok());
+        std::fs::write(run.join("overlay/cargo/upper/x"), "").unwrap();
+        assert!(check_overlay(&run).unwrap_err().contains("not empty"));
+        std::fs::remove_file(run.join("overlay/cargo/upper/x")).unwrap();
+        std::fs::create_dir(run.join("overlay/other")).unwrap();
+        assert!(
+            check_overlay(&run)
+                .unwrap_err()
+                .contains("not a private layer")
+        );
+        std::fs::remove_dir(run.join("overlay/other")).unwrap();
+        std::fs::create_dir(run.join("overlay/target/elsewhere")).unwrap();
+        assert!(
+            check_overlay(&run)
+                .unwrap_err()
+                .contains("not a private layer")
+        );
+        std::fs::remove_dir(run.join("overlay/target/elsewhere")).unwrap();
+        std::os::unix::fs::symlink("/tmp", run.join("overlay/target/work")).unwrap();
+        assert!(check_overlay(&run).unwrap_err().contains("not a directory"));
+        std::fs::remove_file(run.join("overlay/target/work")).unwrap();
+        let linked = crate::test_dir("private-layers-link");
+        std::os::unix::fs::symlink(run.join("overlay"), linked.join("overlay")).unwrap();
+        assert!(
+            check_overlay(&linked)
+                .unwrap_err()
+                .contains("symbolic link")
+        );
+        // Only a missing overlay is absent: under a file it cannot be looked at.
+        let file = linked.join("file");
+        std::fs::write(&file, "").unwrap();
+        assert!(
+            check_overlay(&file)
+                .unwrap_err()
+                .contains("Not a directory")
+        );
+    }
+
+    fn no_secrets() -> Scan {
+        Scan {
+            secrets: Vec::new(),
+            account_ids: Vec::new(),
+            minutes_left: None,
+        }
+    }
+
+    /// A finished run directory: meta/ and the four empty private layers.
+    fn finished_run(name: &str) -> PathBuf {
+        let run = crate::test_dir(name);
+        std::fs::create_dir(run.join("meta")).unwrap();
+        for part in ["cargo/upper", "cargo/work", "target/upper", "target/work"] {
+            std::fs::create_dir_all(run.join("overlay").join(part)).unwrap();
+        }
+        run
+    }
+
+    #[test]
+    fn a_missing_or_odd_overlay_quarantines_a_run_that_mounted_one() {
+        let run = finished_run("finish-clean");
+        let (findings, left) = finish(&run, &no_secrets(), true).unwrap();
+        assert!(findings.is_empty() && left.is_empty(), "{findings:?}");
+        assert!(!run.join("overlay").exists());
+        // --base-rw mounts no overlay: none is expected.
+        assert!(finish(&run, &no_secrets(), false).unwrap().0.is_empty());
+        // Every other run must find it as a directory.
+        let quarantined = |run: &Path| {
+            let findings = finish(run, &no_secrets(), true).unwrap().0;
+            let report = std::fs::read_to_string(run.join("meta/token-scan.json")).unwrap();
+            assert!(report.contains("\"quarantined\": true"), "{report}");
+            findings
+        };
+        let found = quarantined(&run);
+        assert!(found[0].form.contains("No such file"), "{found:?}");
+        std::fs::write(run.join("overlay"), "").unwrap();
+        let found = quarantined(&run);
+        assert!(found[0].form.contains("not a directory"), "{found:?}");
+        let elsewhere = crate::test_dir("finish-elsewhere");
+        std::fs::write(elsewhere.join("keep"), "x").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, run.join("overlay")).unwrap();
+        let found = quarantined(&run);
+        assert!(found[0].form.contains("not a directory"), "{found:?}");
+        assert!(elsewhere.join("keep").exists());
+        // A special file in an upper layer is opened up as a finding too.
+        let run = finished_run("finish-fifo");
+        crate::mknod(
+            &run.join("overlay/target/upper/fifo"),
+            rustix::fs::FileType::Fifo,
+            0,
+        )
+        .unwrap();
+        let forms: Vec<(String, String)> = quarantined(&run)
+            .into_iter()
+            .map(|finding| (finding.credential, finding.form))
+            .collect();
+        assert!(
+            forms
+                .iter()
+                .any(|(label, form)| label == "open-up" && form.contains("a fifo")),
+            "{forms:?}"
+        );
+        assert!(
+            forms.iter().any(|(label, _)| label == "special-file"),
+            "{forms:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_wait_still_tears_down_and_scans_the_run() {
+        let run = finished_run("supervise");
+        std::fs::write(
+            run.join("overlay/target/upper/leak"),
+            format!("sk-ant-oat01-{}", "x".repeat(48)),
+        )
+        .unwrap();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        // Reaped behind the child's back: waiting on it can only fail.
+        rustix::process::waitpid(
+            Some(rustix::process::Pid::from_child(&child)),
+            rustix::process::WaitOptions::empty(),
+        )
+        .unwrap();
+        assert!(child.try_wait().is_err());
+        let result = supervise(
+            child,
+            Instant::now(),
+            Duration::from_secs(60),
+            DiskFloor::new(0),
+            &run,
+            &no_secrets(),
+            true,
+        );
+        assert!(result.is_err());
+        let report = std::fs::read_to_string(run.join("meta/token-scan.json")).unwrap();
+        assert!(report.contains("\"quarantined\": true"), "{report}");
+        assert!(!run.join("overlay").exists());
+    }
+
+    #[test]
+    fn the_disk_floor_is_checked_at_once_and_then_every_interval() {
+        let sleeper = || {
+            std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap()
+        };
+        let dir = crate::test_dir("disk-floor");
+        let started = Instant::now();
+        // A floor no filesystem meets kills at the first check.
+        let unreachable = DiskFloor::new(u64::MAX);
+        let waited = wait_capped(
+            &mut sleeper(),
+            started,
+            Duration::from_secs(20),
+            Some((&dir, unreachable)),
+        )
+        .unwrap();
+        assert!(waited.killed_at_disk_floor && !waited.killed_at_cap);
+        assert!(!waited.status.success());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // A floor met at first, then not (an unreadable filesystem counts
+        // as full), kills at the next check.
+        let started = Instant::now();
+        let gone = dir.clone();
+        let remover = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::remove_dir(gone).unwrap();
+        });
+        let every = DiskFloor {
+            bytes: 1,
+            every: Duration::from_millis(20),
+        };
+        let waited = wait_capped(
+            &mut sleeper(),
+            started,
+            Duration::from_secs(5),
+            Some((&dir, every)),
+        )
+        .unwrap();
+        remover.join().unwrap();
+        assert!(waited.killed_at_disk_floor && !waited.killed_at_cap);
+        assert!(started.elapsed() >= Duration::from_millis(300));
+    }
+
+    #[test]
+    fn base_rw_and_templates_belong_to_command_mode() {
+        let dir = crate::test_dir("base-rw");
+        let host = fixture_host(&dir);
+        let options = Options {
+            profile: "claude".into(),
+            run: dir.join("run"),
+            wall_cap: 5,
+            probe: false,
+            mode: Mode::Command,
+            slots: BTreeMap::new(),
+            control: crate::control::Control::None,
+            template: Some(Template::Test),
+            base_rw: true,
+        };
+        assert!(enter(&options, &host).unwrap_err().contains("--base-rw"));
+        let harness = Options {
+            mode: Mode::Harness,
+            base_rw: false,
+            ..options.clone()
+        };
+        assert!(enter(&harness, &host).unwrap_err().contains("template"));
+        let no_template = Options {
+            template: None,
+            base_rw: false,
+            ..options
+        };
+        assert!(enter(&no_template, &host).unwrap_err().contains("template"));
+        assert!(!dir.join("run").exists());
     }
 
     #[test]
@@ -701,10 +1384,13 @@ mod tests {
     fn a_quarantined_run_never_exits_zero() {
         let outcome = |exit, quarantined| Outcome {
             control: crate::control::Control::None,
+            store: Store::HostTest,
             exit,
             killed_at_cap: false,
+            killed_at_disk_floor: false,
             quarantined,
-            minutes_left: 60,
+            minutes_left: Some(60),
+            overlay_left: Vec::new(),
         };
         assert_eq!(exit_status(&outcome(0, false)), 0);
         assert_eq!(exit_status(&outcome(0, true)), QUARANTINE_EXIT);
@@ -756,14 +1442,5 @@ mod tests {
             harness_exe(&crate::profile::load("codex").unwrap()),
             "/bench/tools/codex/bin/codex"
         );
-    }
-
-    #[test]
-    fn the_environment_points_every_proxy_variable_at_the_bridge() {
-        let env = environment(&crate::profile::load("codex").unwrap());
-        assert_eq!(env["HTTPS_PROXY"], "http://127.0.0.1:3128");
-        assert_eq!(env["PATH"], BIN_DIR);
-        assert_eq!(env["CODEX_HOME"], "/home/bench/.codex");
-        assert!(!env.contains_key("SSH_AUTH_SOCK"));
     }
 }

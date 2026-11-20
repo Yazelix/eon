@@ -44,7 +44,6 @@ pub struct Profile {
     #[serde(default)]
     pub release_mount: Option<String>,
     pub allowlist: String,
-    pub store: String,
     pub argv: Vec<String>,
     pub web_tools_denied: Vec<String>,
     pub web_tools_mechanism: Vec<String>,
@@ -74,12 +73,6 @@ pub fn load(name: &str) -> Result<Loaded> {
             "profile {name} names no shipped allowlist {}",
             profile.allowlist
         ))?;
-    if profile.store != "host-probe-only" {
-        return Err(format!(
-            "profile {name}: store {} is not built yet (M3)",
-            profile.store
-        ));
-    }
     for flag in &profile.argv {
         if FORBIDDEN_FLAGS.contains(&flag.as_str()) {
             return Err(format!("profile {name}: the template may not carry {flag}"));
@@ -94,10 +87,6 @@ pub fn load(name: &str) -> Result<Loaded> {
 }
 
 impl Loaded {
-    pub fn probe_only(&self) -> bool {
-        self.profile.store == "host-probe-only"
-    }
-
     /// The argv from the template with `slots` filled in.
     pub fn fill(&self, slots: &BTreeMap<String, String>) -> Result<Vec<String>> {
         let names: Vec<&str> = slots.keys().map(String::as_str).collect();
@@ -201,7 +190,6 @@ mod tests {
     fn shipped_profiles_load() {
         for (name, _) in PROFILES {
             let loaded = load(name).unwrap();
-            assert!(loaded.probe_only());
             let argv = loaded.fill(&slots("Reply with exactly: jail-ok")).unwrap();
             loaded
                 .check_argv(&slots("Reply with exactly: jail-ok"), &argv)

@@ -62,18 +62,7 @@ pub fn create(source: &Path, base: &str, out: &Path, drops: &[String]) -> Result
     if fs::symlink_metadata(out).is_ok() {
         fail!("{} already exists", out.display());
     }
-    if base.starts_with('-') {
-        fail!("{base:?} is not a revision");
-    }
-    let commit = git::line(
-        source,
-        &[
-            "rev-parse",
-            "--verify",
-            "--end-of-options",
-            &format!("{base}^{{commit}}"),
-        ],
-    )?;
+    let commit = git::commit(source, base)?;
     let format = git::line(source, &["rev-parse", "--show-object-format"])?;
 
     let mut init = git::command(None);
@@ -100,7 +89,7 @@ fn fill(source: &Path, commit: &str, out: &Path, dropped: &BTreeSet<String>) -> 
         &["ls-tree", "-r", "-t", "-z", "--full-tree", commit],
     )?;
     let mut objects = BTreeSet::new();
-    for entry in entries(&listing)? {
+    for entry in git::entries(&listing)? {
         let top = entry.path.split('/').next().unwrap_or_default();
         if dropped.contains(top) {
             continue;
@@ -120,7 +109,7 @@ fn fill(source: &Path, commit: &str, out: &Path, dropped: &BTreeSet<String>) -> 
     // The root tree without the dropped entries, and one parentless commit.
     let root = git::run(source, &["ls-tree", "-z", "--full-tree", commit])?;
     let mut kept = Vec::new();
-    for entry in entries(&root)? {
+    for entry in git::entries(&root)? {
         if !dropped.contains(&entry.path) {
             kept.extend_from_slice(
                 format!(
@@ -352,39 +341,6 @@ fn check_config(path: &Path, violations: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
-struct Entry {
-    mode: String,
-    kind: String,
-    oid: String,
-    path: String,
-}
-
-/// Parses `ls-tree -z` output.
-fn entries(listing: &[u8]) -> Result<Vec<Entry>> {
-    let mut out = Vec::new();
-    for item in listing.split(|b| *b == 0).filter(|i| !i.is_empty()) {
-        let Ok(item) = std::str::from_utf8(item) else {
-            fail!("a path in the base tree is not UTF-8");
-        };
-        let Some((meta, path)) = item.split_once('\t') else {
-            fail!("unexpected ls-tree line {item:?}");
-        };
-        let mut fields = meta.split(' ');
-        let (Some(mode), Some(kind), Some(oid), None) =
-            (fields.next(), fields.next(), fields.next(), fields.next())
-        else {
-            fail!("unexpected ls-tree line {item:?}");
-        };
-        out.push(Entry {
-            mode: mode.into(),
-            kind: kind.into(),
-            oid: oid.into(),
-            path: path.into(),
-        });
-    }
-    Ok(out)
-}
-
 /// Every object in the repository at `dir`: loose and packed, reachable or not, sorted.
 fn all_objects(dir: &Path) -> Result<Vec<String>> {
     let out = git_line(
@@ -416,7 +372,7 @@ fn layout_violations(dot_git: &Path, violations: &mut Vec<String>) -> Result<()>
         if fs::symlink_metadata(&root).is_err() {
             continue;
         }
-        walk(&root, &mut |path, meta| {
+        walk(&root, false, &mut |path, meta| {
             let relative = path
                 .strip_prefix(dot_git)
                 .expect("walk stays under .git")
@@ -477,7 +433,7 @@ fn names(dir: &Path) -> Result<Vec<String>> {
 
 fn symlinks(dir: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    walk(dir, &mut |path, meta| {
+    walk(dir, false, &mut |path, meta| {
         if meta.file_type().is_symlink() {
             out.push(path.display().to_string());
         }
@@ -486,17 +442,25 @@ fn symlinks(dir: &Path) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Calls `visit` for every path under `dir` (children before their directory), then `dir`
-/// itself, never following symlinks and skipping a top-level `.git`.
-fn walk(dir: &Path, visit: &mut dyn FnMut(&Path, &fs::Metadata) -> Result<()>) -> Result<()> {
+/// Calls `visit` for every path under `dir` (children before their directory, siblings in
+/// name order), then `dir` itself, never following symlinks. A top-level `.git` is skipped
+/// unless `include_git` is set or `dir` is itself a `.git`.
+pub(crate) fn walk(
+    dir: &Path,
+    include_git: bool,
+    visit: &mut dyn FnMut(&Path, &fs::Metadata) -> Result<()>,
+) -> Result<()> {
     fn inner(
         path: &Path,
         skip_git: bool,
         visit: &mut dyn FnMut(&Path, &fs::Metadata) -> Result<()>,
     ) -> Result<()> {
-        let meta = fs::symlink_metadata(path)?;
+        let context = |error: std::io::Error| crate::Error(format!("{}: {error}", path.display()));
+        let meta = fs::symlink_metadata(path).map_err(context)?;
         if meta.is_dir() {
-            let mut children: Vec<_> = fs::read_dir(path)?.collect::<std::io::Result<_>>()?;
+            let mut children: Vec<_> = fs::read_dir(path)
+                .and_then(|entries| entries.collect::<std::io::Result<_>>())
+                .map_err(context)?;
             children.sort_by_key(|entry| entry.file_name());
             for child in children {
                 if skip_git && child.file_name() == ".git" {
@@ -507,7 +471,7 @@ fn walk(dir: &Path, visit: &mut dyn FnMut(&Path, &fs::Metadata) -> Result<()>) -
         }
         visit(path, &meta)
     }
-    let skip_git = dir.file_name().is_none_or(|name| name != ".git");
+    let skip_git = !include_git && dir.file_name().is_none_or(|name| name != ".git");
     inner(dir, skip_git, visit)
 }
 
@@ -520,7 +484,7 @@ fn normalize_mtimes(dir: &Path) -> Result<()> {
         last_access: at,
         last_modification: at,
     };
-    walk(dir, &mut |path, _| {
+    walk(dir, false, &mut |path, _| {
         utimensat(CWD, path, &times, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|error| crate::Error(format!("{}: {error}", path.display())))
     })
@@ -528,7 +492,7 @@ fn normalize_mtimes(dir: &Path) -> Result<()> {
 
 fn mtime_violations(dir: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    walk(dir, &mut |path, meta| {
+    walk(dir, false, &mut |path, meta| {
         if meta.mtime() != EPOCH || meta.mtime_nsec() != 0 {
             let shown = path.strip_prefix(dir).unwrap_or(path);
             out.push(if shown.as_os_str().is_empty() {
@@ -543,12 +507,12 @@ fn mtime_violations(dir: &Path) -> Result<Vec<String>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
     /// Runs git for a test fixture with fixed identity and dates.
-    fn git(dir: &Path, args: &[&str]) -> String {
+    pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
         let mut command = git::command(Some(dir));
         command
             .args(args)
@@ -566,7 +530,7 @@ mod tests {
 
     /// A source repository with two commits, a symlink, an executable, an ignore rule and a
     /// tracker directory.
-    fn source() -> tempfile::TempDir {
+    pub(crate) fn source() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         git(root, &["init", "-q", "--initial-branch=edge"]);
