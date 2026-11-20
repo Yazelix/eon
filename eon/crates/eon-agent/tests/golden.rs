@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 #![cfg(target_os = "linux")]
 //! Byte-exact output of the standalone `rota` host. The goldens under tests/fixtures/golden were
-//! captured from the binary before the host seam (eon-eon-agent-lr8sx.39.1) and updated once for
-//! the quota gate (`.39.2`: `--role lead`, the reading's `quota_problem` and `source`, the `lead`
-//! and `warnings` status fields, and unread candidates shown as not checked); the rota host must
-//! keep every byte. `eon/crates/eon/tests/agent.rs` holds the `eon agent` twins.
+//! captured from the binary before the host seam (eon-eon-agent-lr8sx.39.1), updated for the
+//! quota gate (`.39.2`: `--role lead`, the reading's `quota_problem` and `source`, the `lead`
+//! status field, and unread candidates shown as not checked), and without the per-backend
+//! `warnings` field (eon-0nn1p.27); the rota host must keep every byte. `eon/crates/eon/tests/agent.rs` holds the `eon agent` twins.
 
 use std::{fs, path::Path, process::Command};
 

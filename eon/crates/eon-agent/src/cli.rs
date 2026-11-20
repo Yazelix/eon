@@ -108,20 +108,11 @@ fn load_config(primary: Option<&Path>, program: &str) -> Result<(Config, PathBuf
         Some(path) => path,
         None => fallback_config_path()?,
     };
-    let config = parse_config(
+    let config = Config::parse(
         &fs::read_to_string(&path).map_err(|e| format!("cannot read config: {e}"))?,
         program,
     )?;
     Ok((config, path))
-}
-
-/// Parses a configuration and prints its warnings on stderr.
-fn parse_config(text: &str, program: &str) -> Result<Config, String> {
-    let config = Config::parse(text, program)?;
-    for warning in &config.warnings {
-        let _ = writeln!(std::io::stderr(), "{program}: warning: {}", warning.text);
-    }
-    Ok(config)
 }
 
 fn run(
@@ -203,7 +194,7 @@ fn run(
                     .ok_or_else(|| (2, "slot --config needs a file".into()))?;
                 let text = fs::read_to_string(path).map_err(|e| (2, e.to_string()))?;
                 (
-                    parse_config(&text, host.program).map_err(|e| (2, e))?,
+                    Config::parse(&text, host.program).map_err(|e| (2, e))?,
                     &args[3..],
                 )
             } else {
@@ -229,10 +220,9 @@ fn run(
     );
     if args.len() == 2 {
         let status: Vec<_> = config.backends.iter().zip(&readings).map(|(b,r)| {
-            let warnings: Vec<_> = config.warnings.iter().filter(|w| w.backend == b.name).map(|w| &w.text).collect();
             let mut value = serde_json::json!({ "backend": b.name, "enabled": b.enabled, "reading": r,
                 "implement": status_for(&config, b, r, Role::Implement, host.program), "review": status_for(&config, b, r, Role::Review, host.program),
-                "lead": status_for(&config, b, r, Role::Lead, host.program), "warnings": warnings });
+                "lead": status_for(&config, b, r, Role::Lead, host.program) });
             if let Some(identity) = &r.identity {
                 value["reading"]["source"]["identity"] = serde_json::json!(identity);
             }

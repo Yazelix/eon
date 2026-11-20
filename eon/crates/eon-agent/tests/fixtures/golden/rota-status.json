@@ -18,8 +18,7 @@
         "observed_at": 1700000000000
       }
     },
-    "review": "available",
-    "warnings": []
+    "review": "available"
   },
   {
     "backend": "runonly",
@@ -34,8 +33,7 @@
       "running": 0,
       "source": null
     },
-    "review": "available for rota run",
-    "warnings": []
+    "review": "available for rota run"
   },
   {
     "backend": "fallback",
@@ -50,7 +48,6 @@
       "running": 0,
       "source": null
     },
-    "review": "not allowed for role",
-    "warnings": []
+    "review": "not allowed for role"
   }
 ]

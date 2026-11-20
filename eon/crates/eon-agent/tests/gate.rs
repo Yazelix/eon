@@ -740,39 +740,6 @@ fn an_idle_claude_account_needs_its_five_hour_window_declared_absent() {
 }
 
 #[test]
-fn allow_missing_loads_ignored_with_a_warning() {
-    let root = root();
-    let fixture = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/config-corpus/allow-missing.toml"),
-    )
-    .unwrap();
-    fs::write(
-        root.path.join("config.toml"),
-        fixture.replace("<ROOT>", root.path.to_str().unwrap()),
-    )
-    .unwrap();
-    let warning = "rota: warning: backends.sclaude.limits.implement.allow_missing is removed and \
-                   ignored; declare the account's missing windows in [backends.quota] absent_windows\n";
-    let status = root.rota(&["status", "--json"]);
-    assert!(status.status.success(), "{status:?}");
-    assert_eq!(text(&status.stderr), warning);
-    let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
-    assert_eq!(
-        json[0]["warnings"],
-        serde_json::json!([warning.strip_prefix("rota: warning: ").unwrap().trim_end()])
-    );
-    // Ignored: the missing window it used to excuse now holds.
-    assert_eq!(
-        json[0]["implement"],
-        "missing quota window five_hour on account sclaude"
-    );
-    let dry = root.rota(&["launch", "--dry-run", "brief"]);
-    assert_eq!(dry.status.code(), Some(3), "{dry:?}");
-    assert!(text(&dry.stderr).starts_with(warning), "{dry:?}");
-}
-
-#[test]
 fn codexbar_quota_uses_the_shared_gate() {
     use serde_json::{Value, json};
 

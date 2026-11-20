@@ -316,10 +316,8 @@ Custom popup and headless argv remain your explicit command choices too.
   `min_remaining."10080m" = 3` covers every weekly window in any order.
   `absent_windows` entries are nonempty, unique and not `"*"`. Lead launches
   check no limits, and `limits.lead` is a configuration error.
-  `allow_missing` is removed: it still loads, is ignored, and every command
-  warns `backends.NAME.limits.ROLE.allow_missing is removed and ignored;
-  declare the account's missing windows in [backends.quota] absent_windows`
-  (on stderr, and in each backend's `warnings` in `status --json`).
+  `allow_missing` is an unknown key: a file that sets it fails to load, and
+  the error points to `absent_windows`.
   Eon snapshots must report `state = "fresh"`;
   missing, stale, error and unknown snapshots refuse. Every quota hold names the
   account. A refused role lists every window under its limit with its value, the

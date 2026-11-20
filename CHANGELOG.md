@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent` and rota refuse `limits.ROLE.allow_missing`: a configuration
+  that sets it fails to load, and the error points to `[backends.quota]
+  absent_windows`. `status --json` no longer has a `warnings` array per
+  backend (`eon-0nn1p.27`).
+
 ## v0.1.28 (2026-11-20)
 
 ### Upgrading from v0.1.16

@@ -36,13 +36,10 @@ see.
   native `DURATIONm/INDEX` window.
 - Configuration errors: `allow_unknown_quota` with limits, limits without
   `account`, `limits.lead`, `run.commands.lead`, invalid `absent_windows`.
-  `allow_missing` loads, is ignored, and prints a warning on stderr for every
-  command.
 - Leads: `launch --role lead` for backends listing the `lead` role reads no
   quota, consumes nothing and checks no limits; `run --role lead` exits 2.
 - Refusals: every quota hold names the account; a limit hold names each
   window under its limit, its value, the rule and its threshold
   (`quota limit on account A: five_hour used 55% (max_used < 50%)`).
 - Output: readings carry `quota_problem` and `source` (account and
-  `observed_at`); `status` adds a `lead` column and, in `--json`, a `warnings`
-  array per backend.
+  `observed_at`); `status` adds a `lead` column.

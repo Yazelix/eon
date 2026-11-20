@@ -232,8 +232,8 @@ approved rule (2026-11-19) names it.
 does not have: a limit naming a missing window holds unless it is listed. A
 key `DURATIONm` without an index, in limits or `absent_windows`, covers every
 native window of that duration. `limits.lead` and `run.commands.lead` are
-errors. The removed `limits.ROLE.allow_missing` still loads, is ignored, and
-every command warns about it on stderr.
+errors. `limits.ROLE.allow_missing` is an unknown key: a file that sets it
+fails to load, and the error points to `absent_windows`.
 
 Resume reads the admitted backend's native store. Claude uses
 `CLAUDE_CONFIG_DIR`, or `~/.claude` under its effective home when that variable

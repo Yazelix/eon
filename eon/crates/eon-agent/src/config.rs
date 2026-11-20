@@ -44,17 +44,6 @@ pub struct Config {
     pub projects: BTreeMap<String, crate::cleanup::Project>,
     #[serde(default)]
     pub cleanup: crate::cleanup::Cleanup,
-    /// Non-fatal findings of validation, such as removed keys; callers print them.
-    #[serde(skip)]
-    pub warnings: Vec<Warning>,
-}
-
-/// A configuration key that loads but has no effect.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Warning {
-    /// The backend the key belongs to.
-    pub backend: String,
-    pub text: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,9 +314,6 @@ pub struct Limits {
     pub min_remaining: BTreeMap<String, f64>,
     #[serde(default)]
     pub max_used: BTreeMap<String, f64>,
-    /// Removed: parsed so older files load, ignored, and reported as a [`Warning`].
-    #[serde(default)]
-    pub allow_missing: Option<bool>,
     #[serde(default)]
     pub strictly_above_min: bool,
 }
@@ -439,13 +425,23 @@ fn run_valid(run: &Run) -> bool {
 impl Config {
     /// Parses and validates a configuration; `program` names the host in error messages.
     pub fn parse(text: &str, program: &str) -> Result<Self, String> {
-        let mut config: Self = toml::from_str(text).map_err(|e| e.to_string())?;
-        config.warnings = config.validate(program)?;
+        let config: Self = toml::from_str(text).map_err(|e| {
+            let error = e.to_string();
+            if e.message().starts_with("unknown field `allow_missing`,") {
+                format!(
+                    "{}\nallow_missing is removed: declare the account's missing windows in \
+                     [backends.quota] absent_windows",
+                    error.trim_end()
+                )
+            } else {
+                error
+            }
+        })?;
+        config.validate(program)?;
         Ok(config)
     }
 
-    fn validate(&self, program: &str) -> Result<Vec<Warning>, String> {
-        let mut warnings = Vec::new();
+    fn validate(&self, program: &str) -> Result<(), String> {
         self.slots.validate()?;
         crate::cleanup::validate(self)?;
         if self.state_file.as_os_str().is_empty()
@@ -545,7 +541,7 @@ impl Config {
                     "run needs commands, efforts containing default_effort, the brief on stdin or as {brief}, and add_dir with one {dir} for a whole {add_dirs} argument",
                 );
             }
-            for (role, limit) in &b.limits {
+            for limit in b.limits.values() {
                 if limit
                     .min_remaining
                     .values()
@@ -553,17 +549,6 @@ impl Config {
                     .any(|v| !v.is_finite() || !(0.0..=100.0).contains(v))
                 {
                     return fail("quota limits must be finite percentages");
-                }
-                if limit.allow_missing.is_some() {
-                    warnings.push(Warning {
-                        backend: b.name.clone(),
-                        text: format!(
-                            "backends.{}.limits.{}.allow_missing is removed and ignored; \
-                             declare the account's missing windows in [backends.quota] absent_windows",
-                            b.name,
-                            role.name()
-                        ),
-                    });
                 }
             }
             if b.limits.contains_key(&Role::Lead) {
@@ -633,7 +618,7 @@ impl Config {
                 "popup_backend must name an implement backend or the configured fallback".into(),
             );
         }
-        Ok(warnings)
+        Ok(())
     }
 }
 
@@ -878,7 +863,6 @@ mod tests {
         }
         // Backends without limits keep allow_unknown_quota and need no account.
         let config = Config::parse(EXAMPLE, "rota").unwrap();
-        assert!(config.warnings.is_empty());
         assert!(config.backends[4].allow_unknown_quota && !config.backends[4].limited());
         assert_eq!(config.backends[1].absent_windows(), ["five_hour"]);
         assert!(config.backends[1].roles.contains(&Role::Lead));
@@ -897,21 +881,35 @@ mod tests {
     }
 
     #[test]
-    fn allow_missing_is_a_warned_tombstone() {
-        let text = EXAMPLE.replace(
-            "[backends.limits.review.max_used]\n",
-            "[backends.limits.review]\nallow_missing = false\n[backends.limits.review.max_used]\n",
-        );
-        let config = Config::parse(&text, "rota").unwrap();
-        assert_eq!(
-            config.warnings,
-            [Warning {
-                backend: "secondary".into(),
-                text: "backends.secondary.limits.review.allow_missing is removed and ignored; \
-                       declare the account's missing windows in [backends.quota] absent_windows"
-                    .into(),
-            }]
-        );
+    fn allow_missing_is_refused_naming_absent_windows() {
+        let limits = |key: &str| {
+            EXAMPLE.replace(
+                "[backends.limits.review.max_used]\n",
+                &format!("[backends.limits.review]\n{key}\n[backends.limits.review.max_used]\n"),
+            )
+        };
+        for key in ["allow_missing = true", "allow_missing = false"] {
+            let error = Config::parse(&limits(key), "rota").unwrap_err();
+            assert!(
+                error.contains("unknown field `allow_missing`")
+                    && error.ends_with(
+                        "\nallow_missing is removed: declare the account's missing windows \
+                         in [backends.quota] absent_windows"
+                    ),
+                "{key}: {error}"
+            );
+        }
+        // Any other unknown key keeps the plain error.
+        for text in [
+            limits("allow_missing_extra = true"),
+            format!("typo = true\n{EXAMPLE}"),
+        ] {
+            let error = Config::parse(&text, "rota").unwrap_err();
+            assert!(
+                error.contains("unknown field") && !error.contains("absent_windows"),
+                "{error}"
+            );
+        }
     }
 
     #[test]
