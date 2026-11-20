@@ -349,6 +349,150 @@ dependency decision does not establish public-distribution proof.
 - **Exit:** one call site in `src/transport.rs`. Drop the feature if the
   standard library gains a readiness wait or peek on `UnixStream`.
 
+### Rune candidate dependency
+
+- **Selected shape:** an optional `rune` Git dependency behind the
+  non-default `candidate-rune` feature (`eon-yp6vg.7.6`), with
+  `default-features = false` and `features = ["accessibility"]`. No package,
+  test, CI or tool root enables the feature, and no Venus code uses it yet.
+  eon-yp6vg.7.7 adds the first candidate module with its caller, and the
+  single switch (eon-yp6vg.54) removes the feature.
+- **Source:** `https://github.com/Yazelix/eon-rune` at
+  `caeb04729e1dc378c8fdcbf12a22c333daf30d1d` (tree `92aa6b61`). Its parent
+  is `e267be6e`, the fork rebased onto upstream `55ef5268` and qualified
+  under eon-yp6vg.46. The pin adds one manifest line: `crates/rune` builds
+  winit without `wayland-csd-adwaita-notitle`. With that feature on,
+  sctk-adwaita's `tiny-skia` brought the published `tiny-skia-path 0.11.4`
+  beside Rune's vendored copy of the same name and version. nixpkgs
+  `importCargoLock` vendors by name and version, so it failed for the whole
+  workspace. A root patch onto Rune's copy does not compile either (E0004:
+  the copy adds `PathSegment::ConicTo`). Rune's own `Cargo.lock` is
+  unchanged by the commit. The pin is durable because the commit sits on
+  the protected fork branch `eon-pin-yp6vg-7-6`; landing waits for that
+  protection.
+- **Features:** `accessibility` is on, because the chrome needs it.
+  Off:
+  - `embedded-fonts`: Venus registers its own packaged fonts.
+  - `dbus` and `svg`: no Venus surface uses them.
+  - `metal-backend` and `ogg-audio`: refused.
+  - `tooling`: debug builds keep upstream's tooling paths.
+  - `frame-profile`: frame proofs opt in (eon-yp6vg.7.8).
+- **Root patch:** `parley_engine` from the same rev in the root
+  `[patch.crates-io]`. Only the `candidate-rune` graph reaches it. Registry
+  `parley_engine 0.12.0` lacks Rune's `line-dictionaries`, and Cargo ignores
+  a dependency's own `[patch]`. The patch moves with the pin. Rune's five
+  workspace patches and their dispositions:
+
+  | Rune patch | Changes | Disposition here |
+  | --- | --- | --- |
+  | `parley_engine` | UAX #9 L1, shaping reuse; needed to resolve | root patch, same Git rev |
+  | `wgpu-hal` | DXGI/DX12 only | not applied: Windows only |
+  | `accesskit_windows` | Windows only | not applied |
+  | `winit` | Windows taskbar and placement; macOS IME APIs (`set_ime_text`, `take_ime_clauses`, `take_ime_replacement`); Wayland finger and continuous scroll gain ×12 | not applied. The IME APIs belong to eon-yp6vg.47/.57, whose winit `78b8f28` has them. Neither root winit `7c209ec5` nor `78b8f28` has the scroll gain. Root winit is shared with shipping Venus, so the decision is eon-yp6vg.7.2's |
+  | `accesskit_macos` | `AXHeading`, a main-thread borrow panic guard, text runs past 64 KiB | not applied. A root patch would change shipping Darwin Venus's `accesskit_macos 0.27.2`. Gap for Darwin qualification (eon-yp6vg.58) |
+
+  `tiny-skia-path` is a path dependency inside the Rune Git source, so it is
+  vendored from the same rev.
+- **Lock delta:** 0 identities removed or changed, 83 added (390 → 473), and
+  0 checksum changes. 14 existing stanzas gain lock-level dependency entries
+  only: arboard, codespan-reporting, cosmic-text, fontconfig-parser,
+  gpu-allocator, objc2-core-foundation, objc2-io-surface, objc2-metal, sha2,
+  wgpu, wgpu-hal, winit, x11rb and yazelix-venus. Three of them
+  (cosmic-text, fontconfig-parser, sha2) only qualify an existing entry with
+  its version, because a second version is now locked. No name and version
+  appears twice.
+- **Versions:** after the minimal resolution, each added crates.io package
+  is set to the version in Rune's own lock, the versions eon-yp6vg.46
+  qualified. The minimal resolution chose `image 0.25.9` for the workspace's
+  lowest declared Rust (1.85), and it lacks the `LoopCount` API that Rune
+  calls. The resolver keeps 15 crates newer than Rune's lock, at
+  semver-compatible versions:
+  - `icu_collections`, `icu_locale_core`, `icu_locale_fallback`,
+    `icu_locale_fallback_data`, `icu_normalizer`, `icu_normalizer_data`,
+    `icu_properties`, `icu_properties_data`, `icu_segmenter` and
+    `icu_segmenter_data`: 2.4.0, where Rune has 2.3.0;
+  - `icu_provider`: 2.4.0, where Rune has 2.3.1;
+  - `tinystr` 0.8.5, `yoke` 0.8.4, `zerovec` 0.11.9 and `zerovec-derive`
+    0.11.7.
+- **Nix:** `workspaceCargoLock.outputHashes."rune-0.0.1"` =
+  `sha256-XBOcWfbEkL+Y9nl06JuiJebcGfk76DszrqWo6e9FyZ8=`, which covers the
+  six crates from the rev. Their vendored contents equal `git archive` of
+  the rev, apart from the files nixpkgs adds (`.cargo-checksum.json`,
+  `.cargo-config`) and its workspace-value substitution in `Cargo.toml`.
+- **Licenses:** Rune is MIT. The 83 added packages:
+
+  | Licenses | Count |
+  | --- | ---: |
+  | Unicode-3.0 (ICU4X) | 22 |
+  | MIT | 16 |
+  | MIT and Apache-2.0 combinations | 24 |
+  | Zlib, MIT and Apache-2.0 combinations | 10 |
+  | BSD-3-Clause or BSD-2-Clause, alone or combined | 4 |
+  | Unlicense OR MIT | 2 |
+  | CC0-1.0 combinations | 2 |
+  | 0BSD combination | 1 |
+  | Zlib | 1 |
+  | MPL-2.0 | 1 |
+
+  The one MPL-2.0 package, `spellbook 0.4.2`, is a wasm32-only Rune
+  dependency. It is locked but built for no Eon target.
+- **Rust version:** the highest declared `rust-version` among the added
+  packages is 1.88 (the parley family and `image 0.25.10`). Rune declares
+  none. The workspace builds the enabled graph with Rust 1.96.1: Venus
+  clippy and tests with `candidate-rune`, and `cargo check --locked -p
+  rune` in the fork.
+- **Feature-off identity:** with the feature off, `cargo tree --locked` is
+  identical to the parent on `x86_64-unknown-linux-gnu` and
+  `aarch64-apple-darwin`. That covers 62 trees: every workspace package and
+  the workspace, with edges `normal,build` and `normal,build,dev`. No tree
+  contains `rune`, and no workspace package depends on Venus. The shipping
+  Linux closure, binaries, notices and source companion match the parent
+  under the bead's allow-lists. The Darwin build evidence is the lead's
+  darwin-build.yml run, recorded on the bead.
+- **Enabled graph** (normal edges, unique packages):
+  - **Linux:** 210 → 284. Feature unification gives winit `x11`, `x11-dl`
+    and `x11rb` for the whole binary, so Venus's own event loop gets them in
+    a `candidate-rune` build. winit has no client-side decorations, as in
+    shipping Venus. wgpu gains `parking_lot` and `metal`, which does nothing
+    off Apple; Vulkan stays the only Linux backend. Rune adds Linux
+    `arboard`, whose Linux backend also carries X11. Venus refused that edge
+    in "Native clipboard decision" and keeps `wl-clipboard-rs`. `zbus` comes
+    from `accesskit_unix`, which Venus already ships.
+  - **Darwin:** 130 → 202, from resolution only, because eon-yp6vg.57
+    blocks the build. wgpu gains `custom`, and shipping `accesskit_macos
+    0.27.2` gets Rune as a second dependent.
+- **X11 waiver:** this applies to the unpackaged graph only, by the lead's
+  ruling of 2026-11-20. Rune brings winit `x11`, `x11rb` and Linux
+  `arboard`. Nothing reaches them while no root enables the feature. This
+  search (Markdown and `.beads/` excluded) finds only the feature's own
+  manifest lines in `venus/Cargo.toml` and the root `Cargo.toml`, plus the
+  six existing Helix and notice-producer hits in `flake.nix` and
+  `nix/notices/default.nix`:
+  `rg -n --hidden -g '!.git' -g '!*.md' -g '!.beads' -e 'candidate-rune' -e '--all-features' -e '--features' -e 'cargoBuildFeatures' -e 'buildFeatures' -e 'cargoTestFeatures' -e 'cargo[^\n]* -F ' .`
+  Related work:
+  - eon-yp6vg.7.14 removes X11 from the Rune graph and blocks eon-yp6vg.7.4
+    and .54.
+  - eon-yp6vg.7.7's private entry refuses to start without
+    `WAYLAND_DISPLAY`.
+  - eon-yp6vg.58 owns the `accesskit_macos` gap.
+  - eon-yp6vg.7.2 owns the scroll gain.
+- **Version policy:** the pin moves only by a reviewed fork commit on a
+  protected branch. Each move updates the `rev` in both manifests and the
+  Nix hash, and repeats the lock alignment and the checks above.
+- **Rejected:**
+  - Pinning `e267be6e` unchanged: its CSD feature breaks Nix vendoring.
+  - A root `tiny-skia-path` patch: it does not compile.
+  - Renaming Rune's vendored crate: this works too, but it changes a
+    package name that upstream Rune shares.
+  - Switching the workspace to `fetchCargoVendor`: it changes every Rust
+    vendor and the notice tooling's paths.
+  - Copying Rune's other patches to the root: they change shipping
+    identities.
+  - A default or packaged feature: the host is not qualified yet.
+- **Exit:** the single switch (eon-yp6vg.54) replaces the feature with the
+  shipping host, or removes the dependency if the Rune host is dropped. The
+  `parley_engine` root patch goes with it.
+
 ## Measured comparison
 
 Minimal Rust 2024 scratch binaries were resolved and checked on Rust 1.96.0.

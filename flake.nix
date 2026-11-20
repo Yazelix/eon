@@ -241,6 +241,7 @@
             lockFile = ./Cargo.lock;
             outputHashes."dpi-0.1.1" = "sha256-fJQqcXhKPGtivKo1AyyGhy1oNebTFGyzWDmOesFsltI=";
             outputHashes."libghostty-vt-0.2.1" = "sha256-wkBrC+C/VOlallPH1m6Rtl81ys7HE67WamKFXrxpQ1o=";
+            outputHashes."rune-0.0.1" = "sha256-XBOcWfbEkL+Y9nl06JuiJebcGfk76DszrqWo6e9FyZ8=";
           };
           codexbarIdentity = component "codexbar";
           animaIdentity = component "anima";

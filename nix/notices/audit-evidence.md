@@ -54,6 +54,37 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+For eon-yp6vg.7.6 over `f592d1ba`, the Eon, Orbit and Venus contexts change
+through the lock alone. The bead adds Venus's optional `rune` dependency
+behind the non-default `candidate-rune` feature, which no producer enables.
+The normalized lock gains 83 stanzas (390 → 473). 14 existing stanzas gain
+dependency-list entries and change nothing else: arboard, codespan-reporting,
+cosmic-text, fontconfig-parser, gpu-allocator, objc2-core-foundation,
+objc2-io-surface, objc2-metal, sha2, wgpu, wgpu-hal, winit, x11rb and
+yazelix-venus. Every added entry names a locked package. No stanza is removed,
+and no version or checksum changes.
+
+Each producer's canonical `graph.json` differs from the accepted one only in
+`lock`. Putting the parent's normalized lock back into the candidate graph and
+re-serializing it reproduces the accepted hash byte for byte: `4c690223` →
+`423b5016` for Eon, `613ab539` → `212a651f` for Orbit, and `2c6597da` →
+`3f5a96c0` for Venus. Runtime identities, native features, audited packages
+and build contexts are therefore identical to the accepted graphs, and the
+host-only and unselected classifications carry over (Eon 9/2, Orbit 6/1,
+Venus 15/4). The Orbit and Venus binaries are byte-identical to the parent's.
+
+Three `inspect-audit` replays against the actual binaries reproduce the saved
+graphs. The strict proposal changes only the six fingerprints, and parsed, it
+equals the checked-in file. The new contexts:
+
+- Eon: `4c6902230e5d19585cd20dd31d70d9c10e600fbb86d04dab358257a8da8608c2`.
+- Orbit: `613ab53969dbd29e983713f8db80a4825bbbe2e5c98cafafa4e9ae7fec8a0e5a`.
+- Venus: `2c6597da6a1f6a6efb0a5e3df75ea7d0a40b7d4d9d730e4d8e36d346fee1cea7`.
+- Vendor: `/nix/store/5yq1h5qm76ya33z4b077l5vbgil2c96s-cargo-vendor-dir`.
+- Proposal input: `/nix/store/gby2jn9qamfpq3f917qpy0z6zs2lwk9z-eon-archive-notice-input.json`.
+
+Historical (`eon-2r02l.2`):
+
 For eon-2r02l.2 over `2f6857b2`, the Eon, Orbit and Venus contexts change
 through the lock alone. The bead adds the local repository tool `agent-jail`,
 whose lock stanza lists five dependencies that were already pinned: `rustix 1.1.4`,
@@ -316,6 +347,20 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-20 for `eon-yp6vg.7.6` to context
+`4c6902230e5d19585cd20dd31d70d9c10e600fbb86d04dab358257a8da8608c2`
+in the single archive variant. Only the normalized workspace lock changes in
+this context: it gains Venus's optional `rune` graph (83 stanzas plus
+dependency-list entries in 14). Restoring the parent lock reproduces
+`423b5016…`.
+
+- Source: `/nix/store/sf769wlshz54i0l6qmifxflplxyig2dy-source` (candidate tree over edge `f592d1ba`, before this renewal's own edits).
+- Observation: `/nix/store/p2jr7wdpp1gcjwrlnf9d16fn4a5zilx4-eon-cargo-notices-0.1.28`.
+  Binary: `/nix/store/qalff9h2wys2cxk195m8874i2n29g9ld-eon-rust-0.1.28/bin/eon`.
+  SHA-256: `1b264cb891f9e8c61cf423b88fa35951f953efeb1b9b279dc5813dd5ead7cc25`.
+
+Historical (`eon-2r02l.2`):
+
 Renewed on 2026-11-20 for `eon-2r02l.2` to context
 `423b5016bbcb628ec72491c3481d3e04d8eb293ad205eb0371edd72981221bd8`
 in the single archive variant. Only the normalized workspace lock changes in
@@ -542,6 +587,20 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-20 for `eon-yp6vg.7.6` to context
+`613ab53969dbd29e983713f8db80a4825bbbe2e5c98cafafa4e9ae7fec8a0e5a`
+in the single archive variant. Only the normalized workspace lock changes in
+this context: it gains Venus's optional `rune` graph (83 stanzas plus
+dependency-list entries in 14). Restoring the parent lock reproduces
+`212a651f…`.
+
+- Source: `/nix/store/sf769wlshz54i0l6qmifxflplxyig2dy-source` (candidate tree over edge `f592d1ba`, before this renewal's own edits).
+- Observation: `/nix/store/0mhn8jmy6r9vhdh5apmqi1sqyp9z34ip-orbit-cargo-notices-0.1.0`.
+  Binary: `/nix/store/iyn09gcm1mpqhxydmpdg7zgx0ay0z5ba-yazelix-orbit-0.1.0/bin/yazelix-orbit`.
+  SHA-256: `49c5e6b7f9bbde1dff5d3d566e108b1a6cc8e52067da10a80fd34dbd88d47e05`.
+
+Historical (`eon-2r02l.2`):
+
 Renewed on 2026-11-20 for `eon-2r02l.2` to context
 `212a651f920d55b4176c199f9dcf4c134d08a7b32b349d070bc92298d08c9884`
 in the single archive variant. Only the normalized workspace lock changes in
@@ -760,6 +819,20 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-20 for `eon-yp6vg.7.6` to context
+`2c6597da6a1f6a6efb0a5e3df75ea7d0a40b7d4d9d730e4d8e36d346fee1cea7`
+in the single archive variant. Only the normalized workspace lock changes in
+this context: it gains Venus's optional `rune` graph (83 stanzas plus
+dependency-list entries in 14). Restoring the parent lock reproduces
+`3f5a96c0…`.
+
+- Source: `/nix/store/sf769wlshz54i0l6qmifxflplxyig2dy-source` (candidate tree over edge `f592d1ba`, before this renewal's own edits).
+- Observation: `/nix/store/0p5pbijcyaw5im56cp3lbq071zx3vc0w-venus-cargo-notices-0.1.0`.
+  Binary: `/nix/store/xav2dvp2hvx691ry61qcdg7w0l4v5pqy-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`.
+  SHA-256: `3e128751102bbc6d2b18055cd5a66433df61358686d7fcc18829fbadb0f3b67a`.
+
+Historical (`eon-2r02l.2`):
 
 Renewed on 2026-11-20 for `eon-2r02l.2` to context
 `3f5a96c03d5800a4cde1af9e40fe26ecbd3914ef9ec1e5f069041ee1d9c43b0a`
