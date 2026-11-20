@@ -200,6 +200,9 @@ fn run(
             } else {
                 (load().map_err(|e| (2, e))?.0, &args[1..])
             };
+        if let Some(text) = config.slots.boat.tombstone() {
+            let _ = writeln!(std::io::stderr(), "{}: warning: {text}", host.program);
+        }
         let options = slots::parse(rest, host.program)?;
         return slots::run(&config, options, host);
     }

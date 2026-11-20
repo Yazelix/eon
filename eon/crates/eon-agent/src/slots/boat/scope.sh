@@ -41,8 +41,8 @@ scope_end() {
 
 # Keep the workload cgroup alive until the outside observer reads its counters.
 boat_scope_controller() {
-  local managed_scope=$1 cap=$2 high=$3 margin=$4
-  shift 4
+  local managed_scope=$1 cap=$2 high=$3 margin=$4 kernel_reader=$5
+  shift 5
   local path parent group ancestor key effective available total ceiling code before after
   local job_oom job_kills group_kills guest_kills own global other logged complete lines
   local drained=false vmstat_readable=false remaining groups
@@ -92,8 +92,15 @@ boat_scope_controller() {
 
   before=$(awk '$1=="oom_kill" {print $2}' /proc/vmstat)
   [[ $before =~ ^[0-9]+$ ]] || return 96
-  dmesg --raw > /home/user/eon-run/kernel-before || return 96
-  [ -s /home/user/eon-run/kernel-before ] || return 96
+  # Kernel samples stay in the manager runtime: the workload gets a fresh /run and no
+  # XDG_RUNTIME_DIR, while eon-run is visible to it. The reader uses the image's
+  # observer socket when present and a bounded dmesg otherwise.
+  local sample_dir
+  sample_dir=$(mktemp -d "${XDG_RUNTIME_DIR:?}/eon-boat-kernel.XXXXXXXX") || return 96
+  # shellcheck disable=SC2064 # expand the private directory now
+  trap "rm -f -- '$sample_dir/kernel-before' '$sample_dir/kernel-after'; rmdir -- '$sample_dir'" EXIT
+  /usr/bin/python3 -I -c "$kernel_reader" > "$sample_dir/kernel-before" || return 96
+  [ -s "$sample_dir/kernel-before" ] || return 96
   command -v bwrap >/dev/null || return 96
   local resolver=()
   case $(readlink -f /etc/resolv.conf) in
@@ -141,12 +148,12 @@ boat_scope_controller() {
   if [[ $after =~ ^[0-9]+$ ]] && (( after >= before )); then
     vmstat_readable=true
     guest_kills=$((after - before))
-    if dmesg --raw > /home/user/eon-run/kernel-after; then
+    if /usr/bin/python3 -I -c "$kernel_reader" > "$sample_dir/kernel-after"; then
       # A wrapped or altered baseline cannot exclude a VM-wide event.
-      lines=$(wc -l < /home/user/eon-run/kernel-before)
-      if head -n "$lines" /home/user/eon-run/kernel-after | cmp -s /home/user/eon-run/kernel-before -; then
+      lines=$(wc -l < "$sample_dir/kernel-before")
+      if head -n "$lines" "$sample_dir/kernel-after" | cmp -s "$sample_dir/kernel-before" -; then
         read -r own global other logged groups < <(
-          tail -n "+$((lines + 1))" /home/user/eon-run/kernel-after |
+          tail -n "+$((lines + 1))" "$sample_dir/kernel-after" |
             awk -v cg="${group#/sys/fs/cgroup}" '
               /oom-kill:constraint=/ {
                 group=0

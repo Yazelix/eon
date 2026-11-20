@@ -1,4 +1,5 @@
 //! Opt-in build execution; the local slot scheduler remains the admission owner.
+pub(super) mod image;
 pub(super) mod local;
 pub(super) mod tree;
 
@@ -7,6 +8,7 @@ use crate::config::{BoatConfig, Shape};
 use crate::launch::{atomic_write, ensure_parent};
 use crate::platform::{BOAT_SIGNAL as SIGNAL, BoatSignals as Signals};
 use fs2::FileExt;
+use image::{Image, Refusal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
@@ -77,6 +79,9 @@ pub(super) struct Record {
     memory: Option<Report>,
     #[serde(default)]
     machine: Machine,
+    /// The pinned bootstrap image the run started from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
     usage: Option<Value>,
     environment_version: Option<u64>,
     reason: Option<String>,
@@ -182,127 +187,6 @@ pub(super) fn lease_metadata(root: &Path) -> Result<Option<fs::Metadata>, String
         }
         _ => Err("unsafe-or-unreadable-boat-lease".into()),
     }
-}
-
-#[derive(Deserialize, Serialize)]
-struct Warm {
-    schema: u8,
-    vm_id: String,
-    lock_key: String,
-    snapshot: Option<Saved>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Saved {
-    name: String,
-    lock_key: String,
-    source_vm: String,
-    snapshot_id: String,
-}
-
-fn warm_cache(root: &Path) -> Option<Warm> {
-    read_private::<Warm>(&root.join("boat/warm.json"))
-        .ok()
-        .flatten()
-        .filter(|cache| cache.schema == 1)
-}
-
-fn snapshot_ready<'a>(list: &'a Value, saved: &Saved) -> Option<&'a Value> {
-    list["named"].as_array()?.iter().find(|snapshot| {
-        snapshot["name"] == saved.name
-            && snapshot["status"] == "ready"
-            && snapshot["sourceSandboxId"] == saved.source_vm
-            && (saved.snapshot_id.is_empty() || snapshot["snapshotId"] == saved.snapshot_id)
-            && snapshot["snapshotId"]
-                .as_str()
-                .is_some_and(|id| !id.is_empty())
-    })
-}
-
-fn publish_snapshot(client: &Client, config: &BoatConfig, warm: &mut Warm) -> Result<(), String> {
-    if config.snapshot.is_empty() {
-        return Ok(());
-    }
-    let limits = client.json(&["limits", "--all"])?;
-    if limits["accessTier"] == "trial" {
-        return Ok(());
-    }
-    if limits["subscriptionStatus"] != "active" {
-        return Err("snapshot-plan-not-paid".into());
-    }
-    if billing_policy(&limits) != Ok(false) {
-        return Err("snapshot-unverified-standard-plan".into());
-    }
-    if limits["keepGoing"]["enabled"] != false {
-        return Err("snapshot-budget-unsafe".into());
-    }
-    let list = client.json(&["snapshots"])?;
-    if let Some(saved) = warm.snapshot.as_mut()
-        && saved.name == config.snapshot
-        && saved.lock_key == warm.lock_key
-        && let Some(ready) = snapshot_ready(&list, saved)
-    {
-        saved.snapshot_id = ready["snapshotId"]
-            .as_str()
-            .ok_or("snapshot-identity-unknown")?
-            .into();
-        return Ok(());
-    }
-    let named = list["named"]
-        .as_array()
-        .ok_or("snapshot-allowance-unknown")?;
-    if let Some(existing) = named
-        .iter()
-        .find(|snapshot| snapshot["name"] == config.snapshot)
-    {
-        if existing["sourceSandboxId"] != warm.vm_id
-            && !warm.snapshot.as_ref().is_some_and(|saved| {
-                existing["sourceSandboxId"] == saved.source_vm && saved.name == config.snapshot
-            })
-        {
-            return Err("snapshot-owner-unknown".into());
-        }
-    } else {
-        let allowance = &list["namedAllowance"];
-        let used = allowance["used"]
-            .as_u64()
-            .ok_or("snapshot-allowance-unknown")?;
-        let included = allowance["included"]
-            .as_u64()
-            .ok_or("snapshot-allowance-unknown")?;
-        if used >= included || allowance["extra"].as_u64() != Some(0) {
-            return Err("snapshot-included-allowance-exhausted".into());
-        }
-    }
-    client.json(&["snapshot", &warm.vm_id, &config.snapshot])?;
-    // An accepted save can still be pinning; keep its source identity for later readiness.
-    warm.snapshot = Some(Saved {
-        name: config.snapshot.clone(),
-        lock_key: warm.lock_key.clone(),
-        source_vm: warm.vm_id.clone(),
-        snapshot_id: String::new(),
-    });
-    let list = client.json(&["snapshots"])?;
-    let saved = list["named"]
-        .as_array()
-        .and_then(|snapshots| {
-            snapshots.iter().find(|snapshot| {
-                snapshot["name"] == config.snapshot
-                    && snapshot["status"] == "ready"
-                    && snapshot["sourceSandboxId"] == warm.vm_id
-            })
-        })
-        .ok_or("snapshot-not-ready")?;
-    warm.snapshot = Some(Saved {
-        name: config.snapshot.clone(),
-        lock_key: warm.lock_key.clone(),
-        source_vm: warm.vm_id.clone(),
-        snapshot_id: saved["snapshotId"]
-            .as_str()
-            .ok_or("snapshot-identity-unknown")?
-            .into(),
-    });
-    Ok(())
 }
 
 struct Client {
@@ -511,7 +395,7 @@ fn decode(code: u8, bytes: &[u8], operation: &str) -> Result<Value, String> {
     {
         return Err("boat-command-failed".into());
     }
-    let value = if matches!(operation, "new" | "resume" | "info") {
+    let value = if matches!(operation, "new" | "info") {
         values
             .into_iter()
             .rev()
@@ -553,7 +437,17 @@ fn environment(value: &Value) -> Result<u64, String> {
         .ok_or_else(|| "unsupported-provider-output".into())
 }
 
-fn stop_vm(client: &Client, id: &str) -> Result<(), String> {
+/// The pinned image's named row, read from the provider now.
+fn pinned_row(client: &Client, image: &Image) -> Result<(), String> {
+    let list = client
+        .json(&["snapshots"])
+        .map_err(|_| Refusal::Unverified("snapshot-unreadable"))?;
+    image::verify(&list, image).map_err(Into::into)
+}
+
+/// Asks the VM to stop and waits, bounded, for it to report stopped, so its final usage
+/// is complete. Deletion follows either way, so a VM that never stops is still retired.
+fn stop_vm(client: &Client, id: &str) {
     let _ = client.json(&["stop", id]);
     let stop_deadline = (Instant::now() + Duration::from_secs(45)).min(
         client
@@ -561,21 +455,17 @@ fn stop_vm(client: &Client, id: &str) -> Result<(), String> {
             .checked_sub(Duration::from_secs(15))
             .unwrap_or_else(Instant::now),
     );
-    loop {
+    while Instant::now() < stop_deadline {
         if let Ok(info) = client.json(&["info", id])
             && matches!(
                 sandbox(&info)["state"].as_str(),
                 Some("stopped" | "archived")
             )
         {
-            return Ok(());
-        }
-        if Instant::now() >= stop_deadline {
-            break;
+            return;
         }
         std::thread::sleep(Duration::from_secs(1));
     }
-    delete_vm(client, id)
 }
 
 fn safe_id(id: &str) -> bool {
@@ -595,6 +485,13 @@ fn delete_vm(client: &Client, id: &str) -> Result<(), String> {
     } else {
         Err("remote-cleanup-unknown".into())
     }
+}
+
+/// Stop for final usage, then delete once: no VM outlives its run, so none can be resumed.
+fn retire(client: &Client, id: &str, started: u64) -> (Option<Value>, Result<(), String>) {
+    stop_vm(client, id);
+    let usage = usage(client, id, started);
+    (usage, delete_vm(client, id))
 }
 
 fn usage(client: &Client, id: &str, started: u64) -> Option<Value> {
@@ -642,10 +539,9 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
         .as_deref()
         .filter(|id| safe_id(id))
         .ok_or("remote-create-unknown")?;
-    stop_vm(client, id)?;
-    old.usage = usage(client, id, old.started);
-    // Stopping can suspend detached work; an uncertain VM must never be resumed.
-    delete_vm(client, id)?;
+    let (usage, retired) = retire(client, id, old.started);
+    old.usage = usage;
+    retired?;
     old.phase = "stopped".into();
     old.reason
         .get_or_insert_with(|| "recovered-after-wrapper-loss".into());
@@ -684,11 +580,11 @@ pub(super) fn run(
     config: &BoatConfig,
     argv: &[String],
     shape: Shape,
-    memory: (Limit, Machine),
+    memory: (Limit, &'static Image),
     identity: &mut Option<tree::Identity>,
-    program: &str,
 ) -> Result<Outcome, String> {
-    let (limit, machine) = memory;
+    let (limit, image) = memory;
+    let machine = image.machine;
     let _signals = Signals::install();
     let wall_started = Instant::now();
     let started = super::now_ns() / super::SECOND;
@@ -709,61 +605,27 @@ pub(super) fn run(
         Err(reason) => return fallback(reason),
     };
     *identity = Some(source.identity());
-    let lock_key = match source.lock_key() {
-        Ok(key) => key,
-        Err(reason) => return fallback(reason),
-    };
+    // Everything before the receipt exists refuses with nothing to reconcile.
     let preflight = || {
+        if config.environment != image.environment {
+            return Err(Refusal::Mismatch("environment").into());
+        }
         let env_version = environment(&client.json(&["env", "info", &config.environment])?)?;
+        if env_version != image.environment_version {
+            return Err(Refusal::Mismatch("environment").into());
+        }
         budget(
             &client.json(&["limits", "--all"])?,
             config,
             machine,
             super::now_ns() / super::SECOND,
         )?;
+        pinned_row(&client, image)?;
         Ok::<_, String>(env_version)
     };
     let env_version = match preflight() {
         Ok(version) => version,
         Err(reason) => return fallback(reason),
-    };
-    let mut warm = warm_cache(&lease.root);
-    let from_snapshot = warm
-        .as_ref()
-        .and_then(|warm| warm.snapshot.as_ref())
-        .filter(|saved| saved.name == config.snapshot && saved.lock_key == lock_key)
-        .filter(|saved| {
-            client
-                .json(&["snapshots"])
-                .is_ok_and(|list| snapshot_ready(&list, saved).is_some())
-        })
-        .map(|saved| saved.name.clone());
-    let previous = listing(&lease.root)?;
-    let pool = if from_snapshot.is_none() {
-        warm.as_ref()
-            .map(|warm| warm.vm_id.clone())
-            .or_else(|| {
-                previous
-                    .as_ref()
-                    .filter(|record| {
-                        record.phase == "stopped"
-                            && record.credentials_absent
-                            && (record.exit_code.is_some()
-                                || record.reason.as_deref() == Some("remote-preparation-failed"))
-                    })
-                    .and_then(|record| record.vm_id.clone())
-            })
-            .filter(|id| safe_id(id))
-            .filter(|id| {
-                client.json(&["info", id]).is_ok_and(|info| {
-                    let info = sandbox(&info);
-                    matches!(info["state"].as_str(), Some("stopped" | "archived"))
-                        && info["holdsCreatorLogins"] == false
-                        && info["environment"] == config.environment
-                })
-            })
-    } else {
-        None
     };
     let run_id = crate::run::random().map_err(|_| "run-id")?;
     private_directory(&lease.root.join("runs"))?;
@@ -781,7 +643,7 @@ pub(super) fn run(
         pid: std::process::id(),
         phase: "creating".into(),
         location: "boat".into(),
-        vm_id: pool.clone(),
+        vm_id: None,
         command_pid: None,
         tree: source.tree.clone(),
         base: source.base.clone(),
@@ -792,6 +654,7 @@ pub(super) fn run(
         exit_code: None,
         memory: None,
         machine,
+        image: Some(image.name.into()),
         usage: None,
         environment_version: Some(env_version),
         reason: None,
@@ -816,36 +679,23 @@ pub(super) fn run(
         lease.save(&record)?;
         return fallback(reason);
     }
-    let created = if let Some(id) = pool.as_deref() {
-        client.json(&[
-            "resume",
-            id,
-            "--environment",
-            &config.environment,
-            "--no-env",
-            "--type",
-            machine.as_str(),
-            "--ttl",
-            &ttl,
-        ])
-    } else {
-        let mut args = vec![
-            "new",
-            "--name",
-            &name,
-            "--environment",
-            &config.environment,
-            "--no-env",
-            "--type",
-            machine.as_str(),
-            "--ttl",
-            &ttl,
-        ];
-        if let Some(snapshot) = &from_snapshot {
-            args.extend(["--from", snapshot]);
-        }
-        client.json(&args)
-    };
+    // Every run starts fresh from the pinned image; captures stay off because the VM is
+    // deleted after its run.
+    let created = client.json(&[
+        "new",
+        "--name",
+        &name,
+        "--environment",
+        &config.environment,
+        "--no-env",
+        "--type",
+        machine.as_str(),
+        "--ttl",
+        &ttl,
+        "--from",
+        image.name,
+        "--no-snapshots",
+    ]);
     let value = match created {
         Ok(value) => value,
         Err(reason) => {
@@ -889,15 +739,62 @@ pub(super) fn run(
     let mut released = false;
     let execution = (|| {
         lease.save(&record)?;
-        let info = client.json(&["info", &id])?;
+        // Nothing but these reads and the marker check runs before the image is verified.
+        let info = client
+            .json(&["info", &id])
+            .map_err(|_| Refusal::Unverified("vm-state"))?;
         let info = sandbox(&info);
-        if info["holdsCreatorLogins"].as_bool() != Some(false)
-            || info["type"] != machine.as_str()
-            || info["environment"].as_str() != Some(&config.environment)
-            || info["environmentVersion"].as_u64() != Some(env_version)
+        if !matches!(info["state"].as_str(), Some("ready" | "idle" | "running")) {
+            return Err(Refusal::Unverified("vm-state").into());
+        }
+        // A field Boat leaves out or mistypes is unreadable; only a readable other value
+        // is a different image.
+        let (Some(kind), Some(environment), Some(version)) = (
+            info["type"].as_str(),
+            info["environment"].as_str(),
+            info["environmentVersion"].as_u64(),
+        ) else {
+            return Err(Refusal::Unverified("vm-identity").into());
+        };
+        if (kind, environment, version)
+            != (
+                machine.as_str(),
+                image.environment,
+                image.environment_version,
+            )
         {
+            return Err(Refusal::Mismatch("vm-identity").into());
+        }
+        if info["holdsCreatorLogins"].as_bool() != Some(false) {
             return Err("vm-environment-unsafe".into());
         }
+        // Boat reports no origin snapshot for a clone: the row before and after the start
+        // and the guest's root-owned recipe marker are the identity evidence.
+        pinned_row(&client, image)?;
+        image::marker_status(
+            client
+                .invoke(
+                    false,
+                    &[
+                        "exec",
+                        &id,
+                        "--",
+                        "env",
+                        "-i",
+                        "PATH=/usr/bin:/bin",
+                        "LC_ALL=C",
+                        "bash",
+                        "--noprofile",
+                        "--norc",
+                        "-c",
+                        image::MARKER,
+                        "eon-image",
+                        image.recipe_sha256,
+                    ],
+                    None,
+                )
+                .map(|(code, _)| code),
+        )?;
         client
             .success(
                 &[
@@ -964,6 +861,7 @@ pub(super) fn run(
             &cap,
             &high,
             &margin,
+            include_str!("boat/read-kernel.py"),
         ];
         args.extend(argv.iter().map(String::as_str));
         let command = client.json(&args)?;
@@ -1005,7 +903,11 @@ pub(super) fn run(
         }
     }
     let output_path = directory.join("output.log");
+    // A VM refused before its workload started is never read from, only retired.
     let log_result = (|| {
+        if !released {
+            return Err("remote-log-not-started".to_owned());
+        }
         cleanup.success(
             &[
                 "scp",
@@ -1105,48 +1007,6 @@ pub(super) fn run(
             .map(|_| "job-limit-oom".into())
     });
     record.phase = "stopping".into();
-    let mut cacheable = matches!(execution, Ok(0)) && record.credentials_absent;
-    if cacheable {
-        let prepare = client.json(&["limits", "--all"]);
-        if prepare
-            .as_ref()
-            .is_ok_and(|limits| limits["accessTier"] != "trial")
-        {
-            // Complete proof is already local; named images retain tools/caches, not old source/logs.
-            if client
-                .success(
-                    &[
-                        "exec",
-                        &id,
-                        "--",
-                        "bash",
-                        "--noprofile",
-                        "--norc",
-                        "-c",
-                        include_str!("boat/probe.sh"),
-                    ],
-                    None,
-                )
-                .and_then(|()| {
-                    client.success(
-                        &[
-                            "exec",
-                            &id,
-                            "--",
-                            "bash",
-                            "-c",
-                            "set -eu; rm -rf /home/user/eon /home/user/eon-run",
-                        ],
-                        None,
-                    )
-                })
-                .is_err()
-            {
-                cacheable = false;
-                record.reason = Some("warm-preparation-failed".into());
-            }
-        }
-    }
     let record_saved = lease.save(&record);
     let cleanup = Client {
         deadline: Instant::now() + Duration::from_secs(CLEANUP),
@@ -1154,8 +1014,8 @@ pub(super) fn run(
         reserve_seconds: 0.0,
         machine,
     };
-    let stopped = stop_vm(&cleanup, &id);
-    record.usage = usage(&cleanup, &id, started);
+    let (usage, retired) = retire(&cleanup, &id, started);
+    record.usage = usage;
     if let (Ok(before), Ok(after)) = (
         allowance_before.as_ref(),
         cleanup.json(&["limits", "--all"]),
@@ -1178,14 +1038,7 @@ pub(super) fn run(
             record.trial_usage_reason = Some("standard-plan-run".into());
         }
     }
-    let stopped = stopped.and_then(|()| {
-        if execution.is_err() {
-            delete_vm(&cleanup, &id)
-        } else {
-            Ok(())
-        }
-    });
-    if stopped.is_ok() {
+    if retired.is_ok() {
         record.phase = "stopped".into();
     } else {
         record.phase = "cleanup-unknown".into();
@@ -1194,30 +1047,7 @@ pub(super) fn run(
     let saved = lease.save(&record);
     record_saved?;
     saved?;
-    stopped?;
-    if cacheable {
-        let mut next = Warm {
-            schema: 1,
-            vm_id: id.clone(),
-            lock_key,
-            snapshot: warm.take().and_then(|warm| warm.snapshot),
-        };
-        if let Err(reason) = if shape == Shape::NixGate {
-            publish_snapshot(&cleanup, config, &mut next)
-        } else {
-            Ok(())
-        } {
-            let _ = writeln!(
-                io::stderr(),
-                "{program} slot: warm snapshot unavailable ({reason}); retaining stopped pool"
-            );
-        }
-        atomic_write(
-            &lease.root.join("boat/warm.json"),
-            &serde_json::to_vec(&next).map_err(|_| "warm-cache-format")?,
-        )
-        .map_err(|_| "warm-cache-write")?;
-    }
+    retired?;
     let signal = SIGNAL.load(Ordering::Relaxed);
     if signal != 0 {
         return Ok(Outcome::Complete((128 + signal) as u8, None));

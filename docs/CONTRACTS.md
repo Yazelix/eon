@@ -8309,6 +8309,10 @@ reference to existing pane creation, not by the unapproved targeting beads.
   Proof/Open proof entries.
   Local delegation/source-match amendment approved by eon-lead under Lucca's standing rule
   on 2026-11-16 (INBOX20:36:52Z), exact bead/23 text after Opus approval.
+
+  Amendment for eon-klt8h.1 (qualified bootstrap-image pin, cold-only starts,
+  image-based machine selection) approved by eon-lead on 2026-11-20 (INBOX
+  02:18:45Z), exact bead/contract-proposal.md text.
 - **Consumer:** A person or cooperating local agent running a heavy foreground
   command, in any project or terminal, under the same operating-system user.
 - **Trigger:**
@@ -8372,7 +8376,7 @@ reference to existing pane creation, not by the unapproved targeting beads.
     the caller's Git history, credentials, arbitrary environment or absolute host
     paths. Desktop/GPU proofs,
     visual checks, timing/frame benchmarks, profile installs and Update stay local.
-    Before each VM start or resume, admission verifies Boat reachability, a
+    Before each VM start, admission verifies Boat reachability, a
     builds-only environment with credential passing disabled, included compute
     and start allowances, the configured reserve and bounded run lifetime; it
     never enables paid overage. A remote run holds a separate remote lease, not
@@ -8388,7 +8392,7 @@ reference to existing pane creation, not by the unapproved targeting beads.
     A remote command failure
     passes through; lost contact after execution may have begun never triggers
     an automatic duplicate local run. Every owned VM ID and command identity is
-    recorded before execution, and shutdown is confirmed after the run. Unknown
+    recorded before execution, and deletion is confirmed after the run. Unknown
     remote cleanup remains visible and prevents another remote start until
     reconciled. Queue/grant/exit records and listing identify local or Boat
     execution and retain the proven tree, duration, usage cost and result or
@@ -8398,10 +8402,43 @@ reference to existing pane creation, not by the unapproved targeting beads.
     a remote ticket or claiming its lease. Built-in class defaults are default6G,
     nix8G, rune8G and bench4G; the shared heavy policy may change them and
     HEAVY_MEM overrides with whole-gigabyte values1–12G. Quiet-exempt timing jobs
-    stay local. Effective caps at most6G select the default machine;7G–12G select
-    large within its measured configured ceiling, using one shared serial lease
-    and size-aware included-credit guards. Above the qualified ceiling, locality
-    is decided at ticket creation with a capacity reason, without remote waiting.
+    stay local. A cap selects the smallest machine type that has a qualified
+    bootstrap image and whose ceiling covers it: default up to 6G, large up to
+    its measured configured ceiling. Only large has a qualified image, so remote
+    runs use large, with one shared serial lease and size-aware included-credit
+    guards. A cap that only an unqualified type covers uses local admission with
+    an unpinned-image capacity reason before remote queueing.
+
+    **Qualified bootstrap image.** Each remote run starts one fresh VM from the
+    reviewed bootstrap-image pin built into Eon for its machine type. The large
+    pin is Boat named snapshot `eon-builds-nix-2-34-7-large-klt8h-v1`, snapshot
+    ID `9c882067-a76c-4580-9a53-c90ad574441e`, source VM `bx_vfxzz24a`,
+    environment `eon-builds` version 2, recipe SHA-256
+    `7a5da4f0f0a1bf9de41b47695ae48f94ed115b7145cba5b941bcee2019dd708f`. Before
+    the start, the configured environment must be that environment at that
+    version, and Boat's named-snapshot inventory must hold exactly one row with
+    that name, carrying that ID and source, in state ready, and of type large
+    when the row reports a type. The start names the pinned image with captures
+    disabled. Before anything else runs on the VM, it must report an active
+    state, no creator logins and the pinned type, environment and version; the
+    inventory row must still match; and the VM must hold the recipe digest
+    followed by a newline in `/opt/eon-boat/recipe.sha256`, a regular file that
+    is not a symlink, owned by root:root with mode 0444. An absent, unready or
+    unreadable row, an unreadable or inactive VM, and an absent or unreadable
+    marker are unverified. A different ID, source, type, environment name or
+    version, a duplicate row, and a marker with other content, ownership, mode
+    or file type are mismatched. Either refuses before the workload, and nothing
+    is copied from a refused VM. A refusal before the start uses local admission
+    with a named reason; after the start it does so only once the VM's deletion
+    is confirmed, and otherwise remains unknown cleanup that exits 125 and
+    blocks the next remote start. Boat reports no origin snapshot for a clone,
+    so the image identity rests on the named row before and after the start and
+    the guest marker. Stopped VMs and warm snapshots are not reused; each VM is
+    deleted after its run, and a leftover `slots.boat.snapshot` setting is
+    ignored with a warning.
+
+    Above the qualified ceiling, locality is decided at ticket creation with a
+    capacity reason, without remote waiting.
     A determinately unavailable selected type uses local admission with a capacity
     reason before remote queueing/lease claim; invalid limits fail before queueing.
     The guest cap covers preparation and every workload descendant, disallows
@@ -8536,11 +8573,12 @@ reference to existing pane creation, not by the unapproved targeting beads.
   candidate. Model-language choice and model checking remain pending.
   Boat route: policy-negative/local fallback, exact dirty-tree transfer,
   credential absence, included-budget and trial-cap refusal, full result/log
-  return, remote listing, cancellation/contact-loss cleanup, warm lock refresh,
-  and one real remote landing gate with laptop-load observations. Named warm
-  snapshot proof waits for provider eligibility without an early paid upgrade.
-  Cold bootstrap within the configured lifetime; flake inputs fetchable without
-  credentials.
+  return, remote listing, cancellation/contact-loss cleanup, and one real remote
+  landing gate with laptop-load observations. Pinned cold start from the
+  qualified large image, including the three attended memory proofs on the
+  installed gate; confirmed post-run deletion (asynchronous deletion completion
+  is eon-f676x). Cold bootstrap within the configured lifetime; flake inputs
+  fetchable without credentials.
 
 ## EON-C44 — Configuration schema and named-key editing
 

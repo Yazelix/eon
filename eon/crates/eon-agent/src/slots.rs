@@ -809,7 +809,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
     let nesting_token = random()?;
     let shape = boat::shape(&slots.config.boat, options.argv);
     let initial_limit = memory.limit();
-    let selected = initial_limit.machine(&slots.config.boat);
+    let selected = boat::image::select(initial_limit, &slots.config.boat);
     let capacity_reason = |limit: memory::Limit, reason: &str| {
         format!(
             "boat-capacity class={} cap={}G {reason}",
@@ -827,14 +827,14 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
         Some("boat-not-enabled".into())
     } else {
         match selected {
-            None => Some(capacity_reason(initial_limit, "unqualified-ceiling")),
-            Some(machine) if boat::qualification_blocked(&slots.root, machine) => {
+            Err(reason) => Some(capacity_reason(initial_limit, reason)),
+            Ok(image) if boat::qualification_blocked(&slots.root, image.machine) => {
                 Some(capacity_reason(initial_limit, "qualification-stale"))
             }
-            Some(machine) if !boat::available(machine) => {
+            Ok(image) if !boat::available(image.machine) => {
                 Some(capacity_reason(initial_limit, "machine-unavailable"))
             }
-            Some(_) => None,
+            Ok(_) => None,
         }
     };
     let remote = shape.is_some() && fallback_reason.is_none();
@@ -875,7 +875,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
     let mut observed = (initial_limit, selected);
     let (holder, slot_lock, holder_lock) = loop {
         let limit = memory.limit();
-        let selected = limit.machine(&slots.config.boat);
+        let selected = boat::image::select(limit, &slots.config.boat);
         let new_policy = (limit, selected) != observed;
         let local_reason = if !ticket.remote {
             None
@@ -883,14 +883,14 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             Some("boat-not-enabled".into())
         } else {
             match selected {
-                None => Some(capacity_reason(limit, "unqualified-ceiling")),
-                Some(machine) if boat::qualification_blocked(&slots.root, machine) => {
+                Err(reason) => Some(capacity_reason(limit, reason)),
+                Ok(image) if boat::qualification_blocked(&slots.root, image.machine) => {
                     Some(capacity_reason(limit, "qualification-stale"))
                 }
-                Some(machine) if new_policy && !boat::available(machine) => {
+                Ok(image) if new_policy && !boat::available(image.machine) => {
                     Some(capacity_reason(limit, "machine-unavailable"))
                 }
-                Some(_) => None,
+                Ok(_) => None,
             }
         };
         observed = (limit, selected);
@@ -947,8 +947,8 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                 if !quiet
                     && remote_head.is_some_and(|head| std::ptr::eq(head.ticket, &ticket))
                     && let Some(shape) = shape
-                    && let Some(machine) = selected
-                    && !boat::qualification_blocked(&slots.root, machine)
+                    && let Ok(image) = selected
+                    && !boat::qualification_blocked(&slots.root, image.machine)
                     && slots.remote_enabled()
                     && let Some(lease) =
                         boat::Lease::claim(&slots.root).map_err(|e| slots.failure(&ticket, e))?
@@ -961,9 +961,8 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                         &slots.config.boat,
                         options.argv,
                         shape,
-                        (limit, machine),
+                        (limit, image),
                         &mut source,
-                        slots.program,
                     ) {
                         Ok(boat::Outcome::Local(reason)) => {
                             ticket.remote = false;

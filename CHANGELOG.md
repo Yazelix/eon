@@ -10,6 +10,16 @@ installation, and proven contract changes.
   absent_windows`. `status --json` no longer has a `warnings` array per
   backend (`eon-0nn1p.27`).
 
+- `eon agent slot run` starts each Boat run fresh from the qualified large
+  build image pinned in Eon, `eon-builds-nix-2-34-7-large-klt8h-v1`, and
+  checks the image Boat reports, before the start and again before anything
+  runs on the VM. A missing, unverified or mismatched image keeps the job
+  local with a named reason. Every remote run uses the large VM, so set
+  `slots.boat.large_max_memory_gib` to at least 8 to route remote runs. The
+  VM is deleted after each run; stopped VMs and warm snapshots are no longer
+  reused. `slots.boat.snapshot` is removed: a leftover setting loads with a
+  warning and has no effect (`eon-klt8h.1`, EON-C43).
+
 ## v0.1.28 (2026-11-20)
 
 ### Upgrading from v0.1.16

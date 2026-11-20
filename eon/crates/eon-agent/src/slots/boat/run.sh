@@ -10,7 +10,8 @@ dependency_expression=$6
 cap=$7
 high=$8
 margin=$9
-shift 9
+kernel_reader=${10}
+shift 10
 while [ ! -f /home/user/eon-run/go ]; do sleep 1; done
 umask 077
 exec 3>&1 4>&2
@@ -140,7 +141,7 @@ XDG_RUNTIME_DIR="$manager_runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$manager_
 systemd-run --user --scope --quiet --unit "eon-boat-$run_id" \
   -p Delegate=memory -p OOMPolicy=continue -- \
   bash --noprofile --norc -c 'boat_scope_controller "$@"' eon-controller \
-  "eon-boat-$run_id.scope" "$cap" "$high" "$margin" "$tree" "$relative" "$jobs" "$gate_warm" "$dependency_expression" "$@" 3>&- 4>&- || code=$?
+  "eon-boat-$run_id.scope" "$cap" "$high" "$margin" "$kernel_reader" "$tree" "$relative" "$jobs" "$gate_warm" "$dependency_expression" "$@" 3>&- 4>&- || code=$?
 if [ ! -s /home/user/eon-run/preparation-started ]; then
   echo "phase=memory-scope-refused launch_exit=$code" >&2
   exit 96

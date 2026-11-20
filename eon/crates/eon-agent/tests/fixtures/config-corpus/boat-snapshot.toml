@@ -1,0 +1,20 @@
+# Corpus: a slot configuration that still names the removed warm snapshot. The file loads,
+# every command warns that the key is ignored, and remote runs start from the pinned image.
+# `<ROOT>` is replaced with a scratch directory.
+state_file = '<ROOT>/state/anchor'
+log_file = '<ROOT>/log/decisions.jsonl'
+
+[slots.boat]
+allow_shapes = ['eon-test']
+environment = 'eon-builds'
+large_max_memory_gib = 8
+snapshot = ''
+
+[[backends]]
+name = 'fake'
+roles = ['implement']
+guard = ['false']
+allow_unknown_quota = true
+[backends.commands]
+medium = ['never-start-this', '{prompt}']
+high = ['never-start-this', '{prompt}']

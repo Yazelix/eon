@@ -23,7 +23,9 @@ env)
   fi
   github=false
   [ "$mode" != unsafe ] || github=true
-  printf '{"safeForThirdParties":true,"passGithub":%s,"passSecrets":false,"passSandboxCredentials":false,"passAgentsCredentials":false,"proxyAiCredentials":false,"variables":0,"secretFiles":[],"selectedRepositories":[],"latestVersionNumber":1}\n' "$github"
+  version=2
+  [ "$mode" != environment-version ] || version=1
+  printf '{"safeForThirdParties":true,"passGithub":%s,"passSecrets":false,"passSandboxCredentials":false,"passAgentsCredentials":false,"proxyAiCredentials":false,"variables":0,"secretFiles":[],"selectedRepositories":[],"latestVersionNumber":%s}\n' "$github" "$version"
   ;;
 limits)
   if [ -f "$root/policy-probed" ]; then
@@ -46,7 +48,6 @@ limits)
   case "$mode" in paid*) tier=paid; status=active; plan=box_20 ;; standard*) tier=standard; status=active; plan=box_20 ;; esac
   if [ "$mode" = paid-mismatch ]; then active_plan=box_100; fi
   if [ -e "$root/attached" ]; then
-    [ "$mode" != paid-after-gate-mismatch ] || active_plan=box_100
     [ "$mode" != post-reserve-loss ] || used=90000
     if [ "$mode" = post-plan-loss ]; then tier=paid; status=active; plan=box_20; active_plan=box_100; fi
   fi
@@ -56,6 +57,10 @@ new)
   if [ "$mode" = create-refused ]; then echo '{"ok":false}'; exit 1; fi
   [[ " $* " == *' --environment eon-builds '* ]]
   [[ " $* " == *' --no-env '* ]]
+  # Only the pinned image, with captures off, may be started.
+  [[ " $* " == *' --from eon-builds-nix-2-34-7-large-klt8h-v1 --no-snapshots '* ]]
+  printf '%s\n' "$*" > "$root/new-args"
+  rm -f "$root/marker-verified"
   for ((i=1;i<$#;i++)); do
     if [ "${!i}" = --type ]; then j=$((i+1)); printf '%s\n' "${!j}" > "$root/type"; break; fi
   done
@@ -64,23 +69,12 @@ new)
   printf '{"sandbox":{"id":"%s"}}\n' "$id"
   echo '{"event":"ready"}'
   ;;
-resume)
-  [ "$1" = bx_test ]
-  if [ "$mode" = resume-hold ]; then
-    touch "$root/preflight"
-    while :; do sleep 1; done
-  fi
-  [ ! -e "$root/old-command" ] || touch "$root/revived-old-command"
-  [[ " $* " == *' --environment eon-builds '* ]]
-  [[ " $* " == *' --no-env '* ]]
-  for ((i=1;i<$#;i++)); do
-    if [ "${!i}" = --type ]; then j=$((i+1)); printf '%s\n' "${!j}" > "$root/type"; break; fi
-  done
-  echo running > "$root/state"
-  echo '{"sandbox":{"id":"bx_test"}}'
-  ;;
 info)
   [ "$1" = "$id" ] || { echo '{"ok":false}'; exit 1; }
+  if [ "$mode" = info-hold ] && [ ! -e "$root/held" ]; then
+    touch "$root/held" "$root/preflight"
+    while :; do sleep 1; done
+  fi
   state=$(cat "$root/state")
   if [ "$state" = stopping ]; then
     remaining=$(cat "$root/stop-polls")
@@ -89,10 +83,17 @@ info)
   fi
   type=$(cat "$root/type" 2>/dev/null || echo default)
   [ "$mode" != wrong-type ] || type=small
-  printf '{"id":"%s","state":"%s","type":"%s","holdsCreatorLogins":false,"environment":"eon-builds","environmentVersion":1}\n' "$id" "$state" "$type"
+  # vm-inactive: the first report after the start shows a state work cannot run in.
+  if [ "$mode" = vm-inactive ] && [ ! -e "$root/info-read" ]; then state=error; fi
+  touch "$root/info-read"
+  version=',"environmentVersion":2'
+  [ "$mode" != identity-missing ] || version=
+  printf '{"id":"%s","state":"%s","type":"%s","holdsCreatorLogins":false,"environment":"eon-builds"%s}\n' "$id" "$state" "$type" "$version"
   ;;
 push)
   [ "$1" = "$id" ]; [ "$3" = --to ]; [ "$4" = /home/user/eon ]
+  # Source reaches only a VM whose image marker was verified.
+  [ -e "$root/marker-verified" ]
   if [ -d "$root/upload" ]; then rm -r "$root/upload"; fi
   cp -a "$2" "$root/upload"
   [ ! -e "$root/upload/.git" ]; [ ! -e "$root/upload/secret" ]
@@ -105,7 +106,7 @@ exec)
       [[ " $* " == *' -- env -i HOME=/home/user USER=user LOGNAME=user PATH=/usr/local/bin:/usr/bin:/bin bash --noprofile --norc -c '* ]]
       until [ "$1" = eon-build ]; do shift; done
       shift; tree=$1; shift 3; run_id=$1
-      shift; printf '%s\0' "$1" "${@:6}" > "$root/detached"
+      shift; printf '%s\0' "$1" "${@:7}" > "$root/detached"
       printf '%s\n' "$3 ${4:-null} $5" > "$root/requested-memory"
       read -r cap high margin < <(cat "$root/observed-memory" 2>/dev/null || echo '8589934592 null 2147483648')
       git -C "$root/upload" init -q
@@ -147,6 +148,19 @@ exec)
       if [ "$mode" = disconnected ]; then touch "$root/old-command"; exit 1; fi
       ;;
     --kill) rm -f "$root/hold"; echo '{"success":true}' ;;
+    --)
+      if [[ " $* " == *' -- env -i PATH=/usr/bin:/bin LC_ALL=C bash --noprofile --norc -c '*' eon-image 7a5da4f0f0a1bf9de41b47695ae48f94ed115b7145cba5b941bcee2019dd708f ' ]]; then
+        case "$mode" in
+          marker-absent) exit 94 ;;
+          marker-mismatch) exit 95 ;;
+        esac
+        touch "$root/marker-verified"
+      else
+        # The credential probe and setup run only after the marker check.
+        [ -e "$root/marker-verified" ]
+        echo 'remote preparation'
+      fi
+      ;;
     *) echo 'remote preparation' ;;
   esac
   ;;
@@ -159,6 +173,7 @@ scp)
   ;;
 stop)
   if [ "$mode" = delayed-stop ]; then echo stopping > "$root/state"; echo 6 > "$root/stop-polls";
+  elif [ "$mode" = stuck-stop ]; then echo stopping > "$root/state"; echo 1000 > "$root/stop-polls";
   else echo stopped > "$root/state"; fi
   rm -f "$root/hold"
   echo '{"success":true}'
@@ -180,17 +195,13 @@ list)
   echo '{"sandboxes":[]}'
   ;;
 snapshots)
-  named='[]'
-  [ ! -f "$root/snapshot" ] || named='[{"name":"eon-warm","status":"ready","sourceSandboxId":"bx_test","snapshotId":"im_test"}]'
-  used=0
-  [ "$mode" != paid-full ] || used=10
-  printf '{"named":%s,"namedAllowance":{"included":10,"used":%s,"extra":0}}\n' "$named" "$used"
-  ;;
-snapshot)
-  [ "$mode" != paid-full ]
-  [ "$1" = bx_test ]; [ "$2" = eon-warm ]
-  touch "$root/snapshot"
-  echo '{"success":true}'
+  # The pinned image's named row; modes change it before or after the start.
+  id_field=9c882067-a76c-4580-9a53-c90ad574441e
+  [ "$mode" != image-wrong-id ] || id_field=9c882067-0000-4000-8000-000000000000
+  if [ "$mode" = image-drift ] && [ -e "$root/new-args" ]; then id_field=other; fi
+  named=$(printf '[{"name":"eon-warm","status":"ready","sourceSandboxId":"bx_old","snapshotId":"im_old"},{"name":"eon-builds-nix-2-34-7-large-klt8h-v1","status":"ready","sourceSandboxId":"bx_vfxzz24a","snapshotId":"%s","type":"large"}]' "$id_field")
+  [ "$mode" != image-absent ] || named='[{"name":"eon-warm","status":"ready","sourceSandboxId":"bx_old","snapshotId":"im_old"}]'
+  printf '{"named":%s,"namedAllowance":{"included":10,"used":2,"extra":0}}\n' "$named"
   ;;
 *) exit 92 ;;
 esac

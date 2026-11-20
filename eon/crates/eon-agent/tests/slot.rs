@@ -327,52 +327,6 @@ fn post_start_plan_and_reserve_loss_clean_up_without_local_replay() {
 }
 
 #[test]
-fn paid_snapshot_disabled_keeps_only_stopped_pool() {
-    let f = Fixture::boat_fixture();
-    let config = f.dir.path().join("config.toml");
-    fs::write(
-        &config,
-        fs::read_to_string(&config)
-            .unwrap()
-            .replace("[slots.boat]", "[slots.boat]\nsnapshot = ''"),
-    )
-    .unwrap();
-    fs::write(f.dir.path().join("provider/mode"), "paid").unwrap();
-    assert!(
-        f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
-            .output()
-            .unwrap()
-            .status
-            .success()
-    );
-    assert!(!f.dir.path().join("provider/snapshot").exists());
-    assert!(!f.dir.path().join("provider/deleted").exists());
-    assert_eq!(f.list()["boat"]["trial_seconds_used"], 0);
-}
-
-#[test]
-fn snapshot_publish_rechecks_standard_plan_after_gate() {
-    let f = Fixture::boat_fixture();
-    fs::write(
-        f.dir.path().join("provider/mode"),
-        "paid-after-gate-mismatch",
-    )
-    .unwrap();
-    let output = f
-        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(!f.dir.path().join("provider/snapshot").exists());
-    // Under the rota host the warning names rota (was a hard-coded `eon agent slot:`).
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("rota slot: warm snapshot unavailable (snapshot-unverified-standard-plan)"),
-        "{stderr}"
-    );
-}
-
-#[test]
 fn delegated_pid_signal_releases_target_and_stops_command() {
     let f = Fixture::boat_fixture();
     delegate(&f, false);
@@ -990,20 +944,31 @@ fn review_missing_build_identity_proof_retires_vm_without_a_local_duplicate() {
 }
 
 #[test]
-fn review_lost_result_on_a_warm_vm_retires_its_unfinished_children() {
+fn review_lost_result_deletes_the_vm_with_its_unfinished_children() {
     let f = Fixture::boat_fixture();
     let args = ["slot", "run", "--", "nix", "build", ".#default"];
-    assert!(f.boat_command(&args).output().unwrap().status.success());
     fs::write(f.dir.path().join("provider/mode"), "disconnected").unwrap();
     assert_eq!(
         f.boat_command(&args).output().unwrap().status.code(),
         Some(125)
     );
-    assert!(!f.dir.path().join("provider/old-command").exists());
+    // This run is the only one, so the deletion below is its own.
+    let calls = calls(&f);
+    let start = position(&calls, "new", 0).unwrap();
+    assert!(position(&calls, "delete", start).is_some(), "{calls:?}");
     assert!(f.dir.path().join("provider/deleted").exists());
+    assert_eq!(
+        fs::read_to_string(f.dir.path().join("provider/state"))
+            .unwrap()
+            .trim(),
+        "deleted"
+    );
+    assert!(!f.dir.path().join("provider/old-command").exists());
+    assert_eq!(f.list()["boat"]["vm_id"], "bx_test");
+    assert_eq!(f.list()["boat"]["phase"], "stopped");
+    // Its deletion was confirmed, so the next run starts its own fresh VM.
     fs::write(f.dir.path().join("provider/mode"), "").unwrap();
     assert!(f.boat_command(&args).output().unwrap().status.success());
-    assert!(!f.dir.path().join("provider/revived-old-command").exists());
     assert_eq!(f.list()["boat"]["vm_id"], "bx_next");
 }
 
@@ -1033,13 +998,6 @@ fn review_crash_recovery_deletes_uncertain_vm_instead_of_reviving_old_work() {
     record["command_pid"] = 123.into();
     record["credentials_absent"] = true.into();
     fs::write(current, serde_json::to_vec(&record).unwrap()).unwrap();
-    let warm = f.root().join("boat/warm.json");
-    fs::write(
-        &warm,
-        br#"{"schema":1,"vm_id":"bx_test","lock_key":"prior","snapshot":null}"#,
-    )
-    .unwrap();
-    fs::set_permissions(warm, fs::Permissions::from_mode(0o600)).unwrap();
     fs::write(f.dir.path().join("provider/state"), "running").unwrap();
     fs::write(f.dir.path().join("provider/old-command"), "uncertain build").unwrap();
     let output = f
@@ -1051,7 +1009,6 @@ fn review_crash_recovery_deletes_uncertain_vm_instead_of_reviving_old_work() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!f.dir.path().join("provider/revived-old-command").exists());
     assert!(!f.dir.path().join("provider/old-command").exists());
     assert_eq!(f.list()["boat"]["vm_id"], "bx_next");
     let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
@@ -1060,11 +1017,10 @@ fn review_crash_recovery_deletes_uncertain_vm_instead_of_reviving_old_work() {
 }
 
 #[test]
-fn review_canceled_resume_returns_signal_status_after_cleanup() {
+fn review_canceled_preparation_returns_signal_status_after_cleanup() {
     let f = Fixture::boat_fixture();
     let args = ["slot", "run", "--", "nix", "build", ".#default"];
-    assert!(f.boat_command(&args).output().unwrap().status.success());
-    fs::write(f.dir.path().join("provider/mode"), "resume-hold").unwrap();
+    fs::write(f.dir.path().join("provider/mode"), "info-hold").unwrap();
     let mut run = Running(
         f.boat_command(&args)
             .stderr(Stdio::piped())
@@ -1081,6 +1037,7 @@ fn review_canceled_resume_returns_signal_status_after_cleanup() {
     rustix::process::kill_process(Pid::from_raw(run.pid() as i32).unwrap(), Signal::TERM).unwrap();
     assert_eq!(run.wait().code(), Some(143));
     assert_eq!(f.list()["boat"]["phase"], "stopped");
+    assert!(f.dir.path().join("provider/deleted").exists());
     assert!(!f.dir.path().join("local-ran").exists());
 }
 
@@ -1527,11 +1484,28 @@ fn boat_unqualified_caps_and_timing_do_not_query_or_wait_for_the_provider() {
     assert!(!f.root().join("boat/lease.lock").exists());
 }
 
+const PINNED: &str = "eon-builds-nix-2-34-7-large-klt8h-v1";
+
+fn calls(f: &Fixture) -> Vec<String> {
+    fs::read_to_string(f.dir.path().join("provider/calls"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn position(calls: &[String], verb: &str, after: usize) -> Option<usize> {
+    calls[after..]
+        .iter()
+        .position(|c| c == verb)
+        .map(|i| i + after)
+}
+
 #[test]
-fn boat_requests_the_exact_cap_and_type_at_the_default_boundary() {
-    for (cap, kind, observed) in [
-        ("6G", "default", "6442450944 null 1073741824\n"),
-        ("7G", "large", "7516192768 null 2147483648\n"),
+fn boat_runs_every_qualified_cap_on_the_pinned_large_image_and_deletes_it() {
+    for (cap, observed) in [
+        ("6G", "6442450944 null 2147483648\n"),
+        ("8G", "8589934592 null 2147483648\n"),
     ] {
         let f = Fixture::boat_fixture();
         let provider = f.dir.path().join("provider");
@@ -1548,13 +1522,149 @@ fn boat_requests_the_exact_cap_and_type_at_the_default_boundary() {
         );
         assert_eq!(
             fs::read_to_string(provider.join("type")).unwrap().trim(),
-            kind
+            "large"
+        );
+        let new = fs::read_to_string(provider.join("new-args")).unwrap();
+        assert!(
+            new.contains(&format!(
+                "--type large --ttl 3600 --from {PINNED} --no-snapshots"
+            )),
+            "{new}"
         );
         assert_eq!(
             fs::read_to_string(provider.join("requested-memory")).unwrap(),
             observed
         );
+        // The named row is read before the start and again before anything runs on the VM.
+        let calls = calls(&f);
+        let before = position(&calls, "snapshots", 0).unwrap();
+        let start = position(&calls, "new", before).unwrap();
+        let again = position(&calls, "snapshots", start).unwrap();
+        let push = position(&calls, "push", again).unwrap();
+        assert!(position(&calls, "delete", push).is_some(), "{calls:?}");
+        assert!(
+            !calls
+                .iter()
+                .any(|c| matches!(c.as_str(), "resume" | "snapshot"))
+        );
+        assert!(!f.root().join("boat/warm.json").exists());
+        assert_eq!(f.list()["boat"]["phase"], "stopped");
+        let run = f.list()["boat"]["run_id"].as_str().unwrap().to_owned();
+        let receipt: Value = serde_json::from_slice(
+            &fs::read(f.root().join("runs").join(run).join("receipt.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["image"], PINNED);
         assert!(!f.dir.path().join("local-ran").exists());
+    }
+}
+
+#[test]
+fn boat_without_a_pinned_image_for_the_cap_stays_local_before_any_provider_start() {
+    let f = Fixture::boat_fixture();
+    let config = f.dir.path().join("config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)
+            .unwrap()
+            .replace("large_max_memory_gib = 8", "large_max_memory_gib = 0"),
+    )
+    .unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .env("HEAVY_MEM", "6G")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("where=local reason=boat-capacity class=nix cap=6G image-unpinned"),
+        "{stderr}"
+    );
+    assert!(f.dir.path().join("local-ran").exists());
+    assert!(!calls(&f).iter().any(|c| c == "new"));
+}
+
+#[test]
+fn boat_unverified_or_mismatched_image_before_start_stays_local_with_its_reason() {
+    for (mode, reason) in [
+        (
+            "image-absent",
+            "boat-image-unverified check=snapshot-absent",
+        ),
+        ("image-wrong-id", "boat-image-mismatch check=snapshot-id"),
+        (
+            "environment-version",
+            "boat-image-mismatch check=environment",
+        ),
+    ] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        let args = ["slot", "run", "--", "nix", "build", ".#default"];
+        let out = f.boat_command(&args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{mode}: {stderr}");
+        assert!(
+            stderr.contains(&format!("where=local reason={reason}")),
+            "{mode}: {stderr}"
+        );
+        assert!(f.dir.path().join("local-ran").exists(), "{mode}");
+        assert!(!calls(&f).iter().any(|c| c == "new"), "{mode}");
+        // Nothing was created, so nothing is left to reconcile: the next run goes remote.
+        assert!(!f.root().join("boat/current.json").exists(), "{mode}");
+        fs::remove_file(f.dir.path().join("local-ran")).unwrap();
+        fs::write(f.dir.path().join("provider/mode"), "").unwrap();
+        let out = f.boat_command(&args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!f.dir.path().join("local-ran").exists(), "{mode}");
+        assert_eq!(f.list()["boat"]["phase"], "stopped", "{mode}");
+    }
+}
+
+#[test]
+fn boat_image_refused_after_start_retires_the_vm_without_reading_from_it() {
+    for (mode, reason) in [
+        ("marker-absent", "boat-image-unverified check=recipe-marker"),
+        ("marker-mismatch", "boat-image-mismatch check=recipe-marker"),
+        ("image-drift", "boat-image-mismatch check=snapshot-id"),
+        ("wrong-type", "boat-image-mismatch check=vm-identity"),
+        (
+            "identity-missing",
+            "boat-image-unverified check=vm-identity",
+        ),
+        ("vm-inactive", "boat-image-unverified check=vm-state"),
+    ] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        let out = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{mode}: {stderr}");
+        assert!(
+            stderr.contains(&format!("where=local reason={reason}")),
+            "{mode}: {stderr}"
+        );
+        assert!(f.dir.path().join("local-ran").exists(), "{mode}");
+        let calls = calls(&f);
+        let start = position(&calls, "new", 0).unwrap();
+        for verb in ["push", "scp"] {
+            assert!(
+                !calls.contains(&verb.to_owned()),
+                "{mode}: {verb} in {calls:?}"
+            );
+        }
+        assert!(
+            position(&calls, "delete", start).is_some(),
+            "{mode}: {calls:?}"
+        );
+        assert!(!f.dir.path().join("provider/detached").exists(), "{mode}");
+        assert_eq!(f.list()["boat"]["phase"], "stopped", "{mode}");
     }
 }
 
@@ -1647,7 +1757,7 @@ fn boat_pre_work_memory_refusals_require_cleanup_and_block_repeat_starts() {
             fs::read_to_string(provider.join("state")).unwrap().trim(),
             "deleted"
         );
-        let evidence = fs::read(f.root().join("boat/default_qualification_hold.json")).unwrap();
+        let evidence = fs::read(f.root().join("boat/large_qualification_hold.json")).unwrap();
         let record: Value = serde_json::from_slice(&evidence).unwrap();
         assert_eq!(record["reason"], reason);
         if mode == "headroom" {
@@ -1720,55 +1830,42 @@ fn lost_boat_contact_after_start_stops_vm_without_duplicate_local_run() {
 }
 
 #[test]
-fn trial_warm_pool_resumes_without_snapshot_spend_and_tracks_changed_locks() {
-    let f = Fixture::boat_fixture();
-    let args = ["slot", "run", "--", "nix", "build", ".#default"];
-    let first = f.boat_command(&args).output().unwrap();
-    assert!(
-        first.status.success(),
-        "{}",
-        String::from_utf8_lossy(&first.stderr)
-    );
-    let before: Value =
-        serde_json::from_slice(&fs::read(f.root().join("boat/warm.json")).unwrap()).unwrap();
-    assert_eq!(before["snapshot"], Value::Null);
-    fs::write(f.dir.path().join("Cargo.lock"), "changed lock\n").unwrap();
-    let second = f.boat_command(&args).output().unwrap();
-    assert!(
-        second.status.success(),
-        "{}",
-        String::from_utf8_lossy(&second.stderr)
-    );
-    let after: Value =
-        serde_json::from_slice(&fs::read(f.root().join("boat/warm.json")).unwrap()).unwrap();
-    assert_ne!(before["lock_key"], after["lock_key"]);
-    let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
-    assert_eq!(calls.lines().filter(|line| *line == "new").count(), 1);
-    assert_eq!(calls.lines().filter(|line| *line == "resume").count(), 1);
-    assert!(!calls.lines().any(|line| line == "snapshot"));
-    assert_eq!(f.list()["boat"]["phase"], "stopped");
+fn slow_boat_stop_reads_final_usage_before_one_delete() {
+    // delayed-stop reaches stopped after a few polls; stuck-stop never does within the
+    // stop wait, so retirement falls through to the one delete.
+    for mode in ["delayed-stop", "stuck-stop"] {
+        let f = Fixture::boat_fixture();
+        fs::write(f.dir.path().join("provider/mode"), mode).unwrap();
+        let started = Instant::now();
+        let result = f
+            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(f.list()["boat"]["phase"], "stopped", "{mode}");
+        let calls = calls(&f);
+        let stop = position(&calls, "stop", 0).unwrap();
+        let usage = position(&calls, "usage", stop).unwrap();
+        let delete = position(&calls, "delete", usage).unwrap();
+        assert_eq!(
+            calls.iter().filter(|c| *c == "delete").count(),
+            1,
+            "{mode}: {calls:?}"
+        );
+        assert!(!calls[stop..delete].contains(&"delete".to_owned()));
+        assert!(f.dir.path().join("provider/deleted").exists(), "{mode}");
+        assert!(f.list()["boat"]["usage"].is_object(), "{mode}");
+        // Retirement fits the cleanup budget (60 s) even when the VM never stops.
+        assert!(started.elapsed() < Duration::from_secs(60 + 20), "{mode}");
+    }
 }
 
 #[test]
-fn asynchronous_boat_stop_is_confirmed_without_discarding_the_warm_vm() {
-    let f = Fixture::boat_fixture();
-    fs::write(f.dir.path().join("provider/mode"), "delayed-stop").unwrap();
-    let result = f
-        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert_eq!(f.list()["boat"]["phase"], "stopped");
-    let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
-    assert!(!calls.lines().any(|line| line == "delete"));
-}
-
-#[test]
-fn timeout_wrapped_gate_warms_publishes_and_runs_its_original_argv_on_boat() {
+fn timeout_wrapped_gate_warms_its_inputs_and_runs_its_original_argv_on_boat() {
     let f = Fixture::boat_fixture();
     let config = f.dir.path().join("config.toml");
     fs::write(
@@ -1792,7 +1889,7 @@ fn timeout_wrapped_gate_warms_publishes_and_runs_its_original_argv_on_boat() {
     // The envelope reached Boat rather than the local queue.
     assert!(!f.dir.path().join("local-ran").exists());
     let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
-    assert!(calls.lines().any(|line| matches!(line, "new" | "resume")));
+    assert!(calls.lines().any(|line| line == "new"));
     let detached = fs::read(f.dir.path().join("provider/detached")).unwrap();
     let words: Vec<_> = detached
         .split(|byte| *byte == 0)
@@ -1801,42 +1898,8 @@ fn timeout_wrapped_gate_warms_publishes_and_runs_its_original_argv_on_boat() {
         .collect();
     assert_eq!(words[0], "1", "a wrapped gate still warms the gate inputs");
     assert_eq!(words[1..], argv, "the VM runs the original argv");
-    assert_eq!(calls.lines().filter(|line| *line == "snapshot").count(), 1);
-    let warm: Value =
-        serde_json::from_slice(&fs::read(f.root().join("boat/warm.json")).unwrap()).unwrap();
-    assert_eq!(warm["snapshot"]["name"], "eon-warm");
-}
-
-#[test]
-fn named_warm_snapshot_uses_only_included_capacity_and_is_refreshed_for_locks() {
-    let f = Fixture::boat_fixture();
-    let args = ["slot", "run", "--", "nix", "build", ".#default"];
-    fs::write(f.dir.path().join("provider/mode"), "paid-full").unwrap();
-    let result = f.boat_command(&args).output().unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert!(!f.dir.path().join("provider/snapshot").exists());
-    fs::write(f.dir.path().join("provider/mode"), "paid").unwrap();
-    assert!(f.boat_command(&args).output().unwrap().status.success());
-    let first: Value =
-        serde_json::from_slice(&fs::read(f.root().join("boat/warm.json")).unwrap()).unwrap();
-    assert_eq!(first["snapshot"]["name"], "eon-warm");
-    fs::write(f.dir.path().join("flake.lock"), "changed pinned inputs\n").unwrap();
-    assert!(f.boat_command(&args).output().unwrap().status.success());
-    let second: Value =
-        serde_json::from_slice(&fs::read(f.root().join("boat/warm.json")).unwrap()).unwrap();
-    assert_ne!(
-        first["snapshot"]["lock_key"],
-        second["snapshot"]["lock_key"]
-    );
-    assert_eq!(second["snapshot"]["lock_key"], second["lock_key"]);
-    assert!(f.boat_command(&args).output().unwrap().status.success());
-    let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
-    assert_eq!(calls.lines().filter(|line| *line == "snapshot").count(), 2);
-    assert_eq!(calls.lines().filter(|line| *line == "new").count(), 2);
+    assert!(!calls.lines().any(|line| line == "snapshot"));
+    assert!(!f.root().join("boat/warm.json").exists());
 }
 
 const FUTURE: &str = "4102444800";
@@ -2739,4 +2802,37 @@ mod platform {
             });
         }
     }
+}
+
+#[test]
+fn leftover_boat_snapshot_key_warns_and_changes_nothing() {
+    let f = Fixture::boat_fixture();
+    let config = f.dir.path().join("config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config).unwrap().replace(
+            "large_max_memory_gib = 8",
+            "large_max_memory_gib = 8\nsnapshot = \"eon-warm\"",
+        ),
+    )
+    .unwrap();
+    let out = f
+        .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            ": warning: slots.boat.snapshot is removed and ignored; remote runs start fresh \
+             from Eon's pinned qualified image"
+        ),
+        "{stderr}"
+    );
+    assert!(!f.dir.path().join("local-ran").exists());
+    let new = fs::read_to_string(f.dir.path().join("provider/new-args")).unwrap();
+    assert!(
+        new.contains(&format!("--from {PINNED} --no-snapshots")),
+        "{new}"
+    );
 }

@@ -134,7 +134,16 @@ fn runner_with_limits(
         )
         .replace("/proc/meminfo", proc.join("meminfo").to_str().unwrap())
         .replace("/proc/vmstat", proc.join("vmstat").to_str().unwrap())
+        .replace("/usr/bin/python3", "python3")
         .replace("/home/user", home.to_str().unwrap());
+    // Only the passed copy changes; the shipped reader stays the qualified bytes.
+    let reader = include_str!("read-kernel.py")
+        .replace(
+            "/run/eon-boat-observer/kernel.sock",
+            root.path().join("observer.sock").to_str().unwrap(),
+        )
+        .replace("/usr/bin/timeout", "timeout")
+        .replace("/usr/bin/dmesg", "dmesg");
     let path = std::env::var("PATH").unwrap();
     let mut command = Command::new("bash");
     command
@@ -160,6 +169,7 @@ fn runner_with_limits(
             cap,
             high,
             margin,
+            &reader,
             "bash",
             "-c",
             "[ -z \"${XDG_RUNTIME_DIR+x}${DBUS_SESSION_BUS_ADDRESS+x}\" ] || exit 99; \
@@ -370,6 +380,71 @@ fn scope_refuses_a_lower_ancestor_or_insufficient_headroom() {
         assert_eq!(result["headroom_failed"]["ceiling"], ceiling);
         assert!(!root.path().join("proc/bwrap-args").exists());
     }
+}
+
+#[test]
+fn scope_reads_kernel_evidence_through_the_observer_socket_outside_the_workload() {
+    use std::io::Write;
+    let (root, mut command) = runner(false, false);
+    let listener = UnixListener::bind(root.path().join("observer.sock")).unwrap();
+    let kmsg = root.path().join("proc/kmsg");
+    listener.set_nonblocking(true).unwrap();
+    let observer = std::thread::spawn(move || {
+        // Bounded, so a runner that never connects fails the assertion instead of hanging.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut served = 0;
+        while served < 2 && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
+                    let mut sample = fs::read(&kmsg).unwrap();
+                    sample.push(0);
+                    stream.write_all(&sample).unwrap();
+                    served += 1;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        served
+    });
+    let result = run_result(&root, command.env("FIXTURE_OOM", "job"));
+    assert_eq!(observer.join().unwrap(), 2, "{result}");
+    let observation: Observation = serde_json::from_value(result["memory"].clone()).unwrap();
+    let limit = Limit {
+        class: Class::Default,
+        cap_gib: 6,
+    };
+    assert_eq!(
+        observation
+            .report(limit, Machine::Default, false)
+            .unwrap()
+            .cause,
+        Cause::JobLimit,
+        "{result}"
+    );
+    let home = root.path().join("home");
+    for directory in [home.join("eon-run"), home.join("runtime")] {
+        for entry in fs::read_dir(&directory).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.starts_with("kernel-") && !name.starts_with("eon-boat-kernel."),
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn shipped_kernel_reader_is_the_qualified_reader() {
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        format!("{:x}", Sha256::digest(include_str!("read-kernel.py"))),
+        "30b8b3ffe52442b0c7a936cb152f10ba88f333b3af85f78f74b7ba3921d0cf78"
+    );
 }
 
 #[test]

@@ -430,7 +430,6 @@ prefix owns local queueing. It receives original queue-age/class metadata and
 must acquire local capacity before its supplied payload runs. Captured remote
 source identity is checked before local admission and again before execution;
 a changed/unverifiable source refuses with125. No automatic post-start retry.
-Set `slots.boat.snapshot = ""` to keep stopped-pool reuse without named saves.
 
 The optional `[slots.boat]` route runs permitted headless builds with no caller credentials on a
 Boat VM using a separate lease; see Eon's [configuration reference](../../../docs/CONFIGURATION.md#remote-heavy-builds)

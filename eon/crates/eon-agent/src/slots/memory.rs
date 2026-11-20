@@ -1,5 +1,4 @@
 //! Shared heavy-run memory policy. It never opens slot state or contacts Boat.
-use crate::config::BoatConfig;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -225,15 +224,6 @@ impl Class {
 }
 
 impl Limit {
-    pub fn machine(self, config: &BoatConfig) -> Option<Machine> {
-        if self.cap_gib <= 6 {
-            Some(Machine::Default)
-        } else if self.cap_gib <= config.large_max_memory_gib {
-            Some(Machine::Large)
-        } else {
-            None
-        }
-    }
     pub fn bytes(self) -> u64 {
         u64::from(self.cap_gib) * GIB
     }

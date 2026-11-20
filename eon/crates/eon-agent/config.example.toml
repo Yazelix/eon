@@ -47,7 +47,6 @@ environment = "eon-builds"
 reserve_hours = 2
 timeout_seconds = 3600 # 120..7200; use 7200 for a cold bootstrap.
 jobs = 4
-snapshot = "" # Disable named-image saves/restores; keep successful stopped-pool reuse.
 
 [[backends]]
 name = "alpha"

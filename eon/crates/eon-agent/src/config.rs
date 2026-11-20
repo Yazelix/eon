@@ -93,8 +93,20 @@ pub struct BoatConfig {
     pub reserve_hours: f64,
     pub timeout_seconds: u64,
     pub jobs: u16,
-    pub snapshot: String,
+    /// Removed with warm reuse: parsed so older files load, ignored, and reported by
+    /// [`BoatConfig::tombstone`]. Ignoring it is safe: nothing is reused either way.
+    pub snapshot: Option<String>,
     pub large_max_memory_gib: u8,
+}
+
+impl BoatConfig {
+    /// The warning for a removed key the file still sets; slot commands print it.
+    pub fn tombstone(&self) -> Option<&'static str> {
+        self.snapshot.is_some().then_some(
+            "slots.boat.snapshot is removed and ignored; remote runs start fresh \
+             from Eon's pinned qualified image",
+        )
+    }
 }
 
 impl Default for BoatConfig {
@@ -105,7 +117,7 @@ impl Default for BoatConfig {
             reserve_hours: 2.0,
             timeout_seconds: 3600,
             jobs: 4,
-            snapshot: "eon-warm".into(),
+            snapshot: None,
             large_max_memory_gib: 0,
         }
     }
@@ -136,12 +148,6 @@ impl SlotConfig {
             || !(120..=7200).contains(&boat.timeout_seconds)
             || !(1..=4).contains(&boat.jobs)
             || !(boat.large_max_memory_gib == 0 || (8..=12).contains(&boat.large_max_memory_gib))
-            || boat.snapshot.len() > 63
-            || boat.snapshot.starts_with('-')
-            || !boat
-                .snapshot
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         {
             return Err("invalid slots.boat policy: use unique build shapes, a non-base environment, finite reserve, timeout 120..7200 and jobs 1..4".into());
         }
@@ -910,6 +916,29 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn boat_snapshot_is_a_warned_tombstone() {
+        let text = include_str!("../tests/fixtures/config-corpus/boat-snapshot.toml")
+            .replace("<ROOT>", "/scratch");
+        let config = Config::parse(&text, "rota").unwrap();
+        assert_eq!(config.slots.boat.allow_shapes, [Shape::EonTest]);
+        assert_eq!(
+            config.slots.boat.tombstone(),
+            Some(
+                "slots.boat.snapshot is removed and ignored; remote runs start fresh \
+                 from Eon's pinned qualified image"
+            )
+        );
+        assert_eq!(
+            Config::parse(EXAMPLE, "rota")
+                .unwrap()
+                .slots
+                .boat
+                .tombstone(),
+            None
+        );
     }
 
     #[test]

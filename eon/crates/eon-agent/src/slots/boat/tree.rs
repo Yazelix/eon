@@ -1,7 +1,6 @@
 //! Capture through a temporary index, then export verified raw blobs without checkout filters.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
@@ -112,15 +111,6 @@ impl Source {
             tree: self.tree.clone(),
             cwd: self.cwd.clone(),
         }
-    }
-    pub fn lock_key(&self) -> Result<String, String> {
-        let mut hash = Sha256::new();
-        for name in ["Cargo.lock", "flake.lock"] {
-            hash.update(name.as_bytes());
-            hash.update([0]);
-            hash.update(fs::read(self.directory.join(name)).map_err(|_| "lockfiles-required")?);
-        }
-        Ok(format!("{:x}", hash.finalize()))
     }
 
     pub fn capture(cwd: &Path) -> Result<Self, String> {

@@ -297,7 +297,6 @@ environment = "eon-builds"
 reserve_hours = 2
 timeout_seconds = 3600
 jobs = 4
-snapshot = "eon-warm"
 ```
 
 `allow_shapes = ["nix-gate"]` permits Eon's repository-local `nix build`
@@ -372,13 +371,16 @@ explicit permitted command flags retain their own values.
 Boat uses the same heavy memory classes as local admission. Defaults are 6G
 for ordinary jobs, 8G for Nix and Rune, and 4G for quiet runs. The shared
 `mem-caps` file can change the defaults, and `HEAVY_MEM` overrides the limit
-with a whole number from 1G to 12G. Quiet timing jobs stay local. Caps up to 6G
-select the default 4-vCPU/8-GB VM. Caps from 7G to 12G select the large
+with a whole number from 1G to 12G. Quiet timing jobs stay local. A remote run
+uses the smallest machine type that has a qualified image and whose ceiling
+covers its cap: the default 4-vCPU/8-GB VM up to 6G, or the large
 8-vCPU/16-GB VM up to the measured `slots.boat.large_max_memory_gib` ceiling.
-The ceiling defaults to 0, meaning the large VM is unqualified, and accepts
-0 or 8–12. Requests above the qualified ceiling enter local admission with
-a capacity reason. Both sizes share one lease. A large job requires twice the
-default rate of included credit.
+Only large has a qualified image, so every remote run uses large. The ceiling
+defaults to 0, meaning the large VM is unqualified, and accepts 0 or 8–12; set
+it to at least 8 to route remote runs. A cap that only the default type covers
+enters local admission with reason `image-unpinned`, and a cap above every
+ceiling with `unqualified-ceiling`. Both sizes share one lease. A large job
+requires twice the default rate of included credit.
 
 The guest checks the actual per-job limit, no swap, ancestor limits, a local
 Nix store without an external builder, and spare memory before preparation.
@@ -394,8 +396,6 @@ configuration, credentials and absolute host cwd are not uploaded. Remote cwd
 is the same repository-relative directory.
 Export writes raw Git blobs and verifies their bytes and modes locally before
 upload; local checkout/smudge filters cannot inject data into the upload.
-The captured repository must contain both `Cargo.lock` and `flake.lock`;
-their contents identify reusable build dependencies.
 
 Remote runs hold one separate Boat lease, leaving local heavy capacity free.
 Quiet policy still applies. Before remote execution, policy/connectivity or
@@ -410,18 +410,23 @@ output and a local receipt with the reason, status and `output_complete` flag.
 Terminal callers keep their inherited streams. Default-local and
 policy-negative commands keep direct streams without this recording.
 
-The route reuses only its own stopped, credential-free VM after confirmed
-completion and checks credentials
-again after resume. `snapshot` names one warm image (default `eon-warm`);
-named images are created only when the paid plan permits them and their count
-fits the included allowance. Set `snapshot = ""` to disable named-image
-restoration/publication, including on a paid plan; a successful stopped pool
-is still reusable. The trial uses the stopped pool without an early
-payment. Cargo.lock/flake.lock fingerprints select a matching named image;
-after a successful Nix gate, changed locks refresh that single image. Unknown
-images are not adopted. A pending save keeps its source identity until ready.
-Uncertain work, including wrapper crash or lost result, retires the VM by
-confirmed deletion; merely stopping it cannot authorize warm reuse.
+Every remote run starts one fresh VM from the qualified image pinned in Eon:
+Boat named snapshot `eon-builds-nix-2-34-7-large-klt8h-v1` (environment
+`eon-builds` version 2, large). It is not configurable; a new image needs its
+own qualification and an Eon release. Before the start, the configured
+environment must be that environment and version, and `boat snapshots` must
+show exactly one row of that name with the pinned snapshot ID and source VM,
+ready. The start uses `--from` that name with captures off. Before anything
+else runs on the VM, it must be active, hold no creator logins, report the
+pinned type, environment and version, still match that row, and hold the
+recipe digest in the root-owned, mode-0444 file `/opt/eon-boat/recipe.sha256`.
+A failed check runs locally with `boat-image-unverified check=NAME` (the
+provider or guest cannot show the image) or `boat-image-mismatch check=NAME`
+(it shows another one). After the start, the VM is deleted first and nothing
+is copied from it; if deletion is unconfirmed, the run stays unknown cleanup.
+Stopped VMs and snapshots are never reused: each VM is stopped for its final
+usage and deleted after its run. `slots.boat.snapshot` is removed; a leftover
+setting loads with a warning and has no effect.
 
 `eon agent slot ls --json` identifies remote holders with `where: "boat"` and
 shows the last Boat receipt. `boat_lease_held` is `true` or `false` when the
@@ -453,7 +458,7 @@ Only a verified trial or active standard `box_20` plan is admitted; wallet,
 packs and nonstandard paid plans cannot bypass the included-credit guard.
 Unknown identity/schema and near-reserve credit choose local before execution;
 after execution may have begun, budget loss/provider stop is unresolved125,
-with no local retry. Each start/resume reads fresh limits. Cleanup always runs.
+with no local retry. Each start reads fresh limits. Cleanup always runs.
 Private records retain `kill_sent`, monotonic `duration_seconds`, VM `usage`,
 and observed `trial_seconds_used` with `trial_usage_reason`. Trial counter
 deltas are account-wide observations, not exact per-VM metering. Unknown/tier
