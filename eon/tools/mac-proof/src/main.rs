@@ -68,8 +68,10 @@ Steps, in order; each has a deadline, and a step whose prerequisite did not pass
               If combined evaluation fails, paths are evaluated individually; checks
               that still fail evaluation run their own build.
   workspace   the Cargo workspace's packages, then test:<package> runs eon-test on each
-              rota-cli is Linux-only: only its verified empty test result is not-applicable;
-              a newly nonempty result or a missing listed package fails, as do all other test failures
+              a listed Linux-only package (agent-jail, rota-cli) is not-applicable only on its
+              verified empty test result; a newly nonempty result, a missing listed package and
+              an unlisted package without tests fail, as do all other test failures. mac-proof's
+              own tests keep the list equal to the gated packages that compile no macOS tests
   session ... stop
               the GUI scenario on the built package; `mac-proof scenario --help` lists
               its steps and what each needs

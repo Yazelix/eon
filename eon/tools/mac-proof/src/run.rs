@@ -18,8 +18,11 @@ const MINUTE: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(3600);
 const SYSTEM: &str = "aarch64-darwin";
 const NATIVE: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
-// These crates gate their library and integration tests with target_os = "linux".
-const LINUX_ONLY_TEST_PACKAGES: &[&str] = &["rota-cli"];
+/// Workspace packages that compile no tests on macOS: each is gated to Linux, and
+/// its verified empty test result is not-applicable. Listing a package removes it
+/// from the macOS proof. The tests in `macos_tests` keep this list equal to the
+/// gated packages without macOS tests, so a new one fails on Linux until listed.
+const LINUX_ONLY_TEST_PACKAGES: &[&str] = &["agent-jail", "rota-cli"];
 /// Names of the processes an Eon run or its tests start.
 const EON_PROCESSES: &[&str] = &[
     "eon",
@@ -306,28 +309,34 @@ fn test_packages(runner: &mut Runner, context: &mut Context) -> std::io::Result<
                     false,
                     true,
                 )?;
-                if LINUX_ONLY_TEST_PACKAGES.contains(&name.as_str()) {
+                let listed = LINUX_ONLY_TEST_PACKAGES.contains(&name.as_str());
+                if listed {
                     check(!status.success(), || {
                         format!("{name} has macOS tests now; remove it from the Linux-only list")
                     })?;
-                    if status.code() == Some(4)
-                        && log
-                            .text()
-                            .map_err(|error| Failure::Check(format!("reading test log: {error}")))?
-                            .lines()
-                            .any(|line| line.trim() == "error: no tests to run")
-                    {
-                        return Err(Failure::NotApplicable(format!(
-                            "{name} is Linux-only; no macOS tests are expected"
-                        )));
-                    }
                 }
                 if status.success() {
-                    Ok(())
-                } else {
-                    Err(Failure::Command(format!(
+                    return Ok(());
+                }
+                let no_tests = status.code() == Some(4)
+                    && log
+                        .text()
+                        .map_err(|error| Failure::Check(format!("reading test log: {error}")))?
+                        .lines()
+                        .any(|line| line.trim() == "error: no tests to run");
+                match (listed, no_tests) {
+                    (true, true) => Err(Failure::NotApplicable(format!(
+                        "{name} is listed Linux-only and compiles no tests on macOS, \
+                         as mac-proof's own tests check"
+                    ))),
+                    (false, true) => Err(Failure::Command(format!(
+                        "eon-test --package {name} exited with {status}: it ran no tests; \
+                         a Linux-only package is gated to Linux and listed in \
+                         mac-proof's LINUX_ONLY_TEST_PACKAGES"
+                    ))),
+                    (_, false) => Err(Failure::Command(format!(
                         "eon-test --package {name} exited with {status}"
-                    )))
+                    ))),
                 }
             },
         )?;
@@ -806,10 +815,16 @@ fn workspace(context: &mut Context, log: &mut Log, deadline: Instant) -> Outcome
         .map_err(|error| Failure::Check(format!("cargo metadata printed no JSON: {error}")))?;
     context.packages = metadata["packages"]
         .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|package| package["name"].as_str().map(str::to_owned))
-        .collect();
+        .ok_or_else(|| Failure::Check("cargo metadata printed no packages array".to_owned()))?
+        .iter()
+        .map(|package| {
+            package["name"].as_str().map(str::to_owned).ok_or_else(|| {
+                Failure::Check(format!(
+                    "cargo metadata listed a package without a name: {package}"
+                ))
+            })
+        })
+        .collect::<Result<_, _>>()?;
     check(!context.packages.is_empty(), || {
         "cargo metadata listed no packages".to_owned()
     })?;
@@ -899,6 +914,9 @@ fn eon_processes(log: &mut Log, deadline: Instant) -> Result<BTreeSet<(String, S
         .map(|process| (process.pid.to_string(), process.command))
         .collect())
 }
+
+#[cfg(test)]
+mod macos_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1043,43 +1061,97 @@ esac
         fs::create_dir_all(&root).unwrap();
         let mut context = stub(&root);
         let no_tests = "error: no tests to run\n";
-        for (index, (listed, rota_exit, rota_output, regular_exit, expected)) in [
-            (true, 4, no_tests, 0, "not-applicable"),
-            (true, 0, "", 0, "fail"),
-            (true, 4, "error: different failure\n", 0, "fail"),
-            (true, 101, no_tests, 0, "fail"),
-            (false, 4, no_tests, 0, "skipped"),
-            (true, 4, no_tests, 4, "not-applicable"),
-        ]
-        .into_iter()
-        .enumerate()
+        let other = "error: different failure\n";
+        let listed = ["agent-jail", "rota-cli"];
+        assert_eq!(LINUX_ONLY_TEST_PACKAGES, listed);
+        // (metadata, listed exit and output, unlisted exit and output,
+        //  listed status, unlisted status, unlisted failure contains the hint)
+        let all = serde_json::json!({"packages": [
+            {"name": "agent-jail"}, {"name": "rota-cli"}, {"name": "plain"}
+        ]});
+        let cases = [
+            (
+                all.clone(),
+                4,
+                no_tests,
+                0,
+                "",
+                "not-applicable",
+                "pass",
+                false,
+            ),
+            (all.clone(), 0, "", 0, "", "fail", "pass", false),
+            (all.clone(), 4, other, 0, "", "fail", "pass", false),
+            (all.clone(), 101, no_tests, 0, "", "fail", "pass", false),
+            (
+                all.clone(),
+                4,
+                no_tests,
+                4,
+                no_tests,
+                "not-applicable",
+                "fail",
+                true,
+            ),
+            (
+                all.clone(),
+                4,
+                no_tests,
+                4,
+                other,
+                "not-applicable",
+                "fail",
+                false,
+            ),
+            (
+                all.clone(),
+                4,
+                no_tests,
+                101,
+                no_tests,
+                "not-applicable",
+                "fail",
+                false,
+            ),
+            (
+                serde_json::json!({"packages": [{"name": "agent-jail"}, {"name": "plain"}]}),
+                4,
+                no_tests,
+                0,
+                "",
+                "absent",
+                "skipped",
+                false,
+            ),
+            (
+                serde_json::json!({"packages": [
+                    {"name": "agent-jail"}, {"name": "rota-cli"}, {"version": "1"}
+                ]}),
+                4,
+                no_tests,
+                0,
+                "",
+                "absent",
+                "skipped",
+                false,
+            ),
+        ];
+        let mut runs = 0;
+        for (
+            index,
+            (metadata, listed_exit, listed_output, exit, output, listed_status, status, hint),
+        ) in cases.into_iter().enumerate()
         {
             let evidence = root.join(index.to_string());
             let mut runner = Runner::new(&evidence, false, MINUTE).unwrap();
-            let names = if listed {
-                vec!["rota-cli", "mac-proof"]
-            } else {
-                vec!["mac-proof"]
-            };
-            fs::write(
-                root.join("metadata.json"),
-                serde_json::json!({"packages": names.iter().map(|name| {
-                    serde_json::json!({"name": name})
-                }).collect::<Vec<_>>()})
-                .to_string(),
-            )
-            .unwrap();
-            for (name, status, output) in [
-                ("rota-cli", rota_exit, rota_output),
-                (
-                    "mac-proof",
-                    regular_exit,
-                    if regular_exit == 0 { "" } else { no_tests },
-                ),
-            ] {
-                fs::write(root.join(format!("{name}.exit")), status.to_string()).unwrap();
-                fs::write(root.join(format!("{name}.output")), output).unwrap();
+            context.packages.clear();
+            fs::write(root.join("metadata.json"), metadata.to_string()).unwrap();
+            for name in listed {
+                fs::write(root.join(format!("{name}.exit")), listed_exit.to_string()).unwrap();
+                fs::write(root.join(format!("{name}.output")), listed_output).unwrap();
             }
+            fs::write(root.join("plain.exit"), exit.to_string()).unwrap();
+            fs::write(root.join("plain.output"), output).unwrap();
             runner
                 .step(&mut context, "source", MINUTE, &[], false, |_, _, _| Ok(()))
                 .unwrap();
@@ -1098,44 +1170,65 @@ esac
             let summary: serde_json::Value =
                 serde_json::from_slice(&fs::read(evidence.join("summary.json")).unwrap()).unwrap();
             let steps = summary["steps"].as_array().unwrap();
-            let step = |name: &str| steps.iter().find(|step| step["name"] == name).unwrap();
+            let step = |name: &str| steps.iter().find(|step| step["name"] == name);
             let logs = evidence_logs(&evidence);
             assert_eq!(passed, index == 0, "case {index}: {logs}");
-            if listed {
-                assert_eq!(step("test:rota-cli")["status"], expected, "{logs}");
-                assert_eq!(step("test:rota-cli")["for_yu"], false);
-                if expected == "not-applicable" {
-                    assert!(
-                        step("test:rota-cli")["first_failure"]
-                            .as_str()
-                            .unwrap()
-                            .contains("Linux-only")
-                    );
-                }
-                assert_eq!(
-                    step("test:mac-proof")["status"],
-                    if regular_exit == 0 { "pass" } else { "fail" },
-                    "{logs}"
-                );
-            } else {
-                assert_eq!(step("workspace")["status"], "fail", "{logs}");
+            if listed_status == "absent" {
+                let workspace = step("workspace").unwrap();
+                assert_eq!(workspace["status"], "fail", "{logs}");
                 assert!(
-                    step("workspace")["first_failure"]
+                    workspace["first_failure"]
                         .as_str()
                         .unwrap()
-                        .contains("rota-cli")
+                        .contains(if index == 7 {
+                            "rota-cli is absent"
+                        } else {
+                            "without a name"
+                        }),
+                    "case {index}: {logs}"
                 );
-                assert_eq!(step("test:mac-proof")["status"], expected);
+                // No package is tested after a failed workspace step.
+                for step in steps {
+                    if step["name"].as_str().unwrap().starts_with("test:") {
+                        assert_eq!(step["status"], status, "case {index}: {logs}");
+                    }
+                }
+                continue;
             }
+            runs += 1;
+            assert_eq!(step("workspace").unwrap()["status"], "pass", "{logs}");
+            for name in listed {
+                let step = step(&format!("test:{name}")).unwrap();
+                assert_eq!(step["status"], listed_status, "case {index}: {logs}");
+                assert_eq!(step["for_yu"], false);
+                if listed_status == "not-applicable" {
+                    assert!(
+                        step["first_failure"]
+                            .as_str()
+                            .unwrap()
+                            .contains("listed Linux-only")
+                    );
+                }
+            }
+            let plain = step("test:plain").unwrap();
+            assert_eq!(plain["status"], status, "case {index}: {logs}");
+            assert_eq!(
+                logs.contains("listed in mac-proof's LINUX_ONLY_TEST_PACKAGES"),
+                hint,
+                "case {index}: {logs}"
+            );
         }
         let calls = fs::read_to_string(root.join("calls")).unwrap();
-        assert_eq!(
-            calls
-                .lines()
-                .filter(|line| line.ends_with("eon-test --package rota-cli"))
-                .count(),
-            5
-        );
+        for name in ["agent-jail", "rota-cli", "plain"] {
+            assert_eq!(
+                calls
+                    .lines()
+                    .filter(|line| line.ends_with(&format!("eon-test --package {name}")))
+                    .count(),
+                runs,
+                "{name}"
+            );
+        }
         assert!(!calls.contains("--no-tests"));
         fs::remove_dir_all(root).unwrap();
     }

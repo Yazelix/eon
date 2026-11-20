@@ -211,13 +211,19 @@ shared inputs once in `check-inputs`. It then builds each check, skipping
 checks whose inputs failed (or whose input status is unknown). If combined
 derivation evaluation fails, paths are evaluated individually; checks that
 still fail evaluation run their own build. It runs `eon-test` once per
-workspace package, including compilation of `rota-cli`'s Darwin stub and test
-targets. Only the explicitly listed Linux-only `rota-cli` may report
+workspace package, including compilation of the Linux-only packages' Darwin
+stubs and test targets. Only packages listed in mac-proof's
+`LINUX_ONLY_TEST_PACKAGES` (`agent-jail`, `rota-cli`) may report
 `not-applicable`, and only on exit 4 with nextest's `no tests to run` diagnostic.
-If it gains macOS tests, or its name disappears from workspace metadata, the
-run fails so the exclusion must be removed. An unlisted package with no tests
-still fails. Not-applicable has a recorded reason, permits a passing verdict,
-leaves no check for Yu, and does not satisfy another step's prerequisite.
+If a listed package gains macOS tests, or its name disappears from workspace
+metadata, the run fails so the exclusion must be removed. An unlisted package
+with no tests still fails. mac-proof's own tests, which run on Linux too, read
+every workspace package's source and require the list to equal the packages
+that are gated with `#![cfg(target_os = "linux")]` and compile no tests on
+macOS, so a new Linux-only package fails there until it is listed. Listing a
+package removes it from the macOS proof. Not-applicable has a recorded reason,
+permits a passing verdict, leaves no check for Yu, and does not satisfy another
+step's prerequisite.
 Each step has its own deadline, log and status. `--rev`
 picks another commit, `--timeout` is the run's time limit on the Mac (12
 hours by default; `remote` waits 30 minutes more) and `--dry-run` runs only

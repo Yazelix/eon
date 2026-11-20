@@ -621,7 +621,7 @@ mod tests {
     fn a_checked_platform_exclusion_is_not_left_for_yu_or_a_passed_dependency() {
         let evidence = scratch("platform-exclusion");
         let mut runner = Runner::new(&evidence, false, Duration::from_secs(60)).unwrap();
-        let reason = "rota-cli is Linux-only; no macOS tests are expected";
+        let reason = "a listed Linux-only package compiles no tests on macOS";
         runner
             .step(&mut (), "test:rota-cli", POLL, &[], false, |_, log, _| {
                 log.line("before snapshot");
