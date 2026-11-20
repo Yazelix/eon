@@ -345,11 +345,7 @@ fn validate_management_identity(
     let runtime = presentation
         .parent()
         .ok_or_else(|| "terminal presentation endpoint has no parent".to_string())?;
-    let expected_presentation = match number {
-        1 => presentation == runtime.join("orbit.sock"),
-        number => presentation == runtime.join(format!("terminal-{number}.sock")),
-    };
-    if !expected_presentation {
+    if presentation != super::workspace::terminal_endpoint(runtime, number) {
         return Err(format!(
             "terminal identity {} uses unexpected presentation endpoint {}",
             identity.session_id,
@@ -2623,6 +2619,8 @@ pub(super) fn stop_managed_sessions(
     }
 }
 
+mod checkpoint;
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
@@ -2736,11 +2734,7 @@ pub(crate) mod tests {
 
     /// A real validated socket peer whose first Stop fails and whose old EOF is delayed.
     pub(crate) fn lease_race_host(root: &Path, number: usize, case: &'static str) -> LeaseRaceHost {
-        let endpoint = root.join(if number == 1 {
-            "orbit.sock".into()
-        } else {
-            format!("terminal-{number}.sock")
-        });
+        let endpoint = crate::workspace::terminal_endpoint(root, number);
         let management_path = super::artifact_path(&endpoint, ".management");
         let presentation = UnixListener::bind(&endpoint).unwrap();
         let listener = UnixListener::bind(&management_path).unwrap();
@@ -3853,7 +3847,7 @@ pub(crate) mod tests {
         number: usize,
         reason: TerminationReason,
     ) -> (RunningSession, UnixStream, Tombstone) {
-        let endpoint = root.join(format!("terminal-{number}.sock"));
+        let endpoint = crate::workspace::terminal_endpoint(root, number);
         let identity = LiveIdentity {
             session_id: format!("terminal-{number}"),
             run_id: format!("run-{number}"),
@@ -4324,6 +4318,11 @@ pub(crate) mod tests {
     /// Marks a run ended before the supervisor reaps it.
     pub(crate) fn finish(session: &mut RunningSession) {
         session.finished = Some(super::SessionEnd::OwnerLost(None));
+    }
+
+    /// Makes the row another run of its terminal, at the same endpoint.
+    pub(crate) fn rerun(session: &mut RunningSession, run: &str) {
+        session.identity.run_id = run.into();
     }
 
     /// Shuts the lease's read side, so the Runtime reads it as closed.

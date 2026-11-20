@@ -1,6 +1,6 @@
 //! Shared EONR v1 topology; bytes grant no process, filesystem or registry authority.
-// Preparatory owner for recovery and Update; its tests consume the codec until
-// eon-vwe03 (adapters) and eon-t3fyd.6 (S3b) call it.
+// Preparatory owner for recovery and Update; its tests and the owner adapters'
+// tests consume the codec until eon-t3fyd.6 (S3b) calls it.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use eon_workspace_protocol::v47::{
@@ -119,6 +119,10 @@ pub(super) enum Error {
         floor: u16,
         current: u16,
     },
+    /// Capture refused: the live state is not one an Update carries.
+    Unsettled(&'static str),
+    /// Restore refused before anything changed.
+    Unrestorable(&'static str),
 }
 
 impl std::fmt::Display for Error {
@@ -143,13 +147,15 @@ impl std::fmt::Display for Error {
                 "unsupported Update checkpoint schema {found}: this build accepts schemas \
                  {floor} through {current}; move the window's sessions to a new window by hand"
             ),
+            Self::Unsettled(what) => write!(f, "cannot checkpoint: {what}"),
+            Self::Unrestorable(what) => write!(f, "cannot restore checkpoint: {what}"),
         }
     }
 }
 
 impl std::error::Error for Error {}
 
-type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 impl Header {
     fn validate(&self) -> Result<()> {
@@ -365,7 +371,7 @@ fn text(field: &'static str, value: &str, maximum: usize) -> Result<()> {
     Ok(())
 }
 
-fn path(field: &'static str, bytes: &[u8]) -> Result<()> {
+pub(crate) fn path(field: &'static str, bytes: &[u8]) -> Result<()> {
     if !bytes.starts_with(b"/") || bytes.len() > MAX_DIRECTORY_BYTES || bytes.contains(&0) {
         return Err(Error::Invalid(field));
     }
@@ -713,7 +719,7 @@ impl<'a> Decoder<'a> {
     }
 }
 
-mod update;
+pub(crate) mod update;
 
 #[cfg(test)]
 mod tests;

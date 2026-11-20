@@ -5,7 +5,7 @@ use orbit_protocol::management::{ProgramKind, ProgramState};
 /// The first local number of identity range 3.
 const F: u64 = 3 * RANGE_IDS + 1;
 
-fn header() -> Header {
+pub(crate) fn header() -> Header {
     Header {
         namespace: "/r".into(),
         generation: format!("g1-{}", "1".repeat(32)),
@@ -52,7 +52,7 @@ fn popup(n: u64, entry: &str, label: &str, terminal: u64) -> Popup {
     }
 }
 
-fn record(created: u64, state: ProgramState) -> ProgramRecord {
+pub(crate) fn record(created: u64, state: ProgramState) -> ProgramRecord {
     ProgramRecord {
         id: if created == 1 {
             String::new()
@@ -819,8 +819,9 @@ fn update_transients_exist_only_while_shown() {
         u.tab_extras[0].selected_popup = Some(id("u", 0));
         u.tab_extras[0].covered_popup = None;
     });
-    red(invalid("hidden transient"), |_, u| {
-        // A second transient beside the shown one.
+    red(invalid("hidden transient"), |c, u| {
+        // A second transient beside the shown one, with its terminal extra,
+        // so only the shown-transient rule refuses it.
         u.allocator.next_popup = F + 6;
         let tab = &mut u.tab_extras[0];
         tab.extra_popups.push(ExtraPopup {
@@ -828,6 +829,20 @@ fn update_transients_exist_only_while_shown() {
             popup: popup(5, "lazygit", "LazyGit", 7),
         });
         tab.popup_order.push(id("u", 5));
+        let at = u
+            .slots(c)
+            .unwrap()
+            .iter()
+            .position(|slot| slot.run.terminal_id == "terminal-7")
+            .unwrap();
+        u.terminal_extras.insert(
+            at,
+            TerminalExtra {
+                terminal: "terminal-7".into(),
+                default_shell: false,
+                named: None,
+            },
+        );
     });
 }
 

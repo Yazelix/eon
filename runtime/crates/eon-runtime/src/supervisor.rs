@@ -1299,7 +1299,7 @@ fn supervise(
         Some(registration) => format!("{detail}; registered persistent_id={}", registration.id),
         None => detail,
     };
-    let initial_endpoint = runtime.join("orbit.sock");
+    let initial_endpoint = workspace::terminal_endpoint(runtime, 1);
     let initial_session_id = "terminal-1";
     let presentation_socket = if mode == LaunchMode::Workspace {
         runtime.join("eon.sock")
@@ -6095,7 +6095,10 @@ mod tests {
         let mut store = Snapshots::new(&runtime);
         let session = |id: &str| Session {
             id: id.into(),
-            endpoint: runtime.join(format!("{id}.sock")),
+            endpoint: crate::workspace::terminal_endpoint(
+                &runtime,
+                id.strip_prefix("terminal-").unwrap().parse().unwrap(),
+            ),
         };
         let start = |file: &Path, id: &str| SessionOperation::Start {
             session: session(id),

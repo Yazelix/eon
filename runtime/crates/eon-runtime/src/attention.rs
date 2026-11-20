@@ -1153,6 +1153,8 @@ impl Attention {
     }
 }
 
+pub(crate) mod checkpoint;
+
 #[cfg(test)]
 mod tests {
     use super::*;

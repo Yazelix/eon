@@ -37,14 +37,14 @@ use orbit_protocol::management::{
 };
 use std::collections::{HashMap, HashSet};
 
-pub(super) const SECTION: &str = "update";
+pub(crate) const SECTION: &str = "update";
 /// The carried-state schema this build writes.
-pub(super) const SCHEMA: u16 = 1;
+pub(crate) const SCHEMA: u16 = 1;
 /// The oldest schema this build admits: the preceding release's.
-pub(super) const SCHEMA_FLOOR: u16 = 1;
+pub(crate) const SCHEMA_FLOOR: u16 = 1;
 /// No age or due distance exceeds about 146 years, so a restore adding the
 /// elapsed gap cannot overflow u64 nanoseconds.
-pub(super) const MAX_STAMP_NS: u64 = 1 << 62;
+pub(crate) const MAX_STAMP_NS: u64 = 1 << 62;
 const RANGE_IDS: u64 = IDS_PER_SUPERVISOR as u64;
 const MAX_TAB_EXTRAS: usize = MAX_WORKSPACES * MAX_TABS;
 
@@ -58,13 +58,13 @@ const _: () = {
 
 /// The independently held identity an Update target expects.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Scope {
+pub(crate) struct Scope {
     pub header: Header,
     pub range: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Update {
+pub(crate) struct Update {
     pub captured_monotonic_ns: u64,
     pub allocator: Allocator,
     pub registry_available: bool,
@@ -80,7 +80,7 @@ pub(super) struct Update {
 /// `next_session` is Runtime's `next_workspace`; `next_terminal` its
 /// `next_session`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Allocator {
+pub(crate) struct Allocator {
     pub range: u64,
     pub next_session: u64,
     pub next_tab: u64,
@@ -91,20 +91,20 @@ pub(super) struct Allocator {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct SessionExtra {
+pub(crate) struct SessionExtra {
     pub session: String,
     pub home: Option<Vec<u8>>,
     pub registration_error: Option<RegistrationError>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct RegistrationError {
+pub(crate) struct RegistrationError {
     pub code: String,
     pub detail: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TabExtra {
+pub(crate) struct TabExtra {
     pub tab: String,
     pub pending: bool,
     /// Every popup of the tab, core and extension, in the tab's order.
@@ -116,19 +116,19 @@ pub(super) struct TabExtra {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ExtraPopup {
+pub(crate) struct ExtraPopup {
     pub role: Role,
     pub popup: Popup,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Role {
+pub(crate) enum Role {
     Transient,
     PendingPair,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TerminalExtra {
+pub(crate) struct TerminalExtra {
     pub terminal: String,
     pub default_shell: bool,
     pub named: Option<Named>,
@@ -137,13 +137,13 @@ pub(super) struct TerminalExtra {
 /// An acknowledged `AttachAllow` name; `process_start` is an opaque same-boot
 /// token from the platform owner, never reinterpreted here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Named {
+pub(crate) struct Named {
     pub process_id: u32,
     pub process_start: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Attention {
+pub(crate) struct Attention {
     pub terminals: Vec<AttentionTerminal>,
     pub recovered: Vec<Recovered>,
     pub next_poll_due_ns: u64,
@@ -153,13 +153,13 @@ pub(super) struct Attention {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Recovered {
+pub(crate) struct Recovered {
     pub run_id: String,
     pub baseline: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct AttentionTerminal {
+pub(crate) struct AttentionTerminal {
     pub terminal: String,
     pub run_id: String,
     pub update: u64,
@@ -174,7 +174,7 @@ pub(super) struct AttentionTerminal {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct AttentionRecord {
+pub(crate) struct AttentionRecord {
     pub record: ProgramRecord,
     pub changed_age_ns: u64,
     pub raise: Option<Raise>,
@@ -182,7 +182,7 @@ pub(super) struct AttentionRecord {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Raise {
+pub(crate) struct Raise {
     pub age_ns: u64,
     pub changed: u64,
     pub seen: bool,
@@ -191,7 +191,7 @@ pub(super) struct Raise {
 
 /// Encodes a complete Update checkpoint: the core, the required `update`
 /// section, then `optional` sections, which must not be required or `update`.
-pub(super) fn encode(
+pub(crate) fn encode(
     header: Header,
     core: Core,
     update: &Update,
@@ -222,7 +222,7 @@ pub(super) fn encode(
 
 /// Decodes and validates a complete Update checkpoint for `scope`, admitting
 /// every schema in the release window.
-pub(super) fn decode(bytes: &[u8], scope: &Scope) -> Result<(Checkpoint, Update)> {
+pub(crate) fn decode(bytes: &[u8], scope: &Scope) -> Result<(Checkpoint, Update)> {
     let checkpoint = Checkpoint::decode(bytes, &scope.header, &[SECTION])?;
     let mut sections = checkpoint
         .sections
@@ -257,15 +257,47 @@ impl Allocator {
 }
 
 /// One pane or popup terminal, core or extension, in window order.
-struct Slot<'a> {
-    run: &'a Run,
-    pending: bool,
+pub(crate) struct Slot<'a> {
+    pub run: &'a Run,
+    /// Its tab is pending (only the tab's Files pair).
+    pub pending: bool,
 }
 
 impl Update {
+    /// Every slot of the window in its one order: session by session, tab by
+    /// tab, each tab's panes column by column, then its popups in
+    /// `popup_order`. Terminal extras follow this order.
+    pub(crate) fn slots<'a>(&'a self, core: &'a Core) -> Result<Vec<Slot<'a>>> {
+        let tabs = core.sessions.iter().flat_map(|session| &session.tabs);
+        let mut slots = Vec::new();
+        for (tab, extra) in tabs.zip(&self.tab_extras) {
+            if extra.tab != tab.id {
+                return Err(Error::Invalid("tab extras"));
+            }
+            let pending = extra.pending;
+            for pane in tab.columns.iter().flat_map(|column| &column.panes) {
+                slots.push(Slot {
+                    run: &pane.run,
+                    pending,
+                });
+            }
+            for id in &extra.popup_order {
+                let run = tab
+                    .popups
+                    .iter()
+                    .chain(extra.extra_popups.iter().map(|extra| &extra.popup))
+                    .find(|popup| &popup.id == id)
+                    .map(|popup| &popup.run)
+                    .ok_or(Error::Invalid("popup order"))?;
+                slots.push(Slot { run, pending });
+            }
+        }
+        Ok(slots)
+    }
+
     /// Every rule beyond the core's, over the combined model. `core` must
     /// already be valid.
-    pub(super) fn validate(&self, core: &Core) -> Result<()> {
+    pub(crate) fn validate(&self, core: &Core) -> Result<()> {
         let high_water = core.terminal_id_high_water;
         let allocator = &self.allocator;
         let (first, limit) = allocator.bounds()?;
@@ -343,7 +375,6 @@ impl Update {
             }
         }
 
-        let mut slots = Vec::new();
         let tabs = core.sessions.iter().flat_map(|session| &session.tabs);
         for (tab, extra) in tabs.zip(&self.tab_extras) {
             if extra.tab != tab.id {
@@ -375,26 +406,9 @@ impl Update {
             validate_pending(tab, extra)?;
             validate_popup_order(&tab.popups, extra)?;
             validate_selection(&tab.popups, extra, tab.selected_popup.as_deref())?;
-
-            let pending = extra.pending;
-            for pane in tab.columns.iter().flat_map(|column| &column.panes) {
-                slots.push(Slot {
-                    run: &pane.run,
-                    pending,
-                });
-            }
-            for id in &extra.popup_order {
-                let run = tab
-                    .popups
-                    .iter()
-                    .chain(extra.extra_popups.iter().map(|extra| &extra.popup))
-                    .find(|popup| &popup.id == id)
-                    .map(|popup| &popup.run)
-                    .ok_or(Error::Invalid("popup order"))?;
-                slots.push(Slot { run, pending });
-            }
         }
 
+        let slots = self.slots(core)?;
         let mut runs = HashSet::new();
         for slot in &slots {
             if slot.run.kind != RunKind::Confirmed {
@@ -932,5 +946,7 @@ fn stamp(value: u64) -> Result<()> {
     Ok(())
 }
 
+pub(crate) mod model;
+
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

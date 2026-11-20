@@ -190,11 +190,7 @@ impl IdAllocator {
         let number = self.pane_number();
         Session {
             id: format!("terminal-{number}"),
-            endpoint: self.runtime.join(if number == 1 {
-                "orbit.sock".into()
-            } else {
-                format!("terminal-{number}.sock")
-            }),
+            endpoint: terminal_endpoint(&self.runtime, number),
         }
     }
 
@@ -213,10 +209,21 @@ impl IdAllocator {
             self.next_session = 2;
             self.first_reserved = true;
         }
-        let id = format!("terminal-{}", self.next_session);
-        let endpoint = self.runtime.join(format!("{id}.sock"));
-        Session { id, endpoint }
+        Session {
+            id: format!("terminal-{}", self.next_session),
+            endpoint: terminal_endpoint(&self.runtime, self.next_session),
+        }
     }
+}
+
+/// The presentation endpoint of `terminal-N` under `runtime`: terminal-1, the
+/// window's first terminal, serves `orbit.sock`.
+pub(crate) fn terminal_endpoint(runtime: &Path, number: usize) -> PathBuf {
+    runtime.join(if number == 1 {
+        "orbit.sock".into()
+    } else {
+        format!("terminal-{number}.sock")
+    })
 }
 
 /// Supervisor-wide admission, identities and replay protection; topology stays local.
@@ -4696,8 +4703,10 @@ pub(crate) fn keys_human(
     output
 }
 
+pub(crate) mod checkpoint;
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     fn wire_snapshot(mut snapshot: Snapshot) -> Snapshot {
         snapshot.generation = "g1-00000000000000000000000000000001".into();
         snapshot.created_build = snapshot.generation.clone();
@@ -4707,7 +4716,7 @@ mod tests {
     use super::*;
 
     /// A default pane in the caller's or the active tab.
-    fn new_pane(focus: bool) -> Action {
+    pub(crate) fn new_pane(focus: bool) -> Action {
         Action::CreatePane {
             tab: None,
             argv: Vec::new(),
@@ -5217,7 +5226,7 @@ mod tests {
         set
     }
 
-    fn invoke(tab: &str, entry: &str) -> Action {
+    pub(crate) fn invoke(tab: &str, entry: &str) -> Action {
         Action::InvokePopup {
             tab: tab.into(),
             entry: entry.into(),
@@ -6896,7 +6905,7 @@ mod tests {
                         number,
                         Session {
                             id: format!("terminal-{number}"),
-                            endpoint: format!("/runtime/terminal-{number}.sock").into(),
+                            endpoint: terminal_endpoint(Path::new("/runtime"), number),
                         },
                     )
                 })
@@ -8544,7 +8553,7 @@ mod tests {
         assert_eq!(set, before);
     }
 
-    fn catalog() -> PopupCatalog {
+    pub(crate) fn catalog() -> PopupCatalog {
         PopupCatalog {
             geometry: PopupGeometry {
                 side_margin: 8.0,
@@ -8609,7 +8618,7 @@ mod tests {
         }
     }
 
-    fn prepared(command: &PopupCommand, _: &Path) -> Result<PreparedCommand, String> {
+    pub(crate) fn prepared(command: &PopupCommand, _: &Path) -> Result<PreparedCommand, String> {
         let argv = match command {
             PopupCommand::Argv(argv) => argv.clone(),
             PopupCommand::Editor => vec!["editor".into()],
