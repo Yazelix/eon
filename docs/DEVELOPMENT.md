@@ -185,13 +185,14 @@ while the extra leg's duration and disk use are measured. Both jobs retain a
 `ORBIT_BIN`, so a failing package dependency cannot block test collection. It
 runs release-profile ordinary workspace executable tests through `eon-test`
 and nextest without fail-fast, then workspace doctests without fail-fast,
-then ignored tests from only `eon` and `eon-runtime`, one at a time. Later
+then ignored tests from `eon` and `eon-runtime`, then Orbit's Darwin clippy,
+then Orbit's ignored `real_pty` checks, each ignored set one at a time. Later
 phases still run after a test failure; any failed phase keeps the job failed.
 Read each collection step's log for its failure list and summary. The package
 job's log remains the authority for its packaged release configuration.
 
-This does not enable Orbit's ignored `real_pty` checks, ignored display or
-host-facility tests elsewhere in the workspace, or the Linux-only installer.
+This does not enable ignored display or host-facility tests elsewhere in the
+workspace, or the Linux-only installer.
 Darwin `eon-test` provides private HOME, TMPDIR and runtime directories and
 refuses a running Eon supervisor, but shares the runner's host processes,
 network and files; it does not provide Linux namespace isolation. A build

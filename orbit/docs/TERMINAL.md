@@ -14,9 +14,9 @@ A Rust host owns the PTY, libghostty and the sockets and asks a Bend worker for
 every decision ([HOST.md](HOST.md)); [BEHAVIOR.md](BEHAVIOR.md) states the
 behavior claim by claim with its checks. The ordinary and managed server is
 proved on x86_64 Linux, covering PTY spawn, input, resize, reconnect, socket
-permissions, EOF, HUP shutdown, and management Stop; [ORB-C14](CONTRACTS.md)
-records Apple Silicon macOS. Venus, Eon, Nix packaging, signing, and
-distribution have not adopted macOS.
+permissions, EOF, HUP shutdown, and management Stop, and on Apple Silicon
+macOS under [ORB-C14](CONTRACTS.md). Venus and Eon record their own macOS
+status under VEN-C16 and EON-C7.
 
 ### Scrollback and wire versions
 

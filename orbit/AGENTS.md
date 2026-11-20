@@ -66,9 +66,9 @@ it beside its result.
 
 ## Platform seam
 
-x86_64 Linux is proved. `ORB-C14`'s native `aarch64-darwin` proof predates the
-Bend host and worker, so this tree's macOS proof is a recorded gap (`EON-C7`);
-Venus and Eon have not adopted macOS. Keep PTY creation, process
+Orbit runs on x86_64 Linux and, under `ORB-C14`, on Apple Silicon macOS;
+`ORB-C14` records the native proof and its open items, and `VEN-C16` and
+`EON-C7` record Venus's and Eon's macOS status. Keep PTY creation, process
 groups, signals, polling, file-descriptor flags, socket paths and permissions,
 and platform-specific EOF or error behavior behind one narrow seam. Keep Darwin
 mechanics to what `ORB-C14` requires; add no generic portability framework,

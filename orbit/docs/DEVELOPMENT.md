@@ -48,11 +48,15 @@ Native input-to-visible response remains `eon-bench response`.
 
 ## CI
 
-No hosted workflow runs these checks. Orbit's former Ubuntu and manual Apple
-Silicon jobs were not carried into the consolidated repository; re-homing them
-is a separate `AP-CI-001` decision. The root
-[Cachix workflow](../../.github/workflows/cachix.yml) builds and publishes the
-Linux Nix packages only.
+Hosted workflows belong to the repository root. Pull-request checks run
+`git diff --check` and build `orbit-laws`, `orbit-boundary` and
+`orbit-terminfo-darwin` on Linux. On Apple Silicon runners,
+[darwin-build.yml](../../.github/workflows/darwin-build.yml) builds the
+package and, on manual dispatch, runs Orbit's tests, Darwin clippy and
+real-PTY tests, and [mac-proof.yml](../../.github/workflows/mac-proof.yml) runs the
+[macOS proof harness](../../docs/DEVELOPMENT.md#macos-proof-harness).
+[DISTRIBUTION.md](../../docs/DISTRIBUTION.md#optional-binary-cache) describes
+the Linux and Darwin cache workflows.
 
 ## Governance check
 

@@ -719,14 +719,20 @@ PTY pixel size rule needs no wire change.
         covers styles 0–5, both RGB separator forms and style/colour resets.
       - Isolated native Helix/Neovim diagnostic captures for installed proof,
         as `eon-khndw` records.
-- **Open proof:** The macOS clause has no native run. From Linux,
+- **Open proof:** The macOS clause has one native read, outside this
+  contract's accepted proof: ORB-C14's `mac-proof final` at `0e47d26`
+  (`eon-mac-launch-kz4p.12`) ran the system's `/usr/bin/infocmp eon` and
+  `TERM=eon /usr/bin/tput clear` with an empty `HOME`. With only the package's
+  `share/terminfo` on `TERMINFO_DIRS`, `infocmp` printed the entry and
+  `tput clear` matched `xterm-256color`'s; without it, `infocmp` found no
+  `eon`. That entry predates `orbit/terminfo/eon-darwin.terminfo`
+  (`eon-khndw`), which keeps its content and build. From Linux,
   `orbit-terminfo-darwin` (`eon-mac-launch-kz4p.20`) builds the macOS entry and
   checks that it starts with the legacy magic 0432, fits the legacy reader's
   4096 bytes, is reachable as `e/eon` and `65/eon`, and differs from the Linux
-  entry only in `pairs` and the Linux-only `Smulx`/`Setulc` extensions. The
-  macOS harness (`eon-mac-launch-kz4p.8`) is to run
-  the system's `/usr/bin/infocmp eon` and `TERM=eon /usr/bin/tput clear` with
-  an empty `HOME` and only the package's `share/terminfo` on `TERMINFO_DIRS`.
+  entry only in `pairs` and the Linux-only `Smulx`/`Setulc` extensions.
+  Programs other than `infocmp` and `tput`, such as `/bin/zsh` and `less`,
+  have no native check.
 
 ## ORB-C11 — Ordered terminal-authored clipboard writes
 
@@ -1131,7 +1137,8 @@ PTY pixel size rule needs no wire change.
     Orbit holds no records. It is a neutral terminal fact, like the terminal
     title: Orbit gives it no status meaning. A process that leaves the tree,
     such as a double fork that init adopts, is not counted. Linux reads
-    `/proc`; macOS uses libproc, unproved until ORB-C14's native proof.
+    `/proc`; macOS uses libproc, which ORB-C14's native proof at `0e47d26`
+    ran through `orbit-program-status`.
     Each reply also identifies the counted processes by PID and kernel
     process-start identity, in the same sample and under the same 512-process
     walk and 255-count bounds. It carries at most 16 distinct identities and
@@ -1154,7 +1161,8 @@ PTY pixel size rule needs no wire change.
     holds records. It is a neutral terminal fact, like the terminal title and
     the background count: Orbit gives it no status meaning, and Eon decides
     what it means (EON-C11). It uses the same POSIX `tcgetpgrp` on Linux and
-    macOS; macOS is unproved until ORB-C14's native proof.
+    macOS; ORB-C14's accepted native proof at `0e47d26` predates the
+    foreground.
   - **Lifetime.** Orbit removes `working` and `blocked` records on any of
     these:
     - the child exits, which ends the run and every record with it;
@@ -1778,5 +1786,5 @@ and native, web, or mobile clients. Eon owns product workspace topology and
 policy. Multiple sessions, windows, tabs, splits, restart recovery, remote
 transport, web, mobile, and multiplayer are not initial Orbit contracts and
 receive no IDs until the user authorizes their implementation scope. ORB-C14 is
-the sole authorized platform expansion; it covers Orbit alone, and Venus and
-Eon have not adopted macOS.
+the sole authorized platform expansion and covers Orbit alone; Venus and Eon
+record their own macOS status under VEN-C16 and EON-C7.

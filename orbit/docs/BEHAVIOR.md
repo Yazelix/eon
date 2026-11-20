@@ -133,7 +133,8 @@ The Darwin terminfo check builds the macOS entry on Linux and finds the legacy
 magic 0432, at most 4096 bytes, the same file at `65/eon`, and, from
 `infocmp`, no difference from the Linux entry but `pairs` and the Linux-only
 underline extensions. Without the cap,
-the check failed. No native macOS run has read it yet.
+the check failed. ORB-C14's native proof at `0e47d26` read the entry with
+macOS's own `infocmp` and `tput` (ORB-C10).
 
 Orbit starts with grapheme clustering (DEC mode 2027) on, and a full reset
 keeps it on. An emoji modifier, flag or ZWJ sequence occupies one wide cell
@@ -1212,9 +1213,9 @@ that bound leaves room for. On Linux it reads one children list per thread
 of each walked process, so a sample costs walked processes times their
 threads in file reads, on the host loop. It reads the stat fields after the
 process name as bytes, since a name the kernel cut mid-character is not
-UTF-8. The macOS path compiles in a scratch crate against `libc` for
-`aarch64-apple-darwin` (recorded on `eon-agent-background-work-yte0.1`) and
-is otherwise unproved (ORB-C14). Management v8 also carries up to 16 counted
+UTF-8. ORB-C14's native proof at `0e47d26` ran the macOS walk through
+`orbit-program-status` on Apple Silicon; the identities below and the
+foreground postdate it. Management v8 also carries up to 16 counted
 PID/start identities, their completeness flag, and the optional foreground
 group leader identity. Missing identities, a seventeenth identity or either
 walk/count bound makes the list incomplete; it never changes the raw count.
@@ -1257,7 +1258,8 @@ The real-PTY program-status check reads the records through a
   stays a zombie; after the second and its child have run for 1.1 s the
   reply counts 2, so the zombie neither counts nor hides its live sibling or
   the sibling's child, and once those exit too it counts 0. The check is
-  built for Linux and macOS and has run only on Linux. On macOS, XNU's source
+  built for Linux and macOS and passed natively on Apple Silicon in ORB-C14's
+  proof at `0e47d26`. On macOS, XNU's source
   (xnu-12377.1.9, read on `eon-mac-launch-kz4p.2`) has `proc_pidinfo` with a
   zero argument, as the walk calls it, return no record for a zombie, so the
   walk skips it, and has `proc_listchildpids` list a zombie after its live
@@ -1907,18 +1909,15 @@ behind these lives in the host's platform seam,
 [src/platform.rs](../src/platform.rs).
 [build.rs](../build.rs) passes `-Wl,-z,noexecstack` to clang only on Linux.
 
-No macOS proof covers this tree. The last native run was in the bend-orbit
-repository at revision b017e4f0, on a Scaleway Mac mini M2 (16 GiB) with macOS
-26.7.1 (25G241), built natively with Rust 1.95.0, zig 0.15.2 and bun 1.3.13.
-There every real-PTY check passed through `cargo test`, 36 of 36, the Rust
-unit tests passed, 24 of 24, `PROOF.bend` printed `ALL PROOFS CHECK`, and
-`tests/lifecycle.rs`, with its binary lookup redirected, passed 15
-of 15; its other three tests are `cfg(target_os = "linux")`. The imported code
-differs from b017e4f0 in its names, its schema digest, its worker lookup and
-its `orbit-protocol` path dependency, so that run is evidence about the
-design, not a proof of this revision. zig 0.15 cannot link against the macOS
-26 SDK, whose `libSystem` stubs list `arm64e` but not `arm64`; that run
-answered `xcrun --show-sdk-path` with the Command Line Tools' 15.4 SDK.
+ORB-C14's accepted native proof is `mac-proof final` at `0e47d26`, on an
+Apple M2 Mac mini with macOS 27.2, every `checks.aarch64-darwin` output
+built on that Mac. At that revision `orbit-laws` passed; the 49 real-PTY
+checks its macOS build compiled, all but `orbit-unreaped-stop`, passed; and
+native `cargo test` passed `yazelix-orbit`'s 55 unit tests and 15 of
+`tests/lifecycle.rs`'s tests.
+[ORB-C14](CONTRACTS.md) holds the environment, the earlier runs of the
+previous Rust server and of bend-orbit, and the open items; changes after
+`0e47d26` are outside that proof.
 
 The real-PTY checks find processes with `pgrep` and `ps` and read `/proc` only
 on Linux, using `lsof` elsewhere. macOS applies no read timeout to a peek and

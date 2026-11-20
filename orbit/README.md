@@ -18,8 +18,9 @@ every answer as a pure step whose laws [PROOF.bend](PROOF.bend) proves
 
 ## Run locally
 
-Orbit's server is proved on x86_64 Linux; [ORB-C14](docs/CONTRACTS.md) records
-Apple Silicon macOS. The composed Eon product remains Linux-only. Inside
+Orbit's server is proved on x86_64 Linux and, under
+[ORB-C14](docs/CONTRACTS.md), Apple Silicon macOS. Eon's own platform
+support is in its [README](../README.md#status-and-limits). Inside
 `nix develop`, which supplies the Bend compiler, bun and clang that build the
 worker:
 

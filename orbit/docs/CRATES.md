@@ -23,7 +23,7 @@ dependency gate, and Beads retain the full candidate evidence.
   crates.io release that builds Ghostty `8c425a7bd`; replacement by `rio-vt`.
   Lucca chose to stay on `libghostty-vt` (2026-10-29, `eon-j0md`); report:
   `~/pjs/refs/vt-core-research-2026-10/report.md`. Revisit if (1) Zig or libghostty fails
-  to build on x86_64 Linux, aarch64-darwin when EON-C7 resumes, or the Nix-free build, and
+  to build on x86_64 Linux, aarch64-darwin, or the Nix-free build, and
   no Nix-level fix resolves it within one session; (2) a Rust engine shows near-parity: a
   published esctest2 tally at or above libghostty-vt's on a comparable harness, headless
   Kitty placements, key/mouse encoders, and OSC 7501 or a hook for Orbit to own it; (3)
@@ -69,10 +69,10 @@ dependency gate, and Beads retain the full candidate evidence.
   worker dup2, signal handlers/errno, peer credentials,
   Darwin foreground groups and process information, and errno names; the host's opt-in trace uses rustix's
   monotonic clock. Fork-hook registration uses std's `CommandExt::pre_exec`.
-- **Status:** Selected for ordinary and managed Sessions on x86_64 Linux,
-  with the proof status of [ORB-C1](CONTRACTS.md) and [ORB-C13](CONTRACTS.md);
-  the old Orbit's own `src/platform.rs` seam was also proved on Apple Silicon macOS,
-  and [ORB-C14](CONTRACTS.md) records this host's macOS status
+- **Status:** Selected for ordinary and managed Sessions on x86_64 Linux and
+  Apple Silicon macOS, with the proof status of [ORB-C1](CONTRACTS.md),
+  [ORB-C13](CONTRACTS.md) and [ORB-C14](CONTRACTS.md); ORB-C14's accepted
+  native proof at `0e47d26` ran this seam on direct `libc`, before rustix
 - **Credible alternatives:** Retain direct libc; handwritten C ABI with no crate;
   `pty-process` 0.5.3; `nix` 0.31.3 with narrow `fs`, `poll`, `process`, `signal`,
   and `term` features; `portable-pty` 0.9.0; `rustix-openpty` 0.2.0; `signal-hook`
@@ -123,9 +123,9 @@ dependency gate, and Beads retain the full candidate evidence.
   in `eon-c828u`; safe PTY/fork/errno proof and feature approval in
   `eon-c828u.10`; retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
   and libc sources plus the portability disposition are recorded in `orb-pmp`;
-  post-candidate `pty-process` evidence is recorded there for a future decision. The
-  old Orbit's native ORB-C14 run is recorded in `eon-orb-c14-mac-reproof-l8rz`, and the
-  host's import in `eon-awmq.3`.
+  post-candidate `pty-process` evidence is recorded there for a future decision. This
+  host's native ORB-C14 proof is recorded in `eon-mac-launch-kz4p.12`, the old Orbit's
+  in `eon-orb-c14-mac-reproof-l8rz`, and the host's import in `eon-awmq.3`.
 
 ### Linux PTY Session shutdown
 
@@ -300,8 +300,9 @@ dependency gate, and Beads retain the full candidate evidence.
   selected stack passed the native consumer proof and the corrected sustained-output
   envelope at Venus `8929c9f9d151641a343813ddeb6005cb9c771286` without changing ORBS v1 or
   adding an Orbit dependency, and VEN-C16 proved Linux native Wayland at Venus
-  `e033efadf023492ae02eb1e9036de98ad93d2f98`; VEN-C16 now cites this repository. X11, Xwayland, macOS, and other native
-  platforms are unsupported. Broader Wayland compositor coverage remains unproved.
+  `e033efadf023492ae02eb1e9036de98ad93d2f98`; VEN-C16 cites this repository and records Venus's
+  partial Apple Silicon macOS proof. macOS, X11, Xwayland, and other native
+  platforms remain unsupported. Broader Wayland compositor coverage remains unproved.
 - **Evidence:** Venus `ven-upt.1`, `ven-upt.2`, `ven-39u`, and
   `ven-venus-linux-wayland-only-ndj`; Orbit acceptance in `orb-bi4.4` and `orb-bi4.5`
 

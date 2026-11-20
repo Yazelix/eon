@@ -133,10 +133,9 @@ finer steps, and the Bend laws prove the lifecycle decisions.
 
 ## Initial boundaries
 
-- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux;
-  [ORB-C14](CONTRACTS.md) records Apple Silicon macOS, and Venus/Eon
-  composition, packaging, and distribution remain unsupported on macOS as
-  separate downstream scope
+- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux and,
+  under [ORB-C14](CONTRACTS.md), Apple Silicon macOS; Venus and Eon record
+  their own macOS status under VEN-C16 and EON-C7
 - local Unix socket transport
 - one terminal session, one input-capable client, and one read-only metadata
   observer
