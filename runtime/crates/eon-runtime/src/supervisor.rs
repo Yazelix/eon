@@ -5022,7 +5022,6 @@ mod tests {
     }
 
     use super::WorkspaceAction;
-    #[cfg(target_os = "linux")]
     use super::apply_session_operation;
     use super::{
         Action, DiagnosticLog, Dispatched, LaunchMode, PairStart, SESSION_CLEANUP_TIMEOUT,
