@@ -3720,6 +3720,12 @@ popup or automatic tutorial launch.
     recovery acquisition or its existing refusal rules. No terminal is stopped,
     restarted or replaced merely to obtain an identity range. Reserved Stop is
     unchanged.
+  - Planned Update (`eon-t3fyd`) keeps the same lifetime generation and the
+    existing exact identity, UID, record and endpoint checks. It restores the
+    window's existing identity range and counters and completed-request
+    deduplication from its checkpoint, and allocates no replacement-supervisor
+    range. Actual supervisor loss keeps this contract's synthetic-session and
+    new-range recovery.
   - Before spawn, Eon creates and retains the exact empty owned mode-0600
     management record inode. Orbit locks it, marks publication and atomically
     replaces it with Ready. Local Child rollback requires winning the lock on

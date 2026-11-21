@@ -651,6 +651,13 @@ impl ControlListener {
         Ok(control)
     }
 
+    /// Where the listener is bound.
+    // An Update's import (S4b-1, eon-t3fyd.8) is its first caller.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// A second handle on the listening socket, for the start pump.
     pub(super) fn try_clone_listener(&self) -> Option<UnixListener> {
         self.listener.try_clone().ok()

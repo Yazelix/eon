@@ -951,6 +951,16 @@ impl Quotas {
         quotas
     }
 
+    /// The providers polled now.
+    #[cfg(test)]
+    pub(crate) fn polled(&self) -> Vec<&'static str> {
+        [&self.codex, &self.claude, &self.google]
+            .into_iter()
+            .filter(|slot| slot.worker.is_some())
+            .map(|slot| slot.provider)
+            .collect()
+    }
+
     /// Polls exactly the providers whose chips `[bar] widgets` lists (EON-C27).
     pub(crate) fn show(&mut self, widgets: &[String]) {
         for slot in [&mut self.codex, &mut self.claude, &mut self.google] {

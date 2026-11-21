@@ -3989,9 +3989,7 @@ pub(crate) mod tests {
     /// A real Orbit run of `script`, leased by this Runtime. Orbit is the one
     /// at `ORBIT_BIN`, which eon-test and the eon package's check set.
     pub(crate) fn leased_orbit(root: &Path, script: &str) -> RunningSession {
-        let orbit =
-            PathBuf::from(std::env::var_os("ORBIT_BIN").expect("ORBIT_BIN names the Orbit to run"));
-        leased_orbit_with_program(root, script, &orbit)
+        leased_orbit_at(root, 1, script, Duration::from_secs(5))
     }
 
     #[cfg(target_os = "linux")]
@@ -4072,21 +4070,44 @@ pub(crate) mod tests {
         script: &str,
         orbit: &Path,
     ) -> RunningSession {
-        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
+        leased(root, 1, script, orbit, Duration::from_secs(5))
+    }
+
+    /// A real Orbit run of `script` as `terminal-<number>` at its endpoint
+    /// under `runtime`, given `start` to become ready.
+    pub(crate) fn leased_orbit_at(
+        runtime: &Path,
+        number: usize,
+        script: &str,
+        start: Duration,
+    ) -> RunningSession {
+        let orbit =
+            PathBuf::from(std::env::var_os("ORBIT_BIN").expect("ORBIT_BIN names the Orbit to run"));
+        leased(runtime, number, script, &orbit, start)
+    }
+
+    fn leased(
+        runtime: &Path,
+        number: usize,
+        script: &str,
+        orbit: &Path,
+        start: Duration,
+    ) -> RunningSession {
+        fs::set_permissions(runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = orbit.into();
-        let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "eon");
+        let log = DiagnosticLog::open_in(Ok(runtime.join("launch-logs")), "g1-test", "eon");
         super::start_orbit(
             &inputs,
-            root,
-            &root.join("orbit.sock"),
-            "terminal-1",
+            runtime,
+            &crate::workspace::terminal_endpoint(runtime, number),
+            &format!("terminal-{number}"),
             "g1-00000000000000000000000000000001",
-            root,
+            runtime,
             &["sh".into(), "-c".into(), script.into()],
             None,
             &log,
-            Instant::now() + Duration::from_secs(5),
+            Instant::now() + start,
             &mut super::FailedStarts::default(),
             &mut super::sleep_until,
         )

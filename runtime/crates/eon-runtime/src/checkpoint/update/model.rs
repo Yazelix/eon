@@ -1,7 +1,9 @@
 //! The complete logical Runtime state of an Update: the three owners' parts
 //! composed into one checkpoint, and back. The supervisor's own part (the
 //! settled boundary, the anchor, the elapsed gap and its own facts) is in
-//! `supervisor/update.rs` (export) and eon-8bfip (S3b-2, restore).
+//! `supervisor/update.rs` (export and import).
+// S4a (eon-t3fyd.7) and S4b-1 (eon-t3fyd.8) call export and import; until
+// then their tests consume this.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::Update;
@@ -13,7 +15,7 @@ use crate::sessions::RunningSession;
 use crate::workspace::{WorkspaceSet, terminal_endpoint};
 use std::{
     collections::HashSet,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -75,26 +77,20 @@ pub(crate) fn capture(
     Ok((core, update))
 }
 
-/// Restores a decoded checkpoint under `runtime` with the target's `registry`
-/// and `catalog`, `elapsed` after its capture. `sessions` are the runs S4
-/// re-adopted, in any order: exactly one per slot, each at its derived
-/// endpoint. Every check runs before the rows change, so a refusal leaves
-/// them, and the registry, untouched.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn restore(
+/// R8: `sessions` are the runs S4 re-adopted, in any order, exactly one
+/// unfinished row per slot with the slot's run at its derived endpoint under
+/// `runtime`, and no other. Returns each slot's row index, in slot (and so
+/// terminal-extra) order. Reads the rows only.
+pub(crate) fn match_rows(
     core: &Core,
     update: &Update,
-    runtime: PathBuf,
-    registry: Option<Registry>,
-    catalog: PopupCatalog,
-    sessions: &mut [RunningSession],
-    now: Instant,
-    elapsed: Duration,
-) -> Result<(WorkspaceSet, Option<Attention>)> {
+    runtime: &Path,
+    sessions: &[RunningSession],
+) -> Result<Vec<usize>> {
     let readopted = Error::Unrestorable("the re-adopted terminals differ from the checkpoint");
     let slots = update.slots(core)?;
     let mut order = Vec::with_capacity(slots.len());
-    for (slot, extra) in slots.iter().zip(&update.terminal_extras) {
+    for slot in &slots {
         let number = slot
             .run
             .terminal_id
@@ -109,9 +105,9 @@ pub(crate) fn restore(
             (Some((index, session)), None)
                 if !session.is_finished()
                     && session.run_id() == slot.run.run_id
-                    && session.endpoint == terminal_endpoint(&runtime, number) =>
+                    && session.endpoint == terminal_endpoint(runtime, number) =>
             {
-                order.push((index, extra));
+                order.push(index);
             }
             _ => return Err(readopted),
         }
@@ -119,16 +115,37 @@ pub(crate) fn restore(
     if order.len() != sessions.len() {
         return Err(readopted);
     }
+    Ok(order)
+}
+
+/// R1-R7: the owners rebuilt from a decoded checkpoint under `runtime`, with
+/// the target's `registry` and `catalog`, `elapsed` after its capture.
+/// Attention, which reads nothing, is checked before the registry is read.
+/// Changes nothing: the registry is only read.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate(
+    core: &Core,
+    update: &Update,
+    runtime: PathBuf,
+    registry: Option<Registry>,
+    catalog: PopupCatalog,
+    now: Instant,
+    elapsed: Duration,
+) -> Result<(WorkspaceSet, Option<Attention>)> {
     let attention = update
         .attention
         .as_ref()
         .map(|attention| Attention::restore(attention, now, elapsed))
         .transpose()?;
     let workspaces = WorkspaceSet::restore(core, update, runtime, registry, catalog)?;
-    for (index, extra) in order {
+    Ok((workspaces, attention))
+}
+
+/// Gives each matched row its terminal extra; `order` is `match_rows`'s.
+pub(crate) fn apply_extras(sessions: &mut [RunningSession], order: &[usize], update: &Update) {
+    for (&index, extra) in order.iter().zip(&update.terminal_extras) {
         sessions[index].restore_extra(extra);
     }
-    Ok((workspaces, attention))
 }
 
 #[cfg(test)]

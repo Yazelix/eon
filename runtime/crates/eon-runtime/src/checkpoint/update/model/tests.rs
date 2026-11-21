@@ -121,6 +121,24 @@ fn restore_bytes(
     )
 }
 
+/// R8, R1-R7, then the extras: the restore half of an import, as one call.
+#[allow(clippy::too_many_arguments)]
+fn restore(
+    core: &Core,
+    update: &Update,
+    runtime: PathBuf,
+    registry: Option<Registry>,
+    catalog: PopupCatalog,
+    sessions: &mut [RunningSession],
+    now: Instant,
+    elapsed: Duration,
+) -> Result<(WorkspaceSet, Option<Attention>)> {
+    let order = match_rows(core, update, &runtime, sessions)?;
+    let restored = validate(core, update, runtime, registry, catalog, now, elapsed)?;
+    apply_extras(sessions, &order, update);
+    Ok(restored)
+}
+
 /// A registry directory copied from `source`'s, so two windows can each
 /// create the same next session.
 fn copied_registry(source: &Source) -> Registry {

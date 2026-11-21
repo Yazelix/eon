@@ -42,6 +42,11 @@ pub(crate) struct Snapshot {
 }
 
 impl Snapshot {
+    #[cfg(test)]
+    pub(crate) fn directory(&self) -> &Path {
+        &self.directory
+    }
+
     /// Records `terminal` as the popup's, before that terminal starts, so a
     /// recovery that adopts its editor keeps the snapshot.
     pub(crate) fn mark(&self, terminal: &str) -> Result<(), String> {
@@ -110,8 +115,23 @@ impl Snapshots {
         };
         let mut highest = None;
         let mut errors = Vec::new();
+        #[cfg(test)]
+        let entries = entries.chain(
+            tests::LISTING_FAILS
+                .with(std::cell::Cell::get)
+                .then(|| Err(io::Error::other("injected listing failure"))),
+        );
         for entry in entries {
-            let entry = entry.map_err(|error| error.to_string())?;
+            // A listing that fails stops here (the platform reads no further
+            // entries); `next` still passes every own number already seen,
+            // and `write` skips the own directories left unread.
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    errors.push(format!("cannot list {}: {error}", self.root.display()));
+                    break;
+                }
+            };
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
             match self.own_number(&name) {
@@ -164,20 +184,29 @@ impl Snapshots {
     ) -> Result<Snapshot, String> {
         let prefix = self.prefix.as_ref().map_err(Clone::clone)?;
         prepare_runtime(&self.root)?;
-        let directory = self.root.join(format!("{prefix}-{}", self.next));
-        self.next = self
-            .next
-            .checked_add(1)
-            .ok_or("scrollback snapshot numbers are exhausted")?;
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&directory)
-            .map_err(|error| {
-                format!(
-                    "cannot create snapshot directory {}: {error}",
-                    directory.display()
-                )
-            })?;
+        // A directory this process already holds is skipped, never reused:
+        // after an in-place exec, adoption may not have read every own
+        // directory. Anything else at the name refuses.
+        let directory = loop {
+            let directory = self.root.join(format!("{prefix}-{}", self.next));
+            self.next = self
+                .next
+                .checked_add(1)
+                .ok_or("scrollback snapshot numbers are exhausted")?;
+            match fs::DirBuilder::new().mode(0o700).create(&directory) {
+                Ok(()) => break directory,
+                Err(error)
+                    if error.kind() == io::ErrorKind::AlreadyExists
+                        && fs::symlink_metadata(&directory)
+                            .is_ok_and(|metadata| metadata.file_type().is_dir()) => {}
+                Err(error) => {
+                    return Err(format!(
+                        "cannot create snapshot directory {}: {error}",
+                        directory.display()
+                    ));
+                }
+            }
+        };
         let snapshot = Snapshot {
             file: directory.join(format!("{target}-scrollback.txt")),
             directory,
@@ -359,9 +388,18 @@ pub(crate) mod tests {
     use orbit_protocol::management::{HistoryText, Screen};
     use std::{
         fs,
-        os::unix::fs::{PermissionsExt, symlink},
+        os::unix::fs::{DirBuilderExt, PermissionsExt, symlink},
         path::Path,
     };
+
+    /// The file naming a snapshot's terminal, for tests outside this module.
+    pub(crate) const OWNER_FILE: &str = OWNER;
+
+    thread_local! {
+        /// On this thread, adoption's listing fails after its last entry.
+        pub(super) static LISTING_FAILS: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
 
     pub(crate) fn history(screen: Screen, omitted_lines: u32, cut_bytes: u32) -> HistoryText {
         HistoryText {
@@ -556,6 +594,68 @@ pub(crate) mod tests {
         assert!(!live.exists() && dead.exists());
         store.retain(|_, _| false, &log);
         assert!(!snapshots.exists());
+        fs::remove_dir_all(runtime).unwrap();
+    }
+
+    /// An own directory adoption did not read (a listing that stopped early)
+    /// is skipped by the next write, never reused or refused.
+    #[test]
+    fn a_write_skips_own_names_that_already_exist() {
+        let runtime = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "eon");
+        let mut store = Snapshots::adopt(&runtime, [], &log);
+        let prefix = store.prefix.clone().unwrap();
+        let snapshots = runtime.join("snapshots");
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&snapshots)
+            .unwrap();
+        let held = [1, 2].map(|number| {
+            let directory = snapshots.join(format!("{prefix}-{number}"));
+            fs::create_dir(&directory).unwrap();
+            fs::write(directory.join(OWNER), "terminal-9").unwrap();
+            directory
+        });
+        let snapshot = store.write("u1", &history(Screen::Primary, 0, 0)).unwrap();
+        assert!(
+            snapshot.directory.ends_with(format!("{prefix}-3")),
+            "{}",
+            snapshot.directory.display()
+        );
+        for directory in &held {
+            assert_eq!(fs::read(directory.join(OWNER)).unwrap(), b"terminal-9");
+        }
+        store.discard(snapshot).unwrap();
+        fs::remove_dir_all(runtime).unwrap();
+    }
+
+    /// A listing that fails after an own number was seen still numbers new
+    /// snapshots past it, even when that directory was removed: no number
+    /// is ever reused.
+    #[test]
+    fn a_failed_listing_still_numbers_past_every_own_number_seen() {
+        let runtime = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(runtime.join("logs")), "g1-test", "eon");
+        let prefix = Snapshots::new(&runtime).prefix.unwrap();
+        let snapshots = runtime.join("snapshots");
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&snapshots)
+            .unwrap();
+        let stale = snapshots.join(format!("{prefix}-100"));
+        fs::create_dir(&stale).unwrap();
+        fs::write(stale.join(OWNER), "terminal-9").unwrap();
+        LISTING_FAILS.with(|fails| fails.set(true));
+        let mut store = Snapshots::adopt(&runtime, [], &log);
+        LISTING_FAILS.with(|fails| fails.set(false));
+        assert!(!stale.exists(), "the unadopted own directory is removed");
+        let snapshot = store.write("u1", &history(Screen::Primary, 0, 0)).unwrap();
+        assert!(
+            snapshot.directory.ends_with(format!("{prefix}-101")),
+            "{}",
+            snapshot.directory.display()
+        );
+        store.discard(snapshot).unwrap();
         fs::remove_dir_all(runtime).unwrap();
     }
 

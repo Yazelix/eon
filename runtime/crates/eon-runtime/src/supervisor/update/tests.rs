@@ -639,3 +639,4 @@ fn an_unreaped_presentation_exit_refuses_without_waiting_or_reporting() {
     window.state.venus = None;
     assert_eq!(window.export(now).unwrap(), before);
 }
+mod restore;

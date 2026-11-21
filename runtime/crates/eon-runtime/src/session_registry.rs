@@ -158,6 +158,8 @@ impl Worker {
 
     pub(super) fn start(registry: Registry) -> Result<Self, Failure> {
         #[cfg(test)]
+        WORKER_STARTS.with(|starts| starts.set(starts.get() + 1));
+        #[cfg(test)]
         if registry.fault == Some(Fault::WorkerSpawn) {
             return Err(Failure::new(
                 "injected session registry worker spawn failure",
@@ -172,6 +174,10 @@ impl Worker {
                     if results.send(registry.perform(operation)).is_err() {
                         break;
                     }
+                }
+                #[cfg(test)]
+                if registry.fault == Some(Fault::SignalWorkerEnd) {
+                    let _ = fs::write(registry.root.join(WORKER_ENDED), b"ended");
                 }
             })
             .map_err(|error| {
@@ -258,6 +264,35 @@ pub(crate) enum Fault {
     WaitBeforeRecordPublication,
     WorkerSpawn,
     ObserveBusyRetry,
+    /// A busy retry's pause writes `.tmp-test-retrying` and waits for
+    /// `.tmp-test-release`; the attempt after it always runs. Its retry
+    /// limit is an hour, so the pause is reached however late the first
+    /// busy attempt is.
+    HandOffBusyRetry,
+    /// Busy failures are not retried.
+    BusyRetryLimitZero,
+    /// The worker's thread writes `WORKER_ENDED` once its loop ends.
+    SignalWorkerEnd,
+}
+
+/// The file `Fault::SignalWorkerEnd` writes in the registry root.
+#[cfg(test)]
+pub(crate) const WORKER_ENDED: &str = ".tmp-test-worker-ended";
+
+#[cfg(test)]
+thread_local! {
+    /// `Worker::start` calls on this thread, counted on entry.
+    static WORKER_STARTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How long the next busy-retried operation on this thread takes before
+    /// its first attempt.
+    pub(crate) static FIRST_ATTEMPT_DELAY: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// How often this thread entered `Worker::start`.
+#[cfg(test)]
+pub(crate) fn worker_starts() -> usize {
+    WORKER_STARTS.with(std::cell::Cell::get)
 }
 
 impl Registry {
@@ -274,11 +309,44 @@ impl Registry {
         &self,
         operation: impl FnMut() -> Result<T, Failure>,
     ) -> Result<T, Failure> {
-        retry_with(operation, BUSY_RETRY_LIMIT, Instant::now, |pause| {
+        #[cfg(test)]
+        let operation = {
+            let mut operation = operation;
+            let mut delay = FIRST_ATTEMPT_DELAY.with(std::cell::Cell::take);
+            move || {
+                if let Some(delay) = delay.take() {
+                    thread::sleep(delay);
+                }
+                operation()
+            }
+        };
+        // A hand-off test waits for its own release, never for this clock.
+        #[cfg(test)]
+        let limit = match self.fault {
+            Some(Fault::BusyRetryLimitZero) => Duration::ZERO,
+            Some(Fault::HandOffBusyRetry) => Duration::from_secs(3600),
+            _ => BUSY_RETRY_LIMIT,
+        };
+        #[cfg(not(test))]
+        let limit = BUSY_RETRY_LIMIT;
+        retry_with(operation, limit, Instant::now, |pause| {
             #[cfg(test)]
-            if self.fault == Some(Fault::ObserveBusyRetry) {
+            if matches!(
+                self.fault,
+                Some(Fault::ObserveBusyRetry | Fault::HandOffBusyRetry)
+            ) {
                 fs::write(self.root.join(".tmp-test-retrying"), b"retry")
                     .map_err(|error| Failure::at(&self.root, error))?;
+            }
+            #[cfg(test)]
+            if self.fault == Some(Fault::HandOffBusyRetry) {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !self.root.join(".tmp-test-release").exists() {
+                    if Instant::now() >= deadline {
+                        return Err(Failure::new("test busy retry was not released"));
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
             thread::sleep(pause);
             Ok(())

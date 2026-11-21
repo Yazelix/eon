@@ -187,8 +187,9 @@ pub(super) struct LaunchOptions {
     pub(super) no_anima: bool,
 }
 
-/// Full Eon's window identity and decorations on every launch, and on an
-/// in-place Update's target, which the launch does not pass it.
+/// Full Eon's application ID and decorations: every full-Eon launch passes
+/// them, and an in-place Update's target, which has no launch arguments,
+/// uses them directly.
 pub(super) const WORKSPACE_APPLICATION_ID: &str = "eon";
 pub(super) const WORKSPACE_DECORATIONS: bool = false;
 
@@ -3178,6 +3179,8 @@ fn apply_session_operation(
                 return Ok(());
             };
             if !pending {
+                #[cfg(test)]
+                tests::SETTLED_PAIRS.with(|settled| settled.set(settled.get() + 1));
                 return sessions::settle_pending_pair(&pair.endpoint);
             }
             return sessions::mark_pending_pair(&pair.endpoint).map_err(|error| {
@@ -5188,6 +5191,11 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    thread_local! {
+        /// Pending pairs this thread settled through `MarkPair { pending: false }`.
+        pub(super) static SETTLED_PAIRS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
     #[cfg(target_os = "macos")]
     use crate::platform::{test_children as children, test_program as program};
     use rustix::process::{Pid, Signal, kill_process};

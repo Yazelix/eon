@@ -1,8 +1,8 @@
 //! The window topology's part of an Update checkpoint: sessions, tabs, panes,
 //! popups, identity counters, replay rings and recency.
-// Consumed by `checkpoint::update::model`, whose capture the supervisor's
-// export uses once S4a (eon-t3fyd.7) calls it, and whose restore is
-// eon-8bfip's (S3b-2); until then its tests consume it.
+// Consumed by `checkpoint::update::model`, whose capture and restore halves
+// the supervisor's export and import use once S4a (eon-t3fyd.7) and S4b-1
+// (eon-t3fyd.8) call them; until then their tests consume it.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{
@@ -211,19 +211,30 @@ impl WorkspaceSet {
                 "the session registry availability differs",
             ));
         }
+        // One listing, retried while busy, names every registered session.
+        let registrations = match &registry {
+            Some(registry)
+                if core
+                    .sessions
+                    .iter()
+                    .any(|session| session.persistent_id.is_some()) =>
+            {
+                registry
+                    .retry_busy(|| registry.list())
+                    .map_err(|_| Error::Unrestorable("the session registry cannot be read"))?
+            }
+            _ => Vec::new(),
+        };
         let mut tab_extras = update.tab_extras.iter();
         let mut workspaces = Vec::with_capacity(core.sessions.len());
         for (session, extra) in core.sessions.iter().zip(&update.session_extras) {
             let name = match (&session.persistent_id, &registry) {
-                (Some(id), Some(registry)) => match registry.lookup(id) {
-                    Ok(Some(registration)) => registration.name,
-                    Ok(None) => {
-                        return Err(Error::Unrestorable("a session's registration is missing"));
-                    }
-                    Err(_) => {
-                        return Err(Error::Unrestorable("the session registry cannot be read"));
-                    }
-                },
+                (Some(id), Some(_)) => registrations
+                    .iter()
+                    .find(|registration| &registration.id == id)
+                    .ok_or(Error::Unrestorable("a session's registration is missing"))?
+                    .name
+                    .clone(),
                 _ => None,
             };
             let mut tabs = Vec::with_capacity(session.tabs.len());

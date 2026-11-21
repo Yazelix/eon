@@ -227,6 +227,13 @@ impl Running {
         generation: &str,
         log: Arc<DiagnosticLog>,
     ) -> Result<Self, String> {
+        #[cfg(test)]
+        {
+            tests::STARTS.with(|starts| starts.set(starts.get() + 1));
+            if tests::FAIL_NEXT_START.with(|fail| fail.replace(false)) {
+                return Err("injected running window worker failure".into());
+            }
+        }
         let cache = Arc::new(Mutex::new(Cache {
             inventory: None,
             fingerprint: Fingerprint::read(&base, &[]).ok(),
@@ -333,7 +340,23 @@ impl Running {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
+    thread_local! {
+        /// `Running::start` calls on this thread, counted on entry.
+        pub(super) static STARTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        pub(super) static FAIL_NEXT_START: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// How often this thread entered `Running::start`.
+    pub(crate) fn starts() -> usize {
+        STARTS.with(std::cell::Cell::get)
+    }
+
+    /// Makes this thread's next `Running::start` fail before it spawns.
+    pub(crate) fn fail_next_start() {
+        FAIL_NEXT_START.with(|fail| fail.set(true));
+    }
+
     use super::*;
     use crate::supervisor::{lock_supervisor_lifecycle, temporary_directory};
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};

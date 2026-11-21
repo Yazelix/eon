@@ -33,6 +33,21 @@ impl Source {
         self.set.workspaces[index].home = home;
     }
 
+    /// Moves every identity counter `by` past where it stands, as a window
+    /// that has lived a while has them.
+    pub(crate) fn advance_ids(&mut self, by: usize) {
+        let ids = &mut self.set.ids;
+        for counter in [
+            &mut ids.next_workspace,
+            &mut ids.next_tab,
+            &mut ids.next_pane,
+            &mut ids.next_session,
+            &mut ids.next_popup,
+        ] {
+            *counter += by;
+        }
+    }
+
     pub(crate) fn capture(&self) -> Result<(Core, Update)> {
         self.set.checkpoint(7, &Self::run)
     }
@@ -63,9 +78,13 @@ impl Source {
     }
 }
 
+/// The lifetime the sources' runtimes belong to, so a supervisor can
+/// export and import them.
+pub(crate) const GENERATION: &str = "g1-00000000000000000000000000000001";
+
 fn empty_root() -> (PathBuf, PathBuf, Registry) {
     let root = temporary_directory();
-    let runtime = root.join("runtime");
+    let runtime = crate::generation::generation_directory(&root, GENERATION);
     fs::create_dir_all(&runtime).unwrap();
     let registry = Registry::in_test_directory(root.join("sessions"));
     (root, runtime, registry)
