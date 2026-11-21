@@ -14738,10 +14738,10 @@ fn check_agent_auto_popup(primary: bool, relative_in_tab: Option<bool>, pin: boo
 #[test]
 fn agent_popup_failures_stay_visible_until_enter_and_keep_exit_status() {
     for (bad_config, args, held, code) in [
-        (false, vec!["launch", "--popup"], true, 3),
+        (false, vec!["launch", "--popup"], true, 75),
         (true, vec!["launch", "--popup"], true, 2),
-        (false, vec!["launch", "--popup", "--dry-run"], false, 3),
-        (false, vec!["launch", "brief"], false, 3),
+        (false, vec!["launch", "--popup", "--dry-run"], false, 75),
+        (false, vec!["launch", "brief"], false, 75),
     ] {
         let root = tempfile::tempdir().unwrap();
         let config = root.path().join("agent.toml");
@@ -26375,9 +26375,9 @@ fn native_quota_store_admits_one_launch_on_a_stale_claude_reading() {
         "{entry}"
     );
 
-    // The moved launcher keeps rota's refusal status 3 (EON-C40, 2026-11-13 amendment).
+    // A spent observation is a hold: 75 (EON-C40 clause 7).
     let second = launch(false);
-    assert_eq!(second.status.code(), Some(3), "{second:?}");
+    assert_eq!(second.status.code(), Some(75), "{second:?}");
     assert!(
         String::from_utf8_lossy(&second.stderr).contains(&format!(
             "reading observed at {} already admitted a launch on account claude",

@@ -43,9 +43,9 @@ impl<'a> Host<'a> {
 }
 
 const COMMANDS: [&str; 8] = [
-    "launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--dry-run] <prompt-file>",
+    "launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run] <prompt-file>",
     "launch --popup [--only BACKEND] [--dry-run]",
-    "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...",
+    "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION]",
     "ps [--json] [--all]",
     "slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...",
     "slot ls [--json]",
@@ -146,6 +146,8 @@ fn run(
 ) -> Result<u8, (u8, String)> {
     let usage = usage(host);
     let load = || load_config(host.config.as_ref().map_err(Clone::clone)?.as_deref(), host);
+    // Each admission attempt reads the configuration again (EON-C40 clause 7).
+    let load_admission = || load().map(|loaded| loaded.config).map_err(|e| (2, e));
     let args: Vec<_> = arguments
         .map(|arg| {
             arg.into_string()
@@ -178,10 +180,7 @@ fn run(
     }
     if args.first().is_some_and(|s| s == "launch") {
         let options = launch::parse(&args[1..])?;
-        let result = load()
-            .map_err(|error| (2, error))
-            .and_then(|loaded| launch::run(&loaded.config, &options, host))
-            .map(|()| 0);
+        let result = launch::run(&options, host, &load_admission).map(|()| 0);
         if options.popup
             && !options.dry_run
             && std::io::stdin().is_terminal()
@@ -198,8 +197,7 @@ fn run(
     }
     if args.first().is_some_and(|s| s == "run") {
         let options = headless::parse(&args[1..])?;
-        let config = load().map_err(|e| (2, e))?.config;
-        return headless::run(&config, &options, host).map(|()| 0);
+        return headless::run(&options, host, &load_admission).map(|()| 0);
     }
     if args.first().is_some_and(|s| s == "ps") {
         let options = ps::parse(&args[1..])?;

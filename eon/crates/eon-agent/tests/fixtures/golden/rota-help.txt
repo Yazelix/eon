@@ -1,6 +1,6 @@
-Usage: rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--dry-run] <prompt-file>
+Usage: rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run] <prompt-file>
        rota launch --popup [--only BACKEND] [--dry-run]
-       rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+       rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION]
        rota ps [--json] [--all]
        rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
        rota slot ls [--json]

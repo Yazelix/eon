@@ -17,3 +17,4 @@ pub mod readings;
 pub mod run;
 pub mod session;
 pub mod slots;
+pub mod wait;

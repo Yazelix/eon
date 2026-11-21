@@ -7139,6 +7139,13 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   `readings::guard_tests` unit tests in `eon/crates/eon-agent`; that bead's
   commit is its revision.
 
+  Amended on 2026-11-20 by `eon-eon-agent-lr8sx.39.4` (approved by eon-lead
+  under Lucca's delegation): clause 7's waiting and exit codes and the popup
+  exit text below take effect, proved by `tests/wait.rs` and the
+  `wait::tests` unit tests in `eon/crates/eon-agent`; that bead's commit is
+  its revision. Clause 7's `--json` reasons stay pending with `.39.5`, and
+  `--pane` forwarding with `.39.7`.
+
   Amended on 2026-11-17 (`eon-eon-agent-lr8sx.39`; approved by eon-lead
   under Lucca's delegation; its policy clauses carry Lucca's 2026-11-16
   rules). Each clause takes effect when the named child lands and is proven
@@ -7222,14 +7229,17 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
      backend's `add_dir` template, and `run` commands through `[backends.run]
      add_dir` as before.
   7. **Waiting and exits** (`.39.4`). `launch` and `run` accept
-     `--wait DURATION`: admission retries with new readings until it admits or
-     the deadline passes, with no ordering among waiters. A hold (quota, a
-     consumed observation, cap, guard, project cap, or the wait deadline)
-     exits 75; a refusal that waiting cannot change (no backend serves the
-     role, an unknown project or `--only` backend) exits 69; invalid input or
-     configuration exits 2; I/O or launch failure exits 1. `--pane` keeps
-     forwarding EON-C10's 3 and 4. Every hold and refusal names its reason on
-     stderr and in `--json`.
+     `--wait DURATION`: admission retries with new readings and its
+     configuration re-read until it admits or the deadline passes, and sleeps
+     up to `wait_retry_seconds` between attempts, never past the deadline, with
+     no ordering among waiters; without `--wait` it makes one attempt. A hold
+     (quota, a consumed observation, cap, access checks (guard, account check,
+     required files), project cap, a busy admission lock, or the wait deadline)
+     exits 75; a refusal that waiting cannot change (no enabled backend serves
+     the role, the options or the working directory; an unknown project or
+     `--only` backend) exits 69; invalid input or configuration exits 2; I/O or
+     launch failure exits 1. `--pane` keeps forwarding EON-C10's 3 and 4. Every
+     hold and refusal names its reason on stderr and in `--json`.
   8. **Receipts** (`.39.5`). `run` prints a JSON started receipt and then a
      finished receipt on stdout, naming the run, its log path and its exit
      code; its own exit carries the provider's status, and 124 on timeout.
@@ -7342,10 +7352,10 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   backend retains its enabled state, guard, required files, excluded roots,
   account checks, quota limits, caps, preparation and environment. A pinned
   configured fallback uses the existing reported `FALLBACK` decision path.
-  Failed admission, including an unavailable popup command, refuses with
-  exit 3 (with `.39.4`: 75 for a hold, 69 for a refusal waiting cannot
-  change) and never selects another backend or retries through unmanaged
-  built-ins. An exec failure keeps exit 1. Existing diagnostic retention,
+  Failed admission exits 75 for a hold and 69 for a refusal waiting cannot
+  change (an unavailable popup command is one) and never selects another
+  backend or retries through unmanaged built-ins. An exec failure keeps
+  exit 1. Existing diagnostic retention,
   decision records and lock behavior remain in force, and selection follows
   configured order (with `.39.2`). Dry-run
   applies the same pin without launching or mutating state.
@@ -7386,8 +7396,9 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   Explicit `[popups.agent]` argv remains a generic exact command outside
   managed selection.
 
-  Popup mode retains moved CLI exit meanings: 2 invalid input/configuration,
-  3 admission or lock-busy refusal, and 1 operational error. Lock-busy
+  Popup mode uses clause 7's exit meanings: 2 invalid input/configuration,
+  75 a hold (a busy admission lock included), 69 a refusal waiting cannot
+  change, and 1 operational error; it accepts no `--wait`. Lock-busy
   admission refuses immediately; no admission queue or new wait state is
   introduced. A real `launch --popup` failure with terminal stdin and stderr retains
   its diagnostic in that same terminal until Enter or EOF, then returns

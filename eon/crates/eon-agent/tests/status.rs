@@ -141,6 +141,6 @@ weekly = 10
         "agy",
         prompt.to_str().unwrap(),
     ]);
-    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(output.status.code(), Some(75));
     assert!(String::from_utf8(output.stderr).unwrap().contains(expected));
 }

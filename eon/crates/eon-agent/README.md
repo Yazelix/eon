@@ -14,9 +14,9 @@ Build with `cargo build --release` (Linux, Rust 1.96 or later). Copy
 paths, commands, models and example percentages.
 
 ```text
-rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--dry-run] <prompt-file>
+rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run] <prompt-file>
 rota launch --popup [--only BACKEND] [--dry-run]
-rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION]
 rota ps [--json] [--all]
 rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
 rota slot ls [--json]
@@ -85,6 +85,25 @@ check and cap still apply, and the decision log records `"role": "lead"`.
 `rota run` refuses `--role lead` (exit 2). Status shows a `lead` column computed
 from those access checks alone.
 
+`--wait DURATION` (`300`, `300s`, `30m` or `2h`; at most 24h) retries a held
+admission until it admits or the deadline passes. Each attempt re-reads the
+configuration, takes the admission lock only while it works, and reads fresh
+quota; between attempts it sleeps up to `wait_retry_seconds` (default 60),
+never past the deadline. Only the first attempt may run a backend's `refresh`.
+Waiters are not ordered, and one observation still admits one launch. A waiter
+prints `held: REASON; retrying for up to DURATION` once and repeats its reading
+lines only when they change; at the deadline it exits 75 with
+`REASON; still held after waiting DURATION`. Without `--wait` an admission
+makes one attempt. The popup takes no `--wait`.
+
+`launch` and `run` exit 75 for a hold that waiting can change: quota, a spent
+observation, a cap, a guard, account check or required file, a project cap, a
+busy admission lock, or the `--wait` deadline. They exit 69 for a refusal
+waiting cannot change, decided before any reading: an unknown `--project` or
+`--only` backend, no backend with the role, or every candidate disabled,
+excluded for the folder or unable to take the options. Invalid input or
+configuration exits 2 and operational failure 1.
+
 `rota run` runs one headless agent session (a plan, review or investigation)
 and waits for it. It checks guards, account checks, quota limits and caps like
 `launch`, with no fallback, then runs the backend's `run` command for the role
@@ -122,8 +141,9 @@ them, and exits 125, never 0. If systemd-run fails before the command starts
 `failed` and rota exits 1; the log says why.
 rota exits with the run's status: 128+N when a signal N ended it, 124 after a
 timeout, 130 after an interruption and 125 when it abandoned processes. If the
-final record write fails, rota exits 1. A refusal exits 3 and an unusable
-option, backend or brief exits 2, as for `launch`, before anything starts. A run's own status can also be 1, 2 or 3: a run started
+final record write fails, rota exits 1. Before anything starts, a hold exits
+75, a refusal waiting cannot change 69 and an unusable option or brief 2, as for
+`launch`. A run's own status can also be 1, 2, 69 or 75: a run started
 when the `session:` line was printed, and its record's `outcome` says how it
 ended.
 
@@ -223,6 +243,10 @@ Custom popup and headless argv remain your explicit command choices too.
   picked every time, and nothing rotates. `roles` (`implement`, `review`,
   `lead`) controls eligibility; the fallback backend has an empty role list.
   Disabled backends never run checks.
+- Optional top-level `wait_retry_seconds` (1 to 3600, default 60) is the
+  longest sleep between `--wait` attempts, re-read on every attempt. Older
+  builds reject the whole file when it is present: upgrade every binary that
+  reads a shared config before setting it, and remove it before rolling back.
 - Optional top-level `popup_backend = "main"` pins `launch --popup` to an
   implement backend or the configured fallback. Omission keeps dynamic
   selection; explicit `--only` overrides it with its existing role restrictions.
@@ -366,7 +390,7 @@ Custom popup and headless argv remain your explicit command choices too.
   (repeating the backend's own optional `add_dir` template once per
   `launch --add-dir DIR`) and `{overlay}`. None may be the program. A backend
   whose command needs `--name`, or lacks `{add_dirs}` when `--add-dir` is
-  given, is skipped with that reason, and the launch is refused (exit 2) when
+  given, is skipped with that reason, and the launch is refused (exit 69) when
   no backend remains. `popup_command` takes none of `{prompt}`, `{name}`,
   `{add_dirs}` or `{overlay}`.
 - `[projects.P]` profiles (`max`, `[projects.P.backends.B] max`,
@@ -375,7 +399,7 @@ Custom popup and headless argv remain your explicit command choices too.
   linked worktree). Caps count live agents: an admission records its process
   (PID and start time) in `agents/` beside `state_file`, and a record counts
   while that process, or a run's leader, still runs. A reached cap or a failing
-  guard holds (exit 3) before any quota is read, naming the live PIDs or the
+  guard holds (exit 75) before any quota is read, naming the live PIDs or the
   guard's first stderr line. Overlays are keyed by the command's executable and
   apply to every backend the role reaches that runs it; a role with overlays
   picks only executables it names. Leads and the popup are never capped. The

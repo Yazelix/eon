@@ -12,6 +12,9 @@ log_file = "/PATH/TO/state/decisions.jsonl"
 fallback = "main"
 # Optional: keep popup resume on main's store; omitted means dynamic selection.
 # popup_backend = "main"
+# Optional: the longest sleep between --wait attempts (1-3600, default 60).
+# Older rota builds reject this key: upgrade every reader of a shared config first.
+# wait_retry_seconds = 60
 
 # Headless runs (rota run) only, never checks: drop these inherited variables
 # (a trailing * matches every name with that prefix), then set [run.env].

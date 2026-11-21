@@ -1,13 +1,13 @@
 use crate::command::{self, valid_name};
 use crate::config::{Backend, Config, Role, Run, RunEnv, Stdin};
 use crate::launch::{
-    Entry, Failure, io_failure, lock, log, print_readings, project_holds, record_admission,
-    supported, unsupported_refusal,
+    Admission, Entry, Failure, io_failure, lock, log, print_readings, project_holds,
+    record_admission, supported, unsupported_refusal,
 };
 use crate::platform::RUN_STOP as STOP;
 use crate::projects;
 use crate::session::{self, SCHEMA, Session};
-use crate::{decision, readings};
+use crate::{decision, readings, wait};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -48,26 +48,12 @@ pub struct RunOptions {
     pub name: String,
     pub add_dirs: Vec<PathBuf>,
     pub project: Option<String>,
+    /// `--wait DURATION`; `None` makes one admission attempt.
+    pub wait: Option<wait::Wait>,
 }
 
 pub fn parse_timeout(text: &str) -> Option<u64> {
-    let (digits, unit) = match text.strip_suffix(['s', 'm', 'h']) {
-        Some(digits) => (digits, &text[digits.len()..]),
-        None => (text, "s"),
-    };
-    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let scale = match unit {
-        "s" => 1,
-        "m" => 60,
-        _ => 3600,
-    };
-    digits
-        .parse::<u64>()
-        .ok()?
-        .checked_mul(scale)
-        .filter(|s| (1..=MAX_TIMEOUT).contains(s))
+    crate::wait::parse_duration(text, MAX_TIMEOUT)
 }
 
 pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
@@ -75,6 +61,7 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
     let mut role = Role::Implement;
     let (mut only, mut cwd, mut brief, mut effort, mut timeout, mut name, mut project) =
         (None, None, None, None, None, None, None);
+    let mut wait_for = None;
     let mut add_dirs = Vec::new();
     let mut i = 0;
     while let Some(arg) = args.get(i) {
@@ -88,6 +75,7 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
             "--name",
             "--add-dir",
             "--project",
+            "--wait",
         ];
         if !flags.contains(&arg.as_str()) {
             return Err(bad("unknown run option"));
@@ -122,6 +110,7 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
                 name = Some(value.clone());
             }
             "--project" => project = Some(value.clone()),
+            "--wait" => wait_for = Some(wait::parse(value)?),
             _ => add_dirs.push(PathBuf::from(value)),
         }
         i += 2;
@@ -141,6 +130,7 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
         name,
         add_dirs,
         project,
+        wait: wait_for,
     })
 }
 
@@ -528,11 +518,16 @@ fn utf8(path: &Path) -> Result<&str, Failure> {
         .ok_or_else(|| (2, "paths must be UTF-8".into()))
 }
 
-pub fn run(
-    config: &Config,
-    options: &RunOptions,
-    host: &crate::cli::Host<'_>,
-) -> Result<(), Failure> {
+/// What a run reads once, before any admission attempt: its brief, directory and `--add-dir`
+/// folders.
+struct Prepared {
+    brief: PathBuf,
+    brief_file: File,
+    cwd: PathBuf,
+    add_dirs: Vec<PathBuf>,
+}
+
+fn prepare(options: &RunOptions) -> Result<Prepared, Failure> {
     let input = |what: &str, e: std::io::Error| (2, format!("cannot use {what}: {e}"));
     let brief = fs::canonicalize(&options.brief).map_err(|e| input("brief file", e))?;
     if !brief.is_file() {
@@ -549,9 +544,42 @@ pub fn run(
         return Err((2, "--cwd must be a directory".into()));
     }
     let add_dirs = command::canonical_dirs(&options.add_dirs)?;
-    let project = projects::select(config, options.project.as_deref(), &cwd)?;
+    Ok(Prepared {
+        brief,
+        brief_file,
+        cwd,
+        add_dirs,
+    })
+}
+
+pub fn run(
+    options: &RunOptions,
+    host: &crate::cli::Host<'_>,
+    load: &dyn Fn() -> Result<Config, Failure>,
+) -> Result<(), Failure> {
+    let prepared = prepare(options)?;
+    let (config, admission) = wait::admit(options.wait.as_ref(), host.program, |attempt| {
+        let config = load()?;
+        attempt.retry_every(config.wait_retry());
+        let admission = admit(&config, options, &prepared, host, attempt)?;
+        Ok((config, admission))
+    })?;
+    start(&config, options, prepared, host, admission)
+}
+
+/// One admission attempt (EON-C40 clause 7): from project selection to the post-prepare cap
+/// recheck, under the admission lock it returns. A failure drops the lock before it returns.
+fn admit(
+    config: &Config,
+    options: &RunOptions,
+    prepared: &Prepared,
+    host: &crate::cli::Host<'_>,
+    attempt: &mut wait::Attempt,
+) -> Result<Admission, Failure> {
+    let cwd = &prepared.cwd;
+    let project = projects::select(config, options.project.as_deref(), cwd)?;
     if let Some(selected) = &project {
-        eprintln!("{}: {}", host.program, selected.line());
+        attempt.line(format!("{}: {}", host.program, selected.line()));
     }
     let indices: Vec<usize> = match &options.only {
         Some(name) => {
@@ -559,9 +587,14 @@ pub fn run(
                 .backends
                 .iter()
                 .position(|b| &b.name == name)
-                .ok_or_else(|| (2, format!("--only {name} is not a configured backend")))?;
+                .ok_or_else(|| {
+                    (
+                        wait::REFUSED,
+                        format!("--only {name} is not a configured backend"),
+                    )
+                })?;
             if let Some(reason) = unsupported(&config.backends[index], options) {
-                return Err((2, format!("{name}: {reason}")));
+                return Err((wait::REFUSED, format!("{name}: {reason}")));
             }
             vec![index]
         }
@@ -571,7 +604,7 @@ pub fn run(
     };
     if indices.is_empty() {
         return Err((
-            2,
+            wait::REFUSED,
             "no backend has a headless command for these options".into(),
         ));
     }
@@ -582,25 +615,35 @@ pub fn run(
         .map(|_| readings::not_checked())
         .collect();
     let (normal, reasons) = supported(config, &indices, &mut readings, |index| {
-        let command = &config.backends[index].run.as_ref()?.commands[&options.role];
+        let backend = &config.backends[index];
+        if let Some(problem) = readings::static_problem(backend, cwd) {
+            return Some(problem);
+        }
+        let command = &backend.run.as_ref()?.commands[&options.role];
         projects::overlay(project.as_ref(), options.role, command).err()
     });
     if normal.is_empty() {
         return Err(unsupported_refusal("run", &reasons));
     }
-    // Wait for other rota selections instead of failing a batch of runs.
-    let lock = lock(config, true, host.program)?;
-    let mut ledger = crate::admissions::Ledger::load(&config.state_file);
+    // Without --wait, wait for other selections instead of failing a batch of runs; a waiter
+    // takes the lock only when it is free, so no attempt starts after its deadline.
+    let lock = lock(config, options.wait.is_none(), host.program)?;
+    let ledger = crate::admissions::Ledger::load(&config.state_file);
     let entry = Entry {
         role: options.role,
         level: None,
-        cwd: &cwd,
+        cwd,
         project: project.as_ref().map(|p| p.name),
     };
     let (scanner, live) = project_holds(config, project.as_ref(), &entry, &readings, false)?;
     let candidates = decision::Candidates {
         normal,
         fallback: None,
+    };
+    let mode = if attempt.first() {
+        readings::QuotaMode::Admit
+    } else {
+        readings::QuotaMode::Retry
     };
     let pick = decision::select(config, &candidates, options.role, &mut readings, |index| {
         let backend = &config.backends[index];
@@ -613,22 +656,62 @@ pub fn run(
                 ..decision::Reading::default()
             };
         }
-        let mode = readings::QuotaMode::Admit;
-        readings::check(backend, &cwd, mode, &ledger, host.session)
+        readings::check(backend, cwd, mode, &ledger, host.session)
     });
     log(config, &entry, &readings, pick.as_ref().ok(), None)?;
-    print_readings(config, &indices, &readings, options.role, host.program);
+    print_readings(
+        config,
+        &indices,
+        &readings,
+        options.role,
+        host.program,
+        attempt,
+    );
     let pick = pick.map_err(|e| (e.code, e.message))?;
     let backend = &config.backends[pick.index];
-    let run = backend.run.as_ref().expect("candidates have a run table");
-    println!("pick: {}", backend.name);
     for prepare in &backend.prepare {
-        readings::probe(backend, prepare, 30, &cwd).map_err(io_failure)?;
+        readings::probe(backend, prepare, 30, cwd).map_err(io_failure)?;
     }
     if let Err(problem) = readings::recheck_cap(backend, &mut readings[pick.index]) {
         log(config, &entry, &readings, None, None)?;
-        return Err((3, problem));
+        return Err((wait::HOLD, problem));
     }
+    Ok(Admission {
+        pick,
+        project: projects::Chosen::of(project.as_ref()),
+        readings,
+        ledger,
+        scanner,
+        lock: Some(lock),
+    })
+}
+
+/// After admission: checks the scope mechanism, records the admission, and supervises the run.
+fn start(
+    config: &Config,
+    options: &RunOptions,
+    prepared: Prepared,
+    host: &crate::cli::Host<'_>,
+    admission: Admission,
+) -> Result<(), Failure> {
+    let Prepared {
+        brief,
+        brief_file,
+        cwd,
+        add_dirs,
+    } = prepared;
+    let Admission {
+        pick,
+        project,
+        readings,
+        mut ledger,
+        scanner,
+        lock,
+    } = admission;
+    let project = projects::Chosen::selected(project.as_ref(), config);
+    let backend = &config.backends[pick.index];
+    let run = backend.run.as_ref().expect("candidates have a run table");
+    println!("pick: {}", backend.name);
     // The run gets its own scope, so rota can stop and wait for every process it starts.
     let probe = ["sh", "-c", PROBE_SCRIPT].map(String::from).to_vec();
     let probe = bounded(
@@ -829,8 +912,15 @@ mod tests {
     #[test]
     fn run_arguments() {
         let line = "--brief b.md --name eon-x.review_2 --timeout 90m --role review \
-                    --add-dir /a --add-dir /b --effort xhigh --cwd /w --project tide";
+                    --add-dir /a --add-dir /b --effort xhigh --cwd /w --project tide --wait 2h";
         let parsed = parse(&args(line)).unwrap();
+        assert_eq!(
+            parsed.wait,
+            Some(crate::wait::Wait {
+                limit: std::time::Duration::from_secs(7200),
+                text: "2h".into()
+            })
+        );
         assert_eq!(parsed.role, Role::Review);
         assert_eq!(parsed.timeout, 5400);
         assert_eq!(parsed.name, "eon-x.review_2");
@@ -840,8 +930,14 @@ mod tests {
         assert_eq!(parsed.project.as_deref(), Some("tide"));
         let parsed = parse(&args("--brief b --name n --timeout 5")).unwrap();
         assert_eq!(
-            (parsed.role, parsed.cwd, parsed.effort, parsed.project),
-            (Role::Implement, None, None, None)
+            (
+                parsed.role,
+                parsed.cwd,
+                parsed.effort,
+                parsed.project,
+                parsed.wait
+            ),
+            (Role::Implement, None, None, None, None)
         );
         for bad in [
             "--brief b --name n",
@@ -854,6 +950,9 @@ mod tests {
             "--brief b --name n --timeout 5 extra",
             "--brief b --name n --timeout",
             "--brief b --name n --timeout 5 --project",
+            "--brief b --name n --timeout 5 --wait 25h",
+            "--brief b --name n --timeout 5 --wait 0",
+            "--brief b --name n --timeout 5 --wait",
         ] {
             assert_eq!(parse(&args(bad)).unwrap_err().0, 2, "{bad}");
         }

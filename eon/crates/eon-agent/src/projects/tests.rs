@@ -128,7 +128,7 @@ fn selection_by_flag_repository_and_worktree() {
     assert_eq!(flagged.line(), "project: alpha (from --project)");
     assert_eq!(
         select(&config, Some("nope"), &other).err().unwrap(),
-        (2, "unknown project nope".into())
+        (69, "unknown project nope".into())
     );
     // Two projects on one repository: legal for retire, ambiguous for selection.
     let config = parse(&format!(

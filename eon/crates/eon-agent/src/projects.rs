@@ -146,6 +146,37 @@ pub fn validate(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+/// The project an admission was checked for, by name, so the start uses the same one even if
+/// repository discovery would now answer differently (a prepare hook may create a `.git`).
+#[derive(Clone, Debug)]
+pub struct Chosen {
+    pub name: String,
+    pub from_flag: bool,
+}
+
+impl Chosen {
+    pub fn of(selected: Option<&Selected<'_>>) -> Option<Chosen> {
+        selected.map(|s| Chosen {
+            name: s.name.to_owned(),
+            from_flag: s.from_flag,
+        })
+    }
+
+    /// The project again, from the configuration the admission read.
+    pub fn selected<'a>(chosen: Option<&Chosen>, config: &'a Config) -> Option<Selected<'a>> {
+        let chosen = chosen?;
+        let (name, project) = config
+            .projects
+            .get_key_value(&chosen.name)
+            .expect("the admitted project is in the configuration that admitted it");
+        Some(Selected {
+            name,
+            project,
+            from_flag: chosen.from_flag,
+        })
+    }
+}
+
 /// A selected project and how it was chosen.
 pub struct Selected<'a> {
     pub name: &'a str,
@@ -179,7 +210,7 @@ pub fn select<'a>(
         let (name, project) = config
             .projects
             .get_key_value(name)
-            .ok_or_else(|| (2, format!("unknown project {name}")))?;
+            .ok_or_else(|| (crate::wait::REFUSED, format!("unknown project {name}")))?;
         return Ok(Some(Selected {
             name,
             project,

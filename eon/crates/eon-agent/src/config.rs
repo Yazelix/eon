@@ -35,6 +35,8 @@ pub struct Config {
     pub log_file: PathBuf,
     pub fallback: Option<String>,
     pub popup_backend: Option<String>,
+    /// How long `--wait` sleeps between admission attempts, at most; 1 to 3600, default 60.
+    pub wait_retry_seconds: Option<u64>,
     #[serde(default)]
     pub run: RunEnv,
     #[serde(default)]
@@ -615,7 +617,21 @@ impl Config {
                 "popup_backend must name an implement backend or the configured fallback".into(),
             );
         }
+        if self
+            .wait_retry_seconds
+            .is_some_and(|seconds| !(1..=3600).contains(&seconds))
+        {
+            return Err("wait_retry_seconds must be between 1 and 3600".into());
+        }
         Ok(())
+    }
+
+    /// The longest sleep between `--wait` attempts.
+    pub fn wait_retry(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.wait_retry_seconds
+                .unwrap_or(crate::wait::DEFAULT_RETRY_SECONDS),
+        )
     }
 }
 
@@ -623,6 +639,19 @@ impl Config {
 mod tests {
     use super::*;
     const EXAMPLE: &str = include_str!("../config.example.toml");
+
+    #[test]
+    fn wait_retry_seconds_defaults_to_60_and_is_bounded() {
+        let config = Config::parse(EXAMPLE, "rota").unwrap();
+        assert_eq!(config.wait_retry(), std::time::Duration::from_secs(60));
+        for (value, ok) in [(1, true), (3600, true), (0, false), (3601, false)] {
+            let parsed = Config::parse(&format!("wait_retry_seconds = {value}\n{EXAMPLE}"), "rota");
+            assert_eq!(parsed.is_ok(), ok, "{value}: {:?}", parsed.err());
+            if ok {
+                assert_eq!(parsed.unwrap().wait_retry().as_secs(), value);
+            }
+        }
+    }
 
     #[test]
     fn example_is_valid() {

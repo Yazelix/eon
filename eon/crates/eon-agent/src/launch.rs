@@ -2,7 +2,7 @@ use crate::command::{self, Part};
 use crate::config::{Backend, Config, Level, Role};
 use crate::projects::{self, Selected};
 use crate::readings::QuotaMode;
-use crate::{admissions, decision, readings};
+use crate::{admissions, decision, readings, wait};
 use fs2::FileExt;
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::Write;
@@ -24,6 +24,8 @@ pub struct Options {
     pub project: Option<String>,
     pub name: Option<String>,
     pub add_dirs: Vec<PathBuf>,
+    /// `--wait DURATION`; `None` makes one admission attempt.
+    pub wait: Option<wait::Wait>,
 }
 
 pub fn parse(args: &[String]) -> Result<Options, Failure> {
@@ -38,12 +40,13 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
         project: None,
         name: None,
         add_dirs: Vec::new(),
+        wait: None,
     };
     let mut i = 0;
     let mut role_or_level = false;
     while let Some(arg) = args.get(i) {
         match arg.as_str() {
-            "--role" | "--level" | "--only" | "--project" | "--name" | "--add-dir" => {
+            "--role" | "--level" | "--only" | "--project" | "--name" | "--add-dir" | "--wait" => {
                 i += 1;
                 let value = args.get(i).ok_or_else(|| bad("option needs a value"))?;
                 match arg.as_str() {
@@ -72,6 +75,7 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
                         options.name = Some(value.clone());
                     }
                     "--add-dir" => options.add_dirs.push(PathBuf::from(value)),
+                    "--wait" => options.wait = Some(wait::parse(value)?),
                     _ => options.only = Some(value.clone()),
                 }
             }
@@ -92,9 +96,10 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
             || options.project.is_some()
             || options.name.is_some()
             || !options.add_dirs.is_empty()
+            || options.wait.is_some()
         {
             return Err(bad(
-                "--popup takes no prompt file, --role, --level, --project, --name or --add-dir",
+                "--popup takes no prompt file, --role, --level, --project, --name, --add-dir or --wait",
             ));
         }
     } else if args.len() != i + 1 {
@@ -252,8 +257,9 @@ pub fn io_failure(error: impl std::fmt::Display) -> Failure {
     (1, error.to_string())
 }
 
-/// Serializes rota's backend selection; the descriptor closes on exec.
-pub fn lock(config: &Config, wait: bool, program: &str) -> Result<File, Failure> {
+/// Serializes rota's backend selection; the descriptor closes on exec. `block` waits for the
+/// lock; otherwise a busy lock is a hold.
+pub fn lock(config: &Config, block: bool, program: &str) -> Result<File, Failure> {
     let mut lock_path = config.state_file.as_os_str().to_os_string();
     lock_path.push(".lock");
     let lock_path = PathBuf::from(lock_path);
@@ -266,7 +272,7 @@ pub fn lock(config: &Config, wait: bool, program: &str) -> Result<File, Failure>
         .mode(0o600)
         .open(lock_path)
         .map_err(io_failure)?;
-    let locked = if wait {
+    let locked = if block {
         lock.lock_exclusive()
     } else {
         lock.try_lock_exclusive()
@@ -274,7 +280,7 @@ pub fn lock(config: &Config, wait: bool, program: &str) -> Result<File, Failure>
     locked.map_err(|e| {
         if e.kind() == std::io::ErrorKind::WouldBlock {
             (
-                3,
+                wait::HOLD,
                 format!("another {program} command is selecting a backend"),
             )
         } else {
@@ -338,10 +344,10 @@ pub fn supported(
     (kept, reasons)
 }
 
-/// The refusal when static reasons leave no candidate: waiting cannot change configuration.
+/// The refusal when static reasons leave no candidate: waiting cannot change them.
 pub fn unsupported_refusal(what: &str, reasons: &[String]) -> Failure {
     (
-        2,
+        wait::REFUSED,
         format!("no backend can take this {what}: {}", reasons.join("; ")),
     )
 }
@@ -363,7 +369,7 @@ pub fn project_holds(
         if !dry_run && let Err(e) = log(config, entry, readings, None, Some(&message)) {
             return e;
         }
-        (3, message)
+        (wait::HOLD, message)
     };
     let mut found = (None, Vec::new());
     if entry.role != Role::Lead {
@@ -384,12 +390,14 @@ pub fn project_holds(
     Ok(found)
 }
 
+/// Adds one line per candidate's reading to `attempt`'s output.
 pub fn print_readings(
     config: &Config,
     indices: &[usize],
     readings: &[decision::Reading],
     role: Role,
     program: &str,
+    attempt: &mut wait::Attempt,
 ) {
     for index in indices {
         let b = &config.backends[*index];
@@ -402,14 +410,25 @@ pub fn print_readings(
             .as_ref()
             .and_then(|source| source.via.as_deref())
             .map_or_else(String::new, |via| format!(" via {via}"));
-        match r.detail.as_str() {
-            "" => eprintln!("{program}: {} [{availability}]{via}", b.name),
-            detail => eprintln!("{program}: {} [{availability}]: {detail}{via}", b.name),
-        }
+        attempt.line(match r.detail.as_str() {
+            "" => format!("{program}: {} [{availability}]{via}", b.name),
+            detail => format!("{program}: {} [{availability}]: {detail}{via}", b.name),
+        });
     }
 }
 
-pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> Result<(), Failure> {
+/// What a launch reads once, before any admission attempt: its brief, directory and `--add-dir`
+/// folders. Everything that depends on the configuration is decided again by each attempt.
+struct Prepared {
+    /// The canonical prompt file and its text; `None` for the popup.
+    brief: Option<(PathBuf, String)>,
+    cwd: PathBuf,
+    cwd_text: String,
+    prompt_path: String,
+    dirs: Vec<String>,
+}
+
+fn prepare(options: &Options) -> Result<Prepared, Failure> {
     let brief = if options.popup {
         None
     } else {
@@ -425,33 +444,92 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
     let cwd = std::env::current_dir()
         .and_then(fs::canonicalize)
         .map_err(io_failure)?;
-    let cwd_text = cwd
-        .to_str()
-        .ok_or_else(|| (2, "working directory must be UTF-8".into()))?;
-    let prompt_path = brief
-        .as_ref()
-        .map(|(file, _)| {
-            file.to_str()
-                .ok_or_else(|| (2, "prompt path must be UTF-8".into()))
-        })
-        .transpose()?
-        .unwrap_or("");
-    let add_dirs = command::canonical_dirs(&options.add_dirs)?;
-    let dirs: Vec<&str> = add_dirs
-        .iter()
-        .map(|d| {
-            d.to_str()
-                .ok_or_else(|| (2, "--add-dir must be UTF-8".to_string()))
-        })
-        .collect::<Result<_, _>>()?;
-    // The person's Agent popup is never a project's agent.
-    let project = if options.popup {
-        None
-    } else {
-        projects::select(config, options.project.as_deref(), &cwd)?
+    let utf8 = |path: &Path, what: &str| {
+        path.to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| (2, format!("{what} must be UTF-8")))
     };
+    let cwd_text = utf8(&cwd, "working directory")?;
+    let prompt_path = match &brief {
+        Some((file, _)) => utf8(file, "prompt path")?,
+        None => String::new(),
+    };
+    let dirs = command::canonical_dirs(&options.add_dirs)?
+        .iter()
+        .map(|dir| utf8(dir, "--add-dir"))
+        .collect::<Result<_, _>>()?;
+    Ok(Prepared {
+        brief,
+        cwd,
+        cwd_text,
+        prompt_path,
+        dirs,
+    })
+}
+
+/// The command a launch runs on `backend`: the popup command, or the level's command. `None`
+/// for a popup on a backend without one.
+fn argv_of(options: &Options, backend: &Backend) -> Option<Vec<String>> {
+    if options.popup {
+        backend.popup_command()
+    } else {
+        Some(backend.commands[&options.level].clone())
+    }
+}
+
+/// The launch's project: the person's Agent popup is never a project's agent.
+fn select_project<'c>(
+    config: &'c Config,
+    options: &Options,
+    cwd: &Path,
+) -> Result<Option<Selected<'c>>, Failure> {
+    if options.popup {
+        Ok(None)
+    } else {
+        projects::select(config, options.project.as_deref(), cwd)
+    }
+}
+
+/// What an admission attempt that admitted hands on: its pick and the reading it spends, the
+/// project it was checked for, the ledger and the project scanner read under the lock, and the
+/// lock itself, held until exec.
+pub struct Admission {
+    pub pick: decision::Pick,
+    pub project: Option<projects::Chosen>,
+    pub readings: Vec<decision::Reading>,
+    pub ledger: admissions::Ledger,
+    pub scanner: Option<projects::Scanner>,
+    pub lock: Option<File>,
+}
+
+pub fn run(
+    options: &Options,
+    host: &crate::cli::Host<'_>,
+    load: &dyn Fn() -> Result<Config, Failure>,
+) -> Result<(), Failure> {
+    let prepared = prepare(options)?;
+    let (config, admission) = wait::admit(options.wait.as_ref(), host.program, |attempt| {
+        let config = load()?;
+        attempt.retry_every(config.wait_retry());
+        let admission = admit(&config, options, &prepared, host, attempt)?;
+        Ok((config, admission))
+    })?;
+    start(&config, options, &prepared, host, admission)
+}
+
+/// One admission attempt (EON-C40 clause 7): from project selection to the post-prepare cap
+/// recheck, under the admission lock it returns. A failure drops the lock before it returns.
+fn admit(
+    config: &Config,
+    options: &Options,
+    prepared: &Prepared,
+    host: &crate::cli::Host<'_>,
+    attempt: &mut wait::Attempt,
+) -> Result<Admission, Failure> {
+    let cwd = &prepared.cwd;
+    let project = select_project(config, options, cwd)?;
     if let Some(selected) = &project {
-        eprintln!("{}: {}", host.program, selected.line());
+        attempt.line(format!("{}: {}", host.program, selected.line()));
     }
     let popup_backend = if options.popup {
         config.popup_backend.as_deref()
@@ -473,13 +551,6 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         .iter()
         .map(|_| readings::not_checked())
         .collect();
-    let argv_of = |backend: &Backend| {
-        if options.popup {
-            backend.popup_command()
-        } else {
-            Some(backend.commands[&options.level].clone())
-        }
-    };
     let level_name = match options.level {
         Level::Medium => "medium",
         Level::High => "high",
@@ -487,7 +558,12 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
     // Reasons these options can never use a backend, decided before anything is read.
     let (kept, reasons) = supported(config, &indices, &mut readings, |index| {
         let backend = &config.backends[index];
-        let argv = argv_of(backend)?;
+        if let Some(problem) = readings::static_problem(backend, cwd) {
+            return Some(problem);
+        }
+        let Some(argv) = argv_of(options, backend) else {
+            return Some("no popup_command for this executable".into());
+        };
         let overlay = match projects::overlay(project.as_ref(), options.role, &argv) {
             Ok(overlay) => overlay,
             Err(why) => return Some(why),
@@ -495,7 +571,7 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         command::unsupported(
             &argv,
             overlay,
-            !dirs.is_empty(),
+            !prepared.dirs.is_empty(),
             options.name.is_some(),
             level_name,
         )
@@ -507,8 +583,8 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
             return Err(unsupported_refusal("launch", &reasons));
         }
     }
-    // Serialize rota launches from scan through exec.
-    let _lock = if options.dry_run {
+    // Serialize admissions from scan through exec.
+    let lock = if options.dry_run {
         None
     } else {
         Some(lock(config, false, host.program)?)
@@ -516,41 +592,84 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
     let entry = Entry {
         role: options.role,
         level: Some(options.level),
-        cwd: &cwd,
+        cwd,
         project: project.as_ref().map(|p| p.name),
     };
     let (scanner, live) =
         project_holds(config, project.as_ref(), &entry, &readings, options.dry_run)?;
-    let mut ledger = admissions::Ledger::load(&config.state_file);
-    let mode = match (options.role, options.dry_run) {
-        (Role::Lead, _) => QuotaMode::Skip,
-        (_, true) => QuotaMode::Read,
-        (_, false) => QuotaMode::Admit,
+    let ledger = admissions::Ledger::load(&config.state_file);
+    let mode = match (options.role, options.dry_run, attempt.first()) {
+        (Role::Lead, _, _) => QuotaMode::Skip,
+        (_, true, _) => QuotaMode::Read,
+        (_, false, true) => QuotaMode::Admit,
+        (_, false, false) => QuotaMode::Retry,
     };
     let result = decision::select(config, &candidates, options.role, &mut readings, |index| {
         let backend = &config.backends[index];
-        if options.popup && backend.popup_command().is_none() {
-            decision::Reading {
-                problem: Some("no popup_command for this executable".into()),
-                ..decision::Reading::default()
-            }
-        } else if let Some(reason) = project
+        match project
             .as_ref()
             .and_then(|p| projects::backend_hold(p, options.role, &backend.name, &live))
         {
-            decision::Reading {
+            Some(reason) => decision::Reading {
                 problem: Some(reason),
                 ..decision::Reading::default()
-            }
-        } else {
-            readings::check(backend, &cwd, mode, &ledger, host.session)
+            },
+            None => readings::check(backend, cwd, mode, &ledger, host.session),
         }
     });
     if !options.dry_run {
         log(config, &entry, &readings, result.as_ref().ok(), None)?;
     }
-    print_readings(config, &indices, &readings, options.role, host.program);
+    print_readings(
+        config,
+        &indices,
+        &readings,
+        options.role,
+        host.program,
+        attempt,
+    );
     let pick = result.map_err(|e| (e.code, e.message))?;
+    if !options.dry_run {
+        let backend = &config.backends[pick.index];
+        if let Some(path) = &backend.trusted_settings {
+            trust_folder(path, cwd).map_err(io_failure)?;
+        }
+        for prepare in &backend.prepare {
+            readings::probe(backend, prepare, 30, cwd).map_err(io_failure)?;
+        }
+        if let Err(problem) = readings::recheck_cap(backend, &mut readings[pick.index]) {
+            log(config, &entry, &readings, None, None)?;
+            return Err((wait::HOLD, problem));
+        }
+    }
+    Ok(Admission {
+        pick,
+        project: projects::Chosen::of(project.as_ref()),
+        readings,
+        ledger,
+        scanner,
+        lock,
+    })
+}
+
+/// After admission: prints the pick, records the admission, and execs the backend (or, for a
+/// dry run, prints its command).
+fn start(
+    config: &Config,
+    options: &Options,
+    prepared: &Prepared,
+    host: &crate::cli::Host<'_>,
+    admission: Admission,
+) -> Result<(), Failure> {
+    let Admission {
+        pick,
+        project,
+        readings,
+        mut ledger,
+        scanner,
+        lock: _lock,
+    } = admission;
+    let project = projects::Chosen::selected(project.as_ref(), config);
     let backend = &config.backends[pick.index];
     if pick.fallback {
         eprintln!(
@@ -559,33 +678,30 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         );
     }
     println!("pick: {}", backend.name);
-    let command = argv_of(backend).expect("selection checked popup command");
+    let command = argv_of(options, backend).expect("admission checked the popup command");
     let overlay =
         projects::overlay(project.as_ref(), options.role, &command).map_err(|e| (2, e))?;
     let name = options.name.as_deref().unwrap_or_default();
+    let dirs: Vec<&str> = prepared.dirs.iter().map(String::as_str).collect();
     let values = command::Values {
-        fills: &[("{cwd}", cwd_text), (command::NAME, name)],
+        fills: &[("{cwd}", &prepared.cwd_text), (command::NAME, name)],
         template: backend.add_dir.as_deref(),
         add_dirs: &dirs,
         overlay,
     };
     let parts = command::expand(&command, &values);
     if options.dry_run {
-        println!("command: {}", display(backend, &parts, prompt_path));
+        println!(
+            "command: {}",
+            display(backend, &parts, &prepared.prompt_path)
+        );
         return Ok(());
     }
-    if let Some(path) = &backend.trusted_settings {
-        trust_folder(path, &cwd).map_err(io_failure)?;
-    }
-    for prepare in &backend.prepare {
-        readings::probe(backend, prepare, 30, &cwd).map_err(io_failure)?;
-    }
-    let prompt = brief.as_ref().map_or("", |(_, prompt)| prompt.as_str());
+    let prompt = prepared
+        .brief
+        .as_ref()
+        .map_or("", |(_, prompt)| prompt.as_str());
     let argv = command::argv(parts, prompt);
-    if let Err(problem) = readings::recheck_cap(backend, &mut readings[pick.index]) {
-        log(config, &entry, &readings, None, None)?;
-        return Err((3, problem));
-    }
     // Written before exec, so the agent counts from the moment it is admitted; a failed
     // exec drops it.
     let _admitted = match (&project, &scanner) {
@@ -599,7 +715,9 @@ pub fn run(config: &Config, options: &Options, host: &crate::cli::Host<'_>) -> R
         _ => None,
     };
     record_admission(&mut ledger, backend, options.role, &readings[pick.index])?;
-    let error = readings::command(backend, &argv).current_dir(&cwd).exec();
+    let error = readings::command(backend, &argv)
+        .current_dir(&prepared.cwd)
+        .exec();
     Err(io_failure(format!(
         "could not exec {}: {error}",
         backend.name
@@ -642,6 +760,12 @@ mod tests {
         assert_eq!(named.project.as_deref(), Some("tide"));
         assert_eq!(named.name.as_deref(), Some("tide-1"));
         assert_eq!(named.add_dirs, [PathBuf::from("/a"), PathBuf::from("/b")]);
+        assert_eq!(named.wait, None);
+        let waiting = parse(&args(&["--wait", "90m", "--dry-run", "task"])).unwrap();
+        assert_eq!(
+            waiting.wait.map(|w| (w.limit.as_secs(), w.text)),
+            Some((5400, "90m".into()))
+        );
         let lead = parse(&["--role".to_string(), "lead".into(), "task".into()]).unwrap();
         assert_eq!(lead.role, Role::Lead);
         for args in [
@@ -655,6 +779,9 @@ mod tests {
             vec!["--popup", "--project", "p"],
             vec!["--popup", "--name", "n"],
             vec!["--popup", "--add-dir", "/x"],
+            vec!["--popup", "--wait", "1m"],
+            vec!["--wait", "25h", "task"],
+            vec!["--wait", "soon", "task"],
         ] {
             assert_eq!(
                 parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())

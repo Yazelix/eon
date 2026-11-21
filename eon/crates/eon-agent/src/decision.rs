@@ -268,7 +268,7 @@ pub fn candidates(
             .position(|b| b.name == name && b.roles.contains(&role))
         else {
             return Err(Refusal {
-                code: 2,
+                code: crate::wait::REFUSED,
                 message: format!("--only {name} is not allowed for role {role:?}"),
             });
         };
@@ -292,6 +292,12 @@ pub fn candidates(
     } else {
         None
     };
+    if normal.is_empty() && fallback.is_none() {
+        return Err(Refusal {
+            code: crate::wait::REFUSED,
+            message: format!("no backend serves role {}", role.name()),
+        });
+    }
     Ok(Candidates { normal, fallback })
 }
 
@@ -313,9 +319,10 @@ fn first(candidates: &Candidates, mut admits: impl FnMut(usize) -> bool) -> Opti
         })
 }
 
+/// Every candidate was read and none admits: a hold, since a later reading may admit.
 fn refusal() -> Refusal {
     Refusal {
-        code: 3,
+        code: crate::wait::HOLD,
         message: "no backend available, refusing".into(),
     }
 }
@@ -389,11 +396,17 @@ mod tests {
         assert_eq!(pick(&r, Role::Review, None).unwrap().index, 1);
         r[1].quota_problem = Some("quota unreadable".into());
         assert_eq!(pick(&r, Role::Implement, None).unwrap().index, 2);
-        assert_eq!(pick(&r, Role::Review, Some("code")).unwrap_err().code, 2);
+        assert_eq!(
+            pick(&r, Role::Review, Some("code")).unwrap_err().code,
+            crate::wait::REFUSED
+        );
         // Leads: only backends that opt in, quota problems ignored, access problems not.
         assert_eq!(pick(&r, Role::Lead, None).unwrap().index, 1);
         r[1].problem = Some("command guard missing or failed".into());
-        assert_eq!(pick(&r, Role::Lead, None).unwrap_err().code, 3);
+        assert_eq!(
+            pick(&r, Role::Lead, None).unwrap_err().code,
+            crate::wait::HOLD
+        );
     }
     #[test]
     fn first_tries_candidates_one_at_a_time_and_stops_at_the_pick() {
@@ -440,13 +453,13 @@ mod tests {
             select_from(&config, &r, Role::Review, None, None)
                 .unwrap_err()
                 .code,
-            3
+            crate::wait::HOLD
         );
         assert_eq!(
             select_from(&config, &r, Role::Implement, Some("code"), None)
                 .unwrap_err()
                 .code,
-            3
+            crate::wait::HOLD
         );
         assert_eq!(
             select_from(&config, &r, Role::Implement, None, None).unwrap(),
@@ -460,14 +473,14 @@ mod tests {
             select_from(&config, &r, Role::Lead, None, None)
                 .unwrap_err()
                 .code,
-            3
+            crate::wait::HOLD
         );
         r[4].problem = Some("guard missing".into());
         assert_eq!(
             select_from(&config, &r, Role::Implement, None, None)
                 .unwrap_err()
                 .code,
-            3
+            crate::wait::HOLD
         );
     }
     #[test]
@@ -479,7 +492,7 @@ mod tests {
             select_from(&config, &r, Role::Implement, None, Some("alpha"))
                 .unwrap_err()
                 .code,
-            3
+            crate::wait::HOLD
         );
         assert_eq!(
             select_from(&config, &r, Role::Implement, None, Some("main")).unwrap(),

@@ -267,7 +267,7 @@ fn real_launches_take_the_first_available_account_every_time() {
     // Both held: refusal naming both reasons.
     root.config(&body(5, 4));
     let output = root.rota(&["launch", "brief"]);
-    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    assert_eq!(output.status.code(), Some(75), "{output:?}");
     assert_eq!(
         text(&output.stderr),
         format!("{held_a}{held_b}rota: no backend available, refusing\n")
@@ -307,13 +307,13 @@ fn an_observation_admits_once_and_a_refresh_brings_a_later_one() {
     fs::remove_file(root.path.join("launched-wrapper-a")).unwrap();
     let held = format!("rota: wrapper-a [{}]", repeat(at, "acct-1"));
     let second = root.rota(&["launch", "brief"]);
-    assert_eq!(second.status.code(), Some(3), "{second:?}");
+    assert_eq!(second.status.code(), Some(75), "{second:?}");
     assert!(text(&second.stderr).contains(&held), "{second:?}");
     assert!(!root.exists("launched-wrapper-a"));
     // A dry run shows the hold and writes nothing.
     let before = fs::read(root.path.join("state/admissions.json")).unwrap();
     let dry = root.rota(&["launch", "--dry-run", "brief"]);
-    assert_eq!(dry.status.code(), Some(3), "{dry:?}");
+    assert_eq!(dry.status.code(), Some(75), "{dry:?}");
     assert!(text(&dry.stderr).contains(&held));
     let status = root.rota(&["status", "--json"]);
     let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
@@ -336,7 +336,7 @@ fn an_observation_admits_once_and_a_refresh_brings_a_later_one() {
     let dry = root.rota(&["launch", "--dry-run", "brief"]);
     assert_eq!(
         dry.status.code(),
-        Some(3),
+        Some(75),
         "a dry run never refreshes: {dry:?}"
     );
     let third = root.rota(&["launch", "brief"]);
@@ -365,7 +365,7 @@ fn backends_on_one_account_share_its_observations() {
     let first = root.rota(&["launch", "--only", "wrapper-a", "brief"]);
     assert!(first.status.success(), "{first:?}");
     let second = root.rota(&["launch", "--only", "wrapper-b", "brief"]);
-    assert_eq!(second.status.code(), Some(3), "{second:?}");
+    assert_eq!(second.status.code(), Some(75), "{second:?}");
     assert!(
         text(&second.stderr).contains(&format!("rota: wrapper-b [{}]", repeat(at, "acct-1"))),
         "{second:?}"
@@ -415,7 +415,7 @@ fn a_limited_backend_needs_a_present_and_recent_reading_time() {
     // The default bound holds the 1805 s reading that a 2000 s bound admits.
     root.config(&body.replacen(&wide, IMPLEMENT_LIMIT, 1));
     let output = root.rota(&["launch", "--dry-run", "--only", "old-wide", "brief"]);
-    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    assert_eq!(output.status.code(), Some(75), "{output:?}");
     assert!(
         text(&output.stderr).contains(
             "rota: old-wide [quota reading on account acct-4 is 1805 s old (max_age_seconds 600)]"
@@ -458,7 +458,7 @@ fn an_unreadable_ledger_holds_limited_backends_with_its_path() {
     ] {
         fs::write(&ledger, content).unwrap();
         let output = root.rota(&["launch", "brief"]);
-        assert_eq!(output.status.code(), Some(3), "{content}: {output:?}");
+        assert_eq!(output.status.code(), Some(75), "{content}: {output:?}");
         let stderr = text(&output.stderr);
         assert!(
             stderr.contains(&format!(
@@ -540,7 +540,7 @@ fn an_observation_spent_by_one_command_holds_the_other() {
     let launch = root_a.rota(&["launch", "brief"]);
     assert!(launch.status.success(), "{launch:?}");
     let run = rota_run(&root_a, "wrapper-a");
-    assert_eq!(run.status.code(), Some(3), "{run:?}");
+    assert_eq!(run.status.code(), Some(75), "{run:?}");
     assert!(text(&run.stderr).contains(&held), "{run:?}");
     assert!(!root_a.exists("ran-wrapper-a"));
     // run, then launch.
@@ -553,7 +553,7 @@ fn an_observation_spent_by_one_command_holds_the_other() {
     );
     assert_eq!(root_b.spent("acct-1"), Some(at));
     let launch = root_b.rota(&["launch", "brief"]);
-    assert_eq!(launch.status.code(), Some(3), "{launch:?}");
+    assert_eq!(launch.status.code(), Some(75), "{launch:?}");
     assert!(text(&launch.stderr).contains(&held), "{launch:?}");
     assert!(!root_b.exists("launched-wrapper-a"));
 }
@@ -597,7 +597,7 @@ fn a_launch_while_a_run_holds_the_admission_lock_is_refused() {
         text(&launch.stdout).starts_with("pick: "),
     ];
     assert_eq!(admitted, [true, false], "{run:?}\n{launch:?}");
-    assert_eq!(launch.status.code(), Some(3), "{launch:?}");
+    assert_eq!(launch.status.code(), Some(75), "{launch:?}");
     assert_eq!(
         text(&launch.stderr),
         "rota: another rota command is selecting a backend\n"
@@ -634,7 +634,7 @@ fn a_run_waiting_for_the_admission_lock_sees_the_admission_it_waited_for() {
         text(&run.stdout).starts_with("pick: "),
     ];
     assert_eq!(admitted, [true, false], "{launch:?}\n{run:?}");
-    assert_eq!(run.status.code(), Some(3), "{run:?}");
+    assert_eq!(run.status.code(), Some(75), "{run:?}");
     assert!(
         text(&run.stderr).contains(&format!("rota: wrapper-b [{}]", repeat(at, "acct-1"))),
         "{run:?}"
@@ -676,7 +676,7 @@ fn lead_launches_skip_the_quota_gate_but_keep_access_checks() {
     assert_eq!(decision["decision"], "pick");
     // The same account over its limits holds an implement launch.
     let implement = root.rota(&["launch", "brief"]);
-    assert_eq!(implement.status.code(), Some(3), "{implement:?}");
+    assert_eq!(implement.status.code(), Some(75), "{implement:?}");
     // Status shows the lead column from access checks alone.
     let status = root.rota(&["status", "--json"]);
     let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
@@ -698,19 +698,28 @@ fn lead_launches_skip_the_quota_gate_but_keep_access_checks() {
         "30",
     ]);
     assert_eq!(run.status.code(), Some(2), "{run:?}");
-    // A disabled or guard-failing lead backend still refuses.
-    for change in [
-        ("guard = ['true']", "guard = ['false']"),
-        ("name = 'wrapper-a'", "name = 'wrapper-a'\nenabled = false"),
+    // A guard-failing lead backend still holds; a disabled one refuses (69), since waiting
+    // cannot enable it.
+    for (change, code) in [
+        (("guard = ['true']", "guard = ['false']"), 75),
+        (
+            ("name = 'wrapper-a'", "name = 'wrapper-a'\nenabled = false"),
+            69,
+        ),
     ] {
         root.config(&body.replace(change.0, change.1));
         let lead = root.rota(&["launch", "--role", "lead", "brief"]);
-        assert_eq!(lead.status.code(), Some(3), "{change:?}: {lead:?}");
+        assert_eq!(lead.status.code(), Some(code), "{change:?}: {lead:?}");
     }
-    // A backend that does not opt in to the lead role is not a lead candidate.
+    // A backend that does not opt in to the lead role is not a lead candidate: no backend
+    // serves the role.
     root.config(&body.replace("['implement', 'lead']", "['implement']"));
     let lead = root.rota(&["launch", "--role", "lead", "brief"]);
-    assert_eq!(lead.status.code(), Some(3), "{lead:?}");
+    assert_eq!(lead.status.code(), Some(69), "{lead:?}");
+    assert!(
+        text(&lead.stderr).contains("no backend serves role lead"),
+        "{lead:?}"
+    );
 }
 
 #[test]
@@ -731,7 +740,7 @@ fn an_idle_claude_account_needs_its_five_hour_window_declared_absent() {
     assert!(output.status.success(), "{output:?}");
     root.config(&body(""));
     let output = root.rota(&["launch", "--dry-run", "brief"]);
-    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    assert_eq!(output.status.code(), Some(75), "{output:?}");
     assert!(
         text(&output.stderr)
             .contains("rota: wrapper-a [missing quota window five_hour on account acct-1]"),
@@ -810,7 +819,7 @@ fn codexbar_quota_uses_the_shared_gate() {
             "brief",
         ]);
         if let Some(reason) = hold {
-            assert_eq!(output.status.code(), Some(3), "{name}/{role}: {output:?}");
+            assert_eq!(output.status.code(), Some(75), "{name}/{role}: {output:?}");
             assert!(
                 text(&output.stderr).contains(reason),
                 "{reason}: {output:?}"
@@ -1042,7 +1051,7 @@ fn codexbar_quota_uses_the_shared_gate() {
         json!({"account":"configured-subscription","observed_at":observed_at})
     );
     let held = root.rota(&["launch", "--only", "claude", "brief"]);
-    assert_eq!(held.status.code(), Some(3), "{held:?}");
+    assert_eq!(held.status.code(), Some(75), "{held:?}");
     assert!(text(&held.stderr).contains(&repeat(observed_at, "configured-subscription")));
     assert!(!root.exists("launched-claude"));
 }

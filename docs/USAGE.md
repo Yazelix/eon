@@ -92,9 +92,9 @@ running Eon window. Configure its separate
 [agent.toml](CONFIGURATION.md#agent-commands) first.
 
 ```text
-eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--dry-run] <prompt-file>
+eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run] <prompt-file>
 eon agent launch --popup [--only BACKEND] [--dry-run]
-eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]...
+eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION]
 eon agent ps [--json] [--all]
 eon agent slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
 eon agent slot ls [--json]
@@ -121,8 +121,24 @@ the guard's reason. `--name NAME` fills `{name}` and each `--add-dir DIR` repeat
 the backend's `add_dir` template at `{add_dirs}`; a backend whose command needs
 an option that was not given is skipped with its reason. The popup never
 selects a project, and lead launches are never capped.
-JSON status includes the config file used. Exit codes retain rota's meanings:
-2 for invalid input/config, 3 for admission refusal and 1 for operational error.
+JSON status includes the config file used.
+
+`--wait DURATION` (`300`, `300s`, `30m` or `2h`; at most 24h) retries a held
+admission until it admits or the deadline passes. Each attempt re-reads the
+configuration, takes the admission lock only while it works, and reads fresh
+quota; between attempts it sleeps up to `wait_retry_seconds` (default 60),
+never past the deadline. Only the first attempt may run a backend's `refresh`.
+Waiters are not ordered, and one observation still admits one launch. A waiter
+prints `held: REASON; retrying for up to DURATION` once and repeats its reading
+lines only when they change; at the deadline it exits 75 with
+`REASON; still held after waiting DURATION`. Without `--wait` an admission
+makes one attempt. The popup takes no `--wait`.
+
+Exit codes: 75 for a hold that waiting can change (quota, a spent observation,
+a cap, a guard or account check, a project cap, a busy admission lock, or the
+`--wait` deadline); 69 for a refusal waiting cannot change (an unknown project
+or `--only` backend, no enabled backend serving the role, the options or the
+folder); 2 for invalid input/config; 1 for operational error.
 Headless run passes through the agent's status after cleanup, with 124 for a
 timeout, 130 for interruption and 125 for abandoned processes.
 

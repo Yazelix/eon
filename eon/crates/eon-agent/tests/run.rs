@@ -706,7 +706,7 @@ fn scrub_list_applies_to_the_run_but_not_to_checks() {
 
 fn assert_refused(f: &Fixture, message: &str) {
     let output = rota(f, &["--name", "t", "--timeout", "30"]);
-    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(output.status.code(), Some(75));
     let stderr = text(&output.stderr);
     assert!(stderr.contains(message), "{stderr}");
     assert!(
@@ -749,10 +749,10 @@ fn guard_and_quota_refusals_start_nothing() {
 }
 
 #[test]
-fn unsupported_backends_are_input_errors() {
+fn unsupported_backends_are_refusals_waiting_cannot_change() {
     let f = fixture("", "", "");
     let output = rota(&f, &["--name", "t", "--timeout", "30"]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(69));
     assert!(text(&output.stderr).contains("no backend has a headless command for these options"));
     let output = rota(&f, &["--name", "t", "--timeout", "30", "--only", "fake"]);
     assert!(text(&output.stderr).contains("fake: no [backends.run] table"));
@@ -772,7 +772,7 @@ fn unsupported_backends_are_input_errors() {
             "max",
         ],
     );
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(69));
     assert!(text(&output.stderr).contains("fake: effort max is not in efforts"));
     let output = rota(
         &f,

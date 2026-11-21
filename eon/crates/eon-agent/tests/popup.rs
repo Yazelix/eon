@@ -64,7 +64,7 @@ fn popup_mode_validates_custom_commands_and_preserves_ordinary_launch() {
     let root = root.path();
     config(root, "custom", "");
     let output = run(root, &["launch", "--popup", "--dry-run"]);
-    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    assert_eq!(output.status.code(), Some(69), "{output:?}");
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
@@ -140,7 +140,7 @@ fn popup_refusal_and_busy_lock_preserve_exit_codes() {
     )
     .unwrap();
     let refused = run(root, &["launch", "--popup"]);
-    assert_eq!(refused.status.code(), Some(3), "{refused:?}");
+    assert_eq!(refused.status.code(), Some(75), "{refused:?}");
     assert!(
         String::from_utf8(refused.stderr)
             .unwrap()
@@ -156,7 +156,7 @@ fn popup_refusal_and_busy_lock_preserve_exit_codes() {
     let lock = fs::File::create(root.join("state.lock")).unwrap();
     lock.lock_exclusive().unwrap();
     let busy = run(root, &["launch", "--popup"]);
-    assert_eq!(busy.status.code(), Some(3), "{busy:?}");
+    assert_eq!(busy.status.code(), Some(75), "{busy:?}");
     assert!(
         String::from_utf8(busy.stderr)
             .unwrap()
@@ -299,9 +299,10 @@ fn popup_pin_refuses_without_rescue_from_an_available_backend_or_fallback() {
             fs::write(root.join("agent.toml"), config).unwrap();
             fs::write(root.join("state"), "previous\n").unwrap();
             let output = run(root, &["launch", "--popup"]);
+            // A disabled pin refuses before anything is read (69); a failing guard holds (75).
             assert_eq!(
                 output.status.code(),
-                Some(3),
+                Some(if disabled { 69 } else { 75 }),
                 "{pin}, disabled={disabled}: {output:?}"
             );
             assert_eq!(
@@ -312,6 +313,10 @@ fn popup_pin_refuses_without_rescue_from_an_available_backend_or_fallback() {
             assert!(!root.join(format!("{other}-checked")).exists());
             assert!(!root.join("main-prepared").exists());
             assert!(!root.join("secondary-prepared").exists());
+            if disabled {
+                assert!(!root.join("decisions").exists());
+                continue;
+            }
             let record: serde_json::Value =
                 serde_json::from_str(&fs::read_to_string(root.join("decisions")).unwrap()).unwrap();
             assert_eq!(record["decision"], "REFUSAL");

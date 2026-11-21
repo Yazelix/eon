@@ -5,6 +5,17 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent launch` and `eon agent run` take `--wait DURATION` (at most 24h):
+  a held admission retries until it admits or the deadline passes, re-reading
+  `agent.toml` and fresh quota on every attempt and sleeping up to the new
+  optional `wait_retry_seconds` (default 60) between attempts. Only the first
+  attempt may run a backend's `refresh`, and waiters are not ordered.
+  Builds before this one reject an `agent.toml` holding `wait_retry_seconds`.
+  - A hold now exits 75 instead of 3: quota, a spent observation, a cap, an
+    access check, a project cap, a busy admission lock or the `--wait`
+    deadline. A refusal waiting cannot change exits 69 instead of 2 or 3: an
+    unknown project or `--only` backend, or no enabled backend that serves the
+    role, the options or the folder. This applies to the Agent popup too.
 - A Boat run under `eon agent slot run` survives a dropped `boat exec --attach`
   stream. Eon checks the command's status and re-attaches while it runs; if
   it has ended, its real exit code comes back. Before, the healthy run was

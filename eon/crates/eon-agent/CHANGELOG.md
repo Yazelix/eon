@@ -5,6 +5,23 @@ see.
 
 ## Unreleased
 
+- `launch` and `run` take `--wait DURATION` (`300`, `30m`, `2h`; at most 24h).
+  A held admission retries until it admits or the deadline passes. Each attempt
+  re-reads the configuration, takes the admission lock only while it works and
+  reads fresh quota. Between attempts it sleeps up to `wait_retry_seconds`, a
+  new optional top-level key (1 to 3600, default 60). Only the first attempt
+  may run a backend's `refresh`. Waiters are not ordered. The popup takes no
+  `--wait`.
+  - Builds before this one reject a config holding `wait_retry_seconds`, so
+    upgrade every binary that reads a shared config before setting it.
+- Admission exit codes change. A hold exits 75 where it exited 3: quota, a spent
+  observation, a cap, a guard, account check or required file, a project cap,
+  a busy admission lock, or the `--wait` deadline (`REASON; still held after
+  waiting DURATION`). A refusal waiting cannot change exits 69 where it exited 2
+  or 3: an unknown `--project` or `--only` backend, no backend with the role
+  (`no backend serves role ROLE`), or every candidate disabled, excluded for
+  the folder or unable to take the options. These are decided before any
+  reading, so they write no decision record.
 - `slot`: `[slots.boat]` and `slots.local_runner` need `eon agent`. When one
   would act (a permitted Boat shape, a nonempty runner), `rota slot` warns
   that it needs `eon agent` and runs every command on a local slot. `slot ls
@@ -31,7 +48,8 @@ see.
   backend's new `add_dir` template at `{add_dirs}`. `run` fills `{name}` with
   its `--name`.
   - A backend whose command needs an option that was not given is skipped with
-    its reason, and the command is refused (exit 2) when none remains.
+    its reason, and the command is refused when none remains (exit 69 since
+    `--wait`).
   - Launch commands fill `{cwd}` inside any argument, not only as a whole
     argument.
   - Configuration refuses `{prompt}` inside another argument, `{dir}` outside

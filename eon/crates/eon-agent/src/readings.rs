@@ -385,6 +385,17 @@ pub enum QuotaMode {
     /// Real admissions: read, and run a configured refresh (below the cap) after a failed read
     /// or when the observation was already spent or is too old.
     Admit,
+    /// A waiting admission's later attempts: as `Admit`, but never refresh and never read again
+    /// for a spent or old observation, so a waiter spends no quota on refreshes after its first
+    /// attempt. Stale Claude facts still get their one in-process re-read.
+    Retry,
+}
+
+impl QuotaMode {
+    /// A real admission, which may consume the reading.
+    fn admits(self) -> bool {
+        matches!(self, Self::Admit | Self::Retry)
+    }
 }
 
 /// Why a reading cannot admit: an access problem (which also holds leads) or a quota problem.
@@ -491,6 +502,20 @@ fn freshness(
     }
 }
 
+/// Why `backend` can never serve `cwd`, whatever its reading: disabled, or the folder is in
+/// its excluded roots. Admission decides these before reading anything, and waiting does not
+/// change them (EON-C40 clause 7).
+pub fn static_problem(backend: &Backend, cwd: &Path) -> Option<String> {
+    if !backend.enabled {
+        return Some("disabled".into());
+    }
+    backend
+        .excluded_roots
+        .iter()
+        .any(|root| cwd.starts_with(fs::canonicalize(root).unwrap_or_else(|_| root.clone())))
+        .then(|| "folder belongs to an excluded account".into())
+}
+
 /// Reads one backend: access checks, then its quota as `mode` allows.
 pub fn read(
     backend: &Backend,
@@ -501,15 +526,8 @@ pub fn read(
 ) -> Reading {
     let mut reading = Reading::default();
     let access = (|| -> Result<(), String> {
-        if !backend.enabled {
-            return Err("disabled".into());
-        }
-        if backend
-            .excluded_roots
-            .iter()
-            .any(|root| cwd.starts_with(fs::canonicalize(root).unwrap_or_else(|_| root.clone())))
-        {
-            return Err("folder belongs to an excluded account".into());
+        if let Some(problem) = static_problem(backend, cwd) {
+            return Err(problem);
         }
         for path in &backend.required_files {
             if !path.is_file() {
@@ -604,7 +622,7 @@ fn read_quota(
     // Set once the one in-process re-read for stale Claude facts is spent: after it, anything
     // but a fresh unspent reading holds, with no further read and no refresh.
     let mut reread = false;
-    if mode == QuotaMode::Admit
+    if mode.admits()
         && let Err((_, origin)) = &quota
     {
         // Claude facts a newer failure left stale, which the host no longer calls fresh (an hour
@@ -651,9 +669,12 @@ fn read_quota(
     let (mut fresh, mut stale) = check_freshness(&quota);
     // A real admission reads once more: after a refresh where configured for a spent or too old
     // observation, and without one for a stale reading past its bound.
-    if mode == QuotaMode::Admit
-        && !reread
+    if !reread
         && let Some(Err(recheck @ (Recheck::Refresh(_) | Recheck::Reread(_)))) = &fresh
+        && match recheck {
+            Recheck::Refresh(_) => mode == QuotaMode::Admit,
+            _ => mode.admits(),
+        }
     {
         if matches!(recheck, Recheck::Refresh(_)) {
             run_refresh(reading)?;
@@ -1549,7 +1570,7 @@ mod tests {
     }
 
     #[test]
-    fn a_spent_observation_reads_again_after_refresh_only_when_admitting() {
+    fn a_spent_observation_reads_again_after_refresh_only_on_a_first_admission() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let reading = root.join("reading");
@@ -1590,6 +1611,16 @@ mod tests {
                 stale: None,
             })
         );
+        assert!(!refreshed.exists());
+        // A waiter's later attempt holds on the spent reading and never refreshes.
+        let retried = read(
+            &limited,
+            root,
+            QuotaMode::Retry,
+            &ledger,
+            &|_| unreachable!(),
+        );
+        assert_eq!(retried.quota_problem, Some(repeat(first)));
         assert!(!refreshed.exists());
         // A real admission refreshes once, reads again, and admits the later observation.
         let admitted = read(

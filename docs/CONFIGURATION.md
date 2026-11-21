@@ -202,6 +202,14 @@ implement/high selection. `--only BACKEND` overrides the pin with its existing
 role restrictions. A refused pin never selects another backend. Ordinary
 launch and run selection are unchanged.
 
+Optional top-level `wait_retry_seconds` (an integer from 1 to 3600, default
+60) is the longest sleep between the attempts of `launch --wait` and
+`run --wait`; a waiter re-reads it on every attempt. Builds before it was added
+reject the whole file when the key is present. Upgrade every `rota` or
+`eon agent` binary that reads a shared config, including a running window
+supervisor's Agent popup launcher, before setting it, and remove it before
+rolling back.
+
 Each backend may set `account = "NAME"`, the subscription account it draws
 on; it defaults to the backend's `name`. Backends that use one account under
 different models or wrappers declare the same `account`. A backend that sets
@@ -252,7 +260,7 @@ path itself is retained. Other executables are unavailable in popup mode
 until given `popup_command`; normal launch remains available. Popup mode
 does not copy high-command model or permission flags into these defaults.
 Explicit popup argv remains your command choice. A busy admission lock
-refuses immediately (exit 3); there is no popup admission wait queue.
+holds immediately (exit 75); popup mode takes no `--wait`.
 On a real popup-mode failure with terminal input and stderr, the diagnostic
 stays in that terminal until Enter or EOF, then returns its original status.
 It uses the existing fixed `Press Enter to close` dismissal wording. Dry-run,
@@ -293,7 +301,7 @@ Every profile key is optional, and an absent one changes nothing:
 | `[[backends]] add_dir` (argv with one `{dir}`) | none; that backend's launch commands take no `{add_dirs}` and no `--add-dir` |
 
 - **Selection.** `--project NAME` selects a project from anywhere, and an
-  unknown name is refused (exit 2). Without it, the project is the one whose
+  unknown name is refused (exit 69). Without it, the project is the one whose
   `repo` holds the working directory (for `run`, `--cwd`): any folder of the
   checkout, or of a linked worktree, a submodule or a worktree of a bare
   repository, found from `.git` files without running git. `repo` is compared
@@ -315,7 +323,7 @@ Every profile key is optional, and an absent one changes nothing:
   holds with the first non-blank line of its stderr, cut to 200 characters with
   control characters replaced. This is the one probe output copied to
   diagnostics. Finally, a backend at its project `backends.NAME.max` is skipped
-  with that reason. A hold exits 3 and is written to the decision log with
+  with that reason. A hold exits 75 and is written to the decision log with
   `project` and `hold`.
 - **Overlays.** A role's overlay adds arguments at the `{overlay}` argument of
   every command that role reaches whose executable it names: level commands of
@@ -347,7 +355,7 @@ Launch level commands accept these placeholders:
 `[backends.run] add_dir`) and `{overlay}`. No placeholder may be the program.
 A backend whose command needs `--name`, takes no `--add-dir`, or has no overlay
 for the project role is skipped with that reason; when none remains the command
-is refused (exit 2), since waiting cannot change configuration.
+is refused (exit 69), since waiting cannot change configuration.
 
 ### Remote heavy builds
 

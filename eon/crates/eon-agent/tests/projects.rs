@@ -259,7 +259,7 @@ fn tide_total_and_backend_caps() {
     // The third is held by the total before any quota is read.
     let reads = root.reads();
     let held = root.rota("repo", &launch("c", &[]));
-    assert_eq!(held.status.code(), Some(3), "{}", text(&held.stderr));
+    assert_eq!(held.status.code(), Some(75), "{}", text(&held.stderr));
     let mut pids = [first.pid(), second.pid()];
     pids.sort();
     assert!(
@@ -314,7 +314,7 @@ fn back_to_back_launches_count_from_the_record() {
             break out;
         }
     };
-    assert_eq!(held.status.code(), Some(3), "{}", text(&held.stderr));
+    assert_eq!(held.status.code(), Some(75), "{}", text(&held.stderr));
     assert!(
         text(&held.stderr).contains(&format!("1 live agent (max 1; pids {})", first.pid())),
         "{}",
@@ -338,7 +338,7 @@ fn strand_role_caps_and_an_implement_only_guard() {
     let b = root.start("repo", &launch("b", &[]), "b");
     let reads = root.reads();
     let held = root.rota("repo", &launch("c", &[]));
-    assert_eq!(held.status.code(), Some(3));
+    assert_eq!(held.status.code(), Some(75));
     let mut pids = [a.pid(), b.pid()];
     pids.sort();
     assert!(
@@ -362,7 +362,7 @@ fn strand_role_caps_and_an_implement_only_guard() {
         project("strand", "[.roles.implement]\nguard = ['<ROOT>guard']\n"),
     ));
     let held = root.rota("repo/sub", &launch("g", &[]));
-    assert_eq!(held.status.code(), Some(3), "{}", text(&held.stderr));
+    assert_eq!(held.status.code(), Some(75), "{}", text(&held.stderr));
     assert!(
         text(&held.stderr)
             .contains("project strand: implement guard failed (exit 1): machine busy"),
@@ -469,7 +469,7 @@ fn prompt_name_and_add_dirs_reach_argv_exactly() {
     assert!(root.records().is_empty());
     // Without --name the backend cannot take the launch at all: refused, not held.
     let refused = root.rota("elsewhere", &["launch", "../prompt"]);
-    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(refused.status.code(), Some(69));
     assert!(
         text(&refused.stderr)
             .contains("no backend can take this launch: cl: the high command needs --name"),
@@ -479,7 +479,7 @@ fn prompt_name_and_add_dirs_reach_argv_exactly() {
     // --add-dir on a command without {add_dirs} is refused the same way.
     root.config(&backend("cl", "claude", "['implement']", ""));
     let refused = root.rota("elsewhere", &launch("x", &["--add-dir", "../w"]));
-    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(refused.status.code(), Some(69));
     assert!(text(&refused.stderr).contains("cl: the high command takes no --add-dir"));
     drop((a, b, c));
 }
@@ -517,7 +517,7 @@ fn overlays_follow_the_executable_never_the_account() {
     assert_eq!(root.records().len(), 2);
     // Without --name nothing can take the launch.
     let refused = root.rota("repo", &["launch", "../prompt"]);
-    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(refused.status.code(), Some(69));
     assert!(text(&refused.stderr).contains("s: the high command needs --name"));
     drop((first, second));
 
@@ -575,7 +575,7 @@ fn leads_and_the_popup_are_never_capped() {
     assert_eq!(root.argv("a"), ["--overlaid", "do the task\n"]);
     root.config(&config("guard = ['<ROOT>guard']"));
     let held = root.rota("repo", &launch("b", &[]));
-    assert_eq!(held.status.code(), Some(3));
+    assert_eq!(held.status.code(), Some(75));
     // A lead launch in the full project admits, takes its role's (absent) overlay, and adds
     // no record.
     let lead = root.start("repo", &launch("lead", &["--role", "lead"]), "lead");
@@ -616,7 +616,7 @@ fn selection_by_flag_folder_and_worktree() {
     let flagged = root.start("elsewhere", &launch("fl", &["--project", "tide"]), "fl");
     assert!(root.stderr("fl").contains("project: tide (from --project)"));
     let unknown = root.rota("elsewhere", &launch("x", &["--project", "nope"]));
-    assert_eq!(unknown.status.code(), Some(2));
+    assert_eq!(unknown.status.code(), Some(69));
     assert!(text(&unknown.stderr).contains("unknown project nope"));
     drop((wt, out, flagged));
 }
@@ -696,7 +696,7 @@ fn runs_count_by_supervisor_and_leader() {
     assert_eq!(record["processes"][0]["pid"], supervisor.pid());
     let leader = record["processes"][1]["pid"].as_u64().unwrap() as u32;
     let held = root.rota("repo", &launch("b", &[]));
-    assert_eq!(held.status.code(), Some(3), "{}", text(&held.stderr));
+    assert_eq!(held.status.code(), Some(75), "{}", text(&held.stderr));
     assert!(text(&held.stderr).contains(&format!("pids {})", supervisor.pid())));
     // A run is held at the cap itself, before any quota read, and logs why.
     let reads = root.reads();
@@ -712,7 +712,7 @@ fn runs_count_by_supervisor_and_leader() {
             "60",
         ],
     );
-    assert_eq!(run.status.code(), Some(3), "{}", text(&run.stderr));
+    assert_eq!(run.status.code(), Some(75), "{}", text(&run.stderr));
     assert!(
         text(&run.stderr).contains("project tide: 1 live agent (max 1; pids"),
         "{}",
@@ -730,7 +730,7 @@ fn runs_count_by_supervisor_and_leader() {
     // With the supervisor gone, the leader alone holds the cap, and the hold names it.
     drop(supervisor);
     let held = root.rota("repo", &launch("b", &[]));
-    assert_eq!(held.status.code(), Some(3), "{}", text(&held.stderr));
+    assert_eq!(held.status.code(), Some(75), "{}", text(&held.stderr));
     assert!(
         text(&held.stderr).contains(&format!("(max 1; pids {leader})")),
         "{}",
@@ -739,6 +739,62 @@ fn runs_count_by_supervisor_and_leader() {
     kill_pid(leader);
     let after = root.start("repo", &launch("c", &[]), "c");
     drop(after);
+}
+
+#[test]
+fn the_admitted_project_holds_when_prepare_moves_discovery() {
+    // `repo/sub` is tide's until a `.git` appears in it, which makes it project inner's. The
+    // backend's prepare hook creates that `.git` after admission: the launch and the run keep
+    // tide's overlay and record, the project whose guards and caps admitted them.
+    for run in [false, true] {
+        let root = root();
+        root.config(&format!(
+            "{}[backends.run]\nstdin = 'brief'\nefforts = ['high']\ndefault_effort = 'high'\n\
+             [backends.run.commands]\nimplement = ['<ROOT>bin/codex', '<ROOT>out/{{name}}', '{{overlay}}']\n\
+             {}\n[projects.inner]\nrepo = '<ROOT>repo/sub'\nagents_root = '<ROOT>agents'\n\
+             [projects.inner.roles.implement.overlay]\ncodex = ['--inner']\n",
+            backend(
+                "cx",
+                "codex",
+                "['implement']",
+                "prepare = [['mkdir', '-p', '.git']]"
+            ),
+            project("tide", "[.roles.implement.overlay]\ncodex = ['--tide']\n"),
+        ));
+        if run {
+            let output = root.rota(
+                "repo/sub",
+                &[
+                    "run",
+                    "--brief",
+                    "../prompt",
+                    "--name",
+                    "r-exit",
+                    "--timeout",
+                    "60",
+                ],
+            );
+            assert!(
+                text(&output.stderr).contains("project: tide"),
+                "{}",
+                text(&output.stderr)
+            );
+            assert_eq!(root.argv("r-exit"), ["--tide"]);
+        } else {
+            let agent = root.start("repo/sub", &launch("a", &[]), "a");
+            assert!(
+                root.stderr("a").contains("project: tide"),
+                "{}",
+                root.stderr("a")
+            );
+            assert_eq!(root.argv("a"), ["--tide", "do the task\n"]);
+            let records = root.records();
+            assert_eq!(records.len(), 1, "{records:?}");
+            assert_eq!(records[0]["project"], "tide");
+            drop(agent);
+        }
+        assert!(root.p("repo/sub/.git").is_dir(), "the prepare hook ran");
+    }
 }
 
 #[test]
@@ -792,7 +848,7 @@ fn run_takes_project_and_role_guard() {
             "60",
         ],
     );
-    assert_eq!(held.status.code(), Some(3), "{}", text(&held.stderr));
+    assert_eq!(held.status.code(), Some(75), "{}", text(&held.stderr));
     assert!(
         text(&held.stderr).contains("project tide: implement guard failed (exit 1): machine busy"),
         "{}",

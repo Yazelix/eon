@@ -291,7 +291,7 @@ high = ['never-start-this', '--model', 'high', '{{prompt}}']
             .contains("pick: first\ncommand: never-start-this --model medium")
     );
     let output = run(&["launch", "--dry-run", "--only", "absent"]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(69));
     fs::write(
         &config_path,
         config.replace("guard = ['true']", "guard = ['false']"),
@@ -301,7 +301,7 @@ high = ['never-start-this', '--model', 'high', '{{prompt}}']
         run(&["launch", "--dry-run", "--role", "review"])
             .status
             .code(),
-        Some(3)
+        Some(75)
     );
     fs::remove_file(&prompt).unwrap();
     assert_eq!(run(&["launch", "--dry-run"]).status.code(), Some(2));

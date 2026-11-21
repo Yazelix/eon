@@ -244,7 +244,7 @@ fn agent_dispatch_keeps_arguments_exit_codes_and_eonbase_boundary() {
         )
         .status
         .code(),
-        Some(2)
+        Some(69)
     );
     let path = root.path().join("override.toml");
     fs::write(
@@ -258,7 +258,7 @@ fn agent_dispatch_keeps_arguments_exit_codes_and_eonbase_boundary() {
         run(root.path(), &["launch", "--dry-run", "brief"])
             .status
             .code(),
-        Some(3)
+        Some(75)
     );
     let help = Command::new(env!("CARGO_BIN_EXE_eon"))
         .env_clear()
