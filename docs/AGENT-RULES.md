@@ -376,11 +376,40 @@ Eon consumes Venus's accepted native-host boundary and does not copy
 Wayland, Metal, application-lifecycle, or presentation mechanisms into the
 orchestrator.
 
-Each Orbit or Venus implementation bead records one portability disposition:
-`neutral`, an isolated Linux, Wayland, or Darwin dependency, or a `platform
-blocker`. A blocker names the assumption, affected contracts, replacement
-shape, and removal cost, then stops for user choice before it enters a protocol
-or durable format.
+**Linux and macOS ship together.** This binds every crate, test, tool, script
+and Nix output in this repository, and every bead that changes them: Orbit,
+Venus, Runtime, Eon, rota, Boat and the benches. A change that adds a
+Linux-only path lands only with its `aarch64-darwin` alternative in the same
+change. A Linux-only path is anything that works only on Linux, such as
+`cfg(target_os = "linux")`, a `cfg(unix)` path that assumes Linux, a
+Linux-only dependency or `[target]` section, a Linux-only tool in `nix/`, a
+script or a test, or code with no platform gate that works only on Linux (a
+`/proc` read, a Linux-only syscall, path or command). The alternative does the
+same job on macOS; a stub that returns "unsupported" or nothing is not one. A
+mechanism that is Linux by nature, such as Wayland, D-Bus or `/proc`, is
+covered when its owner already has the Darwin counterpart for the same
+capability (AppKit, `proc_pidinfo`) and the change uses that counterpart on
+macOS. Anything else stops for Lucca before landing, and the owning bead
+records his answer. Reviewers enforce this with `REVIEW.md`: a Linux-only
+path without its alternative or Lucca's recorded answer breaks this rule,
+which is a blocker, and the Darwin evidence routes there show that the
+alternative builds and runs. A named macOS bead does not stand in for the
+alternative.
+
+Code that landed before this rule is grandfathered: beads track its gaps,
+each to port it or to record Lucca's answer, and the rule binds new changes.
+Adding to a grandfathered Linux-only path, such as a new subcommand of a
+Linux-only tool, counts as adding one; fixing it does not.
+
+Distribution channels stay with Composition and Distribution and `EON-C7`:
+the Linux Nix-free archive, its installer, relinker and direct updater need no
+macOS twin.
+
+Each implementation bead records one portability disposition: `neutral`;
+`paired`, naming the Darwin counterpart; `Linux-only`, naming Lucca's
+approval; or `platform blocker`. A blocker names the assumption, affected
+contracts, replacement shape and removal cost, then stops for Lucca before
+landing.
 
 ## Website
 
