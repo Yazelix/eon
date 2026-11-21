@@ -82,8 +82,9 @@ replace a missing observation ([REVIEW.md:111](../../REVIEW.md)).
 
 <!-- owner-only:start -->
 **Owner only: review workflow.** A **risk tier** is the review tool's
-classification of a change. High/Medium get fresh Opus and Codex; Low gets
-Codex. A fresh Claude reviewer replaces Codex if it refuses or is unavailable.
+classification of a change. High/Medium get fresh Opus and a second-lab
+reviewer (Neon by default, Codex as the fallback); Low gets one second-lab
+review. Proof and Review lists the fallbacks and the lab-separation rule.
 **Converge** names the review, fix-or-rebut and required finder-re-check loop.
 The ledger records findings
 and candidate trees; missing required author evidence blocks landing

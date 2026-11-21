@@ -46,9 +46,10 @@ only composes. [`orbit/AGENTS.md`](../orbit/AGENTS.md) adds Orbit's own
 indexing rule under Contracts, crates, and test doubles.
 
 The user approves a feature bead's scope. A feature gets no contract-text
-approval round and no Codex review of contract text; Codex on its code,
-Configurability, Happy Users and the installed dogfood observation still
-apply. A contract demoted to a feature is retired with a pointer:
+approval round and no second-lab review of contract text; the second-lab
+reviewer on its code, Configurability, Happy Users and the installed dogfood
+observation still apply. A contract demoted to a feature is retired with a
+pointer:
 `Retired <date> by Lucca: demoted to a feature; behavior in <doc#anchor>;
 proof in <beads>`.
 
@@ -141,18 +142,34 @@ crate.
   permission or socket-bind calls, mode and type changes, dependencies, Nix,
   CI and component manifests, gate and validator code, agent policy including
   `REVIEW.md`, and any path the rules do not name): the `converge` skill
-  (`AP-PROOF-001`) with a fresh Opus reviewer and Codex at `xhigh`.
+  (`AP-PROOF-001`) with a fresh Opus reviewer and the second-lab reviewer
+  (Codex at `xhigh` when it holds the seat).
 - **Medium** (ordinary product code, tests, assets, and Markdown that a build
-  or test reads): the `converge` skill with a fresh Opus reviewer and Codex
-  at `high`.
-- **Low** (other Markdown, and Beads planning): one fresh read-only Codex
-  review at `high`; a fresh Claude review replaces it when Codex refuses or
-  is unavailable.
+  or test reads): the `converge` skill with a fresh Opus reviewer and the
+  second-lab reviewer (Codex at `high` when it holds the seat).
+- **Low** (other Markdown, and Beads planning): one fresh read-only
+  second-lab review.
+- **Second-lab seat.** It defaults to Gemini 4 Neon at `high` effort at
+  every tier, run headless and read-only, with the diff and `REVIEW.md`
+  given to it as files. Codex (`gpt-6.1-sol` at the tier's effort: `xhigh`
+  for High, `high` for Medium and Low) is the fallback when the Google pools
+  are under the floors that the lead's Google-account policy sets, the
+  account is at its run cap, or Neon fails twice. A fresh Claude review is the
+  last fallback at Low. The seat never goes to the builder's lab: when Gemini
+  built the change, Codex takes it; when an OpenAI model built it, Neon keeps
+  it and Codex does not fall back in; when Claude built it, a Claude review is
+  not a fallback. When no eligible reviewer is available, the slice waits and
+  the lead reports it. The Opus seat is unchanged and stays with fresh Opus
+  even on a Claude-built change. Where a tier wants three labs, the third is
+  Codex when Neon holds the seat and Neon when Codex holds it; a third lab
+  that is the builder's lab is not used and the slice waits. Lucca decided
+  this on 2026-11-21.
 - **Re-checks.** After the first round, each reviewer re-checks only fixes to
   its own findings and the author's rebuttals; text-only fixes need no
   re-check. A full re-review is required only when a fix changes behavior
-  beyond its finding or crosses a trust boundary. Codex (`gpt-6.1-sol`)
-  runs at the tier's effort and replaces converge's own Codex round.
+  beyond its finding or crosses a trust boundary. The second-lab reviewer
+  runs at its seat's effort (Neon at `high`, Codex at the tier's) and
+  replaces converge's own Codex round.
 - **Checks.** The author runs the checks on the exact staged tree. The
   bead's proof record leads with evidence: the tree, and for each check its
   command, environment, exit status and summary line (nextest's `Summary`
@@ -162,13 +179,20 @@ crate.
   required evidence blocks landing. Reviewers do not build or run suites;
   they confirm the candidate tree is the one recorded. Docs, metadata and
   planning follow-ups reuse suite proof under `AP-PROOF-001`.
+- **Running Neon.** Run headless `agy` in plan mode, read-only, with the
+  brief, the diff and `REVIEW.md` as files that it reads next to the
+  candidate tree; it runs no commands. The brief names `REVIEW.md` and the
+  tier. Keep the brief, report and log outside the repository, as for Codex,
+  and stop a run at 30 minutes. Require a non-empty report: an empty one or a
+  timeout counts as a failed run, and a second failure moves the seat to
+  Codex, unless an OpenAI model built the change.
 - **Running Codex.** Every review brief names `REVIEW.md` and the tier. Keep
   the brief, report and log outside the repository, under
   `~/.cache/eon-agents/<session>/` (the scratchpad may be wiped), and run,
   in the background, `timeout 40m codex exec -m gpt-6.1-sol -c
   model_reasoning_effort=<effort> -s read-only -C <repo> -o <report> - <
   <brief> > <log> 2>&1`, so stdin is the brief and ends; check `<log>` for
-  progress within a few minutes. For gate or validator code, every Codex
+  progress within a few minutes. For gate or validator code, every review
   brief carries a scope line: corner cases that no supported closure
   produces are nits unless they let a real defect pass.
 - **Reviewer evals.** `eon/tools/review-tier/evals/cases.toml` holds the
@@ -185,7 +209,8 @@ crate.
   at that tier, against the per-tier baseline recorded on `eon-uxgal`, and
   records the counts there. Any revert, regression or failed landing from a
   Low slice moves Low to Medium review; two or more regressions from Medium
-  slices move Medium to Codex `xhigh`. A rolled-back tier returns only when each
+  slices move Medium to High's reviewers, with the third lab named under
+  Second-lab seat added. A rolled-back tier returns only when each
   cause has an eval case that the reduced review catches, 50 slices under
   the stricter review are recorded, and Lucca approves.
 - **Close record.** The lead closes each landed bead with `br close
@@ -201,7 +226,7 @@ crate.
   paths, accounts, quotas or session IDs.
 
 Record one ledger line per slice in its bead: the `classify` output's tier
-and trees, pass count and findings, including Codex's.
+and trees, pass count and findings, including the second-lab reviewer's.
 
 ## Testing Discipline
 
