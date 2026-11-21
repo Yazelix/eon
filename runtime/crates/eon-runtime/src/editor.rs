@@ -760,15 +760,8 @@ fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
 
 pub(super) fn validate_listener_path(endpoint: &Path, kind: ListenerKind) -> Result<(), String> {
     if kind == ListenerKind::Neovim {
-        let runtime = fs::canonicalize(endpoint.parent().expect("terminal endpoint has a parent"))
+        let path = canonical_socket_path(endpoint)
             .map_err(|error| format!("cannot resolve Neovim Editor runtime directory: {error}"))?;
-        let path = socket_path(
-            &runtime.join(
-                endpoint
-                    .file_name()
-                    .expect("terminal endpoint has a filename"),
-            ),
-        );
         // Neovim parses the last colon as host:port even in an absolute path.
         if path.as_os_str().as_encoded_bytes().contains(&b':') {
             return Err(format!(
@@ -848,13 +841,8 @@ impl Sockets {
                     path.display()
                 ));
             }
-            let canonical = fs::canonicalize(directory)
-                .map_err(|error| format!("cannot resolve Editor socket directory: {error}"))?
-                .join(
-                    endpoint
-                        .file_name()
-                        .expect("terminal endpoint has a filename"),
-                );
+            let canonical = canonical_socket_path(endpoint)
+                .map_err(|error| format!("cannot resolve Editor socket directory: {error}"))?;
             if canonical.to_str().is_none() {
                 return Err(format!(
                     "Editor socket path {} must be UTF-8; set EON_RUNTIME_DIR to a runtime root with a UTF-8 resolved path",
@@ -978,6 +966,21 @@ fn terminal_may_run(endpoint: &Path, running: &[RunningSession]) -> bool {
         .iter()
         .any(|session| session.endpoint == endpoint && !session.is_finished())
         || sessions::launch_record_remains(endpoint)
+}
+
+/// The listener of the terminal at `endpoint` as Eon binds it: inside the
+/// resolved generation directory, so on macOS `/tmp` reads `/private/tmp`.
+/// It names the same file as [`socket_path`] because the listener directory
+/// must be an owned real directory (EON-C10).
+fn canonical_socket_path(endpoint: &Path) -> io::Result<PathBuf> {
+    let runtime = fs::canonicalize(endpoint.parent().expect("terminal endpoint has a parent"))?;
+    Ok(socket_path(
+        &runtime.join(
+            endpoint
+                .file_name()
+                .expect("terminal endpoint has a filename"),
+        ),
+    ))
 }
 
 fn socket_path(endpoint: &Path) -> PathBuf {
@@ -1905,5 +1908,79 @@ mod tests {
         sockets.retain(&[], now + Duration::from_secs(2), &log);
         assert!(!path.parent().unwrap().exists());
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn owner_sockets_derive_from_terminal_endpoints_inside_the_generation_directory() {
+        use eon_workspace_protocol::v47::MAX_SESSIONS;
+        let base = super::super::supervisor::temporary_directory()
+            .canonicalize()
+            .unwrap();
+        // An independent window's root, reached through an alias as macOS reaches
+        // /tmp and /var/folders through /private.
+        let physical = base.join("p");
+        let window = physical.join("w/0000000a");
+        prepare_runtime(&window).unwrap();
+        let alias = base.join("a");
+        symlink(&physical, &alias).unwrap();
+        let generation =
+            super::super::generation::generation_directory(&alias.join("w/0000000a"), "g1");
+        prepare_runtime(&generation).unwrap();
+        let canonical = window.join("generations/g1");
+        assert_eq!(generation.canonicalize().unwrap(), canonical);
+        assert_eq!(
+            generation.join("eon.sock").parent(),
+            Some(generation.as_path())
+        );
+        let log = DiagnosticLog::open_in(Ok(base.join("logs")), "g1-test", "eon");
+        let mut bound = 0;
+        for number in [1, 2, MAX_SESSIONS] {
+            let endpoint = crate::workspace::terminal_endpoint(&generation, number);
+            let name = endpoint.file_name().unwrap();
+            assert_eq!(endpoint.parent(), Some(generation.as_path()));
+            for suffix in [".management", ".record"] {
+                let mut artifact = endpoint.clone().into_os_string();
+                artifact.push(suffix);
+                assert_eq!(Path::new(&artifact).parent(), Some(generation.as_path()));
+            }
+            assert_eq!(
+                socket_path(&endpoint),
+                generation.join(SOCKET_DIRECTORY).join(name)
+            );
+            // Editor terminals are popups, which never take terminal-1.
+            if number == 1 {
+                continue;
+            }
+            let expected = canonical.join(SOCKET_DIRECTORY).join(name);
+            for kind in [ListenerKind::Helix, ListenerKind::Neovim] {
+                let mut sockets = Sockets::default();
+                let prepared = sockets.prepare(&endpoint, &[], kind);
+                if !platform::socket_path_fits(&expected) {
+                    assert!(prepared.unwrap_err().contains("Unix socket limit"));
+                    continue;
+                }
+                let selected = prepared.unwrap();
+                assert_eq!(selected, expected);
+                assert!(selected.starts_with(&window));
+                assert_eq!(canonical_socket_path(&endpoint).unwrap(), selected);
+                sockets.retain(&[], Instant::now(), &log);
+                assert!(!selected.with_extension("owner").exists());
+                bound += 1;
+            }
+        }
+        assert!(bound >= 2, "the test parent {} is too long", base.display());
+        // A listener directory that links out of the root is refused, and nothing
+        // is created where it points.
+        let outside = base.join("outside");
+        prepare_runtime(&outside).unwrap();
+        symlink(&outside, generation.join(SOCKET_DIRECTORY)).unwrap();
+        let endpoint = crate::workspace::terminal_endpoint(&generation, 2);
+        for kind in [ListenerKind::Helix, ListenerKind::Neovim] {
+            let error = Sockets::default()
+                .prepare(&endpoint, &[], kind)
+                .unwrap_err();
+            assert!(error.contains("owned private directory"), "{error}");
+        }
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        fs::remove_dir_all(base).unwrap();
     }
 }

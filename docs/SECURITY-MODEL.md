@@ -16,7 +16,18 @@ IPC remains tracked for work after the beta (`eon-260mh.2`, `.3`, `.10`).
 Sandboxed agents must not reach Eon's socket or helper sockets: a client that
 can reach them can run commands on the host even under `none`. Helpers include
 Editor RPC (such as a Neovim server); Quick search runs no listener
-(`eon-260mh.2.4`, finding 18).
+(`eon-260mh.2.4`, finding 18). Every such socket is under Eon's runtime root
+(`eon-260mh.2.3`), so a sandbox must deny that whole directory. It resolves
+as `EON_RUNTIME_DIR`, else `$XDG_RUNTIME_DIR/eon`, else the platform fallback
+(`$TMPDIR/eon-UID` on Linux, or `/tmp/eon-UID` without `TMPDIR`, after a
+warning; `/tmp/eon-UID` on macOS). Seatbelt rules must name the resolved
+spelling of whichever root applies, such as `/private/tmp/eon-UID` or, for an
+`EON_RUNTIME_DIR` under `/var/folders`, `/private/var/folders/...`. Independent windows live
+under it at `<root>/w/<id>`; `EON_WINDOW_RUNTIME_DIR`, which Eon sets for its
+own processes, names one window's root and must be denied too if it points
+elsewhere (`runtime/crates/eon-runtime/src/supervisor.rs:1121`, `:1130`;
+`runtime/crates/eon-runtime/src/platform.rs:67`, `:78`; windows at
+`runtime/crates/eon-runtime/src/windows.rs:49`).
 These restrictions must be enforced by the agent's sandbox; the content
 setting does not establish isolation. See the [public security policy](../SECURITY.md)
 for private reporting and beta guidance, and the
@@ -143,11 +154,23 @@ request invokes a constant Lua program with separate path arguments
 `runtime/crates/eon-runtime/src/editor.rs:456`). That safe request construction
 does not restrict a direct client's use of Neovim's execution-capable RPC
 interface. Same-user socket access remains available under
-`terminal_access = "none"` (`docs/CONTRACTS.md:2290`). A sandbox permitting that
+`terminal_access = "none"` (EON-C10, the Editor clause). A sandbox permitting that
 socket can reach an editor outside the sandbox; this is a conditional high
 risk when a Neovim listener is running. Exploitability of this source-inferred
 path remains unverified. The packaged default editor is Helix
 (`eon/crates/eon/src/product.rs:224`).
+
+Post-audit update (2026-11-21, `eon-260mh.2.3`): the Editor listeners are
+owner-authority sockets (EON-C10 Control authority). Eon derives each one
+from its terminal endpoint as `<window root>/generations/<g>/ed/<terminal>.sock`
+and supplies it to the editor only through `--listen` in argv; Neovim may
+export its own `NVIM` to processes it starts. Tests pin every Editor
+listener, Orbit endpoint and the workspace socket inside the window's runtime
+root, under `none` and `window`, and check that no other terminal's
+environment names a listener. Supervisor children no longer inherit a
+launching Neovim's `NVIM` or `NVIM_LISTEN_ADDRESS` (EON-C9). Neovim's RPC
+still executes anything, so only a sandbox that denies the runtime root keeps
+a process from it; Eon adds no listener key and hides no path.
 
 Quick search runs no listener (`eon-260mh.2.4`, EON-C10). Until that bead,
 the pinned fzf 0.73.1 ran with `--listen` on a Unix socket beside its terminal
@@ -427,7 +450,7 @@ finding across follow-up work; the referenced sections above supply evidence.
 | 10 | Medium, configuration-dependent | Configured `trusted_settings` enrolls launch directories without a separate approval. | Require explicit scoped trust enrollment; verify downstream effects. |
 | 11 | Custody record closed; owner assurance, 2026-11-16 | Owner holds the key outside development/agent environments and signs manually. Authenticated cloud-session reachability is not independently verified. | Follow the [custody and recovery policy](DISTRIBUTION.md#release-signing-custody-and-recovery); source/build integrity and recovery rehearsal remain separate, unproved concerns. |
 | 12 | Low, conditional | Predictable fallback runtime paths permit precreation denial of service in shared temporary parents. | Use a private per-user parent or fail safely without one. |
-| 13 | High, conditional | A reachable Neovim Editor RPC socket is an additional host-execution route under `none`, with the authority impact of 5. | Restrict sandbox access to auxiliary IPC or replace general RPC with a constrained boundary. |
+| 13 | High, conditional | A reachable Neovim Editor RPC socket is an additional host-execution route under `none`, with the authority impact of 5. | Boundary stated and tested (`eon-260mh.2.3`): Editor listeners stay under the runtime root, which a sandbox must deny. |
 | 14 | Low, verified | No terminal reply returns program-chosen control bytes or shell syntax; the OSC 5522 clipboard id echoes only `[A-Za-z0-9-_+.]`, at most 512 bytes, which a modal line editor can read as commands. | Keep title reports off; re-run the terminal-replies check on each libghostty update; eon-z7ghx.4 asks upstream about the id. |
 | 15 | Low, source-supported | Signer-file validation lacks an owner/mode policy. | Define a safe trust-anchor ownership and writability policy. |
 | 16 | Medium, configuration-dependent | Example Codex commands omit the default popup's daemon isolation flag; shared routing can target another window. | Align examples with `--no-daemon` and verify the supported backend version. |

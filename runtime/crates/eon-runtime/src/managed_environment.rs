@@ -2657,8 +2657,15 @@ const AGENT_TOOL_SETTINGS: &[(&str, &[(&str, &str)])] = &[
 /// one it loses the name, except `LANG`, which stays so the locale remains UTF-8.
 const CODEX_LOCALE: &[&str] = &["LANG", "LC_CTYPE", "LC_ALL"];
 
-/// Keeps the launching agent's session, the settings its tool runner adds, and Eon's
-/// delegation markers (EON-C11) out of a child the supervisor starts.
+/// The server identity a Neovim gives the processes it starts. A supervisor
+/// started from a Neovim terminal, such as another window's Editor popup,
+/// would otherwise hand that editor's listener to every terminal; a Neovim Eon
+/// starts sets `NVIM` again for its own children (EON-C9, EON-C10).
+const INHERITED_EDITOR_SERVERS: &[&str] = &["NVIM", "NVIM_LISTEN_ADDRESS"];
+
+/// Keeps the launching agent's session, the settings its tool runner adds, a launching
+/// Neovim's server identity and Eon's delegation markers (EON-C11) out of a child the
+/// supervisor starts.
 pub(crate) fn remove_agent_session(command: &mut Command) -> &mut Command {
     remove_agent_environment(command, |name| env::var_os(name), desktop_locale)
 }
@@ -2696,10 +2703,14 @@ fn remove_agent_environment(
             None => {}
         }
     }
-    for name in AGENT_SESSION_VARIABLES.iter().chain(&[
-        super::generation::DELEGATION_MARKER,
-        super::generation::ROUTE_MARKER,
-    ]) {
+    for name in AGENT_SESSION_VARIABLES
+        .iter()
+        .chain(INHERITED_EDITOR_SERVERS)
+        .chain(&[
+            super::generation::DELEGATION_MARKER,
+            super::generation::ROUTE_MARKER,
+        ])
+    {
         command.env_remove(name);
     }
     command
@@ -6568,6 +6579,25 @@ label = "Browse"
                 "{marker} reaches the child"
             );
         }
+    }
+
+    #[test]
+    fn children_never_inherit_a_launching_neovim_server() {
+        // A supervisor started from a Neovim terminal carries that editor's server
+        // identity; no terminal, popup, Venus or quota reader may name it (EON-C9).
+        // Neovim settings a person chooses are not server identities and stay.
+        let mut command = Command::new("/managed/orbit");
+        for name in ["NVIM", "NVIM_LISTEN_ADDRESS", "NVIM_APPNAME", "VIMRUNTIME"] {
+            command.env(name, "parent");
+        }
+        remove_agent_session(&mut command);
+        let passes = |name: &str| {
+            command
+                .get_envs()
+                .any(|(variable, value)| variable == name && value.is_some())
+        };
+        assert!(!passes("NVIM") && !passes("NVIM_LISTEN_ADDRESS"));
+        assert!(passes("NVIM_APPNAME") && passes("VIMRUNTIME"));
     }
 
     #[test]

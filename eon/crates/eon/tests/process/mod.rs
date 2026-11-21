@@ -267,3 +267,49 @@ pub fn waits(pid: u32) -> std::io::Result<Option<bool>> {
         "proc_pidinfo({pid}) gave {read} of {size} bytes: {error}"
     )))
 }
+
+/// The process ID the kernel reports for the peer that connected `stream`.
+#[cfg(target_os = "linux")]
+pub fn peer_pid(stream: &std::os::unix::net::UnixStream) -> u32 {
+    use std::os::fd::AsRawFd;
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the descriptor is a live Unix socket and both out-pointers name
+    // initialized storage of the size passed.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut credentials).cast(),
+            &raw mut length,
+        )
+    };
+    assert_eq!(result, 0, "{}", io::Error::last_os_error());
+    u32::try_from(credentials.pid).unwrap()
+}
+
+/// The process ID the kernel reports for the peer that connected `stream`.
+#[cfg(target_os = "macos")]
+pub fn peer_pid(stream: &std::os::unix::net::UnixStream) -> u32 {
+    use std::os::fd::AsRawFd;
+    let mut pid: libc::pid_t = 0;
+    let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    // SAFETY: the descriptor is a live Unix socket and both out-pointers name
+    // initialized storage of the size passed.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&raw mut pid).cast(),
+            &raw mut length,
+        )
+    };
+    assert_eq!(result, 0, "{}", io::Error::last_os_error());
+    u32::try_from(pid).unwrap()
+}

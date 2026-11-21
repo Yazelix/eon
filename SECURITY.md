@@ -43,8 +43,13 @@ Scrollback shortcut remains available.
 Sandboxed agents must not reach Eon's socket or helper sockets: a client that
 can reach them can run commands on the host, even with `terminal_access = "none"`.
 Helper sockets include Editor RPC (such as a Neovim server); Quick search runs no listener.
-Verify these restrictions in the agent's sandbox. Eon does not isolate unrestricted
-programs running as the same user.
+All of these sockets live under Eon's runtime root, so deny the sandbox that whole
+directory: `EON_RUNTIME_DIR` when set, else `$XDG_RUNTIME_DIR/eon`, else
+`$TMPDIR/eon-UID` on Linux (`/tmp/eon-UID` when `TMPDIR` is unset) and
+`/tmp/eon-UID` on macOS. Seatbelt rules need the resolved spelling of whichever
+root applies, such as `/private/tmp/eon-UID` or `/private/var/folders/...`.
+Every window lives under it, including independent windows at `<root>/w/<id>`. Verify these restrictions in the agent's
+sandbox. Eon does not isolate unrestricted programs running as the same user.
 
 The beta retains accepted risks: agents with terminal-input access can send
 instructions or commands to other agents and shell panes, and launched agents

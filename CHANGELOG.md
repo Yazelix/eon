@@ -16,6 +16,17 @@ installation, and proven contract changes.
     deadline. A refusal waiting cannot change exits 69 instead of 2 or 3: an
     unknown project or `--only` backend, or no enabled backend that serves the
     role, the options or the folder. This applies to the Agent popup too.
+- Terminals, popups and panes no longer inherit `NVIM` or
+  `NVIM_LISTEN_ADDRESS` when Eon itself was started from a Neovim terminal,
+  so no Eon terminal names an editor server it was not started from. A
+  Neovim that Eon starts, such as the Editor popup's, still sets `NVIM` for
+  the programs it runs. Tools such as `nvr` or lazygit's `nvim-remote` that
+  used the outer Neovim from an Eon pane no longer find it.
+- Eon's contract now states, and tests check, that the Editor popup's
+  listener, the workspace socket and every terminal socket stay inside the
+  window's runtime root, independent windows included; no socket moved. The
+  security guidance names that root for sandbox deny rules, in its resolved
+  spelling for Seatbelt on macOS (such as `/private/tmp/eon-UID`).
 - A Boat run under `eon agent slot run` survives a dropped `boat exec --attach`
   stream. Eon checks the command's status and re-attaches while it runs; if
   it has ended, its real exit code comes back. Before, the healthy run was

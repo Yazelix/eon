@@ -1201,6 +1201,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-19 by `eon-9iriq` (approved by eon-lead under Lucca's
   2026-11-19 rule): the Google quota reader drops Codex's `C.UTF-8` locale
   names without asking the desktop session.
+  Amended on 2026-11-21 by `eon-260mh.2.3` (approved by eon-lead under
+  Lucca's delegation): children the supervisor starts no longer inherit a
+  Neovim server's `NVIM` or `NVIM_LISTEN_ADDRESS`.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
   paths or checking configuration, Eon terminals launched under Nushell or Bash,
   and every terminal, popup, Venus and quota reader the supervisor starts.
@@ -1358,10 +1361,15 @@ names its socket. CLI JSON names a session `session` and a terminal
     tell a person's own identical value from the runner's: a person who sets
     one of these on purpose, such as `PAGER=cat`, and starts Eon from such an
     agent shell loses it in command panes, popups and the Editor unless their
-    shell configuration or the command itself sets it. Every other inherited
-    name, agent settings such as `CLAUDE_CONFIG_DIR`,
-    `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` and API keys included, keeps the
-    treatment described above.
+    shell configuration or the command itself sets it. Apart from the
+    Neovim-server names below, every other inherited name, agent settings such
+    as `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` and API keys
+    included, keeps the treatment described above.
+  - So that no terminal names a Neovim server it was not started from,
+    Eon also removes `NVIM` and `NVIM_LISTEN_ADDRESS` from the environment
+    of every terminal, popup, Venus and quota reader the supervisor
+    starts. A Neovim that Eon starts, such as the Editor popup's, still
+    sets `NVIM` for the processes it starts (EON-C10).
 - **Important failures:** Invalid or unreadable configuration, empty command,
   missing artifact, manifest mismatch, or shell launch fails explicitly without
   a replacement terminal. Optional integration failure warns without preventing
@@ -1379,8 +1387,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   shell framework, automatic Direnv, mise installation or trust management,
   history/sync policy, plugin surface,
   editor replacement, or remote/headless clipboard bridge. Apart from the
-  agent-session and tool-runner removal above, arbitrary argv remains
-  unmanaged and `eon run -- COMMAND...` remains the explicit escape hatch.
+  agent-session, tool-runner and Neovim-server removal above, arbitrary argv
+  remains unmanaged and `eon run -- COMMAND...` remains the explicit escape
+  hatch.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Qualification:** The evidence at
     `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
@@ -1434,6 +1443,13 @@ names its socket. CLI JSON names a session `session` and a terminal
     output past 4 MiB, endless, failing and missing ones give no locale), and
     the `CLAUDE_CODE_HOST_WORKTREE` pair to
     `children_drop_the_launching_agent_session_and_keep_agent_settings`.
+  - **Neovim server:** `eon-260mh.2.3` adds
+    `children_never_inherit_a_launching_neovim_server` (both names removed;
+    `NVIM_APPNAME` and `VIMRUNTIME` kept) and
+    `terminals_do_not_inherit_a_launching_neovim_server` (a supervisor started
+    with both names, in the default namespace and as an independent window,
+    gives none of its panes or their terminal hosts either name; red before
+    the removal).
   - **Config path:** `eon-wt5v8` and `eon-hb4zp` add
     `config_path_prints_the_settings_file_and_config_dir_the_root`
     (`config-path` and `config-dir` output, root created, file not created,
@@ -1474,6 +1490,11 @@ names its socket. CLI JSON names a session `session` and a terminal
   retired shell evidence does not cover the current managed shells.
 
 ## EON-C10 — Typed workspace control
+
+- **Amendment (2026-11-21):** `eon-260mh.2.3`, approved by eon-lead under
+  Lucca's delegation (`eon-260mh.2.1`): owner-authority sockets (workspace,
+  Orbit, Editor listeners) stay under the window's runtime root, and Eon
+  makes no isolation promise between unrestricted same-user processes.
 
 - **Amendment (2026-11-17):** `eon-260mh.2.1`, approved by eon-lead under
   Lucca's delegation: control authority. The supervisor admits every EONW
@@ -2387,10 +2408,13 @@ names its socket. CLI JSON names a session `session` and a terminal
   instance's path. A live or non-owned leftover fails the popup start. Eon
   removes leftover sockets when their terminals end and sweeps stale sockets
   on supervisor start, keeping sockets of terminals it adopts until they end.
-  The Unix permissions admit any same-user process, including agents with
-  agents.terminal_access = "none". Eon exports the path to no unrelated terminal;
-  Neovim may expose its own server identity to processes it starts. The argv
-  and socket path are runtime policy. Quick search runs no listener.
+  The listener is an owner-authority socket under the window's runtime root
+  (Control authority): the Unix permissions admit any same-user process,
+  including agents with agents.terminal_access = "none", and only a
+  sandbox keeps a process from it. Eon exports the path to no unrelated
+  terminal; Neovim may expose its own server identity to processes it
+  starts. The argv and socket path are runtime policy. Quick search runs no
+  listener.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
@@ -2540,6 +2564,14 @@ names its socket. CLI JSON names a session `session` and a terminal
     present or reload a compatible Venus (EON-C11), so those exemptions
     never exceed owner authority. Any process that can inject input into
     the presentation, or control it, holds the same authority.
+  - Every socket that carries owner authority (the workspace socket,
+    Orbit terminal sockets and Editor listeners) is under the window's
+    runtime root.
+  - Eon cannot detect or enforce a sandbox and makes no isolation promise
+    between unrestricted processes of the same user. A sandboxed process
+    is kept from owner authority only by a sandbox that denies it the
+    runtime root, every Wayland display socket of the session, and
+    services that start processes outside the sandbox.
 - **Configuration:** Eon fixes popup margins at 8 side and 4 vertical logical
   pixels; a `[popup]` table is an unknown key and warns as described in EON-C9.
   `[popups.<id>]` owns direct argv, physical shortcut,

@@ -4037,6 +4037,9 @@ struct PairWindow {
     zoxide_log: PathBuf,
     panes_log: PathBuf,
     binary: PathBuf,
+    /// An independent window's root under `runtime`, as `eon window new`
+    /// allocates one; `None` runs in the default namespace.
+    window_root: Option<PathBuf>,
 }
 
 impl PairWindow {
@@ -4082,6 +4085,7 @@ impl PairWindow {
             panes_log: root.join("panes.log"),
             binary: PathBuf::from(env!("CARGO_BIN_EXE_eon")),
             root,
+            window_root: None,
         };
         configure_mock_desktop(&window.config);
         // No quota chips, so no quota read lands between two snapshots.
@@ -4148,16 +4152,47 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
         command
     }
 
+    /// Runs this window as independent window `id` under the base root.
+    /// `eon window new` refuses a base whose `w/<id>/generations/<g>` sockets
+    /// would not fit, and on macOS Editor listeners bind under `/private`, so
+    /// the base is a short name in the suites' short TMPDIR rather than under
+    /// this window's directory.
+    fn independent(mut self, id: &str) -> Self {
+        let base = std::env::temp_dir().join(format!(
+            "w{:x}{:x}",
+            std::process::id(),
+            NEXT_TEST.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&base).unwrap();
+        self.window_root = Some(base.join("w").join(id));
+        self.runtime = base;
+        self
+    }
+
+    /// The window's runtime root: the base root in the default namespace.
+    fn window_runtime(&self) -> &Path {
+        self.window_root.as_deref().unwrap_or(&self.runtime)
+    }
+
+    /// Selects this window for a supervisor or CLI `command`.
+    fn select(&self, command: &mut Command) {
+        command
+            .env("EON_RUNTIME_DIR", &self.runtime)
+            .env("EON_CONFIG_HOME", &self.config);
+        if let Some(root) = &self.window_root {
+            command.env("EON_WINDOW_RUNTIME_DIR", root);
+        }
+    }
+
     fn command_with_arguments(&self, arguments: &[&str]) -> Command {
         let mut command = eon_command(&self.binary);
         command.args(arguments);
+        self.select(&mut command);
         command
             .current_dir(&self.launch)
             .env("HOME", &self.home)
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_RUNTIME_DIR", &self.xdg)
-            .env("EON_RUNTIME_DIR", &self.runtime)
-            .env("EON_CONFIG_HOME", &self.config)
             .env("EON_ORBIT", self.root.join("orbit"))
             .env("EON_VENUS", self.root.join("venus"))
             .env("EON_SESSION_BIN", self.root.join("session-bin"))
@@ -4179,7 +4214,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     }
 
     fn generation(&self) -> PathBuf {
-        generation_runtime(&self.runtime)
+        generation_runtime(self.window_runtime())
     }
 
     fn control(&self) -> PathBuf {
@@ -4187,7 +4222,10 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     }
 
     fn eon(&self, arguments: &[&str]) -> Output {
-        invoke(&self.binary, &self.runtime, &self.config, arguments)
+        let mut command = eon_command(&self.binary);
+        command.args(arguments);
+        self.select(&mut command);
+        command.output().unwrap()
     }
 
     fn inspect(&self, id: &str) -> Snapshot {
@@ -4258,7 +4296,10 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     }
 
     fn stop_generation(&self, supervisor: &mut TestProcess) -> String {
-        let stopped = self.eon(&["window", "stop", "default", "--json"]);
+        let id = self.window_root.as_deref().map_or("default", |root| {
+            root.file_name().unwrap().to_str().unwrap()
+        });
+        let stopped = self.eon(&["window", "stop", id, "--json"]);
         assert!(stopped.status.success(), "{}", stdout(&stopped));
         wait_for_successful_exit(&mut supervisor.child);
         stdout(&stopped).to_owned()
@@ -4272,6 +4313,9 @@ impl Drop for PairWindow {
             // Pair and pane stubs see the stop file before their directories go.
             thread::sleep(Duration::from_millis(50));
             let _ = fs::remove_dir_all(&self.root);
+            if self.window_root.is_some() {
+                let _ = fs::remove_dir_all(&self.runtime);
+            }
         }
     }
 }
@@ -20177,103 +20221,127 @@ fn editor_popup_socket_helper() {
     .unwrap();
     listener.set_nonblocking(true).unwrap();
     let mut listener = Some(listener);
+    let session = path.file_stem().unwrap().to_str().unwrap().to_owned();
+    let barrier = root.join(format!("editor-barrier.{session}"));
+    let mut peers = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("editor-peers.log"))
+        .unwrap();
     while !release.exists() && !stop.exists() {
         let mode = fs::read_to_string(root.join("editor-mode")).unwrap_or_default();
         if mode == "refused" {
             listener.take();
         }
+        // A barrier read before draining: every connection made before it was
+        // set is queued, so after the drain its acknowledgement covers them.
+        let requested = fs::read_to_string(&barrier).unwrap_or_default();
         if let Some(listener) = &listener {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    stream
-                        .set_read_timeout(Some(Duration::from_secs(3)))
-                        .unwrap();
-                    let request = if neovim {
-                        use rmp::decode::{read_array_len, read_int};
-                        fn string(stream: &mut UnixStream) -> String {
-                            let len = rmp::decode::read_str_len(stream).unwrap() as usize;
-                            assert!(len <= 65_536);
-                            let mut bytes = vec![0; len];
-                            stream.read_exact(&mut bytes).unwrap();
-                            String::from_utf8(bytes).unwrap()
-                        }
-                        fn position(stream: &mut UnixStream) -> Option<i32> {
-                            let marker = rmp::decode::read_marker(stream).unwrap();
-                            if marker == rmp::Marker::Null {
-                                None
-                            } else {
-                                Some(
-                                    read_int(
-                                        &mut std::io::Cursor::new([marker.to_u8()]).chain(stream),
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        // On macOS an accepted socket inherits the listener's
+                        // O_NONBLOCK, and a read timeout does not apply to it.
+                        stream.set_nonblocking(false).unwrap();
+                        writeln!(peers, "{session}|{}", process::peer_pid(&stream)).unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(3)))
+                            .unwrap();
+                        let request = if neovim {
+                            use rmp::decode::{read_array_len, read_int};
+                            fn string(stream: &mut UnixStream) -> String {
+                                let len = rmp::decode::read_str_len(stream).unwrap() as usize;
+                                assert!(len <= 65_536);
+                                let mut bytes = vec![0; len];
+                                stream.read_exact(&mut bytes).unwrap();
+                                String::from_utf8(bytes).unwrap()
+                            }
+                            fn position(stream: &mut UnixStream) -> Option<i32> {
+                                let marker = rmp::decode::read_marker(stream).unwrap();
+                                if marker == rmp::Marker::Null {
+                                    None
+                                } else {
+                                    Some(
+                                        read_int(
+                                            &mut std::io::Cursor::new([marker.to_u8()])
+                                                .chain(stream),
+                                        )
+                                        .unwrap(),
                                     )
-                                    .unwrap(),
-                                )
+                                }
+                            }
+                            assert_eq!(read_array_len(&mut stream).unwrap(), 4);
+                            assert_eq!(read_int::<u8, _>(&mut stream).unwrap(), 0);
+                            assert_eq!(read_int::<u8, _>(&mut stream).unwrap(), 1);
+                            assert_eq!(string(&mut stream), "nvim_exec_lua");
+                            assert_eq!(read_array_len(&mut stream).unwrap(), 2);
+                            let lua = string(&mut stream);
+                            assert!(
+                                lua.contains("vim.fn.bufadd(path)")
+                                    && lua.contains("args = {tostring(target)}")
+                            );
+                            assert_eq!(read_array_len(&mut stream).unwrap(), 3);
+                            let path = string(&mut stream);
+                            let line = position(&mut stream);
+                            let column = position(&mut stream);
+                            serde_json::json!({"paths":[path],"line":line,"column":column})
+                        } else {
+                            let mut line = String::new();
+                            std::io::BufReader::new(&mut stream)
+                                .read_line(&mut line)
+                                .unwrap();
+                            serde_json::from_str(&line).unwrap()
+                        };
+                        writeln!(opened, "{request}").unwrap();
+                        if mode == "hang" {
+                            while fs::read_to_string(root.join("editor-mode")).unwrap_or_default()
+                                == "hang"
+                                && !stop.exists()
+                            {
+                                thread::sleep(Duration::from_millis(10));
                             }
                         }
-                        assert_eq!(read_array_len(&mut stream).unwrap(), 4);
-                        assert_eq!(read_int::<u8, _>(&mut stream).unwrap(), 0);
-                        assert_eq!(read_int::<u8, _>(&mut stream).unwrap(), 1);
-                        assert_eq!(string(&mut stream), "nvim_exec_lua");
-                        assert_eq!(read_array_len(&mut stream).unwrap(), 2);
-                        let lua = string(&mut stream);
-                        assert!(
-                            lua.contains("vim.fn.bufadd(path)")
-                                && lua.contains("args = {tostring(target)}")
-                        );
-                        assert_eq!(read_array_len(&mut stream).unwrap(), 3);
-                        let path = string(&mut stream);
-                        let line = position(&mut stream);
-                        let column = position(&mut stream);
-                        serde_json::json!({"paths":[path],"line":line,"column":column})
-                    } else {
-                        let mut line = String::new();
-                        std::io::BufReader::new(&mut stream)
-                            .read_line(&mut line)
-                            .unwrap();
-                        serde_json::from_str(&line).unwrap()
-                    };
-                    writeln!(opened, "{request}").unwrap();
-                    if mode == "hang" {
-                        while fs::read_to_string(root.join("editor-mode")).unwrap_or_default()
-                            == "hang"
-                            && !stop.exists()
-                        {
-                            thread::sleep(Duration::from_millis(10));
-                        }
-                    }
-                    if neovim {
-                        if mode == "lost" {
+                        if neovim {
+                            if mode == "lost" {
+                                continue;
+                            }
+                            if mode == "rejected" {
+                                stream
+                                    .write_all(b"\x94\x01\x01\x92\x00\xb3fake editor failure\xc0")
+                                    .unwrap();
+                            } else if mode == "invalid" {
+                                stream.write_all(b"\x94\x01\x02\xc0\xc3").unwrap();
+                            } else {
+                                if mode == "notify" {
+                                    stream
+                                        .write_all(b"\x93\x02\xa5event\x91\xc7\x01\0x")
+                                        .unwrap();
+                                }
+                                let _ = stream.write_all(b"\x94\x01\x01\xc0\xc3");
+                            }
                             continue;
                         }
-                        if mode == "rejected" {
-                            stream
-                                .write_all(b"\x94\x01\x01\x92\x00\xb3fake editor failure\xc0")
-                                .unwrap();
-                        } else if mode == "invalid" {
-                            stream.write_all(b"\x94\x01\x02\xc0\xc3").unwrap();
+                        let reply = if matches!(
+                            mode.as_str(),
+                            "rejected" | "timeout" | "unavailable" | "invalid" | "unsupported"
+                        ) {
+                            serde_json::json!({"version":1,"id":request["id"],"status":"error","error":{"class":mode,"message":"fake editor failure"}})
                         } else {
-                            if mode == "notify" {
-                                stream
-                                    .write_all(b"\x93\x02\xa5event\x91\xc7\x01\0x")
-                                    .unwrap();
-                            }
-                            let _ = stream.write_all(b"\x94\x01\x01\xc0\xc3");
-                        }
-                        continue;
+                            serde_json::json!({"version":1,"id":request["id"],"status":"ok"})
+                        };
+                        let _ = writeln!(stream, "{reply}");
                     }
-                    let reply = if matches!(
-                        mode.as_str(),
-                        "rejected" | "timeout" | "unavailable" | "invalid" | "unsupported"
-                    ) {
-                        serde_json::json!({"version":1,"id":request["id"],"status":"error","error":{"class":mode,"message":"fake editor failure"}})
-                    } else {
-                        serde_json::json!({"version":1,"id":request["id"],"status":"ok"})
-                    };
-                    let _ = writeln!(stream, "{reply}");
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("fake editor accept: {error}"),
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) => panic!("fake editor accept: {error}"),
             }
+        }
+        if !requested.is_empty() {
+            fs::write(
+                barrier.with_extension(format!("{session}.done")),
+                &requested,
+            )
+            .unwrap();
         }
         thread::sleep(Duration::from_millis(5));
     }
@@ -20369,9 +20437,8 @@ fn edit_as(window: &PairWindow, file: &OsStr, caller: Option<&str>) -> Output {
     command
         .args(["edit", "--json", "--"])
         .arg(file)
-        .current_dir(&window.root)
-        .env("EON_RUNTIME_DIR", &window.runtime)
-        .env("EON_CONFIG_HOME", &window.config);
+        .current_dir(&window.root);
+    window.select(&mut command);
     if let Some(caller) = caller {
         command.env("EON_TERMINAL", caller);
     }
@@ -21399,6 +21466,507 @@ fn scrollback_opens_a_private_snapshot_and_removes_it_when_its_popup_ends() {
     }
     window.stop_generation(&mut supervisor);
     assert!(!snapshots.exists());
+}
+
+/// Waits until the fake editor of `session` has drained every connection
+/// queued before this call, so an unchanged log afterwards means none came.
+fn editor_barrier(window: &PairWindow, session: &str, round: usize) {
+    let request = window.root.join(format!("editor-barrier.{session}"));
+    let done = window.root.join(format!("editor-barrier.{session}.done"));
+    fs::write(&request, round.to_string()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while fs::read_to_string(&done).unwrap_or_default() != round.to_string() {
+        assert!(
+            Instant::now() < deadline,
+            "{session} did not drain round {round}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The longest Unix socket path this platform binds, as Runtime computes it.
+fn socket_path_bytes() -> usize {
+    std::mem::size_of::<libc::sockaddr_un>() - std::mem::offset_of!(libc::sockaddr_un, sun_path) - 1
+}
+
+/// Every terminal the snapshot shows: its session and endpoint.
+fn snapshot_terminals(snapshot: &Snapshot) -> Vec<(String, PathBuf)> {
+    snapshot
+        .tabs
+        .iter()
+        .flat_map(|tab| {
+            tab.panes()
+                .map(|pane| (pane.session.clone(), pane.endpoint.clone()))
+                .chain(
+                    tab.popups
+                        .iter()
+                        .map(|popup| (popup.session.clone(), popup.endpoint.clone())),
+                )
+                .collect::<Vec<_>>()
+        })
+        .map(|(session, endpoint)| (session, PathBuf::from(OsStr::from_bytes(&endpoint))))
+        .collect()
+}
+
+/// The `EON_TERMINAL` the program of the terminal at `endpoint` runs with.
+fn terminal_caller(endpoint: &Path) -> String {
+    process::environ(live_identity(endpoint).process_id)
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .map(|token| String::from_utf8(token.to_vec()).unwrap())
+        .unwrap()
+}
+
+/// EON-C10 Control authority for Editor RPC (eon-260mh.2.3), in an independent
+/// window with decoy listeners under the base root: every owner socket is
+/// under the window's runtime root, no other terminal names the listener, no
+/// CLI reaches it, and forged, stale and absent callers behave as before.
+fn editor_rpc_stays_in_the_window_root(neovim: bool, access: &str) {
+    let window = editor_popup_window().independent("0000000a");
+    let mut config = format!(
+        "\n[agents]\nterminal_access = \"{access}\"\n\n[popups.commands]\ncommand = [\"eon-nu\"]\n"
+    );
+    if neovim {
+        config.push_str("\n[editor]\ncommand = [\"my-nvim\"]\nkind = \"neovim\"\n");
+    }
+    fs::OpenOptions::new()
+        .append(true)
+        .open(window.config.join("config.toml"))
+        .unwrap()
+        .write_all(config.as_bytes())
+        .unwrap();
+    dump_terminal_environments(&window, &window.root.join("dump-environment"));
+    let mut supervisor = start_editor_popup_window(&window);
+    let generation = window.generation();
+    let window_root = window.window_runtime().canonicalize().unwrap();
+    let canonical = generation.canonicalize().unwrap();
+    assert!(
+        canonical.starts_with(&window_root),
+        "{}",
+        canonical.display()
+    );
+    // Decoys where a derivation from the base root would put the listeners.
+    let decoy_directory = window
+        .runtime
+        .join("generations")
+        .join(generation.file_name().unwrap())
+        .join(EDITOR_SOCKET_DIRECTORY);
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&decoy_directory)
+        .unwrap();
+    let decoys = (2..=8)
+        .map(|number| {
+            let decoy = UnixListener::bind(decoy_directory.join(format!("terminal-{number}.sock")))
+                .unwrap();
+            decoy.set_nonblocking(true).unwrap();
+            decoy
+        })
+        .collect::<Vec<_>>();
+    let no_decoy_reached = || {
+        for decoy in &decoys {
+            assert_eq!(
+                decoy.accept().unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock,
+                "a client reached a base-root decoy"
+            );
+        }
+    };
+    let peers = window.root.join("editor-peers.log");
+    let opened = window.root.join("editor-open.log");
+    let from_supervisor = |supervisor: &TestProcess| {
+        for line in log_lines(&peers) {
+            let (_, peer) = line.split_once('|').unwrap();
+            assert_eq!(peer, supervisor.child.id().to_string(), "{line}");
+        }
+    };
+    pick_editor_popup_tab(&window);
+    let files = window.inspect("files").tabs[0].popups[0].clone();
+    let files_caller = terminal_caller(Path::new(OsStr::from_bytes(&files.endpoint)));
+
+    // 1. The listener is bound inside this window's root, in its canonical spelling.
+    let popup = open_editor_popup(&window, "open-editor");
+    let editor_endpoint = PathBuf::from(OsStr::from_bytes(&popup.endpoint));
+    let editor = live_identity(&editor_endpoint);
+    let bound = wait_for_lines(&window.root.join("editor-socket.log"), 1)[0]
+        .split_once('|')
+        .unwrap()
+        .0
+        .to_owned();
+    let listener = PathBuf::from(&bound);
+    assert_eq!(
+        listener,
+        canonical
+            .join(EDITOR_SOCKET_DIRECTORY)
+            .join(format!("{}.sock", popup.session))
+    );
+    assert!(listener.starts_with(&window_root));
+    assert!(listener.as_os_str().len() <= socket_path_bytes());
+    let alias = generation
+        .join(EDITOR_SOCKET_DIRECTORY)
+        .join(format!("{}.sock", popup.session));
+
+    // 6. Hiding and reopening keeps the editor and its listener.
+    let hidden = window.eon(&["popup", "hide", &popup.id, "--json"]);
+    assert!(hidden.status.success(), "{hidden:?}");
+    let Response::Snapshot(reopened) =
+        window.invoke_popup("reopen-editor", "editor", Some(&popup.id))
+    else {
+        panic!("Editor did not reopen");
+    };
+    assert_eq!(reopened.tabs[0].selected_popup.as_ref(), Some(&popup.id));
+    assert_eq!(live_identity(&editor_endpoint), editor);
+    assert_eq!(log_lines(&window.root.join("editor-socket.log")).len(), 1);
+
+    // 3 (later spawns). Terminals started after the bind, in this tab and another.
+    let pane = window.eon(&["pane", "create"]);
+    assert!(pane.status.success(), "{pane:?}");
+    let Response::Snapshot(_) = window.invoke_popup("tool", "commands", None) else {
+        panic!("Commands did not open");
+    };
+    let home = window.home.to_str().unwrap();
+    let added = window.eon(&["tab", "create", "--dir", home]);
+    assert!(added.status.success(), "{added:?}");
+    let snapshot = window.inspect("terminals");
+    let shown = snapshot.active_tab.clone();
+    assert_ne!(shown, snapshot.tabs[0].id);
+
+    // 2. The control socket and every Orbit endpoint are inside the root too.
+    assert_eq!(window.control(), generation.join("eon.sock"));
+    assert!(
+        window
+            .control()
+            .canonicalize()
+            .unwrap()
+            .starts_with(&window_root)
+    );
+    let terminals = snapshot_terminals(&snapshot);
+    assert!(terminals.len() >= 6, "{snapshot:?}");
+    for (session, endpoint) in &terminals {
+        assert_eq!(endpoint.parent(), Some(generation.as_path()), "{session}");
+        let mut management = endpoint.clone().into_os_string();
+        management.push(".management");
+        assert_eq!(
+            live_identity(endpoint).management.path,
+            management.as_bytes(),
+            "{session}"
+        );
+    }
+
+    // 3. No other terminal's program or host names the listener.
+    let named = |environment: &[u8]| {
+        let text = String::from_utf8_lossy(environment);
+        [
+            &listener,
+            &alias,
+            &canonical.join(EDITOR_SOCKET_DIRECTORY),
+            &generation.join(EDITOR_SOCKET_DIRECTORY),
+        ]
+        .iter()
+        .any(|path| text.contains(path.to_str().unwrap()))
+            || environment_names(environment)
+                .iter()
+                .any(|name| name == "NVIM" || name == "NVIM_LISTEN_ADDRESS")
+    };
+    let mut dumps = 0;
+    for (session, endpoint) in &terminals {
+        if *session == popup.session {
+            continue;
+        }
+        let host = process::environ(live_identity(endpoint).process_id);
+        assert!(
+            !named(&host),
+            "{session}'s terminal host names the listener"
+        );
+        if session != &files.session {
+            let program = dumped_environment(&window, session);
+            assert!(!named(program.as_bytes()), "{session} names the listener");
+            dumps += 1;
+        }
+    }
+    assert!(dumps >= 4, "{terminals:?}");
+
+    // 4 and 6. A forged caller (another live terminal's token, from a process
+    // outside it) is routed to that terminal's tab, as today, and the editor
+    // there keeps its buffers: the same process takes the request.
+    let forged = edit_as(&window, OsStr::new("b.txt"), Some(&files_caller));
+    assert!(forged.status.success(), "{forged:?}");
+    let after = window.inspect("forged-caller");
+    assert_eq!(after.active_tab, shown);
+    assert_eq!(after.tabs[0].selected_popup.as_ref(), Some(&popup.id));
+    assert_eq!(live_identity(&editor_endpoint), editor);
+    let requests = wait_for_lines(&opened, 2);
+    let request: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
+    assert_eq!(
+        request["paths"][0],
+        window.root.join("b.txt").to_str().unwrap()
+    );
+    let mut round = 1;
+    editor_barrier(&window, &popup.session, round);
+    from_supervisor(&supervisor);
+    no_decoy_reached();
+
+    // 5. A fabricated caller names no live run: refused as today, reaching nothing.
+    let (_, run) = files_caller.split_once('.').unwrap();
+    // Tabs, terminals and selections; pane labels track their connection.
+    let topology = |snapshot: Snapshot| {
+        let tabs = snapshot
+            .tabs
+            .iter()
+            .map(|tab| (tab.id.clone(), tab.selected_popup.clone()))
+            .collect::<Vec<_>>();
+        (
+            snapshot.active_tab.clone(),
+            tabs,
+            snapshot_terminals(&snapshot),
+        )
+    };
+    let before = topology(window.inspect("before-fabricated"));
+    let (peer_count, open_count) = (log_lines(&peers).len(), log_lines(&opened).len());
+    let fabricated = edit_as(
+        &window,
+        OsStr::new("c.txt"),
+        Some(&format!("terminal-77.{run}")),
+    );
+    assert_eq!(fabricated.status.code(), Some(3), "{fabricated:?}");
+    assert!(
+        stdout(&fabricated).contains("unknown-caller"),
+        "{fabricated:?}"
+    );
+    round += 1;
+    editor_barrier(&window, &popup.session, round);
+    assert_eq!(
+        (log_lines(&peers).len(), log_lines(&opened).len()),
+        (peer_count, open_count)
+    );
+    assert_eq!(topology(window.inspect("after-fabricated")), before);
+    no_decoy_reached();
+
+    // 5. Absent: a callerless edit opens in the shown tab, as today.
+    let absent = edit_as(&window, OsStr::new("d.txt"), None);
+    assert!(absent.status.success(), "{absent:?}");
+    let after = window.inspect("callerless");
+    let active = after
+        .tabs
+        .iter()
+        .find(|tab| tab.id == after.active_tab)
+        .unwrap();
+    let second = active
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "editor")
+        .unwrap()
+        .clone();
+    assert_ne!(second.session, popup.session);
+    assert_eq!(active.selected_popup.as_ref(), Some(&second.id));
+    let second_bound = wait_for_lines(&window.root.join("editor-socket.log"), 2)[1]
+        .split_once('|')
+        .unwrap()
+        .0
+        .to_owned();
+    assert!(Path::new(&second_bound).starts_with(&window_root));
+
+    // 5. Stale: once the first Editor ends, its socket and marker are gone, and
+    // its own token is refused without reaching any listener.
+    let editor_caller = terminal_caller(&editor_endpoint);
+    fs::write(
+        window
+            .root
+            .join(format!("editor-release.{}", popup.session)),
+        "",
+    )
+    .unwrap();
+    wait_for_snapshot(&window.control(), "editor-ended", |snapshot| {
+        snapshot_terminals(snapshot)
+            .iter()
+            .all(|(session, _)| *session != popup.session)
+    });
+    wait_for_removal(&listener);
+    wait_for_removal(&listener.with_extension("owner"));
+    let (peer_count, open_count) = (log_lines(&peers).len(), log_lines(&opened).len());
+    let stale = edit_as(&window, OsStr::new("e.txt"), Some(&editor_caller));
+    assert_eq!(stale.status.code(), Some(3), "{stale:?}");
+    assert!(stdout(&stale).contains("unknown-caller"), "{stale:?}");
+    editor_barrier(&window, &second.session, 1);
+    assert_eq!(
+        (log_lines(&peers).len(), log_lines(&opened).len()),
+        (peer_count, open_count)
+    );
+    assert_eq!(log_lines(&window.root.join("editor-socket.log")).len(), 2);
+    from_supervisor(&supervisor);
+    no_decoy_reached();
+
+    // 5. Stale socket: a dead terminal's owned socket and marker are swept at start.
+    let orphan = canonical
+        .join(EDITOR_SOCKET_DIRECTORY)
+        .join("terminal-98.sock");
+    drop(UnixListener::bind(&orphan).unwrap());
+    let kind = if neovim { "neovim" } else { "helix" };
+    let marker = orphan.with_extension("owner");
+    fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&marker)
+        .unwrap()
+        .write_all(format!("{{\"version\":1,\"kind\":\"{kind}\"}}").as_bytes())
+        .unwrap();
+    window.crash(&mut supervisor);
+    let mut supervisor = start_editor_popup_window(&window);
+    window.inspect("recovered");
+    assert!(!orphan.exists() && !marker.exists());
+    fs::write(
+        window
+            .root
+            .join(format!("editor-release.{}", second.session)),
+        "",
+    )
+    .unwrap();
+    window.stop_generation(&mut supervisor);
+    assert!(!canonical.join(EDITOR_SOCKET_DIRECTORY).exists());
+}
+
+#[test]
+fn editor_rpc_stays_in_the_window_root_helix_window() {
+    editor_rpc_stays_in_the_window_root(false, "window");
+}
+
+#[test]
+fn editor_rpc_stays_in_the_window_root_helix_none() {
+    editor_rpc_stays_in_the_window_root(false, "none");
+}
+
+#[test]
+fn editor_rpc_stays_in_the_window_root_neovim_window() {
+    editor_rpc_stays_in_the_window_root(true, "window");
+}
+
+#[test]
+fn editor_rpc_stays_in_the_window_root_neovim_none() {
+    editor_rpc_stays_in_the_window_root(true, "none");
+}
+
+/// Makes `session-bin/eon-nu`, every pane's shell, and `program` write their
+/// own environment to `env.<terminal>` under the window's root, so a check
+/// sees what the terminal's program sees without `/proc`.
+fn dump_terminal_environments(window: &PairWindow, program: &Path) {
+    // The dump appears under its final name only once complete: `mv` within
+    // one directory is a rename.
+    let script = format!(
+        "#!/bin/sh\ndump='{}/env.'\"${{EON_TERMINAL%%.*}}\"\nenv > \"$dump.partial\" && mv \"$dump.partial\" \"$dump\"\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+        window.root.display()
+    );
+    executable(&window.root.join("session-bin/eon-nu"), &script);
+    executable(program, &script);
+}
+
+/// The environment `terminal`'s program dumped, one `NAME=value` per entry.
+fn dumped_environment(window: &PairWindow, terminal: &str) -> String {
+    let path = window.root.join(format!("env.{terminal}"));
+    wait_for(&path);
+    fs::read_to_string(&path).unwrap()
+}
+
+/// The names `environment` (`NAME=value` lines or NUL-separated entries) sets.
+fn environment_names(environment: &[u8]) -> Vec<String> {
+    environment
+        .split(|byte| *byte == 0 || *byte == b'\n')
+        .filter_map(|entry| {
+            entry
+                .iter()
+                .position(|byte| *byte == b'=')
+                .map(|end| &entry[..end])
+        })
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect()
+}
+
+#[test]
+fn environment_dumps_are_read_only_once_complete() {
+    // An `env` that writes `EON_TERMINAL` before a later name: a check that
+    // read the dump early would miss the leaked name it is looking for.
+    let window = PairWindow::new();
+    let program = window.root.join("dump-environment");
+    dump_terminal_environments(&window, &program);
+    let slow = window.root.join("slow-env");
+    fs::create_dir(&slow).unwrap();
+    executable(
+        &slow.join("env"),
+        "#!/bin/sh\necho EON_TERMINAL=terminal-5.run\nsleep 0.5\necho NVIM=late\n",
+    );
+    fs::write(&window.stop, "").unwrap();
+    let path = format!("{}:{}", slow.display(), std::env::var("PATH").unwrap());
+    let mut dump = Command::new(&program)
+        .env("PATH", path)
+        .env("EON_TERMINAL", "terminal-5.run")
+        .env("EON_TEST_STOP", &window.stop)
+        .spawn()
+        .unwrap();
+    let names = environment_names(dumped_environment(&window, "terminal-5").as_bytes());
+    assert!(dump.wait().unwrap().success());
+    assert!(names.iter().any(|name| name == "NVIM"), "{names:?}");
+}
+
+#[test]
+fn terminals_do_not_inherit_a_launching_neovim_server() {
+    for independent in [false, true] {
+        let mut window = PairWindow::new();
+        if independent {
+            window = window.independent("0000000a");
+        }
+        let program = window.root.join("dump-environment");
+        dump_terminal_environments(&window, &program);
+        // The server of a Neovim whose `:terminal` started Eon, such as another
+        // window's Editor popup.
+        let server = window.root.join("outer-editor.sock");
+        let _listener = UnixListener::bind(&server).unwrap();
+        let mut command = window.command(&[program.to_str().unwrap()]);
+        command
+            .env("NVIM", &server)
+            .env("NVIM_LISTEN_ADDRESS", &server);
+        let mut supervisor = window.start(command);
+        wait_for_ready(&window.control());
+        if window.inspect("launched").tabs[0].pending {
+            pick_editor_popup_tab(&window);
+        }
+        let created = window.eon(&["pane", "create", "--json"]);
+        assert!(created.status.success(), "{created:?}");
+        let snapshot = window.inspect("inherited-server");
+        let mut terminals = 0;
+        for pane in snapshot.tabs[0].panes() {
+            let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+            assert!(
+                endpoint.starts_with(window.window_runtime()),
+                "{}",
+                endpoint.display()
+            );
+            let host = live_identity(endpoint).process_id;
+            for (source, environment) in [
+                (
+                    "program",
+                    dumped_environment(&window, &pane.session).into_bytes(),
+                ),
+                ("terminal host", process::environ(host)),
+            ] {
+                let names = environment_names(&environment);
+                assert!(
+                    names.iter().any(|name| name == "EON_TERMINAL"),
+                    "{source} {names:?}"
+                );
+                for name in ["NVIM", "NVIM_LISTEN_ADDRESS"] {
+                    assert!(
+                        !names.iter().any(|inherited| inherited == name),
+                        "independent={independent}: {} {source} inherits {name}",
+                        pane.session
+                    );
+                }
+            }
+            terminals += 1;
+        }
+        assert!(terminals >= 2, "{snapshot:?}");
+        window.stop_generation(&mut supervisor);
+    }
 }
 
 /// A recovering supervisor removes the snapshots of supervisors no longer
