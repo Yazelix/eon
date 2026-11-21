@@ -16,6 +16,7 @@ let
     "Apache-2.0 WITH Swift-exception" "OpenSSL" "ICU" "CC-BY-4.0"
     "LicenseRef-Anthropic-Brand-Terms"
     "LicenseRef-Codex-Identification-Use"
+    "LicenseRef-Google-Brand-Terms"
     "Sublime Packages license" "OLDAP-2.8" "GPL-2.0-only WITH GCC-exception-2.0" "Unicode-DFS-2016"
   ];
   omitted = builtins.fromJSON (builtins.readFile ./omitted-grammars.json);

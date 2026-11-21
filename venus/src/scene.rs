@@ -456,6 +456,7 @@ pub(crate) enum AppMark {
     Codex,
     ClaudeCode,
     OpenCode,
+    Antigravity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2484,6 +2485,7 @@ fn attention_row(
         Some("claude-code") => (Some(AppMark::ClaudeCode), "Claude"),
         Some("codex") => (Some(AppMark::Codex), "Codex"),
         Some("opencode") => (Some(AppMark::OpenCode), "OpenCode"),
+        Some("antigravity") => (Some(AppMark::Antigravity), "Antigravity"),
         Some(app) => (None, app),
         None => (None, ""),
     };

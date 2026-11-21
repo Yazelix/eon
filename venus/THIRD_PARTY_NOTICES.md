@@ -305,3 +305,62 @@ SOFTWARE.
 
 OpenCode retains its name and marks; this copyright licence does not imply
 affiliation or endorsement.
+
+## Antigravity one-color icon
+
+`assets/antigravity-icon-one-color.svg` is the unaltered official “Icon – One
+Color” SVG from [Google Antigravity's press kit](https://antigravity.google/press)
+([exact asset URL](https://antigravity.google/assets/image/brand/antigravity-icon__one-color.svg)).
+Retrieved 2026-11-21. Original SVG SHA-256:
+`5b5d0cfd07cb79ba5d299d80b754e7c91d782dc1199811688dec67a0a11ba240`.
+
+The complete 180×180 square SVG canvas is rasterized directly without cropping,
+padding changes, or path edits. The 22px, 33px, and 44px PNGs correspond to the
+default 1x/1.25x, 1.5x, and 2x Agents sidebar and attention inbox row sizes;
+their `.alpha` files store 8-bit single-channel alpha masks, and the 256px
+`.alpha` mask serves other font sizes and scales through the existing
+glyph-cache sampler. At draw time, Venus tints the mask `#FFFFFF` on dark row
+surfaces and `#202124` (the vendor SVG's fill) on light row surfaces, choosing
+the higher contrast against the row's resolved background.
+
+Preparation uses `rsvg-convert` 2.62.3 (cairo 1.18.4) and ImageMagick
+7.1.2-35 Q16-HDRI, for SIDE 22, 33, 44, and 256:
+
+```sh
+rsvg-convert --width=SIDE --height=SIDE --output=antigravity-icon-one-color-SIDE.png antigravity-icon-one-color.svg
+magick antigravity-icon-one-color-SIDE.png -alpha extract -depth 8 gray:antigravity-icon-one-color-SIDE.alpha
+```
+
+The 256px intermediate PNG is not shipped. SHA-256 values (paths relative to
+`assets/`):
+
+| File | SHA-256 |
+| --- | --- |
+| `antigravity-icon-one-color.svg` | `5b5d0cfd07cb79ba5d299d80b754e7c91d782dc1199811688dec67a0a11ba240` |
+| `antigravity-icon-one-color-22.png` | `9306b9be17b9dae6a11794c88fbbdd54a57030758f49001fb05eba9793b905b8` |
+| `antigravity-icon-one-color-22.alpha` | `a56923f1474a7c4b9aef47ecfb9d4a5d5598f13022d25d83fd5ac2a8b1148cf8` |
+| `antigravity-icon-one-color-33.png` | `53cdcbaa88da3734ac838ac7431cb7a7a2e042387fab969f597b9568142e3c38` |
+| `antigravity-icon-one-color-33.alpha` | `77a707381c599518b9d682f66a2c199c9061fc89edfe0d29bca2a5cd29861df1` |
+| `antigravity-icon-one-color-44.png` | `475dc1dce95cdf618ce02fc0db23e0eca94ab278c1dcc3dd008944f04e1df986` |
+| `antigravity-icon-one-color-44.alpha` | `3ee07ac9dad35ad684d9d8887e0d7fb5540ba18db0b5411762eda61da9f8b5f1` |
+| `antigravity-icon-one-color-256.alpha` | `b381369ef6756498e62f1d77c8484c1aa4ad70af71888e76ff874941ae1d704f` |
+
+Google LLC retains its Antigravity name and marks. No permissive artwork licence
+is claimed; Eon's Apache-2.0 licence grants no rights to Google's artwork or
+trademarks. [Google Antigravity's press assets page](https://antigravity.google/press)
+(read 2026-11-21) links to [Google Antigravity's Terms of Service](https://antigravity.google/terms)
+(read 2026-11-21) with no permissive copyright grant. Use of Google product
+icons and marks is governed by [Google's Brand Resource Center Guidance](https://about.google/brand-resource-center/guidance/),
+[Product icons guidelines](https://about.google/brand-resource-center/brand-elements/#product-icons),
+and [Trademark guidelines for proper usage](https://about.google/brand-resource-center/rules/)
+(all read 2026-11-21), which require prior permission for product-icon use,
+unaltered artwork, identifying context, and no implied endorsement or
+affiliation. In Eon, the mark is shown beside the row's label in sidebar and
+inbox rows—which is the program name (`Antigravity`) unless a pane pin or
+record title replaces it—and never as an icon-only rail or standalone chip.
+
+By Lucca's decision of 2026-11-13, Eon uses this mark for identification only,
+with the art unaltered and no implied endorsement or affiliation:
+
+> "this is nothing for us to worry about, in practice, they add this to protect
+> from people trying to use the logo for bad practices"

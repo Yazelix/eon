@@ -264,6 +264,7 @@ import ./default.nix {
       "claude-code-mark"
       "codex-symbol"
       "opencode-mark"
+      "antigravity-mark"
       "gemini-mark"
     ];
     ${pkgs.ncurses.name}.source = "${pkgs.ncurses.src} rebuilt with ${../../nix/ncurses-termios-speed.h}";
@@ -563,6 +564,47 @@ import ./default.nix {
         {
           file = ../../venus/assets/opencode-mark-light.svg;
           hash = "8fb1cffb7171c85d4c12a8219250f31a397e316b53e94ca14c171452eb3efed7";
+        }
+      ];
+    }
+    {
+      id = "antigravity-mark";
+      version = "2026-11-21";
+      source = "https://antigravity.google/assets/image/brand/antigravity-icon__one-color.svg (from https://antigravity.google/press, Icon - One Color); retrieved 2026-11-21";
+      licenses = [ "LicenseRef-Google-Brand-Terms" ];
+      notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/antigravity-icon-one-color.svg;
+          hash = "5b5d0cfd07cb79ba5d299d80b754e7c91d782dc1199811688dec67a0a11ba240";
+        }
+        {
+          file = ../../venus/assets/antigravity-icon-one-color-22.png;
+          hash = "9306b9be17b9dae6a11794c88fbbdd54a57030758f49001fb05eba9793b905b8";
+        }
+        {
+          file = ../../venus/assets/antigravity-icon-one-color-22.alpha;
+          hash = "a56923f1474a7c4b9aef47ecfb9d4a5d5598f13022d25d83fd5ac2a8b1148cf8";
+        }
+        {
+          file = ../../venus/assets/antigravity-icon-one-color-33.png;
+          hash = "53cdcbaa88da3734ac838ac7431cb7a7a2e042387fab969f597b9568142e3c38";
+        }
+        {
+          file = ../../venus/assets/antigravity-icon-one-color-33.alpha;
+          hash = "77a707381c599518b9d682f66a2c199c9061fc89edfe0d29bca2a5cd29861df1";
+        }
+        {
+          file = ../../venus/assets/antigravity-icon-one-color-44.png;
+          hash = "475dc1dce95cdf618ce02fc0db23e0eca94ab278c1dcc3dd008944f04e1df986";
+        }
+        {
+          file = ../../venus/assets/antigravity-icon-one-color-44.alpha;
+          hash = "3ee07ac9dad35ad684d9d8887e0d7fb5540ba18db0b5411762eda61da9f8b5f1";
+        }
+        {
+          file = ../../venus/assets/antigravity-icon-one-color-256.alpha;
+          hash = "b381369ef6756498e62f1d77c8484c1aa4ad70af71888e76ff874941ae1d704f";
         }
       ];
     }

@@ -478,49 +478,76 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
     assert!(!project(&snapshot, 1400).sidebar_empty());
 }
 
+fn single_app_rows(app: &str, metrics: CellMetrics) -> [SidebarRow; 2] {
+    let mut snapshot = sidebar_snapshot();
+    let attention = Attention {
+        state: AttentionState::Idle,
+        record: Some(eon_workspace_protocol::v47::AttentionRecord {
+            app: app.into(),
+            name: "not a session name".into(),
+            title: String::new(),
+            message: String::new(),
+            kind: None,
+            progress: None,
+            changed_at: 0,
+            stale: false,
+            others: 0,
+        }),
+    };
+    snapshot.tabs[0].columns[0].panes[0].attention = Some(attention.clone());
+    snapshot.tabs[0].attention_rollup = Some(attention.state);
+    snapshot.attention_queue = vec![eon_workspace_protocol::v47::QueueEntry {
+        workspace: snapshot.workspace.clone(),
+        tab: "t1".into(),
+        target: "p1".into(),
+        attention,
+    }];
+    let sidebar = scrolled_sidebar(&snapshot, metrics, 0.0, None);
+    let inbox = DialogScene::attention_inbox(
+        &snapshot,
+        AttentionFilter::All,
+        None,
+        PhysicalSize::new(1280, 800),
+        metrics,
+        0.0,
+        0,
+    );
+    [
+        sidebar.sidebar_row("p1").unwrap().clone(),
+        inbox.attention_rows[0].clone(),
+    ]
+}
+
 #[test]
 fn opencode_rows_use_the_product_name_and_mark_without_changing_unknown_apps() {
     let metrics = CellMetrics::for_scale(1.0);
     for (app, title) in [("opencode", "OpenCode"), ("other-agent", "other-agent")] {
-        let mut snapshot = sidebar_snapshot();
-        let attention = Attention {
-            state: AttentionState::Idle,
-            record: Some(eon_workspace_protocol::v47::AttentionRecord {
-                app: app.into(),
-                name: "not a session name".into(),
-                title: String::new(),
-                message: String::new(),
-                kind: None,
-                progress: None,
-                changed_at: 0,
-                stale: false,
-                others: 0,
-            }),
-        };
-        snapshot.tabs[0].columns[0].panes[0].attention = Some(attention.clone());
-        snapshot.tabs[0].attention_rollup = Some(attention.state);
-        snapshot.attention_queue = vec![eon_workspace_protocol::v47::QueueEntry {
-            workspace: snapshot.workspace.clone(),
-            tab: "t1".into(),
-            target: "p1".into(),
-            attention,
-        }];
-        let sidebar = scrolled_sidebar(&snapshot, metrics, 0.0, None);
-        let inbox = DialogScene::attention_inbox(
-            &snapshot,
-            AttentionFilter::All,
-            None,
-            PhysicalSize::new(1280, 800),
-            metrics,
-            0.0,
-            0,
-        );
-        for row in [sidebar.sidebar_row("p1").unwrap(), &inbox.attention_rows[0]] {
+        for row in single_app_rows(app, metrics) {
             assert_eq!(row.title, title);
             assert_eq!(
                 row.icon.map(|(mark, _)| mark),
                 (app == "opencode").then_some(AppMark::OpenCode),
             );
+            assert!(
+                row.accessible_label
+                    .starts_with(&format!("Idle: {title} in "))
+            );
+        }
+    }
+}
+
+#[test]
+fn antigravity_rows_use_the_product_name_and_mark_and_reject_near_misses() {
+    let metrics = CellMetrics::for_scale(1.0);
+    for (app, title, expected_mark) in [
+        ("antigravity", "Antigravity", Some(AppMark::Antigravity)),
+        ("agy", "agy", None),
+        ("Antigravity", "Antigravity", None),
+        ("antigravity-cli", "antigravity-cli", None),
+    ] {
+        for row in single_app_rows(app, metrics) {
+            assert_eq!(row.title, title);
+            assert_eq!(row.icon.map(|(mark, _)| mark), expected_mark);
             assert!(
                 row.accessible_label
                     .starts_with(&format!("Idle: {title} in "))
@@ -808,6 +835,14 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
             "person's choice",
             AppMark::OpenCode,
         ),
+        ("antigravity", "", None, "Antigravity", AppMark::Antigravity),
+        (
+            "antigravity",
+            "not a session name",
+            Some("person's choice"),
+            "person's choice",
+            AppMark::Antigravity,
+        ),
         (
             "claude-code",
             "eon-overseer",
@@ -859,6 +894,10 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                             Allow Bash: cargo test?",
                         AppMark::OpenCode =>
                             "Needs input (permission): OpenCode, person's choice \
+                            in tab 2, site, p2, changed 4 minutes ago, 2 more records: \
+                            Allow Bash: cargo test?",
+                        AppMark::Antigravity =>
+                            "Needs input (permission): Antigravity, person's choice \
                             in tab 2, site, p2, changed 4 minutes ago, 2 more records: \
                             Allow Bash: cargo test?",
                         AppMark::ClaudeCode =>

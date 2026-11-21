@@ -7,6 +7,14 @@ installation, and proven contract changes.
 
 - On macOS, Eon keeps a live window's control socket when its connection queue
   is full, so generation cleanup and bind attempts leave the window reachable.
+- Antigravity (`app=antigravity`) rows in the Agents sidebar and attention inbox
+  now display Google Antigravity's official one-colour icon beside the row's
+  label (`Antigravity`, unless a pane pin or record title replaces it), tinted
+  `#FFFFFF` on dark row surfaces and `#202124` on light row surfaces (including
+  hover and keyboard-focus fills) without dimming on stale rows. Near-miss
+  `app` strings are unchanged, and the Google Eon Bar quota chip keeps its
+  Gemini spark (`eon-sidebar-app-icons-y99b7.12`).
+
 - `eon agent launch` and `eon agent run` take `--wait DURATION` (at most 24h):
   a held admission retries until it admits or the deadline passes, re-reading
   `agent.toml` and fresh quota on every attempt and sleeping up to the new

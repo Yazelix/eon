@@ -2342,7 +2342,8 @@ re-proved when that platform or feature is next touched.
   re-proof of background blur ([Window background and
   decorations](PRESENTATION.md#window-background-and-decorations)), and the
   current row's focus-colour outline and inset keyboard-focus treatment
-  (`eon-wuau8.4`), and pointer scrolling/overflow indication (`eon-r1scq`).
+  (`eon-wuau8.4`), and pointer scrolling/overflow indication (`eon-r1scq`),
+  and the Antigravity program mark (`eon-sidebar-app-icons-y99b7.12`).
   Lucca approved the current-row outline presentation on 2026-11-11 ("ahhh
   i like it"); its live acceptance follows landing. The bare translucent-row
   badges, contour fallback and font-sized row badges (`eon-0ntg1`) have
@@ -2395,6 +2396,11 @@ re-proved when that platform or feature is next touched.
   Lucca's delegation on 2026-11-14: Background's round-dot pulse shares the
   attention-motion guard and update budget; colour adaptation precedes pulse
   opacity and stale dimming.
+  Amended by `eon-sidebar-app-icons-y99b7.12`, approved by the lead on
+  2026-11-21: exact `app=antigravity` maps to Antigravity's one-colour icon
+  tinted `#FFFFFF`/`#202124` for row-background contrast and the `Antigravity`
+  fallback label (with already-landed `app=opencode` → `OpenCode` aligned in
+  the contract text); installed proof pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2451,16 +2457,27 @@ re-proved when that platform or feature is next touched.
     - A row shows:
       - the state glyph;
       - the app icon: Venus maps `app=claude-code` to Claude Code's official
-        standalone Clawd symbol and `app=codex` to a colour vector of Codex's
-        symbol. Both keep their supplied colours and transparency, including on
-        stale rows, and scale proportionally inside the icon slot. Eon Bar quota chips
-        keep their account/provider marks ([Eon Bar](PRESENTATION.md#eon-bar));
+        standalone Clawd symbol, `app=codex` to a colour vector of Codex's
+        symbol, `app=opencode` to OpenCode's official transparent mark
+        (selecting the vendor's dark or light variant whose outer stroke
+        contrasts more with the row's resolved background, including hover and
+        keyboard-focus fills), and exact `app=antigravity` (no aliases or
+        process-name guessing) to Google Antigravity's official one-colour icon
+        (`Icon – One Color`). Claude Code, Codex, and OpenCode keep their
+        supplied colours and transparency; Antigravity draws as an alpha mask
+        tinted `#FFFFFF` on dark row surfaces and `#202124` on light row
+        surfaces, choosing the higher contrast against the row's resolved
+        background (including hover and keyboard-focus fills). App marks are not
+        dimmed when stale and scale proportionally inside the icon slot. Eon Bar
+        quota chips keep their account/provider marks
+        ([Eon Bar](PRESENTATION.md#eon-bar)), including the Google quota chip;
       - one label: a pane's nonempty `pinned_name` takes precedence, including over
         an agent-reported name. This also applies to an attention inbox row whose
         pane belongs to the shown session. Without a pane pin, use the first
         nonempty of: the attention `name`, for `app=claude-code` only, which Claude
         Code sets to its session name or title; the record title; and the app's name
-        (`Claude`, `Codex`, or any other `app` verbatim), else `agent`.
+        (`Claude`, `Codex`, `OpenCode`, `Antigravity`, or any other `app`
+        verbatim), else `agent`.
         Popup agents have no pane pin. An inbox row of another session retains the
         reported-name/title/app fallback because the queue carries no pane pin.
         Venus maps `app` to an icon and to whether its

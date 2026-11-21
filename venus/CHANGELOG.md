@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- VEN-C30: Antigravity (`app=antigravity`) sidebar and attention inbox rows use
+  Google Antigravity's official one-colour icon (`Icon – One Color`) as an alpha
+  mask tinted `#FFFFFF` on dark row surfaces and `#202124` on light row surfaces
+  (including hover and keyboard-focus fills), keep the fallback label
+  `Antigravity`, and are not dimmed when stale. Quota chips retain their
+  provider marks, including the Google quota chip
+  (`eon-sidebar-app-icons-y99b7.12`, lead approval 2026-11-21).
+
 - Consume canonical EONW v47: Alt+M sends the one pane-creation request with
   no tab and no command; behaviour is unchanged (`eon-89ho`).
 
