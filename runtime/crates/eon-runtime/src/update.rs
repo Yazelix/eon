@@ -59,12 +59,33 @@ fn fault(point: &str) -> bool {
 thread_local! {
     pub(crate) static INJECTED: std::cell::Cell<&'static [&'static str]> =
         const { std::cell::Cell::new(&[]) };
+    /// One-shot signal fired when an active `await_hangup` wait starts,
+    /// strictly after the client has passed `peer(&stream)`, or dropped when
+    /// cleared by `ClientHooks` on return or unwind. See
+    /// `release_before_hangup`.
+    static RELEASE_BEFORE_HANGUP: std::cell::RefCell<Option<std::sync::mpsc::Sender<()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Makes this thread fail at each of `points` until the next call.
 #[cfg(test)]
 pub(crate) fn inject(points: &'static [&'static str]) {
     INJECTED.with(|injected| injected.set(points));
+}
+
+/// Arms (or clears, with `None`) a one-shot signal fired when this thread
+/// enters an active `await_hangup` wait, strictly after `peer(&stream)`.
+///
+/// A fixture that must close before the client's next step blocks on the
+/// matching receiver with plain `recv()`, never on a timer: the server end is
+/// closed only after the client has either passed `peer(&stream)` and reached
+/// `await_hangup`, or hung up and dropped the `Sender` via `ClientHooks` drop.
+/// That ensures the client's peer credential read always happens on a connected
+/// socket in every interleaving (avoiding macOS `LOCAL_PEERPID` returning
+/// `ENOTCONN`); a stalled test is bounded by the test runner's own timeout.
+#[cfg(test)]
+pub(crate) fn release_before_hangup(release: Option<std::sync::mpsc::Sender<()>>) {
+    RELEASE_BEFORE_HANGUP.with(|slot| *slot.borrow_mut() = release);
 }
 
 /// `set`, a socket option's result, or under the fault `point` the EINVAL
@@ -86,6 +107,10 @@ pub(crate) const NO_HANGUP: &str = "the window's hang-up was not observed";
 fn await_hangup(stream: &UnixStream, point: &str) -> io::Result<()> {
     if !fault(point) {
         return Ok(());
+    }
+    #[cfg(test)]
+    if let Some(tx) = RELEASE_BEFORE_HANGUP.with(|slot| slot.borrow_mut().take()) {
+        let _ = tx.send(());
     }
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {

@@ -6,7 +6,7 @@ use std::{
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     path::PathBuf,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, mpsc},
 };
 
 /// A source that yields one byte per read and advances a shared clock by
@@ -489,6 +489,59 @@ fn a_reply_that_cannot_be_encoded_is_an_internal_refusal() {
     );
 }
 
+/// Restores thread-local test hooks on drop, so an early return or panic never
+/// leaks injected faults or a pending release sender into later tests.
+///
+/// Dropped in `Fixture::inspect_under` before joining the fixture server thread,
+/// which drops any unsent `Sender` armed via `release_before_hangup` so a
+/// fixture blocked in `recv()` unblocks without a timer. Together with
+/// `hold_until_eof`, the server end is closed only after the client has passed
+/// `peer(&stream)` or hung up (its stream dropped by `inspect` returning, or
+/// its `ClientHooks` drop dropping the `Sender`), never by a timer, so the
+/// client's peer credential read always happens on a connected socket in every
+/// interleaving; a stalled test is bounded by the test runner's own timeout.
+struct ClientHooks;
+
+impl ClientHooks {
+    fn arm(points: &'static [&'static str], release: Option<mpsc::Sender<()>>) -> Self {
+        inject(points);
+        release_before_hangup(release);
+        Self
+    }
+}
+
+impl Drop for ClientHooks {
+    fn drop(&mut self) {
+        inject(&[]);
+        release_before_hangup(None);
+    }
+}
+
+/// Holds the server end of a fixture connection open until the client hangs up,
+/// discarding any bytes the client writes.
+///
+/// A fixture that closes right after `accept()`—or on a timer—races the
+/// client's peer credential read: on macOS `LOCAL_PEERPID` fails with
+/// `ENOTCONN` once the peer has closed. Because `hold_until_eof` has no overall
+/// deadline and closes only after the client has hung up (its stream dropped by
+/// `inspect` returning), never by a timer, the client's peer credential read
+/// always happens on a connected socket in every interleaving; a stalled test
+/// is bounded by the test runner's own timeout. Reading via `read_within` (and
+/// continuing on `Interrupted`, `WouldBlock`, or `TimedOut`) keeps the no-panic
+/// handling of `EINVAL` from `set_read_timeout` if the client already closed.
+fn hold_until_eof(mut stream: UnixStream) {
+    use std::io::ErrorKind::{Interrupted, TimedOut, WouldBlock};
+    let mut sink = [0; 256];
+    loop {
+        match stream.read_within(&mut sink, LONG) {
+            Ok(0) => return,
+            Ok(_) => {}
+            Err(error) if matches!(error.kind(), Interrupted | WouldBlock | TimedOut) => {}
+            Err(_) => return,
+        }
+    }
+}
+
 /// A lifetime directory `<root>/generations/<LIFETIME>` with a fixture
 /// window on its update.sock that answers each connection with `answer`.
 struct Fixture {
@@ -524,8 +577,22 @@ impl Fixture {
         }
     }
 
-    fn inspect(mut self) -> Result<Inspected, Refusal> {
-        let result = inspect(&self.lifetime, Instant::now() + LONG);
+    /// Runs `inspect` against this fixture with no client-side faults.
+    /// Callers that need a client-side fault use `inspect_with`, because
+    /// `inspect` clears the client thread's hooks.
+    fn inspect(self) -> Result<Inspected, Refusal> {
+        self.inspect_under(&[], None)
+    }
+
+    fn inspect_under(
+        mut self,
+        points: &'static [&'static str],
+        release: Option<mpsc::Sender<()>>,
+    ) -> Result<Inspected, Refusal> {
+        let result = {
+            let _hooks = ClientHooks::arm(points, release);
+            inspect(&self.lifetime, Instant::now() + LONG)
+        };
         self.server.take().unwrap().join().unwrap();
         // Zero eon.sock connections: inspecting never speaks EONW.
         assert_eq!(
@@ -637,13 +704,14 @@ fn the_client_reports_another_version_with_the_manual_move() {
 
 #[test]
 fn the_client_refuses_a_peer_of_another_user() {
-    let fixture = Fixture::new(|_, _: &Path| {});
-    inject(&["peer-uid"]);
-    let lifetime = fixture.lifetime.clone();
-    let result = inspect(&lifetime, Instant::now() + LONG);
-    inject(&[]);
-    assert!(matches!(result, Err(Refusal::Unsafe(_))), "{result:?}");
-    fixture.inspect().ok();
+    let result = inspect_with(
+        Fixture::new(|stream, _: &Path| hold_until_eof(stream)),
+        &["peer-uid"],
+    );
+    match result {
+        Err(Refusal::Unsafe(reason)) => assert!(reason.contains("another user"), "{reason}"),
+        other => panic!("expected Unsafe(another user), got {other:?}"),
+    }
 }
 
 #[test]
@@ -736,10 +804,7 @@ fn a_refusal_from_a_swapped_endpoint_is_not_this_windows() {
 
 /// `inspect` with `points` injected on this, the client's, thread only.
 fn inspect_with(fixture: Fixture, points: &'static [&'static str]) -> Result<Inspected, Refusal> {
-    inject(points);
-    let result = fixture.inspect();
-    inject(&[]);
-    result
+    fixture.inspect_under(points, None)
 }
 
 #[test]
@@ -774,24 +839,30 @@ fn a_reply_buffered_before_the_window_closed_is_read() {
 fn a_reply_from_a_window_that_closed_before_the_request_is_read() {
     // The window answers without reading and closes before the client sets
     // its write timeout: both options fail with EINVAL, as on Darwin, the
-    // request write fails, and the reply must still be read.
+    // request write fails, and the reply must still be read. The fixture
+    // blocks on `release_before_hangup` without a timer before writing and
+    // closing so the client's `peer(&stream)` always sees a connected socket
+    // in every interleaving.
     let points = &[
         "await-close-before-write",
         "einval-on-write-timeout",
         "einval-on-read-timeout",
     ];
-    let other_version = Fixture::new(|mut stream, _: &Path| {
-        stream.write_all(&raw(2, 130, &[0; 19])).unwrap();
-    });
+    let inspect_early_reply = |reply: Vec<u8>| {
+        let (release_tx, release_rx) = mpsc::channel();
+        let fixture = Fixture::new(move |mut stream, _: &Path| {
+            if release_rx.recv().is_ok() {
+                let _ = stream.write_all(&reply);
+            }
+        });
+        fixture.inspect_under(points, Some(release_tx))
+    };
     assert_eq!(
-        inspect_with(other_version, points),
+        inspect_early_reply(raw(2, 130, &[0; 19])),
         Err(Refusal::Version { window: 2, ours: 1 })
     );
     // The approved all-zero ID: the window could not read the request.
-    let unread = Fixture::new(|mut stream, _: &Path| {
-        stream.write_all(&refused([0; 16])).unwrap();
-    });
-    let result = inspect_with(unread, points);
+    let result = inspect_early_reply(refused([0; 16]));
     assert!(
         matches!(
             result,
@@ -847,17 +918,19 @@ fn the_endpoint_module_names_no_workspace_module() {
 
 #[test]
 fn a_window_still_open_fails_the_wait_before_any_option_call() {
-    // The window holds its end open past the wait (3 s against 1 s). The
-    // client must stop at the wait, before its option call: with the EINVAL
-    // injected, reaching the option would refuse with a different text.
+    // The window holds its end open until the client hangs up after the 1 s
+    // wait expires. The client must stop at the wait, before its option call:
+    // with the EINVAL injected, reaching the option would refuse with a
+    // different text.
     let held = |read_first: bool| {
         move |mut stream: UnixStream, _: &Path| {
             if read_first {
                 let mut request = [0; 28];
-                stream.read_exact(&mut request).unwrap();
-                stream.write_all(&raw(2, 130, &[0; 19])).unwrap();
+                if stream.read_exact(&mut request).is_ok() {
+                    let _ = stream.write_all(&raw(2, 130, &[0; 19]));
+                }
             }
-            thread::sleep(Duration::from_secs(3));
+            hold_until_eof(stream);
         }
     };
     for (read_first, points) in [
