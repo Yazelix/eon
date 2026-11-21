@@ -33,6 +33,40 @@ pub(crate) fn make_fifo(path: &std::path::Path) {
     assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
 }
 
+/// Returns the listener and the clients keeping its accept queue full.
+pub(crate) fn busy_listener(path: &std::path::Path) -> (socket2::Socket, Vec<socket2::Socket>) {
+    use socket2::{Domain, SockAddr, Socket, Type};
+    use std::io::ErrorKind;
+
+    let address = SockAddr::unix(path).unwrap();
+    let listener = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
+    listener.bind(&address).unwrap();
+    // Darwin treats a backlog of zero as somaxconn.
+    listener.listen(1).unwrap();
+    let mut queued = Vec::new();
+    for _ in 0..16 {
+        let client = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
+        client.set_nonblocking(true).unwrap();
+        match client.connect(&address) {
+            Ok(()) => queued.push(client),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::ConnectionRefused
+                ) =>
+            {
+                assert!(!queued.is_empty(), "the listener refused its first client");
+                return (listener, queued);
+            }
+            Err(error) => panic!(
+                "cannot fill backlog after {} connections: {error}",
+                queued.len()
+            ),
+        }
+    }
+    panic!("backlog never filled after {} connections", queued.len());
+}
+
 pub(crate) fn inputs() -> Inputs {
     Inputs {
         launch: Err("unwrapped fixture".into()),

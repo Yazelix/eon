@@ -2,8 +2,8 @@ use super::cli::Inputs;
 use super::control::{
     CONTROL_TIMEOUT, ControlResponse, EndpointFailure, EndpointFailureKind, Error, StopAnswer,
     connect_control, failure, probe_generation_runtime, probe_generation_runtime_from,
-    probe_generation_runtime_until, remove_socket_if_identity, report_failure,
-    send_action_from_until, send_stop_on, socket_identity, socket_identity_from, write_stdout,
+    probe_generation_runtime_until, remove_stale_socket, report_failure, send_action_from_until,
+    send_stop_on, socket_identity, socket_identity_from, write_stdout,
 };
 use super::sessions::terminal_session;
 use super::supervisor::{
@@ -24,11 +24,7 @@ use std::{
     ffi::OsString,
     fs,
     io::IsTerminal,
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{FileTypeExt, MetadataExt},
-        process::CommandExt,
-    },
+    os::unix::{ffi::OsStrExt, fs::MetadataExt, process::CommandExt},
     path::{Path, PathBuf},
     process::Command,
     process::Stdio,
@@ -252,7 +248,7 @@ pub(super) fn cleanup_metadata(runtime: &Path) -> Result<(), String> {
     validate_private_directory(runtime)?;
     let parent = crate::private_file::object(runtime)?;
     for socket in ENDPOINTS {
-        remove_dead_socket(&runtime.join(socket));
+        let _ = remove_stale_socket(&runtime.join(socket), "Eon supervisor");
     }
     let mut metadata = Vec::with_capacity(4);
     for entry in fs::read_dir(runtime)
@@ -1362,20 +1358,6 @@ pub(super) fn private_directory_exists(path: &Path, description: &str) -> Result
             "cannot inspect {description} {}: {error}",
             path.display()
         )),
-    }
-}
-
-fn remove_dead_socket(path: &Path) {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return;
-    };
-    if !metadata.file_type().is_socket() || metadata.uid() != effective_uid() {
-        return;
-    }
-    let identity = socket_identity_from(&metadata);
-    // An uncertain probe, such as a busy listener, keeps the socket.
-    if matches!(super::control::socket_is_dead(path), Ok(true)) {
-        remove_socket_if_identity(path, identity);
     }
 }
 
@@ -2907,56 +2889,30 @@ mod tests {
         }
     }
 
-    /// A listener whose accept queue is full, and how its last connect
-    /// failed: WouldBlock where a blocking connect would wait (Linux), or
-    /// refused where it cannot (macOS refuses a full queue at once).
-    fn busy_listener(path: &Path) -> (socket2::Socket, Vec<socket2::Socket>, std::io::ErrorKind) {
-        use socket2::{Domain, SockAddr, Socket, Type};
-        let address = SockAddr::unix(path).unwrap();
-        let listener = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
-        listener.bind(&address).unwrap();
-        listener.listen(0).unwrap();
-        let mut held = Vec::new();
-        for _ in 0..1024 {
-            let client = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
-            client.set_nonblocking(true).unwrap();
-            match client.connect(&address) {
-                Ok(()) => held.push(client),
-                Err(error) => return (listener, held, error.kind()),
-            }
-        }
-        panic!("the accept queue never filled");
-    }
-
-    /// Runs `probe` on a thread and fails, rather than hangs, if it blocks.
-    fn finishes<T: Send + 'static>(probe: impl FnOnce() -> T + Send + 'static) -> T {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || sender.send(probe()));
-        receiver
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the socket probe blocked on a busy listener")
-    }
-
     #[test]
     fn a_busy_listener_neither_stalls_nor_loses_its_socket() {
         let runtime = temporary_directory();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         drop(std::os::unix::net::UnixListener::bind(runtime.join("eon.sock")).unwrap());
         let busy = runtime.join("update.sock");
-        let (_listener, _held, full) = busy_listener(&busy);
+        let (_listener, _queued) = crate::fixtures::busy_listener(&busy);
         let directory = runtime.clone();
-        let cleanup = finishes(move || cleanup_metadata(&directory));
         let path = busy.clone();
-        let bind =
-            finishes(move || crate::control::PrivateListener::bind(&path, "Eon Update").map(drop));
-        // Where a full queue is refused at once (macOS), the probe cannot
-        // block and reads the socket as dead, as it always has for eon.sock.
-        if full == std::io::ErrorKind::WouldBlock {
-            let error = cleanup.unwrap_err();
-            assert!(error.contains("unsafe or active object"), "{error}");
-            assert!(bind.is_err());
-            assert!(busy.exists(), "a busy socket is kept");
-        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let probe = thread::spawn(move || {
+            let cleanup = cleanup_metadata(&directory);
+            let bind = crate::control::PrivateListener::bind(&path, "Eon Update").map(drop);
+            sender.send((cleanup, bind)).unwrap();
+        });
+        let (cleanup, bind) = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the socket probe blocked on a busy listener");
+        probe.join().unwrap();
+        let error = cleanup.unwrap_err();
+        assert!(error.contains("unsafe or active object"), "{error}");
+        let error = bind.unwrap_err();
+        assert!(error.contains("already active"), "{error}");
+        assert!(busy.exists(), "a busy socket is kept");
         fs::remove_dir_all(&runtime).unwrap();
     }
 }

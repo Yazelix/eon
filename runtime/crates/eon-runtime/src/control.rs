@@ -13,10 +13,10 @@ use eon_workspace_protocol::v47::{
 };
 use std::{
     fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     os::unix::{
         fs::{FileTypeExt, MetadataExt, PermissionsExt},
-        net::{UnixListener, UnixStream},
+        net::{UnixDatagram, UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -578,23 +578,61 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
     }
 }
 
-/// Whether nothing listens at `path`: true only when connecting finds no
-/// socket or is refused, false when it connects. Anything else, such as a
-/// listener too busy to take the connection within `CLIENT_IO_TIMEOUT`, is an
-/// error, which callers treat as live: they keep the socket.
-pub(super) fn socket_is_dead(path: &Path) -> std::io::Result<bool> {
-    match super::sessions::unix_connect_with_timeout(path, CLIENT_IO_TIMEOUT) {
-        Ok(_) => Ok(false),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-            ) =>
-        {
-            Ok(true)
+/// Under the lifecycle lock, reclaim only an owned socket with no live peer.
+pub(super) fn remove_stale_socket(path: &Path, what: &str) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_socket() && metadata.uid() == effective_uid() => {
+            metadata
         }
-        Err(error) => Err(error),
+        Ok(_) => {
+            return Err(format!(
+                "{what} path {} must be an owned Unix socket",
+                path.display()
+            ));
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect {what} path {}: {error}",
+                path.display()
+            ));
+        }
+    };
+
+    probe_stale_socket(path, what, socket_identity_from(&metadata))
+}
+
+fn probe_stale_socket(path: &Path, what: &str, identity: SocketIdentity) -> Result<(), String> {
+    // Linux and macOS check the type before the accept queue: a live stream
+    // gives EPROTOTYPE even when a stream connect would be refused.
+    match UnixDatagram::unbound().and_then(|socket| socket.connect(path)) {
+        Err(error) if error.kind() == ErrorKind::ConnectionRefused => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::EPROTOTYPE) => {
+            return Err(format!(
+                "an Eon supervisor is already active at {}",
+                path.display()
+            ));
+        }
+        Ok(()) => {
+            return Err(format!(
+                "{what} path {} is a Unix datagram socket",
+                path.display()
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect {what} socket {}: {error}",
+                path.display()
+            ));
+        }
     }
+    remove_socket_if_identity(path, identity).map_err(|error| {
+        format!(
+            "cannot remove stale {what} socket {}: {error}",
+            path.display()
+        )
+    })
 }
 
 /// A private Unix listener at `path`: it refuses a live owner, replaces only
@@ -610,46 +648,7 @@ pub(super) struct PrivateListener {
 impl PrivateListener {
     /// `what` names the socket in errors, such as "Eon control".
     pub(super) fn bind(path: &Path, what: &str) -> Result<Self, String> {
-        match socket_is_dead(path) {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(format!(
-                    "an Eon supervisor is already active at {}",
-                    path.display()
-                ));
-            }
-            Err(error) => {
-                return Err(format!(
-                    "cannot inspect {what} socket {}: {error}",
-                    path.display()
-                ));
-            }
-        }
-        match fs::symlink_metadata(path) {
-            Ok(metadata)
-                if metadata.file_type().is_socket() && metadata.uid() == effective_uid() =>
-            {
-                fs::remove_file(path).map_err(|error| {
-                    format!(
-                        "cannot remove stale {what} socket {}: {error}",
-                        path.display()
-                    )
-                })?;
-            }
-            Ok(_) => {
-                return Err(format!(
-                    "{what} path {} must be an owned Unix socket",
-                    path.display()
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(format!(
-                    "cannot inspect {what} path {}: {error}",
-                    path.display()
-                ));
-            }
-        }
+        remove_stale_socket(path, what)?;
         let listener = UnixListener::bind(path)
             .map_err(|error| format!("cannot bind {what} socket {}: {error}", path.display()))?;
         let identity = socket_identity(path)?
@@ -1059,10 +1058,9 @@ pub(super) fn socket_identity(socket: &Path) -> Result<Option<SocketIdentity>, S
     }
 }
 
-pub(super) fn remove_socket_if_identity(path: &Path, identity: SocketIdentity) {
-    if socket_identity(path).is_ok_and(|current| current == Some(identity)) {
-        let _ = fs::remove_file(path);
-    }
+fn remove_socket_if_identity(path: &Path, identity: SocketIdentity) -> Result<(), String> {
+    crate::private_file::revalidate(path, Some(identity))?;
+    fs::remove_file(path).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -1492,6 +1490,53 @@ mod tests {
     }
 
     #[test]
+    fn a_bound_socket_is_kept_until_closed() {
+        let root = temporary_directory();
+        let path = root.join("eon.sock");
+        let socket =
+            socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+        socket
+            .bind(&socket2::SockAddr::unix(&path).unwrap())
+            .unwrap();
+
+        // A stream connect is refused before listen(), even on Linux.
+        let rejected = ControlListener::bind(&path);
+        assert!(matches!(rejected, Err(error) if error.contains("already active")));
+
+        drop(socket);
+        drop(ControlListener::bind(&path).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_socket_that_vanishes_after_inspection_leaves_the_path_available() {
+        let root = temporary_directory();
+        let path = root.join("eon.sock");
+        let original = ControlListener::bind(&path).unwrap();
+        let observed = socket_identity(&path).unwrap().unwrap();
+        drop(original);
+
+        super::probe_stale_socket(&path, "Eon control", observed).unwrap();
+        drop(ControlListener::bind(&path).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_datagram_socket_is_kept_and_reported() {
+        let root = temporary_directory();
+        let path = root.join("eon.sock");
+        let datagram = std::os::unix::net::UnixDatagram::bind(&path).unwrap();
+        let observed = socket_identity(&path).unwrap().unwrap();
+
+        let rejected = ControlListener::bind(&path);
+        assert!(matches!(rejected, Err(error) if error.contains("is a Unix datagram socket")));
+        assert_eq!(socket_identity(&path).unwrap(), Some(observed));
+
+        drop(datagram);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn socket_removal_is_bound_to_the_observed_identity() {
         let root = temporary_directory();
         let socket = root.join("eon.sock");
@@ -1501,7 +1546,7 @@ mod tests {
         fs::remove_file(&socket).unwrap();
         let _replacement = UnixListener::bind(&socket).unwrap();
 
-        remove_socket_if_identity(&socket, observed);
+        assert!(remove_socket_if_identity(&socket, observed).is_err());
 
         assert!(UnixStream::connect(&socket).is_ok());
         fs::remove_dir_all(root).unwrap();
