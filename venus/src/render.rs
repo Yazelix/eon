@@ -48,6 +48,8 @@ mod cells;
 mod chrome;
 mod cursor_trail;
 mod fonts;
+#[cfg(feature = "candidate-rune")]
+mod hosted_backdrop;
 mod images;
 mod palette;
 pub use palette::{Palette, PaletteContrast, PaletteMode, contrast_ratio};
@@ -1363,6 +1365,36 @@ struct WindowedTarget {
     window: Arc<Window>,
 }
 
+/// The look a hosted renderer draws with: the values a host does not configure. A host's
+/// matched parent passes the same values to `Renderer::new`, so the two cannot drift apart.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HostedLook {
+    pub(crate) background_opacity: f32,
+    pub(crate) padding_color: PaddingColor,
+    /// The hosted renderer draws the static scene cursor, never the tail.
+    pub(crate) cursor_tail: Option<(SceneColor, f32)>,
+    pub(crate) pane_frames: bool,
+    pub(crate) panel_heading: PanelHeading,
+    pub(crate) detect_local_hosts: bool,
+    pub(crate) focus_color: SceneColor,
+    pub(crate) border_width: u8,
+    pub(crate) focus_border_width: u8,
+    pub(crate) animate_working_badge: bool,
+}
+
+pub(crate) const HOSTED_LOOK: HostedLook = HostedLook {
+    background_opacity: 1.0,
+    padding_color: PaddingColor::Extend,
+    cursor_tail: None,
+    pane_frames: false,
+    panel_heading: PanelHeading::Connected,
+    detect_local_hosts: false,
+    focus_color: SceneColor { r: 0, g: 0, b: 0 },
+    border_width: 1,
+    focus_border_width: 1,
+    animate_working_badge: false,
+};
+
 /// One shared GPU/text owner, optionally presenting to its own native window.
 pub struct Renderer {
     #[cfg(test)]
@@ -1382,6 +1414,9 @@ pub struct Renderer {
     dynamic_vertices: wgpu::Buffer,
     dynamic_vertex_capacity: u64,
     dynamic_vertex_count: u32,
+    /// The Rune candidate's hosted slot background (see `hosted_backdrop.rs`).
+    #[cfg(feature = "candidate-rune")]
+    hosted_backdrop: Option<(wgpu::Buffer, u32)>,
     images: Images,
     fonts: FontSetup,
     swash_cache: SwashCache,
@@ -1602,6 +1637,7 @@ impl Renderer {
             alpha_mode: CompositeAlphaMode::Opaque,
             view_formats: Vec::new(),
         };
+        let look = HOSTED_LOOK;
         Self::assemble(
             None,
             device,
@@ -1609,16 +1645,16 @@ impl Renderer {
             queue,
             config,
             scale_factor,
-            false,
-            1.0,
-            PaddingColor::default(),
-            None,
-            false,
-            PanelHeading::default(),
-            false,
-            SceneColor::default(),
-            1,
-            1,
+            look.animate_working_badge,
+            look.background_opacity,
+            look.padding_color,
+            look.cursor_tail,
+            look.pane_frames,
+            look.panel_heading,
+            look.detect_local_hosts,
+            look.focus_color,
+            look.border_width,
+            look.focus_border_width,
             None,
             fonts,
         )
@@ -1631,6 +1667,8 @@ impl Renderer {
         blink_visible: bool,
         generation: u64,
     ) -> Result<(), RenderError> {
+        #[cfg(feature = "candidate-rune")]
+        self.prepare_hosted_backdrop(scene);
         self.prepare_frame(
             Some(scene),
             None,
@@ -1649,6 +1687,8 @@ impl Renderer {
 
     /// Draws the prepared terminal into the host's current viewport.
     pub fn draw_hosted(&self, pass: &mut wgpu::RenderPass<'_>) -> Result<(), RenderError> {
+        #[cfg(feature = "candidate-rune")]
+        self.draw_hosted_backdrop(pass);
         self.draw_into(pass)
     }
 
@@ -1788,6 +1828,8 @@ impl Renderer {
             dynamic_vertices,
             dynamic_vertex_capacity: vertex_capacity,
             dynamic_vertex_count: 0,
+            #[cfg(feature = "candidate-rune")]
+            hosted_backdrop: None,
             images,
             fonts,
             swash_cache,

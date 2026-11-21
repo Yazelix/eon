@@ -93,3 +93,62 @@ that display can confirm the band:
 ```sh
 timeout 60s cargo test --locked --lib images_draw_in_panes_and_popups_and_refusals_keep_the_renderer -- --ignored
 ```
+
+## Rune candidate entry
+
+`venus-rune-candidate` is the private Rune host candidate (eon-yp6vg.7.7). It
+draws the canonical Venus grid with the hosted renderer inside one Rune
+device and frame pass. It shows fixed fixture frames, never a live terminal,
+and it has no input. Only the non-default `candidate-rune` feature builds it,
+so no package, test or CI root contains it. eon-yp6vg.54 removes it.
+
+On Linux it refuses to start without `WAYLAND_DISPLAY`, before any event loop
+exists: the Rune pin compiles winit's X11 backend. On macOS both hosts use the
+native event loop. The launcher below and the lavapipe check are Linux-only;
+the candidate's first Darwin build and proof belong to eon-yp6vg.57.
+
+Each line on stdin advances one fixture step. After the last step, the first
+step comes back as a fresh attachment. After a step's first presentation, the
+entry prints `drawn <cycle> <step> <name>`. That line means the client
+presented the frame, not that the compositor shows it yet.
+
+`--host venus` draws the same steps with Venus's own windowed path and the
+hosted renderer's fixed look. That host is the parent the native pixel proof
+compares against.
+
+Build it into a directory of its own:
+
+```sh
+nix develop -c cargo build --locked --release -p yazelix-venus \
+  --features candidate-rune --bin venus-rune-candidate --target-dir DIR
+```
+
+Like shipping Venus, it needs the runtime libraries and fonts that the
+package wrapper sets, and the dev shell does not set all of them. This
+launcher takes them from the shipping wrapper of the installed `eon` on
+`PATH` (inside an Eon terminal, Eon's own tool directory comes first, so run it
+from a desktop session or with the profile's `bin` first on `PATH`), then runs the
+candidate. A desktop entry's `Exec=` can run it:
+
+```sh
+#!/usr/bin/env bash
+# venus-rune-candidate.sh DIR/release/venus-rune-candidate [--host rune|venus]
+set -eu
+eon=$(readlink -f "$(command -v eon)")
+venus=$(sed -n "s/^export EON_VENUS='\(.*\)'$/\1/p" "$eon" | head -n 1)
+[ -n "$venus" ] || { echo "no EON_VENUS in $eon" >&2; exit 1; }
+eval "$(grep -E '^(export |LD_LIBRARY_PATH=|XDG_DATA_DIRS=)' "$venus")"
+exec "$@"
+```
+
+The native check of the candidate needs a real adapter and the packaged fonts.
+On lavapipe it compares every fixture step drawn through the production
+compositor with the parent's windowed recording, at scales 1 and 2. It also
+checks an inset slot cut by a clipping ancestor, painter order, and a refused
+frame on a second device. Set `EON_RUNE_PROOF_DIR` to keep every image pair:
+
+```sh
+VK_ICD_FILENAMES=<mesa>/share/vulkan/icd.d/lvp_icd.x86_64.json \
+  timeout 600s cargo test --locked -p yazelix-venus --features candidate-rune \
+  --lib rune_hosted_grid_matches_the_venus_parent -- --ignored
+```

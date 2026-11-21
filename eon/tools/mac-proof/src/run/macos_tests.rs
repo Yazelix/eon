@@ -9,11 +9,14 @@
 //! The reading is a lexer, not a compiler. It follows what decides whether a
 //! test exists on aarch64-darwin: crate-level and module-level `cfg`s, file and
 //! inline modules, `#[path]`, and `#[test]` functions with their `cfg`s and
-//! `#[ignore]`, with `cfg_attr` expanded for macOS. A `cfg` predicate it cannot
+//! `#[ignore]`, with `cfg_attr` expanded for macOS. The Mac runs every package
+//! with its default features, so `feature = "x"` holds when the package's
+//! `default` enables x. A `cfg` predicate it cannot
 //! evaluate, a module file it cannot find, a path outside the repository, an
 //! unbalanced group or an unterminated literal panics rather than guesses.
 
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -181,21 +184,21 @@ fn inner_attributes(tokens: &[Token], at: &mut usize, file: &Path) -> Vec<Vec<To
 
 /// Whether a `cfg(...)` attribute holds on aarch64-darwin under test; any
 /// other attribute holds.
-fn holds_on_macos(attribute: &[Token], file: &Path) -> bool {
+fn holds_on_macos(attribute: &[Token], file: &Path, features: &Features) -> bool {
     if ident(attribute.first()) != Some("cfg") {
         return true;
     }
     let mut at = 1;
     let predicate = group(attribute, &mut at, '(', ')', file);
     match split_list(&predicate).as_slice() {
-        [predicate] if at == attribute.len() => predicate_holds(predicate, file),
+        [predicate] if at == attribute.len() => predicate_holds(predicate, file, features),
         _ => panic!("{}: malformed cfg {attribute:?}", file.display()),
     }
 }
 
 /// An attribute as macOS sees it: a `cfg_attr` becomes the attributes it
 /// applies when its predicate holds on macOS, and nothing otherwise.
-fn expand(attribute: Vec<Token>, file: &Path) -> Vec<Vec<Token>> {
+fn expand(attribute: Vec<Token>, file: &Path, features: &Features) -> Vec<Vec<Token>> {
     if ident(attribute.first()) != Some("cfg_attr") {
         return vec![attribute];
     }
@@ -204,8 +207,10 @@ fn expand(attribute: Vec<Token>, file: &Path) -> Vec<Vec<Token>> {
     let mut parts = split_list(&list).into_iter();
     match parts.next() {
         Some(predicate) if at == attribute.len() => {
-            if predicate_holds(&predicate, file) {
-                parts.flat_map(|part| expand(part, file)).collect()
+            if predicate_holds(&predicate, file, features) {
+                parts
+                    .flat_map(|part| expand(part, file, features))
+                    .collect()
             } else {
                 Vec::new()
             }
@@ -215,14 +220,14 @@ fn expand(attribute: Vec<Token>, file: &Path) -> Vec<Vec<Token>> {
 }
 
 /// Whether every attribute, expanded for macOS, holds there.
-fn all_hold(attributes: &[Vec<Token>], file: &Path) -> bool {
+fn all_hold(attributes: &[Vec<Token>], file: &Path, features: &Features) -> bool {
     attributes
         .iter()
-        .flat_map(|attribute| expand(attribute.clone(), file))
-        .all(|attribute| holds_on_macos(&attribute, file))
+        .flat_map(|attribute| expand(attribute.clone(), file, features))
+        .all(|attribute| holds_on_macos(&attribute, file, features))
 }
 
-fn predicate_holds(predicate: &[Token], file: &Path) -> bool {
+fn predicate_holds(predicate: &[Token], file: &Path, features: &Features) -> bool {
     let unknown = || panic!("{}: cannot evaluate cfg({predicate:?})", file.display());
     match predicate {
         [Token::Ident(name)] => match name.as_str() {
@@ -235,6 +240,10 @@ fn predicate_holds(predicate: &[Token], file: &Path) -> bool {
             "target_arch" => value == "aarch64",
             "target_family" => value == "unix",
             "target_vendor" => value == "apple",
+            "feature" => match features.holds(value) {
+                Some(on) => on,
+                None => unknown(),
+            },
             _ => unknown(),
         },
         [Token::Ident(name), Token::Punct('('), .., Token::Punct(')')] => {
@@ -245,9 +254,13 @@ fn predicate_holds(predicate: &[Token], file: &Path) -> bool {
             }
             let parts = split_list(&inner);
             match name.as_str() {
-                "not" if parts.len() == 1 => !predicate_holds(&parts[0], file),
-                "any" => parts.iter().any(|part| predicate_holds(part, file)),
-                "all" => parts.iter().all(|part| predicate_holds(part, file)),
+                "not" if parts.len() == 1 => !predicate_holds(&parts[0], file, features),
+                "any" => parts
+                    .iter()
+                    .any(|part| predicate_holds(part, file, features)),
+                "all" => parts
+                    .iter()
+                    .all(|part| predicate_holds(part, file, features)),
                 _ => unknown(),
             }
         }
@@ -292,8 +305,66 @@ fn inside(root: &Path, path: &Path) -> PathBuf {
     resolved
 }
 
+/// The features a package declares, and those its `default` enables.
+struct Features {
+    declared: BTreeSet<String>,
+    default: BTreeSet<String>,
+}
+
+impl Features {
+    /// From a `cargo metadata` package; no `features` table declares none.
+    fn of(package: &serde_json::Value) -> Self {
+        let table = package["features"].as_object();
+        let declared: BTreeSet<String> = table
+            .into_iter()
+            .flatten()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let mut default = BTreeSet::new();
+        let mut pending = vec!["default".to_owned()];
+        while let Some(name) = pending.pop() {
+            if !declared.contains(&name) || !default.insert(name.clone()) {
+                continue;
+            }
+            for entry in table
+                .and_then(|table| table[&name].as_array())
+                .into_iter()
+                .flatten()
+            {
+                let entry = entry.as_str().expect("feature entries are strings");
+                // `x/f` also turns on the optional dependency x and its implicit feature;
+                // `dep:x` and `x?/f` turn on no feature of this package.
+                if let Some((dependency, _)) = entry.split_once('/') {
+                    pending.push(dependency.to_owned());
+                } else if !entry.starts_with("dep:") {
+                    pending.push(entry.to_owned());
+                }
+            }
+        }
+        Self { declared, default }
+    }
+
+    /// Whether a target's `required-features` list (absent: none) is all on
+    /// with default features.
+    fn enabled_by_default(&self, required: &serde_json::Value) -> bool {
+        required.as_array().into_iter().flatten().all(|name| {
+            let name = name.as_str().expect("required features are strings");
+            self.default.contains(name)
+        })
+    }
+
+    /// Whether `name` is on with default features; `None` when the package
+    /// does not declare it, so a misspelled feature cannot pass as off.
+    fn holds(&self, name: &str) -> Option<bool> {
+        self.declared
+            .contains(name)
+            .then(|| self.default.contains(name))
+    }
+}
+
 struct Walk<'a> {
     root: &'a Path,
+    features: &'a Features,
     tests: usize,
 }
 
@@ -301,13 +372,14 @@ impl Walk<'_> {
     /// Counts the macOS tests in a module file and the modules it declares,
     /// and returns the file's inner attributes. `dir` holds its child modules.
     fn file(&mut self, path: &Path, dir: &Path) -> Vec<Vec<Token>> {
+        let features = self.features;
         let path = inside(self.root, path);
         let text =
             fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         let tokens = lex(&text, &path);
         let mut at = 0;
         let attributes = inner_attributes(&tokens, &mut at, &path);
-        if all_hold(&attributes, &path) {
+        if all_hold(&attributes, &path, features) {
             self.items(&tokens, &mut at, dir, &path, false);
         }
         attributes
@@ -316,6 +388,7 @@ impl Walk<'_> {
     /// Reads items up to the end of the file or, `inline`, to the brace that
     /// closes the inline module.
     fn items(&mut self, tokens: &[Token], at: &mut usize, dir: &Path, file: &Path, inline: bool) {
+        let features = self.features;
         let mut pending: Vec<Vec<Token>> = Vec::new();
         let mut depth = 0usize;
         while let Some(token) = tokens.get(*at) {
@@ -323,7 +396,7 @@ impl Walk<'_> {
                 Token::Punct('#') if tokens.get(*at + 1) == Some(&Token::Punct('[')) => {
                     *at += 1;
                     let attribute = group(tokens, at, '[', ']', file);
-                    pending.extend(expand(attribute, file));
+                    pending.extend(expand(attribute, file, features));
                 }
                 Token::Punct('#')
                     if tokens.get(*at + 1) == Some(&Token::Punct('!'))
@@ -339,7 +412,7 @@ impl Walk<'_> {
                     *at += 2;
                     let enabled = pending
                         .iter()
-                        .all(|attribute| holds_on_macos(attribute, file));
+                        .all(|attribute| holds_on_macos(attribute, file, features));
                     let path = pending
                         .iter()
                         .find_map(|attribute| match attribute.as_slice() {
@@ -383,7 +456,9 @@ impl Walk<'_> {
                         Some(Token::Punct('{')) => {
                             let open = *at;
                             *at += 1;
-                            if enabled && all_hold(&inner_attributes(tokens, at, file), file) {
+                            if enabled
+                                && all_hold(&inner_attributes(tokens, at, file), file, features)
+                            {
                                 let child_dir = match &path {
                                     Some(path) => base.join(path),
                                     None => dir.join(&name),
@@ -422,7 +497,7 @@ impl Walk<'_> {
                         && !ignored
                         && pending
                             .iter()
-                            .all(|attribute| holds_on_macos(attribute, file))
+                            .all(|attribute| holds_on_macos(attribute, file, features))
                     {
                         self.tests += 1;
                     }
@@ -477,8 +552,10 @@ fn verdicts(metadata: &serde_json::Value, root: &Path) -> Vec<(String, Verdict)>
         .iter()
         .map(|package| {
             let name = package["name"].as_str().expect("package name").to_owned();
+            let features = Features::of(package);
             let mut walk = Walk {
                 root: &root,
+                features: &features,
                 tests: 0,
             };
             let mut linux_gated = false;
@@ -490,8 +567,12 @@ fn verdicts(metadata: &serde_json::Value, root: &Path) -> Vec<(String, Verdict)>
                     .map(|kind| kind.as_str().expect("target kind"))
                     .collect();
                 let path = Path::new(target["src_path"].as_str().expect("target src_path"));
-                // nextest collects tests from exactly the targets with test set.
-                if !target["test"].as_bool().expect("target test") || kinds == ["custom-build"] {
+                // nextest collects tests from exactly the targets with test set, and Cargo
+                // skips a target whose required features the default build lacks.
+                if !target["test"].as_bool().expect("target test")
+                    || kinds == ["custom-build"]
+                    || !features.enabled_by_default(&target["required-features"])
+                {
                     continue;
                 }
                 let dir = path.parent().expect("target src_path has a directory");
@@ -1020,6 +1101,64 @@ mod tests {
         json!({"packages": [{"name": "p", "targets": [
             {"kind": ["bin"], "src_path": path, "test": true}
         ]}]})
+    }
+
+    #[test]
+    fn features_hold_as_the_default_features_enable_them() {
+        let features = json!({
+            "default": ["base"],
+            "base": ["extra", "dep:hidden", "maybe?/f", "optional/f"],
+            "extra": [],
+            "candidate": ["dep:rune"],
+            "maybe": ["dep:maybe"],
+            "optional": ["dep:optional"],
+        });
+        for (cfg, macos_tests) in [
+            ("feature = \"base\"", true),
+            ("feature = \"extra\"", true),
+            ("feature = \"optional\"", true),
+            ("feature = \"candidate\"", false),
+            ("feature = \"maybe\"", false),
+            ("not(feature = \"candidate\")", true),
+            ("all(test, feature = \"candidate\")", false),
+        ] {
+            let fixture = Fixture::new(
+                "features",
+                &[
+                    ("src/lib.rs", &format!("#[cfg({cfg})]\nmod a;\n")),
+                    ("src/a.rs", TEST),
+                ],
+            );
+            let metadata = json!({"packages": [{"name": "p", "features": features, "targets": [
+                {"kind": ["lib"], "src_path": fixture.root.join("src/lib.rs"), "test": true}
+            ]}]});
+            let verdict = verdicts(&metadata, &fixture.root).pop().unwrap().1;
+            assert_eq!(verdict.macos_tests, macos_tests, "{cfg}");
+        }
+        // A target the default build skips for its required features compiles no test.
+        let fixture = Fixture::new(
+            "required-features",
+            &[("src/lib.rs", ""), ("tests/needs.rs", TEST)],
+        );
+        for (required, macos_tests) in [(json!(["candidate"]), false), (json!(["extra"]), true)] {
+            let metadata = json!({"packages": [{"name": "p", "features": features, "targets": [
+                {"kind": ["lib"], "src_path": fixture.root.join("src/lib.rs"), "test": true},
+                {"kind": ["test"], "src_path": fixture.root.join("tests/needs.rs"), "test": true,
+                 "required-features": required}
+            ]}]});
+            let verdict = verdicts(&metadata, &fixture.root).pop().unwrap().1;
+            assert_eq!(verdict.macos_tests, macos_tests, "{required}");
+        }
+
+        // A feature the package does not declare is not taken as off.
+        let fixture = Fixture::new(
+            "undeclared-feature",
+            &[("src/lib.rs", "#[cfg(feature = \"nope\")]\nmod a;\n")],
+        );
+        let metadata = json!({"packages": [{"name": "p", "features": features, "targets": [
+            {"kind": ["lib"], "src_path": fixture.root.join("src/lib.rs"), "test": true}
+        ]}]});
+        assert!(panic_message(&metadata, &fixture.root).contains("cannot evaluate cfg"));
     }
 
     #[test]

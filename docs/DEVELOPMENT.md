@@ -224,7 +224,8 @@ stubs and test targets. Only packages listed in mac-proof's
 If a listed package gains macOS tests, or its name disappears from workspace
 metadata, the run fails so the exclusion must be removed. An unlisted package
 with no tests still fails. mac-proof's own tests, which run on Linux too, read
-every workspace package's source and require the list to equal the packages
+every workspace package's source, with the default features the Mac builds it
+with, and require the list to equal the packages
 that are gated with `#![cfg(target_os = "linux")]` and compile no tests on
 macOS, so a new Linux-only package fails there until it is listed. Listing a
 package removes it from the macOS proof. Not-applicable has a recorded reason,

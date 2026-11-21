@@ -354,9 +354,11 @@ dependency decision does not establish public-distribution proof.
 - **Selected shape:** an optional `rune` Git dependency behind the
   non-default `candidate-rune` feature (`eon-yp6vg.7.6`), with
   `default-features = false` and `features = ["accessibility"]`. No package,
-  test, CI or tool root enables the feature, and no Venus code uses it yet.
-  eon-yp6vg.7.7 adds the first candidate module with its caller, and the
-  single switch (eon-yp6vg.54) removes the feature.
+  test, CI or tool root enables the feature. Its first user is the private
+  entry from eon-yp6vg.7.7: the `rune_candidate` module and the
+  `venus-rune-candidate` binary and test, each behind the feature
+  (`required-features` for the binary and test). The single switch
+  (eon-yp6vg.54) removes the feature.
 - **Source:** `https://github.com/Yazelix/eon-rune` at
   `caeb04729e1dc378c8fdcbf12a22c333daf30d1d` (tree `92aa6b61`). Its parent
   is `e267be6e`, the fork rebased onto upstream `55ef5268` and qualified
@@ -465,9 +467,11 @@ dependency decision does not establish public-distribution proof.
   ruling of 2026-11-20. Rune brings winit `x11`, `x11rb` and Linux
   `arboard`. Nothing reaches them while no root enables the feature. This
   search (Markdown and `.beads/` excluded) finds only the feature's own
-  manifest lines in `venus/Cargo.toml` and the root `Cargo.toml`, plus the
-  six existing Helix and notice-producer hits in `flake.nix` and
-  `nix/notices/default.nix`:
+  manifest lines in `venus/Cargo.toml` (the feature, and the candidate
+  binary's and test's `required-features`) and the root `Cargo.toml`, the
+  candidate module's `cfg` lines in `venus/src/lib.rs` and
+  `venus/src/render/tests/mod.rs`, plus the six existing Helix and
+  notice-producer hits in `flake.nix` and `nix/notices/default.nix`:
   `rg -n --hidden -g '!.git' -g '!*.md' -g '!.beads' -e 'candidate-rune' -e '--all-features' -e '--features' -e 'cargoBuildFeatures' -e 'buildFeatures' -e 'cargoTestFeatures' -e 'cargo[^\n]* -F ' .`
   Related work:
   - eon-yp6vg.7.14 removes X11 from the Rune graph and blocks eon-yp6vg.7.4

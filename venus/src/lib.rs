@@ -9,6 +9,8 @@ mod input;
 mod model;
 mod native_command;
 mod render;
+#[cfg(feature = "candidate-rune")]
+pub mod rune_candidate;
 mod scene;
 mod system;
 mod transport;

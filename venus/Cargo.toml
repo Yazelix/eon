@@ -3,6 +3,23 @@ name = "yazelix-venus"
 version = "0.1.0"
 edition = "2024"
 publish = false
+# The private Rune candidate binary must not make a bare `cargo run` ambiguous.
+default-run = "yazelix-venus"
+
+[[bin]]
+name = "yazelix-venus"
+path = "src/main.rs"
+
+# Private Rune host candidate entry (eon-yp6vg.7.7); see docs/DEVELOPMENT.md.
+[[bin]]
+name = "venus-rune-candidate"
+path = "src/bin/venus-rune-candidate.rs"
+required-features = ["candidate-rune"]
+
+[[test]]
+name = "rune_candidate"
+path = "tests/rune_candidate.rs"
+required-features = ["candidate-rune"]
 
 [features]
 # Private Rune host candidate (eon-yp6vg.7); no package, test or CI root enables it.
