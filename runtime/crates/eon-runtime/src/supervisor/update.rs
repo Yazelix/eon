@@ -242,6 +242,68 @@ pub(super) fn import(
     ))
 }
 
+// EONU's own bounds must cover what a window can hold; an owner raising its
+// bound breaks this build and forces an EONU decision (eon-t3fyd.7).
+const _: () = {
+    use eon_workspace_protocol::{update as eonu, v47};
+    assert!(eonu::MAX_HOSTS >= v47::MAX_SESSIONS);
+    assert!(eonu::MAX_ID_BYTES >= orbit_protocol::management::MAX_ID_BYTES);
+    assert!(eonu::MAX_PATH_BYTES >= v47::MAX_DIRECTORY_BYTES);
+};
+
+impl SupervisorState {
+    /// INSPECTED for `request`: who this window is, for a client of any EONW.
+    /// `runtime` is the lifetime directory, `<namespace>/generations/<id>`.
+    /// Reads only; an unreadable identity record is an error.
+    pub(super) fn inspected(
+        &self,
+        request: eon_workspace_protocol::update::RequestId,
+        runtime: &Path,
+    ) -> std::result::Result<eon_workspace_protocol::update::Inspected, String> {
+        use eon_workspace_protocol::update::{Host, Inspected, Presentation};
+        let namespace = runtime.parent().and_then(Path::parent).unwrap_or(runtime);
+        // An unreadable record is not "no launcher": it refuses.
+        let launcher = super::super::generation::Identity::read(runtime)?
+            .and_then(|identity| identity.active_launcher)
+            .map(|path| path.into_os_string().into_vec());
+        Ok(Inspected {
+            request,
+            pid: std::process::id(),
+            namespace: namespace.as_os_str().as_bytes().to_vec(),
+            lifetime: self.component_generation.clone(),
+            created_build: self.created_build.clone(),
+            active_build: self.active_build.clone(),
+            active_launcher: launcher,
+            // The one place EONU learns the workspace version: as a number.
+            eonw: eon_workspace_protocol::v47::VERSION,
+            eonr: crate::checkpoint::VERSION,
+            update_schema: update::SCHEMA,
+            presentation: if self.venus.is_some() {
+                Presentation::Attached
+            } else {
+                Presentation::Detached
+            },
+            hosts: self
+                .sessions
+                .iter()
+                .map(|session| {
+                    let inventory = session.inventory();
+                    Host {
+                        terminal: inventory.terminal,
+                        run: inventory.run,
+                        origin: inventory.origin_build,
+                        management: inventory.management_version,
+                        record_generation: inventory.record_generation,
+                        orbs: inventory.orbs,
+                        orbf: inventory.orbf,
+                    }
+                })
+                .collect(),
+            last: None,
+        })
+    }
+}
+
 /// A checkpoint and the scope its target must expect.
 pub(super) struct Export {
     pub(super) bytes: Vec<u8>,

@@ -27,7 +27,6 @@ use std::{
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt},
-        net::UnixStream,
         process::CommandExt,
     },
     path::{Path, PathBuf},
@@ -244,19 +243,28 @@ pub(super) fn record_launcher(inputs: &Inputs, runtime: &Path) -> Result<Identit
     Ok(identity)
 }
 
+/// A lifetime directory's supervisor endpoints, which cleanup removes only
+/// when dead (EON-C11).
+const ENDPOINTS: [&str; 2] = ["eon.sock", "update.sock"];
+
 /// Under the lifecycle lock, remove metadata only after every host owner settled.
 pub(super) fn cleanup_metadata(runtime: &Path) -> Result<(), String> {
     validate_private_directory(runtime)?;
     let parent = crate::private_file::object(runtime)?;
-    remove_dead_socket(&runtime.join("eon.sock"));
-    let mut metadata = Vec::with_capacity(3);
+    for socket in ENDPOINTS {
+        remove_dead_socket(&runtime.join(socket));
+    }
+    let mut metadata = Vec::with_capacity(4);
     for entry in fs::read_dir(runtime)
         .map_err(|error| format!("cannot list {}: {error}", runtime.display()))?
     {
         let entry =
             entry.map_err(|error| format!("cannot inspect {}: {error}", runtime.display()))?;
         let name = entry.file_name();
-        if !matches!(name.to_str(), Some("eon.sock" | "eon" | "identity")) {
+        if !matches!(
+            name.to_str(),
+            Some("eon.sock" | "update.sock" | "eon" | "identity")
+        ) {
             return Err(format!(
                 "retaining metadata in {}: residue {}",
                 runtime.display(),
@@ -271,7 +279,7 @@ pub(super) fn cleanup_metadata(runtime: &Path) -> Result<(), String> {
                 Some("eon") => object.file_type().is_symlink(),
                 Some("identity") => object.is_file() && object.mode() & 0o7777 == 0o600,
                 // A remaining endpoint was not safely removed as dead above.
-                Some("eon.sock") => false,
+                Some("eon.sock" | "update.sock") => false,
                 _ => unreachable!(),
             };
         if !safe {
@@ -1365,14 +1373,8 @@ fn remove_dead_socket(path: &Path) {
         return;
     }
     let identity = socket_identity_from(&metadata);
-    if matches!(
-        UnixStream::connect(path),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-            )
-    ) {
+    // An uncertain probe, such as a busy listener, keeps the socket.
+    if matches!(super::control::socket_is_dead(path), Ok(true)) {
         remove_socket_if_identity(path, identity);
     }
 }
@@ -2278,8 +2280,9 @@ mod tests {
     }
 
     use super::{
-        BusyTerminals, Confirmation, confirmation_status, current_generation, discover_generations,
-        generation_directory, generation_id, valid_generation,
+        BusyTerminals, Confirmation, ENDPOINTS, cleanup_metadata, confirmation_status,
+        current_generation, discover_generations, generation_directory, generation_id,
+        valid_generation,
     };
     use crate::supervisor::{lock_supervisor_lifecycle, supervisor_lock_path, temporary_directory};
     use std::{
@@ -2872,5 +2875,88 @@ mod tests {
         fs::remove_file(generations.join(linked_id)).unwrap();
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
+    }
+
+    // EON-C11's cleanup rule: a dead update.sock is removed like eon.sock,
+    // a live one keeps the directory.
+    #[test]
+    fn dead_generation_cleanup_accepts_update_socket() {
+        use std::os::unix::net::UnixListener;
+        for live in [false, true] {
+            let runtime = temporary_directory();
+            fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+            for name in ENDPOINTS {
+                drop(UnixListener::bind(runtime.join(name)).unwrap());
+            }
+            let listener = live.then(|| {
+                fs::remove_file(runtime.join("update.sock")).unwrap();
+                UnixListener::bind(runtime.join("update.sock")).unwrap()
+            });
+            let result = cleanup_metadata(&runtime);
+            if live {
+                let error = result.unwrap_err();
+                assert!(error.contains("unsafe or active object"), "{error}");
+                assert!(runtime.join("update.sock").exists());
+                assert!(!runtime.join("eon.sock").exists());
+                drop(listener);
+                fs::remove_dir_all(&runtime).unwrap();
+            } else {
+                result.unwrap();
+                assert!(!runtime.exists());
+            }
+        }
+    }
+
+    /// A listener whose accept queue is full, and how its last connect
+    /// failed: WouldBlock where a blocking connect would wait (Linux), or
+    /// refused where it cannot (macOS refuses a full queue at once).
+    fn busy_listener(path: &Path) -> (socket2::Socket, Vec<socket2::Socket>, std::io::ErrorKind) {
+        use socket2::{Domain, SockAddr, Socket, Type};
+        let address = SockAddr::unix(path).unwrap();
+        let listener = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
+        listener.bind(&address).unwrap();
+        listener.listen(0).unwrap();
+        let mut held = Vec::new();
+        for _ in 0..1024 {
+            let client = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
+            client.set_nonblocking(true).unwrap();
+            match client.connect(&address) {
+                Ok(()) => held.push(client),
+                Err(error) => return (listener, held, error.kind()),
+            }
+        }
+        panic!("the accept queue never filled");
+    }
+
+    /// Runs `probe` on a thread and fails, rather than hangs, if it blocks.
+    fn finishes<T: Send + 'static>(probe: impl FnOnce() -> T + Send + 'static) -> T {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || sender.send(probe()));
+        receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the socket probe blocked on a busy listener")
+    }
+
+    #[test]
+    fn a_busy_listener_neither_stalls_nor_loses_its_socket() {
+        let runtime = temporary_directory();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        drop(std::os::unix::net::UnixListener::bind(runtime.join("eon.sock")).unwrap());
+        let busy = runtime.join("update.sock");
+        let (_listener, _held, full) = busy_listener(&busy);
+        let directory = runtime.clone();
+        let cleanup = finishes(move || cleanup_metadata(&directory));
+        let path = busy.clone();
+        let bind =
+            finishes(move || crate::control::PrivateListener::bind(&path, "Eon Update").map(drop));
+        // Where a full queue is refused at once (macOS), the probe cannot
+        // block and reads the socket as dead, as it always has for eon.sock.
+        if full == std::io::ErrorKind::WouldBlock {
+            let error = cleanup.unwrap_err();
+            assert!(error.contains("unsafe or active object"), "{error}");
+            assert!(bind.is_err());
+            assert!(busy.exists(), "a busy socket is kept");
+        }
+        fs::remove_dir_all(&runtime).unwrap();
     }
 }

@@ -26,6 +26,7 @@ use super::{
     },
     start_pump::{Capture, StartPump},
     subscriptions::{Subscriber, Subscribers},
+    update::UpdateListener,
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
 use eon_workspace_protocol::v47::{
@@ -1305,6 +1306,13 @@ fn supervise(
     );
     let mut editor_sockets = Sockets::recover(runtime, &sessions, log);
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
+    // After the control listener, so it never outlives eon.sock; a failure
+    // leaves only this window unable to update in place (EON-C11).
+    let update_listener = if mode == LaunchMode::Workspace {
+        UpdateListener::bind(runtime, log)
+    } else {
+        None
+    };
     // Clients that connect while the first terminals start are held for the loop.
     let mut start_pump = StartPump::new(control_listener.try_clone_listener(), Arc::clone(log));
     drop(namespace_lock);
@@ -1376,6 +1384,7 @@ fn supervise(
             &starting,
         )?
         else {
+            drop(update_listener);
             drop(control_listener);
             return Ok(0);
         };
@@ -1672,6 +1681,7 @@ fn supervise(
             }
             let error = startup_error(errors.join("; "));
             if state.failed_starts.is_empty() {
+                drop(update_listener);
                 drop(control_listener);
                 return Err(error);
             }
@@ -1732,6 +1742,9 @@ fn supervise(
                         )
                     }),
                 }?;
+                if let Some(listener) = &update_listener {
+                    listener.serve(log, |request| state.inspected(request, runtime));
+                }
                 state.end_turn(Instant::now());
                 match accepted {
                     Accepted::None => thread::sleep(Duration::from_millis(25)),
@@ -1769,6 +1782,7 @@ fn supervise(
     state.subscribers.end(generation);
     // Held clients read EOF with the listener, before Venus and notices close.
     state.start_pump = StartPump::default();
+    drop(update_listener);
     drop(control_listener);
     if let Some(process) = state.venus.take() {
         drop(process);
@@ -5191,6 +5205,8 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    mod update_endpoint;
+
     thread_local! {
         /// Pending pairs this thread settled through `MarkPair { pending: false }`.
         pub(super) static SETTLED_PAIRS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

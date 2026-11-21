@@ -12,6 +12,8 @@ use eon_workspace_protocol::v47::{
 use std::collections::HashSet;
 
 pub(super) const MAX_BYTES: usize = 16 * 1024 * 1024;
+/// The EONR envelope version this build reads and writes.
+pub(crate) const VERSION: u16 = 1;
 const MAX_SECTIONS: usize = 32;
 const MAX_ID_BYTES: usize = orbit_protocol::management::MAX_ID_BYTES;
 
@@ -211,7 +213,7 @@ impl Checkpoint {
             return Err(Error::Invalid("magic"));
         }
         let version = input.u16()?;
-        if version != 1 {
+        if version != VERSION {
             return Err(Error::UnsupportedVersion(version));
         }
         let header = Header {
@@ -317,7 +319,8 @@ impl Checkpoint {
     }
 
     fn write(&self, out: &mut Encoder) -> Result<()> {
-        out.bytes(b"EONR\x01\0")?;
+        out.bytes(b"EONR")?;
+        out.u16(VERSION)?;
         out.text(&self.header.namespace)?;
         for id in [
             &self.header.generation,

@@ -2615,6 +2615,9 @@ fn anima_waits_for_native_readiness_then_hands_off_to_the_pair_and_popup_stops_o
     };
     assert!(pending_pair(&pending).is_some());
     assert!(pending.tabs[0].columns.is_empty());
+    // A production build serves no Update endpoint until in-place update
+    // ships (EON-C11 planned Update control, eon-t3fyd.7).
+    assert!(!generation_runtime(&runtime).join("update.sock").exists());
 
     assert!(matches!(
         protocol_action(

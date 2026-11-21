@@ -25,13 +25,13 @@ use std::{
 pub(super) use eon_workspace_protocol::{CONTROL_TIMEOUT, STOP_TIMEOUT};
 
 /// How long one client's request read or reply write may block the supervisor.
-const CLIENT_IO_TIMEOUT: Duration = Duration::from_millis(250);
+pub(super) const CLIENT_IO_TIMEOUT: Duration = Duration::from_millis(250);
 /// How long the supervisor writes one reply in all before it drops the client.
 /// A `History` reply is up to 8 MiB, so a client that drains it slowly would
 /// otherwise hold the supervisor for as long as each write makes progress
 /// within `CLIENT_IO_TIMEOUT`. Fixed, as the 2 s bound on a terminal read's
 /// answer is: a performance budget for every pane's window actions.
-const REPLY_DEADLINE: Duration = Duration::from_secs(2);
+pub(super) const REPLY_DEADLINE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EndpointFailureKind {
@@ -578,27 +578,49 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
     }
 }
 
-pub(super) struct ControlListener {
+/// Whether nothing listens at `path`: true only when connecting finds no
+/// socket or is refused, false when it connects. Anything else, such as a
+/// listener too busy to take the connection within `CLIENT_IO_TIMEOUT`, is an
+/// error, which callers treat as live: they keep the socket.
+pub(super) fn socket_is_dead(path: &Path) -> std::io::Result<bool> {
+    match super::sessions::unix_connect_with_timeout(path, CLIENT_IO_TIMEOUT) {
+        Ok(_) => Ok(false),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// A private Unix listener at `path`: it refuses a live owner, replaces only
+/// an owned dead socket, binds mode 0600 and nonblocking, and on drop removes
+/// the socket only while it is still the one it bound. `eon.sock` and
+/// `update.sock` share these steps.
+pub(super) struct PrivateListener {
     listener: UnixListener,
     path: PathBuf,
     identity: (u64, u64),
 }
 
-impl ControlListener {
-    pub(super) fn bind(path: &Path) -> Result<Self, String> {
-        match UnixStream::connect(path) {
-            Ok(_) => {
+impl PrivateListener {
+    /// `what` names the socket in errors, such as "Eon control".
+    pub(super) fn bind(path: &Path, what: &str) -> Result<Self, String> {
+        match socket_is_dead(path) {
+            Ok(true) => {}
+            Ok(false) => {
                 return Err(format!(
                     "an Eon supervisor is already active at {}",
                     path.display()
                 ));
             }
-            Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound
-                    || error.kind() == std::io::ErrorKind::ConnectionRefused => {}
             Err(error) => {
                 return Err(format!(
-                    "cannot inspect Eon control socket {}: {error}",
+                    "cannot inspect {what} socket {}: {error}",
                     path.display()
                 ));
             }
@@ -609,76 +631,54 @@ impl ControlListener {
             {
                 fs::remove_file(path).map_err(|error| {
                     format!(
-                        "cannot remove stale Eon control socket {}: {error}",
+                        "cannot remove stale {what} socket {}: {error}",
                         path.display()
                     )
                 })?;
             }
             Ok(_) => {
                 return Err(format!(
-                    "Eon control path {} must be an owned Unix socket",
+                    "{what} path {} must be an owned Unix socket",
                     path.display()
                 ));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!(
-                    "cannot inspect Eon control path {}: {error}",
+                    "cannot inspect {what} path {}: {error}",
                     path.display()
                 ));
             }
         }
-        let listener = UnixListener::bind(path).map_err(|error| {
-            format!("cannot bind Eon control socket {}: {error}", path.display())
-        })?;
+        let listener = UnixListener::bind(path)
+            .map_err(|error| format!("cannot bind {what} socket {}: {error}", path.display()))?;
         let identity = socket_identity(path)?
-            .ok_or_else(|| format!("Eon control socket {} disappeared", path.display()))?;
-        let control = Self {
+            .ok_or_else(|| format!("{what} socket {} disappeared", path.display()))?;
+        let private = Self {
             listener,
             path: path.into(),
             identity: (identity.0, identity.1),
         };
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
-            format!(
-                "cannot protect Eon control socket {}: {error}",
-                path.display()
-            )
-        })?;
-        control
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("cannot protect {what} socket {}: {error}", path.display()))?;
+        private
             .listener
             .set_nonblocking(true)
-            .map_err(|error| format!("cannot configure Eon control socket: {error}"))?;
-        Ok(control)
+            .map_err(|error| format!("cannot configure {what} socket: {error}"))?;
+        Ok(private)
     }
 
     /// Where the listener is bound.
-    // An Update's import (S4b-1, eon-t3fyd.8) is its first caller.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn path(&self) -> &Path {
         &self.path
     }
 
-    /// A second handle on the listening socket, for the start pump.
-    pub(super) fn try_clone_listener(&self) -> Option<UnixListener> {
-        self.listener.try_clone().ok()
-    }
-
-    pub(super) fn accept<D: Into<Dispatched>>(
-        &self,
-        dispatch: impl FnOnce(Incoming, Option<(libc::pid_t, libc::uid_t)>) -> D,
-    ) -> Result<Accepted, String> {
-        match self.listener.accept() {
-            Ok((stream, _)) => {
-                super::diagnostics::bench_trace("accept", "");
-                Ok(handle_client(stream, dispatch))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(Accepted::None),
-            Err(error) => Err(format!("cannot accept Eon control client: {error}")),
-        }
+    pub(super) fn listener(&self) -> &UnixListener {
+        &self.listener
     }
 }
 
-impl Drop for ControlListener {
+impl Drop for PrivateListener {
     fn drop(&mut self) {
         // The open listener prevents inode reuse; chmod may legitimately change ctime.
         if socket_identity(&self.path)
@@ -687,6 +687,40 @@ impl Drop for ControlListener {
             .is_some_and(|identity| (identity.0, identity.1) == self.identity)
         {
             let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+pub(super) struct ControlListener(PrivateListener);
+
+impl ControlListener {
+    pub(super) fn bind(path: &Path) -> Result<Self, String> {
+        PrivateListener::bind(path, "Eon control").map(Self)
+    }
+
+    /// Where the listener is bound.
+    // An Update's import (S4b-1, eon-t3fyd.8) is its first caller.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn path(&self) -> &Path {
+        self.0.path()
+    }
+
+    /// A second handle on the listening socket, for the start pump.
+    pub(super) fn try_clone_listener(&self) -> Option<UnixListener> {
+        self.0.listener().try_clone().ok()
+    }
+
+    pub(super) fn accept<D: Into<Dispatched>>(
+        &self,
+        dispatch: impl FnOnce(Incoming, Option<(libc::pid_t, libc::uid_t)>) -> D,
+    ) -> Result<Accepted, String> {
+        match self.0.listener().accept() {
+            Ok((stream, _)) => {
+                super::diagnostics::bench_trace("accept", "");
+                Ok(handle_client(stream, dispatch))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(Accepted::None),
+            Err(error) => Err(format!("cannot accept Eon control client: {error}")),
         }
     }
 }
@@ -809,7 +843,7 @@ pub(super) fn stop_failure(failure: Failure) -> stop::Reply {
 /// gets a truncated reply and a closed connection. The writes do not block: a
 /// blocking Unix socket write renews its timeout whenever the peer reads, so
 /// one write of a large reply could last as long as the peer drains it.
-fn write_reply(stream: &mut UnixStream, mut reply: &[u8], deadline: Instant) {
+pub(super) fn write_reply(stream: &mut UnixStream, mut reply: &[u8], deadline: Instant) {
     if stream.set_nonblocking(true).is_err() {
         return;
     }

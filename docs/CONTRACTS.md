@@ -3090,6 +3090,38 @@ popup or automatic tutorial launch.
     contents. Changes to its schema version it; EONW-only changes do not. It is
     transient, read once by the replacing Runtime, and adds no durable recovery
     database or retained old-schema reader.
+  - Planned Update control is independent of EONW. Runtime's canonical
+    `eon-workspace-protocol` crate owns one Update-only format, EONU, which is
+    versioned apart from EONW; EONW-only changes never change it. Its 6-byte
+    prefix (`EONU` and the little-endian version) is fixed, as EONW's is, and
+    a reader decides on the version from that prefix alone.
+
+    A full-Eon window's supervisor serves EONU on `update.sock`, a mode-0600
+    socket beside `eon.sock` in the private lifetime directory, whenever it
+    can bind it. It removes the socket no later than `eon.sock`, and it answers
+    only peers of its own user. A failure to bind or serve `update.sock` never
+    fails the window's start or ends its supervisor; the window then cannot be
+    updated in place. One connection carries one request and one reply.
+
+    Messages on `update.sock` carry bounded lifecycle data only: identities,
+    builds, version numbers, paths, the retained terminals' Orbit versions,
+    and results. They carry no workspace action, layout or terminal contents.
+    The window's exchange with a target's validation child runs over that
+    child's private pipes, never over `update.sock`. It carries the window's
+    checkpoint described above.
+
+    No EONW is decoded in either exchange. Every frame is length-bounded and
+    exactly version-checked, with one current decoder. Unsupported, truncated,
+    oversized or malformed input, or input in another EONU version, is
+    refused and never authorizes exec, signal or mutation.
+  - Update discovery reads a selected lifetime directory without decoding its
+    EONW. It verifies the directory's privacy, the socket object and the
+    peer's user. It also verifies that the answering supervisor reports that
+    same lifetime and namespace, comparing the namespace by file identity, not
+    by spelling. EONW Routing is not a prerequisite. A window without
+    `update.sock`, or one that speaks another EONU version, refuses with
+    update-refused and the one manual move, never a fallback to an older
+    format.
   - Bare full-Eon launch selects the sole live lifetime recorded for the invoked
     active build. With none live it considers recoverable records for that build
     and applies EON-C15 to the sole validated candidate before allocating a
@@ -3217,10 +3249,11 @@ popup or automatic tutorial launch.
     eonbase writes no identity. In-place Update remains planned.
 
     All four dead-discovery/teardown sites share one lifecycle-locked metadata
-    cleanup rule. Keep exact dead-socket cleanup; before removing identity or
-    launcher, enumerate only until the first name other than `eon.sock`, `eon`
-    or `identity`. Any residue or enumeration/validation error retains both
-    metadata objects with a diagnostic. This includes terminal/management
+    cleanup rule. Keep exact dead-socket cleanup for `eon.sock` and
+    `update.sock`; before removing identity or launcher, enumerate only until
+    the first name other than `eon.sock`, `update.sock`, `eon` or `identity`.
+    Any residue or enumeration/validation error retains both metadata objects
+    with a diagnostic. This includes terminal/management
     sockets and records, pending markers, unsettled temps and even an empty
     Scrollback `snapshots/` directory. An absent supervisor socket does not
     establish host absence. Validate owned metadata types, revalidate exact

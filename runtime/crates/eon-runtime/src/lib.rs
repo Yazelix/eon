@@ -27,6 +27,7 @@ mod slots;
 mod start_pump;
 mod subscriptions;
 mod supervisor;
+mod update;
 mod windows;
 mod workspace;
 
