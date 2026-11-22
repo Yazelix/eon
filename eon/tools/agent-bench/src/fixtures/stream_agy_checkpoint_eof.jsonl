@@ -1,0 +1,4 @@
+{"event":"init","conversation_id":"00000000-0000-4000-8000-000000000003","init":{"cwd":"/workspace"}}
+{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"agent_response","usage":{"input_tokens":30000,"output_tokens":600,"thinking_tokens":200,"cache_read_tokens":370000,"total_tokens":400600}}}
+{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"checkpoint","usage":{"input_tokens":1000,"output_tokens":50,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":1050}}}
+{"event":"step_update","step_update":{"step_index":2,"state":"DONE","step_type":"checkpoint","usage":{"input_tokens":6000,"output_tokens":350,"thinking_tokens":75,"cache_read_tokens":20000,"total_tokens":26350}}}

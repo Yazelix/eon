@@ -11,6 +11,8 @@
 //!   shown as 12 hex digits.
 //! - [`trial`]: trial (`eon-bench-trial/1`) and local lanes (`eon-bench-lanes/1`) JSON files and
 //!   planned-run expansion (`agent-bench trial check`).
+//! - [`stream`]: incremental NDJSON stream parsers for Claude Code, Codex CLI, and `agy` into
+//!   one run-event model, plus cross-resume usage accounting.
 //! - [`store`]: a directory holding each record as its canonical bytes under its own hash
 //!   (`configs/`, `judges/`, `tasks/`), the append-only `results.jsonl` and `grades.jsonl`, and
 //!   pooling declarations (`pooling/`). See [`rows`] and [`pooling`].
@@ -34,6 +36,7 @@ pub mod pooling;
 pub mod record;
 pub mod rows;
 pub mod store;
+pub mod stream;
 pub mod task_env;
 mod time;
 pub mod tree;

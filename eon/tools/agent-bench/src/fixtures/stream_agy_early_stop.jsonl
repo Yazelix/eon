@@ -1,0 +1,4 @@
+{"event":"init","conversation_id":"00000000-0000-4000-8000-000000000002","init":{"cwd":"/workspace"}}
+{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"agent_response","usage":{"input_tokens":5000,"output_tokens":120,"thinking_tokens":80,"cache_read_tokens":15000,"total_tokens":20120}}}
+{"event":"step_update","step_update":{"step_index":2,"state":"DONE","step_type":"tool"}}
+{"event":"result","conversation_id":"00000000-0000-4000-8000-000000000002","result":{"conversation_id":"00000000-0000-4000-8000-000000000002","status":"SUCCESS","response":"","denied_actions":[{"action":"command","display_name":"RunCommand"}],"usage":{"input_tokens":5000,"output_tokens":120,"thinking_tokens":80,"cache_read_tokens":15000,"total_tokens":20120}}}

@@ -14,22 +14,24 @@ namespaces, Bubblewrap, and systemd user scopes. Records, stream parsers, and
 reports remain portable across Linux and `aarch64-darwin`.
 
 `agent-bench` and its companion crates implement the hashed record store,
-trial and lanes JSON schemas (`agent-bench trial check`), synthetic workspaces,
-warm task environments, fingerprint needles, and the Linux jail today; later
-Bench v2 beads add the unified trial runner, cost-beside-quality reporting, the
-reviewer eval rework, and the builder task catalog:
+trial and lanes JSON schemas (`agent-bench trial check`), stream parsers for
+Claude Code, Codex CLI, and `agy` (`eon/tools/agent-bench/src/stream.rs`),
+synthetic workspaces, warm task environments, fingerprint needles, and the
+Linux jail today; later Bench v2 beads add the unified trial runner,
+cost-beside-quality reporting, the reviewer eval rework, and the builder task
+catalog:
 
 | Surface | Exists today | Owned by later Bench v2 beads |
 | --- | --- | --- |
 | Records, hashes, store, diff, pooling, trial check | `eon-bench-config/2` (with `eon-bench-config/1` readable for comparison), `eon-bench-task/1`, `eon-bench-run/1` (including Bench v2 fields), `eon-bench-grade/1`, `eon-bench-pooling/1`, `eon-bench-trial/1`, `eon-bench-lanes/1`; CLI subcommands `record`, `config diff`, `pool declare`, `pool show`, `trial check` (`eon/tools/agent-bench`) | — |
-| Workspaces, task environments, trial runner, scoring, jail, leak checks | `workspace create`, `workspace check`, `tree-hash`, `fingerprints`, `task-env warm` (`eon/tools/agent-bench`); Linux no-network jail for Claude Code and Codex CLI (`eon/tools/agent-jail`) | Follow-up beads under `eon-2r02l` (plan items `R2`–`R8b` and `SC` of `eon-2r02l.11`), `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level), `eon-2r02l.8` (blind judges; `R7` is its automatic leak audit), `eon-j8iyd` (`agy` in `agent-jail`) |
+| Workspaces, task environments, stream parsers, trial runner, scoring, jail, leak checks | `workspace create`, `workspace check`, `tree-hash`, `fingerprints`, `task-env warm`, and `agent_bench::stream` parsers for Claude Code, Codex CLI, and `agy` (`eon/tools/agent-bench`); Linux no-network jail for Claude Code and Codex CLI (`eon/tools/agent-jail`) | Follow-up beads under `eon-2r02l` (plan items `R2`, `R4`–`R8b`, and `SC` of `eon-2r02l.11`), `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level), `eon-2r02l.8` (blind judges; `R7` is its automatic leak audit), `eon-j8iyd` (`agy` in `agent-jail`) |
 | Cost-beside-quality reporting | — | Follow-up bead under `eon-2r02l` (plan item `R9` of `eon-2r02l.11`): `agent-bench report` |
 | Reviewer evaluation | `review-tier eval check`, `eval prepare`, `eval score` against `eon/tools/review-tier/evals/cases.toml` | Follow-up beads under `eon-2r02l` (plan items `E1a`, `E1b`, `E2`, `E4`, `R10` of `eon-2r02l.11`): case audit/freeze, new cases, scorer rework and `eval prepare --export-diff`, reviewer role runner and reviewer case task kind |
 | Builder task catalog | — | `eon-2r02l.18`: select, verify, tag, and populate [Task table](#task-table) |
 
 Each bench trial is defined by two JSON inputs (`eon/tools/agent-bench/src/trial.rs`),
 validated and expanded into planned runs by `agent-bench trial check` today
-(runner execution in plan items `R2`–`R8b` remains planned):
+(runner execution in plan items `R2` and `R4`–`R8b` remains planned):
 
 - **Trial file (tracked JSON, `eon-bench-trial/1`):** names the role
   (`builder` or `reviewer`), the arms (inline `eon-bench-config/2` records or
@@ -246,12 +248,12 @@ configurations hash differently and never pool.
 
 The pipeline below describes the **planned** Bench v2 runner's behavior — not
 present `agent-bench` behavior. It is owned by follow-up beads under
-`eon-2r02l` (plan items `R2`–`R8b` and `SC` of `eon-2r02l.11`), alongside
+`eon-2r02l` (plan items `R2`, `R4`–`R8b`, and `SC` of `eon-2r02l.11`), alongside
 `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level),
 `eon-2r02l.8` (blind judges), and `eon-j8iyd` (`agy` in `agent-jail`). Both
 containment levels share these steps (scheduled by the planned trial loop,
-plan item `R8`), building on the workspace, fingerprint, and warm-target
-primitives that exist today in `eon/tools/agent-bench`:
+plan item `R8`), building on the workspace, fingerprint, warm-target, and
+stream-parser (`R3`) primitives that exist today in `eon/tools/agent-bench`:
 
 1. **Gates (plan item `R5`):** checks machine load and free memory; allows at
    most 2 builder runs at once and never takes a live builder slot; runs
@@ -279,19 +281,27 @@ primitives that exist today in `eon/tools/agent-bench`:
    `env.warm_target_sha256`. `jail` mounts the warm target via overlay; `clone`
    creates a private copy per run after a free-disk check and removes it after
    scoring.
-4. **Launch and watch (plan items `R3`, `R4`, `R8b`):** launches with the role
+4. **Launch and watch (plan item `R3` implemented in `eon/tools/agent-bench/src/stream.rs`; runner in `R4`, `R8b`):** launches with the role
    wrapper plus `task_text.md` (`assembled_prompt_sha256` recorded on the row).
    Builders keep `PROGRESS.md` and finish with `READY.md`. When `plan_review`
    is set (plan item `R8b`), the run executes plan, review by the pinned
    reviewer arm, and revise up to the round cap before build, recording each
-   stage's cost on the row. One event model parses each harness's stream
-   (session ID, per-step context tokens, compaction steps, denied actions,
-   final text). Early stop (no `READY.md`, empty final text, denied actions, or
-   max turns) resumes once by session ID (`agy --conversation`, Claude Code
-   `--resume`, `codex exec resume`). At the first compaction, or past the
-   lane's handoff threshold (400K for `agy`) at a turn boundary, the runner
-   ends the session and starts a fresh one that reads `PROGRESS.md`. Fifteen
-   minutes without an event counts as a stall and stops the scope.
+   stage's cost on the row. One event model (`agent_bench::stream`) parses each
+   harness's stream (session ID, per-step context tokens where reported,
+   compaction steps where reported, denied actions, final text, and
+   authoritative vs. partial token totals across resumes). Early stop (no
+   `READY.md`, empty final text, denied actions, or max turns) resumes once by
+   session ID (`agy --conversation`, Claude Code `--resume`,
+   `codex exec resume`). At the first compaction, or past the lane's handoff
+   threshold (400K for `agy`) at a turn boundary, the runner ends the session
+   and starts a fresh one that reads `PROGRESS.md`. **Codex capability gap:**
+   `codex exec --json` emits accumulated thread totals on `turn.completed`
+   rather than single-request context occupancy and exposes no compaction event
+   in its exec item schema; Codex lanes therefore set
+   `context_handoff_tokens: null` and rely on Codex's own compaction, wall cap,
+   stall timeout, and early-stop resume without stream-driven context or
+   compaction handoffs. Fifteen minutes without an event counts as a stall and
+   stops the scope.
 5. **Post-run leak audit (plan item `R7` — the automatic part of `eon-2r02l.8`'s
    leak audit; `eon-2r02l.8` keeps the blind judges):** runs a depth-3 mtime
    walk over the lane's named directories for files changed outside the
@@ -429,8 +439,12 @@ nine columns:
 
 Accounting and presentation rules:
 
-- **Tokens (exact):** parsed from each harness's event stream (plan item `R3`),
-  broken down per stage (`plan`, `review`, `build`).
+- **Tokens (exact):** parsed from each harness's event stream
+  (`eon/tools/agent-bench/src/stream.rs`), broken down per stage (`plan`,
+  `review`, `build`), with whole-tree totals (cumulative session snapshots from
+  `modelUsage` across resumed sessions for Claude Code, snapshot deltas across
+  resumed threads for Codex, and checkpoint-inclusive totals for `agy`) and
+  explicit partial flags when a stream ends without an authoritative total.
 - **Pool deltas (upper bound):** measured from usage readings taken before and
   after each run across the relevant quota pools — Gemini weekly and five-hour
   points per account kind, the shared Claude/GPT `agy` pool, Codex credits, and
