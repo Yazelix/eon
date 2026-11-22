@@ -286,7 +286,7 @@ fn quota_without_reset_retains_percent_and_accessible_freshness() {
             resets_at: None,
             scope: None,
         };
-        let text = quota_text(QuotaProvider::Claude, state, 100, Some(&window), None);
+        let text = quota_text(QuotaProvider::Claude, state, 100, Some(&window), None, None);
         let suffix = if state == CodexQuotaState::Stale {
             " old"
         } else {
@@ -317,20 +317,18 @@ fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
         resets_at: Some(1000 + ((1.0 - elapsed) * 18_000.0).round() as u64),
         scope: None,
     };
-    let shortfall = |elapsed, remaining| quota_shortfall(&window(elapsed, remaining), 1000);
+    let shortfall = |elapsed, remaining| quota_shortfall(&window(elapsed, remaining), 1000, None);
     for (elapsed, remaining, expected) in [
         (0.5, 60, -0.25),  // comfortably under pace: full green
         (0.5, 50, 0.0),    // exactly on pace
         (0.45, 50, 0.1),   // orange
         (0.375, 50, 0.25), // full red
         (0.25, 50, 0.5),   // still full red
-        (0.1, 50, 0.8),
-        (0.09, 50, 0.82), // no elapsed-time gate
-        (0.005, 99, 0.5), // 1% used after only 90 seconds
-        (0.01, 99, 0.0),  // 1% used, exactly on pace
-        (0.5, 99, -1.0),  // little used, comfortably under pace
-        (0.0, 99, 1.0),   // use at the window start is still judged
-        (0.05, 0, 0.95),  // used up, even in a young window
+        (0.1, 50, 0.8),    // at 30m minimum-elapsed boundary
+        (0.1, 95, -1.0),   // exact 30m + 5% boundary: comfortably under pace
+        (0.1, 85, 1.0 / 3.0),
+        (0.5, 95, -1.0), // 5% used halfway through: comfortably under pace
+        (0.05, 0, 0.95), // used up, even in a young window
         (0.95, 0, 0.05),
     ] {
         let actual = shortfall(elapsed, remaining).expect("judged window");
@@ -340,30 +338,53 @@ fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
         );
     }
     for elapsed in [0.0, 0.005, 0.1, 0.5, 1.0] {
-        assert_eq!(shortfall(elapsed, 100), None, "nothing used has no basis");
+        for remaining in [100, 99, 96] {
+            assert_eq!(
+                shortfall(elapsed, remaining),
+                None,
+                "under 5% used has no basis ({elapsed}, {remaining}%)"
+            );
+        }
+    }
+    for elapsed in [0.0, 0.005, 0.09] {
+        for remaining in [95, 50, 1] {
+            assert_eq!(
+                shortfall(elapsed, remaining),
+                None,
+                "under 30m elapsed in 5h has no basis ({elapsed}, {remaining}%)"
+            );
+        }
     }
     let reset_less = QuotaWindow {
         resets_at: None,
         ..window(0.5, 0)
     };
-    assert_eq!(quota_shortfall(&reset_less, 1000), None);
-    let future_start = QuotaWindow {
+    assert_eq!(quota_shortfall(&reset_less, 1000, None), None);
+    let future_start_unused = QuotaWindow {
         resets_at: Some(1000 + 18_060),
         ..window(0.0, 99)
     };
-    assert_eq!(quota_shortfall(&future_start, 1000), Some(1.0));
-    // More used is never better; more elapsed for the same use is never worse.
-    for elapsed in (0..=100).map(|step| step as f32 / 100.0) {
+    assert_eq!(quota_shortfall(&future_start_unused, 1000, None), None);
+    let future_start_exhausted = QuotaWindow {
+        resets_at: Some(1000 + 18_060),
+        ..window(0.0, 0)
+    };
+    assert_eq!(
+        quota_shortfall(&future_start_exhausted, 1000, None),
+        Some(1.0)
+    );
+    // Above the minimum-history gate, more used is never better; more elapsed is never worse.
+    for elapsed in (10..=100).map(|step| step as f32 / 100.0) {
         let mut previous = f32::NEG_INFINITY;
-        for remaining in (0..=99).rev() {
+        for remaining in (0..=95).rev() {
             let current = shortfall(elapsed, remaining).expect("judged window");
             assert!(current >= previous, "{elapsed} elapsed, {remaining}% left");
             previous = current;
         }
     }
-    for remaining in 0..=99 {
+    for remaining in 0..=95 {
         let mut previous = f32::INFINITY;
-        for elapsed in (0..=100).map(|step| step as f32 / 100.0) {
+        for elapsed in (10..=100).map(|step| step as f32 / 100.0) {
             let current = shortfall(elapsed, remaining).expect("judged window");
             assert!(current <= previous, "{elapsed} elapsed, {remaining}% left");
             previous = current;
@@ -422,7 +443,7 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
             Some(fable),
             "Claude Fable-only 7d window\nResets Thu 16:00\nLasts until reset at this pace",
         ),
-        // Under 1% used has no pace, even with a reset.
+        // Below minimum history (30m for 5h / 4h for 7d and 5% used) has no pace, even with a reset.
         (
             Codex,
             Fresh,
@@ -433,7 +454,7 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
             Codex,
             Fresh,
             Some(quota(300, 99, Some(17_940))),
-            "Codex 5h window\nResets at 16:59\nRuns out about 3h20m before reset",
+            "Codex 5h window\nResets at 16:59",
         ),
         (
             Codex,
@@ -444,8 +465,20 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
         (
             Codex,
             Fresh,
+            Some(quota(300, 96, Some(1_800))),
+            "Codex 5h window\nResets at 12:30",
+        ),
+        (
+            Codex,
+            Fresh,
             Some(quota(300, 99, Some(18_000))),
-            "Codex 5h window\nResets at 17:00\nRuns out about 5h before reset",
+            "Codex 5h window\nResets at 17:00",
+        ),
+        (
+            Codex,
+            Fresh,
+            Some(quota(300, 85, Some(16_200))),
+            "Codex 5h window\nResets at 16:30\nRuns out about 1h40m before reset",
         ),
         (
             Codex,
@@ -453,12 +486,12 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
             Some(quota(300, 99, Some(17_940))),
             "Codex 5h window\nResets at 16:59\nData is stale",
         ),
-        // After that, the date.
+        // After that, the date (1h into 7d is below the 4h minimum history; 5h with 15% used is judged).
         (
             Codex,
             Fresh,
             Some(quota(10_080, 50, Some(601_200))),
-            "Codex 7d window\nResets 11 Nov 11:00\nRuns out about 6d22h before reset",
+            "Codex 7d window\nResets 11 Nov 11:00",
         ),
         (
             Claude,
@@ -481,7 +514,14 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
         (Codex, Blocked, None, "Codex quota\nPermission blocked"),
         (Codex, Unknown, None, "Codex quota\nPermission unknown"),
     ] {
-        let text = quota_text(provider, state, observed_at, window.as_ref(), Some(&now));
+        let text = quota_text(
+            provider,
+            state,
+            observed_at,
+            window.as_ref(),
+            None,
+            Some(&now),
+        );
         assert_eq!(text.tooltip, tooltip, "{}", text.label);
         assert!(!text.tooltip.contains('%'), "{tooltip}");
     }
@@ -492,14 +532,21 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
         ..quota(300, 50, None)
     };
     for age in [0, 7_200, 20_000] {
-        let text = quota_text(Codex, Stale, observed_at - age, Some(&reset), Some(&now));
+        let text = quota_text(
+            Codex,
+            Stale,
+            observed_at - age,
+            Some(&reset),
+            None,
+            Some(&now),
+        );
         assert_eq!(
             text.tooltip, "Codex 5h window\nResets at 12:30\nData is stale",
             "{age}"
         );
     }
     let later = now.checked_add(jiff::Span::new().hours(1)).unwrap();
-    let text = quota_text(Codex, Stale, observed_at, Some(&reset), Some(&later));
+    let text = quota_text(Codex, Stale, observed_at, Some(&reset), None, Some(&later));
     assert_eq!(
         text.tooltip,
         "Codex 5h window\nHas reset since this reading\nData is stale"
@@ -510,6 +557,7 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
         Fresh,
         observed_at,
         Some(&reset),
+        None,
         Some(&local(jiff::tz::Offset::UTC)),
     );
     assert!(
@@ -517,7 +565,7 @@ fn quota_tooltip_lists_what_the_chip_does_not_show() {
         "{}",
         text.tooltip
     );
-    let text = quota_text(Codex, Fresh, observed_at, Some(&reset), None);
+    let text = quota_text(Codex, Fresh, observed_at, Some(&reset), None, None);
     assert_eq!(
         text.tooltip,
         "Codex 5h window\nLasts until reset at this pace"
@@ -591,6 +639,7 @@ fn quota_reset_follows_local_days_offsets_and_expiry() {
             CodexQuotaState::Fresh,
             seconds(&noon),
             Some(&window),
+            None,
             Some(&now),
         );
         assert_eq!(
@@ -626,8 +675,8 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         },
         QuotaWindow {
             duration_minutes: 300,
-            remaining_percent: 99,
-            resets_at: Some(observed_at + 17_940),
+            remaining_percent: 85,
+            resets_at: Some(observed_at + 16_200),
             scope: None,
         },
         QuotaWindow {
@@ -652,9 +701,9 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         ),
         (
             &windows[2],
-            "1m/5h 99%",
-            2.0 / 3.0,
-            "5h window: 99% remaining; observed 1m into 5h. At this pace it runs out about 3h20m before reset.",
+            "30m/5h 85%",
+            1.0 / 3.0,
+            "5h window: 85% remaining; observed 30m into 5h. At this pace it runs out about 1h40m before reset.",
         ),
         (
             &windows[3],
@@ -669,6 +718,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
                 CodexQuotaState::Fresh,
                 observed_at,
                 Some(window),
+                None,
                 None,
             );
             assert_eq!(text.label, label);
@@ -694,6 +744,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         observed_at,
         Some(&used_up),
         None,
+        None,
     );
     assert!(text.pace.is_some());
     assert_eq!(text.remaining_percent, Some(0));
@@ -715,6 +766,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         observed_at,
         Some(&barely),
         None,
+        None,
     );
     assert!(
         text.description
@@ -730,6 +782,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
             ..barely
         }),
         None,
+        None,
     );
     assert!(
         text.description
@@ -738,7 +791,7 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         text.description
     );
 
-    // Stale and unused windows retain their percentage but have no pace judgement.
+    // Stale, unused, and below-minimum-history windows retain their percentage without pace.
     let unused = QuotaWindow {
         remaining_percent: 100,
         resets_at: Some(observed_at + 17_940),
@@ -747,6 +800,16 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
     let unused_old = QuotaWindow {
         resets_at: Some(observed_at + 1_800),
         ..unused.clone()
+    };
+    let young_burst = QuotaWindow {
+        remaining_percent: 99,
+        resets_at: Some(observed_at + 17_940),
+        ..windows[0].clone()
+    };
+    let low_use_old = QuotaWindow {
+        remaining_percent: 96,
+        resets_at: Some(observed_at + 1_800),
+        ..windows[0].clone()
     };
     for (state, window, label) in [
         (
@@ -763,9 +826,11 @@ fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
         (CodexQuotaState::Unknown, None, "unknown"),
         (CodexQuotaState::Fresh, Some(&unused), "1m/5h 100%"),
         (CodexQuotaState::Fresh, Some(&unused_old), "4h30m/5h 100%"),
-        (CodexQuotaState::Stale, Some(&windows[2]), "1m/5h 99% old"),
+        (CodexQuotaState::Fresh, Some(&young_burst), "1m/5h 99%"),
+        (CodexQuotaState::Fresh, Some(&low_use_old), "4h30m/5h 96%"),
+        (CodexQuotaState::Stale, Some(&young_burst), "1m/5h 99% old"),
     ] {
-        let text = quota_text(QuotaProvider::Codex, state, observed_at, window, None);
+        let text = quota_text(QuotaProvider::Codex, state, observed_at, window, None, None);
         assert_eq!(text.label, label);
         assert_eq!(
             text.remaining_percent,
@@ -4179,6 +4244,7 @@ fn google_chip_truth_includes_old_reset_and_read_time() {
                 quota.observed_at,
                 Some(&quota.windows[0]),
                 None,
+                None,
             );
             assert_eq!(no_zone.label, q.label);
             for text in [&no_zone.tooltip, &no_zone.description] {
@@ -4250,4 +4316,730 @@ fn gpu_yields_before_disk_in_reversed_display_order() {
         }
     }
     assert!(saw_disk_without_gpu && saw_all);
+}
+
+#[test]
+fn quota_shortfall_requires_minimum_history_across_window_durations() {
+    let observed_at = 2_000_000;
+    let window = |duration_minutes: u32, elapsed_seconds: u64, remaining_percent: u8| {
+        let total = u64::from(duration_minutes) * 60;
+        QuotaWindow {
+            duration_minutes,
+            remaining_percent,
+            resets_at: Some(observed_at + total.saturating_sub(elapsed_seconds)),
+            scope: None,
+        }
+    };
+    // Case 1 (Google Ultra 7d, ~10m old, 99% remaining) and Case 2 stateless (Gemini 7d, ~20m, 97%).
+    assert_eq!(
+        quota_shortfall(&window(10_080, 10 * 60, 99), observed_at, None),
+        None
+    );
+    assert_eq!(
+        quota_shortfall(&window(10_080, 20 * 60, 97), observed_at, None),
+        None
+    );
+
+    // Exact boundary table: min_elapsed = min(duration / 10, 4h), min_used = 5%.
+    for (duration_minutes, elapsed_seconds, remaining_percent, expected) in [
+        // 5h (300m -> gate 30m = 1_800s)
+        (300, 1_799, 90, None),
+        (300, 1_800, 96, None),
+        (300, 1_800, 95, Some(-1.0)),
+        (300, 1_800, 85, Some(1.0 / 3.0)),
+        // 7d (10_080m -> gate capped at 4h = 14_400s)
+        (10_080, 14_399, 85, None),
+        (10_080, 14_400, 96, None),
+        (10_080, 14_400, 95, Some(11.0 / 21.0)),
+        // eon-7aw48 regression guard: 5h into 7d with 15% used stays judged red (~5d15h early).
+        (10_080, 18_000, 85, Some(101.0 / 126.0)),
+        // Arbitrary durations: 1m (6s), 1h (6m), 1d (2h24m), 30d (capped at 4h).
+        (1, 5, 80, None),
+        (1, 6, 96, None),
+        (1, 6, 90, Some(0.0)),
+        (60, 359, 80, None),
+        (60, 360, 96, None),
+        (60, 360, 90, Some(0.0)),
+        (1_440, 8_639, 80, None),
+        (1_440, 8_640, 96, None),
+        (1_440, 8_640, 90, Some(0.0)),
+        (43_200, 14_399, 80, None),
+        (43_200, 14_400, 96, None),
+        (
+            43_200,
+            14_400,
+            95,
+            Some(1.0 - (14_400.0 / 2_592_000.0) / 0.05),
+        ),
+        // Defensive guards: zero duration or >100% remaining never panic or judge.
+        (0, 0, 50, None),
+        (300, 9_000, 101, None),
+    ] {
+        let actual = quota_shortfall(
+            &window(duration_minutes, elapsed_seconds, remaining_percent),
+            observed_at,
+            None,
+        );
+        match (actual, expected) {
+            (None, None) => {}
+            (Some(a), Some(e)) => assert!(
+                (a - e).abs() < 1e-3,
+                "dur={duration_minutes}m elapsed={elapsed_seconds}s rem={remaining_percent}%: {a} != {e}"
+            ),
+            _ => panic!(
+                "dur={duration_minutes}m elapsed={elapsed_seconds}s rem={remaining_percent}%: {actual:?} != {expected:?}"
+            ),
+        }
+    }
+
+    // Exhausted windows are always judged, even minutes after reset or at/before window start.
+    for (duration_minutes, resets_in, expected) in [
+        (10_080, 604_800 - 600, 604_200.0 / 604_800.0),
+        (300, 18_000 - 60, 17_940.0 / 18_000.0),
+        (300, 18_060, 1.0),
+        (300, 0, 0.0),
+    ] {
+        let exhausted = QuotaWindow {
+            duration_minutes,
+            remaining_percent: 0,
+            resets_at: Some(observed_at + resets_in),
+            scope: None,
+        };
+        let actual = quota_shortfall(&exhausted, observed_at, None).expect("exhausted is judged");
+        assert!((actual - expected).abs() < 1e-3, "{actual} != {expected}");
+    }
+}
+
+#[test]
+fn quota_pace_suppression_applies_to_codex_claude_and_google() {
+    let now = jiff::civil::date(2026, 11, 21)
+        .at(4, 15, 0, 0)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .unwrap();
+    let observed_at = now.timestamp().as_second() as u64;
+    let providers = [
+        (QuotaProvider::Codex, None),
+        (QuotaProvider::Claude, None),
+        (QuotaProvider::Claude, Some("Fable")),
+        (QuotaProvider::Google, Some("Gemini Models")),
+    ];
+
+    // Right after reset (10m into 7d at 99%, or 10m into 5h at 95%): neutral, no pace line.
+    for (duration_minutes, elapsed_seconds, remaining_percent, expected_pos) in [
+        (10_080u32, 10 * 60u64, 99u8, "0h/7d 99%"),
+        (300, 10 * 60, 95, "10m/5h 95%"),
+    ] {
+        let resets_at = Some(observed_at + u64::from(duration_minutes) * 60 - elapsed_seconds);
+        for (provider, scope) in providers {
+            let window = QuotaWindow {
+                duration_minutes,
+                remaining_percent,
+                resets_at,
+                scope: scope.map(str::to_owned),
+            };
+            let text = quota_text(
+                provider,
+                CodexQuotaState::Fresh,
+                observed_at,
+                Some(&window),
+                None,
+                Some(&now),
+            );
+            assert_eq!(text.pace, None, "{provider:?} {scope:?} {expected_pos}");
+            assert!(text.label.ends_with(expected_pos), "{}", text.label);
+            assert!(text.tooltip.contains("Resets "), "{}", text.tooltip);
+            assert!(
+                !text.tooltip.contains("Runs out about")
+                    && !text.tooltip.contains("Lasts until reset")
+                    && !text.tooltip.contains("Used up"),
+                "{}",
+                text.tooltip
+            );
+            assert!(
+                !text.description.contains("At this pace") && !text.description.contains("Used up"),
+                "{}",
+                text.description
+            );
+        }
+    }
+
+    // Valid post-gate warning (5h into 7d, 85% left): red pace and exact shortfall on all providers.
+    let resets_at = Some(observed_at + 604_800 - 18_000);
+    for (provider, scope) in providers {
+        let window = QuotaWindow {
+            duration_minutes: 10_080,
+            remaining_percent: 85,
+            resets_at,
+            scope: scope.map(str::to_owned),
+        };
+        let text = quota_text(
+            provider,
+            CodexQuotaState::Fresh,
+            observed_at,
+            Some(&window),
+            None,
+            Some(&now),
+        );
+        let pace = text.pace.expect("5h into 7d with 15% used is judged");
+        assert!(pace >= 0.25, "{provider:?} {scope:?}: {pace}");
+        assert!(
+            text.tooltip.contains("Runs out about 5d15h before reset"),
+            "{}",
+            text.tooltip
+        );
+        assert!(
+            text.description
+                .contains("At this pace it runs out about 5d15h before reset."),
+            "{}",
+            text.description
+        );
+    }
+}
+
+#[test]
+fn quota_reset_movement_reanchors_window_and_drops_prior_usage() {
+    use crate::WorkspaceModel;
+    use eon_workspace_protocol::v47::{
+        ClaudeQuota, ClaudeQuotaState, CodexQuota, GoogleQuota, GoogleQuotaState,
+        Response as WorkspaceResponse,
+    };
+
+    let render = |model: &WorkspaceModel, items: &[BarItem]| {
+        WorkspaceScene::from_snapshot_with_bar(
+            model.snapshot().expect("snapshot applied"),
+            EonBar {
+                items,
+                quota_pace: Some(model.quota_pace()),
+                ..EonBar::default()
+            },
+            PhysicalSize::new(1280, 800),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 8.0),
+            None,
+        )
+    };
+    let window = |duration_minutes: u32,
+                  remaining_percent: u8,
+                  resets_at: Option<u64>,
+                  scope: Option<&str>| QuotaWindow {
+        duration_minutes,
+        remaining_percent,
+        resets_at,
+        scope: scope.map(str::to_owned),
+    };
+    let google_items = [
+        BarItem::GoogleQuota {
+            scope: "Gemini Models".into(),
+            duration_minutes: 10_080,
+        },
+        BarItem::GoogleQuota {
+            scope: "Claude".into(),
+            duration_minutes: 10_080,
+        },
+    ];
+    let codex_claude_items = [BarItem::CodexQuota7d, BarItem::ClaudeQuota7d];
+    let codex_7d = [BarItem::CodexQuota7d];
+    let codex_5h = [BarItem::CodexQuota5h];
+    let google_snap = |observed_at, state, windows| {
+        let mut s = one_pane_snapshot();
+        s.google_quota = Some(GoogleQuota {
+            state,
+            observed_at,
+            windows,
+        });
+        s
+    };
+    let pair_snap = |observed_at, codex_rem, codex_reset, claude_rem, claude_reset| {
+        let mut s = one_pane_snapshot();
+        s.codex_quota = Some(CodexQuota {
+            state: CodexQuotaState::Fresh,
+            observed_at,
+            windows: vec![window(10_080, codex_rem, Some(codex_reset), None)],
+        });
+        s.claude_quota = Some(ClaudeQuota {
+            state: ClaudeQuotaState::Fresh,
+            observed_at,
+            windows: vec![window(10_080, claude_rem, Some(claude_reset), None)],
+        });
+        s
+    };
+    let codex_snap = |obs, dur, rem, reset, state| {
+        let mut s = one_pane_snapshot();
+        s.codex_quota = Some(CodexQuota {
+            state,
+            observed_at: obs,
+            windows: if matches!(state, CodexQuotaState::Fresh | CodexQuotaState::Stale) {
+                vec![window(dur, rem, reset, None)]
+            } else {
+                Vec::new()
+            },
+        });
+        s
+    };
+    let apply = |model: &mut WorkspaceModel, snap: Snapshot| {
+        model.apply(WorkspaceResponse::Snapshot(snap));
+    };
+
+    // 1. Lucca's exact Case 2 timeline (Google Gemini 7d): resets_at shifts +8h29m mid-window.
+    let t_0413 = 1_795_234_380; // 2026-11-21 04:13Z
+    let r_old = t_0413 + 604_800 - 3 * 60; // 28 Nov 04:10Z
+    let t_1259 = t_0413 + 8 * 3600 + 46 * 60; // 12:59Z
+    let r_moved = r_old + 8 * 3600 + 29 * 60; // 28 Nov 12:39Z
+    let t_1700 = t_1259 + 4 * 3600 + 60; // 4h01m after rebase
+    let t_1701 = t_1700 + 60; // 4h02m after rebase
+    let mut model = WorkspaceModel::default();
+    for (obs, rem, reset, msg) in [
+        (t_0413, 99, r_old, "initial young window"),
+        (t_1259, 97, r_moved, "mid-window +8h29m shift re-anchors"),
+        (
+            t_1700,
+            95,
+            r_moved,
+            "prior 3% usage must not count toward post-rebase 5% threshold",
+        ),
+    ] {
+        apply(
+            &mut model,
+            google_snap(
+                obs,
+                GoogleQuotaState::Fresh,
+                vec![window(10_080, rem, Some(reset), Some("Gemini Models"))],
+            ),
+        );
+        assert_eq!(render(&model, &google_items).quotas[0].pace, None, "{msg}");
+    }
+    apply(
+        &mut model,
+        google_snap(
+            t_1701,
+            GoogleQuotaState::Fresh,
+            vec![window(10_080, 92, Some(r_moved), Some("Gemini Models"))],
+        ),
+    );
+    let expected =
+        (((r_moved - t_1701) as f64 - 92.0 * (t_1701 - t_1259) as f64 / 5.0) / 604_800.0) as f32;
+    let actual = render(&model, &google_items).quotas[0]
+        .pace
+        .expect("5% used over >4h since rebase is judged");
+    assert!((actual - expected).abs() < 1e-3, "{actual} != {expected}");
+
+    // 2. Regression: shift occurring 1m (or 1s) BEFORE expiry must NOT be treated as rollover.
+    let r_exp = 3_000_000;
+    let r_shifted = r_exp + 3 * 86_400;
+    let mut near_expiry = WorkspaceModel::default();
+    apply(
+        &mut near_expiry,
+        pair_snap(r_exp - 600, 10, r_exp, 10, r_exp),
+    );
+    assert!(
+        render(&near_expiry, &codex_claude_items).quotas[0]
+            .pace
+            .is_some()
+    );
+    apply(
+        &mut near_expiry,
+        pair_snap(r_exp - 60, 10, r_shifted, 10, r_exp),
+    );
+    assert_eq!(
+        render(&near_expiry, &codex_claude_items).quotas[0].pace,
+        None,
+        "1m before expiry +3d shift with 10% left must re-anchor, not flash red"
+    );
+    apply(
+        &mut near_expiry,
+        pair_snap(r_exp - 1, 10, r_shifted, 10, r_shifted),
+    );
+    assert_eq!(
+        render(&near_expiry, &codex_claude_items).quotas[1].pace,
+        None,
+        "1s before expiry +3d shift with 10% left must re-anchor"
+    );
+    apply(
+        &mut near_expiry,
+        pair_snap(r_exp - 60 + 4 * 3600, 6, r_shifted, 10, r_shifted),
+    );
+    assert_eq!(
+        render(&near_expiry, &codex_claude_items).quotas[0].pace,
+        None
+    );
+    apply(
+        &mut near_expiry,
+        pair_snap(r_exp - 60 + 4 * 3600 + 60, 5, r_shifted, 10, r_shifted),
+    );
+    assert!(
+        render(&near_expiry, &codex_claude_items).quotas[0]
+            .pace
+            .is_some_and(|p| p >= 0.25)
+    );
+
+    // 3. Heavy carried usage (40% used at 4d into 7d) +2d forward shift, and -1d backward shift.
+    let base_obs = 4_000_000;
+    let r_initial = base_obs + 3 * 86_400;
+    let t_shift = base_obs + 60;
+    let r_plus_2d = r_initial + 2 * 86_400;
+    let r_minus_1d = r_initial - 86_400;
+    let mut heavy = WorkspaceModel::default();
+    apply(
+        &mut heavy,
+        pair_snap(base_obs, 60, r_initial, 50, r_initial),
+    );
+    let scene = render(&heavy, &codex_claude_items);
+    assert!(scene.quotas[0].pace.is_some() && scene.quotas[1].pace.is_some());
+    apply(
+        &mut heavy,
+        pair_snap(t_shift, 60, r_plus_2d, 50, r_minus_1d),
+    );
+    let scene = render(&heavy, &codex_claude_items);
+    assert_eq!(scene.quotas[0].pace, None, "forward shift drops 40% usage");
+    assert_eq!(scene.quotas[1].pace, None, "backward shift drops 50% usage");
+    apply(
+        &mut heavy,
+        pair_snap(t_shift + 4 * 3600, 59, r_plus_2d, 50, r_minus_1d),
+    );
+    assert_eq!(render(&heavy, &codex_claude_items).quotas[0].pace, None);
+    apply(
+        &mut heavy,
+        pair_snap(t_shift + 5 * 3600, 55, r_plus_2d, 50, r_minus_1d),
+    );
+    let codex_q = &render(&heavy, &codex_claude_items).quotas[0];
+    assert!(codex_q.pace.is_some_and(|p| p >= 0.25));
+    assert!(
+        codex_q
+            .tooltip
+            .contains("Runs out about 2d12h before reset"),
+        "{}",
+        codex_q.tooltip
+    );
+
+    // 4. Small jitter (<= 5m) ignored; cumulative drift > 5m caught.
+    let r_j = 5_000_000 + 3 * 86_400;
+    let mut jitter = WorkspaceModel::default();
+    apply(
+        &mut jitter,
+        codex_snap(5_000_000, 10_080, 50, Some(r_j), CodexQuotaState::Fresh),
+    );
+    for (step, delta) in [60i64, -120, 300, 120, 240].into_iter().enumerate() {
+        apply(
+            &mut jitter,
+            codex_snap(
+                5_000_000 + (step as u64 + 1) * 60,
+                10_080,
+                50,
+                Some(r_j.checked_add_signed(delta).unwrap()),
+                CodexQuotaState::Fresh,
+            ),
+        );
+        assert!(
+            render(&jitter, &codex_7d).quotas[0].pace.is_some(),
+            "jitter delta={delta}s stays within 5m of anchor"
+        );
+    }
+    apply(
+        &mut jitter,
+        codex_snap(
+            5_000_600,
+            10_080,
+            50,
+            Some(r_j + 360),
+            CodexQuotaState::Fresh,
+        ),
+    );
+    assert_eq!(
+        render(&jitter, &codex_7d).quotas[0].pace,
+        None,
+        "cumulative +6m drift from anchor triggers rebase"
+    );
+
+    // 5. Genuine rollover at/past actual expiry drops old rebase and resumes natural timing.
+    let r5_old = 6_000_000 + 18_000;
+    let r5_rebased = r5_old + 3_600;
+    let r5_new = r5_rebased + 18_000;
+    let r5_next = r5_new + 18_000;
+    let mut rollover = WorkspaceModel::default();
+    apply(
+        &mut rollover,
+        codex_snap(6_000_000, 300, 90, Some(r5_old), CodexQuotaState::Fresh),
+    );
+    apply(
+        &mut rollover,
+        codex_snap(6_000_600, 300, 90, Some(r5_rebased), CodexQuotaState::Fresh),
+    );
+    assert_eq!(render(&rollover, &codex_5h).quotas[0].pace, None);
+    // Laptop wakes 3h into the next 5h window past r5_rebased at 15% remaining -> judged red.
+    apply(
+        &mut rollover,
+        codex_snap(
+            r5_rebased + 3 * 3600,
+            300,
+            15,
+            Some(r5_new),
+            CodexQuotaState::Fresh,
+        ),
+    );
+    assert!(
+        render(&rollover, &codex_5h).quotas[0]
+            .pace
+            .is_some_and(|p| p >= 0.25)
+    );
+    // Exact expiry drops rebase (Fix 1 gates young window); backward shift after expiry re-anchors.
+    apply(
+        &mut rollover,
+        codex_snap(r5_new, 300, 99, Some(r5_next), CodexQuotaState::Fresh),
+    );
+    assert_eq!(render(&rollover, &codex_5h).quotas[0].pace, None);
+    apply(
+        &mut rollover,
+        codex_snap(
+            r5_next + 600,
+            300,
+            50,
+            Some(r5_next - 3_600),
+            CodexQuotaState::Fresh,
+        ),
+    );
+    assert_eq!(render(&rollover, &codex_5h).quotas[0].pace, None);
+
+    // 6. Stale-on-startup detection, idempotence, mark_unavailable, group reorder isolation,
+    //    upward replenishment, exhaustion after rebase, and pruning.
+    let r_g1 = 7_000_000 + 3 * 86_400;
+    let r_g2 = 7_000_000 + 4 * 86_400;
+    let r_g1_moved = r_g1 + 86_400;
+    let mut edge = WorkspaceModel::default();
+    apply(
+        &mut edge,
+        google_snap(
+            7_000_000,
+            GoogleQuotaState::Stale,
+            vec![
+                window(10_080, 60, Some(r_g1), Some("Gemini Models")),
+                window(10_080, 50, Some(r_g2), Some("Claude")),
+            ],
+        ),
+    );
+    let shifted_snap = google_snap(
+        7_000_600,
+        GoogleQuotaState::Fresh,
+        vec![
+            window(10_080, 60, Some(r_g1_moved), Some("Gemini Models")),
+            window(10_080, 50, Some(r_g2), Some("Claude")),
+        ],
+    );
+    apply(&mut edge, shifted_snap.clone());
+    let scene = render(&edge, &google_items);
+    assert_eq!(scene.quotas[0].pace, None);
+    assert!(scene.quotas[1].pace.is_some());
+
+    // Duplicate, older, and mark_unavailable all preserve Gemini's rebase anchor.
+    apply(&mut edge, shifted_snap.clone());
+    apply(
+        &mut edge,
+        google_snap(
+            7_000_100,
+            GoogleQuotaState::Fresh,
+            shifted_snap.google_quota.as_ref().unwrap().windows.clone(),
+        ),
+    );
+    edge.mark_unavailable("Eon reconnecting", false);
+    apply(&mut edge, shifted_snap);
+    assert_eq!(render(&edge, &google_items).quotas[0].pace, None);
+
+    // Reorder Google groups + upward replenishment (60% -> 64%): anchor advances cleanly.
+    for (obs, gemini_rem, expect_gemini_judged) in [
+        (7_001_200, 64, false),
+        (7_001_200 + 4 * 3600, 60, false), // 4% below 64% -> still None
+        (7_001_200 + 4 * 3600 + 60, 0, true), // exhausted -> judged immediately
+    ] {
+        apply(
+            &mut edge,
+            google_snap(
+                obs,
+                GoogleQuotaState::Fresh,
+                vec![
+                    window(10_080, 50, Some(r_g2), Some("Claude")),
+                    window(10_080, gemini_rem, Some(r_g1_moved), Some("Gemini Models")),
+                ],
+            ),
+        );
+        let scene = render(&edge, &google_items);
+        assert_eq!(scene.quotas[0].pace.is_some(), expect_gemini_judged);
+        assert!(scene.quotas[1].pace.is_some());
+        if gemini_rem == 0 {
+            assert!(scene.quotas[0].tooltip.contains("Used up until reset"));
+        }
+    }
+
+    // Pruning: reset-less and Blocked clear tracked state cleanly.
+    let mut pruned = WorkspaceModel::default();
+    apply(
+        &mut pruned,
+        codex_snap(
+            8_000_000,
+            10_080,
+            60,
+            Some(8_000_000 + 3 * 86_400),
+            CodexQuotaState::Fresh,
+        ),
+    );
+    apply(
+        &mut pruned,
+        codex_snap(
+            8_000_600,
+            10_080,
+            60,
+            Some(8_000_000 + 5 * 86_400),
+            CodexQuotaState::Fresh,
+        ),
+    );
+    assert_eq!(render(&pruned, &codex_7d).quotas[0].pace, None);
+    apply(
+        &mut pruned,
+        codex_snap(8_001_200, 10_080, 60, None, CodexQuotaState::Fresh),
+    );
+    assert!(pruned.quota_pace().tracks.is_empty());
+    apply(
+        &mut pruned,
+        codex_snap(
+            8_001_800,
+            10_080,
+            60,
+            Some(8_001_800 + 3 * 86_400),
+            CodexQuotaState::Fresh,
+        ),
+    );
+    assert!(render(&pruned, &codex_7d).quotas[0].pace.is_some());
+    apply(
+        &mut pruned,
+        codex_snap(8_002_400, 10_080, 0, None, CodexQuotaState::Blocked),
+    );
+    assert!(pruned.quota_pace().tracks.is_empty());
+}
+
+#[test]
+fn quota_pace_changes_keep_1280x800_bar_layout_stable() {
+    use crate::WorkspaceModel;
+    use eon_workspace_protocol::v47::{
+        ClaudeQuota, ClaudeQuotaState, CodexQuota, GoogleQuota, GoogleQuotaState,
+        Response as WorkspaceResponse,
+    };
+
+    let items = [
+        BarItem::CodexQuota5h,
+        BarItem::CodexQuota7d,
+        BarItem::ClaudeQuota5h,
+        BarItem::ClaudeQuota7d,
+        BarItem::ClaudeQuotaScoped,
+        BarItem::GoogleQuota {
+            scope: "Gemini Models".into(),
+            duration_minutes: 10_080,
+        },
+    ];
+    let size = PhysicalSize::new(1280, 800);
+    let metrics = CellMetrics::for_scale(1.0);
+    let build = |snapshot: &Snapshot, pace: Option<&QuotaPaceHistory>| {
+        WorkspaceScene::from_snapshot_with_bar(
+            snapshot,
+            EonBar {
+                items: &items,
+                quota_pace: pace,
+                ..EonBar::default()
+            },
+            size,
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 8.0),
+            None,
+        )
+    };
+    let make_snapshot = |observed_at: u64, e5: u64, rem5: u8, e7: u64, rem7: u8| -> Snapshot {
+        let w = |dur: u32, elapsed: u64, rem: u8, scope: Option<&str>| QuotaWindow {
+            duration_minutes: dur,
+            remaining_percent: rem,
+            resets_at: Some(observed_at + u64::from(dur) * 60 - elapsed),
+            scope: scope.map(str::to_owned),
+        };
+        let mut snapshot = one_pane_snapshot();
+        snapshot.codex_quota = Some(CodexQuota {
+            state: CodexQuotaState::Fresh,
+            observed_at,
+            windows: vec![w(300, e5, rem5, None), w(10_080, e7, rem7, None)],
+        });
+        snapshot.claude_quota = Some(ClaudeQuota {
+            state: ClaudeQuotaState::Fresh,
+            observed_at,
+            windows: vec![
+                w(300, e5, rem5, None),
+                w(10_080, e7, rem7, None),
+                w(10_080, e7, rem7, Some("Fable")),
+            ],
+        });
+        snapshot.google_quota = Some(GoogleQuota {
+            state: GoogleQuotaState::Fresh,
+            observed_at,
+            windows: vec![w(10_080, e7, rem7, Some("Gemini Models"))],
+        });
+        snapshot
+    };
+
+    // Part A: isolate pace suppression on the EXACT same snapshot and labels by varying only history.
+    let t_obs = 9_000_000;
+    let prior = make_snapshot(t_obs - 600, 3 * 3600, 50, 4 * 86_400, 60);
+    let current = make_snapshot(t_obs, 2 * 3600, 50, 5 * 3600, 85);
+    let mut model = WorkspaceModel::default();
+    model.apply(WorkspaceResponse::Snapshot(prior));
+    model.apply(WorkspaceResponse::Snapshot(current.clone()));
+
+    let judged = build(&current, None);
+    let suppressed = build(&current, Some(model.quota_pace()));
+    assert_eq!(judged.quotas.len(), 6);
+    assert_eq!(suppressed.quotas.len(), 6);
+    assert!(judged.quotas.iter().all(|q| q.pace.is_some()));
+    assert!(suppressed.quotas.iter().all(|q| q.pace.is_none()));
+    assert_eq!(judged.drag_region, suppressed.drag_region);
+    for (a, b) in judged.quotas.iter().zip(&suppressed.quotas) {
+        assert_eq!(a.label, b.label);
+        assert_eq!(
+            a.rect, b.rect,
+            "toggling pace dot must not shift chip width"
+        );
+        assert_eq!(a.logo, b.logo);
+    }
+
+    // Part B: realistic Case 1, Case 2, and post-gate labels all fit at 1280x800 without overlap.
+    let case1 = make_snapshot(t_obs, 10 * 60, 99, 10 * 60, 99);
+    let case2 = make_snapshot(t_obs, 20 * 60, 97, 20 * 60, 97);
+    let judged_wide = make_snapshot(t_obs, 2 * 3600 + 30 * 60, 50, 2 * 86_400 + 15 * 3600, 50);
+    let judged_realistic = current;
+    for (name, snap, expect_judged) in [
+        ("case1_fresh_reset", &case1, false),
+        ("case2_reset_moved", &case2, false),
+        ("post_gate_red", &judged_realistic, true),
+        ("post_gate_wide_labels", &judged_wide, true),
+    ] {
+        let scene = build(snap, None);
+        assert_eq!(scene.quotas.len(), 6, "{name}: all 6 chips fit at 1280x800");
+        assert!(
+            scene.drag_region.width >= 0.0,
+            "{name}: drag region non-negative"
+        );
+        for (index, quota) in scene.quotas.iter().enumerate() {
+            assert_eq!(quota.pace.is_some(), expect_judged, "{name}[{index}]");
+            assert!(
+                quota.rect.left >= scene.drag_region.right(),
+                "{name}[{index}] overlaps drag region"
+            );
+            assert!(
+                quota.rect.right() <= scene.controls[1].rect.left + 0.01,
+                "{name}[{index}] clips trailing controls"
+            );
+            if let Some(next) = scene.quotas.get(index + 1) {
+                assert!(
+                    quota.rect.right() <= next.rect.left + 0.01,
+                    "{name}[{index}] overlaps next chip"
+                );
+            }
+        }
+    }
 }

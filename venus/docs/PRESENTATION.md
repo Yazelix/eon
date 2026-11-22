@@ -146,17 +146,22 @@ those integrations.
   with a minimum of 1, and its bounds snap to pixels. Normal readings have a
   neutral dot. Yellow, orange and red dots stay separate from mint keyboard
   focus. These read-only chips cannot take keyboard focus.
-- Fresh quota with a reset and at least 1% used grades the dot by pace,
-  projecting the snapshot's used and elapsed shares linearly to reset. The
-  dot is yellow at 5% projected shortfall, orange at 10%, and red at 25% or
-  more, interpolating between anchors; only the red anchor also colours the
-  outline. Healthy judged quota has a neutral dot. Exhausted quota keeps at
-  least a yellow dot, including close to reset, without automatically becoming
-  Critical. Stale, reset-less, blocked, unknown and under-1%-used quota has no
-  dot; its reserved width stays. Hover and accessibility describe pace in words;
-  the numeric label reports remaining quota, not severity. After reset, hover
-  drops its pace line; the dot and accessible description still reflect the
-  reading. Status colours keep at least 4.5:1 on the chip fill.
+- Fresh quota with a reset grades the dot by pace once enough history has
+  accumulated in the window: at least `min(duration / 10, 4h)` elapsed (30m for
+  a 5h window, 4h for a 7d window) and at least 5% used, projecting the
+  observed rate linearly to reset. When a provider moves a window's reset time
+  materially before expiry (beyond `min(duration / 20, 5m)`), Venus drops prior
+  usage and measures elapsed time and usage from that re-anchored reading
+  instead. The dot is yellow at 5% projected shortfall, orange at 10%, and red
+  at 25% or more, interpolating between anchors; only the red anchor also
+  colours the outline. Healthy judged quota has a neutral dot. Exhausted fresh
+  quota (0% remaining) is always judged and keeps at least a yellow dot,
+  including close to reset or right after a reset move, without automatically
+  becoming Critical. Stale, reset-less, blocked, unknown, and below-minimum-history
+  quota has no dot; its reserved width stays. Hover and accessibility describe
+  pace in words; the numeric label reports remaining quota, not severity. After
+  reset, hover drops its pace line; the dot and accessible description still
+  reflect the reading. Status colours keep at least 4.5:1 on the chip fill.
 - The CPU and RAM chips show whole-machine use as an icon and a percentage,
   such as `12%`, refreshed every 2 seconds. CPU covers the last 2 seconds and
   first appears 2 seconds after the window opens; on macOS user, system and

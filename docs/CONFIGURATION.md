@@ -854,11 +854,15 @@ take. There are no progress meters.
 
 Normal readings have a neutral dot. Quota dots start at yellow when projected
 shortfall reaches 5% of the window, then blend through orange at 10% and red
-at 25%; only at 25% or above does the outline also turn red. An exhausted fresh
-window with a reset keeps at least a yellow dot. Stale, reset-less, blocked,
-unknown and under-1%-used quota has no dot. Healthy judged quota keeps a neutral
-dot and outline. Hover and accessibility describe pace in words; the numeric
-label reports remaining amount, not the pace grade.
+at 25%; only at 25% or above does the outline also turn red. Pace judgement
+waits for minimum window history — at least `min(duration / 10, 4h)` elapsed
+(30m for 5h, 4h for 7d) and at least 5% used, or since a mid-window reset move
+beyond `min(duration / 20, 5m)` — and these noise-floor bounds stay fixed
+alongside the pace anchors. An exhausted fresh window with a reset (0%
+remaining) is always judged and keeps at least a yellow dot. Stale, reset-less,
+blocked, unknown, and below-minimum-history quota has no dot. Healthy judged
+quota keeps a neutral dot and outline. Hover and accessibility describe pace in
+words; the numeric label reports remaining amount, not the pace grade.
 
 CPU, RAM and disk dots turn yellow from 60% use, orange from 75% and red from
 90% by default; the outline turns red only at Critical. For each chip,

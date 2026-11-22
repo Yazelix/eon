@@ -58,12 +58,12 @@ pub use render::{
 pub use scene::{
     AttentionFilter, AttentionFilterChip, BarItem, CellText, Color, DialogKind, DialogScene,
     DialogText, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, HeaderText,
-    HeadingAction, HintSection, Hyperlink, LocalClock, PaneHeaderAction, ReleaseStage, Scene,
-    SceneGraphics, ScenePlacement, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint,
-    ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WindowMenuAction, WorkspaceColumn,
-    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene,
-    WorkspaceTab, attention_inbox_hints, shown_workspace, validate_copy_uri, validate_open_uri,
-    window_summary, workspace_column_width, wrapped_lines,
+    HeadingAction, HintSection, Hyperlink, LocalClock, PaneHeaderAction, QuotaPaceHistory,
+    ReleaseStage, Scene, SceneGraphics, ScenePlacement, ScenePreview, SceneRect, ShortcutGroup,
+    ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WindowMenuAction,
+    WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane,
+    WorkspaceScene, WorkspaceTab, attention_inbox_hints, shown_workspace, validate_copy_uri,
+    validate_open_uri, window_summary, workspace_column_width, wrapped_lines,
 };
 pub(crate) use system::Load;
 pub use system::{

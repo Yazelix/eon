@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Quota pace chips in the Eon Bar (Codex, Claude, and Google) now wait for
+  minimum window history (`min(duration / 10, 4h)` elapsed — 30m for 5h, 4h for
+  7d — and at least 5% used) before showing a pace verdict or warning colour,
+  and drop prior usage to re-anchor when a provider shifts a window's reset
+  time materially before expiry; exhausted fresh windows remain judged
+  (`eon-gz0vi`).
+
 - `eon agent run` emits started and finished JSON receipts on stdout for
   headless builders and reviewers. The receipts name the run and its private
   log and report paths. The finished receipt includes the outcome and exit

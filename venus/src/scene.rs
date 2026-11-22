@@ -681,6 +681,8 @@ pub struct EonBar<'a> {
     /// The local wall-clock time the scene is built at, which places quota resets in local
     /// time; none when the local time zone is unknown.
     pub now: Option<&'a jiff::Zoned>,
+    /// Per-window quota reset history used to drop carried usage after mid-window reset moves.
+    pub quota_pace: Option<&'a QuotaPaceHistory>,
     /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
     /// workspace label then opens it.
     pub workspace_picker: Option<&'a str>,
@@ -699,6 +701,7 @@ impl Default for EonBar<'_> {
             gpu: None,
             clock: None,
             now: None,
+            quota_pace: None,
             workspace_picker: None,
         }
     }
@@ -2951,21 +2954,316 @@ fn quota_window_position(window: &QuotaWindow, observed_at: u64) -> Option<Strin
         .map(|elapsed| quota_minutes(elapsed / 60, window.duration_minutes))
 }
 
+/// Minimum elapsed share denominator (`duration / 10`, capped at 4 hours): 30m for 5h, 4h for 7d.
+const QUOTA_MIN_ELAPSED_DIVISOR: u64 = 10;
+const QUOTA_MAX_MIN_ELAPSED_SECONDS: u64 = 4 * 3600;
+/// Minimum reported quota usage (percentage points) before projecting pace.
+/// Providers report floored integer percentages, so 1–3% carries 33–100% quantization error;
+/// 5% bounds integer-floor error to at most 25%.
+const QUOTA_MIN_USED_PERCENT: u8 = 5;
+/// Maximum reset-time jitter treated as the same window (`min(duration / 20, 5m)`).
+const QUOTA_RESET_MOVE_TOLERANCE_DIVISOR: u64 = 20;
+const QUOTA_MAX_RESET_MOVE_TOLERANCE_SECONDS: u64 = 5 * 60;
+
+fn quota_min_elapsed_seconds(total_seconds: u64) -> u64 {
+    (total_seconds / QUOTA_MIN_ELAPSED_DIVISOR).min(QUOTA_MAX_MIN_ELAPSED_SECONDS)
+}
+
+fn quota_reset_move_tolerance_seconds(total_seconds: u64) -> u64 {
+    (total_seconds / QUOTA_RESET_MOVE_TOLERANCE_DIVISOR).min(QUOTA_MAX_RESET_MOVE_TOLERANCE_SECONDS)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QuotaWindowKey {
+    provider: QuotaProvider,
+    duration_minutes: u32,
+    scope: Option<String>,
+    occurrence: u8,
+}
+
+impl QuotaWindowKey {
+    fn matches(
+        &self,
+        provider: QuotaProvider,
+        duration_minutes: u32,
+        scope: Option<&str>,
+        occurrence: u8,
+    ) -> bool {
+        self.provider == provider
+            && self.duration_minutes == duration_minutes
+            && self.scope.as_deref() == scope
+            && self.occurrence == occurrence
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct QuotaRebaseAnchor {
+    observed_at: u64,
+    remaining_percent: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QuotaWindowTrack {
+    key: QuotaWindowKey,
+    anchor_resets_at: u64,
+    last_observed_at: u64,
+    rebase: Option<QuotaRebaseAnchor>,
+}
+
+struct OrderedQuotaWindow<'a> {
+    window: &'a QuotaWindow,
+    occurrence: u8,
+    identity: QuotaWindowIdentity,
+}
+
+fn quota_window_occurrence(windows: &[&QuotaWindow], index: usize) -> u8 {
+    let target = windows[index];
+    windows[..index]
+        .iter()
+        .filter(|prior| {
+            prior.duration_minutes == target.duration_minutes && prior.scope == target.scope
+        })
+        .count()
+        .min(usize::from(u8::MAX)) as u8
+}
+
+/// Returns a provider's quota windows in canonical Eon Bar order, together with their
+/// normalized state, observation time, per-key occurrence, and chip identity.
+fn ordered_quota_windows(
+    snapshot: &Snapshot,
+    provider: QuotaProvider,
+) -> Option<(CodexQuotaState, u64, Vec<OrderedQuotaWindow<'_>>)> {
+    match provider {
+        QuotaProvider::Codex => snapshot.codex_quota.as_ref().map(|quota| {
+            let ordered = if matches!(quota.state, CodexQuotaState::Fresh | CodexQuotaState::Stale)
+            {
+                let mut windows = quota.windows.iter().collect::<Vec<_>>();
+                windows.sort_by_key(|window| window.duration_minutes);
+                (0..windows.len())
+                    .map(|index| {
+                        let window = windows[index];
+                        let occurrence = quota_window_occurrence(&windows, index);
+                        OrderedQuotaWindow {
+                            window,
+                            occurrence,
+                            identity: QuotaWindowIdentity::Codex {
+                                duration: window.duration_minutes,
+                                occurrence,
+                            },
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (quota.state, quota.observed_at, ordered)
+        }),
+        QuotaProvider::Claude => snapshot.claude_quota.as_ref().map(|quota| {
+            let state = match quota.state {
+                ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
+                ClaudeQuotaState::Stale => CodexQuotaState::Stale,
+            };
+            let mut windows = quota.windows.iter().collect::<Vec<_>>();
+            windows.sort_by_key(|window| window.scope.is_some());
+            let unscoped = quota.windows.iter().filter(|w| w.scope.is_none()).count();
+            windows[..unscoped].sort_by_key(|window| window.duration_minutes);
+            let mut scoped = 0u8;
+            let ordered = (0..windows.len())
+                .map(|index| {
+                    let window = windows[index];
+                    let occurrence = quota_window_occurrence(&windows, index);
+                    let identity = if window.scope.is_some() {
+                        let id = QuotaWindowIdentity::ClaudeScoped(scoped);
+                        scoped = scoped.saturating_add(1);
+                        id
+                    } else {
+                        QuotaWindowIdentity::Claude(window.duration_minutes)
+                    };
+                    OrderedQuotaWindow {
+                        window,
+                        occurrence,
+                        identity,
+                    }
+                })
+                .collect();
+            (state, quota.observed_at, ordered)
+        }),
+        QuotaProvider::Google => snapshot.google_quota.as_ref().map(|quota| {
+            let state = match quota.state {
+                GoogleQuotaState::Fresh => CodexQuotaState::Fresh,
+                GoogleQuotaState::Stale => CodexQuotaState::Stale,
+            };
+            let windows = quota.windows.iter().collect::<Vec<_>>();
+            let ordered = (0..windows.len())
+                .map(|index| {
+                    let window = windows[index];
+                    let occurrence = quota_window_occurrence(&windows, index);
+                    OrderedQuotaWindow {
+                        window,
+                        occurrence,
+                        identity: QuotaWindowIdentity::Google(index as u8),
+                    }
+                })
+                .collect();
+            (state, quota.observed_at, ordered)
+        }),
+    }
+}
+
+/// Tracks per-window quota reset anchors across consecutive snapshots so mid-window
+/// reset-time moves drop prior usage instead of extrapolating it over the shifted window.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuotaPaceHistory {
+    tracks: Vec<QuotaWindowTrack>,
+}
+
+impl QuotaPaceHistory {
+    /// Update tracked window anchors from `snapshot`, pruning absent or reset-less windows.
+    pub fn observe(&mut self, snapshot: &Snapshot) {
+        let mut seen = Vec::new();
+        for provider in [
+            QuotaProvider::Codex,
+            QuotaProvider::Claude,
+            QuotaProvider::Google,
+        ] {
+            let Some((_, observed_at, windows)) = ordered_quota_windows(snapshot, provider) else {
+                continue;
+            };
+            for entry in windows {
+                if entry.window.duration_minutes == 0 || entry.window.remaining_percent > 100 {
+                    continue;
+                }
+                let Some(reset) = entry.window.resets_at else {
+                    continue;
+                };
+                let key = QuotaWindowKey {
+                    provider,
+                    duration_minutes: entry.window.duration_minutes,
+                    scope: entry.window.scope.clone(),
+                    occurrence: entry.occurrence,
+                };
+                self.observe_window(&key, observed_at, entry.window, reset);
+                seen.push(key);
+            }
+        }
+        self.tracks.retain(|track| seen.contains(&track.key));
+    }
+
+    fn observe_window(
+        &mut self,
+        key: &QuotaWindowKey,
+        observed_at: u64,
+        window: &QuotaWindow,
+        reset: u64,
+    ) {
+        let Some(track) = self.tracks.iter_mut().find(|track| track.key == *key) else {
+            self.tracks.push(QuotaWindowTrack {
+                key: key.clone(),
+                anchor_resets_at: reset,
+                last_observed_at: observed_at,
+                rebase: None,
+            });
+            return;
+        };
+        if observed_at <= track.last_observed_at {
+            return;
+        }
+        let tolerance = quota_reset_move_tolerance_seconds(u64::from(window.duration_minutes) * 60);
+        if reset.abs_diff(track.anchor_resets_at) <= tolerance {
+            track.last_observed_at = observed_at;
+            if let Some(anchor) = &mut track.rebase
+                && window.remaining_percent > anchor.remaining_percent
+            {
+                *anchor = QuotaRebaseAnchor {
+                    observed_at,
+                    remaining_percent: window.remaining_percent,
+                };
+            }
+            return;
+        }
+        if observed_at >= track.anchor_resets_at && reset > track.anchor_resets_at {
+            // Prior window actually expired and rolled over to a later reset:
+            // drop any rebase anchor so natural window timing resumes (still gated by minimum history).
+            track.anchor_resets_at = reset;
+            track.last_observed_at = observed_at;
+            track.rebase = None;
+        } else {
+            // Reset moved materially before expiry (or backwards): drop prior usage and
+            // re-anchor pace tracking at this observation.
+            track.anchor_resets_at = reset;
+            track.last_observed_at = observed_at;
+            track.rebase = Some(QuotaRebaseAnchor {
+                observed_at,
+                remaining_percent: window.remaining_percent,
+            });
+        }
+    }
+
+    fn rebase_for(
+        &self,
+        provider: QuotaProvider,
+        window: &QuotaWindow,
+        occurrence: u8,
+        observed_at: u64,
+    ) -> Option<QuotaRebaseAnchor> {
+        if window.duration_minutes == 0 {
+            return None;
+        }
+        let reset = window.resets_at?;
+        let tolerance = quota_reset_move_tolerance_seconds(u64::from(window.duration_minutes) * 60);
+        let track = self.tracks.iter().find(|track| {
+            track.key.matches(
+                provider,
+                window.duration_minutes,
+                window.scope.as_deref(),
+                occurrence,
+            )
+        })?;
+        let anchor = track.rebase?;
+        (reset.abs_diff(track.anchor_resets_at) <= tolerance && anchor.observed_at <= observed_at)
+            .then_some(anchor)
+    }
+}
+
 /// How early, as a share of the window, the pace so far runs out before the reset if it
 /// continues linearly; negative is the share left spare, down to -1. `None` has no basis:
-/// no reset, or under 1% used with quota left.
-fn quota_shortfall(window: &QuotaWindow, observed_at: u64) -> Option<f32> {
-    // EONW rejects zero-length windows.
-    let elapsed = quota_elapsed_seconds(window, observed_at)? as f32
-        / (u64::from(window.duration_minutes) * 60) as f32;
-    let used = f32::from(100 - window.remaining_percent) / 100.0;
-    if used >= 1.0 {
-        Some(1.0 - elapsed)
-    } else if window.remaining_percent >= 100 {
-        None
-    } else {
-        Some((1.0 - elapsed / used).max(-1.0))
+/// no reset, or not enough elapsed time (`min(duration / 10, 4h)`) and usage (`5%`) yet
+/// (measured since a mid-window reset move when re-anchored) while quota remains.
+fn quota_shortfall(
+    window: &QuotaWindow,
+    observed_at: u64,
+    rebase: Option<QuotaRebaseAnchor>,
+) -> Option<f32> {
+    if window.duration_minutes == 0 || window.remaining_percent > 100 {
+        return None;
     }
+    let reset = window.resets_at?;
+    let total_seconds = u64::from(window.duration_minutes) * 60;
+    let remaining_seconds = reset.saturating_sub(observed_at).min(total_seconds);
+    if window.remaining_percent == 0 {
+        return Some((remaining_seconds as f64 / total_seconds as f64) as f32);
+    }
+    let (elapsed_seconds, used_percent) = match rebase {
+        Some(anchor) => (
+            observed_at.saturating_sub(anchor.observed_at),
+            anchor
+                .remaining_percent
+                .saturating_sub(window.remaining_percent),
+        ),
+        None => (
+            total_seconds - remaining_seconds,
+            100 - window.remaining_percent,
+        ),
+    };
+    if elapsed_seconds < quota_min_elapsed_seconds(total_seconds)
+        || used_percent < QUOTA_MIN_USED_PERCENT
+    {
+        return None;
+    }
+    let time_to_empty =
+        f64::from(window.remaining_percent) * (elapsed_seconds as f64) / f64::from(used_percent);
+    let shortfall = (remaining_seconds as f64 - time_to_empty) / (total_seconds as f64);
+    Some(shortfall.max(-1.0) as f32)
 }
 
 /// The window's position, duration and remaining share, as every chip shows them.
@@ -3063,6 +3361,7 @@ fn quota_text(
     state: CodexQuotaState,
     observed_at: u64,
     window: Option<&QuotaWindow>,
+    rebase: Option<QuotaRebaseAnchor>,
     now: Option<&jiff::Zoned>,
 ) -> QuotaText {
     let (mut text, remaining_percent) = match state {
@@ -3091,7 +3390,7 @@ fn quota_text(
     };
     // Only fresh facts are judged; stale, blocked and unknown keep the neutral color.
     let pace = if state == CodexQuotaState::Fresh {
-        window.and_then(|window| quota_shortfall(window, observed_at))
+        window.and_then(|window| quota_shortfall(window, observed_at, rebase))
     } else {
         None
     };
@@ -3481,145 +3780,63 @@ impl WorkspaceScene {
         let quota_texts = bar
             .items
             .iter()
-            .flat_map(|item| match item {
-                BarItem::CodexQuota5h | BarItem::CodexQuota7d => snapshot
-                    .codex_quota
-                    .iter()
-                    .flat_map(|quota| match quota.state {
-                        CodexQuotaState::Fresh | CodexQuotaState::Stale => {
-                            let mut windows = quota.windows.iter().collect::<Vec<_>>();
-                            windows.sort_by_key(|window| window.duration_minutes);
-                            windows
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, window)| {
-                                    item.selects(window.scope.as_deref(), window.duration_minutes)
-                                })
-                                .map(|(index, window)| {
-                                    // EONW permits at most two windows; stable sorting keeps ties in wire order.
-                                    let occurrence = u8::from(
-                                        index > 0
-                                            && windows[index - 1].duration_minutes
-                                                == window.duration_minutes,
-                                    );
-                                    (
-                                        item.clone(),
-                                        QuotaProvider::Codex,
-                                        Some(QuotaWindowIdentity::Codex {
-                                            duration: window.duration_minutes,
-                                            occurrence,
-                                        }),
-                                        quota_text(
-                                            QuotaProvider::Codex,
-                                            quota.state,
-                                            quota.observed_at,
-                                            Some(window),
-                                            bar.now,
-                                        ),
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                        CodexQuotaState::Blocked | CodexQuotaState::Unknown
-                            if *item == BarItem::CodexQuota5h =>
-                        {
-                            vec![(
-                                item.clone(),
-                                QuotaProvider::Codex,
-                                None,
-                                quota_text(
-                                    QuotaProvider::Codex,
-                                    quota.state,
-                                    quota.observed_at,
-                                    None,
-                                    bar.now,
-                                ),
-                            )]
-                        }
-                        CodexQuotaState::Blocked | CodexQuotaState::Unknown => Vec::new(),
-                    })
-                    .collect::<Vec<_>>(),
-                // Claude gets one chip per window, five-hour then seven-day, then its scoped
-                // windows in EONW order.
-                BarItem::ClaudeQuota5h | BarItem::ClaudeQuota7d | BarItem::ClaudeQuotaScoped => {
-                    snapshot
-                        .claude_quota
-                        .iter()
-                        .flat_map(|quota| {
-                            let state = match quota.state {
-                                ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
-                                ClaudeQuotaState::Stale => CodexQuotaState::Stale,
-                            };
-                            let mut windows = quota.windows.iter().collect::<Vec<_>>();
-                            windows.sort_by_key(|window| window.scope.is_some());
-                            windows[..quota.windows.iter().filter(|w| w.scope.is_none()).count()]
-                                .sort_by_key(|window| window.duration_minutes);
-                            let mut scoped = 0;
-                            windows.into_iter().filter_map(move |window| {
-                                let identity = if window.scope.is_some() {
-                                    scoped += 1;
-                                    QuotaWindowIdentity::ClaudeScoped(scoped - 1)
-                                } else {
-                                    QuotaWindowIdentity::Claude(window.duration_minutes)
-                                };
-                                item.selects(window.scope.as_deref(), window.duration_minutes)
-                                    .then(|| {
-                                        (
-                                            item.clone(),
-                                            QuotaProvider::Claude,
-                                            Some(identity),
-                                            quota_text(
-                                                QuotaProvider::Claude,
-                                                state,
-                                                quota.observed_at,
-                                                Some(window),
-                                                bar.now,
-                                            ),
-                                        )
-                                    })
-                            })
-                        })
-                        .collect()
+            .flat_map(|item| {
+                let provider = match item {
+                    BarItem::CodexQuota5h | BarItem::CodexQuota7d => QuotaProvider::Codex,
+                    BarItem::ClaudeQuota5h
+                    | BarItem::ClaudeQuota7d
+                    | BarItem::ClaudeQuotaScoped => QuotaProvider::Claude,
+                    BarItem::GoogleQuota { .. } => QuotaProvider::Google,
+                    _ => return Vec::new(),
+                };
+                let Some((state, observed_at, windows)) = ordered_quota_windows(snapshot, provider)
+                else {
+                    return Vec::new();
+                };
+                if matches!(state, CodexQuotaState::Blocked | CodexQuotaState::Unknown) {
+                    return if *item == BarItem::CodexQuota5h {
+                        vec![(
+                            item.clone(),
+                            provider,
+                            None,
+                            quota_text(provider, state, observed_at, None, None, bar.now),
+                        )]
+                    } else {
+                        Vec::new()
+                    };
                 }
-                BarItem::GoogleQuota { .. } => snapshot
-                    .google_quota
-                    .iter()
-                    .flat_map(|quota| {
-                        let state = match quota.state {
-                            GoogleQuotaState::Fresh => CodexQuotaState::Fresh,
-                            GoogleQuotaState::Stale => CodexQuotaState::Stale,
-                        };
-                        quota
-                            .windows
-                            .iter()
-                            .enumerate()
-                            .filter(move |(_, window)| {
-                                item.selects(window.scope.as_deref(), window.duration_minutes)
-                            })
-                            .map(move |(index, window)| {
-                                let mut text = quota_text(
-                                    QuotaProvider::Google,
-                                    state,
-                                    quota.observed_at,
-                                    Some(window),
-                                    bar.now,
-                                );
-                                if let Some((_, marker)) = google_markers
-                                    .iter()
-                                    .find(|(scope, _)| window.scope.as_deref() == Some(*scope))
-                                {
-                                    text.label = format!("{marker} {}", text.label);
-                                }
-                                (
-                                    item.clone(),
-                                    QuotaProvider::Google,
-                                    Some(QuotaWindowIdentity::Google(index as u8)),
-                                    text,
-                                )
-                            })
+                windows
+                    .into_iter()
+                    .filter(|entry| {
+                        item.selects(entry.window.scope.as_deref(), entry.window.duration_minutes)
                     })
-                    .collect(),
-                _ => Vec::new(),
+                    .map(|entry| {
+                        let rebase = bar.quota_pace.and_then(|history| {
+                            history.rebase_for(
+                                provider,
+                                entry.window,
+                                entry.occurrence,
+                                observed_at,
+                            )
+                        });
+                        let mut text = quota_text(
+                            provider,
+                            state,
+                            observed_at,
+                            Some(entry.window),
+                            rebase,
+                            bar.now,
+                        );
+                        if provider == QuotaProvider::Google
+                            && let Some((_, marker)) = google_markers
+                                .iter()
+                                .find(|(scope, _)| entry.window.scope.as_deref() == Some(*scope))
+                        {
+                            text.label = format!("{marker} {}", text.label);
+                        }
+                        (item.clone(), provider, Some(entry.identity), text)
+                    })
+                    .collect()
             })
             .collect::<Vec<_>>();
         let mut quotas = quota_texts

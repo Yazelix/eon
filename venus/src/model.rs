@@ -1,4 +1,6 @@
-use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
+use crate::scene::{
+    DrawRow, QuotaPaceHistory, Scene, ScenePreview, bar_workspace, hidden_needs_input,
+};
 use eon_workspace_protocol::v47::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
@@ -265,6 +267,9 @@ pub struct WorkspaceModel {
     /// Whether Eon was last unreachable, or refused every refresh after a failed Stop; a
     /// snapshot clears it.
     unavailable: bool,
+    /// Per-window quota reset anchors tracked across snapshots to drop carried usage after
+    /// mid-window reset moves.
+    quota_pace: QuotaPaceHistory,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -405,6 +410,11 @@ impl WorkspaceModel {
     }
 
     #[must_use]
+    pub fn quota_pace(&self) -> &QuotaPaceHistory {
+        &self.quota_pace
+    }
+
+    #[must_use]
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_ref().map(|notice| match notice {
             WorkspaceNotice::Action(text)
@@ -488,6 +498,7 @@ impl WorkspaceModel {
                 {
                     self.notice = None;
                 }
+                self.quota_pace.observe(&snapshot);
                 self.snapshot = Some(snapshot);
                 self.unavailable = false;
                 (

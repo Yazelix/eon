@@ -3150,8 +3150,10 @@ mod tests {
                                 };
                                 assert_eq!(quota.label, format!("{label}{suffix}"));
                                 let (pace, last) = if state == ClaudeQuotaState::Fresh
-                                    && quota.window == Some(QuotaWindowIdentity::Claude(10080))
-                                {
+                                    && matches!(
+                                        quota.window,
+                                        Some(QuotaWindowIdentity::Claude(300 | 10080))
+                                    ) {
                                     ("", "")
                                 } else {
                                     (pace, last)
