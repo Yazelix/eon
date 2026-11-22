@@ -1102,9 +1102,11 @@ impl Accessibility {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// `adapter` is none on a host without a platform accessibility adapter (the Rune
+    /// candidate, VEN-C1's Rune-hosted gap); the tree's snapshot still follows the frame.
     pub fn update(
         &self,
-        adapter: &mut Adapter,
+        adapter: Option<&mut Adapter>,
         scene: Option<&Scene>,
         workspace: Option<&WorkspaceScene>,
         dialog: Option<&DialogScene>,
@@ -1141,18 +1143,24 @@ impl Accessibility {
             }
             snapshot.set_links(scene, link_generation);
         }
-        adapter.update_if_active(|| lock(&self.snapshot).tree());
+        if let Some(adapter) = adapter {
+            adapter.update_if_active(|| lock(&self.snapshot).tree());
+        }
     }
 
     pub fn present_links(
         &self,
-        adapter: &mut Adapter,
+        adapter: Option<&mut Adapter>,
         scene: Option<&Scene>,
         generation: Option<u64>,
     ) {
         if lock(&self.snapshot).link_identity == link_identity(scene, generation) {
             return;
         }
+        let Some(adapter) = adapter else {
+            lock(&self.snapshot).set_links(scene, generation);
+            return;
+        };
         adapter.update_if_active(|| {
             let mut snapshot = lock(&self.snapshot);
             snapshot.set_links(scene, generation);

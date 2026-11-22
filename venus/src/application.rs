@@ -1,4 +1,20 @@
+#![forbid(unsafe_code)]
+
+use crate::{
+    Accessibility, AccessibilityTarget, AttentionFilter, BarItem, BenchTrace, CellMetrics,
+    CellText, ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
+    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, FrameTimings, GpuUse,
+    HeaderText, HeadingAction, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels,
+    LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor,
+    PaneHeaderAction, PresentOutcome, RamUse, ReleaseStage, Renderer, Scene, SceneRect, SendError,
+    SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction,
+    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
+    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, bench_trace,
+    bench_tracing, focused_terminal, labels_only_change, read_eon_icon, shown_workspace,
+    validate_copy_uri, validate_open_uri, wrapped_lines,
+};
 use crate::{Result, launch::LaunchArguments};
+use crate::{WindowCommand, external_command};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v47::{
     Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, FocusReport, PopupEntry,
@@ -37,22 +53,10 @@ use winit::{
     keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{CursorIcon, UserAttentionType, Window, WindowAttributes, WindowId},
 };
-use yazelix_venus::{
-    Accessibility, AccessibilityTarget, AttentionFilter, BarItem, BenchTrace, CellMetrics,
-    CellText, ClipboardEffect, Color, ConnectionState, CpuReadings, CpuTimes, CpuUse, DialogKind,
-    DialogScene, DialogText, DiskUse, EonBar, FontSettings, FontSetup, FrameTimings, GpuUse,
-    HeaderText, HeadingAction, Hyperlink, ImageKey, ImageResync, InputState, LoadLevels,
-    LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect, ModelError, Outgoing, PaddingColor,
-    PaneHeaderAction, PresentOutcome, RamUse, ReleaseStage, Renderer, Scene, SceneRect, SendError,
-    SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent, WindowMenuAction,
-    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, bench_trace,
-    bench_tracing, focused_terminal, labels_only_change, read_eon_icon, shown_workspace,
-    validate_copy_uri, validate_open_uri, wrapped_lines,
-};
-use yazelix_venus::{WindowCommand, external_command};
 
 mod geometry;
+#[cfg(feature = "candidate-rune")]
+pub(crate) mod rune_host;
 mod scroll;
 mod shortcuts;
 
@@ -538,6 +542,17 @@ struct NativeRequests {
 }
 
 impl NativeRequests {
+    /// Marks `request` pending, for a host that applies requests only after its callback.
+    #[cfg(feature = "candidate-rune")]
+    fn request(&mut self, request: NativeRequest) {
+        *match request {
+            NativeRequest::Resume => &mut self.resume,
+            NativeRequest::Present => &mut self.present,
+            NativeRequest::Redraw => &mut self.redraw,
+            NativeRequest::Exit => &mut self.exit,
+        } = true;
+    }
+
     fn take(&mut self) -> Option<NativeRequest> {
         for (pending, request) in [
             (&mut self.resume, NativeRequest::Resume),
@@ -555,12 +570,145 @@ impl NativeRequests {
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
 
+/// Where worker threads (transports, presentation control, readings, window commands) send
+/// events for the native event loop: winit's proxy, or the Rune candidate host's sender.
+#[derive(Clone)]
+enum EventSink {
+    Winit(EventLoopProxy<UserEvent>),
+    #[cfg(feature = "candidate-rune")]
+    Host(Arc<dyn Fn(UserEvent) -> bool + Send + Sync>),
+}
+
+impl EventSink {
+    /// False once the event loop is gone.
+    fn send(&self, event: UserEvent) -> bool {
+        match self {
+            Self::Winit(proxy) => proxy.send_event(event).is_ok(),
+            #[cfg(feature = "candidate-rune")]
+            Self::Host(send) => send(event),
+        }
+    }
+
+    fn winit_proxy(&self) -> Option<&EventLoopProxy<UserEvent>> {
+        match self {
+            Self::Winit(proxy) => Some(proxy),
+            #[cfg(feature = "candidate-rune")]
+            Self::Host(_) => None,
+        }
+    }
+}
+
 struct WindowState {
     renderer: Renderer,
     scale_factor: f64,
-    adapter: accesskit_winit::Adapter,
     accessibility: Accessibility,
-    window: Arc<Window>,
+    native: NativeWindow,
+}
+
+/// The native window under Venus's policy: winit's window and its AccessKit adapter, or the
+/// Rune candidate host's window (eon-yp6vg.7.9), which Rune owns.
+enum NativeWindow {
+    Winit {
+        window: Arc<Window>,
+        adapter: accesskit_winit::Adapter,
+    },
+    #[cfg(feature = "candidate-rune")]
+    Rune(rune_host::RuneWindow),
+}
+
+impl NativeWindow {
+    fn id(&self) -> Option<WindowId> {
+        match self {
+            Self::Winit { window, .. } => Some(window.id()),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => None,
+        }
+    }
+
+    /// Whether `event` came from this window. Rune delivers only its own window's events.
+    fn is(&self, id: WindowId) -> bool {
+        match self {
+            Self::Winit { window, .. } => window.id() == id,
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => true,
+        }
+    }
+
+    /// The initial output admission fact: winit's current monitor, Rune's reported output.
+    fn has_output(&self) -> bool {
+        match self {
+            Self::Winit { window, .. } => window.current_monitor().is_some(),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(window) => window.has_output(),
+        }
+    }
+
+    fn request_redraw(&self) {
+        match self {
+            Self::Winit { window, .. } => window.request_redraw(),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(window) => window.request_redraw(),
+        }
+    }
+
+    fn set_title(&self, title: &str) {
+        match self {
+            Self::Winit { window, .. } => window.set_title(title),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(window) => window.set_title(title),
+        }
+    }
+
+    /// Rune: IME is eon-yp6vg.7.2's binding; nothing is set yet.
+    fn set_ime_cursor_area(&self, position: PhysicalPosition<f64>, size: PhysicalSize<f64>) {
+        match self {
+            Self::Winit { window, .. } => window.set_ime_cursor_area(position, size),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => {}
+        }
+    }
+
+    fn set_ime_allowed(&self, allowed: bool) {
+        match self {
+            Self::Winit { window, .. } => window.set_ime_allowed(allowed),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => {}
+        }
+    }
+
+    /// Rune: pointer input is eon-yp6vg.7.2's binding; the cursor stays Rune's.
+    fn set_cursor(&self, icon: CursorIcon) {
+        match self {
+            Self::Winit { window, .. } => window.set_cursor(icon),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => {}
+        }
+    }
+
+    /// Rune: pointer input is eon-yp6vg.7.2's binding, so no drag starts here.
+    fn drag_window(&self) -> std::result::Result<(), winit::error::ExternalError> {
+        match self {
+            Self::Winit { window, .. } => window.drag_window(),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => Ok(()),
+        }
+    }
+
+    fn adapter(&mut self) -> Option<&mut accesskit_winit::Adapter> {
+        match self {
+            Self::Winit { adapter, .. } => Some(adapter),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => None,
+        }
+    }
+
+    fn process_event(&mut self, event: &WindowEvent) {
+        match self {
+            Self::Winit { window, adapter } => adapter.process_event(window, event),
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => {}
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1359,7 +1507,7 @@ struct Application {
     startup_admission: bool,
     decorations: bool,
     pane_frames: bool,
-    panel_heading: yazelix_venus::PanelHeading,
+    panel_heading: crate::PanelHeading,
     /// Whether bare loopback hosts and ports are links; Eon's `--detect-local-hosts` (VEN-C5).
     detect_local_hosts: bool,
     focus_color: Color,
@@ -1387,7 +1535,7 @@ struct Application {
     rows: Option<u16>,
     fatal_error: Option<String>,
     initial_scale_pending: bool,
-    proxy: EventLoopProxy<UserEvent>,
+    events: EventSink,
     transport_wake: Wake,
     workspace_wake: Wake,
     native_requests: NativeRequests,
@@ -1474,7 +1622,7 @@ struct Application {
 }
 
 impl Application {
-    fn new(arguments: LaunchArguments, proxy: EventLoopProxy<UserEvent>) -> Self {
+    fn new(arguments: LaunchArguments, events: EventSink) -> Self {
         let LaunchArguments {
             application_id,
             orbit_socket,
@@ -1516,14 +1664,14 @@ impl Application {
             || columns.is_some()
             || rows.is_some()
             || fonts != FontSettings::default();
-        let transport_proxy = proxy.clone();
-        let workspace_proxy = proxy.clone();
+        let transport_events = events.clone();
+        let workspace_events = events.clone();
         Self {
             transport_wake: Arc::new(move || {
-                let _ = transport_proxy.send_event(UserEvent::Transport);
+                transport_events.send(UserEvent::Transport);
             }),
             workspace_wake: Arc::new(move || {
-                let _ = workspace_proxy.send_event(UserEvent::Workspace);
+                workspace_events.send(UserEvent::Workspace);
             }),
             native_requests: NativeRequests::default(),
             application_id,
@@ -1562,7 +1710,7 @@ impl Application {
             fonts,
             columns,
             rows,
-            proxy,
+            events,
             fatal_error: None,
             initial_scale_pending,
             window: None,
@@ -1656,11 +1804,16 @@ impl Application {
             let _ = window.request_inner_size(initial);
         }
         let accessibility = Accessibility::new(window.inner_size(), self.detect_local_hosts);
+        let proxy = self
+            .events
+            .winit_proxy()
+            .ok_or("the winit window needs the winit event loop's proxy")?
+            .clone();
         let adapter = accesskit_winit::Adapter::with_mixed_handlers(
             event_loop,
             &window,
             accessibility.activation(),
-            self.proxy.clone(),
+            proxy,
         );
         let renderer = pollster::block_on(Renderer::new(
             Arc::clone(&window),
@@ -1685,9 +1838,8 @@ impl Application {
         self.window = Some(WindowState {
             renderer,
             scale_factor,
-            adapter,
             accessibility,
-            window,
+            native: NativeWindow::Winit { window, adapter },
         });
         if !self.initial_scale_pending {
             self.start_initial_attachment();
@@ -2811,7 +2963,7 @@ impl Application {
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
                 if self.attention_inbox.open {
-                    yazelix_venus::attention_inbox_hints()
+                    crate::attention_inbox_hints()
                 } else {
                     shortcut_hints_for(
                         NATIVE_PLATFORM,
@@ -4282,12 +4434,12 @@ impl Application {
             self.refresh_client_view();
             return;
         };
-        let proxy = self.proxy.clone();
+        let events = self.events.clone();
         if let Err(error) = thread::Builder::new()
             .name("venus-quit-eon-window".into())
             .spawn(move || {
                 if let Err(failure) = stop_other_window(&executable, &snapshot, &action) {
-                    let _ = proxy.send_event(UserEvent::WindowCommandFailed(failure));
+                    events.send(UserEvent::WindowCommandFailed(failure));
                 }
             })
         {
@@ -4308,12 +4460,12 @@ impl Application {
             self.refresh_client_view();
             return;
         };
-        let proxy = self.proxy.clone();
+        let events = self.events.clone();
         let result = thread::Builder::new()
             .name("venus-new-eon-window".into())
             .spawn(move || {
                 if let Err(failure) = run_new_window(&executable) {
-                    let _ = proxy.send_event(UserEvent::WindowCommandFailed(failure));
+                    events.send(UserEvent::WindowCommandFailed(failure));
                 }
             });
         if let Err(error) = result {
@@ -4331,11 +4483,11 @@ impl Application {
         let Some(path) = self.disk_path.clone() else {
             return;
         };
-        let proxy = self.proxy.clone();
+        let events = self.events.clone();
         let result = thread::Builder::new()
             .name("venus-disk-reading".into())
             .spawn(move || {
-                let _ = proxy.send_event(UserEvent::Disk(DiskUse::read(&path)));
+                events.send(UserEvent::Disk(DiskUse::read(&path)));
             });
         self.disk_reading = result.is_ok();
         if result.is_err() {
@@ -4344,12 +4496,12 @@ impl Application {
     }
 
     fn read_gpu(&mut self) {
-        let proxy = self.proxy.clone();
+        let events = self.events.clone();
         let interval = self.gpu_interval;
         self.gpu_reading = thread::Builder::new()
             .name("venus-gpu-reading".into())
             .spawn(move || {
-                let _ = proxy.send_event(UserEvent::Gpu(GpuUse::read(interval)));
+                events.send(UserEvent::Gpu(GpuUse::read(interval)));
             })
             .is_ok();
         if !self.gpu_reading && self.gpu.take().is_some() {
@@ -5266,7 +5418,7 @@ impl Application {
         let Some(state) = &mut self.window else {
             return;
         };
-        state.window.set_title(window_title(
+        state.native.set_title(window_title(
             self.terminal
                 .model
                 .scene()
@@ -5283,15 +5435,15 @@ impl Application {
             let left =
                 origin.0 + metrics.padding + f32::from(cursor.leading_column()) * metrics.width;
             let top = origin.1 + metrics.padding + f32::from(cursor.row) * metrics.height;
-            state.window.set_ime_cursor_area(
+            state.native.set_ime_cursor_area(
                 PhysicalPosition::new(f64::from(left), f64::from(top)),
                 PhysicalSize::new(f64::from(metrics.width * 2.0), f64::from(metrics.height)),
             );
         }
-        state.window.set_ime_allowed(ime_allowed);
-        state.window.set_cursor(pointer_icon);
+        state.native.set_ime_allowed(ime_allowed);
+        state.native.set_cursor(pointer_icon);
         state.accessibility.update(
-            &mut state.adapter,
+            state.native.adapter(),
             self.terminal.model.scene(),
             workspace.as_ref(),
             dialog.as_ref(),
@@ -5652,10 +5804,10 @@ impl Application {
             owned_status.as_str()
         };
         let preedit = self.input.preedit();
-        let scene_started = yazelix_venus::frame_time();
+        let scene_started = crate::frame_time();
         let workspace = self.workspace_scene();
         let dialog = self.dialog_scene();
-        let scene_ns = yazelix_venus::frame_elapsed(scene_started);
+        let scene_ns = crate::frame_elapsed(scene_started);
         let workspace_focus = self.workspace_focus;
         let candidate = self.presentation_candidate(workspace.as_ref());
         let kinetic_active = self.terminal.terminal_scroll.velocity != 0.0;
@@ -5814,12 +5966,12 @@ impl Application {
                 self.links.unshifted = unshifted;
                 self.links.shown = shown;
                 state.accessibility.present_links(
-                    &mut state.adapter,
+                    state.native.adapter(),
                     self.terminal.model.scene(),
                     link_generation,
                 );
                 if kinetic_active {
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
                 if let Some(revision) = candidate.revision {
                     self.flush_deferred_selection(revision);
@@ -5835,7 +5987,7 @@ impl Application {
             Ok(PresentOutcome::Recovered) => {
                 self.links.unshifted = false;
                 self.presentation.invalidate();
-                state.window.request_redraw();
+                state.native.request_redraw();
             }
             Err(error) => {
                 self.terminal
@@ -5845,11 +5997,11 @@ impl Application {
                     &mut self.render_notice,
                     &mut self.presentation,
                     error,
-                    |title| state.window.set_title(title),
+                    |title| state.native.set_title(title),
                     |message| report(message),
                 ) {
                     state.accessibility.update(
-                        &mut state.adapter,
+                        state.native.adapter(),
                         self.terminal.model.scene(),
                         workspace.as_ref(),
                         dialog.as_ref(),
@@ -5943,6 +6095,39 @@ impl Application {
         self.window.is_none()
     }
 
+    /// A native scale change. While the initial scale is pending, the host is first asked for
+    /// the initial grid's size at the new scale; a refusal is fatal.
+    fn change_scale(
+        &mut self,
+        scale_factor: f64,
+        request_size: impl FnOnce(PhysicalSize<u32>) -> Result,
+    ) {
+        let Some(state) = &mut self.window else {
+            return;
+        };
+        if self.initial_scale_pending {
+            let initial = initial_window_size(
+                self.columns,
+                self.rows,
+                state.renderer.metrics_at_scale(scale_factor),
+                scale_factor,
+                self.workspace_model.snapshot(),
+            );
+            if let Err(error) = initial.and_then(request_size) {
+                self.fatal_error = Some(error.to_string());
+                self.native_requests.exit = true;
+                return;
+            }
+        }
+        self.terminal
+            .terminal_scroll
+            .cancel(&mut self.terminal.pending_viewport);
+        state.scale_factor = scale_factor;
+        report(format_args!("window scale factor {scale_factor}"));
+        self.presentation.invalidate();
+        self.cancel_pointer_sequence();
+    }
+
     fn handle_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
         let _bench_input = BenchInput::start(&event);
         if local_input(&event) {
@@ -5972,10 +6157,10 @@ impl Application {
         let Some(state) = &mut self.window else {
             return;
         };
-        if state.window.id() != window_id {
+        if !state.native.is(window_id) {
             return;
         }
-        state.adapter.process_event(&state.window, &event);
+        state.native.process_event(&event);
         if let WindowEvent::MouseInput { state, button, .. } = &event {
             let target = window_menu_scene
                 .as_ref()
@@ -6019,36 +6204,11 @@ impl Application {
             WindowEvent::ScaleFactorChanged {
                 scale_factor,
                 mut inner_size_writer,
-            } => {
-                if self.initial_scale_pending {
-                    let initial = initial_window_size(
-                        self.columns,
-                        self.rows,
-                        state.renderer.metrics_at_scale(scale_factor),
-                        scale_factor,
-                        self.workspace_model.snapshot(),
-                    );
-                    match initial.and_then(|size| {
-                        inner_size_writer
-                            .request_inner_size(size)
-                            .map_err(Into::into)
-                    }) {
-                        Ok(()) => {}
-                        Err(error) => {
-                            self.fatal_error = Some(error.to_string());
-                            self.native_requests.exit = true;
-                            return;
-                        }
-                    }
-                }
-                self.terminal
-                    .terminal_scroll
-                    .cancel(&mut self.terminal.pending_viewport);
-                state.scale_factor = scale_factor;
-                report(format_args!("window scale factor {scale_factor}"));
-                self.presentation.invalidate();
-                self.cancel_pointer_sequence();
-            }
+            } => self.change_scale(scale_factor, |size| {
+                inner_size_writer
+                    .request_inner_size(size)
+                    .map_err(Into::into)
+            }),
             WindowEvent::Occluded(occluded) => {
                 self.window_occluded = occluded;
                 self.next_gpu = None;
@@ -6061,7 +6221,7 @@ impl Application {
                     self.presentation.invalidate();
                     self.cancel_pointer_sequence();
                 } else {
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => self.render(),
@@ -6078,7 +6238,7 @@ impl Application {
                     && event.logical_key == Key::Named(NamedKey::Escape)
                     && self.hint_popup.dismiss()
                 {
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
                 self.cancel_terminal_scroll();
                 let Some(event) = self.input.resolve_key(event) else {
@@ -6164,7 +6324,7 @@ impl Application {
                                 .menu_target_at(position.x as f32, position.y as f32)
                                 .cloned()
                         });
-                        state.window.set_cursor(if action.is_some() {
+                        state.native.set_cursor(if action.is_some() {
                             CursorIcon::Pointer
                         } else {
                             CursorIcon::Default
@@ -6209,7 +6369,7 @@ impl Application {
                     || popup_at(self.cursor) != popup_at(position)
                     || (!self.links.pointer_inside && header_at(position).is_some())
                 {
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
                 let selecting = self.input.is_selecting();
                 let was_scrollback = pill_takes_pointer(scrollback_rect, self.cursor, selecting);
@@ -6281,7 +6441,7 @@ impl Application {
             WindowEvent::CursorLeft { .. } => {
                 self.links.pointer_inside = false;
                 self.terminal.scrollback_press = None;
-                state.window.request_redraw();
+                state.native.request_redraw();
                 self.cancel_terminal_scroll();
                 self.cancel_pointer_sequence();
                 self.links.focus = None;
@@ -6296,7 +6456,7 @@ impl Application {
                     self.terminal.selection_scroll.cancel();
                 }
                 if button_state == ElementState::Pressed && self.hint_popup.dismiss() {
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
                 match viewer_button(
                     &mut self.shortcut_viewer.dismissal,
@@ -6352,11 +6512,10 @@ impl Application {
                     if !navigation {
                         state.renderer.reset_cursor_animation();
                     }
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
                 let renderer_size = state.renderer.size();
                 let metrics = state.renderer.metrics();
-                let window = Arc::clone(&state.window);
                 if button == MouseButton::Left && button_state == ElementState::Pressed {
                     self.header_press = None;
                 }
@@ -6489,7 +6648,11 @@ impl Application {
                         }
                         Some(WorkspaceHit::Drag) => {
                             self.header_press = Some(HeaderPress::Drag);
-                            if let Err(error) = window.drag_window() {
+                            let dragged = self
+                                .window
+                                .as_ref()
+                                .map_or(Ok(()), |state| state.native.drag_window());
+                            if let Err(error) = dragged {
                                 report(format!("cannot drag window: {error}"));
                             }
                             return;
@@ -6576,7 +6739,7 @@ impl Application {
                     if scrolling {
                         state.renderer.reset_cursor_animation();
                     }
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
                 if let Some(scroll) = workspace
                     .as_ref()
@@ -6645,7 +6808,7 @@ impl Application {
                 }
                 self.drive_terminal_scroll();
                 if let Some(state) = &self.window {
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
             }
             _ => {}
@@ -6684,7 +6847,7 @@ impl Application {
                 self.native_requests.exit = true;
             }
             UserEvent::Present => {
-                if !self.window_focused && self.window.is_some() {
+                if present_admitted(self.window_focused, self.window.is_some()) {
                     self.native_requests.present = true;
                 }
             }
@@ -6697,7 +6860,7 @@ impl Application {
                 let Some(state) = &mut self.window else {
                     return;
                 };
-                if state.window.id() != event.window_id {
+                if state.native.id() != Some(event.window_id) {
                     return;
                 }
                 match event.window_event {
@@ -6822,6 +6985,24 @@ impl Application {
         Ok(())
     }
 
+    /// The end of one native event-loop turn, on either host: admits the initial scale once the
+    /// window has entered an output (sampled after this turn's scale and size events), then
+    /// advances the deadlines. Returns the next deadline; none sleeps until an event. A failed
+    /// admission is fatal and requests the exit.
+    fn end_turn(&mut self) -> Option<Instant> {
+        self.turns = self.turns.wrapping_add(1);
+        let output_admitted = self
+            .window
+            .as_ref()
+            .is_some_and(|state| state.native.has_output());
+        if let Err(error) = self.admit_initial_scale(output_admitted, &mut io::stdout()) {
+            self.fatal_error = Some(error.to_string());
+            self.native_requests.exit = true;
+            return None;
+        }
+        self.advance_deadlines(Instant::now())
+    }
+
     fn apply_native_requests(&mut self, mut native: impl FnMut(&mut Self, NativeRequest)) {
         while let Some(request) = self.native_requests.take() {
             native(self, request);
@@ -6832,15 +7013,15 @@ impl Application {
         match request {
             NativeRequest::Resume => self.resume_window(event_loop),
             NativeRequest::Present => {
-                if let Some(state) = &self.window {
-                    state
-                        .window
-                        .request_user_attention(Some(UserAttentionType::Informational));
+                if let Some(NativeWindow::Winit { window, .. }) =
+                    self.window.as_ref().map(|state| &state.native)
+                {
+                    window.request_user_attention(Some(UserAttentionType::Informational));
                 }
             }
             NativeRequest::Redraw => {
                 if let Some(state) = &self.window {
-                    state.window.request_redraw();
+                    state.native.request_redraw();
                 }
             }
             NativeRequest::Exit => event_loop.exit(),
@@ -6867,22 +7048,16 @@ impl ApplicationHandler<UserEvent> for Application {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.turns = self.turns.wrapping_add(1);
-        // Initial output entry is sampled after this turn's scale/size events, as before.
-        let output_admitted = self
-            .window
-            .as_ref()
-            .is_some_and(|state| state.window.current_monitor().is_some());
-        if let Err(error) = self.admit_initial_scale(output_admitted, &mut io::stdout()) {
-            self.fatal_error = Some(error.to_string());
-            self.native_requests.exit = true;
-            self.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
-            return;
-        }
-        let deadline = self.advance_deadlines(Instant::now());
+        let deadline = self.end_turn();
         self.apply_native_requests(|app, request| app.apply_winit_request(event_loop, request));
         event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
+}
+
+/// Whether a control Present asks the native window for attention: only an existing window
+/// that is not focused (VEN-C14). Both hosts decide by it.
+fn present_admitted(window_focused: bool, has_window: bool) -> bool {
+    !window_focused && has_window
 }
 
 /// The local wall-clock time, or none rather than UTC when the local time zone is unknown.
@@ -7332,7 +7507,7 @@ fn cycle_focus(focus: WorkspaceFocus, sidebar_rows: bool, has_panes: bool) -> Wo
 
 /// The sidebar row one below or above `current`; none past either end or without a current row.
 fn step_sidebar_row<'a>(
-    rows: &'a [yazelix_venus::SidebarRow],
+    rows: &'a [crate::SidebarRow],
     current: Option<&str>,
     down: bool,
 ) -> Option<&'a str> {
@@ -8001,16 +8176,16 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     let event_loop = EventLoop::<UserEvent>::with_user_event()
         .build()
         .map_err(|_| io::Error::other("Venus requires a native display"))?;
-    let mut application = Application::new(arguments, event_loop.create_proxy());
+    let mut application = Application::new(arguments, EventSink::Winit(event_loop.create_proxy()));
     if application.startup_admission && application.workspace_socket.is_some() {
-        let response = yazelix_venus::read_workspace_response(&mut io::stdin().lock())?;
+        let response = crate::read_workspace_response(&mut io::stdin().lock())?;
         if !matches!(response, eon_workspace_protocol::v47::Response::Snapshot(_)) {
             return Err("Venus startup admission requires an Eon workspace snapshot".into());
         }
         application.workspace_model.apply(response);
     }
     if application.supervised {
-        start_presentation_control(event_loop.create_proxy())?;
+        start_presentation_control(EventSink::Winit(event_loop.create_proxy()))?;
         if !application.startup_admission {
             application.focus_reporter = admit_presentation(
                 &mut io::stdout(),
@@ -8027,11 +8202,11 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     Ok(())
 }
 
-fn start_presentation_control(proxy: EventLoopProxy<UserEvent>) -> Result {
+fn start_presentation_control(events: EventSink) -> Result {
     thread::Builder::new()
         .name("venus-presentation-control".into())
         .spawn(move || {
-            run_presentation_control(io::stdin().lock(), |event| proxy.send_event(event).is_ok());
+            run_presentation_control(io::stdin().lock(), |event| events.send(event));
         })?;
     Ok(())
 }

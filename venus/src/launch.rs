@@ -1,4 +1,7 @@
+#![forbid(unsafe_code)]
+
 use crate::Result;
+use crate::{BarItem, Color, FontSettings, LoadLevels, PaddingColor, PanelHeading, ReleaseStage};
 use std::{
     collections::hash_map::{DefaultHasher, RandomState},
     env,
@@ -8,9 +11,6 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::Duration,
-};
-use yazelix_venus::{
-    BarItem, Color, FontSettings, LoadLevels, PaddingColor, PanelHeading, ReleaseStage,
 };
 
 const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
@@ -699,9 +699,7 @@ fn default_socket_path() -> Result<PathBuf> {
     let uid = fs::metadata("/proc/self")?.uid();
     #[cfg(target_os = "macos")]
     let uid = {
-        let output = yazelix_venus::external_command("/usr/bin/id")
-            .arg("-u")
-            .output()?;
+        let output = crate::external_command("/usr/bin/id").arg("-u").output()?;
         if !output.status.success() {
             return Err(format!("/usr/bin/id -u failed with {}", output.status).into());
         }

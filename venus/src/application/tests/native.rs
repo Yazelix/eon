@@ -171,7 +171,10 @@ fn window_menu_application_routes_input_and_lifecycle() {
         .build()
         .unwrap();
     let arguments = launch::launch_arguments([OsString::from("/unused-orbit.sock")], None).unwrap();
-    let mut probe = Probe(Application::new(arguments, event_loop.create_proxy()));
+    let mut probe = Probe(Application::new(
+        arguments,
+        EventSink::Winit(event_loop.create_proxy()),
+    ));
     event_loop.run_app(&mut probe).unwrap();
 }
 
@@ -269,7 +272,10 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
         None,
     )
     .unwrap();
-    let mut probe = Probe(Application::new(arguments, event_loop.create_proxy()));
+    let mut probe = Probe(Application::new(
+        arguments,
+        EventSink::Winit(event_loop.create_proxy()),
+    ));
     event_loop.run_app(&mut probe).unwrap();
     assert!(probe.0.fatal_error.is_some());
 }
@@ -335,7 +341,7 @@ fn native_startup(explicit_grid: bool) {
                 .app
                 .window
                 .as_ref()
-                .is_some_and(|state| state.window.current_monitor().is_some());
+                .is_some_and(|state| state.native.has_output());
             self.app
                 .admit_initial_scale(output_admitted, &mut self.admission)
                 .unwrap();
@@ -412,7 +418,7 @@ fn native_startup(explicit_grid: bool) {
     readiness
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
-    let mut app = Application::new(arguments, event_loop.create_proxy());
+    let mut app = Application::new(arguments, EventSink::Winit(event_loop.create_proxy()));
     app.startup_admission = true;
     let mut probe = Probe {
         app,
@@ -1536,7 +1542,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                     break;
                 }
             }
-            assert_eq!(admission, Err(yazelix_venus::SendError::Full));
+            assert_eq!(admission, Err(crate::SendError::Full));
             let requests = [
                 ClientMessage::ScrollVertical {
                     frame_revision: 17,
@@ -1563,7 +1569,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 .as_ref()
                 .unwrap()
                 .send(ClientMessage::ReturnToLive)
-                != Err(yazelix_venus::SendError::Closed)
+                != Err(crate::SendError::Closed)
             {
                 assert!(
                     Instant::now() < deadline,
@@ -1778,12 +1784,12 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 "an empty body has no resize failure"
             );
             self.checked = true;
-            let proxy = self.app.proxy.clone();
+            let proxy = self.app.events.clone();
             self.idle_timer = Some(thread::spawn(move || {
                 thread::sleep(Duration::from_millis(100));
-                let _ = proxy.send_event(UserEvent::Transport);
+                proxy.send(UserEvent::Transport);
                 thread::sleep(Duration::from_millis(150));
-                let _ = proxy.send_event(UserEvent::Exit);
+                proxy.send(UserEvent::Exit);
             }));
         }
 
@@ -1954,7 +1960,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             None,
         )
         .unwrap(),
-        event_loop.create_proxy(),
+        EventSink::Winit(event_loop.create_proxy()),
     );
     // This input fixture supplies its own attachment and frames; native
     // startup admission has separate coverage.
@@ -2634,7 +2640,7 @@ fn a_close_request_quits_as_alt_shift_q_does() {
     use eon_workspace_protocol::v47::{self as workspace, BusyTerminals};
 
     run_quit_probe("close", |app, event_loop, busy, actions, terminal| {
-        let id = app.window.as_ref().unwrap().window.id();
+        let id = app.window.as_ref().unwrap().native.id().unwrap();
         let close = |app: &mut Application| {
             app.window_event(event_loop, id, WindowEvent::CloseRequested);
         };
@@ -2769,7 +2775,7 @@ fn a_press_outside_the_shortcut_viewer_closes_it_and_reaches_nothing() {
     use winit::{event::DeviceId, keyboard::ModifiersState};
 
     run_quit_probe("viewer-press", |app, event_loop, _, actions, terminal| {
-        let id = app.window.as_ref().unwrap().window.id();
+        let id = app.window.as_ref().unwrap().native.id().unwrap();
         let device_id = DeviceId::dummy();
         let move_to = |app: &mut Application, (x, y): (f32, f32)| {
             let position = PhysicalPosition::new(f64::from(x), f64::from(y));
@@ -2879,7 +2885,7 @@ fn a_press_outside_the_shortcut_viewer_closes_it_and_reaches_nothing() {
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn a_close_request_detaches_while_the_workspace_is_unavailable() {
     run_quit_probe("unavailable", |app, event_loop, _, actions, _| {
-        let id = app.window.as_ref().unwrap().window.id();
+        let id = app.window.as_ref().unwrap().native.id().unwrap();
         app.handle_workspace(WorkspaceEvent::Unavailable {
             notice: "Eon is not answering.".into(),
             detail: None,
@@ -2898,7 +2904,7 @@ fn a_close_request_detaches_after_a_failed_stop() {
     use eon_workspace_protocol::v47::{self as workspace, BusyTerminals};
 
     run_quit_probe("failed-stop", |app, event_loop, busy, actions, _| {
-        let id = app.window.as_ref().unwrap().window.id();
+        let id = app.window.as_ref().unwrap().native.id().unwrap();
         let mut idle = busy;
         idle.busy = Some(BusyTerminals {
             terminals: vec![],
@@ -2955,10 +2961,6 @@ fn stop_g7() -> Outgoing {
         generation: GENERATION_G7.into(),
     }
 }
-
-/// The probe window's generation, which the Reserved Stop carries.
-#[cfg(target_os = "linux")]
-const GENERATION_G7: &str = "g1-00000000000000000000000000000007";
 
 /// Whether the quit prompt is the dialog shown, and AccessKit describes it. The attention inbox
 /// draws over every other dialog and has filter chips; the prompt draws over Shortcuts.
@@ -3220,10 +3222,7 @@ type QuitCheck = fn(
 /// p1 busy, and runs `check` once the window is presented. The check must end the event loop.
 #[cfg(target_os = "linux")]
 fn run_quit_probe(name: &str, check: QuitCheck) {
-    use eon_workspace_protocol::v47::{
-        self as workspace, BusyTerminal, BusyTerminals, RunningWindows, TargetId, TerminalTarget,
-        WindowEntry, WindowState,
-    };
+    use eon_workspace_protocol::v47 as workspace;
     use std::{os::unix::net::UnixListener, sync::mpsc};
     use winit::platform::wayland::EventLoopBuilderExtWayland;
 
@@ -3355,85 +3354,7 @@ fn run_quit_probe(name: &str, check: QuitCheck) {
             });
         }
     });
-    let busy = workspace::Snapshot {
-        focus: None,
-        generation: "g1-00000000000000000000000000000001".into(),
-        created_build: "g1-00000000000000000000000000000001".into(),
-        active_build: "g1-00000000000000000000000000000001".into(),
-        workspace: "s1".into(),
-        active_workspace: "s1".into(),
-        workspaces: vec![workspace::WorkspaceInfo {
-            id: "s1".into(),
-            persistent_id: Some("s1".into()),
-            registration_error: None,
-            name: None,
-            tab_count: 1,
-            attention: None,
-            recency: 0,
-        }],
-        active_tab: "t1".into(),
-        geometry: workspace::PopupGeometry {
-            side_margin: 8.0,
-            vertical_margin: 4.0,
-        },
-        entries: vec![],
-        tabs: vec![Tab {
-            id: "t1".into(),
-            directory: b"/tmp".to_vec(),
-            pending: false,
-            selected_pane: Some("p1".into()),
-            selected_popup: None,
-            columns: vec![workspace::Column {
-                panes: vec![Pane {
-                    label: "p1".into(),
-                    pinned_name: None,
-                    tag: None,
-                    id: "p1".into(),
-                    session: "s1".into(),
-                    endpoint: root.join("p1.sock").into_os_string().into_vec(),
-                    live: true,
-                    attention: None,
-                }],
-                expanded: "p1".into(),
-            }],
-            popups: vec![],
-            attention_rollup: None,
-        }],
-        codex_quota: None,
-        claude_quota: None,
-        google_quota: None,
-        google_quota_failure: None,
-        codex_quota_failure: None,
-        claude_quota_failure: None,
-        running: Some(RunningWindows {
-            this: WindowEntry {
-                created_build: Some("g1-00000000000000000000000000000001".into()),
-                active_build: Some("g1-00000000000000000000000000000001".into()),
-                window: None,
-                generation: GENERATION_G7.into(),
-                name: None,
-                started_at: None,
-                live_terminals: Some(3),
-                state: WindowState::Live,
-            },
-            others: None,
-            omitted: 0,
-        }),
-        busy: Some(BusyTerminals {
-            terminals: vec![BusyTerminal {
-                target: TerminalTarget {
-                    workspace: "s1".into(),
-                    tab: "t1".into(),
-                    id: TargetId::Pane("p1".into()),
-                    terminal: "s1".into(),
-                },
-                name: "p1".into(),
-            }],
-            omitted: 0,
-        }),
-        sidebar: workspace::Sidebar::Open,
-        attention_queue: Vec::new(),
-    };
+    let busy = busy_window_snapshot(root.join("p1.sock").into_os_string().into_vec());
     let event_loop = EventLoop::<UserEvent>::with_user_event()
         .with_wayland()
         .with_any_thread(true)
@@ -3448,7 +3369,7 @@ fn run_quit_probe(name: &str, check: QuitCheck) {
             None,
         )
         .unwrap(),
-        event_loop.create_proxy(),
+        EventSink::Winit(event_loop.create_proxy()),
     );
     app.workspace_transport = Some(WorkspaceTransport::start(workspace_socket, || {}));
     let mut probe = Probe {
@@ -3794,7 +3715,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
         .unwrap();
     let arguments =
         launch::launch_arguments([root.join("unused-orbit.sock").into_os_string()], None).unwrap();
-    let mut app = Application::new(arguments, event_loop.create_proxy());
+    let mut app = Application::new(arguments, EventSink::Winit(event_loop.create_proxy()));
     app.initial_scale_pending = false;
     app.workspace_model
         .apply(workspace::Response::Snapshot(snapshot.clone()));

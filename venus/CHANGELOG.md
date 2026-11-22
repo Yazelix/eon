@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C14: Present followed by EOF waits, on Wayland, until the compositor has
+  processed the Present's attention request, each wait ending within
+  `SESSION_CLEANUP_TIMEOUT` of its Present; implemented only in the private
+  Rune candidate (`venus-rune-candidate`), the shipping client is unchanged
+  until eon-yp6vg.54 (`eon-yp6vg.7.9`, approved by eon-lead 2026-11-20 and
+  2026-11-21).
+
 - VEN-C30: Antigravity (`app=antigravity`) sidebar and attention inbox rows use
   Google Antigravity's official full-colour icon (`Icon`), unaltered and never
   tinted, keeping its supplied colours and transparency without dimming when

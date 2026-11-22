@@ -1,3 +1,4 @@
+use crate::{CellMetrics, ScenePreview, WorkspaceScene};
 use orbit_protocol::session::{ClientMessage, MAX_SCROLL_ROWS, VerticalDirection};
 use std::{
     collections::VecDeque,
@@ -7,7 +8,6 @@ use winit::{
     dpi::PhysicalPosition,
     event::{MouseScrollDelta, TouchPhase},
 };
-use yazelix_venus::{CellMetrics, ScenePreview, WorkspaceScene};
 
 pub(super) fn list_scroll_delta(delta: MouseScrollDelta, cell_height: f32) -> f32 {
     match delta {
@@ -659,7 +659,7 @@ mod tests {
         let start = Instant::now();
         let mut pending = None;
         assert!(!TerminalScroll::default().accept_batch(&mut pending, -1, -1, 20.0));
-        let row = yazelix_venus::DrawRow {
+        let row = crate::DrawRow {
             wrapped: false,
             wrap_continuation: false,
             cells: Vec::new(),
@@ -897,7 +897,7 @@ mod tests {
             direction: VerticalDirection::Up,
             edge_reached: false,
             rows: vec![
-                yazelix_venus::DrawRow {
+                crate::DrawRow {
                     wrapped: false,
                     wrap_continuation: false,
                     cells: Vec::new(),

@@ -2,12 +2,12 @@
 //! surface, and whether another workspace column fits.
 
 use crate::Result;
+use crate::{
+    CellMetrics, EonBar, SceneRect, ShortcutHintsScene, WorkspaceScene, workspace_column_width,
+};
 use eon_workspace_protocol::v47::MAX_COLUMNS;
 use orbit_protocol::{MAX_CELLS, session::SurfaceSize};
 use winit::dpi::PhysicalSize;
-use yazelix_venus::{
-    CellMetrics, EonBar, SceneRect, ShortcutHintsScene, WorkspaceScene, workspace_column_width,
-};
 
 /// Narrowest terminal grid a new workspace column may leave.
 pub(super) const MIN_COLUMN_CELLS: u16 = 40;

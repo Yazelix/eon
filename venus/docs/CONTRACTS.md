@@ -1351,7 +1351,17 @@ re-proved when that platform or feature is next touched.
   the focus as unknown. Standalone Venus and eonbase send no focus report.
 - **Important failures:** Malformed or partial commands do not present; standalone
   Busy remains terminal; Present followed by EOF preserves exact Present-then-
-  Exit ordering.
+  Exit ordering. On Wayland, before that exit Venus waits until the compositor
+  has processed the Present's attention request (activation token, activate,
+  then a later display sync). Each attention wait ends within
+  `SESSION_CLEANUP_TIMEOUT` of the Present that requested it, and every Present
+  is requested before EOF, so control EOF still exits within that bound, the
+  way today's fast exit does. A window's first Present after it is shown also
+  makes one registry roundtrip, inside the same bound, to find
+  `xdg_activation_v1`; without it nothing waits. After a wait times out, later
+  Presents in that window do not wait until the compositor answers again or the
+  window is shown again. Processing does not guarantee focus or urgency, which
+  remain compositor policy, and the wait never stops Orbit.
 - **Owner:** Venus supervised control stream and native event-loop lifecycle.
 - **Consumes:** Eon `EON-C11`, one bounded private byte stream, Unix EOF, and
   exact winit 0.30.13 event/exit APIs.
@@ -1396,7 +1406,10 @@ re-proved when that platform or feature is next touched.
     eonbase started and exited with its command.
 - **Open proof:** Pending re-proof in this repository: native Present of an
   existing window that preserves its process and terminal attachment. Focus
-  reports are not proved on Darwin.
+  reports are not proved on Darwin. The attention wait under Important
+  failures is implemented only in the Rune candidate (`venus-rune-candidate`,
+  eon-yp6vg.7.9); the shipping winit client keeps its immediate exit until
+  eon-yp6vg.54 switches Venus to Rune.
   Re-proof of VEN-C14 on the beta candidate is pending under eon-igae.7.5,
   after the remote lifecycle amendments in eon-remote-workspaces-52i4.2 and
   eon-remote-workspaces-52i4.3.

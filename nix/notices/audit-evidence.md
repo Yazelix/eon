@@ -54,6 +54,33 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+For eon-yp6vg.7.9 over `ffc97873`, the Eon, Orbit and Venus contexts change
+through the normalized workspace lock. The `eon-rune` revision moves from
+`caeb0472` to `52f6f6c9` in the source fields for `parley_engine`, `rune`,
+`rune-motion`, `rune-staging`, `rune-taffy` and `tiny-skia-path`. Reversing
+that substitution in each candidate graph reproduces the accepted graph
+byte for byte. The archive producers use default features and leave
+`candidate-rune` disabled.
+
+Three `inspect-audit` replays against the actual binaries reproduce the saved
+graphs and observations. The candidate and base runtime and native feature
+trees match byte for byte, and their audited package records and missing sets
+match. The exact-vendor Cargo tree replays confirm that the host exceptions
+appear only in the normal/build tree. The unselected exceptions are absent
+from both trees and from the base and candidate producer build-phase compile
+lines. The counts remain Eon 9 host / 2 unselected, Orbit 6 / 1 and Venus 15 / 4.
+
+The strict `propose-audit-renewal` result changes six `graph_sha256` fields and
+preserves every exception identity, reason and evidence anchor. Zoxide's
+`prove-audit-omission` accepts the retained root in the root-only baseline and
+rejects the omission of audited runtime dependency `anyhow 1.0.98` with both
+the preceding and renewed exception data.
+
+- Vendor at `/nix/store/jha1vj3q936amz2xz7svdhbm3grplg9h-cargo-vendor-dir`.
+- Proposal input at `/nix/store/0n6nqy1j5j9qla957bznpak4v553gv1x-eon-archive-notice-input.json` (candidate tree `472b7388`, before this renewal).
+
+Historical (`eon-eon-agent-lr8sx.40.5`):
+
 For eon-eon-agent-lr8sx.40.5 over `027f86d8`, the Eon, Orbit and Venus
 contexts change through one local package. The bead moves Boat out of
 `rota-cli` into the new unpublished local crate `eon-boat`, whose lock stanza
@@ -376,6 +403,19 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-22 for `eon-yp6vg.7.9` to context
+`e5bb007e31c6737e0c60bd13b6273ed8bd053815091be70065dcd4f6413a8549`
+in the single archive variant. Restoring the parent Rune revision in the
+normalized lock reproduces `91ec5905…`.
+
+- Source at `/nix/store/l33z3rvd7dcvif2qc99axlxajnzvjiw9-source`.
+- Observation at `/nix/store/a8lm3c59bvzd1dyg7abwjaaisrvx1n10-eon-cargo-notices-0.1.28`.
+- Binary at `/nix/store/7bvjg8nrgnzln835iaayg5zj5wfazh79-eon-rust-0.1.28/bin/eon`
+  with SHA-256 `a35a25abe1681ecc38aa003fa4d13f5b86eb6822cfda62f99f37bace9898d317`.
+- Observed build flags `-j 6 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-eon-agent-lr8sx.40.5`):
+
 Renewed on 2026-11-20 for `eon-eon-agent-lr8sx.40.5` to context
 `91ec5905fa2ac006539872d8a56afa5e2c6935d2665389b64cae3166197876e7`
 in the single archive variant. The local crate `eon-boat` joins this context: its lock stanza, `eon`'s
@@ -629,6 +669,19 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-22 for `eon-yp6vg.7.9` to context
+`c06ba4abdcb8266bd7877235e7b3323f100b0ec3f6df153dc324ad9f1d95880c`
+in the single archive variant. Restoring the parent Rune revision in the
+normalized lock reproduces `368da961…`.
+
+- Source at `/nix/store/ijybhmvgpjjspxzxmlj1ynw65khmnypr-source`.
+- Observation at `/nix/store/dfd3xka4vw08i640a234138awlia9lqm-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/ag5xxhj2sh9avrdnq2mww6fjfqr1crfk-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `49c5e6b7f9bbde1dff5d3d566e108b1a6cc8e52067da10a80fd34dbd88d47e05`.
+- Observed build flags `-j 6 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-eon-agent-lr8sx.40.5`):
+
 Renewed on 2026-11-20 for `eon-eon-agent-lr8sx.40.5` to context
 `368da961dae3792455876c44df2000c58baffb6f51d5b6babb8d674085a2ffe6`
 in the single archive variant. Only the normalized workspace lock changes in
@@ -874,6 +927,19 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-22 for `eon-yp6vg.7.9` to context
+`bfa4519b8698ca3dbd7cce90191ea0b93a3236dfa3d7031ced53a2eeb8778a80`
+in the single archive variant. Restoring the parent Rune revision in the
+normalized lock reproduces `1e960751…`.
+
+- Source at `/nix/store/ghx2qicfk6bq7amnkqv4xv0mc5cb3mqy-source`.
+- Observation at `/nix/store/43zs456258s2jzj7nmblva2w5jcvvkys-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/3whqfr9i2i6mwglnbmqmd6kf02wj4zgn-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `7dc214b4c304e3e3397c02f2535c03a8a6571f756db39b04e350c7fa446ff547`.
+- Observed build flags `-j 6 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-eon-agent-lr8sx.40.5`):
 
 Renewed on 2026-11-20 for `eon-eon-agent-lr8sx.40.5` to context
 `1e96075187bb8d307bae06d72614839399272f31a471c480f6514412a26bc249`

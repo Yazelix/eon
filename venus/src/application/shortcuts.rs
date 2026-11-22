@@ -1,4 +1,5 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
+use crate::{HintSection, ShortcutGroup, ShortcutHint, ShortcutRow, WorkspaceFocus};
 pub(super) use eon_workspace_protocol::shortcuts::{
     Action as NativeShortcutAction, Direction as ShortcutDirection, FIXED_SHORTCUTS,
     Shortcut as NativeShortcut, Side as ShortcutSide, Trigger as NativeShortcutTrigger, shortcut,
@@ -16,7 +17,6 @@ use winit::{
     event::MouseButton,
     keyboard::{KeyCode, PhysicalKey},
 };
-use yazelix_venus::{HintSection, ShortcutGroup, ShortcutHint, ShortcutRow, WorkspaceFocus};
 
 pub(super) fn paste_shortcut(
     physical_key: PhysicalKey,
@@ -776,7 +776,7 @@ mod tests {
 
     #[test]
     fn default_hints_fit_a_1280_pixel_window() {
-        use yazelix_venus::{FontSettings, FontSetup, ShortcutHintsScene};
+        use crate::{FontSettings, FontSetup, ShortcutHintsScene};
 
         let entries = default_entries();
         // Eon's packaged sans face, the exact file its Nix build and dev shell name, which hosts

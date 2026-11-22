@@ -2506,7 +2506,7 @@ checksum = "9c4482d912d7671a7cd2089794f90ef3bb5f5f8c738230fb0fcd50fa020f0ed3"
 [[package]]
 name = "parley_engine"
 version = "0.12.0"
-source = "git+https://github.com/Yazelix/eon-rune?rev=caeb04729e1dc378c8fdcbf12a22c333daf30d1d#caeb04729e1dc378c8fdcbf12a22c333daf30d1d"
+source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
 dependencies = [
  "fontique",
  "harfrust 0.12.0",
@@ -2917,7 +2917,7 @@ dependencies = [
 [[package]]
 name = "rune"
 version = "0.0.1"
-source = "git+https://github.com/Yazelix/eon-rune?rev=caeb04729e1dc378c8fdcbf12a22c333daf30d1d#caeb04729e1dc378c8fdcbf12a22c333daf30d1d"
+source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2993,12 +2993,12 @@ dependencies = [
 [[package]]
 name = "rune-motion"
 version = "0.1.0"
-source = "git+https://github.com/Yazelix/eon-rune?rev=caeb04729e1dc378c8fdcbf12a22c333daf30d1d#caeb04729e1dc378c8fdcbf12a22c333daf30d1d"
+source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
 
 [[package]]
 name = "rune-staging"
 version = "0.0.1"
-source = "git+https://github.com/Yazelix/eon-rune?rev=caeb04729e1dc378c8fdcbf12a22c333daf30d1d#caeb04729e1dc378c8fdcbf12a22c333daf30d1d"
+source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
 dependencies = [
  "wgpu",
 ]
@@ -3006,7 +3006,7 @@ dependencies = [
 [[package]]
 name = "rune-taffy"
 version = "0.0.1"
-source = "git+https://github.com/Yazelix/eon-rune?rev=caeb04729e1dc378c8fdcbf12a22c333daf30d1d#caeb04729e1dc378c8fdcbf12a22c333daf30d1d"
+source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
 dependencies = [
  "taffy",
 ]
@@ -3530,7 +3530,7 @@ dependencies = [
 [[package]]
 name = "tiny-skia-path"
 version = "0.11.4"
-source = "git+https://github.com/Yazelix/eon-rune?rev=caeb04729e1dc378c8fdcbf12a22c333daf30d1d#caeb04729e1dc378c8fdcbf12a22c333daf30d1d"
+source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
 dependencies = [
  "arrayref",
  "bytemuck",

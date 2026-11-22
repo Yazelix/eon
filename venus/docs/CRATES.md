@@ -360,7 +360,11 @@ dependency decision does not establish public-distribution proof.
   (`required-features` for the binary and test). The single switch
   (eon-yp6vg.54) removes the feature.
 - **Source:** `https://github.com/Yazelix/eon-rune` at
-  `caeb04729e1dc378c8fdcbf12a22c333daf30d1d` (tree `92aa6b61`). Its parent
+  `52f6f6c9bc31f6016641f01899814d7b74d41a0a` (tree `4470697f`, protected
+  branch `eon-pin-yp6vg-7-5`), eon-yp6vg.7.5's `App::attention_wait` on
+  `caeb04729e1dc378c8fdcbf12a22c333daf30d1d` (tree `92aa6b61`); eon-yp6vg.7.9
+  moved the pin there, and the commit changes no Rune manifest or lock, so
+  the dependency graph is the one recorded here. `caeb0472`'s parent
   is `e267be6e`, the fork rebased onto upstream `55ef5268` and qualified
   under eon-yp6vg.46. The pin adds one manifest line: `crates/rune` builds
   winit without `wayland-csd-adwaita-notitle`. With that feature on,
@@ -369,9 +373,9 @@ dependency decision does not establish public-distribution proof.
   `importCargoLock` vendors by name and version, so it failed for the whole
   workspace. A root patch onto Rune's copy does not compile either (E0004:
   the copy adds `PathSegment::ConicTo`). Rune's own `Cargo.lock` is
-  unchanged by the commit. The pin is durable because the commit sits on
-  the protected fork branch `eon-pin-yp6vg-7-6`; landing waits for that
-  protection.
+  unchanged by the commit. The pin is durable because each commit sits on a
+  fork branch the `eon-pin-*` ruleset protects (`caeb0472` on
+  `eon-pin-yp6vg-7-6`, `52f6f6c9` on `eon-pin-yp6vg-7-5`).
 - **Features:** `accessibility` is on, because the chrome needs it.
   Off:
   - `embedded-fonts`: Venus registers its own packaged fonts.
@@ -417,7 +421,7 @@ dependency decision does not establish public-distribution proof.
   - `tinystr` 0.8.5, `yoke` 0.8.4, `zerovec` 0.11.9 and `zerovec-derive`
     0.11.7.
 - **Nix:** `workspaceCargoLock.outputHashes."rune-0.0.1"` =
-  `sha256-XBOcWfbEkL+Y9nl06JuiJebcGfk76DszrqWo6e9FyZ8=`, which covers the
+  `sha256-xMMh2e/na/R1Q780zhmsjucCICQ8l+iJhwY8zlHZQXo=` (`52f6f6c9`), which covers the
   six crates from the rev. Their vendored contents equal `git archive` of
   the rev, apart from the files nixpkgs adds (`.cargo-checksum.json`,
   `.cargo-config`) and its workspace-value substitution in `Cargo.toml`.
@@ -469,8 +473,13 @@ dependency decision does not establish public-distribution proof.
   search (Markdown and `.beads/` excluded) finds only the feature's own
   manifest lines in `venus/Cargo.toml` (the feature, and the candidate
   binary's and test's `required-features`) and the root `Cargo.toml`, the
-  candidate module's `cfg` lines in `venus/src/lib.rs` and
-  `venus/src/render/tests/mod.rs`, plus the six existing Helix and
+  candidate's `cfg` lines in `venus/src/lib.rs`, `venus/src/application.rs`
+  (the Rune host module and its seams), `venus/src/application/tests/mod.rs`,
+  `venus/src/render.rs` and `venus/src/render/tests/mod.rs`, the gate check
+  in `venus/src/render/tests/hosted_state.rs`, the module comments of
+  `venus/src/rune_candidate.rs`, `venus/src/application/rune_host.rs`,
+  `venus/src/bin/venus-rune-candidate.rs` and
+  `venus/src/render/hosted_backdrop.rs`, plus the six existing Helix and
   notice-producer hits in `flake.nix` and `nix/notices/default.nix`:
   `rg -n --hidden -g '!.git' -g '!*.md' -g '!.beads' -e 'candidate-rune' -e '--all-features' -e '--features' -e 'cargoBuildFeatures' -e 'buildFeatures' -e 'cargoTestFeatures' -e 'cargo[^\n]* -F ' .`
   Related work:

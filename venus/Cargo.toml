@@ -37,7 +37,7 @@ pollster = { version = "=1.0.1", default-features = false }
 # Only `accessibility`, which the chrome needs. Off: embedded-fonts (Venus registers its own),
 # dbus and svg (unused), metal-backend and ogg-audio (refused), tooling and frame-profile
 # (debug builds keep tooling; frame proofs opt in).
-rune = { git = "https://github.com/Yazelix/eon-rune", rev = "caeb04729e1dc378c8fdcbf12a22c333daf30d1d", default-features = false, features = ["accessibility"], optional = true }
+rune = { git = "https://github.com/Yazelix/eon-rune", rev = "52f6f6c9bc31f6016641f01899814d7b74d41a0a", default-features = false, features = ["accessibility"], optional = true }
 serde_json = "=1.0.151"
 unicode-script = "=0.5.8"
 # `noop` serves the headless renderer tests; wgpu never uses it unless enabled. Here

@@ -3,9 +3,36 @@
 /// Maximum OSC 8 target size accepted by Venus link actions.
 pub const MAX_LINK_BYTES: usize = 4096;
 
+type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The `yazelix-venus` binary: parses Venus's launch arguments and the private presentation
+/// control variable, then runs the native client on winit. The binary is only this call, so the
+/// Rune candidate entry can run the same `Application` (eon-yp6vg.7.9).
+#[doc(hidden)]
+pub fn run_venus() -> Result {
+    application::run(launch_arguments_from_env()?)
+}
+
+/// The Rune candidate entry (eon-yp6vg.7.9): the same launch arguments, startup admission,
+/// presentation control and policy as `run_venus`, with Rune as the native host.
+#[cfg(feature = "candidate-rune")]
+#[doc(hidden)]
+pub fn run_rune_candidate() -> Result {
+    application::rune_host::run(launch_arguments_from_env()?)
+}
+
+fn launch_arguments_from_env() -> Result<launch::LaunchArguments> {
+    launch::launch_arguments(
+        std::env::args_os().skip(1),
+        std::env::var_os("EON_VENUS_PRESENTATION_CONTROL"),
+    )
+}
+
 mod accessibility;
+mod application;
 mod contour;
 mod input;
+mod launch;
 mod model;
 mod native_command;
 mod render;
