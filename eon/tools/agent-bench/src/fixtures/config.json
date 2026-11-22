@@ -1,10 +1,12 @@
 {
-  "schema": "eon-bench-config/1",
+  "schema": "eon-bench-config/2",
   "bench": {
     "version": "0.1.0",
     "commit": "1111111111111111111111111111111111111111"
   },
   "role": "builder",
+  "containment": "jail",
+  "plan_review": "none",
   "model": {
     "family": "claude",
     "id": "claude-opus-5-5"

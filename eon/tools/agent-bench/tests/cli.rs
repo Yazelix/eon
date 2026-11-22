@@ -5,7 +5,11 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 const CONFIG: &str = include_str!("../src/fixtures/config.json");
+const CONFIG_CLONE: &str = include_str!("../src/fixtures/config_clone.json");
+const CONFIG_V1: &str = include_str!("../src/fixtures/config_v1.json");
 const TASK: &str = include_str!("../src/fixtures/task.json");
+const TRIAL: &str = include_str!("../src/fixtures/trial.json");
+const LANES: &str = include_str!("../src/fixtures/lanes.json");
 
 fn bench(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_agent-bench"))
@@ -80,6 +84,9 @@ fn usage_errors_exit_2() {
             "p",
         ],
         &["tree-hash"],
+        &["trial", "check"],
+        &["trial", "check", "trial.json"],
+        &["trial", "check", "--lanes", "lanes.json"],
         &["task-env", "warm", "--agent-jail", "j"],
         &[
             "workspace",
@@ -101,6 +108,7 @@ fn usage_errors_exit_2() {
     let help = bench(&["help"]);
     assert_eq!(code(&help), 0);
     for command in [
+        "agent-bench trial check FILE --lanes FILE [--store DIR]",
         "agent-bench workspace check",
         "--private-layer DIR",
         "agent-bench tree-hash DIR",
@@ -333,4 +341,184 @@ fn workspace_create_and_check() {
         path(&out),
     ]);
     assert_eq!(code(&again), 1);
+}
+
+#[test]
+fn v1_config_is_refused_on_record_and_diffable_when_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store");
+
+    // `agent-bench record` refuses `eon-bench-config/1`.
+    let v1_file = dir.path().join("config_v1.json");
+    std::fs::write(&v1_file, CONFIG_V1).unwrap();
+    let refused = bench(&["record", "--store", path(&store), path(&v1_file)]);
+    assert_eq!(code(&refused), 1);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("eon-bench-config/1"), "{stderr}");
+    assert!(stderr.contains("eon-bench-config/2"), "{stderr}");
+
+    // Store a `/2` config and plant the historical `/1` canonical record directly in `configs/`.
+    let v2_hash = record(&store, "config_v2.json", CONFIG, |_| {});
+    let v1_hashed = agent_bench::record::hash(CONFIG_V1.as_bytes()).unwrap();
+    std::fs::write(
+        store
+            .join("configs")
+            .join(format!("{}.json", v1_hashed.hash)),
+        &v1_hashed.canonical,
+    )
+    .unwrap();
+
+    let diff_out = bench(&[
+        "config",
+        "diff",
+        "--store",
+        path(&store),
+        &v1_hashed.hash[..12],
+        &v2_hash[..12],
+    ]);
+    assert_eq!(code(&diff_out), 0, "{diff_out:?}");
+    assert_eq!(
+        stdout(&diff_out),
+        concat!(
+            "containment: (absent) -> \"jail\"\n",
+            "plan_review: (absent) -> \"none\"\n",
+            "schema: \"eon-bench-config/1\" -> \"eon-bench-config/2\"\n",
+        )
+    );
+}
+
+#[test]
+fn trial_check_expands_and_refuses_invalid_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let lanes_file = dir.path().join("lanes.json");
+    std::fs::write(&lanes_file, LANES).unwrap();
+
+    // 1. Happy path with inline configs and tasks (no --store needed).
+    let trial_file = dir.path().join("trial.json");
+    std::fs::write(&trial_file, TRIAL).unwrap();
+    let ok = bench(&[
+        "trial",
+        "check",
+        path(&trial_file),
+        "--lanes",
+        path(&lanes_file),
+    ]);
+    assert_eq!(code(&ok), 0, "{ok:?}");
+    let out = stdout(&ok);
+    assert!(out.ends_with('\n'));
+    let plan: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(plan["schema"], "eon-bench-trial-plan/1");
+    assert_eq!(plan["initial_runs"], 4);
+    assert_eq!(plan["max_runs"], 8);
+    let runs = plan["planned_runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 4);
+    assert_eq!(
+        runs[0]["config_hash"],
+        "b599be3855e7f25d5fd06a39705bb85bf93a48e2c4cb017e2d9d20b092da1449"
+    );
+    assert_eq!(
+        runs[0]["task_hash"],
+        "4b99405a84bf4646a1dddc5013b03778d7e4bafd0dafd887fa4de6bb3154f430"
+    );
+    assert_eq!(runs[0]["repeat"], 1);
+    assert_eq!(runs[0]["effective_wall_cap_s"], 5400);
+    assert_eq!(runs[2]["repeat"], 2);
+
+    // 2. Happy path resolving stored config + task hashes via `--store`.
+    let store = dir.path().join("store");
+    let clone_hash = record(&store, "clone.json", CONFIG_CLONE, |_| {});
+    let task_hash = record(&store, "task.json", TASK, |_| {});
+    let stored_trial_file = dir.path().join("stored_trial.json");
+    let stored_trial = serde_json::json!({
+        "schema": "eon-bench-trial/1",
+        "name": "stored-clone",
+        "role": "builder",
+        "containment": "clone",
+        "arms": [{
+            "name": "arm-a",
+            "lane": "lane-a",
+            "config": &clone_hash[..12]
+        }],
+        "tasks": [&task_hash[..12]],
+        "repeats": {"start": 1, "cap": 3},
+        "pairing_window_hours": 72,
+        "budget_caps": {"gemini-pro": {"week_pct": 20.0}}
+    });
+    std::fs::write(
+        &stored_trial_file,
+        serde_json::to_vec_pretty(&stored_trial).unwrap(),
+    )
+    .unwrap();
+    let stored_ok = bench(&[
+        "trial",
+        "check",
+        path(&stored_trial_file),
+        "--lanes",
+        path(&lanes_file),
+        "--store",
+        path(&store),
+    ]);
+    assert_eq!(code(&stored_ok), 0, "{stored_ok:?}");
+    let stored_plan: serde_json::Value = serde_json::from_str(&stdout(&stored_ok)).unwrap();
+    assert_eq!(stored_plan["planned_runs"][0]["config_hash"], clone_hash);
+    assert_eq!(stored_plan["planned_runs"][0]["task_hash"], task_hash);
+
+    // 3. Refusal cases: exit 1, clear stderr, empty stdout.
+    let base_trial: serde_json::Value = serde_json::from_str(TRIAL).unwrap();
+    let jail_config: serde_json::Value = serde_json::from_str(CONFIG).unwrap();
+
+    let mut missing_field = base_trial.clone();
+    missing_field
+        .as_object_mut()
+        .unwrap()
+        .remove("pairing_window_hours");
+
+    let mut clone_with_jail_digest = base_trial.clone();
+    clone_with_jail_digest["arms"][0]["config"]["tools"]["jail_profile_sha256"] =
+        serde_json::json!("4".repeat(64));
+
+    let mut jail_without_digest = base_trial.clone();
+    jail_without_digest["containment"] = serde_json::json!("jail");
+    let mut bad_jail_cfg = jail_config.clone();
+    bad_jail_cfg["tools"]["jail_profile_sha256"] = serde_json::Value::Null;
+    jail_without_digest["arms"] = serde_json::json!([{
+        "name": "jail-arm",
+        "lane": "lane-a",
+        "config": bad_jail_cfg
+    }]);
+
+    let mut unapproved_containment = base_trial.clone();
+    unapproved_containment["containment"] = serde_json::json!("jail");
+    unapproved_containment["arms"] = serde_json::json!([{
+        "name": "jail-on-clone-lane",
+        "lane": "lane-b",
+        "config": jail_config
+    }]);
+
+    for (name, value, needle) in [
+        ("missing_field.json", missing_field, "pairing_window_hours"),
+        (
+            "clone_with_jail_digest.json",
+            clone_with_jail_digest,
+            "must be null for clone containment",
+        ),
+        (
+            "jail_without_digest.json",
+            jail_without_digest,
+            "required non-null for jail containment",
+        ),
+        (
+            "unapproved_containment.json",
+            unapproved_containment,
+            "not approved for jail",
+        ),
+    ] {
+        let file = dir.path().join(name);
+        std::fs::write(&file, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let output = bench(&["trial", "check", path(&file), "--lanes", path(&lanes_file)]);
+        assert_eq!(code(&output), 1, "{name}: {output:?}");
+        assert!(stdout(&output).is_empty(), "{name}: unexpected stdout");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(needle), "{name}: stderr was {stderr:?}");
+    }
 }

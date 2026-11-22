@@ -14,12 +14,15 @@
 //! exactly: integers, and the one decimal field limited to three decimal places.
 
 use crate::{Result, fail};
-use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{
+    self, DeserializeOwned, DeserializeSeed, Deserializer, EnumAccess, MapAccess, SeqAccess,
+    VariantAccess, Visitor,
+};
 use serde_json::{Number, Value};
 use std::collections::HashSet;
 use std::fmt;
 
-const MAX_EXACT: u64 = (1 << 53) - 1;
+pub(crate) const MAX_EXACT: u64 = (1 << 53) - 1;
 
 /// The canonical form of `value`.
 pub fn canonical(value: &Value) -> Result<String> {
@@ -195,6 +198,539 @@ impl<'de> Visitor<'de> for Unique {
     }
 }
 
+/// Deserializes `T` from JSON bytes after rejecting duplicate object member names and
+/// refusing positional JSON arrays wherever a Rust struct (JSON object) is expected.
+/// Preserves byte-stream line and column positions on errors.
+pub(crate) fn from_slice_objects<'de, T: serde::Deserialize<'de>>(input: &'de [u8]) -> Result<T> {
+    reject_duplicate_names(input)?;
+    let mut deserializer = serde_json::Deserializer::from_slice(input);
+    let value = T::deserialize(StrictObject(&mut deserializer))?;
+    deserializer.end()?;
+    Ok(value)
+}
+
+/// Deserializes `T` from an already-parsed `Value`, refusing positional JSON arrays wherever
+/// a Rust struct (JSON object) is expected.
+pub(crate) fn from_value_objects<T: DeserializeOwned>(value: Value) -> Result<T> {
+    Ok(T::deserialize(StrictObject(value))?)
+}
+
+/// Strips a trailing ` at line N column M` suffix from a `serde_json` error message so a
+/// parent deserializer can wrap it with field context without duplicating the location.
+pub(crate) fn strip_json_location(msg: &str) -> &str {
+    let Some((prefix, rest)) = msg.rsplit_once(" at line ") else {
+        return msg;
+    };
+    let Some((line, col)) = rest.split_once(" column ") else {
+        return msg;
+    };
+    if !line.is_empty()
+        && line.bytes().all(|b| b.is_ascii_digit())
+        && !col.is_empty()
+        && col.bytes().all(|b| b.is_ascii_digit())
+    {
+        prefix
+    } else {
+        msg
+    }
+}
+
+/// Wraps any `Deserializer` so every `deserialize_struct` rejects JSON arrays instead of
+/// accepting serde's default positional-sequence representation for structs.
+struct StrictObject<D>(D);
+
+impl<'de, D: Deserializer<'de>> Deserializer<'de> for StrictObject<D> {
+    type Error = D::Error;
+
+    fn deserialize_any<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_any(StrictVisitor(visitor))
+    }
+
+    fn deserialize_bool<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_bool(visitor)
+    }
+
+    fn deserialize_i8<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_i8(visitor)
+    }
+
+    fn deserialize_i16<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_i16(visitor)
+    }
+
+    fn deserialize_i32<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_i32(visitor)
+    }
+
+    fn deserialize_i64<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_i64(visitor)
+    }
+
+    fn deserialize_i128<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_i128(visitor)
+    }
+
+    fn deserialize_u8<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_u8(visitor)
+    }
+
+    fn deserialize_u16<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_u16(visitor)
+    }
+
+    fn deserialize_u32<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_u32(visitor)
+    }
+
+    fn deserialize_u64<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_u64(visitor)
+    }
+
+    fn deserialize_u128<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_u128(visitor)
+    }
+
+    fn deserialize_f32<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_f32(visitor)
+    }
+
+    fn deserialize_f64<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_f64(visitor)
+    }
+
+    fn deserialize_char<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_char(visitor)
+    }
+
+    fn deserialize_str<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_str(visitor)
+    }
+
+    fn deserialize_string<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_string(visitor)
+    }
+
+    fn deserialize_bytes<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_bytes(visitor)
+    }
+
+    fn deserialize_byte_buf<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_byte_buf(visitor)
+    }
+
+    fn deserialize_option<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_option(StrictVisitor(visitor))
+    }
+
+    fn deserialize_unit<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_unit(visitor)
+    }
+
+    fn deserialize_unit_struct<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_unit_struct(name, visitor)
+    }
+
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0
+            .deserialize_newtype_struct(name, StrictVisitor(visitor))
+    }
+
+    fn deserialize_seq<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_seq(StrictVisitor(visitor))
+    }
+
+    fn deserialize_tuple<V: Visitor<'de>>(
+        self,
+        len: usize,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_tuple(len, StrictVisitor(visitor))
+    }
+
+    fn deserialize_tuple_struct<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        len: usize,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0
+            .deserialize_tuple_struct(name, len, StrictVisitor(visitor))
+    }
+
+    fn deserialize_map<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_map(StrictVisitor(visitor))
+    }
+
+    fn deserialize_struct<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_struct(
+            name,
+            fields,
+            StrictStructVisitor {
+                name,
+                inner: visitor,
+            },
+        )
+    }
+
+    fn deserialize_enum<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        variants: &'static [&'static str],
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0
+            .deserialize_enum(name, variants, StrictVisitor(visitor))
+    }
+
+    fn deserialize_identifier<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_identifier(visitor)
+    }
+
+    fn deserialize_ignored_any<V: Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> std::result::Result<V::Value, D::Error> {
+        self.0.deserialize_ignored_any(visitor)
+    }
+
+    fn is_human_readable(&self) -> bool {
+        self.0.is_human_readable()
+    }
+}
+
+struct StrictStructVisitor<V> {
+    name: &'static str,
+    inner: V,
+}
+
+impl<'de, V: Visitor<'de>> Visitor<'de> for StrictStructVisitor<V> {
+    type Value = V::Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "a JSON object for {}", self.name)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> std::result::Result<Self::Value, A::Error> {
+        self.inner.visit_map(StrictMapAccess(map))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, _seq: A) -> std::result::Result<Self::Value, A::Error> {
+        Err(de::Error::custom(format!(
+            "expected a JSON object for {}, not an array",
+            self.name
+        )))
+    }
+}
+
+struct StrictVisitor<V>(V);
+
+impl<'de, V: Visitor<'de>> Visitor<'de> for StrictVisitor<V> {
+    type Value = V::Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        self.0.expecting(formatter)
+    }
+
+    fn visit_bool<E: de::Error>(self, v: bool) -> std::result::Result<Self::Value, E> {
+        self.0.visit_bool(v)
+    }
+
+    fn visit_i8<E: de::Error>(self, v: i8) -> std::result::Result<Self::Value, E> {
+        self.0.visit_i8(v)
+    }
+
+    fn visit_i16<E: de::Error>(self, v: i16) -> std::result::Result<Self::Value, E> {
+        self.0.visit_i16(v)
+    }
+
+    fn visit_i32<E: de::Error>(self, v: i32) -> std::result::Result<Self::Value, E> {
+        self.0.visit_i32(v)
+    }
+
+    fn visit_i64<E: de::Error>(self, v: i64) -> std::result::Result<Self::Value, E> {
+        self.0.visit_i64(v)
+    }
+
+    fn visit_i128<E: de::Error>(self, v: i128) -> std::result::Result<Self::Value, E> {
+        self.0.visit_i128(v)
+    }
+
+    fn visit_u8<E: de::Error>(self, v: u8) -> std::result::Result<Self::Value, E> {
+        self.0.visit_u8(v)
+    }
+
+    fn visit_u16<E: de::Error>(self, v: u16) -> std::result::Result<Self::Value, E> {
+        self.0.visit_u16(v)
+    }
+
+    fn visit_u32<E: de::Error>(self, v: u32) -> std::result::Result<Self::Value, E> {
+        self.0.visit_u32(v)
+    }
+
+    fn visit_u64<E: de::Error>(self, v: u64) -> std::result::Result<Self::Value, E> {
+        self.0.visit_u64(v)
+    }
+
+    fn visit_u128<E: de::Error>(self, v: u128) -> std::result::Result<Self::Value, E> {
+        self.0.visit_u128(v)
+    }
+
+    fn visit_f32<E: de::Error>(self, v: f32) -> std::result::Result<Self::Value, E> {
+        self.0.visit_f32(v)
+    }
+
+    fn visit_f64<E: de::Error>(self, v: f64) -> std::result::Result<Self::Value, E> {
+        self.0.visit_f64(v)
+    }
+
+    fn visit_char<E: de::Error>(self, v: char) -> std::result::Result<Self::Value, E> {
+        self.0.visit_char(v)
+    }
+
+    fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
+        self.0.visit_str(v)
+    }
+
+    fn visit_borrowed_str<E: de::Error>(self, v: &'de str) -> std::result::Result<Self::Value, E> {
+        self.0.visit_borrowed_str(v)
+    }
+
+    fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Self::Value, E> {
+        self.0.visit_string(v)
+    }
+
+    fn visit_bytes<E: de::Error>(self, v: &[u8]) -> std::result::Result<Self::Value, E> {
+        self.0.visit_bytes(v)
+    }
+
+    fn visit_borrowed_bytes<E: de::Error>(
+        self,
+        v: &'de [u8],
+    ) -> std::result::Result<Self::Value, E> {
+        self.0.visit_borrowed_bytes(v)
+    }
+
+    fn visit_byte_buf<E: de::Error>(self, v: Vec<u8>) -> std::result::Result<Self::Value, E> {
+        self.0.visit_byte_buf(v)
+    }
+
+    fn visit_none<E: de::Error>(self) -> std::result::Result<Self::Value, E> {
+        self.0.visit_none()
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, de: D) -> std::result::Result<Self::Value, D::Error> {
+        self.0.visit_some(StrictObject(de))
+    }
+
+    fn visit_unit<E: de::Error>(self) -> std::result::Result<Self::Value, E> {
+        self.0.visit_unit()
+    }
+
+    fn visit_newtype_struct<D: Deserializer<'de>>(
+        self,
+        de: D,
+    ) -> std::result::Result<Self::Value, D::Error> {
+        self.0.visit_newtype_struct(StrictObject(de))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> std::result::Result<Self::Value, A::Error> {
+        self.0.visit_seq(StrictSeqAccess(seq))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> std::result::Result<Self::Value, A::Error> {
+        self.0.visit_map(StrictMapAccess(map))
+    }
+
+    fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> std::result::Result<Self::Value, A::Error> {
+        self.0.visit_enum(StrictEnumAccess(data))
+    }
+}
+
+struct StrictSeed<S>(S);
+
+impl<'de, S: DeserializeSeed<'de>> DeserializeSeed<'de> for StrictSeed<S> {
+    type Value = S::Value;
+
+    fn deserialize<D: Deserializer<'de>>(
+        self,
+        de: D,
+    ) -> std::result::Result<Self::Value, D::Error> {
+        self.0.deserialize(StrictObject(de))
+    }
+}
+
+struct StrictMapAccess<A>(A);
+
+impl<'de, A: MapAccess<'de>> MapAccess<'de> for StrictMapAccess<A> {
+    type Error = A::Error;
+
+    fn next_key_seed<K: DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> std::result::Result<Option<K::Value>, A::Error> {
+        self.0.next_key_seed(seed)
+    }
+
+    fn next_value_seed<V: DeserializeSeed<'de>>(
+        &mut self,
+        seed: V,
+    ) -> std::result::Result<V::Value, A::Error> {
+        self.0.next_value_seed(StrictSeed(seed))
+    }
+}
+
+struct StrictSeqAccess<A>(A);
+
+impl<'de, A: SeqAccess<'de>> SeqAccess<'de> for StrictSeqAccess<A> {
+    type Error = A::Error;
+
+    fn next_element_seed<T: DeserializeSeed<'de>>(
+        &mut self,
+        seed: T,
+    ) -> std::result::Result<Option<T::Value>, A::Error> {
+        self.0.next_element_seed(StrictSeed(seed))
+    }
+}
+
+struct StrictEnumAccess<A>(A);
+
+impl<'de, A: EnumAccess<'de>> EnumAccess<'de> for StrictEnumAccess<A> {
+    type Error = A::Error;
+    type Variant = StrictVariantAccess<A::Variant>;
+
+    fn variant_seed<V: DeserializeSeed<'de>>(
+        self,
+        seed: V,
+    ) -> std::result::Result<(V::Value, Self::Variant), A::Error> {
+        let (val, variant) = self.0.variant_seed(StrictSeed(seed))?;
+        Ok((val, StrictVariantAccess(variant)))
+    }
+}
+
+struct StrictVariantAccess<A>(A);
+
+impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for StrictVariantAccess<A> {
+    type Error = A::Error;
+
+    fn unit_variant(self) -> std::result::Result<(), A::Error> {
+        self.0.unit_variant()
+    }
+
+    fn newtype_variant_seed<T: DeserializeSeed<'de>>(
+        self,
+        seed: T,
+    ) -> std::result::Result<T::Value, A::Error> {
+        self.0.newtype_variant_seed(StrictSeed(seed))
+    }
+
+    fn tuple_variant<V: Visitor<'de>>(
+        self,
+        len: usize,
+        visitor: V,
+    ) -> std::result::Result<V::Value, A::Error> {
+        self.0.tuple_variant(len, StrictVisitor(visitor))
+    }
+
+    fn struct_variant<V: Visitor<'de>>(
+        self,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> std::result::Result<V::Value, A::Error> {
+        self.0.struct_variant(
+            fields,
+            StrictStructVisitor {
+                name: "variant",
+                inner: visitor,
+            },
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +871,37 @@ mod tests {
             reject_duplicate_names(text.as_bytes()).unwrap();
         }
         assert!(reject_duplicate_names(b"{} {}").is_err());
+    }
+
+    #[test]
+    fn positional_arrays_are_refused_for_structs() {
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        struct Inner {
+            a: u64,
+            b: u64,
+        }
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        struct Outer {
+            inner: Inner,
+            list: Vec<Inner>,
+            map: std::collections::BTreeMap<String, Inner>,
+            opt: Option<Inner>,
+        }
+
+        let ok = br#"{"inner":{"a":1,"b":2},"list":[{"a":3,"b":4}],"map":{"k":{"a":5,"b":6}},"opt":{"a":7,"b":8}}"#;
+        let parsed: Outer = from_slice_objects(ok).unwrap();
+        assert_eq!(parsed.inner, Inner { a: 1, b: 2 });
+
+        for bad in [
+            br#"[[{"a":1,"b":2}],[],{},null]"#.as_slice(),
+            br#"{"inner":[1,2],"list":[],"map":{},"opt":null}"#.as_slice(),
+            br#"{"inner":{"a":1,"b":2},"list":[[3,4]],"map":{},"opt":null}"#.as_slice(),
+            br#"{"inner":{"a":1,"b":2},"list":[],"map":{"k":[5,6]},"opt":null}"#.as_slice(),
+            br#"{"inner":{"a":1,"b":2},"list":[],"map":{},"opt":[7,8]}"#.as_slice(),
+        ] {
+            let err = from_slice_objects::<Outer>(bad).unwrap_err().0;
+            assert!(err.contains("expected a JSON object"), "{err}");
+            assert!(err.contains("line 1"), "{err}");
+        }
     }
 }

@@ -5,9 +5,12 @@
 //! on, and nothing in it is specific to one repository: a task's repository commands come from
 //! its `task.json`.
 //!
-//! - [`record`]: the configuration record (`eon-bench-config/1`, judges included) and the task
-//!   record (`eon-bench-task/1`). A record that parses is complete; its hash is SHA-256 over
-//!   its RFC 8785 canonical JSON ([`jcs`]), shown as 12 hex digits.
+//! - [`record`]: the configuration record (`eon-bench-config/2`, with `eon-bench-config/1` kept
+//!   readable for comparison; judges included) and the task record (`eon-bench-task/1`). A record
+//!   that parses is complete; its hash is SHA-256 over its RFC 8785 canonical JSON ([`jcs`]),
+//!   shown as 12 hex digits.
+//! - [`trial`]: trial (`eon-bench-trial/1`) and local lanes (`eon-bench-lanes/1`) JSON files and
+//!   planned-run expansion (`agent-bench trial check`).
 //! - [`store`]: a directory holding each record as its canonical bytes under its own hash
 //!   (`configs/`, `judges/`, `tasks/`), the append-only `results.jsonl` and `grades.jsonl`, and
 //!   pooling declarations (`pooling/`). See [`rows`] and [`pooling`].
@@ -34,6 +37,7 @@ pub mod store;
 pub mod task_env;
 mod time;
 pub mod tree;
+pub mod trial;
 pub mod workspace;
 
 use std::fmt;
@@ -77,6 +81,27 @@ pub(crate) use fail;
 /// Lowercase hex of `bytes`.
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Whether every byte in `text` is a lowercase ASCII hex digit (`0-9`, `a-f`).
+pub(crate) fn is_lower_hex(text: &str) -> bool {
+    text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Refuses non-finite or negative floating-point values.
+pub(crate) fn check_non_negative_finite(value: f64, label: &str) -> Result<()> {
+    if !value.is_finite() || value < 0.0 {
+        fail!("{label} must be finite and non-negative");
+    }
+    Ok(())
+}
+
+/// Refuses non-finite or non-positive floating-point values.
+pub(crate) fn check_positive_finite(value: f64, label: &str) -> Result<()> {
+    if !value.is_finite() || value <= 0.0 {
+        fail!("{label} must be finite and above 0");
+    }
+    Ok(())
 }
 
 /// Lowercase hex SHA-256 of `bytes`.

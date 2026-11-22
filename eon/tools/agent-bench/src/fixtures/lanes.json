@@ -1,0 +1,83 @@
+{
+  "schema": "eon-bench-lanes/1",
+  "lanes": {
+    "lane-a": {
+      "pool": "gemini-pro",
+      "launch_template": [
+        "bench-harness",
+        "--lane",
+        "lane-a"
+      ],
+      "usage_read": {
+        "command": [
+          "bench-usage",
+          "--lane",
+          "lane-a"
+        ],
+        "parser": "agy"
+      },
+      "floors": {
+        "week_pct": 15.0,
+        "five_hour_pct": 20.0
+      },
+      "run_cap": 2,
+      "live_runs_counter": {
+        "kind": "lock_file",
+        "path": "/var/lib/bench/locks/lane-a.lock"
+      },
+      "stagger_s": 60,
+      "heavy_queue_command": [
+        "bench-heavy",
+        "--queue"
+      ],
+      "context_handoff_tokens": 400000,
+      "extra_env": [
+        "BENCH_LANE_TOKEN"
+      ],
+      "approved_containment": [
+        "clone",
+        "jail"
+      ],
+      "home_settings_files": [
+        "settings.json"
+      ],
+      "audit_dirs": [
+        "/var/lib/bench/audit-root"
+      ]
+    },
+    "lane-b": {
+      "pool": "claude-pro",
+      "launch_template": [
+        "bench-harness",
+        "--lane",
+        "lane-b"
+      ],
+      "usage_read": {
+        "command": [
+          "bench-usage",
+          "--lane",
+          "lane-b"
+        ],
+        "parser": "claude"
+      },
+      "floors": {
+        "week_pct": 10.0
+      },
+      "run_cap": 1,
+      "live_runs_counter": {
+        "kind": "caps_file",
+        "path": "/var/lib/bench/caps/lane-b.json"
+      },
+      "stagger_s": 60,
+      "heavy_queue_command": [
+        "bench-heavy",
+        "--queue"
+      ],
+      "context_handoff_tokens": null,
+      "extra_env": [],
+      "approved_containment": [
+        "clone"
+      ]
+    }
+  }
+}

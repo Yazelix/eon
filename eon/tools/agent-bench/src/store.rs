@@ -27,8 +27,18 @@ impl Store {
     }
 
     /// Validates, hashes and stores a record; storing an identical record again is a no-op.
+    /// Historical `eon-bench-config/1` records are read-only and refused here.
     pub fn put(&self, input: &[u8]) -> Result<Hashed> {
         let hashed = record::hash(input)?;
+        if let Record::Config(ref config) = hashed.record
+            && config.is_v1()
+        {
+            fail!(
+                "{} is read-only; new configuration records must use {}",
+                record::CONFIG_SCHEMA_V1,
+                record::CONFIG_SCHEMA
+            );
+        }
         self.write_canonical(hashed.kind().dir(), &hashed.hash, &hashed.canonical)?;
         Ok(hashed)
     }
@@ -100,11 +110,7 @@ impl Store {
 
     /// Resolves a full hash or a unique hex prefix among the stored records of `kinds`.
     pub fn resolve(&self, kinds: &[Kind], prefix: &str) -> Result<(Kind, String)> {
-        if prefix.is_empty()
-            || !prefix
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        {
+        if prefix.is_empty() || !crate::is_lower_hex(prefix) {
             fail!("{prefix:?} is not a lowercase hex hash or prefix");
         }
         let mut found = Vec::new();
@@ -181,7 +187,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::record::tests::{CONFIG, JUDGE, TASK};
+    use crate::record::tests::{CONFIG, CONFIG_V1, JUDGE, JUDGE_V1, TASK};
 
     #[test]
     fn records_are_stored_as_their_canonical_bytes() {
@@ -239,5 +245,38 @@ mod tests {
         )
         .unwrap();
         assert!(store.resolve(&kinds, &config.hash[..1]).is_err());
+    }
+
+    #[test]
+    fn v1_configs_are_readable_but_not_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        for input in [CONFIG_V1, JUDGE_V1] {
+            let error = store.put(input.as_bytes()).unwrap_err().0;
+            assert!(error.contains("eon-bench-config/1"), "{error}");
+            assert!(error.contains("eon-bench-config/2"), "{error}");
+        }
+        // Historical `/1` files already on disk stay readable for comparison and `config diff`.
+        let config_v1 = record::hash(CONFIG_V1.as_bytes()).unwrap();
+        let judge_v1 = record::hash(JUDGE_V1.as_bytes()).unwrap();
+        store
+            .write_canonical("configs", &config_v1.hash, &config_v1.canonical)
+            .unwrap();
+        store
+            .write_canonical("judges", &judge_v1.hash, &judge_v1.canonical)
+            .unwrap();
+        assert_eq!(store.get(Kind::Config, &config_v1.hash).unwrap(), config_v1);
+        assert_eq!(store.get(Kind::Judge, &judge_v1.hash).unwrap(), judge_v1);
+        assert!(store.config(&config_v1.hash).unwrap().is_v1());
+        assert!(store.judge(&judge_v1.hash).unwrap().is_v1());
+        let kinds = [Kind::Config, Kind::Judge];
+        assert_eq!(
+            store.resolve(&kinds, &config_v1.hash[..12]).unwrap(),
+            (Kind::Config, config_v1.hash)
+        );
+        assert_eq!(
+            store.resolve(&kinds, &judge_v1.hash[..12]).unwrap(),
+            (Kind::Judge, judge_v1.hash)
+        );
     }
 }

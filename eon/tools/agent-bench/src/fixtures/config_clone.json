@@ -1,0 +1,68 @@
+{
+  "schema": "eon-bench-config/2",
+  "bench": {
+    "version": "0.1.0",
+    "commit": "1111111111111111111111111111111111111111"
+  },
+  "role": "builder",
+  "containment": "clone",
+  "plan_review": "none",
+  "model": {
+    "family": "gemini",
+    "id": "gemini-4-neon"
+  },
+  "harness": {
+    "name": "agy",
+    "version": "1.2.0",
+    "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "effort": {
+    "value": "high"
+  },
+  "prompt": {
+    "role_wrapper_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "fleet_rules": [
+      {
+        "name": "common-rules",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "name": "builder-ownership-line",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    ],
+    "repo_overlays": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ]
+  },
+  "harness_home": {
+    "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "permissions": {
+    "mode": "dangerouslySkipPermissions",
+    "sandbox": "clone",
+    "web_tools": "denied",
+    "proxy_allowlist_sha256": null
+  },
+  "limits": {
+    "wall_cap_multiplier": 1.5,
+    "max_turns": 200
+  },
+  "tools": {
+    "rota_commit": null,
+    "rota_backend_sha256": null,
+    "rtk": {
+      "enabled": false,
+      "version": null
+    },
+    "dcg": {
+      "version": "1.4.2",
+      "config_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "heavy_sh_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "jail_profile_sha256": null
+  }
+}

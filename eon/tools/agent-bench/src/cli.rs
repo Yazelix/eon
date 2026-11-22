@@ -4,7 +4,7 @@
 use crate::pooling::PoolKind;
 use crate::record::Kind;
 use crate::store::Store;
-use crate::{Error, Result, diff, fingerprints, task_env, tree, workspace};
+use crate::{Error, Result, diff, fingerprints, task_env, tree, trial, workspace};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -14,6 +14,8 @@ usage:
   agent-bench config diff --store DIR A B
   agent-bench pool declare --store DIR --kind config|task --pair OLD NEW [--pair OLD NEW]... --reason TEXT --signed-by NAME
   agent-bench pool show --store DIR CONFIG TASK    (prints {\"rows\": [...], \"excluded\": [...]})
+  agent-bench trial check FILE --lanes FILE [--store DIR]
+      (validates trial and lanes files and prints the planned runs JSON)
   agent-bench workspace create --source REPO --base COMMIT --out DIR [--drop NAME]...
   agent-bench workspace check DIR --object-set SHA256 [--task FILE --task-env DIR --private-layer DIR...]
       (--task, --task-env and at least one --private-layer go together: they add the task
@@ -65,6 +67,9 @@ pub fn run(args: &[String], out: &mut dyn Write) -> std::result::Result<(), Fail
             out,
         ),
         ["pool", "show", rest @ ..] => pool_show(&parse(rest, &["--store"], &[], &[], 2)?, out),
+        ["trial", "check", rest @ ..] => {
+            trial_check(&parse(rest, &["--lanes"], &["--store"], &[], 1)?, out)
+        }
         ["workspace", "create", rest @ ..] => workspace_create(
             &parse(rest, &["--source", "--base", "--out"], &[], &["--drop"], 0)?,
             out,
@@ -366,6 +371,27 @@ fn task_env_warm(args: &Args, out: &mut dyn Write) -> std::result::Result<(), Fa
             wall_cap: args.get("--wall-cap"),
         },
         out,
+    )?;
+    Ok(())
+}
+
+fn trial_check(args: &Args, out: &mut dyn Write) -> std::result::Result<(), Failure> {
+    let trial_path = &args.positional[0];
+    let lanes_path = args.get("--lanes");
+    let trial_bytes =
+        std::fs::read(trial_path).map_err(|error| Error(format!("{trial_path}: {error}")))?;
+    let lanes_bytes =
+        std::fs::read(lanes_path).map_err(|error| Error(format!("{lanes_path}: {error}")))?;
+    let trial = trial::parse_trial(&trial_bytes)
+        .map_err(|error| Error(format!("{trial_path}: {}", error.0)))?;
+    let lanes = trial::parse_lanes(&lanes_bytes)
+        .map_err(|error| Error(format!("{lanes_path}: {}", error.0)))?;
+    let store = args.optional("--store").map(Store::new);
+    let plan = trial::plan_checked(&trial, &lanes, store.as_ref())?;
+    writeln!(
+        out,
+        "{}",
+        serde_json::to_string(&plan).map_err(Error::from)?
     )?;
     Ok(())
 }

@@ -121,7 +121,7 @@ impl Store {
         let mut out = Vec::new();
         for hash in self.hashes(DIR)? {
             let bytes = self.read_canonical(DIR, &hash)?;
-            let declaration: Declaration = serde_json::from_slice(&bytes)
+            let declaration: Declaration = jcs::from_slice_objects(&bytes)
                 .map_err(|error| crate::Error(format!("{DIR}/{hash}.json: {error}")))?;
             self.check_declaration(&declaration)
                 .map_err(|error| crate::Error(format!("{DIR}/{hash}.json: {error}")))?;
@@ -130,8 +130,12 @@ impl Store {
         Ok(out)
     }
 
-    /// The live, non-drifted runs for (config, task), including runs under hashes declared
-    /// equivalent to either, ordered by repeat. Two pooled rows for one repeat are an error.
+    /// The live, countable, non-drifted runs for (config, task), including runs under hashes
+    /// declared equivalent to either, ordered by repeat. Two pooled rows for one repeat are an
+    /// error.
+    ///
+    /// Drifted rows, audit-flagged rows, and infrastructure failures stay in the store
+    /// (`results.jsonl` / [`Store::live_runs`]) and are excluded from pooled results.
     ///
     /// A row under a declared `new` hash that started before that declaration (a run in
     /// flight when it was written, or clock skew between hosts) is not pooled: pooling is
@@ -146,6 +150,7 @@ impl Store {
             .into_iter()
             .filter(|run| {
                 !run.config_drift
+                    && run.outcome.is_countable()
                     && configs.contains(run.key.config.as_str())
                     && tasks.contains(run.key.task.as_str())
             })
@@ -270,7 +275,7 @@ fn class(declarations: &[Declaration], kind: PoolKind, start: &str) -> BTreeSet<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::record::tests::{CONFIG, JUDGE, TASK};
+    use crate::record::tests::{CONFIG, CONFIG_CLONE, CONFIG_V1, JUDGE, TASK};
     use crate::rows::tests::{fixture, run};
     use serde_json::{Value, json};
 
@@ -478,5 +483,177 @@ mod tests {
         f.store.write_canonical(DIR, &widened, &canonical).unwrap();
         assert!(f.store.declarations().is_err());
         assert_ne!(hash, widened);
+    }
+
+    #[test]
+    fn audit_flagged_and_infra_failure_rows_do_not_pool() {
+        use crate::rows::{AuditResult, AuditStatus, Outcome};
+
+        let f = fixture();
+        f.store
+            .append_run(run(&f.config, &f.task, 1, "r1-good"))
+            .unwrap();
+
+        let mut flagged = run(&f.config, &f.task, 2, "r2-flagged");
+        flagged.audit = AuditResult {
+            status: AuditStatus::Flagged,
+            findings: vec![Text::new("outside write").unwrap()],
+        };
+        flagged.outcome = Outcome::AuditFlagged {
+            reason: Text::new("leak audit failed").unwrap(),
+        };
+        f.store.append_run(flagged).unwrap();
+
+        let mut infra = run(&f.config, &f.task, 3, "r3-infra");
+        infra.tokens.clear();
+        infra.outcome = Outcome::InfraFailure {
+            reason: Text::new("lane stalled").unwrap(),
+        };
+        f.store.append_run(infra).unwrap();
+
+        // Both non-countable attempts remain in the store's live_runs() audit trail.
+        let live_ids: Vec<String> = f
+            .store
+            .live_runs()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run_id.to_string())
+            .collect();
+        assert_eq!(live_ids, ["r1-good", "r2-flagged", "r3-infra"]);
+
+        // Neither appears in pooled results (`pool show`).
+        let pooled = f.store.pooled(&f.config, &f.task).unwrap();
+        assert_eq!(pooled.rows.len(), 1);
+        assert_eq!(pooled.rows[0].run_id.as_str(), "r1-good");
+        assert!(pooled.excluded.is_empty());
+    }
+
+    #[test]
+    fn v2_containment_plan_review_and_v1_never_pool_across_boundaries() {
+        let f = fixture();
+        let clone_a = f.store.put(CONFIG_CLONE.as_bytes()).unwrap().hash;
+
+        // Historical `/1` config planted in the store cannot pool with `/2`.
+        let v1 = crate::record::hash(CONFIG_V1.as_bytes()).unwrap();
+        f.store
+            .write_canonical("configs", &v1.hash, &v1.canonical)
+            .unwrap();
+        let err = f
+            .store
+            .declare(
+                PoolKind::Config,
+                &[(v1.hash, f.config.clone())],
+                "schema bump",
+                "eon-lead",
+            )
+            .unwrap_err()
+            .0;
+        assert!(
+            err.ends_with("this changes containment, plan_review, schema"),
+            "{err}"
+        );
+
+        // `clone` and `jail` never pool (same config differing only by containment + its 4 digests).
+        let clone_of_f = put_edited(&f.store, CONFIG, |v| {
+            v["containment"] = json!("clone");
+            v["permissions"]["proxy_allowlist_sha256"] = Value::Null;
+            v["tools"]["rota_commit"] = Value::Null;
+            v["tools"]["rota_backend_sha256"] = Value::Null;
+            v["tools"]["jail_profile_sha256"] = Value::Null;
+        });
+        let err = f
+            .store
+            .declare(
+                PoolKind::Config,
+                &[(clone_of_f, f.config.clone())],
+                "containment change",
+                "eon-lead",
+            )
+            .unwrap_err()
+            .0;
+        assert!(
+            err.ends_with("this changes containment, permissions.proxy_allowlist_sha256"),
+            "{err}"
+        );
+
+        // Differing `plan_review` settings never pool (none vs enabled, or distinct rounds/reviewer).
+        let pr_one = put_edited(&f.store, CONFIG, |v| {
+            v["plan_review"] = json!({"reviewer_config": "a".repeat(64), "max_rounds": 1});
+        });
+        let pr_two = put_edited(&f.store, CONFIG, |v| {
+            v["plan_review"] = json!({"reviewer_config": "a".repeat(64), "max_rounds": 2});
+        });
+        let err = f
+            .store
+            .declare(
+                PoolKind::Config,
+                &[(f.config.clone(), pr_one.clone())],
+                "plan review toggle",
+                "eon-lead",
+            )
+            .unwrap_err()
+            .0;
+        assert!(
+            err.ends_with(
+                "this changes plan_review, plan_review.max_rounds, plan_review.reviewer_config"
+            ),
+            "{err}"
+        );
+        let err = f
+            .store
+            .declare(
+                PoolKind::Config,
+                &[(pr_one, pr_two)],
+                "plan review rounds",
+                "eon-lead",
+            )
+            .unwrap_err()
+            .0;
+        assert!(
+            err.ends_with("this changes plan_review.max_rounds"),
+            "{err}"
+        );
+
+        // Same-containment infrastructure-only diffs still pool: clone-to-clone and jail-to-jail.
+        let clone_b = put_edited(&f.store, CONFIG_CLONE, |v| {
+            v["bench"]["commit"] = json!("9".repeat(40));
+            v["tools"]["heavy_sh_sha256"] = json!("8".repeat(64));
+        });
+        let (_, clone_decl) = f
+            .store
+            .declare(
+                PoolKind::Config,
+                &[(clone_a, clone_b)],
+                "clone infra bump",
+                "eon-lead",
+            )
+            .unwrap();
+        assert_eq!(
+            clone_decl.pairs[0].changed,
+            ["bench.commit", "tools.heavy_sh_sha256"]
+        );
+
+        let jail_b = put_edited(&f.store, CONFIG, |v| {
+            v["tools"]["jail_profile_sha256"] = json!("7".repeat(64));
+            v["tools"]["rota_commit"] = json!("6".repeat(40));
+            v["tools"]["rota_backend_sha256"] = json!("5".repeat(64));
+        });
+        let (_, jail_decl) = f
+            .store
+            .declare(
+                PoolKind::Config,
+                &[(f.config.clone(), jail_b)],
+                "jail infra bump",
+                "eon-lead",
+            )
+            .unwrap();
+        assert_eq!(
+            jail_decl.pairs[0].changed,
+            [
+                "tools.jail_profile_sha256",
+                "tools.rota_backend_sha256",
+                "tools.rota_commit",
+            ]
+        );
     }
 }

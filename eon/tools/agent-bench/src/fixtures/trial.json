@@ -1,0 +1,251 @@
+{
+  "schema": "eon-bench-trial/1",
+  "name": "clone-builder-mini",
+  "role": "builder",
+  "containment": "clone",
+  "arms": [
+    {
+      "name": "arm-a",
+      "lane": "lane-a",
+      "config": {
+        "schema": "eon-bench-config/2",
+        "bench": {
+          "version": "0.1.0",
+          "commit": "1111111111111111111111111111111111111111"
+        },
+        "role": "builder",
+        "containment": "clone",
+        "plan_review": "none",
+        "model": {
+          "family": "gemini",
+          "id": "gemini-4-neon"
+        },
+        "harness": {
+          "name": "agy",
+          "version": "1.2.0",
+          "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "effort": {
+          "value": "high"
+        },
+        "prompt": {
+          "role_wrapper_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "fleet_rules": [
+            {
+              "name": "common-rules",
+              "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            {
+              "name": "builder-ownership-line",
+              "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            }
+          ],
+          "repo_overlays": [
+            {
+              "path": "AGENTS.md",
+              "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ]
+        },
+        "harness_home": {
+          "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "permissions": {
+          "mode": "dangerouslySkipPermissions",
+          "sandbox": "clone",
+          "web_tools": "denied",
+          "proxy_allowlist_sha256": null
+        },
+        "limits": {
+          "wall_cap_multiplier": 1.5,
+          "max_turns": 200
+        },
+        "tools": {
+          "rota_commit": null,
+          "rota_backend_sha256": null,
+          "rtk": {
+            "enabled": false,
+            "version": null
+          },
+          "dcg": {
+            "version": "1.4.2",
+            "config_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "heavy_sh_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "jail_profile_sha256": null
+        }
+      },
+      "plan_review_lane": null
+    },
+    {
+      "name": "arm-b",
+      "lane": "lane-b",
+      "config": {
+        "schema": "eon-bench-config/2",
+        "bench": {
+          "version": "0.1.0",
+          "commit": "1111111111111111111111111111111111111111"
+        },
+        "role": "builder",
+        "containment": "clone",
+        "plan_review": "none",
+        "model": {
+          "family": "claude",
+          "id": "claude-opus-5-5"
+        },
+        "harness": {
+          "name": "claude-code",
+          "version": "3.2.1",
+          "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "effort": {
+          "value": "high"
+        },
+        "prompt": {
+          "role_wrapper_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "fleet_rules": [
+            {
+              "name": "common-rules",
+              "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            {
+              "name": "builder-ownership-line",
+              "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            }
+          ],
+          "repo_overlays": [
+            {
+              "path": "AGENTS.md",
+              "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ]
+        },
+        "harness_home": {
+          "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "permissions": {
+          "mode": "bypassPermissions",
+          "sandbox": "clone",
+          "web_tools": "denied",
+          "proxy_allowlist_sha256": null
+        },
+        "limits": {
+          "wall_cap_multiplier": 1,
+          "max_turns": 200
+        },
+        "tools": {
+          "rota_commit": null,
+          "rota_backend_sha256": null,
+          "rtk": {
+            "enabled": true,
+            "version": "0.9.0"
+          },
+          "dcg": {
+            "version": "1.4.2",
+            "config_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "heavy_sh_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "jail_profile_sha256": null
+        }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "schema": "eon-bench-task/1",
+      "repo": "eon",
+      "role": "builder",
+      "task_id": "eon-7aw48",
+      "tier_introduced": "micro",
+      "base_commit": "7777777777777777777777777777777777777777",
+      "snapshot_object_set_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "landed_commit": "9999999999999999999999999999999999999999",
+      "landed_at": "2026-11-10T12:00:00Z",
+      "task_text": {
+        "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "source_commit": "7777777777777777777777777777777777777777",
+        "cutoff": "2026-11-09T08:30:00Z",
+        "cutoff_evidence": "launch record",
+        "addendum_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "key": {
+        "files": [
+          {
+            "path": "venus/src/scene/tests/bar.rs",
+            "sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          }
+        ],
+        "f2p": [
+          "scene::tests::bar::quota_pace_threshold"
+        ],
+        "p2p": [
+          "scene::tests::bar::renders_bar"
+        ]
+      },
+      "env": {
+        "dev_shell": "devShells.x86_64-linux.default",
+        "exclude": [
+          "br",
+          "bv"
+        ],
+        "pass": [
+          "GHOSTTY_*",
+          "EON_*"
+        ],
+        "env_sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+        "lockfiles": [
+          {
+            "path": "Cargo.lock",
+            "base_sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "landed_sha256": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
+          }
+        ],
+        "warm_target_sha256": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+      },
+      "test": {
+        "command": [
+          "eon-test",
+          "-p",
+          "yazelix-venus"
+        ],
+        "build": [
+          "eon-test",
+          "list",
+          "-p",
+          "yazelix-venus"
+        ],
+        "junit_path": "target/nextest/default/junit.xml"
+      },
+      "scope_paths": [
+        "venus/src"
+      ],
+      "protected_paths": [
+        "venus/src/scene/tests"
+      ],
+      "scorer": {
+        "commit": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+        "command": [
+          "agent-bench",
+          "score"
+        ]
+      },
+      "key_edits_sha256": "0707070707070707070707070707070707070707070707070707070707070707",
+      "wall_cap_s": 3600,
+      "key_author_family": "claude"
+    }
+  ],
+  "repeats": {
+    "start": 2,
+    "cap": 4
+  },
+  "pairing_window_hours": 72,
+  "budget_caps": {
+    "gemini-pro": {
+      "week_pct": 25.0,
+      "five_hour_pct": 50.0
+    },
+    "claude-pro": {
+      "week_pct": 20.0
+    }
+  }
+}

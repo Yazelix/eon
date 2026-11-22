@@ -14,33 +14,39 @@ namespaces, Bubblewrap, and systemd user scopes. Records, stream parsers, and
 reports remain portable across Linux and `aarch64-darwin`.
 
 `agent-bench` and its companion crates implement the hashed record store,
-synthetic workspaces, warm task environments, fingerprint needles, and the
-Linux jail today; later Bench v2 beads add the unified trial runner,
-cost-beside-quality reporting, the reviewer eval rework, and the builder task
-catalog:
+trial and lanes JSON schemas (`agent-bench trial check`), synthetic workspaces,
+warm task environments, fingerprint needles, and the Linux jail today; later
+Bench v2 beads add the unified trial runner, cost-beside-quality reporting, the
+reviewer eval rework, and the builder task catalog:
 
 | Surface | Exists today | Owned by later Bench v2 beads |
 | --- | --- | --- |
-| Records, hashes, store, diff, pooling | `eon-bench-config/1`, `eon-bench-task/1`, `eon-bench-run/1`, `eon-bench-grade/1`, `eon-bench-pooling/1`; CLI subcommands `record`, `config diff`, `pool declare`, `pool show` (`eon/tools/agent-bench`) | `eon-2r02l.14` (plan item `R1` of `eon-2r02l.11`): `eon-bench-config/2`, Bench v2 run-row fields, trial and lanes files, `agent-bench trial check` |
+| Records, hashes, store, diff, pooling, trial check | `eon-bench-config/2` (with `eon-bench-config/1` readable for comparison), `eon-bench-task/1`, `eon-bench-run/1` (including Bench v2 fields), `eon-bench-grade/1`, `eon-bench-pooling/1`, `eon-bench-trial/1`, `eon-bench-lanes/1`; CLI subcommands `record`, `config diff`, `pool declare`, `pool show`, `trial check` (`eon/tools/agent-bench`) | — |
 | Workspaces, task environments, trial runner, scoring, jail, leak checks | `workspace create`, `workspace check`, `tree-hash`, `fingerprints`, `task-env warm` (`eon/tools/agent-bench`); Linux no-network jail for Claude Code and Codex CLI (`eon/tools/agent-jail`) | Follow-up beads under `eon-2r02l` (plan items `R2`–`R8b` and `SC` of `eon-2r02l.11`), `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level), `eon-2r02l.8` (blind judges; `R7` is its automatic leak audit), `eon-j8iyd` (`agy` in `agent-jail`) |
 | Cost-beside-quality reporting | — | Follow-up bead under `eon-2r02l` (plan item `R9` of `eon-2r02l.11`): `agent-bench report` |
 | Reviewer evaluation | `review-tier eval check`, `eval prepare`, `eval score` against `eon/tools/review-tier/evals/cases.toml` | Follow-up beads under `eon-2r02l` (plan items `E1a`, `E1b`, `E2`, `E4`, `R10` of `eon-2r02l.11`): case audit/freeze, new cases, scorer rework and `eval prepare --export-diff`, reviewer role runner and reviewer case task kind |
 | Builder task catalog | — | `eon-2r02l.18`: select, verify, tag, and populate [Task table](#task-table) |
 
-In the planned Bench v2 runner (inputs and schema owned by `eon-2r02l.14`, not
-present behavior), each bench trial will be driven by two inputs instead of
-per-trial shell scripts:
+Each bench trial is defined by two JSON inputs (`eon/tools/agent-bench/src/trial.rs`),
+validated and expanded into planned runs by `agent-bench trial check` today
+(runner execution in plan items `R2`–`R8b` remains planned):
 
-- **Trial file (tracked TOML):** names the role (`builder` or `reviewer`), the
-  arms (configuration records), the tasks or cases, the starting and maximum
-  repeats (`K`), the containment level, and the pairing window.
-- **Lanes file (local, never tracked):** per lane, supplies the launch template
-  (`rota run ...` or a local harness wrapper), usage-read command and parser,
-  quota pool floors, run cap, stagger interval, heavy-queue command, context
-  handoff threshold, extra environment variable names, and the containment
-  levels that lane is approved for. Account names and local paths live only in
-  the lanes file so tracked files and beads stay clean, and other repositories
-  can plug in their own lanes and tasks.
+- **Trial file (tracked JSON, `eon-bench-trial/1`):** names the role
+  (`builder` or `reviewer`), the arms (inline `eon-bench-config/2` records or
+  store hashes; an arm whose config enables `plan_review` requires
+  `plan_review_lane` and `--store DIR` to resolve `reviewer_config`, even when
+  the builder config itself is inline), `tasks` (for builders) or `cases` (for
+  reviewers), starting and maximum repeats (`repeats.start` and `repeats.cap`),
+  the containment level, the pairing window, and `budget_caps` per pool.
+- **Lanes file (local JSON, `eon-bench-lanes/1`, never tracked):** per lane,
+  supplies its public `pool`, launch template, usage-read command and parser
+  (`claude`, `codex`, `agy`, or `json`), quota pool floors, run cap, live-runs
+  counter (`lock_file` or `caps_file`), stagger interval, heavy-queue command,
+  context handoff threshold (or `null`), extra environment variable names,
+  approved containment levels, and optional `home_settings_files` and
+  `audit_dirs`. No field defaults to a machine path or account name, so tracked
+  files and beads stay clean and other repositories can plug in their own lanes
+  and tasks.
 
 ## The unit
 
@@ -59,12 +65,27 @@ the validated record; the store keeps exact canonical bytes under
 `configs/<hash>.json` (or `judges/<hash>.json` when `role = "judge"`) with no
 trailing newline, and reports show the 12-character lowercase hex prefix.
 
-`eon-bench-config/1` (implemented today) pins these dimensions:
+`eon-bench-config/2` is the current configuration schema; historical
+`eon-bench-config/1` records already in the store remain readable for
+comparison and `agent-bench config diff`, but `Store::put` (`agent-bench
+record`), `Store::append_run`, `Store::append_grade`, and `agent-bench trial
+check` refuse `/1` records and `/1` never pools with `/2`. `eon-bench-config/2`
+pins these dimensions:
 
 - **`bench`**: `version` (semver) and `commit` (40- or 64-hex git commit ID).
 - **`role`**: `builder`, `reviewer`, `planner`, or `judge`. A `judge`
   configuration requires `rubric_sha256`; every other role refuses
   `rubric_sha256`, even as `null`.
+- **`containment`**: `clone` or `jail`. The four jail, proxy, and rota digests
+  (`permissions.proxy_allowlist_sha256`, `tools.rota_commit`,
+  `tools.rota_backend_sha256`, and `tools.jail_profile_sha256`) are required
+  non-null at `jail` and must be `null` at `clone`, so a `clone` run never
+  fakes them. (On historical `eon-bench-config/1` records, all four fields are
+  required non-null and `containment` / `plan_review` are absent.)
+- **`plan_review`**: `"none"`, or `{"reviewer_config": "<64-hex>",
+  "max_rounds": <u64 >= 1>}`, so a plan-review arm's hash pins its reviewer.
+  Enabled `plan_review` is allowed on `builder` and `planner` configurations
+  and refused on `reviewer` and `judge` configurations.
 - **`model`**: `family` and `id` (as passed to the harness, checked against the
   server-reported ID on each run).
 - **`harness`**: `name`, `version`, and `binary_sha256`.
@@ -76,29 +97,18 @@ trailing newline, and reports show the 12-character lowercase hex prefix.
 - **`harness_home`**: `manifest_sha256` (hashing settings, instructions,
   skills, plugins, MCP configuration, and hooks).
 - **`permissions`**: harness-native text values for `mode`, `sandbox`, and
-  `web_tools`, plus `proxy_allowlist_sha256`.
+  `web_tools`, plus `proxy_allowlist_sha256` (non-null at `jail`, `null` at
+  `clone`).
 - **`limits`**: `wall_cap_multiplier` (above `0` and at most `1000`, with at
   most three decimal places) and `max_turns` (at least `1`, or `null` for no
-  limit).
+  limit). `limits.wall_cap_multiplier` stays on the configuration record while
+  `wall_cap_s` and `env.pass` / `env.exclude` stay on the task record rather
+  than creating a second owner in the trial or lanes file.
 - **`tools`**: `rota_commit`, `rota_backend_sha256`, `rtk` (`enabled` and
   `version`, where `version` is `null` if and only if `enabled` is `false`),
   `dcg` (`version` and `config_sha256`), `heavy_sh_sha256`, and
-  `jail_profile_sha256`.
-
-`eon-2r02l.14` (planned; plan item `R1` of `eon-2r02l.11`) will bump the
-configuration schema to `eon-bench-config/2`:
-
-- Adds **`containment`** (`clone` or `jail`). The jail, proxy, and rota digests
-  (`tools.jail_profile_sha256`, `permissions.proxy_allowlist_sha256`,
-  `tools.rota_commit`, and `tools.rota_backend_sha256`) are required at `jail`
-  and must be `null` at `clone`, so a `clone` run never fakes them. (In
-  `eon-bench-config/1` today, all four fields are required non-null.)
-- Adds **`plan_review`** (`none`, or the reviewer arm's config hash plus a
-  round cap), so a plan-review arm's hash pins its reviewer.
-- Keeps `limits.wall_cap_multiplier` on the configuration record
-  (`eon/tools/agent-bench/src/record.rs`) and reuses the task record's
-  `wall_cap_s` and `env.pass` / `env.exclude` rather than creating a second
-  owner in the trial file.
+  `jail_profile_sha256` (the rota and jail fields are non-null at `jail` and
+  `null` at `clone`).
 
 Because `containment` and `plan_review` sit inside the hashed configuration
 record, `clone` and `jail` runs or distinct plan-review setups never hash
@@ -162,13 +172,31 @@ reviewer run row (planned in a follow-up bead under `eon-2r02l`, plan item
   `scorer.commit` on tasks. Judge configurations never pool. A row under a
   declared new hash whose `started_at` predates `declared_at` is returned in
   `excluded` rather than pooled, and two pooled rows for the same repeat are an
-  error.
-- **Bench v2 row additions and trial check (`eon-2r02l.14`, planned):** before
-  the planned runner writes the first real row, `eon-bench-run/1` will gain
-  containment level, audit result, early-stop and handoff events, tokens, pool
-  readings, and outcome (no schema bump needed). `agent-bench trial check` will
-  expand a trial file into planned runs with full config hash, task hash, and
-  repeat index and refuse on any missing field.
+  error. `audit_flagged` and `infra_failure` rows remain in the store
+  (`results.jsonl` / `live_runs`) as audit records and are excluded from pooled
+  results (`agent-bench pool show`), matching drifted rows.
+- **Bench v2 run-row fields and trial check:** `eon-bench-run/1` keeps one live
+  row per `(config, task, repeat)` key, so a multi-stage attempt (such as a
+  plan-reviewed `builder` or `planner`) writes one row for the whole attempt:
+  `stage` (`plan`, `review`, or `build`) records the final stage the attempt
+  reached, while earlier stages' costs and events live in `tokens` (per
+  `(stage, round)`, with `review` rounds bounded by `plan_review.max_rounds`)
+  and `events` (`early_stop`, `handoff`, `stall`). Rows also record
+  `containment`, `residual_risks`, `audit` (`pass`, `flagged`, or `skipped`
+  with findings), `pool_readings` (before/after pool snapshots with
+  `other_live_runs`), and a role-checked `outcome` (`builder` — with
+  `f2p_total`/`p2p_total` checked against the referenced task's `key.f2p` and
+  `key.p2p` counts on append and read — `reviewer`, `planner`, `audit_flagged`,
+  or `infra_failure`, coupling `audit.status == "flagged"` to `outcome.kind ==
+  "audit_flagged"`). `agent-bench trial check <trial> --lanes <lanes> [--store
+  DIR]` validates both files (requiring `--store DIR` whenever any arm config,
+  task/case, or enabled `plan_review.reviewer_config` is resolved from the
+  store, even when the builder config is inline), computes
+  `effective_wall_cap_s` from `wall_cap_s` and `limits.wall_cap_multiplier`,
+  and expands initial repeats into `eon-bench-trial-plan/1` JSON (fixed safety
+  caps of `100_000` initial planned runs and `64 MiB` estimated expanded size
+  before allocation) with each run's full config hash, task hash, and repeat
+  index, refusing when any required field is missing or invalid.
 
 ## Task tags, tiers and hold-outs
 
@@ -211,8 +239,8 @@ wrappers, or rules.
 ## Containment levels
 
 Bench v2 defines two containment levels, **`clone`** and **`jail`**. Because
-`containment` belongs to `eon-bench-config/2` (planned in `eon-2r02l.14`),
-`clone` and `jail` configurations will hash differently and never pool.
+`containment` belongs to `eon-bench-config/2`, `clone` and `jail`
+configurations hash differently and never pool.
 
 ### Shared run controls
 

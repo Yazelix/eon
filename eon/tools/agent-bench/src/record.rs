@@ -1,22 +1,29 @@
-//! The hashed records: configurations (`eon-bench-config/1`, judges included) and tasks
-//! (`eon-bench-task/1`), field for field as the bench plan's Q4b lists them.
+//! The hashed records: configurations (`eon-bench-config/2`, with `eon-bench-config/1` kept
+//! readable for comparison; judges included) and tasks (`eon-bench-task/1`).
 //!
 //! Every field is required, unknown fields are refused, and every string is validated, so a
 //! record that parses is complete: there is no partial hash. A nullable field must still be
 //! present (`null` is a value, absence is not). The hash is SHA-256 over the RFC 8785
 //! canonical JSON of the parsed record, and the canonical bytes are what the store keeps.
 //!
+//! `eon-bench-config/2` adds `containment` (`clone` or `jail`) and `plan_review` (`"none"`, or
+//! `{"reviewer_config": "<64-hex>", "max_rounds": <u64 >= 1>}`). At `jail`, the four jail,
+//! proxy and rota digests (`permissions.proxy_allowlist_sha256`, `tools.rota_commit`,
+//! `tools.rota_backend_sha256`, `tools.jail_profile_sha256`) are required non-null; at `clone`,
+//! all four must be `null` so a clone run never fakes them.
+//!
 //! A judge configuration is a configuration with `role = "judge"` and `rubric_sha256`; any
 //! other role refuses the `rubric_sha256` key, even as `null`. The task record has no prompt
 //! field, so the role wrapper never reaches a task hash.
 
-use crate::{Result, fail, jcs, sha256_hex, time};
-use serde::de::{Deserializer, Error as _};
-use serde::{Deserialize, Serialize};
+use crate::{Result, fail, is_lower_hex, jcs, sha256_hex, time};
+use serde::de::{Deserializer, Error as _, MapAccess, Visitor, value::MapAccessDeserializer};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use std::fmt;
 
-pub const CONFIG_SCHEMA: &str = "eon-bench-config/1";
+pub const CONFIG_SCHEMA_V1: &str = "eon-bench-config/1";
+pub const CONFIG_SCHEMA: &str = "eon-bench-config/2";
 pub const TASK_SCHEMA: &str = "eon-bench-task/1";
 
 /// Defines a string newtype whose deserializer refuses values `$valid` rejects.
@@ -57,17 +64,13 @@ macro_rules! checked_string {
     };
 }
 
-fn lower_hex(text: &str) -> bool {
-    text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 checked_string!(
     /// A SHA-256 digest: 64 lowercase hex digits.
-    Digest, |t| t.len() == 64 && lower_hex(t), "a SHA-256 hex digest"
+    Digest, |t| t.len() == 64 && is_lower_hex(t), "a SHA-256 hex digest"
 );
 checked_string!(
     /// A git object id: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits.
-    Commit, |t| (t.len() == 40 || t.len() == 64) && lower_hex(t), "a git commit id"
+    Commit, |t| (t.len() == 40 || t.len() == 64) && is_lower_hex(t), "a git commit id"
 );
 checked_string!(
     /// Non-empty text with no surrounding whitespace.
@@ -140,12 +143,115 @@ pub enum Tier {
     Large,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Containment {
+    Clone,
+    Jail,
+}
+
+impl fmt::Display for Containment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Clone => f.write_str("clone"),
+            Self::Jail => f.write_str("jail"),
+        }
+    }
+}
+
+/// Plan-review configuration on `eon-bench-config/2`: `"none"`, or the reviewer arm's config
+/// hash and a round cap.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlanReview {
+    None,
+    Enabled {
+        reviewer_config: Digest,
+        max_rounds: u64,
+    },
+}
+
+impl Serialize for PlanReview {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::None => serializer.serialize_str("none"),
+            Self::Enabled {
+                reviewer_config,
+                max_rounds,
+            } => {
+                #[derive(Serialize)]
+                struct PlanReviewObject<'a> {
+                    reviewer_config: &'a Digest,
+                    max_rounds: u64,
+                }
+                PlanReviewObject {
+                    reviewer_config,
+                    max_rounds: *max_rounds,
+                }
+                .serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PlanReview {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PlanReviewSpec {
+            reviewer_config: Digest,
+            max_rounds: u64,
+        }
+
+        struct PlanReviewVisitor;
+
+        impl<'de> Visitor<'de> for PlanReviewVisitor {
+            type Value = PlanReview;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("\"none\" or an object with `reviewer_config` and `max_rounds`")
+            }
+
+            fn visit_str<E: serde::de::Error>(
+                self,
+                value: &str,
+            ) -> std::result::Result<PlanReview, E> {
+                if value == "none" {
+                    Ok(PlanReview::None)
+                } else {
+                    Err(E::custom(format!(
+                        "plan_review must be \"none\" or an object with `reviewer_config` and `max_rounds`, not {value:?}"
+                    )))
+                }
+            }
+
+            fn visit_map<A: MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> std::result::Result<PlanReview, A::Error> {
+                let spec = PlanReviewSpec::deserialize(MapAccessDeserializer::new(map))?;
+                Ok(PlanReview::Enabled {
+                    reviewer_config: spec.reviewer_config,
+                    max_rounds: spec.max_rounds,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(PlanReviewVisitor)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub schema: Text,
     pub bench: Bench,
     pub role: Role,
+    /// Required on `eon-bench-config/2`; refused on `eon-bench-config/1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub containment: Option<Containment>,
+    /// Required on `eon-bench-config/2`; refused on `eon-bench-config/1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_review: Option<PlanReview>,
     pub model: Model,
     pub harness: Harness,
     pub effort: Effort,
@@ -157,6 +263,13 @@ pub struct Config {
     /// Judges only; see the module documentation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rubric_sha256: Option<Digest>,
+}
+
+impl Config {
+    /// Whether this record uses the historical `eon-bench-config/1` schema.
+    pub fn is_v1(&self) -> bool {
+        self.schema.as_str() == CONFIG_SCHEMA_V1
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -227,7 +340,9 @@ pub struct Permissions {
     pub mode: Text,
     pub sandbox: Text,
     pub web_tools: Text,
-    pub proxy_allowlist_sha256: Digest,
+    /// Required non-null at `jail` (and on `/1`); must be `null` at `clone`. Key always required.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub proxy_allowlist_sha256: Option<Digest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -243,12 +358,18 @@ pub struct Limits {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tools {
-    pub rota_commit: Commit,
-    pub rota_backend_sha256: Digest,
+    /// Required non-null at `jail` (and on `/1`); must be `null` at `clone`. Key always required.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub rota_commit: Option<Commit>,
+    /// Required non-null at `jail` (and on `/1`); must be `null` at `clone`. Key always required.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub rota_backend_sha256: Option<Digest>,
     pub rtk: Rtk,
     pub dcg: Dcg,
     pub heavy_sh_sha256: Digest,
-    pub jail_profile_sha256: Digest,
+    /// Required non-null at `jail` (and on `/1`); must be `null` at `clone`. Key always required.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub jail_profile_sha256: Option<Digest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -424,6 +545,11 @@ impl Record {
 pub fn hash(input: &[u8]) -> Result<Hashed> {
     jcs::reject_duplicate_names(input)?;
     let value: Value = serde_json::from_slice(input)?;
+    hash_value(value)
+}
+
+/// Parses, validates and hashes one record already parsed from duplicate-checked JSON.
+pub(crate) fn hash_value(value: Value) -> Result<Hashed> {
     let record = parse(value)?;
     let canonical = jcs::canonical(&record.to_value())?;
     let hash = sha256_hex(canonical.as_bytes());
@@ -442,23 +568,66 @@ pub fn task(input: &[u8]) -> Result<Task> {
     }
 }
 
+/// Verifies a stored configuration referenced by `plan_review.reviewer_config`: it must use
+/// `eon-bench-config/2`, have `role == "reviewer"`, and match `expected` containment.
+pub(crate) fn validate_plan_reviewer(
+    reviewer: &Config,
+    hash: &str,
+    expected: Containment,
+) -> Result<()> {
+    if reviewer.is_v1() {
+        fail!(
+            "plan_review.reviewer_config {} is {}; plan review requires {}",
+            crate::short(hash),
+            CONFIG_SCHEMA_V1,
+            CONFIG_SCHEMA
+        );
+    }
+    if reviewer.role != Role::Reviewer {
+        fail!(
+            "plan_review.reviewer_config {} has role {:?}, expected reviewer",
+            crate::short(hash),
+            reviewer.role
+        );
+    }
+    match reviewer.containment {
+        Some(actual) if actual == expected => Ok(()),
+        Some(actual) => fail!(
+            "plan_review.reviewer_config {} has containment {actual}, expected {expected}",
+            crate::short(hash)
+        ),
+        None => fail!(
+            "plan_review.reviewer_config {} is missing containment",
+            crate::short(hash)
+        ),
+    }
+}
+
 fn parse(value: Value) -> Result<Record> {
     let Some(object) = value.as_object() else {
         fail!("a record is a JSON object");
     };
     let schema = object.get("schema").and_then(Value::as_str);
     match schema {
-        Some(CONFIG_SCHEMA) => {
+        Some(CONFIG_SCHEMA_V1 | CONFIG_SCHEMA) => {
+            if schema == Some(CONFIG_SCHEMA_V1) {
+                if object.contains_key("containment") {
+                    fail!("containment: {CONFIG_SCHEMA_V1} does not allow `containment`");
+                }
+                if object.contains_key("plan_review") {
+                    fail!("plan_review: {CONFIG_SCHEMA_V1} does not allow `plan_review`");
+                }
+            }
             let judge = object.get("role").and_then(Value::as_str) == Some("judge");
             if !judge && object.contains_key("rubric_sha256") {
                 fail!("rubric_sha256: only a judge configuration has a rubric");
             }
-            let config: Config = serde_json::from_value(value)?;
+            let config: Config = jcs::from_value_objects(value)?;
             validate_config(&config)?;
             Ok(Record::Config(config))
         }
         Some(TASK_SCHEMA) => {
-            let task: Task = serde_json::from_value(value)?;
+            let task: Task = jcs::from_value_objects(value)?;
             validate_task(&task)?;
             Ok(Record::Task(task))
         }
@@ -470,6 +639,54 @@ fn parse(value: Value) -> Result<Record> {
 fn validate_config(config: &Config) -> Result<()> {
     if config.role == Role::Judge && config.rubric_sha256.is_none() {
         fail!("rubric_sha256: a judge configuration needs its rubric hash");
+    }
+    let containment_fields = [
+        (
+            "permissions.proxy_allowlist_sha256",
+            config.permissions.proxy_allowlist_sha256.is_some(),
+        ),
+        ("tools.rota_commit", config.tools.rota_commit.is_some()),
+        (
+            "tools.rota_backend_sha256",
+            config.tools.rota_backend_sha256.is_some(),
+        ),
+        (
+            "tools.jail_profile_sha256",
+            config.tools.jail_profile_sha256.is_some(),
+        ),
+    ];
+    if config.is_v1() {
+        for (field, present) in containment_fields {
+            if !present {
+                fail!("{field}: {CONFIG_SCHEMA_V1} requires a non-null value");
+            }
+        }
+    } else {
+        let Some(containment) = config.containment else {
+            fail!("containment: {CONFIG_SCHEMA} requires `containment` (`clone` or `jail`)");
+        };
+        let Some(plan_review) = &config.plan_review else {
+            fail!("plan_review: {CONFIG_SCHEMA} requires `plan_review` (\"none\" or an object)");
+        };
+        for (field, present) in containment_fields {
+            match (containment, present) {
+                (Containment::Jail, false) => {
+                    fail!("{field}: required non-null for jail containment");
+                }
+                (Containment::Clone, true) => {
+                    fail!("{field}: must be null for clone containment");
+                }
+                _ => {}
+            }
+        }
+        if let PlanReview::Enabled { max_rounds, .. } = plan_review {
+            if *max_rounds == 0 {
+                fail!("plan_review.max_rounds must be at least 1");
+            }
+            if matches!(config.role, Role::Reviewer | Role::Judge) {
+                fail!("plan_review: only builder or planner configurations may enable plan_review");
+            }
+        }
     }
     // Three decimal places at most, so serde_json parses it exactly (see `jcs`).
     let multiplier = config.limits.wall_cap_multiplier;
@@ -513,29 +730,64 @@ pub(crate) mod tests {
     use serde_json::json;
 
     pub(crate) const CONFIG: &str = include_str!("fixtures/config.json");
+    pub(crate) const CONFIG_CLONE: &str = include_str!("fixtures/config_clone.json");
+    pub(crate) const CONFIG_V1: &str = include_str!("fixtures/config_v1.json");
     pub(crate) const JUDGE: &str = include_str!("fixtures/judge.json");
+    pub(crate) const JUDGE_V1: &str = include_str!("fixtures/judge_v1.json");
     pub(crate) const TASK: &str = include_str!("fixtures/task.json");
 
     /// Pinned digests of the fixtures, cross-checked with Python's `json.dumps(sort_keys=True,
     /// separators=(',', ':'))` (the fixtures' keys are ASCII and their numbers plain). A change
     /// here means every stored hash changes too.
-    const GOLDEN_CONFIG: &str = "0a463fa2288e89c6aecd89bb1819ace99c8ea073e9440b3feb43c43509101100";
-    const GOLDEN_JUDGE: &str = "5b0e5dd30093f54cb9ab26b19bc448dfcf9743ae263ca9fcb9e167a6f5c4a789";
-    const GOLDEN_TASK: &str = "4b99405a84bf4646a1dddc5013b03778d7e4bafd0dafd887fa4de6bb3154f430";
+    pub(crate) const GOLDEN_CONFIG: &str =
+        "de7d3b13a5db79a285fc02b3f9a051fc97fffc3086e2b24ba659f2da6361a50b";
+    pub(crate) const GOLDEN_CONFIG_CLONE: &str =
+        "b599be3855e7f25d5fd06a39705bb85bf93a48e2c4cb017e2d9d20b092da1449";
+    const GOLDEN_CONFIG_V1: &str =
+        "0a463fa2288e89c6aecd89bb1819ace99c8ea073e9440b3feb43c43509101100";
+    const GOLDEN_JUDGE: &str = "32ac75b106be17f601bf4b5d78982b5e8e2d57217b9cec10222c36a36bbd4f40";
+    const GOLDEN_JUDGE_V1: &str =
+        "5b0e5dd30093f54cb9ab26b19bc448dfcf9743ae263ca9fcb9e167a6f5c4a789";
+    pub(crate) const GOLDEN_TASK: &str =
+        "4b99405a84bf4646a1dddc5013b03778d7e4bafd0dafd887fa4de6bb3154f430";
 
     fn value(text: &str) -> Value {
         serde_json::from_str(text).unwrap()
     }
 
-    fn hash_value(value: &Value) -> Result<Hashed> {
+    fn hash_json(value: &Value) -> Result<Hashed> {
         hash(&serde_json::to_vec(value).unwrap())
+    }
+
+    fn config_with_plan_review() -> Value {
+        let mut reviewed = value(CONFIG);
+        reviewed["plan_review"] = json!({
+            "reviewer_config": "a".repeat(64),
+            "max_rounds": 2
+        });
+        reviewed
+    }
+
+    fn all_records() -> Vec<(&'static str, Value)> {
+        vec![
+            ("config_v2_jail", value(CONFIG)),
+            ("config_v2_clone", value(CONFIG_CLONE)),
+            ("config_v2_plan_review", config_with_plan_review()),
+            ("judge_v2", value(JUDGE)),
+            ("config_v1", value(CONFIG_V1)),
+            ("judge_v1", value(JUDGE_V1)),
+            ("task_v1", value(TASK)),
+        ]
     }
 
     #[test]
     fn golden_hashes_are_stable() {
         for (fixture, golden, kind) in [
             (CONFIG, GOLDEN_CONFIG, Kind::Config),
+            (CONFIG_CLONE, GOLDEN_CONFIG_CLONE, Kind::Config),
+            (CONFIG_V1, GOLDEN_CONFIG_V1, Kind::Config),
             (JUDGE, GOLDEN_JUDGE, Kind::Judge),
+            (JUDGE_V1, GOLDEN_JUDGE_V1, Kind::Judge),
             (TASK, GOLDEN_TASK, Kind::Task),
         ] {
             let first = hash(fixture.as_bytes()).unwrap();
@@ -625,7 +877,12 @@ pub(crate) mod tests {
     fn mutations(leaf: &Value) -> Vec<Value> {
         match leaf {
             Value::Bool(flag) => vec![json!(!flag)],
-            Value::Null => vec![json!(7), json!("9.9.9")],
+            Value::Null => vec![
+                json!(7),
+                json!("9.9.9"),
+                json!("2".repeat(40)),
+                json!("4".repeat(64)),
+            ],
             Value::Number(number) => match number.as_u64() {
                 Some(integer) => vec![json!(integer + 1)],
                 None => vec![json!(number.as_f64().unwrap() + 1.0)],
@@ -642,10 +899,18 @@ pub(crate) mod tests {
                     out.push(json!(changed));
                 }
                 out.push(json!(format!("{text}x")));
-                for other in ["builder", "reviewer", "planner", "micro", "mini"] {
+                for other in [
+                    "builder", "reviewer", "planner", "micro", "mini", "clone", "jail",
+                ] {
                     if other != text {
                         out.push(json!(other));
                     }
+                }
+                if text == "none" {
+                    out.push(json!({
+                        "reviewer_config": "a".repeat(64),
+                        "max_rounds": 2
+                    }));
                 }
                 out
             }
@@ -656,6 +921,30 @@ pub(crate) mod tests {
             ],
             Value::Object(_) => vec![],
         }
+    }
+
+    /// Populates any still-null jail/proxy/rota digest fields on `edited` with valid values.
+    fn fill_jail_digests(edited: &mut Value) {
+        if edited["permissions"]["proxy_allowlist_sha256"].is_null() {
+            edited["permissions"]["proxy_allowlist_sha256"] = json!("0".repeat(64));
+        }
+        if edited["tools"]["rota_commit"].is_null() {
+            edited["tools"]["rota_commit"] = json!("2".repeat(40));
+        }
+        if edited["tools"]["rota_backend_sha256"].is_null() {
+            edited["tools"]["rota_backend_sha256"] = json!("1".repeat(64));
+        }
+        if edited["tools"]["jail_profile_sha256"].is_null() {
+            edited["tools"]["jail_profile_sha256"] = json!("4".repeat(64));
+        }
+    }
+
+    /// Sets all four jail/proxy/rota digest fields on `edited` to `null`.
+    fn clear_jail_digests(edited: &mut Value) {
+        edited["permissions"]["proxy_allowlist_sha256"] = Value::Null;
+        edited["tools"]["rota_commit"] = Value::Null;
+        edited["tools"]["rota_backend_sha256"] = Value::Null;
+        edited["tools"]["jail_profile_sha256"] = Value::Null;
     }
 
     /// Fields whose validity depends on another field move with it.
@@ -674,8 +963,43 @@ pub(crate) mod tests {
                 let rtk = &mut edited["tools"]["rtk"];
                 rtk["enabled"] = json!(!rtk["version"].is_null());
             }
-            // Only a judge has a rubric.
-            ".role" if edited["role"] != json!("judge") => {
+            // Only a judge has a rubric, and reviewer/judge cannot enable plan_review.
+            ".role" => {
+                if edited["role"] != json!("judge") {
+                    edited.as_object_mut().unwrap().remove("rubric_sha256");
+                }
+                if matches!(edited["role"].as_str(), Some("reviewer" | "judge"))
+                    && edited.get("plan_review").is_some_and(Value::is_object)
+                {
+                    edited["plan_review"] = json!("none");
+                }
+            }
+            // Containment governs the four jail/proxy/rota digests.
+            ".containment" => {
+                if edited["containment"] == json!("clone") {
+                    clear_jail_digests(edited);
+                } else if edited["containment"] == json!("jail") {
+                    fill_jail_digests(edited);
+                }
+            }
+            // On a clone fixture, turning any of the four null digests non-null requires
+            // switching containment to jail and filling the remaining three digests.
+            ".permissions.proxy_allowlist_sha256"
+            | ".tools.rota_commit"
+            | ".tools.rota_backend_sha256"
+            | ".tools.jail_profile_sha256"
+                if edited.get("containment") == Some(&json!("clone")) =>
+            {
+                edited["containment"] = json!("jail");
+                fill_jail_digests(edited);
+            }
+            // Enabling plan_review on a judge or reviewer fixture requires a builder/planner role
+            // (and dropping judge-only rubric_sha256).
+            ".plan_review"
+                if edited["plan_review"].is_object()
+                    && matches!(edited["role"].as_str(), Some("judge" | "reviewer")) =>
+            {
+                edited["role"] = json!("builder");
                 edited.as_object_mut().unwrap().remove("rubric_sha256");
             }
             _ => {}
@@ -684,12 +1008,11 @@ pub(crate) mod tests {
 
     #[test]
     fn every_leaf_change_changes_the_hash() {
-        for fixture in [CONFIG, JUDGE, TASK] {
-            let original = value(fixture);
-            let base = hash_value(&original).unwrap().hash;
+        for (label, original) in all_records() {
+            let base = hash_json(&original).unwrap().hash;
             let mut paths = Vec::new();
             leaves(&original, Vec::new(), &mut paths);
-            assert!(paths.len() > 20);
+            assert!(paths.len() > 20, "{label}");
             for path in paths {
                 // The schema names the record type; another value is another record, not a
                 // changed field.
@@ -701,14 +1024,14 @@ pub(crate) mod tests {
                     let mut edited = original.clone();
                     *at(&mut edited, &path) = replacement;
                     couple(&mut edited, &dotted(&path));
-                    hash_value(&edited).ok()
+                    hash_json(&edited).ok()
                 });
-                let changed =
-                    changed.unwrap_or_else(|| panic!("no valid mutation for {}", dotted(&path)));
+                let changed = changed
+                    .unwrap_or_else(|| panic!("{label}: no valid mutation for {}", dotted(&path)));
                 assert_ne!(
                     changed.hash,
                     base,
-                    "{} did not change the hash",
+                    "{label}: {} did not change the hash",
                     dotted(&path)
                 );
             }
@@ -728,8 +1051,7 @@ pub(crate) mod tests {
 
     #[test]
     fn every_missing_field_is_refused() {
-        for fixture in [CONFIG, JUDGE, TASK] {
-            let original = value(fixture);
+        for (label, original) in all_records() {
             let mut paths = Vec::new();
             members(&original, Vec::new(), &mut paths);
             for path in paths {
@@ -743,8 +1065,8 @@ pub(crate) mod tests {
                     .unwrap()
                     .remove(name);
                 assert!(
-                    hash_value(&edited).is_err(),
-                    "removing {} was accepted",
+                    hash_json(&edited).is_err(),
+                    "{label}: removing {} was accepted",
                     dotted(&path)
                 );
             }
@@ -754,6 +1076,9 @@ pub(crate) mod tests {
     #[test]
     fn invalid_values_are_refused() {
         let config = value(CONFIG);
+        let clone = value(CONFIG_CLONE);
+        let v1 = value(CONFIG_V1);
+        let judge = value(JUDGE);
         let task = value(TASK);
         type Case = (&'static str, Value, fn(&mut Value));
         let cases: Vec<Case> = vec![
@@ -782,7 +1107,82 @@ pub(crate) mod tests {
                 v["role"] = json!("tester")
             }),
             ("wrong schema", config.clone(), |v| {
-                v["schema"] = json!("eon-bench-config/2")
+                v["schema"] = json!("eon-bench-config/3")
+            }),
+            ("null containment on v2", config.clone(), |v| {
+                v["containment"] = Value::Null
+            }),
+            ("unknown containment on v2", config.clone(), |v| {
+                v["containment"] = json!("vm")
+            }),
+            ("null plan_review on v2", config.clone(), |v| {
+                v["plan_review"] = Value::Null
+            }),
+            ("unknown plan_review string", config.clone(), |v| {
+                v["plan_review"] = json!("always")
+            }),
+            ("plan_review zero rounds", config.clone(), |v| {
+                v["plan_review"] = json!({"reviewer_config": "a".repeat(64), "max_rounds": 0})
+            }),
+            (
+                "plan_review unknown field",
+                config.clone(),
+                |v| {
+                    v["plan_review"] =
+                        json!({"reviewer_config": "a".repeat(64), "max_rounds": 1, "extra": true})
+                },
+            ),
+            ("plan_review missing rounds", config.clone(), |v| {
+                v["plan_review"] = json!({"reviewer_config": "a".repeat(64)})
+            }),
+            ("plan_review bad digest", config.clone(), |v| {
+                v["plan_review"] = json!({"reviewer_config": "short", "max_rounds": 1})
+            }),
+            ("plan_review on reviewer role", config.clone(), |v| {
+                v["role"] = json!("reviewer");
+                v["plan_review"] = json!({"reviewer_config": "a".repeat(64), "max_rounds": 1});
+            }),
+            ("plan_review on judge role", judge.clone(), |v| {
+                v["plan_review"] = json!({"reviewer_config": "a".repeat(64), "max_rounds": 1});
+            }),
+            ("jail with null proxy allowlist", config.clone(), |v| {
+                v["permissions"]["proxy_allowlist_sha256"] = Value::Null
+            }),
+            ("jail with null rota commit", config.clone(), |v| {
+                v["tools"]["rota_commit"] = Value::Null
+            }),
+            ("jail with null rota backend", config.clone(), |v| {
+                v["tools"]["rota_backend_sha256"] = Value::Null
+            }),
+            ("jail with null jail profile", config.clone(), |v| {
+                v["tools"]["jail_profile_sha256"] = Value::Null
+            }),
+            ("clone with non-null proxy allowlist", clone.clone(), |v| {
+                v["permissions"]["proxy_allowlist_sha256"] = json!("0".repeat(64))
+            }),
+            ("clone with non-null rota commit", clone.clone(), |v| {
+                v["tools"]["rota_commit"] = json!("2".repeat(40))
+            }),
+            ("clone with non-null rota backend", clone.clone(), |v| {
+                v["tools"]["rota_backend_sha256"] = json!("1".repeat(64))
+            }),
+            ("clone with non-null jail profile", clone.clone(), |v| {
+                v["tools"]["jail_profile_sha256"] = json!("4".repeat(64))
+            }),
+            ("v1 with containment", v1.clone(), |v| {
+                v["containment"] = json!("jail")
+            }),
+            ("v1 with null containment", v1.clone(), |v| {
+                v["containment"] = Value::Null
+            }),
+            ("v1 with plan_review", v1.clone(), |v| {
+                v["plan_review"] = json!("none")
+            }),
+            ("v1 with null plan_review", v1.clone(), |v| {
+                v["plan_review"] = Value::Null
+            }),
+            ("v1 with null jail profile", v1.clone(), |v| {
+                v["tools"]["jail_profile_sha256"] = Value::Null
             }),
             (
                 "null max_turns is fine but zero is not",
@@ -845,15 +1245,41 @@ pub(crate) mod tests {
                 v["task_text"]["addendum_sha256"] = Value::Null
             }),
             ("not an object", json!([]), |_| {}),
+            ("positional array for config.bench", config.clone(), |v| {
+                v["bench"] = json!(["0.1.0", "1".repeat(40)])
+            }),
+            ("positional array for config.limits", config.clone(), |v| {
+                v["limits"] = json!([1.5, 200])
+            }),
+            (
+                "positional array for config.tools.rtk",
+                config.clone(),
+                |v| v["tools"]["rtk"] = json!([true, "0.9.0"]),
+            ),
+            (
+                "positional array for config.prompt.fleet_rules[0]",
+                config.clone(),
+                |v| v["prompt"]["fleet_rules"][0] = json!(["common-rules", "c".repeat(64)]),
+            ),
+            ("positional array for task.scorer", task.clone(), |v| {
+                v["scorer"] = json!(["f".repeat(40), ["agent-bench", "score"]])
+            }),
         ];
         for (name, mut record, edit) in cases {
             edit(&mut record);
-            assert!(hash_value(&record).is_err(), "{name} was accepted");
+            assert!(hash_json(&record).is_err(), "{name} was accepted");
         }
         // Absent and null differ: max_turns may be null, but must be present.
         let mut unlimited = config.clone();
         unlimited["limits"]["max_turns"] = Value::Null;
-        assert!(hash_value(&unlimited).is_ok());
+        assert!(hash_json(&unlimited).is_ok());
+
+        // Enabled plan_review is accepted on both builder and planner configurations.
+        let reviewed = config_with_plan_review();
+        assert!(hash_json(&reviewed).is_ok());
+        let mut planner_reviewed = reviewed;
+        planner_reviewed["role"] = json!("planner");
+        assert!(hash_json(&planner_reviewed).is_ok());
     }
 
     #[test]
@@ -862,7 +1288,7 @@ pub(crate) mod tests {
         let first = hash(CONFIG.as_bytes()).unwrap();
         let mut wrapped = value(CONFIG);
         wrapped["prompt"]["role_wrapper_sha256"] = json!("e".repeat(64));
-        let second = hash_value(&wrapped).unwrap();
+        let second = hash_json(&wrapped).unwrap();
         assert_ne!(first.hash, second.hash);
         // The task record has no prompt field, so no wrapper can reach its hash.
         assert!(!task.canonical.contains("wrapper"));
@@ -871,6 +1297,6 @@ pub(crate) mod tests {
         // Serialising the parsed task drops nothing: a wrapper field is refused, not ignored.
         let mut smuggled = value(TASK);
         smuggled["role_wrapper_sha256"] = json!("e".repeat(64));
-        assert!(hash_value(&smuggled).is_err());
+        assert!(hash_json(&smuggled).is_err());
     }
 }
