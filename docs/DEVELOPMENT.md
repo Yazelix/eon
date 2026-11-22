@@ -173,18 +173,42 @@ and canonical slot-home resolution returns an explicit Unsupported error there.
 
 ### CI failure collection
 
-For the full failure list before landing a Darwin change, a maintainer pushes
-the candidate to a `ci/` branch and dispatches:
+For Darwin evidence before landing, push the reviewed commit to `ci/<bead>`.
+Choose `workspace-tests` for the workspace suite, `build` for the package, or
+`both` (the default). When `review-tier classify` prints a `darwin:` line,
+use the jobs it lists and skip the dispatch for `darwin: none`.
 
 ```sh
-gh workflow run darwin-build.yml --repo Yazelix/eon --ref ci/BRANCH
+candidate=FULL_COMMIT_SHA
+branch=ci/BEAD
+git push origin "$candidate:refs/heads/$branch"
+gh workflow run darwin-build.yml --repo Yazelix/eon --ref "$branch" -f legs=workspace-tests
 ```
 
-The workflow's `build` job keeps the strict Nix package gate. Manual dispatch
-also runs `workspace-tests` on a separate Apple Silicon runner; failure in
-either job does not cancel the other. Filtered `edge` pushes run only `build`
-while the extra leg's duration and disk use are measured. Both jobs retain a
-90-minute timeout, read-only cache access and per-ref cancellation.
+If an amended candidate cannot fast-forward its scratch branch, delete the
+scratch branch before pushing the replacement.
+
+For `darwin: proof`, also dispatch `mac-proof` on the candidate branch with
+the full commit SHA. Use `--ref edge` for proofs of `edge` itself.
+
+```sh
+gh workflow run mac-proof.yml --repo Yazelix/eon --ref "$branch" -f "rev=$candidate"
+```
+
+GitHub allows five concurrent macOS jobs on Yazelix's Free plan. Reserve three
+for the Darwin package build on `edge`, its proof, and the Darwin cache build.
+Check current macOS jobs across Yazelix before dispatching. If the candidate
+needs both Darwin jobs and the proof, wait for a Darwin job to finish before
+starting the proof. [GitHub Actions limits](https://docs.github.com/en/actions/reference/limits)
+
+Record the run IDs with the reviewed commit. After landing, delete the scratch
+branch with `git push origin --delete "$branch"`.
+
+The `build` job keeps the strict Nix package gate. With `legs=both`, the jobs
+use separate Apple Silicon runners and finish independently. Filtered `edge`
+pushes run only `build`. Both jobs retain a 90-minute timeout and read-only
+cache access. A newer run of either workflow replaces its earlier run on the
+same ref. Runs on other refs have their own cancellation groups.
 
 `workspace-tests` builds release Orbit directly from source and supplies it as
 `ORBIT_BIN`, so a failing package dependency cannot block test collection. It

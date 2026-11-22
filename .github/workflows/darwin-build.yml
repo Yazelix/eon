@@ -20,6 +20,16 @@ on:
       - 'docs/USAGE.md'
       - '.github/workflows/darwin-build.yml'
   workflow_dispatch:
+    inputs:
+      legs:
+        description: Darwin jobs to run
+        type: choice
+        required: false
+        default: both
+        options:
+          - workspace-tests
+          - build
+          - both
 
 permissions:
   contents: read
@@ -38,8 +48,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Measure the extra test leg on dispatches before enabling it on edge pushes.
-        check: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["build","workspace-tests"]' || '["build"]') }}
+        check: >-
+          ${{ fromJSON('{"workspace-tests":["workspace-tests"],"build":["build"],"both":["build","workspace-tests"]}')
+          [github.event_name == 'push' && 'build' || inputs.legs] }}
     env:
       CARGO_BUILD_JOBS: '1'
     defaults:

@@ -11,9 +11,9 @@ on:
 permissions:
   contents: read
 
-# One proof at a time; a newer dispatch replaces the running one.
+# A newer dispatch replaces the running proof on the same ref.
 concurrency:
-  group: eon-mac-proof
+  group: eon-mac-proof-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
