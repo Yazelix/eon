@@ -1,19 +1,23 @@
 //! Venus frame work and process CPU on the shared isolated compositor.
+#[cfg(target_os = "linux")]
 use crate::{
-    child, corpus, environment, isolation,
-    json::Value,
-    launcher::{BusPolicy, Headless, Renderer, WindowMode},
+    child, corpus,
+    launcher::{BusPolicy, Headless, WindowMode},
     result::{Grid, RunResult, utc_timestamp},
-    stats::Summary,
-    suite, terminals,
 };
+#[cfg(any(target_os = "linux", test))]
+use crate::{environment, stats::Summary};
+use crate::{isolation, json::Value, launcher::Renderer, suite, terminals};
+#[cfg(target_os = "linux")]
+use std::time::{Instant, SystemTime};
 use std::{
     collections::BTreeMap,
     fs,
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime},
+    time::Duration,
 };
+#[cfg(any(target_os = "linux", test))]
 mod diagnostics;
 #[cfg(target_os = "linux")]
 mod input;
@@ -28,8 +32,23 @@ fn error(e: impl std::fmt::Display) -> String {
 fn object(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     Value::Object(entries.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
+#[cfg(target_os = "linux")]
 fn read(path: &Path) -> Result<Value> {
     Value::parse(&fs::read_to_string(path).map_err(error)?)
+}
+fn hash(path: &Path) -> Result<String> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(path).map_err(error)?;
+    let mut hash = crate::sha256::Sha256::new();
+    let mut bytes = [0; 65536];
+    loop {
+        let n = file.read(&mut bytes).map_err(error)?;
+        if n == 0 {
+            return Ok(hash.hex());
+        }
+        hash.update(&bytes[..n]);
+    }
 }
 const USAGE: &str = "eon-bench frames --eon LABEL=PATH --revision LABEL=COMMIT --candidate-tree LABEL=TREE --source-tree BENCH_TREE --out NEW_DIR [OPTIONS]";
 const WORKLOADS: [&str; 10] = [
@@ -48,21 +67,31 @@ const WORKLOADS: [&str; 10] = [
 struct Candidate {
     label: String,
     path: PathBuf,
+    #[cfg(target_os = "linux")]
     revision: String,
+    #[cfg(target_os = "linux")]
     tree: String,
 }
 pub struct Options {
     settings: suite::Settings,
     candidates: Vec<Candidate>,
+    #[cfg(target_os = "linux")]
     source_tree: String,
     renderer: Renderer,
+    #[cfg(any(target_os = "linux", test))]
     cells: Vec<Cell>,
+    #[cfg(target_os = "linux")]
     scroll_seconds: u64,
+    #[cfg(target_os = "linux")]
     idle_seconds: u64,
+    #[cfg(target_os = "linux")]
     repetitions: u64,
+    #[cfg(target_os = "linux")]
     deadline: Duration,
+    #[cfg(target_os = "linux")]
     mode: String,
 }
+#[cfg(target_os = "linux")]
 #[derive(Clone)]
 struct Cell {
     workload: String,
@@ -70,7 +99,21 @@ struct Cell {
     width: u64,
     height: u64,
 }
+// Other targets still validate the matrix size during argument parsing.
+#[cfg(not(target_os = "linux"))]
+struct Cell;
+
+#[cfg(target_os = "linux")]
 impl Cell {
+    fn new(workload: String, columns: u64, width: u64, height: u64) -> Self {
+        Self {
+            workload,
+            columns,
+            width,
+            height,
+        }
+    }
+
     fn id(&self) -> String {
         format!(
             "{}-{}c-{}x{}",
@@ -85,6 +128,12 @@ impl Cell {
     }
     fn throughput(&self) -> bool {
         !self.scroll() && !self.idle()
+    }
+}
+#[cfg(not(target_os = "linux"))]
+impl Cell {
+    fn new(_: String, _: u64, _: u64, _: u64) -> Self {
+        Self
     }
 }
 fn help() -> String {
@@ -280,21 +329,11 @@ pub fn options(args: &[String]) -> Result<Options> {
     let mut cells = Vec::new();
     for workload in workloads {
         if workload == "cat64" || workload.starts_with("kitten-") {
-            cells.push(Cell {
-                workload,
-                columns: 1,
-                width: 1280,
-                height: 800,
-            });
+            cells.push(Cell::new(workload, 1, 1280, 800));
         } else {
             for &columns in &columns {
                 for &(width, height) in &sizes {
-                    cells.push(Cell {
-                        workload: workload.clone(),
-                        columns,
-                        width,
-                        height,
-                    });
+                    cells.push(Cell::new(workload.clone(), columns, width, height));
                 }
             }
         }
@@ -311,21 +350,38 @@ pub fn options(args: &[String]) -> Result<Options> {
         .into_iter()
         .map(|(label, path)| Candidate {
             path: path.into(),
+            #[cfg(target_os = "linux")]
             revision: revisions[&label].clone(),
+            #[cfg(target_os = "linux")]
             tree: trees[&label].clone(),
             label,
         })
         .collect();
-    Ok(Options {
-        settings,
-        candidates,
+    #[cfg(not(target_os = "linux"))]
+    let _ = (
         source_tree,
-        renderer,
-        cells,
         scroll_seconds,
         idle_seconds,
         repetitions,
         deadline,
+    );
+    Ok(Options {
+        settings,
+        candidates,
+        #[cfg(target_os = "linux")]
+        source_tree,
+        renderer,
+        #[cfg(any(target_os = "linux", test))]
+        cells,
+        #[cfg(target_os = "linux")]
+        scroll_seconds,
+        #[cfg(target_os = "linux")]
+        idle_seconds,
+        #[cfg(target_os = "linux")]
+        repetitions,
+        #[cfg(target_os = "linux")]
+        deadline,
+        #[cfg(target_os = "linux")]
         mode,
     })
 }
@@ -395,10 +451,7 @@ pub fn run(args: &[String], options: &Options) -> Result {
         .map_err(error)?;
         fs::write(
             out.join("SHA256SUMS"),
-            format!(
-                "{}  result.json\n",
-                diagnostics::hash(&out.join("result.json"))?
-            ),
+            format!("{}  result.json\n", hash(&out.join("result.json"))?),
         )
         .map_err(error)?;
     }

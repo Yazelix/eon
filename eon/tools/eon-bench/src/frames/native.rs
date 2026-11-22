@@ -1,5 +1,4 @@
 use super::*;
-use diagnostics::hash;
 use std::io::{BufRead, BufReader, Write};
 
 const HISTORY_LINES: u64 = 3000;

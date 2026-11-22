@@ -384,6 +384,25 @@ lines = [11, 14]
 file = "nix/notices/audit-exceptions.json"
 lines = [5, 82]
 
+[[case]]
+id = "R36"
+kind = "fix-forward"
+commit = "1e5791c3a034d654e355d869e67161aef0c3bd8b"
+fixed_by = "17ca074076dc1b75ce4db970851565d73070abca"
+class = "macos-portability"
+tier = "high"
+summary = "The first-launch bundle journey added occupied_names_processes_that_run_from_the_extraction with no Linux gate, although occupied walks /proc/<pid>/exe and /proc/<pid>/maps through launcher::namespace_processes, so on Darwin, which has no /proc, the test panics on its unwrap and test:eon-bench fails in every macOS proof."
+evidence = "1e5791c3 adds occupied at eon/tools/eon-bench/src/bundle.rs:498-514 reading /proc/{pid} and the ungated test at :1462-1477; native mac-proof 44534167008 on 44ccf12f failed only that test, panicking at bundle.rs:1472:36 with 'No such file or directory (os error 2)'. eon-vr9dy gates it with #[cfg(target_os = \"linux\")], as launcher.rs's /proc tests already are; the bundle journey itself already refuses to run off Linux. The same commit also added a Linux race (not this case's mechanism): joined_calls_share_one_closed_pid_namespace audits right after Jail::start (bundle.rs:628 returns once bwrap reports the init, before the init forks the holder shell), then asserts three jailed processes at :1380-1381, so it failed 2 of 30 stress runs; eon-vr9dy also fixed that, test-only."
+mechanism = [["/proc", "procfs", "proc filesystem"], ["darwin", "macos", "mac-proof", "linux-only", "linux only", "target_os", "cfg", "gate", "ungated", "non-linux", "off linux"]]
+
+[[case.expect]]
+file = "eon/tools/eon-bench/src/bundle.rs"
+lines = [1462, 1477]
+
+[[case.expect]]
+file = "eon/tools/eon-bench/src/bundle.rs"
+lines = [498, 514]
+
 # Exact Darwin levels and legs for the whole first-parent diff.
 [[darwin]]
 commit = "7cf509e988af36c7da06778cf910974707887134"

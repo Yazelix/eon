@@ -294,19 +294,6 @@ pub(super) fn pooled(windows: &[Window]) -> Result<Value> {
     ]))
 }
 
-pub(super) fn hash(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path).map_err(error)?;
-    let mut hash = crate::sha256::Sha256::new();
-    let mut bytes = [0; 65536];
-    loop {
-        let n = file.read(&mut bytes).map_err(error)?;
-        if n == 0 {
-            return Ok(hash.hex());
-        }
-        hash.update(&bytes[..n]);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
