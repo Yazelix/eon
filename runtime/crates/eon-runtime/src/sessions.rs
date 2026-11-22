@@ -530,6 +530,8 @@ fn acquire_management(
     orbit_logs: Option<&Path>,
     deadline: Instant,
 ) -> Result<RunningSession, String> {
+    #[cfg(test)]
+    crate::fixtures::assert_not_update_validator("an Orbit lease");
     let mut retried = false;
     let stream = loop {
         let current = read_management_record(&candidate.record_path)?.ok_or_else(|| {

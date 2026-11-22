@@ -17,8 +17,8 @@ use crate::{
     supervisor::{effective_uid, validate_private_directory},
 };
 use eon_workspace_protocol::update::{
-    self as eonu, Code, Direction, HEADER_BYTES, Inspect, Inspected, Kind, PREFIX_BYTES, Refused,
-    RequestId,
+    self as eonu, Code, Direction, HEADER_BYTES, Inspect, Inspected, Kind, PREFIX_BYTES, Preflight,
+    Preflighted, Refused, RequestId,
 };
 use std::{
     fmt, fs,
@@ -140,6 +140,8 @@ impl UpdateListener {
     /// The window's endpoint in `runtime`, or none, with the reason in the
     /// window's log. Never an error: the window runs without it.
     pub(crate) fn bind(runtime: &Path, log: &DiagnosticLog) -> Option<Self> {
+        #[cfg(test)]
+        crate::fixtures::assert_not_update_validator("the Update listener");
         if !serves_update() {
             return None;
         }
@@ -167,14 +169,9 @@ impl UpdateListener {
         self.0.path()
     }
 
-    /// Serves the one connection waiting, if any, whole, with `inspect`
-    /// answering INSPECT. Never an error of the loop: an accept error is
+    /// Reads one waiting request. Never an error of the loop: an accept error is
     /// logged once per kind, a connection error drops that connection.
-    pub(crate) fn serve(
-        &self,
-        log: &DiagnosticLog,
-        inspect: impl FnOnce(RequestId) -> Result<Inspected, String>,
-    ) {
+    pub(crate) fn serve(&self, log: &DiagnosticLog, handle: impl FnOnce(Kind, &[u8], Reply)) {
         let accepted = if fault("accept") {
             Err(io::Error::from_raw_os_error(libc::EMFILE))
         } else {
@@ -182,7 +179,11 @@ impl UpdateListener {
         };
         match accepted {
             Ok((stream, _)) => {
-                serve_connection(stream, Instant::now() + CLIENT_IO_TIMEOUT, inspect);
+                if let Ok((kind, bytes, reply)) =
+                    receive_connection(stream, Instant::now() + CLIENT_IO_TIMEOUT)
+                {
+                    handle(kind, &bytes, reply);
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
             Err(error) => log.note_once(&format!(
@@ -220,89 +221,149 @@ fn peer(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
     ))
 }
 
-/// One request and one reply, then close. The request has one deadline in
-/// total; the prefix decides the version before anything else is read.
-pub(crate) fn serve_connection(
-    mut stream: UnixStream,
+pub(crate) struct Reply {
+    stream: UnixStream,
+    read_deadline: Instant,
+}
+
+impl Reply {
+    fn send(mut self, result: Result<(Kind, Vec<u8>), Refused>, deferred: bool) -> Served {
+        let (kind, code, bytes) = match result {
+            Ok((kind, bytes)) => (kind, None, bytes),
+            Err(refused) => {
+                let code = refused.code;
+                let bytes = refused.encode().expect("a refusal's detail fits its bound");
+                (Kind::Refused, Some(code), bytes)
+            }
+        };
+        write_reply(&mut self.stream, &bytes, Instant::now() + REPLY_DEADLINE);
+        if deferred {
+            // A complete request was read before the child started. Drain only
+            // already queued input so a silent client cannot stall the window.
+            let _ = self.stream.shutdown(Shutdown::Write);
+            let mut sink = [0; 4096];
+            for _ in 0..16 {
+                if !matches!(platform::read_available(&self.stream, &mut sink), Ok(1..)) {
+                    break;
+                }
+            }
+        } else {
+            finish(self.stream, self.read_deadline);
+        }
+        Served::Replied(kind, code)
+    }
+
+    pub(crate) fn inspect(
+        self,
+        kind: Kind,
+        bytes: &[u8],
+        inspect: impl FnOnce(RequestId) -> Result<Inspected, String>,
+    ) -> Served {
+        self.send(
+            answer(kind, bytes, inspect).map(|bytes| (Kind::Inspected, bytes)),
+            false,
+        )
+    }
+
+    pub(crate) fn preflight(self, result: Result<Preflighted, Refused>, deferred: bool) {
+        self.send(
+            result.and_then(|reply| {
+                reply
+                    .encode()
+                    .map(|bytes| (Kind::Preflighted, bytes))
+                    .map_err(|error| {
+                        refusal(
+                            reply.request,
+                            Code::Internal,
+                            format!("cannot encode preflight: {error}"),
+                        )
+                    })
+            }),
+            deferred,
+        );
+    }
+}
+
+pub(crate) fn refusal(request: RequestId, code: Code, mut detail: String) -> Refused {
+    detail.truncate(detail.floor_char_boundary(eonu::MAX_DETAIL_BYTES));
+    Refused {
+        request,
+        code,
+        detail,
+    }
+}
+
+pub(crate) fn decode_preflight(bytes: &[u8]) -> Result<Preflight, Refused> {
+    Preflight::decode(bytes)
+        .map_err(|error| refusal(frame_request(bytes), Code::Malformed, error.to_string()))
+}
+
+fn frame_request(bytes: &[u8]) -> RequestId {
+    bytes
+        .get(HEADER_BYTES..HEADER_BYTES + 16)
+        .and_then(|id| id.try_into().ok())
+        .unwrap_or([0; 16])
+}
+
+/// The request has one deadline in total. The prefix decides its version
+/// before the reader accepts any more bytes.
+fn receive_connection(
+    stream: UnixStream,
     deadline: Instant,
-    inspect: impl FnOnce(RequestId) -> Result<Inspected, String>,
-) -> Served {
+) -> Result<(Kind, Vec<u8>, Reply), Served> {
     match peer(&stream) {
         Ok((_, uid)) if uid == effective_uid() => {}
-        _ => return Served::Peer,
+        _ => return Err(Served::Peer),
     }
     // Accepted sockets inherit the listener's nonblocking mode on macOS.
     if stream.set_nonblocking(false).is_err() {
-        return Served::Partial;
+        return Err(Served::Partial);
     }
+    let mut reply = Reply {
+        stream,
+        read_deadline: deadline,
+    };
     let mut head = [0; HEADER_BYTES];
-    if read_exact_before(
-        &mut stream,
-        &mut head[..PREFIX_BYTES],
-        deadline,
-        Instant::now,
-    )
-    .is_err()
-    {
-        return Served::Partial;
+    let read = |stream: &mut UnixStream, bytes: &mut [u8]| {
+        read_exact_before(stream, bytes, deadline, Instant::now).map_err(|_| Served::Partial)
+    };
+    read(&mut reply.stream, &mut head[..PREFIX_BYTES])?;
+    let invalid = match eonu::version(head[..PREFIX_BYTES].try_into().expect("6 bytes")) {
+        Err(error) => Some((Code::Malformed, error.to_string())),
+        Ok(version) if version != eonu::VERSION => {
+            Some((Code::Version, version_refusal(eonu::VERSION, version)))
+        }
+        Ok(_) => None,
+    };
+    if let Some((code, detail)) = invalid {
+        return Err(reply.send(Err(refusal([0; 16], code, detail)), false));
     }
-    let refuse = |code, detail: String| Refused {
-        request: [0; 16],
-        code,
-        detail,
-    };
-    let reply = match eonu::version(head[..PREFIX_BYTES].try_into().expect("6 bytes")) {
-        Err(error) => Err(refuse(Code::Malformed, error.to_string())),
-        Ok(version) if version != eonu::VERSION => Err(refuse(
-            Code::Version,
-            version_refusal(eonu::VERSION, version),
-        )),
-        Ok(_) => Ok(()),
-    };
-    let reply = match reply {
-        Err(refused) => Err(refused),
-        Ok(()) => {
-            if read_exact_before(
-                &mut stream,
-                &mut head[PREFIX_BYTES..],
-                deadline,
-                Instant::now,
-            )
-            .is_err()
-            {
-                return Served::Partial;
-            }
-            match eonu::header(&head, Direction::Request) {
-                Err(error) => Err(refuse(Code::Malformed, error.to_string())),
-                Ok(header) => {
-                    let mut frame = vec![0; HEADER_BYTES + header.length];
-                    frame[..HEADER_BYTES].copy_from_slice(&head);
-                    if read_exact_before(
-                        &mut stream,
-                        &mut frame[HEADER_BYTES..],
-                        deadline,
-                        Instant::now,
-                    )
-                    .is_err()
-                    {
-                        return Served::Partial;
-                    }
-                    answer(header.kind, &frame, inspect)
-                }
-            }
+    read(&mut reply.stream, &mut head[PREFIX_BYTES..])?;
+    let header = match eonu::header(&head, Direction::Request) {
+        Ok(header) => header,
+        Err(error) => {
+            return Err(reply.send(
+                Err(refusal([0; 16], Code::Malformed, error.to_string())),
+                false,
+            ));
         }
     };
-    let (kind, code, bytes) = match reply {
-        Ok(bytes) => (Kind::Inspected, None, bytes),
-        Err(refused) => {
-            let code = refused.code;
-            let bytes = refused.encode().expect("a refusal's detail fits its bound");
-            (Kind::Refused, Some(code), bytes)
-        }
-    };
-    write_reply(&mut stream, &bytes, Instant::now() + REPLY_DEADLINE);
-    finish(stream, deadline);
-    Served::Replied(kind, code)
+    let mut frame = vec![0; HEADER_BYTES + header.length];
+    frame[..HEADER_BYTES].copy_from_slice(&head);
+    read(&mut reply.stream, &mut frame[HEADER_BYTES..])?;
+    Ok((header.kind, frame, reply))
+}
+
+#[cfg(test)]
+pub(crate) fn serve_connection(
+    stream: UnixStream,
+    deadline: Instant,
+    inspect: impl FnOnce(RequestId) -> Result<Inspected, String>,
+) -> Served {
+    match receive_connection(stream, deadline) {
+        Ok((kind, bytes, reply)) => reply.inspect(kind, &bytes, inspect),
+        Err(served) => served,
+    }
 }
 
 /// The reply to a whole, header-checked request frame.
@@ -319,10 +380,12 @@ fn answer(
     match kind {
         Kind::Inspect => {
             let request = Inspect::decode(frame).map_err(|error| malformed([0; 16], error))?;
-            let internal = |error: String| Refused {
-                request: request.request,
-                code: Code::Internal,
-                detail: format!("this window cannot describe itself: {error}"),
+            let internal = |error: String| {
+                refusal(
+                    request.request,
+                    Code::Internal,
+                    format!("this window cannot describe itself: {error}"),
+                )
             };
             let inspected = inspect(request.request).map_err(internal)?;
             let encoded = if fault("encode") {
@@ -334,10 +397,7 @@ fn answer(
         }
         // Every request payload starts with its request ID.
         _ => Err(Refused {
-            request: frame
-                .get(HEADER_BYTES..HEADER_BYTES + 16)
-                .and_then(|id| id.try_into().ok())
-                .unwrap_or([0; 16]),
+            request: frame_request(frame),
             code: Code::Unsupported,
             detail: "this window does not serve that Update request".into(),
         }),
@@ -461,6 +521,70 @@ pub(crate) fn endpoint(lifetime: &Path) -> Result<(PathBuf, SocketIdentity), Ref
 /// Asks `lifetime`'s window who it is, over `update.sock`, before
 /// `deadline`. Reads no EONW and never opens `eon.sock`.
 pub(crate) fn inspect(lifetime: &Path, deadline: Instant) -> Result<Inspected, Refusal> {
+    let request = request_id();
+    let bytes = Inspect { request }
+        .encode()
+        .expect("INSPECT fits its bound");
+    let (frame, pid) = exchange(lifetime, &bytes, deadline)?;
+    let reply = decode_reply(
+        &frame,
+        Kind::Inspected,
+        request,
+        Inspected::decode,
+        |reply| reply.request,
+    )?;
+    let namespace = lifetime.parent().and_then(Path::parent);
+    let reported = Path::new(std::ffi::OsStr::from_bytes(&reply.namespace));
+    if lifetime.file_name().and_then(|name| name.to_str()) != Some(reply.lifetime.as_str()) {
+        return Err(Refusal::NotThisWindow(
+            "the window reports another lifetime",
+        ));
+    }
+    if !namespace.is_some_and(|namespace| same_directory(namespace, reported)) {
+        return Err(Refusal::NotThisWindow(
+            "the window reports another namespace",
+        ));
+    }
+    if pid > 0 && u32::try_from(pid) != Ok(reply.pid) {
+        return Err(Refusal::NotThisWindow("the window reports another process"));
+    }
+    Ok(reply)
+}
+
+/// Preflights a target against an already selected window. The caller owns
+/// the request ID so a lost reply can be resolved through inspection.
+pub(crate) fn preflight(
+    lifetime: &Path,
+    request: &Preflight,
+    deadline: Instant,
+) -> Result<Preflighted, Refusal> {
+    if lifetime.file_name().and_then(|name| name.to_str()) != Some(request.lifetime.as_str()) {
+        return Err(Refusal::NotThisWindow("the request names another lifetime"));
+    }
+    let bytes = request.encode().map_err(|error| malformed(&error))?;
+    let (frame, _) = exchange(lifetime, &bytes, deadline)?;
+    let reply = decode_reply(
+        &frame,
+        Kind::Preflighted,
+        request.request,
+        Preflighted::decode,
+        |reply| reply.request,
+    )?;
+    if reply.target_build != request.target_build
+        || reply.caller_origin.is_some() != request.caller.is_some()
+    {
+        return Err(Refusal::Malformed(
+            "the reply disagrees with the preflight request".into(),
+        ));
+    }
+    Ok(reply)
+}
+
+fn exchange(
+    lifetime: &Path,
+    bytes: &[u8],
+    deadline: Instant,
+) -> Result<(Vec<u8>, libc::pid_t), Refusal> {
     let (path, identity) = endpoint(lifetime)?;
     let unavailable = |error: io::Error| Refusal::Unavailable(error.to_string());
     let left = || {
@@ -477,10 +601,6 @@ pub(crate) fn inspect(lifetime: &Path, deadline: Instant) -> Result<Inspected, R
     if uid != effective_uid() {
         return Err(Refusal::Unsafe("the window's peer is another user".into()));
     }
-    let request = request_id();
-    let bytes = Inspect { request }
-        .encode()
-        .expect("INSPECT fits its bound");
     await_hangup(&stream, "await-close-before-write").map_err(unavailable)?;
     let write_timeout = option(
         stream.set_write_timeout(Some(left()?)),
@@ -489,7 +609,7 @@ pub(crate) fn inspect(lifetime: &Path, deadline: Instant) -> Result<Inspected, R
     crate::sessions::bound_io(&stream, write_timeout).map_err(unavailable)?;
     // A window that refused early may have closed already: its reply is
     // still there to read.
-    let _ = stream.write_all(&bytes);
+    let _ = stream.write_all(bytes);
     await_hangup(&stream, "await-close-before-read").map_err(unavailable)?;
     let frame = read_reply(&mut stream, deadline)?;
     // Before any result, refusals included, so a socket replaced while it
@@ -497,13 +617,22 @@ pub(crate) fn inspect(lifetime: &Path, deadline: Instant) -> Result<Inspected, R
     if socket_identity(&path).ok().flatten() != Some(identity) {
         return Err(Refusal::EndpointChanged);
     }
+    Ok((frame, pid))
+}
+
+fn decode_reply<T>(
+    frame: &[u8],
+    expected: Kind,
+    request: RequestId,
+    decode: impl FnOnce(&[u8]) -> eonu::Result<T>,
+    reply_id: impl FnOnce(&T) -> RequestId,
+) -> Result<T, Refusal> {
     let another = || Refusal::Malformed("the reply answers another request".into());
-    let reply = match eonu::kind_of(&frame, Direction::Reply) {
-        Ok(Kind::Inspected) => Inspected::decode(&frame),
+    let reply = match eonu::kind_of(frame, Direction::Reply) {
+        Ok(kind) if kind == expected => decode(frame),
         Ok(Kind::Refused) => {
             let refused =
-                Refused::decode(&frame, Direction::Reply).map_err(|error| malformed(&error))?;
-            // All zero only when the window could not read the request.
+                Refused::decode(frame, Direction::Reply).map_err(|error| malformed(&error))?;
             if refused.request != request && refused.request != [0; 16] {
                 return Err(another());
             }
@@ -516,23 +645,8 @@ pub(crate) fn inspect(lifetime: &Path, deadline: Instant) -> Result<Inspected, R
         Err(error) => Err(error),
     }
     .map_err(|error| malformed(&error))?;
-    if reply.request != request {
+    if reply_id(&reply) != request {
         return Err(another());
-    }
-    let namespace = lifetime.parent().and_then(Path::parent);
-    let reported = Path::new(std::ffi::OsStr::from_bytes(&reply.namespace));
-    if lifetime.file_name().and_then(|name| name.to_str()) != Some(reply.lifetime.as_str()) {
-        return Err(Refusal::NotThisWindow(
-            "the window reports another lifetime",
-        ));
-    }
-    if !namespace.is_some_and(|namespace| same_directory(namespace, reported)) {
-        return Err(Refusal::NotThisWindow(
-            "the window reports another namespace",
-        ));
-    }
-    if pid > 0 && u32::try_from(pid) != Ok(reply.pid) {
-        return Err(Refusal::NotThisWindow("the window reports another process"));
     }
     Ok(reply)
 }

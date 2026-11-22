@@ -133,6 +133,10 @@ impl DiagnosticLog {
             })
     }
 
+    pub(super) fn append_child_output(&self, bytes: &[u8]) {
+        self.append(bytes, false);
+    }
+
     fn append(&self, bytes: &[u8], record: bool) {
         let mut sink = self.sink.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(sink) = sink.as_mut() else {

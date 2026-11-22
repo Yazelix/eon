@@ -7,6 +7,13 @@ use crate::{
 };
 use eon_workspace_protocol::v47::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
+pub(crate) fn assert_not_update_validator(resource: &str) {
+    assert!(
+        std::env::var_os("EON_TEST_PREFLIGHT_LIFETIME").is_none(),
+        "the read-only Update child tried to open {resource}"
+    );
+}
+
 pub(crate) fn make_fifo(path: &std::path::Path) {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
@@ -70,6 +77,8 @@ pub(crate) fn busy_listener(path: &std::path::Path) -> (socket2::Socket, Vec<soc
 pub(crate) fn inputs() -> Inputs {
     Inputs {
         launch: Err("unwrapped fixture".into()),
+        target_launch_facts: |_| Err("no installed target fixture".into()),
+        update_store: "/nix/store".into(),
         version: "fixture-product",
         release_stage: crate::ReleaseStage::Alpha,
         skill: "fixture-skill",

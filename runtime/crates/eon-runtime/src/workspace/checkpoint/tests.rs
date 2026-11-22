@@ -59,6 +59,7 @@ impl Source {
             self.runtime.clone(),
             Some(self.registry.clone()),
             catalog(),
+            false,
         )
     }
 
@@ -389,6 +390,7 @@ fn unrestorable(
         source.runtime.clone(),
         Some(source.registry.clone()),
         catalog,
+        false,
     );
     assert_eq!(result, Err(Error::Unrestorable(what)));
     assert_eq!(source.registry_bytes(), before);
@@ -399,7 +401,14 @@ fn restore_refuses_a_registry_or_catalog_the_window_cannot_use() {
     let source = source_a();
     let (core, update) = source.capture().unwrap();
 
-    let without = WorkspaceSet::restore(&core, &update, source.runtime.clone(), None, catalog());
+    let without = WorkspaceSet::restore(
+        &core,
+        &update,
+        source.runtime.clone(),
+        None,
+        catalog(),
+        false,
+    );
     assert_eq!(
         without,
         Err(Error::Unrestorable(

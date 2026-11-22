@@ -222,6 +222,67 @@ fn configure_mock_desktop(config: &Path) {
 }
 
 #[test]
+fn private_update_validation_reads_eonu_before_starting_runtime() {
+    use eon_workspace_protocol::update::{Code, Direction, Refused, TargetCheck};
+    use std::os::unix::net::UnixDatagram;
+
+    const LIFETIME: &str = "g1-00000000000000000000000000000001";
+    const OTHER: &str = "g1-00000000000000000000000000000002";
+    let root = temporary_directory();
+    let trace_path = root.join("trace.sock");
+    let trace = UnixDatagram::bind(&trace_path).unwrap();
+    trace.set_nonblocking(true).unwrap();
+    let validate = |frame: &[u8]| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_eon"))
+            .args(["--update-validate-target", LIFETIME])
+            .env_clear()
+            .env("EON_WINDOW_RUNTIME_DIR", &root)
+            .env("EON_BENCH_TRACE", &trace_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(frame).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        Refused::decode(&output.stdout, Direction::TargetReply).unwrap()
+    };
+    let check = TargetCheck {
+        lifetime: OTHER.into(),
+        namespace: root.as_os_str().as_bytes().to_vec(),
+        created_build: LIFETIME.into(),
+        active_build: LIFETIME.into(),
+        identity_range: 0,
+        target_build: OTHER.into(),
+        hosts: Vec::new(),
+        checkpoint: Vec::new(),
+    };
+    let refused = validate(&check.encode().unwrap());
+    assert_eq!(
+        (refused.request, refused.code),
+        ([0; 16], Code::TargetRefused)
+    );
+    assert!(refused.detail.contains("another window"), "{refused:?}");
+    let other_version = validate(b"EONU\x02\x00");
+    assert_eq!(
+        (other_version.request, other_version.code),
+        ([0; 16], Code::Version)
+    );
+    assert_eq!(validate(b"EONW\x2f\x00").code, Code::Malformed);
+    assert_eq!(
+        trace.recv(&mut [0; 1024]).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    let paths: Vec<_> = fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(paths, vec![trace_path]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn config_check_validates_offline_without_changing_state() {
     let root = temporary_directory();
     let run = |config: &Path, arguments: &[&str]| {

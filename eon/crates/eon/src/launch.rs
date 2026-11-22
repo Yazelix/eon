@@ -56,7 +56,7 @@ fn capture_at(
     {
         return Err("launch facts locator contradicts installed executable".into());
     }
-    let facts = LaunchFacts::decode(&read_facts(&locator)?, &wrapper, &executable)?;
+    let facts = LaunchFacts::decode(&read_facts(&locator, false)?, &wrapper, &executable)?;
     LaunchInputs::capture(&facts, arguments, environment)
 }
 
@@ -80,18 +80,46 @@ fn installed_paths(executable: &Path) -> Result<(PathBuf, PathBuf, PathBuf), Str
     Ok((executable, wrapper, locator))
 }
 
-fn read_facts(locator: &Path) -> Result<Vec<u8>, String> {
+/// The caller has checked the wrapper's store membership and permissions.
+pub(crate) fn target_facts(wrapper: &Path) -> Result<LaunchFacts, String> {
+    let bin = wrapper.parent().ok_or("missing installed bin directory")?;
+    if wrapper.file_name() != Some(OsStr::new("eon")) || bin.file_name() != Some(OsStr::new("bin"))
+    {
+        return Err("the target wrapper must be installed as bin/eon".into());
+    }
+    let expected_executable = bin.join(".eon-wrapped");
+    let (executable, expected_wrapper, locator) = installed_paths(&expected_executable)?;
+    let metadata = fs::metadata(&executable).map_err(|error| error.to_string())?;
+    let mode = metadata.permissions().mode();
+    if executable.as_os_str() != expected_executable.as_os_str()
+        || expected_wrapper.as_os_str() != wrapper.as_os_str()
+        || !metadata.is_file()
+        || mode & 0o111 == 0
+        || mode & 0o222 != 0
+        || fs::canonicalize(&locator)
+            .map_err(|error| error.to_string())?
+            .as_os_str()
+            != locator.as_os_str()
+    {
+        return Err(
+            "target executable and launch facts must belong to the immutable installation".into(),
+        );
+    }
+    LaunchFacts::decode(&read_facts(&locator, true)?, wrapper, &executable)
+}
+
+fn read_facts(locator: &Path, immutable: bool) -> Result<Vec<u8>, String> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(locator)
         .map_err(|error| format!("cannot open installed launch facts: {error}"))?;
-    if !file
-        .metadata()
-        .map_err(|error| error.to_string())?
-        .is_file()
-    {
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
         return Err("installed launch facts are not a regular file".into());
+    }
+    if immutable && metadata.permissions().mode() & 0o222 != 0 {
+        return Err("installed target launch facts are writable".into());
     }
     let mut bytes = Vec::new();
     file.take((LAUNCH_FACTS_LIMIT + 1) as u64)
@@ -182,5 +210,47 @@ mod tests {
         fs::remove_file(&locator).unwrap();
         fs::write(&locator, table).unwrap();
         capture_at(&executable, arguments(), env(&locator)).unwrap();
+    }
+
+    #[test]
+    fn update_facts_require_immutable_siblings_in_the_same_installation() {
+        use std::os::unix::{ffi::OsStrExt, fs::symlink};
+
+        let root = tempfile::tempdir().unwrap();
+        let root_path = fs::canonicalize(root.path()).unwrap();
+        fs::create_dir_all(root_path.join("bin")).unwrap();
+        fs::create_dir_all(root_path.join("share/eon")).unwrap();
+        let wrapper = root_path.join("bin/eon");
+        let executable = root_path.join("bin/.eon-wrapped");
+        let locator = root_path.join("share/eon/launch-environment");
+        for path in [&wrapper, &executable] {
+            fs::write(path, b"fixture").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        let bytes = [
+            b"EON-LAUNCH-1\0".as_slice(),
+            wrapper.as_os_str().as_bytes(),
+            b"\0",
+            executable.as_os_str().as_bytes(),
+            b"\0",
+        ]
+        .concat();
+        fs::write(&locator, &bytes).unwrap();
+        assert!(target_facts(&wrapper).is_err());
+        fs::set_permissions(&locator, fs::Permissions::from_mode(0o444)).unwrap();
+        assert!(target_facts(&wrapper).is_ok());
+
+        let outside = root_path.join("alias");
+        fs::rename(&locator, &outside).unwrap();
+        symlink(&outside, &locator).unwrap();
+        assert!(target_facts(&wrapper).is_err());
+        fs::remove_file(&locator).unwrap();
+        fs::rename(&outside, &locator).unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(target_facts(&wrapper).is_err());
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o555)).unwrap();
+        fs::rename(&executable, &outside).unwrap();
+        symlink(&outside, &executable).unwrap();
+        assert!(target_facts(&wrapper).is_err());
     }
 }

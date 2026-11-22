@@ -1,8 +1,6 @@
 //! The window topology's part of an Update checkpoint: sessions, tabs, panes,
 //! popups, identity counters, replay rings and recency.
-// Consumed by `checkpoint::update::model`, whose capture and restore halves
-// the supervisor's export and import use once S4a (eon-t3fyd.7) and S4b-1
-// (eon-t3fyd.8) call them; until then their tests consume it.
+//! Consumed by `checkpoint::update::model` during export and validation.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{
@@ -205,6 +203,7 @@ impl WorkspaceSet {
         runtime: PathBuf,
         registry: Option<Registry>,
         catalog: PopupCatalog,
+        preflight: bool,
     ) -> Result<Self> {
         if registry.is_some() != update.registry_available {
             return Err(Error::Unrestorable(
@@ -219,9 +218,12 @@ impl WorkspaceSet {
                     .iter()
                     .any(|session| session.persistent_id.is_some()) =>
             {
-                registry
-                    .retry_busy(|| registry.list())
-                    .map_err(|_| Error::Unrestorable("the session registry cannot be read"))?
+                let records = if preflight {
+                    registry.list_for_preflight()
+                } else {
+                    registry.retry_busy(|| registry.list())
+                };
+                records.map_err(|_| Error::Unrestorable("the session registry cannot be read"))?
             }
             _ => Vec::new(),
         };

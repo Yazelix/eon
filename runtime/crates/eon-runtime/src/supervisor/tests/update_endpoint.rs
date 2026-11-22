@@ -280,10 +280,13 @@ fn a_real_window_answers_inspect_and_keeps_serving_eonw() {
     );
     let before = window.state();
     // A request this slice does not serve, and EONW bytes on the wrong socket.
-    let mut preflight = b"EONU\x01\x00\x02\x00\x10\x00\x00\x00".to_vec();
-    preflight.extend_from_slice(&[4; 16]);
-    let reply = Refused::decode(&window.send_raw(&preflight), Direction::Reply).unwrap();
-    assert_eq!((reply.code, reply.request), (Code::Unsupported, [4; 16]));
+    for (kind, code) in [(2, Code::Malformed), (3, Code::Unsupported)] {
+        let mut request = b"EONU\x01\x00\x00\x00\x10\x00\x00\x00".to_vec();
+        request[6] = kind;
+        request.extend_from_slice(&[4; 16]);
+        let reply = Refused::decode(&window.send_raw(&request), Direction::Reply).unwrap();
+        assert_eq!((reply.code, reply.request), (code, [4; 16]));
+    }
     let reply = window.send_raw(b"EONW\x2f\x00\x01\x00\x00\x00\x00\x00");
     assert_eq!(
         Refused::decode(&reply, Direction::Reply).unwrap().code,

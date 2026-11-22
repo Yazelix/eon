@@ -1,9 +1,8 @@
 //! Update's two halves: a full-Eon supervisor's checkpoint, taken only at a
 //! settled boundary (`export`), and the supervisor rebuilt from it in the
 //! target build (`import`, checked read-only by `validate_target`).
-// S4a (eon-t3fyd.7) calls `export` from the Update exchange and
-// `validate_target` as the target's preflight; S4b-1 (eon-t3fyd.8) calls
-// `import` after the exec. Until then their tests consume them.
+// S4a-2 (eon-t3fyd.16) exports and validates through the test-gated Update
+// exchange. S4b-1 (eon-t3fyd.8) will import after exec.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{
@@ -35,6 +34,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod preflight;
+pub(super) use preflight::PreflightState;
+pub(crate) use preflight::{VALIDATE_UPDATE_TARGET, validate_update_target};
+
 /// What the target build supplies to an import: its own inputs, settings,
 /// registry and log, and the lifetime its own launch says it serves. None of
 /// it comes from the exchange.
@@ -49,7 +52,7 @@ pub(super) struct Target<'a> {
     /// The base runtime directory, which the running-window scan reads.
     pub(super) base: &'a Path,
     pub(super) registry: Option<Registry>,
-    pub(super) log: &'a Arc<DiagnosticLog>,
+    pub(super) log: Option<&'a Arc<DiagnosticLog>>,
 }
 
 impl Target<'_> {
@@ -105,6 +108,7 @@ fn validated(
     target: &Target,
     decoded: &Decoded,
     now: Instant,
+    preflight: bool,
 ) -> Result<(WorkspaceSet, Attention)> {
     let (workspaces, attention) = model::validate(
         &decoded.core,
@@ -114,6 +118,7 @@ fn validated(
         target.settings.popup_catalog(target.inputs),
         now,
         decoded.elapsed,
+        preflight,
     )?;
     Ok((
         workspaces,
@@ -131,7 +136,7 @@ pub(super) fn validate_target(
     boot: Duration,
 ) -> Result<()> {
     let decoded = decoded(target, bytes, scope, boot)?;
-    validated(target, &decoded, now).map(drop)
+    validated(target, &decoded, now, true).map(drop)
 }
 
 /// The window's supervisor rebuilt in the target build around `sessions`,
@@ -150,13 +155,19 @@ pub(super) fn import(
     boot: Duration,
 ) -> std::result::Result<SupervisorState, (Error, Vec<RunningSession>)> {
     let runtime = target.runtime();
+    let Some(log) = target.log else {
+        return Err((
+            Error::Unrestorable("the restored supervisor needs a diagnostic log"),
+            sessions,
+        ));
+    };
     let checked = (|| {
         if listener.path() != runtime.join("eon.sock") {
             return Err(ANOTHER_WINDOW);
         }
         let decoded = decoded(target, bytes, scope, boot)?;
         let order = model::match_rows(&decoded.core, &decoded.update, &runtime, &sessions)?;
-        let (workspaces, attention) = validated(target, &decoded, now)?;
+        let (workspaces, attention) = validated(target, &decoded, now, false)?;
         // The only fallible effects, in order; a failure drops what started.
         let registry_worker = target.registry.clone().map(Worker::start).transpose();
         let running = registry_worker
@@ -166,14 +177,12 @@ pub(super) fn import(
                     target.base.to_path_buf(),
                     target.root,
                     target.generation,
-                    Arc::clone(target.log),
+                    Arc::clone(log),
                 )
                 .map(|running| (worker, running))
             });
         let (registry_worker, running) = running.map_err(|error| {
-            target
-                .log
-                .note(&format!("cannot restore the window's supervisor: {error}"));
+            log.note(&format!("cannot restore the window's supervisor: {error}"));
             Error::Unrestorable("the restored supervisor cannot start its workers")
         })?;
         Ok((
@@ -196,7 +205,7 @@ pub(super) fn import(
         ..
     } = decoded;
     model::apply_extras(&mut sessions, &order, &update);
-    let log = Arc::clone(target.log);
+    let log = Arc::clone(log);
     let scrollback = Snapshots::adopt(
         &runtime,
         sessions.iter().map(|session| session.id.as_str()),
@@ -249,6 +258,7 @@ const _: () = {
     assert!(eonu::MAX_HOSTS >= v47::MAX_SESSIONS);
     assert!(eonu::MAX_ID_BYTES >= orbit_protocol::management::MAX_ID_BYTES);
     assert!(eonu::MAX_PATH_BYTES >= v47::MAX_DIRECTORY_BYTES);
+    assert!(eonu::MAX_CHECKPOINT_BYTES >= crate::checkpoint::MAX_BYTES);
 };
 
 impl SupervisorState {
@@ -260,7 +270,7 @@ impl SupervisorState {
         request: eon_workspace_protocol::update::RequestId,
         runtime: &Path,
     ) -> std::result::Result<eon_workspace_protocol::update::Inspected, String> {
-        use eon_workspace_protocol::update::{Host, Inspected, Presentation};
+        use eon_workspace_protocol::update::{Inspected, Presentation};
         let namespace = runtime.parent().and_then(Path::parent).unwrap_or(runtime);
         // An unreadable record is not "no launcher": it refuses.
         let launcher = super::super::generation::Identity::read(runtime)?
@@ -283,24 +293,27 @@ impl SupervisorState {
             } else {
                 Presentation::Detached
             },
-            hosts: self
-                .sessions
-                .iter()
-                .map(|session| {
-                    let inventory = session.inventory();
-                    Host {
-                        terminal: inventory.terminal,
-                        run: inventory.run,
-                        origin: inventory.origin_build,
-                        management: inventory.management_version,
-                        record_generation: inventory.record_generation,
-                        orbs: inventory.orbs,
-                        orbf: inventory.orbf,
-                    }
-                })
-                .collect(),
+            hosts: self.update_hosts(),
             last: None,
         })
+    }
+
+    fn update_hosts(&self) -> Vec<eon_workspace_protocol::update::Host> {
+        self.sessions
+            .iter()
+            .map(|session| {
+                let inventory = session.inventory();
+                eon_workspace_protocol::update::Host {
+                    terminal: inventory.terminal,
+                    run: inventory.run,
+                    origin: inventory.origin_build,
+                    management: inventory.management_version,
+                    record_generation: inventory.record_generation,
+                    orbs: inventory.orbs,
+                    orbf: inventory.orbf,
+                }
+            })
+            .collect()
     }
 }
 

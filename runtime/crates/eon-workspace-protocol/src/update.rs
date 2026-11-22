@@ -7,8 +7,8 @@
 //! exactly sized payload. The first 6 bytes never change: a reader decides on
 //! the version from them alone and answers another version without reading
 //! further. Each Update slice codes the frames it uses; this module has the
-//! header, every kind's number, direction and bound, and the INSPECT,
-//! INSPECTED and REFUSED payloads.
+//! header, every kind's number, direction and bound, and the inspection,
+//! preflight and target validation payloads.
 
 /// The frozen magic.
 pub const MAGIC: [u8; 4] = *b"EONU";
@@ -27,6 +27,7 @@ pub const MAX_DETAIL_BYTES: usize = 1024;
 pub type RequestId = [u8; 16];
 
 const KIB: usize = 1024;
+pub const MAX_CHECKPOINT_BYTES: usize = 16 * KIB * KIB;
 
 /// Every v1 kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +81,7 @@ impl Kind {
         match self {
             Self::Inspect => 16,
             Self::Preflight | Self::Commit | Self::Carry => 8 * KIB,
-            Self::TargetCheck => 16 * KIB * KIB + 128 * KIB,
+            Self::TargetCheck => MAX_CHECKPOINT_BYTES + 128 * KIB,
             Self::Inspected => 128 * KIB,
             Self::Refused => 2 * KIB,
             Self::Preflighted | Self::Updated | Self::TargetVerdict => KIB,
@@ -284,6 +285,47 @@ pub struct Inspect {
     pub request: RequestId,
 }
 
+/// PREFLIGHT: the exact live owner and build to check, with an optional caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preflight {
+    pub request: RequestId,
+    pub lifetime: String,
+    pub expected_active_build: String,
+    pub target_wrapper: Vec<u8>,
+    pub target_build: String,
+    pub caller: Option<String>,
+}
+
+/// PREFLIGHTED: the child confirmed that the target can validate the checkpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preflighted {
+    pub request: RequestId,
+    pub caller_origin: Option<String>,
+    pub target_build: String,
+    pub eonw: u16,
+}
+
+/// TARGET_CHECK: the owner identifies and supplies a settled checkpoint over a private pipe.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TargetCheck {
+    pub lifetime: String,
+    pub namespace: Vec<u8>,
+    pub created_build: String,
+    pub active_build: String,
+    pub identity_range: u64,
+    pub target_build: String,
+    pub hosts: Vec<Host>,
+    pub checkpoint: Vec<u8>,
+}
+
+/// TARGET_VERDICT: the target's own build identity and version numbers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetVerdict {
+    pub target_build: String,
+    pub eonw: u16,
+    pub update_schema: u16,
+}
+
 /// REFUSED: a reply's refusal, before any effect.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refused {
@@ -361,6 +403,125 @@ impl Inspect {
     }
 }
 
+impl Preflight {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Writer::default();
+        out.bytes(&self.request);
+        out.id35(&self.lifetime)?;
+        out.id35(&self.expected_active_build)?;
+        out.path(&self.target_wrapper)?;
+        out.id35(&self.target_build)?;
+        out.optional(self.caller.as_deref(), |out, caller| {
+            out.text(caller, MAX_ID_BYTES)
+        })?;
+        frame(Kind::Preflight, out.0)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut input = Reader(payload(bytes, Kind::Preflight, Direction::Request)?);
+        let request = Self {
+            request: input.request()?,
+            lifetime: input.id35()?,
+            expected_active_build: input.id35()?,
+            target_wrapper: input.path()?,
+            target_build: input.id35()?,
+            caller: input.optional(|input| input.text(MAX_ID_BYTES))?,
+        };
+        input.finish()?;
+        Ok(request)
+    }
+}
+
+impl Preflighted {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Writer::default();
+        out.bytes(&self.request);
+        out.optional(self.caller_origin.as_deref(), Writer::id35)?;
+        out.id35(&self.target_build)?;
+        out.u16(self.eonw);
+        frame(Kind::Preflighted, out.0)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut input = Reader(payload(bytes, Kind::Preflighted, Direction::Reply)?);
+        let reply = Self {
+            request: input.request()?,
+            caller_origin: input.optional(Reader::id35)?,
+            target_build: input.id35()?,
+            eonw: input.u16()?,
+        };
+        input.finish()?;
+        Ok(reply)
+    }
+}
+
+impl TargetCheck {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        if self.checkpoint.len() > MAX_CHECKPOINT_BYTES {
+            return Err(Error::Oversized);
+        }
+        let mut out = Writer::default();
+        out.id35(&self.lifetime)?;
+        out.path(&self.namespace)?;
+        out.id35(&self.created_build)?;
+        out.id35(&self.active_build)?;
+        out.bytes(&self.identity_range.to_le_bytes());
+        out.id35(&self.target_build)?;
+        out.hosts(&self.hosts)?;
+        out.u32(self.checkpoint.len() as u32);
+        out.bytes(&self.checkpoint);
+        frame(Kind::TargetCheck, out.0)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut input = Reader(payload(bytes, Kind::TargetCheck, Direction::TargetCheck)?);
+        let lifetime = input.id35()?;
+        let namespace = input.path()?;
+        let created_build = input.id35()?;
+        let active_build = input.id35()?;
+        let identity_range = u64::from_le_bytes(input.take(8)?.try_into().expect("8 bytes"));
+        let target_build = input.id35()?;
+        let hosts = input.hosts()?;
+        let length = input.u32()? as usize;
+        if length > MAX_CHECKPOINT_BYTES {
+            return Err(Error::Oversized);
+        }
+        let checkpoint = input.take(length)?;
+        input.finish()?;
+        Ok(Self {
+            lifetime,
+            namespace,
+            created_build,
+            active_build,
+            identity_range,
+            target_build,
+            hosts,
+            checkpoint: checkpoint.to_vec(),
+        })
+    }
+}
+
+impl TargetVerdict {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Writer::default();
+        out.id35(&self.target_build)?;
+        out.u16(self.eonw);
+        out.u16(self.update_schema);
+        frame(Kind::TargetVerdict, out.0)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut input = Reader(payload(bytes, Kind::TargetVerdict, Direction::TargetReply)?);
+        let reply = Self {
+            target_build: input.id35()?,
+            eonw: input.u16()?,
+            update_schema: input.u16()?,
+        };
+        input.finish()?;
+        Ok(reply)
+    }
+}
+
 impl Refused {
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut out = Writer::default();
@@ -397,25 +558,7 @@ impl Inspected {
             out.u16(number);
         }
         out.u8(self.presentation as u8);
-        if self.hosts.len() > MAX_HOSTS {
-            return Err(Error::Malformed("host count"));
-        }
-        out.u16(self.hosts.len() as u16);
-        for host in &self.hosts {
-            out.text(&host.terminal, MAX_ID_BYTES)?;
-            out.text(&host.run, MAX_ID_BYTES)?;
-            out.optional(host.origin.as_deref(), Writer::id35)?;
-            out.u16(host.management);
-            out.u16(host.record_generation);
-            out.optional(host.orbs, |out, value| {
-                out.u16(value);
-                Ok(())
-            })?;
-            out.optional(host.orbf, |out, value| {
-                out.u16(value);
-                Ok(())
-            })?;
-        }
+        out.hosts(&self.hosts)?;
         out.optional(self.last.as_ref(), |out, last| {
             out.bytes(&last.request);
             out.u8(last.operation as u8);
@@ -442,22 +585,7 @@ impl Inspected {
             1 => Presentation::Attached,
             _ => return Err(Error::Malformed("presentation")),
         };
-        let count = usize::from(input.u16()?);
-        if count > MAX_HOSTS {
-            return Err(Error::Malformed("host count"));
-        }
-        let mut hosts = Vec::with_capacity(count);
-        for _ in 0..count {
-            hosts.push(Host {
-                terminal: input.text(MAX_ID_BYTES)?,
-                run: input.text(MAX_ID_BYTES)?,
-                origin: input.optional(Reader::id35)?,
-                management: input.u16()?,
-                record_generation: input.u16()?,
-                orbs: input.optional(Reader::u16)?,
-                orbf: input.optional(Reader::u16)?,
-            });
-        }
+        let hosts = input.hosts()?;
         let last = input.optional(|input| {
             let request = input.request()?;
             let operation = match input.u8()? {
@@ -552,6 +680,28 @@ impl Writer {
         self.bytes(value.as_bytes());
         Ok(())
     }
+    fn hosts(&mut self, hosts: &[Host]) -> Result<()> {
+        if hosts.len() > MAX_HOSTS {
+            return Err(Error::Malformed("host count"));
+        }
+        self.u16(hosts.len() as u16);
+        for host in hosts {
+            self.text(&host.terminal, MAX_ID_BYTES)?;
+            self.text(&host.run, MAX_ID_BYTES)?;
+            self.optional(host.origin.as_deref(), Writer::id35)?;
+            self.u16(host.management);
+            self.u16(host.record_generation);
+            self.optional(host.orbs, |out, value| {
+                out.u16(value);
+                Ok(())
+            })?;
+            self.optional(host.orbf, |out, value| {
+                out.u16(value);
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
     fn optional<T>(
         &mut self,
         value: Option<T>,
@@ -623,6 +773,25 @@ impl<'a> Reader<'a> {
             return Err(Error::Malformed("identity"));
         }
         Ok(value.to_owned())
+    }
+    fn hosts(&mut self) -> Result<Vec<Host>> {
+        let count = usize::from(self.u16()?);
+        if count > MAX_HOSTS {
+            return Err(Error::Malformed("host count"));
+        }
+        let mut hosts = Vec::with_capacity(count);
+        for _ in 0..count {
+            hosts.push(Host {
+                terminal: self.text(MAX_ID_BYTES)?,
+                run: self.text(MAX_ID_BYTES)?,
+                origin: self.optional(Reader::id35)?,
+                management: self.u16()?,
+                record_generation: self.u16()?,
+                orbs: self.optional(Reader::u16)?,
+                orbf: self.optional(Reader::u16)?,
+            });
+        }
+        Ok(hosts)
     }
     fn optional<T>(&mut self, read: impl FnOnce(&mut Self) -> Result<T>) -> Result<Option<T>> {
         match self.u8()? {

@@ -54,7 +54,7 @@ impl Lifetime {
             LaunchMode::Workspace,
             &inputs,
             &LaunchOptions::default(),
-            &log,
+            Some(&log),
         )
         .unwrap();
         settings.display.popups = Some(catalog());
@@ -79,7 +79,7 @@ impl Lifetime {
             generation: &self.generation,
             base: &self.base,
             registry: self.registry.clone(),
-            log: &self.log,
+            log: Some(&self.log),
         }
     }
 
@@ -567,7 +567,7 @@ fn a_busy_registry_is_retried_until_it_is_free() {
 #[test]
 fn a_registry_busy_past_the_limit_refuses() {
     let (mut exported, lifetime) = exported(source_a());
-    let _lock = hold_registry(&lifetime);
+    let lock = hold_registry(&lifetime);
     let target = with_fault(&lifetime, Fault::BusyRetryLimitZero);
     let (bytes, scope) = (exported.bytes.clone(), exported.scope.clone());
     let what = Error::Unrestorable("the session registry cannot be read");
@@ -580,7 +580,17 @@ fn a_registry_busy_past_the_limit_refuses() {
         None,
         BOOT,
         what,
-        true,
+        false,
+    );
+    assert_eq!(
+        validate_target(&target, &bytes, &scope, exported.now, BOOT),
+        Ok(())
+    );
+    drop(lock);
+    fs::remove_file(lifetime.root.join("sessions/registry.lock")).unwrap();
+    assert_eq!(
+        validate_target(&target, &bytes, &scope, exported.now, BOOT),
+        Err(Error::Unrestorable("the session registry cannot be read"))
     );
 }
 

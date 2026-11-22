@@ -13,7 +13,7 @@ use super::{
     running::running_notice,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, terminal_session},
     supervisor::{
-        LaunchMode, LaunchOptions, WORKSPACE_APPLICATION_ID, WORKSPACE_DECORATIONS,
+        self, LaunchMode, LaunchOptions, WORKSPACE_APPLICATION_ID, WORKSPACE_DECORATIONS,
         configuration_directory, launch_current, prepare_configuration, runtime_directory,
     },
     windows,
@@ -69,6 +69,10 @@ pub struct Inputs {
     /// Original supported launch inputs, or why this invocation is not an Update target.
     /// Ineligibility never fails an ordinary command or launch.
     pub launch: Result<super::launch_environment::LaunchInputs, String>,
+    /// Eon's installed association reader for a trusted candidate wrapper.
+    pub target_launch_facts: fn(&Path) -> Result<super::launch_environment::LaunchFacts, String>,
+    #[cfg(test)]
+    pub(crate) update_store: PathBuf,
     pub release_stage: ReleaseStage,
     pub version: &'static str,
     /// The agent skill this build ships, which `eon --skill` prints.
@@ -113,10 +117,20 @@ impl Inputs {
 pub(crate) const WORKSPACE_PICKER: &str = "eon-sessions";
 
 pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
-    let _trace = super::diagnostics::BenchTrace::start();
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let arguments: Vec<OsString> = arguments.collect();
+    if Path::new(&invocation).file_name() == Some(OsStr::new("eon"))
+        && arguments
+            .first()
+            .is_some_and(|flag| flag == supervisor::VALIDATE_UPDATE_TARGET)
+    {
+        return (
+            "eon",
+            supervisor::validate_update_target(&inputs, &arguments[1..]),
+        );
+    }
+    let _trace = super::diagnostics::BenchTrace::start();
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
         Some("eon-commands") => ("eon-commands", Ok(command_runner(&inputs))),

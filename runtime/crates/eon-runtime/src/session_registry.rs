@@ -385,6 +385,43 @@ impl Registry {
         Ok(records)
     }
 
+    /// Preflight validates a snapshot without opening or taking the registry lock.
+    pub(super) fn list_for_preflight(&self) -> Result<Vec<Registration>, Failure> {
+        if !self.present()? {
+            return Ok(Vec::new());
+        }
+        let directory = || -> Result<_, Failure> {
+            let metadata =
+                fs::symlink_metadata(&self.root).map_err(|error| Failure::at(&self.root, error))?;
+            Ok(crate::control::socket_identity_from(&metadata))
+        };
+        let before = directory()?;
+        let (allocator, records) = self.load()?;
+        let lock = self.root.join("registry.lock");
+        match fs::symlink_metadata(&lock) {
+            Ok(metadata)
+                if metadata.is_file()
+                    && metadata.uid() == effective_uid()
+                    && metadata.mode() & 0o7777 == 0o600 => {}
+            Ok(_) => {
+                return Err(Failure::at(
+                    &lock,
+                    "must be an owned mode-0600 regular file",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if allocator.is_some() {
+                    return Err(Failure::new("session registry lock is missing"));
+                }
+            }
+            Err(error) => return Err(Failure::at(&lock, error)),
+        }
+        if before != directory()? {
+            return Err(Failure::new("session registry changed during preflight"));
+        }
+        Ok(records)
+    }
+
     pub(super) fn lookup(&self, id: &str) -> Result<Option<Registration>, Failure> {
         validate_id(id)?;
         Ok(self.list()?.into_iter().find(|record| record.id == id))

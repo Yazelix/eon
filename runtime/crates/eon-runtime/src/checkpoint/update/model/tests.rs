@@ -134,7 +134,9 @@ fn restore(
     elapsed: Duration,
 ) -> Result<(WorkspaceSet, Option<Attention>)> {
     let order = match_rows(core, update, &runtime, sessions)?;
-    let restored = validate(core, update, runtime, registry, catalog, now, elapsed)?;
+    let restored = validate(
+        core, update, runtime, registry, catalog, now, elapsed, false,
+    )?;
     apply_extras(sessions, &order, update);
     Ok(restored)
 }

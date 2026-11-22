@@ -61,6 +61,7 @@ use std::{
 };
 
 mod update;
+pub(crate) use update::{VALIDATE_UPDATE_TARGET, validate_update_target};
 
 pub(super) use eon_workspace_protocol::{
     PRESENTATION_ADMISSION_TIMEOUT, SESSION_CLEANUP_TIMEOUT, TERMINAL_START_TIMEOUT,
@@ -349,8 +350,13 @@ pub(super) fn launch_current(
     let socket = runtime.join("eon.sock");
     let log = DiagnosticLog::open(&generation, mode.name());
     let result = (|| {
-        let settings =
-            WindowSettings::read(configuration_directory()?, mode, inputs, options, &log)?;
+        let settings = WindowSettings::read(
+            configuration_directory()?,
+            mode,
+            inputs,
+            options,
+            Some(&log),
+        )?;
         prepare_generation_runtime(&root, &generation)?;
         prepare_configuration(&settings.config)?;
         supervise(
@@ -537,10 +543,9 @@ impl WindowSettings {
         mode: LaunchMode,
         inputs: &Inputs,
         options: &LaunchOptions,
-        log: &DiagnosticLog,
+        log: Option<&DiagnosticLog>,
     ) -> Result<Self, String> {
         let defaults = &inputs.defaults;
-        let log = Some(log);
         let display = DisplaySettings::read(mode, &config, inputs, options, log)?;
         let warning_close_last_tab =
             managed_environment::warning_close_last_tab(&config, defaults, log)?;
@@ -1213,6 +1218,8 @@ fn supervise(
     log: &Arc<DiagnosticLog>,
     start_timeout: Duration,
 ) -> Result<i32, String> {
+    #[cfg(test)]
+    crate::fixtures::assert_not_update_validator("supervisor launch resources");
     let build = current_generation(inputs)?;
     let retained_identity = if mode == LaunchMode::Workspace {
         let identity = Identity::read(runtime)?;
@@ -1694,6 +1701,7 @@ fn supervise(
     // Terminals started after an admitted Venus spawned.
     state.name_presentation(true);
 
+    let mut preflight = update::PreflightState::default();
     let status = loop {
         let result: Result<i32, String> = (|| {
             loop {
@@ -1729,6 +1737,10 @@ fn supervise(
                     return Ok(state.initial_status.unwrap_or(0));
                 }
 
+                if let Some(listener) = &update_listener {
+                    preflight.serve(listener, &mut state, inputs, root, runtime, log);
+                }
+
                 // Clients held while a terminal started go first, in arrival order.
                 let accepted = match state.start_pump.next_held() {
                     Some(client) => Ok(super::control::serve_client(client, |request, peer| {
@@ -1742,9 +1754,6 @@ fn supervise(
                         )
                     }),
                 }?;
-                if let Some(listener) = &update_listener {
-                    listener.serve(log, |request| state.inspected(request, runtime));
-                }
                 state.end_turn(Instant::now());
                 match accepted {
                     Accepted::None => thread::sleep(Duration::from_millis(25)),
@@ -1782,6 +1791,7 @@ fn supervise(
     state.subscribers.end(generation);
     // Held clients read EOF with the listener, before Venus and notices close.
     state.start_pump = StartPump::default();
+    drop(preflight);
     drop(update_listener);
     drop(control_listener);
     if let Some(process) = state.venus.take() {
@@ -3040,19 +3050,19 @@ fn caller_session(
 /// The live terminal of this session that `caller` (an `EON_TERMINAL`)
 /// names, as the turn's reconciliation left the terminals; it changes nothing.
 fn live_caller(state: &SupervisorState, caller: &str) -> Option<String> {
-    state
-        .sessions
-        .iter()
-        .find(|session| {
-            session.is_terminal(caller)
-                && state.workspaces.as_ref().is_none_or(|workspaces| {
-                    workspaces.owns_session(&workspace::Session {
-                        id: session.id.clone(),
-                        endpoint: session.endpoint.clone(),
-                    })
+    live_caller_row(state, caller).map(|session| session.id.clone())
+}
+
+fn live_caller_row<'a>(state: &'a SupervisorState, caller: &str) -> Option<&'a RunningSession> {
+    state.sessions.iter().find(|session| {
+        session.is_terminal(caller)
+            && state.workspaces.as_ref().is_none_or(|workspaces| {
+                workspaces.owns_session(&workspace::Session {
+                    id: session.id.clone(),
+                    endpoint: session.endpoint.clone(),
                 })
-        })
-        .map(|session| session.id.clone())
+            })
+    })
 }
 
 /// Records the terminals that have exited, once per turn and before any
@@ -3506,19 +3516,22 @@ fn validate_reload(inputs: &Inputs, venus: &Path, versions: [u16; 3]) -> Result<
             ));
         }
     }
-    let metadata = fs::metadata(venus).map_err(|error| format!("cannot inspect Venus: {error}"))?;
-    if !venus.starts_with("/nix/store")
-        || fs::canonicalize(venus)
-            .map_err(|error| error.to_string())?
-            .as_os_str()
-            != venus.as_os_str()
-        || !metadata.is_file()
-        || metadata.permissions().mode() & 0o111 == 0
-        || metadata.permissions().mode() & 0o222 != 0
+    if !immutable_store_executable(venus, Path::new("/nix/store"))
+        .map_err(|error| format!("cannot inspect Venus: {error}"))?
     {
         return Err("Venus must be a canonical immutable executable in /nix/store; bundle reload is unavailable".into());
     }
     Ok(())
+}
+
+fn immutable_store_executable(path: &Path, store: &Path) -> io::Result<bool> {
+    let metadata = fs::metadata(path)?;
+    let mode = metadata.permissions().mode();
+    Ok(path.starts_with(store)
+        && fs::canonicalize(path)?.as_os_str() == path.as_os_str()
+        && metadata.is_file()
+        && mode & 0o111 != 0
+        && mode & 0o222 == 0)
 }
 
 fn reload_presentation(
@@ -3653,6 +3666,8 @@ impl std::ops::Deref for LifecycleLock {
 }
 
 fn open_supervisor_lifecycle_lock(path: &Path) -> Result<LifecycleLock, String> {
+    #[cfg(test)]
+    crate::fixtures::assert_not_update_validator("the lifecycle lock");
     let mut options = fs::OpenOptions::new();
     options
         .read(true)
@@ -5435,7 +5450,7 @@ mod tests {
                 LaunchMode::Terminal,
                 &inputs,
                 &super::LaunchOptions::default(),
-                &log,
+                Some(&log),
             )
             .unwrap();
             super::supervise(
@@ -6422,7 +6437,7 @@ mod tests {
             mode,
             &inputs,
             &super::LaunchOptions::default(),
-            &log,
+            Some(&log),
         )
         .and_then(|settings| {
             super::supervise(

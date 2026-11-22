@@ -19,6 +19,7 @@ pub(crate) fn inputs(launch: Result<eon_runtime::LaunchInputs, String>) -> Input
         };
     Inputs {
         launch,
+        target_launch_facts: crate::launch::target_facts,
         version: env!("CARGO_PKG_VERSION"),
         release_stage: RELEASE_STAGE,
         skill: include_str!("../../../skills/eon/SKILL.md"),

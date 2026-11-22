@@ -3114,6 +3114,11 @@ popup or automatic tutorial launch.
     exactly version-checked, with one current decoder. Unsupported, truncated,
     oversized or malformed input, or input in another EONU version, is
     refused and never authorizes exec, signal or mutation.
+
+    Planned Update inspection reports the lifetime, creation and active builds,
+    active executable, and actual presentation status. It reports the last
+    admitted Preflight outcome by request ID, including the target EONW on
+    success, so a lost reply can be disambiguated without a workspace decoder.
   - Update discovery reads a selected lifetime directory without decoding its
     EONW. It verifies the directory's privacy, the socket object and the
     peer's user. It also verifies that the answering supervisor reports that

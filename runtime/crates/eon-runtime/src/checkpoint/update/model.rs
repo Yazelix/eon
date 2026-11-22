@@ -2,8 +2,6 @@
 //! composed into one checkpoint, and back. The supervisor's own part (the
 //! settled boundary, the anchor, the elapsed gap and its own facts) is in
 //! `supervisor/update.rs` (export and import).
-// S4a (eon-t3fyd.7) and S4b-1 (eon-t3fyd.8) call export and import; until
-// then their tests consume this.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::Update;
@@ -131,13 +129,14 @@ pub(crate) fn validate(
     catalog: PopupCatalog,
     now: Instant,
     elapsed: Duration,
+    preflight: bool,
 ) -> Result<(WorkspaceSet, Option<Attention>)> {
     let attention = update
         .attention
         .as_ref()
         .map(|attention| Attention::restore(attention, now, elapsed))
         .transpose()?;
-    let workspaces = WorkspaceSet::restore(core, update, runtime, registry, catalog)?;
+    let workspaces = WorkspaceSet::restore(core, update, runtime, registry, catalog, preflight)?;
     Ok((workspaces, attention))
 }
 

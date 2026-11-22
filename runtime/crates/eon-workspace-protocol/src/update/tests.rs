@@ -482,3 +482,127 @@ fn codec_names_no_workspace_module() {
     assert!(!source.contains("use crate"));
     assert!(!source.contains("super::"), "the codec uses only std");
 }
+
+#[test]
+fn golden_preflight_and_target_frames() {
+    let request = Preflight {
+        request: REQUEST,
+        lifetime: LIFETIME.into(),
+        expected_active_build: BUILD.into(),
+        target_wrapper: b"/bin/e".to_vec(),
+        target_build: LIFETIME.into(),
+        caller: Some("t".into()),
+    };
+    let reply = Preflighted {
+        request: REQUEST,
+        caller_origin: Some(BUILD.into()),
+        target_build: LIFETIME.into(),
+        eonw: 48,
+    };
+    let check = TargetCheck {
+        lifetime: LIFETIME.into(),
+        namespace: b"/w".to_vec(),
+        created_build: BUILD.into(),
+        active_build: BUILD.into(),
+        identity_range: 0x0102_0304_0506_0708,
+        target_build: LIFETIME.into(),
+        hosts: Vec::new(),
+        checkpoint: vec![0xa0, 0xb0],
+    };
+    let verdict = TargetVerdict {
+        target_build: LIFETIME.into(),
+        eonw: 48,
+        update_schema: 1,
+    };
+    let preflight = [
+        b"EONU\x01\0\x02\0\x85\0\0\0".as_slice(),
+        &REQUEST,
+        LIFETIME.as_bytes(),
+        BUILD.as_bytes(),
+        b"\x06\0/bin/e",
+        LIFETIME.as_bytes(),
+        b"\x01\x01\0t",
+    ]
+    .concat();
+    let preflighted = [
+        b"EONU\x01\0\x83\0\x59\0\0\0".as_slice(),
+        &REQUEST,
+        b"\x01",
+        BUILD.as_bytes(),
+        LIFETIME.as_bytes(),
+        b"\x30\0",
+    ]
+    .concat();
+    let target_check = [
+        b"EONU\x01\0\x40\0\xa0\0\0\0".as_slice(),
+        LIFETIME.as_bytes(),
+        b"\x02\0/w",
+        BUILD.as_bytes(),
+        BUILD.as_bytes(),
+        b"\x08\x07\x06\x05\x04\x03\x02\x01",
+        LIFETIME.as_bytes(),
+        b"\0\0\x02\0\0\0\xa0\xb0",
+    ]
+    .concat();
+    let target_verdict = [
+        b"EONU\x01\0\xc0\0\x27\0\0\0".as_slice(),
+        LIFETIME.as_bytes(),
+        b"\x30\0\x01\0",
+    ]
+    .concat();
+    assert_eq!(request.encode().unwrap(), preflight);
+    assert_eq!(reply.encode().unwrap(), preflighted);
+    assert_eq!(check.encode().unwrap(), target_check);
+    assert_eq!(verdict.encode().unwrap(), target_verdict);
+    assert_eq!(Preflight::decode(&preflight), Ok(request));
+    assert_eq!(Preflighted::decode(&preflighted), Ok(reply));
+    assert_eq!(TargetCheck::decode(&target_check).unwrap(), check);
+    assert_eq!(TargetVerdict::decode(&target_verdict), Ok(verdict));
+
+    let with_hosts = TargetCheck {
+        hosts: vec![host(1, 0)],
+        ..check
+    };
+    let with_hosts_frame = with_hosts.encode().unwrap();
+    assert_eq!(TargetCheck::decode(&with_hosts_frame).unwrap(), with_hosts);
+    type Decode = fn(&[u8]) -> Result<()>;
+    for (bytes, decode) in [
+        (
+            preflight.as_slice(),
+            (|frame| Preflight::decode(frame).map(drop)) as Decode,
+        ),
+        (&preflighted, |frame| Preflighted::decode(frame).map(drop)),
+        (&with_hosts_frame, |frame| {
+            TargetCheck::decode(frame).map(drop)
+        }),
+        (&target_verdict, |frame| {
+            TargetVerdict::decode(frame).map(drop)
+        }),
+    ] {
+        for cut in 0..bytes.len() {
+            assert_eq!(decode(&bytes[..cut]), Err(Error::Truncated), "cut at {cut}");
+        }
+    }
+
+    let mut bad_caller = preflight;
+    bad_caller[HEADER_BYTES + 16 + 3 * 35 + 8] = 2;
+    assert_eq!(
+        Preflight::decode(&bad_caller),
+        Err(Error::Malformed("presence tag"))
+    );
+    assert_eq!(
+        Preflighted::decode(&preflighted[..preflighted.len() - 1]),
+        Err(Error::Truncated)
+    );
+    let mut oversized = target_check;
+    let length_at = oversized.len() - 6;
+    oversized[length_at..length_at + 4].copy_from_slice(&0x0100_0001_u32.to_le_bytes());
+    assert_eq!(TargetCheck::decode(&oversized), Err(Error::Oversized));
+    let mut trailing = target_verdict;
+    trailing[8] += 1;
+    trailing.push(0);
+    assert_eq!(
+        TargetVerdict::decode(&trailing),
+        Err(Error::Malformed("trailing bytes"))
+    );
+}
