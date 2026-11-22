@@ -12,10 +12,13 @@ installation, and proven contract changes.
   reuse retry a refusal during the Editor's startup, between its bind and
   listen, within the existing 100 ms connect deadline.
 - Antigravity (`app=antigravity`) rows in the Agents sidebar and attention inbox
-  now display Google Antigravity's official one-colour icon beside the row's
-  label (`Antigravity`, unless a pane pin or record title replaces it), tinted
-  `#FFFFFF` on dark row surfaces and `#202124` on light row surfaces (including
-  hover and keyboard-focus fills) without dimming on stale rows. Near-miss
+  now display Google Antigravity's official full-colour icon (`Icon`), unaltered
+  and never tinted, beside the row's label (`Antigravity`, unless a pane pin or
+  record title replaces it) without dimming on stale rows
+  (`eon-sidebar-app-icons-y99b7.13`).
+- Antigravity (`app=antigravity`) rows in the Agents sidebar and attention inbox
+  map to the Antigravity app mark and fallback label (`Antigravity`, unless a
+  pane pin or record title replaces it), without dimming on stale rows. Near-miss
   `app` strings are unchanged, and the Google Eon Bar quota chip keeps its
   Gemini spark (`eon-sidebar-app-icons-y99b7.12`).
 

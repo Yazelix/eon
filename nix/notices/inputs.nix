@@ -570,41 +570,41 @@ import ./default.nix {
     {
       id = "antigravity-mark";
       version = "2026-11-21";
-      source = "https://antigravity.google/assets/image/brand/antigravity-icon__one-color.svg (from https://antigravity.google/press, Icon - One Color); retrieved 2026-11-21";
+      source = "https://antigravity.google/assets/image/brand/antigravity-icon__full-color.svg (from https://antigravity.google/press, Icon); retrieved 2026-11-21T15:51:02Z";
       licenses = [ "LicenseRef-Google-Brand-Terms" ];
       notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
       notice_hashes = noticeHashes [
         {
-          file = ../../venus/assets/antigravity-icon-one-color.svg;
-          hash = "5b5d0cfd07cb79ba5d299d80b754e7c91d782dc1199811688dec67a0a11ba240";
+          file = ../../venus/assets/antigravity-icon-full-color.svg;
+          hash = "d775965ea1f8060538c15f758a3e22487317211fcb6051333b5e023f35aa726f";
         }
         {
-          file = ../../venus/assets/antigravity-icon-one-color-22.png;
-          hash = "9306b9be17b9dae6a11794c88fbbdd54a57030758f49001fb05eba9793b905b8";
+          file = ../../venus/assets/antigravity-icon-full-color-22.png;
+          hash = "81561c53e96f8dafd6063b9f5f65b478275d3a6fa87c268b75090f191ee39c5a";
         }
         {
-          file = ../../venus/assets/antigravity-icon-one-color-22.alpha;
-          hash = "a56923f1474a7c4b9aef47ecfb9d4a5d5598f13022d25d83fd5ac2a8b1148cf8";
+          file = ../../venus/assets/antigravity-icon-full-color-22.rgba;
+          hash = "001687cd4dc87bfec63e44a756cf53068128660759690f0e3455df9e532c4419";
         }
         {
-          file = ../../venus/assets/antigravity-icon-one-color-33.png;
-          hash = "53cdcbaa88da3734ac838ac7431cb7a7a2e042387fab969f597b9568142e3c38";
+          file = ../../venus/assets/antigravity-icon-full-color-33.png;
+          hash = "a755f374a875a39c2b94e8632e01c7dc54a6035e10f808b117b3e2023d102878";
         }
         {
-          file = ../../venus/assets/antigravity-icon-one-color-33.alpha;
-          hash = "77a707381c599518b9d682f66a2c199c9061fc89edfe0d29bca2a5cd29861df1";
+          file = ../../venus/assets/antigravity-icon-full-color-33.rgba;
+          hash = "7a48f70c8609ae3a8580542fd27c8057e80ffcf22b20b7df2b01637465237293";
         }
         {
-          file = ../../venus/assets/antigravity-icon-one-color-44.png;
-          hash = "475dc1dce95cdf618ce02fc0db23e0eca94ab278c1dcc3dd008944f04e1df986";
+          file = ../../venus/assets/antigravity-icon-full-color-44.png;
+          hash = "a99ebbc26d064959147b883f878054defee6521403a9d02609c82f8f0794f56d";
         }
         {
-          file = ../../venus/assets/antigravity-icon-one-color-44.alpha;
-          hash = "3ee07ac9dad35ad684d9d8887e0d7fb5540ba18db0b5411762eda61da9f8b5f1";
+          file = ../../venus/assets/antigravity-icon-full-color-44.rgba;
+          hash = "f0acdd0197e59fdf3cbc7e92105ccadcc8de1718f7b580f622e857c370f8fba2";
         }
         {
-          file = ../../venus/assets/antigravity-icon-one-color-256.alpha;
-          hash = "b381369ef6756498e62f1d77c8484c1aa4ad70af71888e76ff874941ae1d704f";
+          file = ../../venus/assets/antigravity-icon-full-color-256.rgba;
+          hash = "d44c265dd84abc5a2929301fa734268250bc0ed62a2b6c8a7f652a5a9caac824";
         }
       ];
     }

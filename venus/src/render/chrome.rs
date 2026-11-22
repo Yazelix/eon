@@ -374,14 +374,14 @@ const OPENCODE_LIGHT_RGBA_44: &[u8; 44 * 44 * 4] =
 const OPENCODE_LIGHT_RGBA_256: &[u8; 256 * 256 * 4] =
     include_bytes!("../../assets/opencode-mark-light-256.rgba");
 
-const ANTIGRAVITY_ALPHA_22: &[u8; 22 * 22] =
-    include_bytes!("../../assets/antigravity-icon-one-color-22.alpha");
-const ANTIGRAVITY_ALPHA_33: &[u8; 33 * 33] =
-    include_bytes!("../../assets/antigravity-icon-one-color-33.alpha");
-const ANTIGRAVITY_ALPHA_44: &[u8; 44 * 44] =
-    include_bytes!("../../assets/antigravity-icon-one-color-44.alpha");
-const ANTIGRAVITY_ALPHA_256: &[u8; 256 * 256] =
-    include_bytes!("../../assets/antigravity-icon-one-color-256.alpha");
+const ANTIGRAVITY_RGBA_22: &[u8; 22 * 22 * 4] =
+    include_bytes!("../../assets/antigravity-icon-full-color-22.rgba");
+const ANTIGRAVITY_RGBA_33: &[u8; 33 * 33 * 4] =
+    include_bytes!("../../assets/antigravity-icon-full-color-33.rgba");
+const ANTIGRAVITY_RGBA_44: &[u8; 44 * 44 * 4] =
+    include_bytes!("../../assets/antigravity-icon-full-color-44.rgba");
+const ANTIGRAVITY_RGBA_256: &[u8; 256 * 256 * 4] =
+    include_bytes!("../../assets/antigravity-icon-full-color-256.rgba");
 
 /// Pointer hover and press state for the workspace chrome, part of the content cache key.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -712,15 +712,6 @@ fn chip_label_top(
 }
 
 /// Direct row-size rasters preserve artwork edges; other sizes use the complete 256px source.
-fn select_row_size(sources: [&'static [u8]; 4], width: u16, height: u16) -> &'static [u8] {
-    sources[match (width, height) {
-        (22, 22) => 0,
-        (33, 33) => 1,
-        (44, 44) => 2,
-        _ => 3,
-    }]
-}
-
 fn product_mark_raster(id: u16, width: u16, height: u16) -> Option<&'static [u8]> {
     let sources: [&[u8]; 4] = match id {
         CLAUDE_CODE_ID => [
@@ -747,21 +738,21 @@ fn product_mark_raster(id: u16, width: u16, height: u16) -> Option<&'static [u8]
             OPENCODE_LIGHT_RGBA_44,
             OPENCODE_LIGHT_RGBA_256,
         ],
+        ANTIGRAVITY_MARK_ID => [
+            ANTIGRAVITY_RGBA_22,
+            ANTIGRAVITY_RGBA_33,
+            ANTIGRAVITY_RGBA_44,
+            ANTIGRAVITY_RGBA_256,
+        ],
         _ => return None,
     };
-    Some(select_row_size(sources, width, height))
-}
-
-fn antigravity_mark_alpha(width: u16, height: u16) -> &'static [u8] {
-    select_row_size(
-        [
-            ANTIGRAVITY_ALPHA_22,
-            ANTIGRAVITY_ALPHA_33,
-            ANTIGRAVITY_ALPHA_44,
-            ANTIGRAVITY_ALPHA_256,
-        ],
-        width,
-        height,
+    Some(
+        sources[match (width, height) {
+            (22, 22) => 0,
+            (33, 33) => 1,
+            (44, 44) => 2,
+            _ => 3,
+        }],
     )
 }
 
@@ -775,11 +766,6 @@ pub(super) fn rasterize_bar_icon(
         OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
         GEMINI_SPARK_ID => (GEMINI_SPARK_ALPHA, 1, ContentType::Mask),
-        ANTIGRAVITY_MARK_ID => (
-            antigravity_mark_alpha(request.width, request.height),
-            1,
-            ContentType::Mask,
-        ),
         // Premultiplied, so averaging never bleeds a clear pixel's colour into the mark.
         EON_ICON_ID => (eon_icon?, 4, ContentType::Color),
         id => (
@@ -3613,11 +3599,6 @@ impl Renderer {
     }
 }
 
-/// Returns whether `light_ink` contrasts at least as well as `dark_ink` against `background`.
-fn prefers_light_ink(light_ink: SceneColor, dark_ink: SceneColor, background: SceneColor) -> bool {
-    contrast_ratio(light_ink, background) >= contrast_ratio(dark_ink, background)
-}
-
 /// Choose the vendor artwork with the more readable outer stroke on the painted row.
 fn opencode_mark_id(background: SceneColor) -> u16 {
     let light_ink = SceneColor {
@@ -3630,52 +3611,36 @@ fn opencode_mark_id(background: SceneColor) -> u16 {
         g: 31,
         b: 31,
     };
-    if prefers_light_ink(light_ink, dark_ink, background) {
+    if contrast_ratio(light_ink, background) >= contrast_ratio(dark_ink, background) {
         OPENCODE_DARK_ID
     } else {
         OPENCODE_LIGHT_ID
     }
 }
 
-/// Choose white or the vendor's `#202124` fill, whichever contrasts more with the painted row.
-fn antigravity_mark_color(background: SceneColor) -> SceneColor {
-    let light_ink = SceneColor {
-        r: 255,
-        g: 255,
-        b: 255,
-    };
-    let dark_ink = SceneColor {
-        r: 32,
-        g: 33,
-        b: 36,
-    };
-    if prefers_light_ink(light_ink, dark_ink, background) {
-        light_ink
-    } else {
-        dark_ink
-    }
-}
-
-/// Colour product images retain their own colours; OpenCode and Antigravity adapt to the row's
-/// resolved backing.
+/// Product images retain their own colours; OpenCode alone adapts to the row's resolved backing.
 fn attention_row_icon(
     row: &crate::SidebarRow,
     clip: SceneRect,
     background: SceneColor,
 ) -> Option<PlacedText> {
     let (mark, rect) = row.icon?;
-    let white = SceneColor {
-        r: 255,
-        g: 255,
-        b: 255,
+    let id = match mark {
+        AppMark::Codex => CODEX_SYMBOL_ID,
+        AppMark::ClaudeCode => CLAUDE_CODE_ID,
+        AppMark::OpenCode => opencode_mark_id(background),
+        AppMark::Antigravity => ANTIGRAVITY_MARK_ID,
     };
-    let (id, color) = match mark {
-        AppMark::Codex => (CODEX_SYMBOL_ID, white),
-        AppMark::ClaudeCode => (CLAUDE_CODE_ID, white),
-        AppMark::OpenCode => (opencode_mark_id(background), white),
-        AppMark::Antigravity => (ANTIGRAVITY_MARK_ID, antigravity_mark_color(background)),
-    };
-    bar_icon(id, color, rect, Some(clip))
+    bar_icon(
+        id,
+        SceneColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        },
+        rect,
+        Some(clip),
+    )
 }
 
 /// Draws the custom glyph `id` in `rect`, a mask tinted `color` or a colour image as it is,
@@ -6986,6 +6951,7 @@ mod tests {
             CODEX_SYMBOL_ID,
             OPENCODE_DARK_ID,
             OPENCODE_LIGHT_ID,
+            ANTIGRAVITY_MARK_ID,
         ] {
             for side in [22, 33, 44, 256] {
                 let source = product_mark_raster(id, side, side).unwrap();
@@ -7007,6 +6973,7 @@ mod tests {
             CODEX_SYMBOL_ID,
             OPENCODE_DARK_ID,
             OPENCODE_LIGHT_ID,
+            ANTIGRAVITY_MARK_ID,
         ]
         .into_iter()
         .flat_map(|id| [11, 22, 33, 44, 253, 256].map(|size| (id, size)))
@@ -7048,6 +7015,20 @@ mod tests {
                         .any(|pixel| { pixel[3] > 200 && pixel[0].abs_diff(pixel[2]) > 30 }),
                     "the product's colour survives instead of a tinted silhouette"
                 );
+                if id == ANTIGRAVITY_MARK_ID {
+                    assert!(
+                        image.data.chunks_exact(4).any(|pixel| {
+                            pixel[3] > 200 && pixel[0] > pixel[2].saturating_add(30)
+                        }),
+                        "Antigravity keeps its warm apex colours at {size}px"
+                    );
+                    assert!(
+                        image.data.chunks_exact(4).any(|pixel| {
+                            pixel[3] > 200 && pixel[2] > pixel[0].saturating_add(30)
+                        }),
+                        "Antigravity keeps its cool blue base colours at {size}px"
+                    );
+                }
             }
             let source = match (id, size) {
                 (CLAUDE_CODE_ID, 22) => Some(CLAUDE_CODE_RGBA_22.as_slice()),
@@ -7062,6 +7043,9 @@ mod tests {
                 (OPENCODE_LIGHT_ID, 22) => Some(OPENCODE_LIGHT_RGBA_22.as_slice()),
                 (OPENCODE_LIGHT_ID, 33) => Some(OPENCODE_LIGHT_RGBA_33.as_slice()),
                 (OPENCODE_LIGHT_ID, 44) => Some(OPENCODE_LIGHT_RGBA_44.as_slice()),
+                (ANTIGRAVITY_MARK_ID, 22) => Some(ANTIGRAVITY_RGBA_22.as_slice()),
+                (ANTIGRAVITY_MARK_ID, 33) => Some(ANTIGRAVITY_RGBA_33.as_slice()),
+                (ANTIGRAVITY_MARK_ID, 44) => Some(ANTIGRAVITY_RGBA_44.as_slice()),
                 _ => None,
             };
             if let Some(source) = source {
@@ -7090,48 +7074,141 @@ mod tests {
                         alpha(2 * cell, side / 3) < 64,
                         "only the SVG's overlapping cell fringe softens this edge"
                     );
+                } else if id == ANTIGRAVITY_MARK_ID {
+                    let alpha = |x, y| image.data[(y * side + x) * 4 + 3];
+                    assert_eq!(alpha(side / 2, side / 3), 255, "arch apex stays solid");
+                    assert_eq!(alpha(side / 2, side * 3 / 4), 0, "arch cavity stays clear");
                 }
             }
         }
     }
 
     #[test]
-    fn antigravity_mask_preserves_shape_and_coverage_at_row_scales() {
-        for size in [11_u16, 22, 33, 44, 253, 256] {
-            let mask = rasterize_bar_icon(
-                RasterizeCustomGlyphRequest {
-                    id: ANTIGRAVITY_MARK_ID,
-                    width: size,
-                    height: size,
-                    x_bin: SubpixelBin::Zero,
-                    y_bin: SubpixelBin::Zero,
-                    scale: f32::from(size) / 16.0,
-                },
-                None,
-            )
-            .expect("Antigravity mark must rasterize without an Eon icon");
-            assert_eq!(mask.content_type, ContentType::Mask);
-            assert_eq!(mask.data.len(), usize::from(size) * usize::from(size));
-            assert_eq!(mask.data[0], 0, "the full canvas keeps its clear corner");
-            assert!(
-                mask.data.iter().any(|&alpha| alpha > 200),
-                "the Antigravity silhouette keeps visible ink at {size}px"
-            );
-            let source = match size {
-                22 => Some(ANTIGRAVITY_ALPHA_22.as_slice()),
-                33 => Some(ANTIGRAVITY_ALPHA_33.as_slice()),
-                44 => Some(ANTIGRAVITY_ALPHA_44.as_slice()),
-                256 => Some(ANTIGRAVITY_ALPHA_256.as_slice()),
-                _ => None,
-            };
-            if let Some(source) = source {
-                let side = usize::from(size);
-                assert_eq!(mask.data.as_slice(), source);
-                let alpha = |x, y| mask.data[y * side + x];
-                assert_eq!(alpha(side / 2, side / 3), 255, "arch apex stays solid");
-                assert_eq!(alpha(side / 2, side * 3 / 4), 0, "arch cavity stays clear");
+    fn antigravity_mark_is_never_tinted_by_row_background() {
+        let scale = 1.0;
+        let size = PhysicalSize::new(1280, 800);
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let mut renderer = Renderer::hosted(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            (size.width, size.height),
+            scale,
+            FontSetup::new(&FontSettings::default()).unwrap(),
+        )
+        .unwrap();
+        renderer.background_opacity = 1.0;
+        let metrics = renderer.metrics();
+        let mut snapshot = popup_sidebar_snapshot();
+        snapshot.tabs[0].popups[0].attention = None;
+        let attention = snapshot.tabs[0].columns[0].panes[0]
+            .attention
+            .as_mut()
+            .unwrap();
+        attention.state = AttentionState::Working;
+        let record = attention.record.as_mut().unwrap();
+        record.app = "antigravity".into();
+        snapshot.attention_queue = vec![eon_workspace_protocol::v47::QueueEntry {
+            workspace: snapshot.workspace.clone(),
+            tab: "t1".into(),
+            target: "p1".into(),
+            attention: attention.clone(),
+        }];
+        let scene = WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+            (text.into(), text.len() as f32 * metrics.width)
+        });
+        let inbox = DialogScene::attention_inbox(
+            &snapshot,
+            crate::scene::AttentionFilter::All,
+            None,
+            size,
+            metrics,
+            0.0,
+            1,
+        );
+        let backgrounds = [
+            palette::DARK.terminal_fallback,
+            palette::DARK.dialog_background,
+            SceneColor {
+                r: 239,
+                g: 241,
+                b: 245,
+            },
+            SceneColor {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+            SceneColor {
+                r: 48,
+                g: 58,
+                b: 72,
+            },
+        ];
+        let states = [
+            (false, false, false, false),
+            (true, false, false, false),
+            (false, true, false, false),
+            (false, false, true, false),
+            (false, false, false, true),
+            (true, false, true, true),
+            (false, true, true, true),
+        ];
+        let mut checked_raster = false;
+        for (base_row, clip) in [
+            (scene.sidebar_row("p1").unwrap(), scene.sidebar_list),
+            (&inbox.attention_rows[0], inbox.content),
+        ] {
+            for background in backgrounds {
+                for (hovered, focused, current, stale) in states {
+                    let mut row = base_row.clone();
+                    row.focused = focused;
+                    row.current = current;
+                    row.glyph.dimmed = stale;
+                    renderer.text.clear();
+                    renderer.push_attention_row(
+                        &row,
+                        clip,
+                        hovered,
+                        Backing::Surface(background),
+                        background,
+                        &mut RectangleBatch::new(size.width, size.height),
+                    );
+                    let mark = renderer
+                        .text
+                        .iter()
+                        .find(|text| text.custom_glyph.is_some())
+                        .expect("Antigravity row emits its custom mark");
+                    let glyph = mark.custom_glyph.as_ref().unwrap();
+                    assert_eq!(
+                        glyph.id, ANTIGRAVITY_MARK_ID,
+                        "{background:?}, hovered={hovered}, focused={focused}, current={current}, stale={stale}"
+                    );
+                    assert_eq!(
+                        mark.color,
+                        Color::rgb(255, 255, 255),
+                        "{background:?}, hovered={hovered}, focused={focused}, current={current}, stale={stale}"
+                    );
+                    if !checked_raster {
+                        let raster = rasterize_bar_icon(
+                            RasterizeCustomGlyphRequest {
+                                id: glyph.id,
+                                width: glyph.width as u16,
+                                height: glyph.height as u16,
+                                x_bin: SubpixelBin::Zero,
+                                y_bin: SubpixelBin::Zero,
+                                scale: scale as f32,
+                            },
+                            None,
+                        )
+                        .expect("Antigravity mark rasterizes as colour");
+                        assert_eq!(raster.content_type, ContentType::Color);
+                        checked_raster = true;
+                    }
+                }
             }
         }
+        assert!(checked_raster);
     }
 
     #[test]
@@ -7163,7 +7240,7 @@ mod tests {
                 "antigravity",
                 AppMark::Antigravity,
                 ANTIGRAVITY_MARK_ID,
-                ContentType::Mask,
+                ContentType::Color,
                 Color::rgb(255, 255, 255),
             ),
         ] {
@@ -7491,7 +7568,7 @@ mod tests {
                             } else {
                                 scene.sidebar_row("p1").unwrap()
                             };
-                            if matches!(app, "opencode" | "antigravity")
+                            if app == "opencode"
                                 && state == AttentionState::Idle
                                 && adapter == wgpu::DeviceType::Cpu
                             {
@@ -7500,38 +7577,17 @@ mod tests {
                                     g: 255,
                                     b: 255,
                                 };
-                                let light_ink = Color::rgb(255, 255, 255);
-                                let dark_ink = Color::rgb(32, 33, 36);
-                                let cases = match app {
-                                    "opencode" => [
-                                        (
-                                            palette::DARK.terminal_fallback,
-                                            false,
-                                            false,
-                                            OPENCODE_DARK_ID,
-                                            light_ink,
-                                        ),
-                                        (white, false, false, OPENCODE_LIGHT_ID, light_ink),
-                                        (white, true, false, OPENCODE_DARK_ID, light_ink),
-                                        (white, false, true, OPENCODE_DARK_ID, light_ink),
-                                    ],
-                                    "antigravity" => [
-                                        (
-                                            palette::DARK.terminal_fallback,
-                                            false,
-                                            false,
-                                            ANTIGRAVITY_MARK_ID,
-                                            light_ink,
-                                        ),
-                                        (white, false, false, ANTIGRAVITY_MARK_ID, dark_ink),
-                                        (white, true, false, ANTIGRAVITY_MARK_ID, light_ink),
-                                        (white, false, true, ANTIGRAVITY_MARK_ID, light_ink),
-                                    ],
-                                    _ => unreachable!(),
-                                };
-                                for (background, hovered, focused, expected_id, expected_color) in
-                                    cases
-                                {
+                                for (background, hovered, focused, expected) in [
+                                    (
+                                        palette::DARK.terminal_fallback,
+                                        false,
+                                        false,
+                                        OPENCODE_DARK_ID,
+                                    ),
+                                    (white, false, false, OPENCODE_LIGHT_ID),
+                                    (white, true, false, OPENCODE_DARK_ID),
+                                    (white, false, true, OPENCODE_DARK_ID),
+                                ] {
                                     for stale in [false, true] {
                                         let mut row = row.clone();
                                         row.focused = focused;
@@ -7548,15 +7604,10 @@ mod tests {
                                         let mark = renderer
                                             .text
                                             .iter()
-                                            .find(|text| text.custom_glyph.is_some())
+                                            .find_map(|text| text.custom_glyph.as_ref())
                                             .unwrap();
                                         assert_eq!(
-                                            mark.custom_glyph.as_ref().unwrap().id,
-                                            expected_id,
-                                            "{background:?}, hovered={hovered}, focused={focused}, stale={stale}"
-                                        );
-                                        assert_eq!(
-                                            mark.color, expected_color,
+                                            mark.id, expected,
                                             "{background:?}, hovered={hovered}, focused={focused}, stale={stale}"
                                         );
                                     }

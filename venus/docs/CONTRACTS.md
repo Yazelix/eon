@@ -2343,7 +2343,7 @@ re-proved when that platform or feature is next touched.
   decorations](PRESENTATION.md#window-background-and-decorations)), and the
   current row's focus-colour outline and inset keyboard-focus treatment
   (`eon-wuau8.4`), and pointer scrolling/overflow indication (`eon-r1scq`),
-  and the Antigravity program mark (`eon-sidebar-app-icons-y99b7.12`).
+  and the Antigravity program mark (`eon-sidebar-app-icons-y99b7.13`).
   Lucca approved the current-row outline presentation on 2026-11-11 ("ahhh
   i like it"); its live acceptance follows landing. The bare translucent-row
   badges, contour fallback and font-sized row badges (`eon-0ntg1`) have
@@ -2401,6 +2401,12 @@ re-proved when that platform or feature is next touched.
   tinted `#FFFFFF`/`#202124` for row-background contrast and the `Antigravity`
   fallback label (with already-landed `app=opencode` → `OpenCode` aligned in
   the contract text); installed proof pending.
+  Amended by `eon-sidebar-app-icons-y99b7.13`, approved by the lead on
+  2026-11-21 (Lucca: "why is the icon all white? boring", then "yeah" to the
+  full-colour proposal): exact `app=antigravity` draws Google Antigravity's
+  official full-colour icon, unaltered and untinted, in place of the one-colour
+  mask; the label and the other programs' marks are unchanged; installed proof
+  pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -2462,12 +2468,10 @@ re-proved when that platform or feature is next touched.
         (selecting the vendor's dark or light variant whose outer stroke
         contrasts more with the row's resolved background, including hover and
         keyboard-focus fills), and exact `app=antigravity` (no aliases or
-        process-name guessing) to Google Antigravity's official one-colour icon
-        (`Icon – One Color`). Claude Code, Codex, and OpenCode keep their
-        supplied colours and transparency; Antigravity draws as an alpha mask
-        tinted `#FFFFFF` on dark row surfaces and `#202124` on light row
-        surfaces, choosing the higher contrast against the row's resolved
-        background (including hover and keyboard-focus fills). App marks are not
+        process-name guessing) to Google Antigravity's official full-colour icon
+        (`Icon`), unaltered. Claude Code, Codex, and Antigravity keep their
+        supplied colours and transparency and are never tinted; OpenCode alone
+        selects its vendor dark or light variant by contrast. App marks are not
         dimmed when stale and scale proportionally inside the icon slot. Eon Bar
         quota chips keep their account/provider marks
         ([Eon Bar](PRESENTATION.md#eon-bar)), including the Google quota chip;

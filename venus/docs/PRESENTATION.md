@@ -571,16 +571,13 @@ request, and the window still opens.
 Sidebar and attention inbox rows identify Claude Code with Anthropic's standalone
 Clawd symbol, Codex with a colour vector of Codex's symbol, OpenCode
 (`app: "opencode"`) with its official transparent mark, and exact Antigravity
-(`app: "antigravity"`) with Google Antigravity's official one-colour icon
-(`Icon – One Color`), without an app tile.
+(`app: "antigravity"`) with Google Antigravity's official full-colour icon
+(`Icon`), unaltered and without an app tile.
 The complete canvases scale proportionally inside the row icon slot; Claude Code,
-Codex, and OpenCode retain their colours and transparency, while Antigravity
-draws as an alpha mask tinted `#FFFFFF` on dark row surfaces and `#202124` on
-light row surfaces, choosing the higher contrast against the row's resolved
-background (including hover and keyboard-focus fills). OpenCode uses the
-vendor's light or dark variant whose outer stroke contrasts best with the row
-background, including its hover or keyboard-focus fill. App marks are not dimmed
-when the record is stale.
+Codex, and Antigravity retain their supplied colours and transparency and are
+never tinted. OpenCode alone selects the vendor's light or dark variant whose
+outer stroke contrasts best with the row background, including its hover or
+keyboard-focus fill. App marks are not dimmed when the record is stale.
 Codex's terminal prompt is transparent. The state glyph carries stale dimming.
 Eon Bar quota chips retain their provider marks: the Claude Spark, OpenAI
 Blossom, and Google's Gemini spark. Other app identifiers retain their existing
