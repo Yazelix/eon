@@ -1264,6 +1264,7 @@ first through ninth session, in `eon session ls` order, and Alt+Shift+0 the
 tenth. `false` leaves those keys to the program in the terminal, for example
 Emacs's M-% on Alt+Shift+5. A popup configured on one of them takes only that
 key either way; with `true`, Alt+/ lists that key as overridden. The window reads the setting when it starts.
+See [Keybinding clashes](USAGE.md#keybinding-clashes).
 
 `[sidebar] enabled = true` offers the agent sidebar, which lists
 the coding agents in the window's tabs that report their status. `false` turns
@@ -1595,6 +1596,16 @@ the popup and the key.
 Configuration uses physical names such as `Alt+Slash` on every platform.
 Window labels use `/` for Slash and, on macOS, Option, Control and Command
 for Alt, Ctrl and Super. These labels refer to the same physical chords.
+
+To resolve clashes with terminal programs and agents that use `Alt+` chords,
+remap or unbind popup entries here, set `[session] number_keys = false` to
+release `Alt+Shift+0` through `Alt+Shift+9`, or set `[sidebar] enabled = false`
+to release `Alt+Shift+H`. Fixed Eon shortcuts cannot be released to the terminal:
+a popup may take overridable fixed keys (`Alt+M`, `Alt+W`, `Alt+Q`, `Alt+G`),
+while `Alt+1` … `Alt+0` and `Alt+/` stay reserved and `Alt+H`/`J`/`K`/`L` keep
+focus (a popup configured on a focus key loads unbound). See
+[Keybinding clashes](USAGE.md#keybinding-clashes) for common clashes and
+app-side workarounds.
 
 Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`
 to select another runtime root. Relative `EON_CONFIG_HOME` values resolve once

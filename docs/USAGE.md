@@ -594,6 +594,110 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+E | Open the shown terminal's scrollback in the configured editor, or dismiss it |
 | Alt+Shift+S | Open the Sessions picker; in the picker, Alt+Shift+S or Enter shows the highlighted session, Enter on an unmatched name creates one, Ctrl+X closes the highlighted one |
 
+### Keybinding clashes
+
+Eon binds `Alt+` and `Alt+Shift+` chords (`Option+` and `Option+Shift+` on
+macOS) to pane, tab, session and popup actions. Eon handles active shortcuts
+before the terminal receives them, so terminal programs never see those chords
+while Eon holds them.
+
+Common clashes:
+
+| Shortcut | Eon action | Terminal app or shell action | Configurable in `config.toml` |
+|---|---|---|---|
+| `Alt+M` | Create a pane in the selected column | Antigravity (`agy`) send-immediately; Nushell (`eon-nu`) backspace-word; Emacs `M-m` (`back-to-indentation`) | Fixed |
+| `Alt+W` | Close the selected pane and stop its terminal | Emacs `M-w` (`kill-ring-save`) | Fixed |
+| `Alt+H` / `Alt+J` / `Alt+K` / `Alt+L` | Move focus across columns, tabs and panes | GNU Readline and Nushell `Alt+L` (lowercase word); Emacs `M-h`, `M-j`, `M-k`, `M-l`; Zellij focus keys | Fixed |
+| `Alt+Q` | Open or close the attention inbox | Emacs `M-q` (`fill-paragraph`) | Fixed |
+| `Alt+G` | Jump to the next agent needing attention | Emacs `M-g` (goto prefix) | Fixed |
+| `Alt+1` … `Alt+9`, `Alt+0` | Select tabs 1 … 10 | GNU Readline and Emacs `M-0` … `M-9` (`digit-argument`) | Fixed |
+| `Alt+/` | Open or close Shortcuts | Emacs `M-/` (`dabbrev-expand`) | Fixed |
+| `Alt+Z` | Quick search popup (`[popups.project]`) | Emacs `M-z` (`zap-to-char`) | `[popups.project] keybinding` |
+| `Alt+Shift+1` … `Alt+Shift+9`, `Alt+Shift+0` | Show sessions 1 … 10 | Shifted Meta chords such as Emacs `M-%` (`Alt+Shift+5`, `query-replace`), `M-!` (`Alt+Shift+1`), `M-$` (`Alt+Shift+4`), and GNU Readline `M-#` (`Alt+Shift+3`), `M-&` (`Alt+Shift+7`), `M-*` (`Alt+Shift+8`) | `[session] number_keys` |
+| `Alt+Shift+H` | Show or hide the agent sidebar | App-defined `Alt+Shift+H` | `[sidebar] enabled` |
+| `Alt+Shift+J` | Git popup (`[popups.git]`) | Helix `Alt+Shift+J` (`join_selections_space`) | `[popups.git] keybinding` or `enabled` |
+| `Alt+Shift+A`, `E`, `L`, `M`, `O`, `S`, `Y` | Built-in popups (`anima`, `scrollback`, `agent`, `commands`, `editor`, `sessions`, `files`) | App-defined `Alt+Shift+` chords | `[popups.<id>] keybinding` or `enabled` (`files` stays enabled) |
+
+Run `eon keys` (or press `Alt+/`) inside an Eon window to list every active
+shortcut, unbound popup and reserved key.
+
+#### Remap or disable Eon shortcuts in `config.toml`
+
+Three shortcut groups can be released to the terminal in `config.toml`
+(`eon config path` prints its path):
+
+- **Popup shortcuts (`[popups.<id>]`).** Set `keybinding = ""` on any built-in
+  popup to unbind it and pass its default chord to the terminal (or on a custom
+  popup to leave it unbound), or set `keybinding` to another modified physical
+  key such as `Ctrl+Alt+G` or `Super+Shift+J`. Optional built-in popups
+  (`agent`, `anima`, `commands`, `editor`, `git`, `scrollback`, `sessions`)
+  also accept `enabled = false`; `project` and `files` stay enabled and accept
+  `keybinding = ""` or another `keybinding`. Unbound popups remain reachable
+  through `eon popup show ENTRY` (and `eon focus uN` once open); new tabs still
+  open on quick search, and the Eon Bar session label still opens Sessions.
+  See [Popups](CONFIGURATION.md#popups) for physical-key syntax and reserved
+  keys.
+- **Session number keys (`[session] number_keys`).** Set
+  `number_keys = false` to pass `Alt+Shift+1` … `Alt+Shift+9` and `Alt+Shift+0`
+  to the terminal. Use `Alt+Shift+S`, the Eon Bar session label or
+  `eon session switch` to switch sessions.
+- **Agent sidebar toggle (`[sidebar] enabled`).** Set `enabled = false` to
+  turn off the agent sidebar and pass `Alt+Shift+H` to the terminal. `Alt+G`,
+  `Alt+Shift+G` and `Alt+Q` stay active.
+
+```toml
+[session]
+number_keys = false
+
+[sidebar]
+enabled = false
+
+[popups.project]
+keybinding = ""
+
+[popups.git]
+keybinding = "Ctrl+Alt+G"
+
+[popups.commands]
+enabled = false
+```
+
+`config.toml` uses physical key names (`Alt`, `Ctrl` or `Control`, `Shift`,
+`Super`) on both Linux and macOS. Run `eon config check` after editing.
+`[session] number_keys` applies on open, reopen or `eon window reload ID`;
+`[popups.*]` and `[sidebar]` changes apply in a fresh window.
+
+#### Workarounds for fixed Eon shortcuts
+
+Fixed Eon shortcuts cannot be released to the terminal in full Eon windows.
+Assigning a popup `keybinding` to an overridable fixed key (`Alt+M`, `Alt+W`,
+`Alt+Q`, `Alt+G`) moves that key to the popup, where Eon still intercepts it
+before the terminal sees it. `Alt+H`/`J`/`K`/`L`, `Alt+1` … `Alt+0` and
+`Alt+/` cannot be taken by a popup (`Alt+H`/`J`/`K`/`L` load any popup assigned
+there unbound; `Alt+1` … `Alt+0` and `Alt+/` are reserved).
+
+- **Remap the shortcut in the app or shell.**
+  - **Antigravity (`agy`):** Check your installed `agy` documentation or
+    keybinding settings to see whether `Alt+m` (send immediately) can be
+    remapped to another chord, or use the normal send flow.
+  - **Bash and GNU Readline:** Rebind clashing Meta commands in `~/.inputrc`.
+  - **Nushell (`eon-nu`):** Rebind clashing chords under `keybindings` in your
+    Nushell configuration (`config nu` opens it; `$nu.config-path` prints its
+    path).
+  - **Emacs (`emacs -nw`):** Rebind frequent Meta commands (especially
+    `kill-ring-save` off `M-w`, since `Alt+W` closes the Eon pane) in your
+    Emacs configuration.
+- **Press `Esc` then the key where the app supports it.** While the terminal
+  has focus, Eon sends `Escape` straight to the terminal. In GNU Readline and
+  terminal Emacs (`emacs -nw`), pressing `Esc` followed by the key invokes the
+  same Meta command (for example, `Esc` then `w` for `M-w`, `Esc` then `m` for
+  `M-m`, `Esc` then `l` for `M-l`, `Esc` then `q` for `M-q` or `Esc` then `/`
+  for `M-/`).
+- **Use `eonbase` for a single app without session shortcuts.** If
+  [`eonbase`](#eonbase) is installed, `eonbase -- COMMAND...` opens a
+  standalone native terminal without Eon's `Alt+` session, pane or popup
+  shortcuts (keeping Copy, Paste and Open link).
+
 ### Eon Bar and tabs
 
 The top row is the native Eon Bar. Its `+`, `?`, and `×` controls create
