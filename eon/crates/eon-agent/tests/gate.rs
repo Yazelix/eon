@@ -484,6 +484,14 @@ fn writable_state(root: &Root) {
     fs::set_permissions(root.path.join("state"), fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+fn assert_started(run: &Output) {
+    let stdout = text(&run.stdout);
+    let receipt: serde_json::Value =
+        serde_json::from_str(stdout.lines().next().expect("started receipt")).unwrap();
+    assert_eq!(receipt["event"], "started");
+    assert_eq!(receipt["backend"], "wrapper-a");
+}
+
 #[test]
 fn a_failed_ledger_write_refuses_launch_and_run_before_their_command() {
     let root = root();
@@ -512,13 +520,11 @@ fn a_failed_ledger_write_refuses_launch_and_run_before_their_command() {
         "{run:?}"
     );
     assert!(!root.exists("ran-wrapper-a"));
+    assert!(run.stdout.is_empty(), "{run:?}");
     assert!(root.ledger().is_none());
     // With the directory writable, the same run starts its command and records the admission.
     let run = rota_run(&root, "wrapper-a");
-    assert!(
-        text(&run.stdout).starts_with("pick: wrapper-a\n"),
-        "{run:?}"
-    );
+    assert_started(&run);
     assert!(root.exists("ran-wrapper-a"), "{run:?}");
     assert_eq!(root.spent("acct-1"), Some(at));
 }
@@ -547,10 +553,7 @@ fn an_observation_spent_by_one_command_holds_the_other() {
     let root_b = root();
     root_b.config(&body);
     let run = rota_run(&root_b, "wrapper-a");
-    assert!(
-        text(&run.stdout).starts_with("pick: wrapper-a\n"),
-        "{run:?}"
-    );
+    assert_started(&run);
     assert_eq!(root_b.spent("acct-1"), Some(at));
     let launch = root_b.rota(&["launch", "brief"]);
     assert_eq!(launch.status.code(), Some(75), "{launch:?}");
@@ -592,11 +595,8 @@ fn a_launch_while_a_run_holds_the_admission_lock_is_refused() {
     let launch = root.rota(&["launch", "--only", "wrapper-b", "brief"]);
     fs::write(root.path.join("go"), "").unwrap();
     let run = run.wait_with_output().unwrap();
-    let admitted = [
-        text(&run.stdout).starts_with("pick: "),
-        text(&launch.stdout).starts_with("pick: "),
-    ];
-    assert_eq!(admitted, [true, false], "{run:?}\n{launch:?}");
+    assert_started(&run);
+    assert!(launch.stdout.is_empty(), "{launch:?}");
     assert_eq!(launch.status.code(), Some(75), "{launch:?}");
     assert_eq!(
         text(&launch.stderr),
@@ -605,6 +605,59 @@ fn a_launch_while_a_run_holds_the_admission_lock_is_refused() {
     assert!(root.exists("ran-wrapper-a"), "{run:?}");
     assert!(!root.exists("launched-wrapper-b"));
     assert_eq!(root.spent("acct-1"), Some(at));
+}
+
+#[test]
+fn a_post_prepare_cap_hold_names_the_capped_backend() {
+    for args in [
+        &["launch", "--json", "brief"][..],
+        &[
+            "run",
+            "--brief",
+            "run-brief.md",
+            "--name",
+            "cap",
+            "--timeout",
+            "30",
+            "--json",
+        ],
+    ] {
+        let root = root();
+        let reader = fixed(80, recent());
+        let chosen = backend(
+            "chosen",
+            "['implement']",
+            &reader,
+            "prepare = [['sh', '-c', 'touch prepared; until test -e go; do sleep .05; done']]",
+            "[backends.cap]\nmax = 1\nexecutable = 'sleep'\n[backends.cap.env]\nROTA_TEST_CAP = '<ROOT>cap'\n",
+        ) + &run_table("chosen");
+        let unchecked =
+            backend("unchecked", "['implement']", &reader, "", "") + &run_table("unchecked");
+        root.config(&(chosen + &unchecked));
+        let command = root
+            .command(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        wait_until("chosen backend's prepare hook", || root.exists("prepared"));
+        let mut occupant = Command::new("sleep")
+            .arg("30")
+            .env("ROTA_TEST_CAP", root.path.join("cap"))
+            .spawn()
+            .unwrap();
+        fs::write(root.path.join("go"), "").unwrap();
+        let result = command.wait_with_output();
+        occupant.kill().unwrap();
+        occupant.wait().unwrap();
+        let result = result.unwrap();
+        assert_eq!(result.status.code(), Some(75), "{result:?}");
+        let error: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(
+            error["error"]["reasons"],
+            serde_json::json!([{"backend": "chosen", "detail": "busy (1 running)"}])
+        );
+    }
 }
 
 #[test]
@@ -629,11 +682,11 @@ fn a_run_waiting_for_the_admission_lock_sees_the_admission_it_waited_for() {
     fs::write(root.path.join("go"), "").unwrap();
     let launch = launch.wait_with_output().unwrap();
     let run = run.wait_with_output().unwrap();
-    let admitted = [
-        text(&launch.stdout).starts_with("pick: "),
-        text(&run.stdout).starts_with("pick: "),
-    ];
-    assert_eq!(admitted, [true, false], "{launch:?}\n{run:?}");
+    assert!(
+        text(&launch.stdout).starts_with("pick: wrapper-a\n"),
+        "{launch:?}"
+    );
+    assert!(run.stdout.is_empty(), "{run:?}");
     assert_eq!(run.status.code(), Some(75), "{run:?}");
     assert!(
         text(&run.stderr).contains(&format!("rota: wrapper-b [{}]", repeat(at, "acct-1"))),

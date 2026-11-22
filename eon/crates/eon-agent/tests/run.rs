@@ -79,6 +79,23 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).unwrap()
 }
 
+fn receipts(stdout: &[u8]) -> [serde_json::Value; 2] {
+    let [started, finished]: [_; 2] = text(stdout)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("one started receipt and one finished receipt");
+    assert_eq!(started["schema"], 1);
+    assert_eq!(started["event"], "started");
+    assert_eq!(finished["event"], "finished");
+    for key in ["schema", "id", "name", "backend", "pid", "log", "report"] {
+        assert_eq!(started[key], finished[key], "{key}");
+    }
+    assert!(started.get("exit_code").is_none());
+    [started, finished]
+}
+
 /// Gone from /proc, reaped and not a zombie, polling for up to `wait`.
 fn gone_within(pid: &str, wait: Duration) -> bool {
     let deadline = Instant::now() + wait;
@@ -149,18 +166,16 @@ fn records_the_session_and_mirrors_the_exit_status() {
     let f = fixture("", "", &run_table("brief", command));
     let output = rota(&f, &["--name", "t", "--timeout", "30", "--effort", "low"]);
     assert!(output.status.success(), "{}", text(&output.stderr));
-    let stdout = text(&output.stdout);
     let run_dir = f.dir.join("state/runs/t-1");
     let report = run_dir.join("report.md");
-    assert!(
-        stdout.starts_with("pick: fake\nsession: t-1\npid: "),
-        "{stdout}"
-    );
-    assert!(stdout.ends_with(&format!(
-        "log: {}\nreport: {}\n",
-        run_dir.join("log").display(),
-        report.display()
-    )));
+    let [started, finished] = receipts(&output.stdout);
+    assert_eq!(started["id"], "t-1");
+    assert_eq!(started["name"], "t");
+    assert_eq!(started["backend"], "fake");
+    assert_eq!(started["log"], run_dir.join("log").to_str().unwrap());
+    assert_eq!(started["report"], report.to_str().unwrap());
+    assert_eq!(finished["outcome"], "exited");
+    assert_eq!(finished["exit_code"], 0);
     assert!(text(&output.stderr).contains("rota: t-1 exited with status 0"));
     let unit = record(&f, "t-1")["unit"].as_str().unwrap().to_string();
     assert!(
@@ -173,6 +188,7 @@ fn records_the_session_and_mirrors_the_exit_status() {
         format!("effort=low cwd={cwd}\n")
     );
     let json = record(&f, "t-1");
+    assert_eq!(started["pid"], json["pid"]);
     assert_eq!(json["schema"], 1);
     assert_eq!(json["id"], "t-1");
     assert_eq!(json["name"], "t");
@@ -197,15 +213,18 @@ fn records_the_session_and_mirrors_the_exit_status() {
     assert!(decisions.contains(r#""level":null"#));
     assert!(!f.dir.join("state/last-pick").exists());
     let text_config = fs::read_to_string(&f.config).unwrap();
-    fs::write(&f.config, text_config.replace("exit 0", "exit 7")).unwrap();
-    let output = rota(&f, &["--name", "t", "--timeout", "30"]);
-    assert_eq!(output.status.code(), Some(7));
-    assert!(text(&output.stderr).contains("rota: t-2 exited with status 7"));
+    fs::write(&f.config, text_config.replace("exit 0", "exit 75")).unwrap();
+    let output = rota(&f, &["--name", "t", "--timeout", "30", "--json"]);
+    assert_eq!(output.status.code(), Some(75));
+    let [_, finished] = receipts(&output.stdout);
+    assert_eq!(finished["exit_code"], 75);
+    assert_eq!(finished["outcome"], "exited");
+    assert!(text(&output.stderr).contains("rota: t-2 exited with status 75"));
     let json = record(&f, "t-2");
     assert_eq!(json["effort"], "high");
     assert_eq!(
         (&json["outcome"], &json["exit_code"]),
-        (&"exited".into(), &7.into())
+        (&"exited".into(), &75.into())
     );
 }
 
@@ -334,6 +353,9 @@ fn timeout_stops_the_whole_tree() {
     let json = record(&f, "t-1");
     assert_eq!(json["outcome"], "timeout");
     assert_eq!(json["exit_code"], 124);
+    let [_, finished] = receipts(&output.stdout);
+    assert_eq!(finished["outcome"], "timeout");
+    assert_eq!(finished["exit_code"], 124);
     assert_workers_gone(&f);
 }
 
@@ -435,6 +457,7 @@ fn a_failed_first_record_write_stops_the_run() {
     fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(text(&output.stderr).contains("rota: wfail-1 cannot write session record"));
+    assert!(output.stdout.is_empty());
     thread::sleep(Duration::from_secs(3));
     assert!(
         !f.dir.join("state/runs/wfail-1/report.md.late").exists(),
@@ -602,28 +625,36 @@ fn signal_death_exits_128_plus_n() {
 #[test]
 #[ignore = "needs a systemd user manager; see DEVELOPMENT.md"]
 fn closed_stdout_does_not_stop_supervision() {
-    let extra = "prepare = [['sleep', '1']]\n";
-    let command = r#"['sh', '-c', 'sleep 1; echo done > "$0"', '{report}']"#;
-    let f = fixture("", extra, &run_table("brief", command));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_rota"))
-        .env("ROTA_CONFIG", &f.config)
-        .current_dir(&f.dir)
-        .args(["run", "--role", "review", "--brief", "brief.md"])
-        .args(["--name", "t", "--timeout", "30"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut first = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut first)
-        .unwrap();
-    assert_eq!(first, "pick: fake\n");
-    // The reader is dropped: rota's next writes, after the 1 s prepare, hit a closed pipe.
-    assert_eq!(child.wait().unwrap().code(), Some(0));
-    assert_eq!(record(&f, "t-1")["outcome"], "exited");
-    let report = f.dir.join("state/runs/t-1/report.md");
-    assert_eq!(fs::read_to_string(report).unwrap(), "done\n");
+    for read_started in [false, true] {
+        let extra = "prepare = [['sh', '-c', 'while [ ! -e go ]; do sleep .05; done']]\n";
+        let command = r#"['sh', '-c', 'while [ ! -e finish ]; do sleep .05; done; echo done > "$0"', '{report}']"#;
+        let f = fixture("", extra, &run_table("brief", command));
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rota"))
+            .env("ROTA_CONFIG", &f.config)
+            .current_dir(&f.dir)
+            .args(["run", "--role", "review", "--brief", "brief.md"])
+            .args(["--name", "t", "--timeout", "30"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut out = BufReader::new(child.stdout.take().unwrap());
+        if read_started {
+            fs::write(f.dir.join("go"), "").unwrap();
+            let mut first = String::new();
+            out.read_line(&mut first).unwrap();
+            let started: serde_json::Value = serde_json::from_str(&first).unwrap();
+            assert_eq!(started["event"], "started");
+            assert_eq!(record(&f, "t-1")["finished"], serde_json::Value::Null);
+        }
+        drop(out);
+        fs::write(f.dir.join("go"), "").unwrap();
+        fs::write(f.dir.join("finish"), "").unwrap();
+        assert_eq!(exit_within_a_minute(&mut child), Some(0));
+        assert_eq!(record(&f, "t-1")["outcome"], "exited");
+        let report = f.dir.join("state/runs/t-1/report.md");
+        assert_eq!(fs::read_to_string(report).unwrap(), "done\n");
+    }
 }
 
 #[test]

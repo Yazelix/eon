@@ -43,9 +43,9 @@ impl<'a> Host<'a> {
 }
 
 const COMMANDS: [&str; 8] = [
-    "launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run] <prompt-file>",
+    "launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run|--json] <prompt-file>",
     "launch --popup [--only BACKEND] [--dry-run]",
-    "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION]",
+    "run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION] [--json]",
     "ps [--json] [--all]",
     "slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...",
     "slot ls [--json]",
@@ -328,6 +328,10 @@ pub fn main(arguments: impl Iterator<Item = std::ffi::OsString>, host: &Host<'_>
 fn print_error(program: &str, message: &str) {
     // A run may end after its caller closed stderr; never panic here.
     let _ = writeln!(std::io::stderr(), "{program}: {message}");
+}
+
+pub(crate) fn write_json(value: &serde_json::Value) {
+    let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
 #[cfg(test)]

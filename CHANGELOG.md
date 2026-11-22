@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon agent run` emits started and finished JSON receipts on stdout for
+  headless builders and reviewers. The receipts name the run and its private
+  log and report paths. The finished receipt includes the outcome and exit
+  code. `run --json` and ordinary `launch --json` also report final admission
+  holds and refusals as JSON.
+
 - On macOS, Eon keeps a live window's control socket when its connection queue
   is full, so generation cleanup and bind attempts leave the window reachable.
 - On macOS, Eon keeps a live Editor popup's listener socket and owner marker

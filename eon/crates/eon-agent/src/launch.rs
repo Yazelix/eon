@@ -19,6 +19,7 @@ pub struct Options {
     pub level: Level,
     pub only: Option<String>,
     pub dry_run: bool,
+    pub json: bool,
     pub popup: bool,
     pub prompt_file: PathBuf,
     pub project: Option<String>,
@@ -35,6 +36,7 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
         level: Level::High,
         only: None,
         dry_run: false,
+        json: false,
         popup: false,
         prompt_file: PathBuf::new(),
         project: None,
@@ -80,6 +82,7 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
                 }
             }
             "--dry-run" => options.dry_run = true,
+            "--json" => options.json = true,
             "--popup" if !options.popup => options.popup = true,
             "--" => {
                 i += 1;
@@ -89,6 +92,9 @@ pub fn parse(args: &[String]) -> Result<Options, Failure> {
             _ => break,
         }
         i += 1;
+    }
+    if options.json && (options.popup || options.dry_run) {
+        return Err(bad("launch --json takes neither --popup nor --dry-run"));
     }
     if options.popup {
         if args.len() != i
@@ -320,20 +326,20 @@ pub fn record_admission(
 
 /// Keeps the candidates these options can use; each other one gets its reason as the
 /// reading's problem, so status output and the decision record say why it was skipped.
-/// Returns the kept indices and the `backend: reason` texts.
-pub fn supported(
-    config: &Config,
+/// Returns the kept indices and the backend/reason pairs.
+pub fn supported<'a>(
+    config: &'a Config,
     indices: &[usize],
     readings: &mut [decision::Reading],
     reason: impl Fn(usize) -> Option<String>,
-) -> (Vec<usize>, Vec<String>) {
+) -> (Vec<usize>, Vec<(&'a str, String)>) {
     let mut kept = Vec::new();
     let mut reasons = Vec::new();
     for &index in indices {
         match reason(index) {
             None => kept.push(index),
             Some(why) => {
-                reasons.push(format!("{}: {why}", config.backends[index].name));
+                reasons.push((config.backends[index].name.as_str(), why.clone()));
                 readings[index] = decision::Reading {
                     problem: Some(why),
                     ..decision::Reading::default()
@@ -345,10 +351,22 @@ pub fn supported(
 }
 
 /// The refusal when static reasons leave no candidate: waiting cannot change them.
-pub fn unsupported_refusal(what: &str, reasons: &[String]) -> Failure {
+pub fn unsupported_refusal(
+    what: &str,
+    reasons: &[(&str, String)],
+    attempt: &mut wait::Attempt,
+) -> Failure {
+    let detail = reasons
+        .iter()
+        .map(|(backend, reason)| {
+            attempt.reason(backend, reason);
+            format!("{backend}: {reason}")
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
     (
         wait::REFUSED,
-        format!("no backend can take this {what}: {}", reasons.join("; ")),
+        format!("no backend can take this {what}: {detail}"),
     )
 }
 
@@ -402,9 +420,16 @@ pub fn print_readings(
     for index in indices {
         let b = &config.backends[*index];
         let r = &readings[*index];
-        let availability = decision::availability(b, r, role)
-            .err()
-            .unwrap_or_else(|| "available".into());
+        let availability = decision::availability(b, r, role);
+        let availability = match &availability {
+            Ok(()) => "available",
+            Err(reason) => {
+                if r.problem.as_deref() != Some(readings::NOT_CHECKED) {
+                    attempt.reason(&b.name, reason);
+                }
+                reason
+            }
+        };
         let via = r
             .source
             .as_ref()
@@ -508,12 +533,17 @@ pub fn run(
     load: &dyn Fn() -> Result<Config, Failure>,
 ) -> Result<(), Failure> {
     let prepared = prepare(options)?;
-    let (config, admission) = wait::admit(options.wait.as_ref(), host.program, |attempt| {
-        let config = load()?;
-        attempt.retry_every(config.wait_retry());
-        let admission = admit(&config, options, &prepared, host, attempt)?;
-        Ok((config, admission))
-    })?;
+    let (config, admission) = wait::admit(
+        options.wait.as_ref(),
+        host.program,
+        options.json,
+        |attempt| {
+            let config = load()?;
+            attempt.retry_every(config.wait_retry());
+            let admission = admit(&config, options, &prepared, host, attempt)?;
+            Ok((config, admission))
+        },
+    )?;
     start(&config, options, &prepared, host, admission)
 }
 
@@ -580,7 +610,7 @@ fn admit(
         candidates.normal.retain(|i| kept.contains(i));
         candidates.fallback = candidates.fallback.filter(|i| kept.contains(i));
         if candidates.normal.is_empty() && candidates.fallback.is_none() {
-            return Err(unsupported_refusal("launch", &reasons));
+            return Err(unsupported_refusal("launch", &reasons, attempt));
         }
     }
     // Serialize admissions from scan through exec.
@@ -639,6 +669,7 @@ fn admit(
         }
         if let Err(problem) = readings::recheck_cap(backend, &mut readings[pick.index]) {
             log(config, &entry, &readings, None, None)?;
+            attempt.reason(&backend.name, &problem);
             return Err((wait::HOLD, problem));
         }
     }
@@ -677,7 +708,16 @@ fn start(
             host.program, backend.name
         );
     }
-    println!("pick: {}", backend.name);
+    if options.json {
+        let _ = writeln!(
+            std::io::stderr(),
+            "{}: pick: {}",
+            host.program,
+            backend.name
+        );
+    } else {
+        println!("pick: {}", backend.name);
+    }
     let command = argv_of(options, backend).expect("admission checked the popup command");
     let overlay =
         projects::overlay(project.as_ref(), options.role, &command).map_err(|e| (2, e))?;
@@ -768,6 +808,7 @@ mod tests {
         );
         let lead = parse(&["--role".to_string(), "lead".into(), "task".into()]).unwrap();
         assert_eq!(lead.role, Role::Lead);
+        assert!(parse(&args(&["--json", "task"])).unwrap().json);
         for args in [
             vec![],
             vec!["--role"],
@@ -780,6 +821,8 @@ mod tests {
             vec!["--popup", "--name", "n"],
             vec!["--popup", "--add-dir", "/x"],
             vec!["--popup", "--wait", "1m"],
+            vec!["--popup", "--json"],
+            vec!["--dry-run", "--json", "task"],
             vec!["--wait", "25h", "task"],
             vec!["--wait", "soon", "task"],
         ] {

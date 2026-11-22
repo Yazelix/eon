@@ -261,6 +261,17 @@ fn last_line(stderr: &str) -> &str {
     stderr.lines().last().unwrap_or("")
 }
 
+fn assert_pick(stdout: &str, run: bool) {
+    if run {
+        let started: serde_json::Value =
+            serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+        assert_eq!(started["event"], "started", "{stdout}");
+        assert_eq!(started["backend"], "w", "{stdout}");
+    } else {
+        assert!(stdout.starts_with("pick: w\n"), "{stdout}");
+    }
+}
+
 #[test]
 fn records_skip_an_unfinished_tail() {
     let root = root();
@@ -281,6 +292,11 @@ fn a_waiter_admits_once_the_reading_drops_under_the_limit() {
     for run in [false, true] {
         let root = root();
         root.put("week", "10");
+        let config = root.read("config.toml").replace(
+            "echo launched >> \"$0\"",
+            "echo launched >> \"$0\"; echo agent-output",
+        );
+        root.put("config.toml", &config);
         let args = |extra: &[&'static str]| {
             if run {
                 run_args(extra)
@@ -288,7 +304,7 @@ fn a_waiter_admits_once_the_reading_drops_under_the_limit() {
                 launch_args(extra)
             }
         };
-        let waiter = root.spawn("w", "config.toml", &args(&["--wait", "10m"]));
+        let waiter = root.spawn("w", "config.toml", &args(&["--wait", "10m", "--json"]));
         waiter.wait_for_stderr("held: no backend available, refusing; retrying for up to 10m");
         assert!(root.records().iter().all(|r| r["decision"] == "REFUSAL"));
         root.put("week", "80");
@@ -296,16 +312,18 @@ fn a_waiter_admits_once_the_reading_drops_under_the_limit() {
         let records = root.records();
         assert!(records.len() >= 2, "{records:?}");
         assert_eq!(records.last().unwrap()["decision"], "pick");
-        assert!(stdout.starts_with("pick: w\n"), "{stdout}");
         assert!(
             root.spent().is_some(),
             "the admission spends its observation"
         );
         if run {
+            assert_pick(&stdout, true);
             // The fake systemd-run starts no scope; the admission itself is what is proved.
             assert!(code != Some(75) && code != Some(69), "{code:?}: {stderr}");
         } else {
             assert_eq!(code, Some(0), "{stderr}");
+            assert_eq!(stdout, "agent-output\n");
+            assert!(stderr.contains("rota: pick: w"), "{stderr}");
             assert_eq!(root.count("launched"), 1);
         }
     }
@@ -322,14 +340,27 @@ fn a_hold_exits_75_at_the_deadline() {
         if slow {
             root.put("delay", "3");
         }
-        let extra = ["--wait", "2s"];
+        let extra = ["--wait", "2s", "--json"];
         let args = if run {
             run_args(&extra)
         } else {
             launch_args(&extra)
         };
-        let (code, _, stderr) = root.spawn("w", "config.toml", &args).finish();
+        let (code, stdout, stderr) = root.spawn("w", "config.toml", &args).finish();
         assert_eq!(code, Some(75), "{stderr}");
+        let error: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(error["error"]["code"], "agent-unavailable");
+        assert_eq!(
+            error["error"]["detail"],
+            "no backend available, refusing; still held after waiting 2s"
+        );
+        assert_eq!(error["error"]["reasons"][0]["backend"], "w");
+        assert!(
+            error["error"]["reasons"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("week left 10%")
+        );
         assert_eq!(
             last_line(&stderr),
             "rota: no backend available, refusing; still held after waiting 2s"
@@ -428,10 +459,19 @@ fn a_refusal_waiting_cannot_change_exits_69_at_once() {
     for (backend, args, reason) in cases {
         root.config(40, "", backend);
         let mut args = args;
-        args.splice(1..1, ["--wait", "1h"]);
+        args.splice(1..1, ["--wait", "1h", "--json"]);
         // Under the watchdog: a refusal that regressed to a hold would wait the full hour.
-        let (code, _, stderr) = root.spawn("r", "config.toml", &args).finish();
+        let (code, stdout, stderr) = root.spawn("r", "config.toml", &args).finish();
         assert_eq!(code, Some(69), "{args:?}: {stderr}");
+        let error: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(error["error"]["code"], "agent-unsupported");
+        assert!(error["error"]["detail"].as_str().unwrap().contains(reason));
+        if !backend.is_empty() {
+            let reasons = error["error"]["reasons"].as_array().unwrap();
+            assert_eq!(reasons.len(), 1, "{error}");
+            assert_eq!(reasons[0]["backend"], "w", "{error}");
+            assert!(reason.contains(reasons[0]["detail"].as_str().unwrap()));
+        }
         assert!(stderr.contains(reason), "{args:?}: {stderr}");
         assert!(!stderr.contains("held:"), "{args:?}: {stderr}");
         assert!(
@@ -594,7 +634,7 @@ fn a_waiter_follows_a_tightened_limit() {
         assert!(root.spent().is_none() && root.count("launched") == 0 && root.count("ran") == 0);
         root.put("week", "80");
         let (code, stdout, stderr) = w.finish();
-        assert!(stdout.starts_with("pick: w\n"), "{stdout}{stderr}");
+        assert_pick(&stdout, run);
         assert!(root.spent().is_some());
         if !run {
             assert_eq!(code, Some(0), "{stderr}");

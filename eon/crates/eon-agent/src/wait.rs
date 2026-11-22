@@ -70,6 +70,7 @@ pub fn parse(text: &str) -> Result<Wait, Failure> {
 pub struct Attempt {
     first: bool,
     lines: Vec<String>,
+    reasons: Vec<serde_json::Value>,
     retry: Duration,
 }
 
@@ -82,6 +83,11 @@ impl Attempt {
     /// Adds one stderr line (without its newline).
     pub fn line(&mut self, text: String) {
         self.lines.push(text);
+    }
+
+    pub(crate) fn reason(&mut self, backend: &str, detail: &str) {
+        self.reasons
+            .push(serde_json::json!({ "backend": backend, "detail": detail }));
     }
 
     /// How long to sleep before the next attempt, from this attempt's configuration.
@@ -102,16 +108,34 @@ fn stderr_line(text: &str) {
 pub fn admit<T>(
     wait: Option<&Wait>,
     program: &str,
-    attempt: impl FnMut(&mut Attempt) -> Result<T, Failure>,
+    json: bool,
+    mut attempt: impl FnMut(&mut Attempt) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
+    let mut reasons = Vec::new();
     retry_with(
         wait,
         program,
         Instant::now,
         std::thread::sleep,
         stderr_line,
-        attempt,
+        |current| {
+            let result = attempt(current);
+            if json {
+                reasons = std::mem::take(&mut current.reasons);
+            }
+            result
+        },
     )
+    .inspect_err(|(code, detail)| {
+        let code = match (json, *code) {
+            (true, HOLD) => "agent-unavailable",
+            (true, REFUSED) => "agent-unsupported",
+            _ => return,
+        };
+        crate::cli::write_json(
+            &serde_json::json!({ "error": { "code": code, "detail": detail, "reasons": reasons } }),
+        );
+    })
 }
 
 fn retry_with<T>(
@@ -129,6 +153,7 @@ fn retry_with<T>(
         let mut current = Attempt {
             first,
             lines: Vec::new(),
+            reasons: Vec::new(),
             retry: Duration::from_secs(DEFAULT_RETRY_SECONDS),
         };
         // The attempt's lock and records are dropped when it returns, before anything below.

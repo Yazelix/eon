@@ -92,9 +92,9 @@ running Eon window. Configure its separate
 [agent.toml](CONFIGURATION.md#agent-commands) first.
 
 ```text
-eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run] <prompt-file>
+eon agent launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run|--json] <prompt-file>
 eon agent launch --popup [--only BACKEND] [--dry-run]
-eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION]
+eon agent run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION] [--json]
 eon agent ps [--json] [--all]
 eon agent slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
 eon agent slot ls [--json]
@@ -139,8 +139,23 @@ a cap, a guard or account check, a project cap, a busy admission lock, or the
 `--wait` deadline); 69 for a refusal waiting cannot change (an unknown project
 or `--only` backend, no enabled backend serving the role, the options or the
 folder); 2 for invalid input/config; 1 for operational error.
-Headless run passes through the agent's status after cleanup, with 124 for a
-timeout, 130 for interruption and 125 for abandoned processes.
+
+`run` defaults to `--role implement` and uses the selected backend's headless
+argv with the project's role overlay. Use a file for `--brief` and a duration
+such as `300m` for `--timeout`. The timeout starts when the child spawns.
+Stdout emits a `started` JSON line after registration and a `finished` line
+after cleanup and the final record write. Both name the run and its private log
+and report paths. The finished line adds `outcome` and `exit_code`. Provider
+output goes to the log, and the report path tells the provider where to write.
+The exit code forwards the provider's status, with `outcome` distinguishing
+it from a timeout (124), interruption (130), abandoned processes (125), or
+failed final recording (1 unless cleanup is unknown, which remains 125).
+
+`run --json` and ordinary `launch --json` also write one JSON error on stdout
+for a final admission hold or refusal. The diagnostic still appears on stderr.
+The error's code is `agent-unavailable` for 75 and `agent-unsupported` for 69.
+On a successful launch, the backend takes over stdout. Launch's JSON option
+is unavailable with `--popup` or `--dry-run`.
 
 The shipped examples retain backend permission handling and use Codex's
 per-terminal TUI mode. Sandboxes may deny host-socket access or writes to
@@ -153,8 +168,8 @@ reports the configured backend name, not an attestation of its permissions.
 manager and systemd 254+. Other Eon commands keep their existing platform
 requirements. Retire requires Linux 5.6+; use `eon agent retire --help` for its
 cleanup guards and `--dry-run` before deleting build output. The
-[moved command reference](../eon/crates/eon-agent/README.md) describes the
-unchanged behavior; replace its `rota` invocation with `eon agent`.
+[rota command reference](../eon/crates/eon-agent/README.md) describes the
+receipt fields and run lifecycle. Use `eon agent` in place of `rota`.
 Diagnostic text, session/unit names and ROTA_* variables keep rota's spellings.
 
 On Linux with an agent configuration file, the Agent popup uses

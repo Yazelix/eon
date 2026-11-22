@@ -734,10 +734,12 @@ pub fn check(
     reading
 }
 
+pub(crate) const NOT_CHECKED: &str = "not checked";
+
 /// A reading for a backend that was not read.
 pub fn not_checked() -> Reading {
     Reading {
-        problem: Some("not checked".into()),
+        problem: Some(NOT_CHECKED.into()),
         ..Reading::default()
     }
 }

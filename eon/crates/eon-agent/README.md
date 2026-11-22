@@ -14,9 +14,9 @@ Build with `cargo build --release` (Linux, Rust 1.96 or later). Copy
 paths, commands, models and example percentages.
 
 ```text
-rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run] <prompt-file>
+rota launch [--role implement|review|lead] [--level medium|high] [--only BACKEND] [--project NAME] [--name NAME] [--add-dir DIR]... [--wait DURATION] [--dry-run|--json] <prompt-file>
 rota launch --popup [--only BACKEND] [--dry-run]
-rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION]
+rota run --brief FILE --name NAME --timeout DURATION [--role implement|review] [--only BACKEND] [--project NAME] [--cwd DIR] [--effort LEVEL] [--add-dir DIR]... [--wait DURATION] [--json]
 rota ps [--json] [--all]
 rota slot run [--class NAME] [--quiet-exempt] [--front] -- COMMAND...
 rota slot ls [--json]
@@ -39,9 +39,10 @@ For a real popup-mode failure with terminal stdin and stderr, the diagnostic
 remains until Enter or EOF, then returns its original status. Dry-run,
 nonterminal calls and ordinary launch return immediately.
 Only implementers without `--only` can use the configured fallback, reported as
-`FALLBACK`. Exit codes: 2 for invalid input/config, 3 for refusal, 1 for I/O or
-launch failure. Status reports availability for both roles; a role a backend
-runs only through `rota run` shows as `available for rota run`.
+`FALLBACK`. Exit codes are 75 for a hold, 69 for a refusal, 2 for invalid
+input/config, and 1 for I/O or launch failure. Status reports availability
+for both roles. A role a backend runs only through `rota run` shows as
+`available for rota run`.
 
 `--dry-run` prints the pick and shell command, showing the prompt as `$(cat file)`.
 It does not write the state, log, lock or trusted settings, run preparation hooks,
@@ -104,15 +105,29 @@ waiting cannot change, decided before any reading: an unknown `--project` or
 excluded for the folder or unable to take the options. Invalid input or
 configuration exits 2 and operational failure 1.
 
-`rota run` runs one headless agent session (a plan, review or investigation)
-and waits for it. It checks guards, account checks, quota limits and caps like
+`rota run` runs one headless builder or reviewer and waits for it.
+It checks guards, account checks, quota limits and caps like
 `launch`, with no fallback, then runs the backend's `run` command for the role
 in `--cwd` (default: the current folder). It does not apply `trusted_settings`
 or `--level`. Its stdin is the brief file or
 `/dev/null`, never rota's own. Output goes to a log under a run directory named
-by the session, `NAME-N` with the first free `N`; rota prints the pick, session,
-PID, log and report paths before the run starts. `--timeout` takes seconds or
+by the session, `NAME-N` with the first free `N`. `--timeout` takes seconds or
 `Ns`, `Nm`, `Nh`, at most 30 days, and counts from the moment the run starts.
+
+Stdout carries newline-delimited JSON. Both receipts have `schema: 1`,
+`event`, `id` (the session ID), `name` (the requested run name), `backend`,
+`pid` (the scope leader), and absolute `log` and `report` paths. A `started`
+receipt follows registration. A `finished` receipt follows cleanup and the
+final record write, with `outcome` and `exit_code` added. The report path
+is where the provider can write a report. Check that file before using it.
+
+`run --json` and ordinary `launch --json` also write one stdout JSON error
+for a final admission hold or refusal, with `error.code` (`agent-unavailable`
+for 75, `agent-unsupported` for 69), `error.detail`, and `error.reasons`
+(a list of backend and detail pairs, empty if none were collected).
+Stderr retains the diagnostics. A successful launch execs the agent with the
+caller's stdout. Launch's JSON option is unavailable with `--popup` or
+`--dry-run`.
 
 `rota run` needs Linux 5.14 or newer with cgroup v2 and a systemd user manager,
 systemd 254 or newer (tested on 255; systemd-run gets `--expand-environment=no`,
@@ -141,11 +156,11 @@ them, and exits 125, never 0. If systemd-run fails before the command starts
 `failed` and rota exits 1; the log says why.
 rota exits with the run's status: 128+N when a signal N ended it, 124 after a
 timeout, 130 after an interruption and 125 when it abandoned processes. If the
-final record write fails, rota exits 1. Before anything starts, a hold exits
+final record write fails, rota exits 1 or retains 125 if cleanup is unknown.
+Before anything starts, a hold exits
 75, a refusal waiting cannot change 69 and an unusable option or brief 2, as for
-`launch`. A run's own status can also be 1, 2, 69 or 75: a run started
-when the `session:` line was printed, and its record's `outcome` says how it
-ended.
+`launch`. A provider can also exit 1, 2, 69 or 75. The `started` receipt and
+the finished `outcome` distinguish a started run from an admission error.
 
 Each run is recorded in the session registry: `sessions/ID.json` beside
 `state_file`, naming the run's `unit`, rewritten when the run ends with `finished` (Unix seconds),

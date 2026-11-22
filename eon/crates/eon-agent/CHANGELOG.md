@@ -5,6 +5,10 @@ see.
 
 ## Unreleased
 
+- `run` writes started and finished JSON receipts to stdout. The finished
+  receipt carries the run's outcome and exit code. `run --json` and ordinary
+  `launch --json` include JSON admission errors for holds and refusals.
+
 - `launch` and `run` take `--wait DURATION` (`300`, `30m`, `2h`; at most 24h).
   A held admission retries until it admits or the deadline passes. Each attempt
   re-reads the configuration, takes the admission lock only while it works and

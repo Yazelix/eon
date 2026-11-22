@@ -48,6 +48,7 @@ pub struct RunOptions {
     pub name: String,
     pub add_dirs: Vec<PathBuf>,
     pub project: Option<String>,
+    pub json: bool,
     /// `--wait DURATION`; `None` makes one admission attempt.
     pub wait: Option<wait::Wait>,
 }
@@ -62,9 +63,15 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
     let (mut only, mut cwd, mut brief, mut effort, mut timeout, mut name, mut project) =
         (None, None, None, None, None, None, None);
     let mut wait_for = None;
+    let mut json = false;
     let mut add_dirs = Vec::new();
     let mut i = 0;
     while let Some(arg) = args.get(i) {
+        if arg == "--json" {
+            json = true;
+            i += 1;
+            continue;
+        }
         let flags = [
             "--role",
             "--only",
@@ -130,6 +137,7 @@ pub fn parse(args: &[String]) -> Result<RunOptions, Failure> {
         name,
         add_dirs,
         project,
+        json,
         wait: wait_for,
     })
 }
@@ -472,6 +480,24 @@ fn verdict(
     }
 }
 
+fn recorded((outcome, code, message): Verdict, result: std::io::Result<()>) -> Verdict {
+    match result {
+        Ok(()) => (outcome, code, message),
+        Err(e) => {
+            let (outcome, code) = if outcome == "abandoned" {
+                (outcome, code)
+            } else {
+                ("failed", 1)
+            };
+            (
+                outcome,
+                code,
+                format!("{message}; cannot write session record: {e}"),
+            )
+        }
+    }
+}
+
 /// `argv` run by systemd-run in a new transient user scope, named `unit` if given. Arguments
 /// are passed literally (systemd 258 expands `$VAR` in scope arguments by default).
 fn scoped(unit: Option<&str>, argv: Vec<String>) -> Vec<String> {
@@ -558,12 +584,17 @@ pub fn run(
     load: &dyn Fn() -> Result<Config, Failure>,
 ) -> Result<(), Failure> {
     let prepared = prepare(options)?;
-    let (config, admission) = wait::admit(options.wait.as_ref(), host.program, |attempt| {
-        let config = load()?;
-        attempt.retry_every(config.wait_retry());
-        let admission = admit(&config, options, &prepared, host, attempt)?;
-        Ok((config, admission))
-    })?;
+    let (config, admission) = wait::admit(
+        options.wait.as_ref(),
+        host.program,
+        options.json,
+        |attempt| {
+            let config = load()?;
+            attempt.retry_every(config.wait_retry());
+            let admission = admit(&config, options, &prepared, host, attempt)?;
+            Ok((config, admission))
+        },
+    )?;
     start(&config, options, prepared, host, admission)
 }
 
@@ -623,7 +654,7 @@ fn admit(
         projects::overlay(project.as_ref(), options.role, command).err()
     });
     if normal.is_empty() {
-        return Err(unsupported_refusal("run", &reasons));
+        return Err(unsupported_refusal("run", &reasons, attempt));
     }
     // Without --wait, wait for other selections instead of failing a batch of runs; a waiter
     // takes the lock only when it is free, so no attempt starts after its deadline.
@@ -674,6 +705,7 @@ fn admit(
     }
     if let Err(problem) = readings::recheck_cap(backend, &mut readings[pick.index]) {
         log(config, &entry, &readings, None, None)?;
+        attempt.reason(&backend.name, &problem);
         return Err((wait::HOLD, problem));
     }
     Ok(Admission {
@@ -711,7 +743,6 @@ fn start(
     let project = projects::Chosen::selected(project.as_ref(), config);
     let backend = &config.backends[pick.index];
     let run = backend.run.as_ref().expect("candidates have a run table");
-    println!("pick: {}", backend.name);
     // The run gets its own scope, so rota can stop and wait for every process it starts.
     let probe = ["sh", "-c", PROBE_SCRIPT].map(String::from).to_vec();
     let probe = bounded(
@@ -799,7 +830,7 @@ fn start(
         && let Ok(process) = scanner.identity(child.id())
         && let Err(e) = admitted.add(process)
     {
-        eprintln!("{}: {}", host.program, e.1);
+        let _ = writeln!(std::io::stderr(), "{}: {}", host.program, e.1);
     }
     let record = Session {
         schema: SCHEMA,
@@ -845,13 +876,12 @@ fn start(
     }
     drop(lock);
     // From here on a closed stdout must not unwind past the live run.
-    let _ = writeln!(
-        std::io::stdout(),
-        "session: {id}\npid: {leader}\nlog: {}\nreport: {}",
-        log_path.display(),
-        report.display()
-    );
-    let stopped = loop {
+    let mut receipt = serde_json::json!({
+        "schema": SCHEMA, "event": "started", "id": id, "name": record.name,
+        "backend": record.backend, "pid": record.pid, "log": log_path, "report": report,
+    });
+    crate::cli::write_json(&receipt);
+    let mut stopped = loop {
         if leader_exited(leader) {
             break None;
         }
@@ -867,7 +897,7 @@ fn start(
     // Also after a normal exit: no worker outlives the run.
     let stopped_all = stop(&mut scope, leader, &PHASES, signal_scope);
     // A leader that never joined its scope means systemd-run failed: the command never ran.
-    let stopped = stopped.or_else(|| {
+    stopped = stopped.or_else(|| {
         let failed = format!(
             "could not start the run's scope; see {}",
             log_path.display()
@@ -875,9 +905,16 @@ fn start(
         scope.cgroup.is_none().then_some(("failed", 1, failed))
     });
     // A leader that survived SIGKILL cannot be waited for without hanging.
-    let status = match leader_exited(leader) {
-        true => Some(child.wait().map_err(io_failure)?),
-        false => None,
+    let status = if leader_exited(leader) {
+        match child.wait() {
+            Ok(status) => Some(status),
+            Err(e) => {
+                stopped = Some(("failed", 1, format!("could not reap run leader: {e}")));
+                None
+            }
+        }
+    } else {
+        None
     };
     let (outcome, code, message) = verdict(
         stopped,
@@ -890,12 +927,14 @@ fn start(
         fields["abandoned_pids"] = left.clone().into();
     }
     let fields = fields.as_object().cloned().unwrap_or_default();
-    if let Err(e) = session::update(&config.state_file, &record, fields) {
-        return Err((
-            1,
-            format!("{id} {message}; cannot write session record: {e}"),
-        ));
-    }
+    let (outcome, code, message) = recorded(
+        (outcome, code, message),
+        session::update(&config.state_file, &record, fields),
+    );
+    receipt["event"] = "finished".into();
+    receipt["outcome"] = outcome.into();
+    receipt["exit_code"] = code.into();
+    crate::cli::write_json(&receipt);
     if code == 0 {
         let _ = writeln!(std::io::stderr(), "{}: {id} {message}", host.program);
         return Ok(());
@@ -912,7 +951,7 @@ mod tests {
     #[test]
     fn run_arguments() {
         let line = "--brief b.md --name eon-x.review_2 --timeout 90m --role review \
-                    --add-dir /a --add-dir /b --effort xhigh --cwd /w --project tide --wait 2h";
+                    --add-dir /a --add-dir /b --effort xhigh --cwd /w --project tide --wait 2h --json";
         let parsed = parse(&args(line)).unwrap();
         assert_eq!(
             parsed.wait,
@@ -922,6 +961,7 @@ mod tests {
             })
         );
         assert_eq!(parsed.role, Role::Review);
+        assert!(parsed.json);
         assert_eq!(parsed.timeout, 5400);
         assert_eq!(parsed.name, "eon-x.review_2");
         assert_eq!(parsed.add_dirs, [PathBuf::from("/a"), PathBuf::from("/b")]);
@@ -963,6 +1003,7 @@ mod tests {
         assert_eq!(parse_timeout("45s"), Some(45));
         assert_eq!(parse_timeout("90m"), Some(5400));
         assert_eq!(parse_timeout("2h"), Some(7200));
+        assert_eq!(parse_timeout("300m"), Some(18_000));
         assert_eq!(parse_timeout("720h"), Some(MAX_TIMEOUT));
         for bad in [
             "",
@@ -976,6 +1017,17 @@ mod tests {
             "721h",
         ] {
             assert_eq!(parse_timeout(bad), None, "{bad}");
+        }
+    }
+    #[test]
+    fn a_failed_final_write_keeps_abandonment_only() {
+        for (outcome, expected) in [("abandoned", ("abandoned", 125)), ("exited", ("failed", 1))] {
+            let (outcome, code, detail) = recorded(
+                (outcome, 125, "run ended".into()),
+                Err(std::io::Error::other("bad record")),
+            );
+            assert_eq!((outcome, code), expected);
+            assert_eq!(detail, "run ended; cannot write session record: bad record");
         }
     }
     #[test]

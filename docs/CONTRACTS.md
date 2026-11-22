@@ -7213,8 +7213,13 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   under Lucca's delegation): clause 7's waiting and exit codes and the popup
   exit text below take effect, proved by `tests/wait.rs` and the
   `wait::tests` unit tests in `eon/crates/eon-agent`; that bead's commit is
-  its revision. Clause 7's `--json` reasons stay pending with `.39.5`, and
-  `--pane` forwarding with `.39.7`.
+  its revision. Clause 7's `--pane` forwarding stays pending with `.39.7`.
+
+  Clause 7's `--json` hold and refusal reasons and clause 8's headless
+  receipts take effect with `eon-eon-agent-lr8sx.39.5`. The
+  `tests/wait.rs` and `tests/run.rs` suites in `eon/crates/eon-agent`
+  and the bead's isolated Linux profile runs prove those surfaces. The
+  bead's commit is its revision.
 
   Amended on 2026-11-17 (`eon-eon-agent-lr8sx.39`; approved by eon-lead
   under Lucca's delegation; its policy clauses carry Lucca's 2026-11-16
