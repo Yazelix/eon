@@ -1,7 +1,8 @@
 //! Pure classification over parsed git output: no processes, no repository.
 use crate::Result;
-use crate::rules::{self, Tier};
+use crate::rules::{self, DarwinLevel, Tier};
 use std::collections::BTreeMap;
+use std::fmt;
 
 /// One `git diff --raw -z --no-renames` record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,12 +15,14 @@ pub struct Change {
     pub path: String,
 }
 
-/// One path's tier and why.
+/// One path's review tier and Darwin check level, with their reasons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     pub tier: Tier,
     pub path: String,
     pub reason: String,
+    pub darwin: DarwinLevel,
+    pub darwin_reason: &'static str,
 }
 
 /// Parses `:<old mode> <new mode> <old sha> <new sha> <status>\0<path>\0`
@@ -198,11 +201,23 @@ pub fn classify(
     }
     let mut verdicts = Vec::new();
     for change in changes {
-        let (tier, reason) = decide(change, lines, &mut read_by_code)?;
+        let mut referenced = None;
+        let mut names = || {
+            if let Some(value) = referenced {
+                return Ok(value);
+            }
+            let value = read_by_code(&change.path)?;
+            referenced = Some(value);
+            Ok(value)
+        };
+        let (tier, reason) = decide(change, lines, &mut names)?;
+        let (darwin, darwin_reason) = rules::darwin_rule(&change.path, names)?;
         verdicts.push(Verdict {
             tier,
             path: change.path.clone(),
             reason,
+            darwin,
+            darwin_reason,
         });
     }
     verdicts.sort_by(|left, right| right.tier.cmp(&left.tier).then(left.path.cmp(&right.path)));
@@ -212,7 +227,7 @@ pub fn classify(
 fn decide(
     change: &Change,
     lines: &BTreeMap<String, Vec<String>>,
-    read_by_code: &mut impl FnMut(&str) -> Result<bool>,
+    read_by_code: impl FnOnce() -> Result<bool>,
 ) -> Result<(Tier, String)> {
     if let Some(reason) = mode_reason(change) {
         return Ok((Tier::High, reason.into()));
@@ -241,7 +256,7 @@ fn decide(
             let plain = |mode: &str| mode == rules::REGULAR || mode == rules::ABSENT;
             if !(plain(&change.old_mode) && plain(&change.new_mode)) {
                 Ok((Tier::High, rules::LOW_MODE.into()))
-            } else if change.path.ends_with(".md") && read_by_code(&change.path)? {
+            } else if change.path.ends_with(".md") && read_by_code()? {
                 Ok((Tier::Medium, rules::READ_BY_CODE.into()))
             } else {
                 Ok((Tier::Low, rule.reason.into()))
@@ -257,6 +272,54 @@ pub fn slice_tier(verdicts: &[Verdict]) -> Tier {
         .map(|verdict| verdict.tier)
         .max()
         .unwrap_or(Tier::High)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DarwinCheck {
+    pub level: DarwinLevel,
+    pub build: bool,
+}
+
+impl fmt::Display for DarwinCheck {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let legs = match (self.level, self.build) {
+            (DarwinLevel::None, _) => "",
+            (_, true) => "workspace-tests, build",
+            (_, false) => "workspace-tests",
+        };
+        write!(formatter, "{} ({legs})", self.level.name())
+    }
+}
+
+pub fn slice_darwin(verdicts: &[Verdict]) -> DarwinCheck {
+    let level = verdicts
+        .iter()
+        .map(|verdict| verdict.darwin)
+        .max()
+        .unwrap_or(DarwinLevel::None);
+    DarwinCheck {
+        level,
+        build: level != DarwinLevel::None
+            && verdicts
+                .iter()
+                .any(|verdict| rules::darwin_build(&verdict.path)),
+    }
+}
+
+pub fn render_darwin(verdicts: &[Verdict]) -> String {
+    let mut output: String = verdicts
+        .iter()
+        .map(|verdict| {
+            format!(
+                "darwin path: {:<5}  {:?}  {}\n",
+                verdict.darwin.name(),
+                verdict.path,
+                verdict.darwin_reason,
+            )
+        })
+        .collect();
+    output.push_str(&format!("darwin: {}\n", slice_darwin(verdicts)));
+    output
 }
 
 /// One aligned `<tier>  <path>  <reason>` line per verdict.
@@ -595,6 +658,61 @@ mod tests {
         assert_eq!(slice_tier(&verdicts[1..]), Tier::Medium);
         assert_eq!(slice_tier(&verdicts[3..]), Tier::Low);
         assert!(classify(&[], &BTreeMap::new(), |_| Ok(false)).is_err());
+    }
+
+    #[test]
+    fn darwin_references_are_independent_of_tier_and_scanned_once() {
+        let mut scanned = Vec::new();
+        let verdicts = classify(
+            &[
+                modified("docs/guide.md"),
+                modified("orbit/docs/CONTRACTS.md"),
+                modified(".beads/example.md"),
+            ],
+            &BTreeMap::new(),
+            |path| {
+                scanned.push(path.to_owned());
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            scanned,
+            [
+                "docs/guide.md",
+                "orbit/docs/CONTRACTS.md",
+                ".beads/example.md"
+            ]
+        );
+        assert_eq!(verdicts[0].tier, Tier::High);
+        assert_eq!(verdicts[0].darwin_reason, rules::READ_BY_CODE);
+        assert_eq!(verdicts[1].darwin, DarwinLevel::None);
+        assert_eq!(verdicts[2].darwin, DarwinLevel::Ci);
+    }
+
+    #[test]
+    fn darwin_takes_the_highest_level_and_adds_build_across_paths() {
+        let verdicts = classify(
+            &[
+                modified("venus/src/application.rs"),
+                modified("nix/guide.md"),
+                modified("launcher/README.md"),
+            ],
+            &BTreeMap::from([("venus/src/application.rs".into(), vec![])]),
+            |_| Ok(false),
+        )
+        .unwrap();
+        assert_eq!(slice_darwin(&verdicts[1..2]).to_string(), "none ()");
+        assert_eq!(
+            slice_darwin(&verdicts[2..]).to_string(),
+            "proof (workspace-tests)"
+        );
+        assert_eq!(verdicts[0].darwin, DarwinLevel::Proof);
+        assert_eq!(
+            slice_darwin(&verdicts[1..]).to_string(),
+            "proof (workspace-tests, build)"
+        );
+        assert!(render_darwin(&verdicts).ends_with("darwin: proof (workspace-tests, build)\n"));
     }
 
     #[test]

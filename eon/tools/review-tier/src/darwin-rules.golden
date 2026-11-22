@@ -1,0 +1,26 @@
+# Darwin levels. First match per path, then highest level across the change.
+# Lowering any Darwin level needs Lucca's recorded approval.
+proof  path: venus/src/application.rs  native macOS surface
+proof  path: venus/src/application/**  native macOS surface
+proof  path: venus/src/launch.rs  native macOS surface
+proof  path: venus/src/accessibility.rs  native macOS surface
+proof  path: venus/src/main.rs  native macOS surface
+proof  path: venus/Cargo.toml  native macOS surface
+proof  path: launcher/**  native macOS surface
+proof  path: nix/macos-app.nix  native macOS surface
+proof  path: eon/tools/mac-proof/**  native macOS surface
+proof  path: orbit/terminfo/eon-darwin.terminfo  native macOS surface
+proof  path: .github/workflows/mac-proof.yml  native macOS surface
+none   path: .beads/**  planning
+none   path: **/*.md without a name match in .rs or .nix  Markdown not read by code
+ci     path: **/*.md  Markdown read by code
+ci     path: **  workspace change
+# ci and proof run workspace-tests. Add build if any changed path matches:
+build  path: nix/**
+build  path: flake.nix
+build  path: flake.lock
+build  path: Cargo.lock
+build  path: **/Cargo.toml
+build  path: components/**
+build  path: launcher/**
+build  path: .github/workflows/darwin-build.yml

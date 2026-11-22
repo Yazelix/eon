@@ -1,10 +1,12 @@
-//! The one rule table that decides a changed path's review tier.
+//! The rules that decide a changed path's review tier and Darwin check level.
 //!
 //! Every rule lives here, in decision order, and `review-tier rules` prints
 //! it. A change that lowers any tier (moves a pattern down, adds to the Medium
 //! or Low list, removes a High pattern, mode rule or risky token) needs
 //! Lucca's recorded approval, like a contract change; REVIEW.md makes it a
 //! blocker without that approval, and this crate's own path is High.
+//! Lowering any Darwin level also needs Lucca's recorded approval.
+use crate::Result;
 use crate::classify::Change;
 use serde::Deserialize;
 use std::fmt;
@@ -220,6 +222,106 @@ pub const READ_BY_CODE: &str = "Markdown read by code";
 pub const LOW_MODE: &str = "mode";
 pub const UNLISTED: &str = "not on the Medium or Low lists";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DarwinLevel {
+    None,
+    Ci,
+    Proof,
+}
+
+impl DarwinLevel {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Ci => "ci",
+            Self::Proof => "proof",
+        }
+    }
+}
+
+struct DarwinRule {
+    level: DarwinLevel,
+    reason: &'static str,
+    patterns: &'static [&'static str],
+    unreferenced_markdown: bool,
+}
+
+/// Explicit paths take precedence over the Markdown rule and workspace default.
+const DARWIN_RULES: &[DarwinRule] = &[
+    DarwinRule {
+        level: DarwinLevel::Proof,
+        reason: "native macOS surface",
+        patterns: &[
+            "venus/src/application.rs",
+            "venus/src/application/**",
+            "venus/src/launch.rs",
+            "venus/src/accessibility.rs",
+            "venus/src/main.rs",
+            "venus/Cargo.toml",
+            "launcher/**",
+            "nix/macos-app.nix",
+            "eon/tools/mac-proof/**",
+            "orbit/terminfo/eon-darwin.terminfo",
+            ".github/workflows/mac-proof.yml",
+        ],
+        unreferenced_markdown: false,
+    },
+    DarwinRule {
+        level: DarwinLevel::None,
+        reason: "planning",
+        patterns: &[".beads/**"],
+        unreferenced_markdown: false,
+    },
+    DarwinRule {
+        level: DarwinLevel::None,
+        reason: "Markdown not read by code",
+        patterns: &["**/*.md"],
+        unreferenced_markdown: true,
+    },
+    DarwinRule {
+        level: DarwinLevel::Ci,
+        reason: READ_BY_CODE,
+        patterns: &["**/*.md"],
+        unreferenced_markdown: false,
+    },
+    DarwinRule {
+        level: DarwinLevel::Ci,
+        reason: "workspace change",
+        patterns: &["**"],
+        unreferenced_markdown: false,
+    },
+];
+
+const DARWIN_BUILD: &[&str] = &[
+    "nix/**",
+    "flake.nix",
+    "flake.lock",
+    "Cargo.lock",
+    "**/Cargo.toml",
+    "components/**",
+    "launcher/**",
+    ".github/workflows/darwin-build.yml",
+];
+
+pub fn darwin_rule(
+    path: &str,
+    mut read_by_code: impl FnMut() -> Result<bool>,
+) -> Result<(DarwinLevel, &'static str)> {
+    for rule in DARWIN_RULES {
+        if rule.patterns.iter().any(|pattern| glob(pattern, path))
+            && (!rule.unreferenced_markdown || !read_by_code()?)
+        {
+            return Ok((rule.level, rule.reason));
+        }
+    }
+    Err(format!("no Darwin rule matches {path:?}").into())
+}
+
+pub fn darwin_build(path: &str) -> bool {
+    DARWIN_BUILD.iter().any(|pattern| glob(pattern, path))
+}
+
 /// The first path rule matching `path`, if any.
 pub fn path_rule(path: &str) -> Option<&'static Rule> {
     RULES
@@ -272,6 +374,32 @@ pub fn render() -> String {
     );
     for (tier, rule, reason) in rows {
         out.push_str(&format!("{:<6}  {rule:<width$}  {reason}\n", tier.name()));
+    }
+    out
+}
+
+pub fn render_darwin() -> String {
+    let mut out = String::from(
+        "# Darwin levels. First match per path, then highest level across the change.\n\
+         # Lowering any Darwin level needs Lucca's recorded approval.\n",
+    );
+    for rule in DARWIN_RULES {
+        let condition = if rule.unreferenced_markdown {
+            " without a name match in .rs or .nix"
+        } else {
+            ""
+        };
+        for pattern in rule.patterns {
+            out.push_str(&format!(
+                "{:<5}  path: {pattern}{condition}  {}\n",
+                rule.level.name(),
+                rule.reason,
+            ));
+        }
+    }
+    out.push_str("# ci and proof run workspace-tests. Add build if any changed path matches:\n");
+    for pattern in DARWIN_BUILD {
+        out.push_str(&format!("build  path: {pattern}\n"));
     }
     out
 }
@@ -348,12 +476,12 @@ mod tests {
         assert!(glob("é*", "éa"));
     }
 
-    /// Any edit to the rule table changes `rules.golden` visibly. A golden
-    /// change that lowers a tier needs Lucca's recorded approval before it
-    /// lands; regenerate with `review-tier rules > src/rules.golden`.
+    /// The tier and Darwin sections of `review-tier rules` have separate
+    /// goldens. Copy each section to its own file when updating the rules.
     #[test]
-    fn the_rule_table_matches_its_golden() {
+    fn the_rule_tables_match_their_goldens() {
         assert_eq!(render(), include_str!("rules.golden"));
+        assert_eq!(render_darwin(), include_str!("darwin-rules.golden"));
     }
 
     #[test]

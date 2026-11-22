@@ -9,6 +9,12 @@
 //! review-tier -- classify …`. REVIEW.md says what each tier requires, and
 //! docs/AGENT-RULES.md "Proof and Review" binds it to landing.
 //!
+//! After the review tier output, `classify` adds reasons for each path's
+//! Darwin level and ends with `darwin: <level> (<legs>)`. The legs are
+//! empty for `none`, `workspace-tests` for `ci` and `proof`, and include
+//! `build` when a changed path matches a build rule. `rules` lists both
+//! sets of policy. Lowering a Darwin level needs Lucca's recorded approval.
+//!
 //! `review-tier record render <input.toml>` and `record check <bead>
 //! [<revision>]` write and verify the close record the lead stores on each
 //! landed bead; `record` documents the format.
@@ -71,7 +77,7 @@ fn run(args: &[String]) -> Result<bool> {
             git::check_revision(candidate)?;
             classify(&Git::current()?, edge, candidate)?
         }
-        ["rules"] => rules::render(),
+        ["rules"] => format!("{}\n{}", rules::render(), rules::render_darwin()),
         ["eval", "check"] => return eval::check(&Git::current()?),
         ["eval", "prepare", id, dir] => eval::prepare(&Git::current()?, id, Path::new(dir))?,
         ["eval", "score", id, report] => {
@@ -119,9 +125,10 @@ fn classify(git: &Git, edge: &str, candidate: &str) -> Result<String> {
     let verdicts = classify_trees(git, &base_tree, &candidate_tree)?;
     Ok(format!(
         "tier: {}\nclassifier: edge {edge} review-tier tree {classifier}\n\
-         base: {base} tree {base_tree}\ncandidate: {candidate} tree {candidate_tree}\n{}",
+         base: {base} tree {base_tree}\ncandidate: {candidate} tree {candidate_tree}\n{}{}",
         classify::slice_tier(&verdicts),
         classify::render(&verdicts),
+        classify::render_darwin(&verdicts),
     ))
 }
 

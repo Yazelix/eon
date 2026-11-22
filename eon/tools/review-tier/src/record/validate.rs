@@ -292,6 +292,24 @@ mod tests {
     }
 
     #[test]
+    fn darwin_proof_checks_accept_only_their_target_kinds() {
+        let facts = facts();
+        let mut record = input();
+        record.proof[1].check = "darwin-clippy".into();
+        record.proof[1].target = Some("eon".into());
+        assert!(problems_of(&record, &facts).is_empty());
+        record.proof[1].target = None;
+        assert_problem(&record, &facts, "darwin-clippy needs a target");
+        for check in ["darwin-ci", "mac-proof"] {
+            record.proof[1].check = check.into();
+            assert!(problems_of(&record, &facts).is_empty());
+            record.proof[1].target = Some("eon".into());
+            assert_problem(&record, &facts, &format!("{check} takes no target"));
+            record.proof[1].target = None;
+        }
+    }
+
+    #[test]
     fn values_outside_the_allowlists_are_refused() {
         let facts = facts();
         let mut record = input();

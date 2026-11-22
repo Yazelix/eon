@@ -1,9 +1,9 @@
 //! The review eval: past changes that should have been stopped, a blind
 //! review setup for each, and scoring of a reviewer's report.
 use crate::Result;
-use crate::classify::{self, Verdict};
+use crate::classify::{self, DarwinCheck, Verdict};
 use crate::git::Git;
-use crate::rules::Tier;
+use crate::rules::{DarwinLevel, Tier};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::fs;
@@ -37,6 +37,17 @@ const CLASSES: &[&str] = &[
 #[serde(deny_unknown_fields)]
 struct Cases {
     case: Vec<Case>,
+    #[serde(default)]
+    darwin: Vec<DarwinCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DarwinCase {
+    commit: String,
+    darwin: DarwinLevel,
+    #[serde(default)]
+    build: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,7 +90,7 @@ struct Expect {
 }
 
 /// Parses and validates the cases file text.
-pub fn parse(text: &str) -> Result<Vec<Case>> {
+fn parse(text: &str) -> Result<Cases> {
     let cases: Cases = toml::from_str(text).map_err(|error| format!("{CASES}: {error}"))?;
     let mut ids = BTreeSet::new();
     for case in &cases.case {
@@ -88,7 +99,28 @@ pub fn parse(text: &str) -> Result<Vec<Case>> {
             return Err(format!("{CASES}: duplicate case id {}", case.id).into());
         }
     }
-    Ok(cases.case)
+    let mut commits = BTreeSet::new();
+    for case in &cases.darwin {
+        validate_commit(&case.commit).map_err(|error| format!("{CASES}: Darwin case: {error}"))?;
+        if !commits.insert(case.commit.as_str()) {
+            return Err(format!("{CASES}: duplicate Darwin case {}", case.commit).into());
+        }
+        if case.darwin == DarwinLevel::None && case.build {
+            return Err(format!("{CASES}: Darwin case {}: none has no legs", case.commit).into());
+        }
+    }
+    Ok(cases)
+}
+
+fn validate_commit(sha: &str) -> std::result::Result<(), String> {
+    if !(sha.len() == 40
+        && sha
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+    {
+        return Err(format!("{sha:?} is not a 40-hex commit id"));
+    }
+    Ok(())
 }
 
 fn validate(case: &Case) -> std::result::Result<(), String> {
@@ -101,13 +133,7 @@ fn validate(case: &Case) -> std::result::Result<(), String> {
         return Err("id must be R or F followed by digits".into());
     }
     for sha in [&case.commit, &case.fixed_by] {
-        if !(sha.len() == 40
-            && sha
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
-        {
-            return Err(format!("{sha:?} is not a 40-hex commit id"));
-        }
+        validate_commit(sha)?;
     }
     if !CLASSES.contains(&case.class.as_str()) {
         return Err(format!("unknown class {:?}", case.class));
@@ -142,7 +168,7 @@ fn validate(case: &Case) -> std::result::Result<(), String> {
     Ok(())
 }
 
-pub fn load(git: &Git) -> Result<Vec<Case>> {
+fn load(git: &Git) -> Result<Cases> {
     let path = git.root().join(CASES);
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
@@ -163,8 +189,8 @@ struct Classified {
     verdicts: Vec<Verdict>,
 }
 
-fn classify_case(git: &Git, case: &Case) -> Result<Classified> {
-    let commit = git.commit(&case.commit)?;
+fn classify_commit(git: &Git, revision: &str) -> Result<Classified> {
+    let commit = git.commit(revision)?;
     let base = git.first_parent(&commit)?;
     let verdicts = crate::classify_trees(git, &git.tree(&base)?, &git.tree(&commit)?)?;
     Ok(Classified {
@@ -176,9 +202,10 @@ fn classify_case(git: &Git, case: &Case) -> Result<Classified> {
 
 /// `eval check`: one line per case; returns whether every case passed.
 pub fn check(git: &Git) -> Result<bool> {
+    let cases = load(git)?;
     let mut passed = true;
-    for case in load(git)? {
-        match check_case(git, &case) {
+    for case in &cases.case {
+        match check_case(git, case) {
             Ok((tier, None)) => println!("{} {tier} ok", case.id),
             Ok((tier, Some(reason))) => {
                 passed = false;
@@ -190,11 +217,29 @@ pub fn check(git: &Git) -> Result<bool> {
             }
         }
     }
+    for case in cases.darwin {
+        let commit = &case.commit;
+        let expected = DarwinCheck {
+            level: case.darwin,
+            build: case.build,
+        };
+        match classify_commit(git, commit).map(|case| classify::slice_darwin(&case.verdicts)) {
+            Ok(actual) if actual == expected => println!("darwin {commit} {actual} ok"),
+            Ok(actual) => {
+                passed = false;
+                println!("darwin {commit} {actual} FAIL: expected {expected}");
+            }
+            Err(error) => {
+                passed = false;
+                println!("darwin {commit} - FAIL: {error}");
+            }
+        }
+    }
     Ok(passed)
 }
 
 fn check_case(git: &Git, case: &Case) -> Result<(Tier, Option<String>)> {
-    let classified = classify_case(git, case)?;
+    let classified = classify_commit(git, &case.commit)?;
     let tier = classify::slice_tier(&classified.verdicts);
     // An omission case may cite a companion file the commit left stale, so an
     // expected file need only exist at the commit; at least one must be in
@@ -248,7 +293,7 @@ fn past_end(content: &[u8], end: u32) -> Option<usize> {
 /// its ancestors, with the current REVIEW.md, and returns the case block.
 pub fn prepare(git: &Git, id: &str, dir: &Path) -> Result<String> {
     let cases = load(git)?;
-    let case = find(&cases, id)?;
+    let case = find(&cases.case, id)?;
     let review = fs::read(git.root().join("REVIEW.md"))
         .map_err(|error| format!("cannot read REVIEW.md at the repository root: {error}"))?;
     let dir = std::path::absolute(dir)?;
@@ -261,7 +306,7 @@ pub fn prepare(git: &Git, id: &str, dir: &Path) -> Result<String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("cannot use {}: {error}", dir.display()).into()),
     }
-    let classified = classify_case(git, case)?;
+    let classified = classify_commit(git, &case.commit)?;
     Git::init(&dir)?;
     let scratch = Git::at(&dir);
     let root = git.root().to_str().ok_or("repository path is not UTF-8")?;
@@ -365,7 +410,7 @@ fn citation(token: &str) -> Option<(String, u32, u32)> {
 /// `eval score`: `<id> caught|located|missed blocker=<n> should-fix=<n> nit=<n>`.
 pub fn score(git: &Git, id: &str, report: &Path) -> Result<String> {
     let cases = load(git)?;
-    let case = find(&cases, id)?;
+    let case = find(&cases.case, id)?;
     let report = fs::read_to_string(report)
         .map_err(|error| format!("cannot read {}: {error}", report.display()))?;
     Ok(score_report(case, &report))
@@ -443,7 +488,8 @@ mod tests {
     #[test]
     fn the_real_cases_file_validates() {
         let cases = parse(include_str!("../evals/cases.toml")).unwrap();
-        assert!(!cases.is_empty());
+        assert!(!cases.case.is_empty());
+        assert!(!cases.darwin.is_empty());
     }
 
     #[test]
@@ -453,7 +499,7 @@ mod tests {
              class = \"release-flip\"\ntier = \"high\"\nsummary = \"s\"\nevidence = \"e\"\n\
              mechanism = [[\"beta\"]]\n[[case.expect]]\nfile = \"a.rs\"\nlines = [3, 4]\n"
         );
-        assert_eq!(parse(&base).unwrap().len(), 1);
+        assert_eq!(parse(&base).unwrap().case.len(), 1);
         let bad = [
             base.replace("id = \"R01\"", "id = \"X01\""),
             base.replace("id = \"R01\"", "id = \"R\""),
@@ -474,6 +520,7 @@ mod tests {
                 .unwrap_or_default()
                 .into(),
             format!("{base}{base}"),
+            format!("{base}\n[[darwin]]\ncommit = \"{SHA}\"\ndarwin = \"none\"\nbuild = true\n"),
         ];
         for text in bad {
             assert!(parse(&text).is_err(), "{text}");
