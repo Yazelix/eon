@@ -1,6 +1,7 @@
 //! Owned Helix and Neovim listeners for Editor popups (EON-C10).
 
 use super::{
+    control::{self, StreamSocketProbe},
     diagnostics::DiagnosticLog,
     managed_environment::{self, ManagedPrograms, Tool},
     platform,
@@ -127,20 +128,35 @@ fn open(endpoint: &Path, file: &Path, id: &str) -> Result<(), Failure> {
     exchange(endpoint, request, ListenerKind::Helix, id, None)
 }
 
-fn exchange(
+fn should_retry_connect(
     endpoint: &Path,
-    request: Vec<u8>,
+    socket: &Path,
     kind: ListenerKind,
-    id: &str,
-    key: Option<&eon_workspace_protocol::v47::PopupKey>,
-) -> Result<(), Failure> {
-    if request.len() > FRAME_LIMIT {
-        return Err(failure("editor-rejected", "Editor request exceeds 64 KiB"));
+    error: &io::Error,
+) -> Result<bool, Failure> {
+    match error.kind() {
+        io::ErrorKind::NotFound => Ok(listener_kind(endpoint)? == Some(kind)),
+        // Between bind(2) and listen(2) (and on macOS with a full backlog),
+        // stream connect returns ECONNREFUSED while a datagram probe still
+        // sees the live stream socket (EPROTOTYPE) or a concurrent unlink.
+        io::ErrorKind::ConnectionRefused => Ok(listener_kind(endpoint)? == Some(kind)
+            && matches!(
+                control::probe_stream_socket(socket),
+                Ok(StreamSocketProbe::LiveStream | StreamSocketProbe::Missing)
+            )),
+        _ => Ok(false),
     }
-    let socket = socket_path(endpoint);
+}
+
+fn connect_listener(
+    endpoint: &Path,
+    socket: &Path,
+    kind: ListenerKind,
+    mut on_retry: impl FnMut(&io::Error),
+) -> Result<std::os::unix::net::UnixStream, Failure> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let mut waiting_for_bind = false;
-    let mut stream = loop {
+    loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err(failure(
@@ -152,14 +168,17 @@ fn exchange(
                 "Editor connect exceeded 100 ms; no request sent",
             ));
         }
-        match sessions::unix_connect_with_timeout(&socket, remaining) {
-            Ok(stream) => break stream,
-            Err(error)
-                if error.kind() == io::ErrorKind::NotFound
-                    && listener_kind(endpoint)? == Some(kind) =>
-            {
+        match sessions::unix_connect_with_timeout(socket, remaining) {
+            Ok(stream) => return Ok(stream),
+            Err(error) if should_retry_connect(endpoint, socket, kind, &error)? => {
                 waiting_for_bind = true;
-                std::thread::sleep(remaining.min(Duration::from_millis(5)));
+                on_retry(&error);
+                let delay = deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(5));
+                if !delay.is_zero() {
+                    std::thread::sleep(delay);
+                }
             }
             Err(error) => {
                 let detail = format!("Editor connection failed: {error}; no request sent");
@@ -168,7 +187,21 @@ fn exchange(
                 return Err(failure);
             }
         }
-    };
+    }
+}
+
+fn exchange(
+    endpoint: &Path,
+    request: Vec<u8>,
+    kind: ListenerKind,
+    id: &str,
+    key: Option<&eon_workspace_protocol::v47::PopupKey>,
+) -> Result<(), Failure> {
+    if request.len() > FRAME_LIMIT {
+        return Err(failure("editor-rejected", "Editor request exceeds 64 KiB"));
+    }
+    let socket = socket_path(endpoint);
+    let mut stream = connect_listener(endpoint, &socket, kind, |_| {})?;
     answer(&mut stream, &request, kind, id).map_err(|mut error| {
         if error.code == "editor-unresponsive"
             && let Some(key) = key
@@ -1016,31 +1049,59 @@ fn remove_marker(marker: &Path) -> Result<(), String> {
     }
 }
 
+fn remove_stale_failure(path: &Path, detail: &str) -> String {
+    format!("cannot remove Editor socket {}: {detail}", path.display())
+}
+
 fn remove_stale(path: &Path) -> Result<(), String> {
-    let failure =
-        |detail: &str| format!("cannot remove Editor socket {}: {detail}", path.display());
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(failure(&error.to_string())),
+        Err(error) => return Err(remove_stale_failure(path, &error.to_string())),
     };
     validate_private_directory(path.parent().expect("Editor socket has a parent"))?;
     if !metadata.file_type().is_socket() || metadata.uid() != effective_uid() {
-        return Err(failure("expected an owned socket"));
+        return Err(remove_stale_failure(path, "expected an owned socket"));
     }
-    // A nonblocking attempt distinguishes a refused socket from one that may listen.
-    match sessions::unix_connect_with_timeout(path, Duration::ZERO) {
-        Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        _ => return Err(failure("the socket may still be listening")),
+    probe_and_remove_stale(path, control::socket_identity_from(&metadata))
+}
+
+fn probe_and_remove_stale(path: &Path, identity: control::SocketIdentity) -> Result<(), String> {
+    match control::probe_stream_socket(path) {
+        Ok(StreamSocketProbe::Dead) => {}
+        Ok(StreamSocketProbe::Missing) => return Ok(()),
+        Ok(StreamSocketProbe::LiveStream) => {
+            return Err(remove_stale_failure(
+                path,
+                "the socket may still be listening",
+            ));
+        }
+        Ok(StreamSocketProbe::LiveDatagram) => {
+            return Err(remove_stale_failure(
+                path,
+                "the path is a Unix datagram socket",
+            ));
+        }
+        Err(error) => return Err(remove_stale_failure(path, &error.to_string())),
     }
+    remove_socket_if_identity(path, identity)
+}
+
+fn remove_socket_if_identity(path: &Path, identity: control::SocketIdentity) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(current) if same_file(&metadata, &current) => {}
+        Ok(current) if control::socket_identity_from(&current) == identity => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        _ => return Err(failure("the socket changed before cleanup")),
+        _ => {
+            return Err(remove_stale_failure(
+                path,
+                "the socket changed before cleanup",
+            ));
+        }
     }
     match fs::remove_file(path) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(failure(&error.to_string())),
+        Err(error) if error.kind() != io::ErrorKind::NotFound => {
+            Err(remove_stale_failure(path, &error.to_string()))
+        }
         _ => Ok(()),
     }
 }
@@ -1726,6 +1787,63 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    fn wait_for_dead_socket(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match control::probe_stream_socket(path) {
+                Ok(StreamSocketProbe::Dead) => return,
+                other if Instant::now() >= deadline => {
+                    panic!(
+                        "expected {} to become Dead after dropping listener, got {other:?}",
+                        path.display()
+                    );
+                }
+                _ => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+    }
+
+    fn read_diagnostic_log(directory: &Path) -> String {
+        let entry = fs::read_dir(directory).unwrap().next().unwrap().unwrap();
+        fs::read_to_string(entry.path()).unwrap()
+    }
+
+    fn spawn_helix_ok_server(
+        listener: UnixListener,
+        ids: &'static [&'static str],
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            for &id in ids {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(&mut stream).read_line(&mut line).unwrap();
+                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["id"], id);
+                let mut reply = serde_json::to_vec(&serde_json::json!({
+                    "version": 1,
+                    "id": id,
+                    "status": "ok",
+                }))
+                .unwrap();
+                reply.push(b'\n');
+                stream.write_all(&reply).unwrap();
+            }
+        })
+    }
+
+    fn answer_helix_open(mut stream: std::os::unix::net::UnixStream, id: &str) {
+        let mut request = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "id": id,
+            "action": "open",
+            "paths": ["/a"],
+            "timeout_ms": 750,
+        }))
+        .unwrap();
+        request.push(b'\n');
+        answer(&mut stream, &request, ListenerKind::Helix, id).unwrap();
+    }
+
     #[test]
     fn editor_connect_handles_initial_binding_refusal_and_a_full_queue() {
         let root = super::super::supervisor::temporary_directory();
@@ -1736,45 +1854,83 @@ mod tests {
             .prepare(&endpoint, &[], ListenerKind::Helix)
             .unwrap();
         assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
-        let bound = socket.clone();
-        let (ready, started) = std::sync::mpsc::channel();
-        let server = std::thread::spawn(move || {
-            ready.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(5));
-            let listener = UnixListener::bind(&bound).unwrap();
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut line = String::new();
-            BufReader::new(&mut stream).read_line(&mut line).unwrap();
-            stream
-                .write_all(b"{\"version\":1,\"id\":\"r1\",\"status\":\"ok\"}\n")
-                .unwrap();
-        });
-        started.recv().unwrap();
+
+        // Phase 1: retry NotFound until the listener binds synchronously in the
+        // retry hook, then accept and reply outside the 100 ms connect window
+        // for both the retried stream and a full `open` call.
+        let mut listener = None;
+        let mut saw_not_found = false;
+        let stream = connect_listener(&endpoint, &socket, ListenerKind::Helix, |error| {
+            assert_eq!(error.kind(), io::ErrorKind::NotFound);
+            saw_not_found = true;
+            if listener.is_none() {
+                listener = Some(UnixListener::bind(&socket).unwrap());
+            }
+        })
+        .unwrap();
+        assert!(
+            saw_not_found,
+            "unbound socket did not produce an initial NotFound"
+        );
+        let server = spawn_helix_ok_server(listener.unwrap(), &["r1-retry", "r1"]);
+        answer_helix_open(stream, "r1-retry");
         open(&endpoint, Path::new("/a"), "r1").unwrap();
         server.join().unwrap();
+
+        // Phase 2: a closed listener fails immediately without spinning the 100 ms deadline.
+        wait_for_dead_socket(&socket);
         let refused = open(&endpoint, Path::new("/a"), "r2").unwrap_err();
         assert_eq!(refused.code, "editor-unavailable");
-        assert!(refused.detail.contains("no request sent"), "{refused:?}");
+        assert!(
+            refused.detail.contains("Editor connection failed:")
+                && refused.detail.contains("no request sent"),
+            "{refused:?}"
+        );
+
+        // Phase 3: a socket bound before listen(2) refuses stream connect with ECONNREFUSED
+        // while the datagram probe reports LiveStream; retry only for the matching marker kind.
         fs::remove_file(&socket).unwrap();
-        let listener =
+        let bound_listener =
             socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
-        listener
+        bound_listener
             .bind(&socket2::SockAddr::unix(&socket).unwrap())
             .unwrap();
-        listener.listen(1).unwrap();
-        let mut queued = Vec::new();
-        for _ in 0..10 {
-            match sessions::unix_connect_with_timeout(&socket, Duration::from_millis(10)) {
-                Ok(stream) => queued.push(stream),
-                Err(_) => break,
-            }
-        }
+        let mismatched = connect_listener(&endpoint, &socket, ListenerKind::Neovim, |_| {
+            panic!("must not retry ConnectionRefused for a mismatched listener kind");
+        })
+        .unwrap_err();
+        assert_eq!(mismatched.code, "editor-unavailable");
         assert!(
-            !queued.is_empty() && queued.len() < 10,
-            "queue did not fill"
+            mismatched.detail.contains("Editor connection failed:")
+                && mismatched.detail.contains("no request sent"),
+            "{mismatched:?}"
         );
-        let full = open(&endpoint, Path::new("/a"), "r3").unwrap_err();
+        let mut bound_listener = Some(bound_listener);
+        let mut listener = None;
+        let mut saw_refused = false;
+        let stream = connect_listener(&endpoint, &socket, ListenerKind::Helix, |error| {
+            assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+            saw_refused = true;
+            if let Some(bound) = bound_listener.take() {
+                bound.listen(1).unwrap();
+                listener = Some(UnixListener::from(std::os::fd::OwnedFd::from(bound)));
+            }
+        })
+        .unwrap();
+        assert!(
+            saw_refused,
+            "bound socket did not produce an initial ConnectionRefused"
+        );
+        let server = spawn_helix_ok_server(listener.unwrap(), &["r3"]);
+        answer_helix_open(stream, "r3");
+        server.join().unwrap();
+
+        // Phase 4: a saturated listener fails cleanly without sending a request.
+        fs::remove_file(&socket).unwrap();
+        let (listener, queued) = crate::fixtures::busy_listener(&socket);
+        let full = open(&endpoint, Path::new("/a"), "r4").unwrap_err();
         assert_eq!(full.code, "editor-unavailable", "{full:?}");
+        assert!(full.detail.contains("no request sent"), "{full:?}");
         drop(queued);
         drop(listener);
         fs::remove_dir_all(root).unwrap();
@@ -1898,8 +2054,7 @@ mod tests {
         sockets.retain(&[], now, &log);
         sockets.retain(&[], now + Duration::from_secs(1), &log);
         assert!(marker.exists());
-        let diagnostic = fs::read_dir(logs).unwrap().next().unwrap().unwrap().path();
-        let text = fs::read_to_string(diagnostic).unwrap();
+        let text = read_diagnostic_log(&logs);
         assert_eq!(text.matches("the socket may still be listening").count(), 1);
 
         drop(listener);
@@ -1909,6 +2064,254 @@ mod tests {
         assert!(!path.parent().unwrap().exists());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn editor_socket_cleanup_preserves_busy_and_bound_listeners_and_reclaims_closed_ones() {
+        let root = super::super::supervisor::temporary_directory();
+        let logs = root.join("logs");
+        let log = DiagnosticLog::open_in(Ok(logs.clone()), "g1-test", "eon");
+        let endpoint = root.join("terminal-2.sock");
+        let mut sockets = Sockets::default();
+        let path = sockets
+            .prepare(&endpoint, &[], ListenerKind::Helix)
+            .unwrap();
+        let marker = path.with_extension("owner");
+
+        // Saturated listener: full accept queue must neither block nor unlink.
+        let (listener, queued) = crate::fixtures::busy_listener(&path);
+        let now = Instant::now();
+        let probe_endpoint = endpoint.clone();
+        let probe_log = std::sync::Arc::clone(&log);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            sockets.retain(&[], now, &probe_log);
+            let prepare_result =
+                Sockets::default().prepare(&probe_endpoint, &[], ListenerKind::Helix);
+            sender.send((sockets, prepare_result)).unwrap();
+        });
+        let (mut sockets, prepare_result) = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("Editor socket cleanup blocked on a busy listener");
+        worker.join().unwrap();
+
+        let prepare_error = prepare_result.unwrap_err();
+        assert!(
+            prepare_error.contains("the socket may still be listening"),
+            "{prepare_error}"
+        );
+        assert!(path.exists(), "busy Editor socket was unlinked");
+        assert!(marker.exists(), "busy Editor owner marker was unlinked");
+        assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
+        assert!(!sockets.is_settled(&[]));
+        let text = read_diagnostic_log(&logs);
+        assert_eq!(
+            text.matches("the socket may still be listening").count(),
+            1,
+            "{text}"
+        );
+
+        drop(queued);
+        drop(listener);
+        wait_for_dead_socket(&path);
+        sockets.retain(&[], now + Duration::from_secs(2), &log);
+        assert!(sockets.is_settled(&[]));
+        assert!(!path.exists());
+        assert!(!marker.exists());
+        assert!(!path.parent().unwrap().exists());
+
+        // Bound-before-listen stream socket: stream connect gets ECONNREFUSED on both
+        // Linux and macOS, while the datagram probe still identifies it as live.
+        let mut sockets = Sockets::default();
+        let path = sockets
+            .prepare(&endpoint, &[], ListenerKind::Neovim)
+            .unwrap();
+        let marker = path.with_extension("owner");
+        let bound =
+            socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+        bound
+            .bind(&socket2::SockAddr::unix(&path).unwrap())
+            .unwrap();
+        assert_eq!(
+            sessions::unix_connect_with_timeout(&path, Duration::ZERO)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::ConnectionRefused
+        );
+
+        let bound_logs = root.join("bound-logs");
+        let bound_log = DiagnosticLog::open_in(Ok(bound_logs.clone()), "g1-test", "eon");
+        sockets.retain(&[], Instant::now(), &bound_log);
+        let prepare_error = Sockets::default()
+            .prepare(&endpoint, &[], ListenerKind::Neovim)
+            .unwrap_err();
+        assert!(
+            prepare_error.contains("the socket may still be listening"),
+            "{prepare_error}"
+        );
+        assert!(path.exists(), "bound Editor socket was unlinked");
+        assert!(marker.exists(), "bound Editor owner marker was unlinked");
+        assert_eq!(
+            listener_kind(&endpoint).unwrap(),
+            Some(ListenerKind::Neovim)
+        );
+        assert!(!sockets.is_settled(&[]));
+        let bound_text = read_diagnostic_log(&bound_logs);
+        assert_eq!(
+            bound_text
+                .matches("the socket may still be listening")
+                .count(),
+            1,
+            "{bound_text}"
+        );
+
+        drop(bound);
+        wait_for_dead_socket(&path);
+        let reclaimed = sockets
+            .prepare(&endpoint, &[], ListenerKind::Helix)
+            .unwrap();
+        assert_eq!(reclaimed, path);
+        assert!(!path.exists());
+        assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn editor_socket_cleanup_enforces_directory_type_and_identity_guards() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Live UnixDatagram socket: preserved by both prepare and retain.
+        {
+            let root = super::super::supervisor::temporary_directory();
+            let logs = root.join("logs");
+            let log = DiagnosticLog::open_in(Ok(logs.clone()), "g1-test", "eon");
+            let endpoint = root.join("terminal-2.sock");
+            let mut sockets = Sockets::default();
+            let path = sockets
+                .prepare(&endpoint, &[], ListenerKind::Helix)
+                .unwrap();
+            let marker = path.with_extension("owner");
+            let datagram = std::os::unix::net::UnixDatagram::bind(&path).unwrap();
+            let observed = control::socket_identity(&path).unwrap().unwrap();
+
+            let error = Sockets::default()
+                .prepare(&endpoint, &[], ListenerKind::Helix)
+                .unwrap_err();
+            assert!(error.contains("Unix datagram socket"), "{error}");
+
+            sockets.retain(&[], Instant::now(), &log);
+            let text = read_diagnostic_log(&logs);
+            assert!(text.contains("Unix datagram socket"), "{text}");
+            assert!(!sockets.is_settled(&[]));
+            assert_eq!(control::socket_identity(&path).unwrap(), Some(observed));
+            assert!(marker.exists());
+            assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
+
+            drop(datagram);
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        // Regular file at socket path: refused by both prepare and retain.
+        {
+            let root = super::super::supervisor::temporary_directory();
+            let logs = root.join("logs");
+            let log = DiagnosticLog::open_in(Ok(logs.clone()), "g1-test", "eon");
+            let endpoint = root.join("terminal-2.sock");
+            let mut sockets = Sockets::default();
+            let path = sockets
+                .prepare(&endpoint, &[], ListenerKind::Helix)
+                .unwrap();
+            let marker = path.with_extension("owner");
+            fs::write(&path, b"not a socket").unwrap();
+
+            let error = Sockets::default()
+                .prepare(&endpoint, &[], ListenerKind::Helix)
+                .unwrap_err();
+            assert!(error.contains("expected an owned socket"), "{error}");
+
+            sockets.retain(&[], Instant::now(), &log);
+            let text = read_diagnostic_log(&logs);
+            assert!(text.contains("expected an owned socket"), "{text}");
+            assert!(!sockets.is_settled(&[]));
+            assert_eq!(fs::read(&path).unwrap(), b"not a socket");
+            assert!(marker.exists());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        // Unsafe ed/ permissions (0755): retain refuses even for a dead socket.
+        {
+            let root = super::super::supervisor::temporary_directory();
+            let logs = root.join("logs");
+            let log = DiagnosticLog::open_in(Ok(logs.clone()), "g1-test", "eon");
+            let endpoint = root.join("terminal-2.sock");
+            let mut sockets = Sockets::default();
+            let path = sockets
+                .prepare(&endpoint, &[], ListenerKind::Helix)
+                .unwrap();
+            let marker = path.with_extension("owner");
+            let stale = UnixListener::bind(&path).unwrap();
+            drop(stale);
+            wait_for_dead_socket(&path);
+            fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
+
+            sockets.retain(&[], Instant::now(), &log);
+            let text = read_diagnostic_log(&logs);
+            assert!(text.contains("owned private directory"), "{text}");
+            assert!(!sockets.is_settled(&[]));
+            assert!(path.exists());
+            assert!(marker.exists());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        // Post-probe TOCTOU live replacement: remove_socket_if_identity refuses without
+        // unlinking the live replacement (mirrors control.rs).
+        {
+            let root = super::super::supervisor::temporary_directory();
+            let endpoint = root.join("terminal-2.sock");
+            let mut sockets = Sockets::default();
+            let path = sockets
+                .prepare(&endpoint, &[], ListenerKind::Helix)
+                .unwrap();
+            let stale = UnixListener::bind(&path).unwrap();
+            let observed = control::socket_identity(&path).unwrap().unwrap();
+            drop(stale);
+            fs::rename(&path, root.join("stale.sock")).unwrap();
+            let replacement = UnixListener::bind(&path).unwrap();
+
+            let error = remove_socket_if_identity(&path, observed).unwrap_err();
+            assert!(
+                error.contains("the socket changed before cleanup"),
+                "{error}"
+            );
+            assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
+
+            drop(replacement);
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        // Vanished paths: vanished before probe (Missing => Ok(())), vanished after
+        // probe (NotFound => Ok(())), and missing before metadata inspection.
+        {
+            let root = super::super::supervisor::temporary_directory();
+            let endpoint = root.join("terminal-2.sock");
+            let mut sockets = Sockets::default();
+            let path = sockets
+                .prepare(&endpoint, &[], ListenerKind::Helix)
+                .unwrap();
+            let ephemeral = UnixListener::bind(&path).unwrap();
+            let observed = control::socket_identity(&path).unwrap().unwrap();
+            drop(ephemeral);
+            fs::remove_file(&path).unwrap();
+
+            probe_and_remove_stale(&path, observed).unwrap();
+            remove_socket_if_identity(&path, observed).unwrap();
+            remove_stale(&path).unwrap();
+
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn owner_sockets_derive_from_terminal_endpoints_inside_the_generation_directory() {
         use eon_workspace_protocol::v47::MAX_SESSIONS;

@@ -7,6 +7,10 @@ installation, and proven contract changes.
 
 - On macOS, Eon keeps a live window's control socket when its connection queue
   is full, so generation cleanup and bind attempts leave the window reachable.
+- On macOS, Eon keeps a live Editor popup's listener socket and owner marker
+  when its connection queue is full. On macOS and Linux, `eon edit` and Files
+  reuse retry a refusal during the Editor's startup, between its bind and
+  listen, within the existing 100 ms connect deadline.
 - Antigravity (`app=antigravity`) rows in the Agents sidebar and attention inbox
   now display Google Antigravity's official one-colour icon beside the row's
   label (`Antigravity`, unless a pane pin or record title replaces it), tinted

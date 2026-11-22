@@ -602,19 +602,42 @@ pub(super) fn remove_stale_socket(path: &Path, what: &str) -> Result<(), String>
     probe_stale_socket(path, what, socket_identity_from(&metadata))
 }
 
-fn probe_stale_socket(path: &Path, what: &str, identity: SocketIdentity) -> Result<(), String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StreamSocketProbe {
+    Dead,
+    Missing,
+    LiveStream,
+    LiveDatagram,
+}
+
+/// Probes `path` with a datagram connect so a live stream socket reports
+/// `EPROTOTYPE` before any accept-queue check (on macOS a full stream
+/// backlog refuses stream connects with `ECONNREFUSED`).
+pub(super) fn probe_stream_socket(path: &Path) -> std::io::Result<StreamSocketProbe> {
     // Linux and macOS check the type before the accept queue: a live stream
     // gives EPROTOTYPE even when a stream connect would be refused.
     match UnixDatagram::unbound().and_then(|socket| socket.connect(path)) {
-        Err(error) if error.kind() == ErrorKind::ConnectionRefused => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == ErrorKind::ConnectionRefused => Ok(StreamSocketProbe::Dead),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(StreamSocketProbe::Missing),
         Err(error) if error.raw_os_error() == Some(libc::EPROTOTYPE) => {
+            Ok(StreamSocketProbe::LiveStream)
+        }
+        Ok(()) => Ok(StreamSocketProbe::LiveDatagram),
+        Err(error) => Err(error),
+    }
+}
+
+fn probe_stale_socket(path: &Path, what: &str, identity: SocketIdentity) -> Result<(), String> {
+    match probe_stream_socket(path) {
+        Ok(StreamSocketProbe::Dead) => {}
+        Ok(StreamSocketProbe::Missing) => return Ok(()),
+        Ok(StreamSocketProbe::LiveStream) => {
             return Err(format!(
                 "an Eon supervisor is already active at {}",
                 path.display()
             ));
         }
-        Ok(()) => {
+        Ok(StreamSocketProbe::LiveDatagram) => {
             return Err(format!(
                 "{what} path {} is a Unix datagram socket",
                 path.display()
