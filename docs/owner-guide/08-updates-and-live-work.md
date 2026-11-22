@@ -31,6 +31,17 @@ The process it replaces is this maintenance CLI, not the workspace supervisor
 ([update.rs:209](../../eon/crates/eon/src/update.rs),
 [docs/CONTRACTS.md:7561](../CONTRACTS.md)).
 
+Workspace commands do not hand off: a pane in an Eon window has that window's
+own `eon` first on PATH, so after a profile refresh `eon window reload` run from
+a pane runs the old binary; reloading presentation must call the profile's
+`eon`: `~/.nix-profile/bin/eon window reload default` (the plain Nix profile
+path is `~/.nix-profile` on macOS too)
+([sessions.rs:2205](../../runtime/crates/eon-runtime/src/sessions.rs),
+[managed_environment.rs:2993](../../runtime/crates/eon-runtime/src/managed_environment.rs),
+[managed_environment.rs:3577](../../runtime/crates/eon-runtime/src/managed_environment.rs),
+[docs/USAGE.md:279](../USAGE.md),
+[docs/DISTRIBUTION.md:159](../DISTRIBUTION.md)).
+
 ## Run it
 
 From the repository root, in Nushell. Read the mechanism and its live-work
