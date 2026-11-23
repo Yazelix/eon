@@ -35,11 +35,28 @@ impl Scratch {
     fn new() -> io::Result<Self> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos();
-        let path = env::temp_dir().join(format!("eon-app-{}-{stamp}", std::process::id()));
-        fs::DirBuilder::new().mode(0o700).create(&path)?;
-        Ok(Self(path))
+        Self::create_in(&env::temp_dir(), stamp)
+    }
+
+    fn create_in(directory: &Path, stamp: u128) -> io::Result<Self> {
+        let prefix = format!("eon-app-{}-{stamp}", std::process::id());
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        // Bound the work before launch can fall back to its inherited PATH.
+        for attempt in 0..1024 {
+            let path = directory.join(format!("{prefix}-{attempt}"));
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "no free app scratch directory name",
+        ))
     }
 }
 
@@ -305,6 +322,33 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn scratch_allocation_skips_equal_timestamps() {
+        let parent = Scratch::new().unwrap();
+        let occupied = parent.0.join(format!("eon-app-{}-0-0", std::process::id()));
+        fs::write(&occupied, b"keep").unwrap();
+
+        let first = Scratch::create_in(&parent.0, 0).unwrap();
+        let second = Scratch::create_in(&parent.0, 0).unwrap();
+        assert_ne!(first.0, second.0);
+        for scratch in [&first, &second] {
+            let metadata = fs::symlink_metadata(&scratch.0).unwrap();
+            assert!(metadata.is_dir());
+            assert_eq!(metadata.mode() & 0o777, 0o700);
+        }
+
+        drop(first);
+        assert!(second.0.is_dir());
+        drop(second);
+        assert_eq!(fs::read_dir(&parent.0).unwrap().count(), 1);
+        assert_eq!(fs::read(occupied).unwrap(), b"keep");
+
+        let error = Scratch::create_in(&parent.0.join("missing"), 0)
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]
