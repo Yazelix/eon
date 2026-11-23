@@ -764,6 +764,17 @@ PNG must show non-background pixels in the pane text area. The run passes
 after `eon window stop all --json`
 acknowledges the observed generation and no candidate process remains.
 
+`eon-bench journey --eon PATH --case tutor --out DIR --output-size WIDTHxHEIGHT`
+uses the same private launcher with a synthetic Git project and a local Demo
+agent. Run it at 1280×800 and 1728×1117. It walks the installed tutor with
+`next` using the packaged interactive shell, checks each complete card and
+returned prompt in the live two-column grid, and writes `capture-agents.png`
+with the sidebar open. The receipt includes the catalog hash, actual grids,
+compositor output and presentation evidence, navigation and cleanup. Inspect
+both PNGs for the lesson, prompt, companion pane, Bar, hints and Agents. The
+Nix bench wrapper supplies Git. The final step ends the private client and
+checks that reattaching restores the same terminals and layout.
+
 Use the active coordinator's heavy-command wrapper for all builds and journey
 runs. In this example `journey_root` is an existing private artifact directory,
 `heavy_runner` names that wrapper, and `CARGO_TARGET_DIR` names your own target.
@@ -791,11 +802,12 @@ build against the product's source receipt when present.
 | Step kind | Evidence on success |
 | --- | --- |
 | `setup` | Case-specific fixture values, including the seeded project paths in first-launch |
-| `cli` | `args` and `stdout`. A background launch has null `stdout` and writes `eon.log` |
+| `cli` | Command output or its structured reply. A background launch has null `stdout` and writes `eon.log` |
 | `send` | The candidate's `pane send --json` reply |
 | `wait` | The matching session or terminal observation. A timed-out wait reports the last observation |
 | `capture` | PNG `file`, `width`, `height`, and the case's `pixels` measurements |
-| `check` | A bundle origin audit: each jailed process's `pid`, `exe` and `origin`, and the count of `outside` processes |
+| `check` | Case-specific state evidence, or a bundle origin audit with jailed process identities and the count of `outside` processes |
+| `fit` | The live pane viewport, card dimensions, and presented terminal revision |
 | `cleanup` | The Stop `reply` and `live_candidate_processes` count, or the removed bundle extraction |
 
 Cases are Rust step lists under `eon/tools/eon-bench/src/journey/`. A step calls

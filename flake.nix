@@ -1636,6 +1636,7 @@
                     pkgs.dbus
                     pkgs.coreutils
                     pkgs.grim
+                    pkgs.git
                   ]} \
                   --set-default EON_BENCH_VULKAN ${pkgs.mesa}/share/vulkan/icd.d \
                   --set-default EON_BENCH_GBM ${pkgs.mesa}/lib/gbm \

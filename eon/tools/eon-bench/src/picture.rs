@@ -3,6 +3,7 @@
 use std::{fs, path::Path};
 
 type Result<T> = std::result::Result<T, String>;
+pub(crate) const MAX_SIDE: usize = 4096;
 
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -63,8 +64,8 @@ impl Picture {
         position += 1;
         if width == 0
             || height == 0
-            || width > 4096
-            || height > 4096
+            || width > MAX_SIDE
+            || height > MAX_SIDE
             || bytes.len() - position != width * height * 3
         {
             return Err("invalid PPM dimensions/length".into());

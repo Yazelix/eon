@@ -273,7 +273,7 @@ struct Session {
 }
 impl Session {
     fn new(options: &Options, candidate: &Candidate, cell: &Cell, dir: &Path) -> Result<Self> {
-        let mut launch = Headless::new(
+        let mut launch = Headless::with_size(
             dir,
             &candidate.path,
             if cell.throughput() {
@@ -281,13 +281,16 @@ impl Session {
             } else {
                 WindowMode::Fullscreen
             },
+            crate::launcher::OutputSize {
+                width: cell.width,
+                height: cell.height,
+            },
         )?;
         options.renderer.apply(&mut launch)?;
         launch.env.insert(
             "FONTCONFIG_FILE".into(),
             terminals::tool("frames_fontconfig")?.display().to_string(),
         );
-        fs::write(dir.join("sway.conf"),format!("output * mode {}x{}\noutput * scale 1\noutput * bg #202020 solid_color\nseat seat0 fallback true\nxwayland disable\ndefault_border none\nfocus_follows_mouse no\nfor_window [app_id=\"eon\"] {} enable\n",cell.width,cell.height,if cell.throughput() { "floating" } else { "fullscreen" })).map_err(error)?;
         if options.mode != "control" {
             launch.env.insert(
                 "EON_VENUS_FRAME_TIMINGS".into(),
@@ -339,21 +342,7 @@ impl Session {
         )
         .map_err(error)?;
         let outputs = terminals::sway(launch, self.deadline, &["-t", "get_outputs", "-r"])?;
-        let active = outputs
-            .as_array()
-            .ok_or("missing Sway outputs")?
-            .iter()
-            .filter(|o| o.get("active").and_then(Value::as_bool) == Some(true))
-            .collect::<Vec<_>>();
-        if active.len() != 1
-            || active[0].get("current_mode").is_none_or(|m| {
-                m.get("width").and_then(Value::as_u64) != Some(cell.width)
-                    || m.get("height").and_then(Value::as_u64) != Some(cell.height)
-            })
-            || active[0].get("scale").and_then(Value::as_f64) != Some(1.0)
-        {
-            return Err("incorrect private output dimensions/scale".into());
-        }
+        launch.output_size.check_outputs(&outputs)?;
         launch.start_eon()?;
         wait(self.deadline, "candidate workspace CLI", || {
             Ok(eon(

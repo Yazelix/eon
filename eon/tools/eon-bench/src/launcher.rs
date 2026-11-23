@@ -168,20 +168,20 @@ pub(crate) fn namespace_processes() -> Result<BTreeMap<u32, String>> {
 /// process, so a reused PID is never signalled; without pidfds (an old
 /// kernel, or not Linux) nothing is sent.
 #[cfg(target_os = "linux")]
-pub(crate) fn signal_pinned(pid: u32, still_same: impl FnOnce() -> bool, signal: Signal) {
+pub(crate) fn signal_pinned(pid: u32, still_same: impl FnOnce() -> bool, signal: Signal) -> bool {
     use rustix::process::{Pid, PidfdFlags, pidfd_open, pidfd_send_signal};
     let Some(pid) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
-        return;
+        return false;
     };
     let Ok(pidfd) = pidfd_open(pid, PidfdFlags::empty()) else {
-        return;
+        return false;
     };
-    if still_same() {
-        let _ = pidfd_send_signal(&pidfd, signal);
-    }
+    still_same() && pidfd_send_signal(&pidfd, signal).is_ok()
 }
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn signal_pinned(_: u32, _: impl FnOnce() -> bool, _: Signal) {}
+pub(crate) fn signal_pinned(_: u32, _: impl FnOnce() -> bool, _: Signal) -> bool {
+    false
+}
 impl Processes {
     pub(crate) fn remember(&mut self, pid: u32) -> Option<String> {
         let Stat {
@@ -284,6 +284,74 @@ pub(crate) enum WindowMode {
     Floating,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OutputSize {
+    pub(crate) width: u64,
+    pub(crate) height: u64,
+}
+
+impl OutputSize {
+    pub(crate) const DEFAULT: Self = Self {
+        width: 1280,
+        height: 800,
+    };
+
+    pub(crate) fn parse(text: &str) -> Result<Self> {
+        let invalid = || {
+            format!(
+                "expected WIDTHxHEIGHT with sides from 1 to {}",
+                crate::picture::MAX_SIDE
+            )
+        };
+        let (width, height) = text.split_once('x').ok_or_else(invalid)?;
+        let side = |value: &str| {
+            value
+                .parse::<u64>()
+                .ok()
+                .filter(|&size| {
+                    value.bytes().all(|byte| byte.is_ascii_digit())
+                        && (1..=crate::picture::MAX_SIDE as u64).contains(&size)
+                })
+                .ok_or_else(invalid)
+        };
+        Ok(Self {
+            width: side(width)?,
+            height: side(height)?,
+        })
+    }
+
+    pub(crate) fn check_outputs(self, outputs: &Value) -> Result {
+        let mut active = outputs
+            .as_array()
+            .ok_or("Sway returned no outputs")?
+            .iter()
+            .filter(|o| o.get("active").and_then(Value::as_bool) == Some(true));
+        let matches = active.next().is_some_and(|output| {
+            output
+                .get("current_mode")
+                .is_some_and(|mode| self.matches(mode))
+                && output.get("scale").and_then(Value::as_f64) == Some(1.0)
+        });
+        if !matches || active.next().is_some() {
+            return Err(format!(
+                "expected one private output at {self}, scale 1: {outputs:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn matches(self, dimensions: &Value) -> bool {
+        dimensions.get("width").and_then(Value::as_u64) == Some(self.width)
+            && dimensions.get("height").and_then(Value::as_u64) == Some(self.height)
+    }
+}
+
+impl std::fmt::Display for OutputSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
+}
+
 /// How every candidate program runs: the launch, CLI calls, helpers and Stop.
 /// Chosen with the candidate, never from a program's path; bench tools such as
 /// `swaymsg` and `grim` always run directly.
@@ -301,11 +369,20 @@ pub(crate) struct Headless {
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) eon: PathBuf,
     pub(crate) out: PathBuf,
+    pub(crate) output_size: OutputSize,
     route: Route,
 }
 impl Headless {
     pub(crate) fn new(out: &Path, eon: &Path, window_mode: WindowMode) -> Result<Self> {
-        Self::create(out, candidate(eon)?, window_mode)
+        Self::with_size(out, eon, window_mode, OutputSize::DEFAULT)
+    }
+    pub(crate) fn with_size(
+        out: &Path,
+        eon: &Path,
+        window_mode: WindowMode,
+        output_size: OutputSize,
+    ) -> Result<Self> {
+        Self::create(out, candidate(eon)?, window_mode, output_size)
     }
     /// A Nix-free bundle candidate whose every program runs in one jail built
     /// from `host` (crate::bundle).
@@ -315,7 +392,7 @@ impl Headless {
         window_mode: WindowMode,
         host: HostSet,
     ) -> Result<Self> {
-        let mut launch = Self::create(out, eon.to_path_buf(), window_mode)?;
+        let mut launch = Self::create(out, eon.to_path_buf(), window_mode, OutputSize::DEFAULT)?;
         let xdg = launch.out.join("xdg");
         for directory in ["data", "config"] {
             fs::create_dir_all(xdg.join(directory)).map_err(failure)?;
@@ -368,7 +445,12 @@ impl Headless {
         launch.route = Route::Jail(Box::new(jail?));
         Ok(launch)
     }
-    fn create(out: &Path, eon: PathBuf, window_mode: WindowMode) -> Result<Self> {
+    fn create(
+        out: &Path,
+        eon: PathBuf,
+        window_mode: WindowMode,
+        output_size: OutputSize,
+    ) -> Result<Self> {
         let roots = Roots::create()?;
         let out = fs::canonicalize(out).map_err(failure)?;
         let runtime = roots.0[0].clone();
@@ -381,7 +463,7 @@ impl Headless {
             WindowMode::Fullscreen => "fullscreen enable",
             WindowMode::Floating => "floating enable",
         };
-        fs::write(&sway_config, format!("output * mode 1280x800\noutput * bg #202020 solid_color\nseat seat0 fallback true\nxwayland disable\ndefault_border none\nfocus_follows_mouse no\nfor_window [app_id=\"eon\"] {window_rule}\n")).map_err(failure)?;
+        fs::write(&sway_config, format!("output * mode {output_size}\noutput * scale 1\noutput * bg #202020 solid_color\nseat seat0 fallback true\nxwayland disable\ndefault_border none\nfocus_follows_mouse no\nfor_window [app_id=\"eon\"] {window_rule}\n")).map_err(failure)?;
         let env = BTreeMap::from([
             ("PATH".into(), std::env::var("PATH").map_err(failure)?),
             ("HOME".into(), out.join("home").display().to_string()),
@@ -415,6 +497,7 @@ impl Headless {
             env,
             eon,
             out,
+            output_size,
             route: Route::Direct,
         })
     }
@@ -679,6 +762,31 @@ impl Headless {
         self.eon_child = Some(self.processes.children.len() - 1);
         Ok(())
     }
+
+    pub(crate) fn presentation(&self, pid: u32) -> Result<Stat> {
+        let supervisor = self
+            .eon_child
+            .map(|index| self.processes.children[index].id())
+            .ok_or("private supervisor has not started")?;
+        process_state(pid)
+            .filter(|stat| stat.parent == supervisor && stat.running && !stat.exiting)
+            .ok_or_else(|| {
+                "private compositor's Eon client is not a live child of the supervisor".into()
+            })
+    }
+
+    /// End the private native client while keeping the supervisor and its PTYs.
+    pub(crate) fn end_presentation(&self, pid: u32) -> Result<String> {
+        let start = self.presentation(pid)?.start;
+        if !signal_pinned(
+            pid,
+            || self.presentation(pid).is_ok_and(|stat| stat.start == start),
+            Signal::TERM,
+        ) {
+            return Err("could not signal the pinned private Eon client".into());
+        }
+        Ok(start)
+    }
     pub(crate) fn stop_eon(&mut self) -> Result {
         self.stop_eon_report().map(|_| ())
     }
@@ -820,6 +928,32 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_check_requires_one_active_output_at_the_requested_mode_and_scale() {
+        let size = OutputSize::DEFAULT;
+        let active = format!(
+            r#"{{"active":true,"current_mode":{{"width":{},"height":{}}},"scale":1}}"#,
+            size.width, size.height,
+        );
+        let check = |outputs: &str| size.check_outputs(&Value::parse(outputs).unwrap());
+        assert!(check(&format!(r#"[{{"active":false}},{active}]"#)).is_ok());
+        assert!(check(&format!("[{active},{active}]")).is_err());
+        assert!(
+            check(&format!(
+                "[{}]",
+                active.replace(r#""scale":1"#, r#""scale":2"#)
+            ))
+            .is_err()
+        );
+        assert!(
+            check(&format!(
+                "[{}]",
+                active.replace(&format!(r#""height":{}"#, size.height), r#""height":1"#),
+            ))
+            .is_err()
+        );
+    }
 
     /// A `/proc/<pid>/stat` line, with a command name that holds `) ` itself.
     fn stat_line(state: char, flags: u32, start: u64) -> String {

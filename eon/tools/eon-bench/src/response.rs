@@ -328,14 +328,14 @@ impl Picture {
     }
 }
 
-struct Collector {
+pub(crate) struct Collector {
     receiver: mpsc::Receiver<Event>,
     alive: Arc<AtomicBool>,
     errors: Arc<AtomicU64>,
     thread: Option<thread::JoinHandle<()>>,
 }
 impl Collector {
-    fn start(socket: UnixDatagram, file: File) -> Result<Self> {
+    pub(crate) fn start(socket: UnixDatagram, file: File) -> Result<Self> {
         socket
             .set_read_timeout(Some(Duration::from_millis(20)))
             .map_err(failure)?;
@@ -396,7 +396,41 @@ impl Collector {
             thread: Some(thread),
         })
     }
-    fn finish(&mut self) -> Result {
+    pub(crate) fn wait_presented(
+        &self,
+        pid: u32,
+        after: u64,
+        revision: u64,
+        limit: Duration,
+    ) -> Result<u64> {
+        let deadline = Instant::now() + limit;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            let Ok(event) = self.receiver.recv_timeout(remaining) else {
+                break;
+            };
+            if event.owner == "venus"
+                && event.pid == pid
+                && event.stage == "present_revision"
+                && event.at >= after
+                && let Some(visible) = event
+                    .detail
+                    .split_once(" Some(")
+                    .and_then(|(_, value)| value.strip_suffix(')'))
+                    .and_then(|value| value.parse::<u64>().ok())
+                && visible >= revision
+            {
+                return Ok(visible);
+            }
+        }
+        if self.errors.load(Ordering::Relaxed) != 0 {
+            return Err("trace collector lost records or could not write its log".into());
+        }
+        Err(format!(
+            "Venus did not present terminal revision {revision} within {limit:?}"
+        ))
+    }
+
+    pub(crate) fn finish(&mut self) -> Result {
         self.alive.store(false, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
             thread.join().map_err(|_| "trace collector panicked")?;

@@ -154,20 +154,7 @@ pub fn run_inner(options: &Options) -> Result {
     let observation = (|| -> Result {
         launch.start_compositor(BusPolicy::Private)?;
         outputs = Value::parse(&call(&launch, "swaymsg", &["-t", "get_outputs", "-r"])?)?;
-        let active = outputs
-            .as_array()
-            .ok_or("Sway returned no outputs")?
-            .iter()
-            .filter(|o| o.get("active").and_then(Value::as_bool) == Some(true))
-            .collect::<Vec<_>>();
-        if active.len() != 1
-            || active[0].get("current_mode").is_none_or(|m| {
-                m.get("width").and_then(Value::as_u64) != Some(1280)
-                    || m.get("height").and_then(Value::as_u64) != Some(800)
-            })
-        {
-            return Err("private output is not one 1280x800 mode".into());
-        }
+        launch.output_size.check_outputs(&outputs)?;
         launch.start_eon()?;
         let deadline = Instant::now() + Duration::from_secs(30);
         let mut log = String::new();

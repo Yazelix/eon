@@ -1,5 +1,6 @@
 //! Installed Eon journeys on the shared private display.
 mod first_launch;
+mod tutor;
 mod update_direct;
 
 use std::{
@@ -15,7 +16,7 @@ use crate::{
     bundle::{self, Bundle, HostSet},
     child, environment, isolation,
     json::{Value, object},
-    launcher::{self, BusPolicy, Headless, Renderer, WindowMode},
+    launcher::{self, BusPolicy, Headless, OutputSize, Renderer, WindowMode},
     picture::Picture,
     suite,
 };
@@ -24,9 +25,10 @@ type Result<T = ()> = std::result::Result<T, String>;
 
 const HELP: &str = "\
 eon-bench journey (--eon PATH | --bundle ARCHIVE) --case first-launch --out DIR
+eon-bench journey --eon PATH --case tutor --out DIR [--output-size WIDTHxHEIGHT]
 eon-bench journey --bundle ARCHIVE --next NEXT --case update-direct --out DIR
 
-Exercise an installed Eon candidate in private 1280x800 headless Sway.
+Exercise an installed Eon candidate in private headless Sway (default 1280x800).
 PATH is a Nix candidate's bin/eon. ARCHIVE is the Nix-free release archive
 (eon-VERSION-x86_64-linux.tar.zst from .#manual-bundle): it runs extracted, in
 a jail with no /nix, on the host's glibc and Mesa lavapipe (a merged-/usr host).
@@ -47,6 +49,7 @@ const LOG_TAIL: usize = 20;
 /// The extraction, under the evidence directory.
 const BUNDLE_ROOT: &str = "bundle";
 const FIRST_LAUNCH: &str = "first-launch";
+const TUTOR: &str = "tutor";
 const UPDATE_DIRECT: &str = "update-direct";
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 const CAPTURE_LIMIT: Duration = Duration::from_secs(10);
@@ -78,6 +81,7 @@ pub struct Options {
     next: Option<PathBuf>,
     out: PathBuf,
     case: String,
+    output_size: OutputSize,
 }
 
 impl Options {
@@ -97,7 +101,7 @@ pub fn options(args: &[String]) -> Result<Options> {
     while let Some(flag) = args.next() {
         if !matches!(
             flag.as_str(),
-            "--eon" | "--bundle" | "--next" | "--out" | "--case"
+            "--eon" | "--bundle" | "--next" | "--out" | "--case" | "--output-size"
         ) {
             return Err(format!("unknown argument {flag}\n{HELP}"));
         }
@@ -110,7 +114,7 @@ pub fn options(args: &[String]) -> Result<Options> {
         }
     }
     let case = *values.get("--case").ok_or("--case is required")?;
-    if !matches!(case, FIRST_LAUNCH | UPDATE_DIRECT) {
+    if !matches!(case, FIRST_LAUNCH | UPDATE_DIRECT | TUTOR) {
         return Err(format!("unknown journey case {case}\n{HELP}"));
     }
     let input = match (values.get("--eon"), values.get("--bundle")) {
@@ -120,17 +124,26 @@ pub fn options(args: &[String]) -> Result<Options> {
     };
     let next = values.get("--next").map(PathBuf::from);
     match (case, &input, &next) {
-        (UPDATE_DIRECT, Input::Bundle(_), Some(_)) | (FIRST_LAUNCH, _, None) => {}
+        (UPDATE_DIRECT, Input::Bundle(_), Some(_))
+        | (FIRST_LAUNCH, _, None)
+        | (TUTOR, Input::Nix(_), None) => {}
+        (TUTOR, Input::Bundle(_), _) => return Err("tutor needs --eon".into()),
         (UPDATE_DIRECT, ..) => {
             return Err(format!("update-direct needs --bundle and --next\n{HELP}"));
         }
         _ => return Err(format!("--next belongs to update-direct\n{HELP}")),
     }
+    let output_size = match values.get("--output-size") {
+        Some(size) if case == TUTOR => OutputSize::parse(size)?,
+        Some(_) => return Err("--output-size belongs to tutor".into()),
+        None => OutputSize::DEFAULT,
+    };
     Ok(Options {
         case: case.into(),
         input,
         next,
         out: values.get("--out").ok_or("--out is required")?.into(),
+        output_size,
     })
 }
 
@@ -259,6 +272,9 @@ pub fn run(options: &Options) -> Result {
             .args(inner)
             .arg("--out")
             .arg(isolation::JOURNEY_EVIDENCE);
+        if options.case == TUTOR {
+            command.args(["--output-size", &options.output_size.to_string()]);
+        }
         let ran = isolation::run_until(&mut command, Some(started + options.run_limit()))
             .map_err(|reason| format!("{reason}; see sandbox.log"));
         // The sandbox's PID namespace is gone, so nothing runs from an
@@ -532,6 +548,7 @@ impl Step {
             Action::Send(target, text) => journey.send(
                 target(journey).ok_or("send target has not been observed")?,
                 *text,
+                text.is_none(),
             ),
             Action::Wait(limit, predicate) => journey.wait(*limit, *predicate),
             Action::Capture(check) => journey.capture(name, *check),
@@ -574,7 +591,12 @@ pub fn run_inner(options: &Options) -> Result {
                     std::env::var_os(PRODUCT_ROOT).ok_or("missing candidate product root")?,
                 );
                 receipt.product_root = text(&root);
-                let mut launch = Headless::new(&options.out, eon, WindowMode::Fullscreen)?;
+                let mut launch = Headless::with_size(
+                    &options.out,
+                    eon,
+                    WindowMode::Fullscreen,
+                    options.output_size,
+                )?;
                 receipt.source_receipt = source_receipt(&root)?;
                 Renderer("lavapipe".into()).apply(&mut launch)?;
                 launch.start_compositor(BusPolicy::Private)?;
@@ -670,8 +692,11 @@ pub fn run_inner(options: &Options) -> Result {
                 verify_build(text, expected_build.as_deref())?;
                 Ok(versions)
             })
-            .and_then(|()| receipt.record("seed-home", "setup", || first_launch::prepare(&journey)))
             .and_then(|()| {
+                if options.case == TUTOR {
+                    return tutor::run(&mut journey, &mut receipt);
+                }
+                receipt.record("seed-home", "setup", || first_launch::prepare(&journey))?;
                 first_launch::STEPS.iter().try_for_each(|step| {
                     step.run(&mut journey, &mut receipt)?;
                     let audit = first_launch::BUNDLE_AUDITS
@@ -823,15 +848,16 @@ impl Journey {
             .map_err(|error| format!("eon {args:?}: {error}"))
     }
 
-    fn send(&self, target: &str, text: Option<&str>) -> Result<Value> {
+    fn send(&self, target: &str, text: Option<&str>, enter: bool) -> Result<Value> {
         let mut args = vec!["pane", "send", target, "--json"];
-        if let Some(text) = text {
-            args.extend(["--", text]);
-        } else {
+        if enter {
             args.push("--enter");
         }
+        if let Some(text) = text {
+            args.extend(["--", text]);
+        }
         let reply = self.call_json(&args, Instant::now() + CALL_LIMIT)?;
-        if reply.get("enter").and_then(Value::as_bool) != Some(text.is_none())
+        if reply.get("enter").and_then(Value::as_bool) != Some(enter)
             || reply.get("bytes").and_then(Value::as_u64) != Some(text.map_or(0, str::len) as u64)
         {
             return Err(format!(
@@ -841,7 +867,11 @@ impl Journey {
         Ok(reply)
     }
 
-    fn wait(&mut self, limit: Duration, predicate: Predicate) -> Result<Value> {
+    fn wait(
+        &mut self,
+        limit: Duration,
+        mut predicate: impl FnMut(&mut Self, &Value, Instant) -> Result<Probe>,
+    ) -> Result<Value> {
         let deadline = Instant::now() + limit;
         let mut last = Value::Null;
         while Instant::now() < deadline {
@@ -895,6 +925,8 @@ impl Journey {
     fn capture(&self, name: &str, check: ImageCheck) -> Result<Value> {
         let path = self.launch.out.join(format!("capture-{name}.png"));
         let path_arg = path_text(&path)?;
+        let raster = path.with_extension("ppm");
+        let raster_arg = path_text(&raster)?;
         let magick = PathBuf::from(
             std::env::var_os("EON_BENCH_MAGICK")
                 .ok_or("missing EON_BENCH_MAGICK (use the Nix bench package)")?,
@@ -902,12 +934,17 @@ impl Journey {
         let deadline = Instant::now() + CAPTURE_LIMIT;
         let frame = || {
             self.tool(Path::new("grim"), &["-t", "png", path_arg], deadline)?;
-            let pixels = self.tool(
+            // Large outputs exceed the command runner's stdout limit as raw RGB.
+            self.tool(
                 &magick,
-                &[path_arg, "-strip", "-alpha", "off", "-depth", "8", "ppm:-"],
+                &[
+                    path_arg, "-strip", "-alpha", "off", "-depth", "8", raster_arg,
+                ],
                 deadline,
             )?;
-            Picture::parse(&pixels)
+            let picture = Picture::read(&raster);
+            fs::remove_file(&raster).map_err(error)?;
+            picture
         };
         let mut last = Value::Null;
         while Instant::now() < deadline {
@@ -915,9 +952,10 @@ impl Journey {
                 Err(_) if last != Value::Null && Instant::now() >= deadline => break,
                 result => result?,
             };
-            if (picture.width, picture.height) != (1280, 800) {
+            let size = self.launch.output_size;
+            if (picture.width as u64, picture.height as u64) != (size.width, size.height) {
                 return Err(format!(
-                    "capture is {}x{}, expected 1280x800",
+                    "capture is {}x{}, expected {size}",
                     picture.width, picture.height
                 ));
             }
@@ -925,8 +963,8 @@ impl Journey {
             if passed {
                 return Ok(object([
                     ("file", format!("capture-{name}.png").into()),
-                    ("width", 1280u64.into()),
-                    ("height", 800u64.into()),
+                    ("width", size.width.into()),
+                    ("height", size.height.into()),
                     ("pixels", evidence),
                 ]));
             }
@@ -1041,6 +1079,44 @@ mod tests {
             options(&args).unwrap().input.mode()
         });
         assert_eq!(modes, ["nix", "bundle"]);
+    }
+
+    #[test]
+    fn tutor_parses_one_size_and_preserves_the_shared_default() {
+        let parse = |line: &str| {
+            options(
+                &line
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let tutor = "--eon eon --out out --case tutor";
+        assert_eq!(parse(tutor).unwrap().output_size, OutputSize::DEFAULT);
+        let large = parse(&format!("{tutor} --output-size 1728x1117"))
+            .unwrap()
+            .output_size;
+        assert_eq!(large.to_string(), "1728x1117");
+        for suffix in [
+            "",
+            "0x800",
+            "1280x",
+            "1280X800",
+            "1280x4097",
+            "+1280x800",
+            "1728x1117 --output-size 1280x800",
+        ] {
+            assert!(
+                parse(&format!("{tutor} --output-size {suffix}")).is_err(),
+                "{suffix}"
+            );
+        }
+        assert!(parse("--eon eon --out out --case first-launch --output-size 1728x1117").is_err());
+        assert!(
+            parse("--bundle a --next b --out out --case update-direct --output-size 1728x1117")
+                .is_err()
+        );
+        assert!(parse("--bundle a --out out --case tutor").is_err());
     }
 
     #[test]
