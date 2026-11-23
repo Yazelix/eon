@@ -1,7 +1,7 @@
 //! The hosted renderer under the private Rune candidate (eon-yp6vg.7.7).
 
 use super::*;
-use crate::rune_candidate::{Entry, Failure, rune_host};
+use crate::rune_candidate::{Entry, Failure, STEP_COUNT, rune_host};
 use images::DrawStep;
 
 #[test]
@@ -317,10 +317,11 @@ fn rune_hosted_grid_matches_the_venus_parent() {
 
     // Matched: every step of a cycle and the next cycle's first, at scale 1 and 2.
     // Wide enough for the image placement, which crosses the 100-column grid's right edge.
-    let points = (1100.0, 640.0);
+    let points = (1280.0, 800.0);
     for scale in [1.0_f32, 2.0] {
-        let size = ((points.0 * scale) as u32, (points.1 * scale) as u32);
+        let mut size = ((points.0 * scale) as u32, (points.1 * scale) as u32);
         let mut rt = candidate_runtime(rune_host::view, points, scale);
+        rt.window_focus(true);
         let mut ui = rune_renderer(&gpu);
         let failure = Failure::default();
         let mut compositor =
@@ -335,12 +336,19 @@ fn rune_hosted_grid_matches_the_venus_parent() {
         )
         .unwrap();
         let mut parent_entry = Entry::new().unwrap();
-        for index in 0..=crate::rune_candidate::STEP_COUNT {
-            if index > 0 {
+        for index in 0..=STEP_COUNT + usize::from(scale == 1.0) {
+            let tiled = index > STEP_COUNT;
+            if tiled {
+                size = (640, 800);
+                rt.set_viewport((640.0, 800.0), scale);
+                rt.invalidate();
+                rt.window_focus(false);
+                parent.resize(PhysicalSize::new(size.0, size.1), f64::from(scale));
+            } else if index > 0 {
                 rt.update(|state, _| state.entry.advance());
                 parent_entry.advance();
             }
-            rt.frame(if index == 0 { 0.0 } else { 1.0 / 60.0 });
+            rt.frame(if index == 0 || tiled { 0.0 } else { 1.0 / 60.0 });
             let candidate = candidate_frame(&gpu, &mut ui, &mut rt, &mut compositor, size);
             assert_eq!(failure.get(), None);
             assert_eq!(
@@ -360,12 +368,12 @@ fn rune_hosted_grid_matches_the_venus_parent() {
                 checker > 1000,
                 "{name} at x{scale}: {checker} opaque checkerboard pixels"
             );
-            probe.compare(
-                &format!("x{scale}-{index}-{step}-{name}"),
-                size,
-                &candidate,
-                &parent_pixels,
-            );
+            let capture = if tiled {
+                "tiled-resize".to_owned()
+            } else {
+                format!("x{scale}-{index}-{step}-{name}")
+            };
+            probe.compare(&capture, size, &candidate, &parent_pixels);
         }
 
         // A frame on another device is refused through the same compositor, with no draw.

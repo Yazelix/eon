@@ -497,8 +497,10 @@ pub(crate) mod rune_host {
     /// The grid slot's view: one effect slot filling the window. Shared with the supervised
     /// candidate host (eon-yp6vg.7.9).
     pub(crate) fn grid_view() -> El {
+        // The grid follows the drawable immediately, including in animated commits.
         el().w_full()
             .h_full()
+            .instant_changes()
             .child(effect(GRID_MARK).key(GRID_KEY).w_full().h_full())
     }
 
