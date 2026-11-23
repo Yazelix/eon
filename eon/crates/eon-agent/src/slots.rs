@@ -532,6 +532,7 @@ impl Drop for Pending {
 
 struct Slots<'a> {
     config: &'a SlotConfig,
+    config_file: Option<&'a Path>,
     /// The host program's name, for message lines.
     program: &'a str,
     /// Arguments that re-invoke the host program from its executable.
@@ -569,6 +570,7 @@ impl Slots<'_> {
     fn request<'b>(&'b self, options: &'b RunOptions<'_>, limit: Limit) -> Request<'b> {
         Request {
             config: self.config,
+            config_file: self.config_file,
             root: &self.root,
             argv: options.argv,
             quiet_exempt: options.quiet_exempt,
@@ -873,7 +875,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
     {
         slots.note_local(&fallback.reason);
     }
-    let (mut ticket, pending) = {
+    let (mut ticket, mut pending) = {
         let _queue = slots.queue_lock(true).map_err(|e| slots.refuse_queue(e))?;
         let mut ticket = Ticket {
             queued_ns: now_ns(),
@@ -892,7 +894,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
         ticket.set_fallback(fallback);
         let pending = slots.enqueue(&ticket).map_err(|e| slots.refuse_queue(e))?;
         slots.log("queue", &ticket, None, None);
-        (ticket, pending)
+        (ticket, Some(pending))
     };
     let poll = std::env::var("ROTA_SLOT_POLL_MS")
         .ok()
@@ -921,7 +923,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
             }
             ticket.set_fallback(fallback);
             fs::write(
-                &pending.path,
+                &pending.as_ref().expect("waiting ticket").path,
                 serde_json::to_vec(&ticket).map_err(|e| slots.failure(&ticket, e))?,
             )
             .map_err(|e| slots.failure(&ticket, e))?;
@@ -970,6 +972,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                     let outcome = route.run_remote(
                         &slots.request(options, limit),
                         &mut || {
+                            pending.take();
                             queue.take();
                             slots.log("grant", &ticket, None, None);
                         },
@@ -1023,13 +1026,21 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                             let _queue = slots
                                 .queue_lock(true)
                                 .map_err(|e| slots.failure(&ticket, e))?;
-                            // Keep the same ticket inode, lock and FIFO age on fallback.
-                            fs::write(
-                                &pending.path,
-                                serde_json::to_vec(&ticket)
-                                    .map_err(|e| slots.failure(&ticket, e))?,
-                            )
-                            .map_err(|e| slots.failure(&ticket, e))?;
+                            // A granted remote ticket left the queue. Restore its original age.
+                            if let Some(pending) = &pending {
+                                fs::write(
+                                    &pending.path,
+                                    serde_json::to_vec(&ticket)
+                                        .map_err(|e| slots.failure(&ticket, e))?,
+                                )
+                                .map_err(|e| slots.failure(&ticket, e))?;
+                            } else {
+                                pending = Some(
+                                    slots
+                                        .enqueue(&ticket)
+                                        .map_err(|e| slots.failure(&ticket, e))?,
+                                );
+                            }
                             slots.log("fallback", &ticket, None, None);
                             slots.note_local(&reason);
                             continue;
@@ -1068,7 +1079,7 @@ fn run_queued(mut slots: Slots<'_>, options: &RunOptions<'_>) -> Result<u8, Fail
                     atomic_write(&path, &record)?;
                     let file = File::open(&path)?;
                     FileExt::try_lock_exclusive(&file)?;
-                    fs::remove_file(&pending.path)?;
+                    fs::remove_file(&pending.as_ref().expect("waiting ticket").path)?;
                     Ok::<_, io::Error>(file)
                 })()
                 .map_err(|e| {
@@ -1285,6 +1296,15 @@ pub fn run(
     options: Options<'_>,
     host: &crate::cli::Host<'_>,
 ) -> Result<u8, Failure> {
+    run_with_config_file(config, options, host, None)
+}
+
+pub(crate) fn run_with_config_file(
+    config: &Config,
+    options: Options<'_>,
+    host: &crate::cli::Host<'_>,
+    config_file: Option<&Path>,
+) -> Result<u8, Failure> {
     let root = state_dir(&config.state_file).join("slots");
     if matches!(options, Options::Run(_))
         && let Some(route) = host.route
@@ -1298,6 +1318,7 @@ pub fn run(
     }
     let slots = Slots {
         config: &config.slots,
+        config_file,
         program: host.program,
         reinvoke: host.reinvoke,
         route: host.route,
@@ -1334,6 +1355,7 @@ mod tests {
         let config = SlotConfig::default();
         let slots = Slots {
             config: &config,
+            config_file: None,
             program: "rota",
             reinvoke: &[],
             route: None,

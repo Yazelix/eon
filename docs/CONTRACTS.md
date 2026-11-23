@@ -8585,8 +8585,17 @@ reference to existing pane creation, not by the unapproved targeting beads.
     stay local. A cap selects the smallest machine type that has a qualified
     bootstrap image and whose ceiling covers it: default up to 6G, large up to
     its measured configured ceiling. Only large has a qualified image, so remote
-    runs use large, with one shared serial lease and size-aware included-credit
-    guards. A cap that only an unqualified type covers uses local admission with
+    runs use large, with size-aware included-credit guards. Remote runs share a
+    Boat lease pool. `slots.boat.max_parallel_leases` accepts integers 1 through 3
+    and defaults to 1. Each lease owns one VM and one journal. Eligible waiters
+    retain the existing queue order and quiet policy. Lowering the limit lets
+    current holders finish and blocks new grants until the occupied count falls
+    below the configured limit. Unresolved cleanup continues to block new remote
+    starts. Admission verifies the identity of active VMs and reserves included
+    compute for the candidate and live siblings. In-flight checks account for
+    concurrent consumption and teardown. `slot ls --json` retains the aggregate
+    Boat fields and reports each occupied lease, including preflight occupancy.
+    A cap that only an unqualified type covers uses local admission with
     an unpinned-image capacity reason before remote queueing.
 
     **Qualified bootstrap image.** Each remote run starts one fresh VM from the

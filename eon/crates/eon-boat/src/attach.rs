@@ -1,7 +1,7 @@
 //! Following a detached Boat command until it ends. A lost `exec --attach` stream is
 //! not a lost result: liveness comes only from Boat's own process status and the run
 //! deadline, never from what the stream delivered (eon-lnfc7).
-use super::{CONTROL, Client, Output, billing_policy, remaining};
+use super::{CONTROL, Client, Output, TEARDOWN, billing_policy, remaining};
 use rota::slots::Signals;
 use serde_json::Value;
 use std::fs::{self, File};
@@ -27,6 +27,19 @@ fn now_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+fn budget_safe(limits: &Value, client: &Client) -> bool {
+    if billing_policy(limits).is_err() || limits["keepGoing"]["enabled"] != false {
+        return false;
+    }
+    limits["activeSandboxes"].as_u64().is_some_and(|active| {
+        // Cover the configured concurrency at this run's grant and any higher
+        // count already reported by the provider.
+        let parallel = active.max(u64::from(client.parallel_leases));
+        let buffer = parallel as f64 * client.machine.weight() * (TEARDOWN + CONTROL) as f64;
+        remaining(limits).is_ok_and(|seconds| seconds > client.reserve_seconds + buffer)
+    })
 }
 
 /// The kill reasons of a run's attach phase, checked from every poll, status read and
@@ -93,15 +106,9 @@ impl Guard {
         let mut next = self.next_budget.lock().unwrap();
         if !client.cleanup && Instant::now() >= *next {
             let limits = client.json(&["limits", "--all"]);
-            let safe = limits.as_ref().is_ok_and(|limits| {
-                billing_policy(limits).is_ok()
-                    && limits["keepGoing"]["enabled"] == false
-                    && remaining(limits).is_ok_and(|seconds| {
-                        seconds
-                            > client.reserve_seconds
-                                + client.machine.weight() * super::TEARDOWN as f64
-                    })
-            });
+            let safe = limits
+                .as_ref()
+                .is_ok_and(|limits| budget_safe(limits, client));
             if !safe {
                 return Some("remote-budget-observation-or-reserve".into());
             }
@@ -620,6 +627,33 @@ pub(super) fn follow(
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn budget_buffer_covers_concurrent_teardown_and_the_next_poll() {
+        let mut client = Client::cleanup(crate::Machine::Large, 120, false);
+        client.reserve_seconds = 14400.0;
+        let mut limits = serde_json::json!({
+            "accessTier": "trial",
+            "subscriptionStatus": "trialing",
+            "sandboxPlanKey": "trial",
+            "keepGoing": {"enabled": false},
+            "planIncluded": {"vmHoursRemaining": 20},
+            "subscriptionRemainingSeconds": 72000,
+            "trialComputeCapSeconds": 90000,
+            "trialComputeUsedSeconds": 74800,
+            "activeSandboxes": 1
+        });
+        assert!(budget_safe(&limits, &client));
+        limits["activeSandboxes"] = 2.into();
+        assert!(!budget_safe(&limits, &client));
+        limits["activeSandboxes"] = 1.into();
+        client.parallel_leases = 3;
+        assert!(!budget_safe(&limits, &client));
+        limits["trialComputeUsedSeconds"] = 70000.into();
+        assert!(budget_safe(&limits, &client));
+        limits["activeSandboxes"] = Value::Null;
+        assert!(!budget_safe(&limits, &client));
+    }
 
     #[derive(Clone, Default)]
     struct Shared(Arc<Mutex<Vec<u8>>>);

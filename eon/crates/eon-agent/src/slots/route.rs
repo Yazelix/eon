@@ -46,7 +46,8 @@ pub trait Route {
     ///
     /// Returns [`Remote::Wait`] only before calling `granted`. `granted` is called once,
     /// when the route holds its capacity and before the command starts; the queue then
-    /// logs the `grant` event and releases its queue lock. A [`Remote::Failed`] before
+    /// removes the waiting ticket, releases its lock and logs the `grant` event. A local
+    /// fallback restores the same queue age. A [`Remote::Failed`] before
     /// `granted` exits 125 with no `grant` event. The route may fill `source`; it follows
     /// a [`Remote::Local`] fallback into the local run.
     fn run_remote(
@@ -77,6 +78,8 @@ pub trait Route {
 /// One `slot run` command, as the route sees it.
 pub struct Request<'a> {
     pub config: &'a SlotConfig,
+    /// The resolved CLI configuration file, for route policy read again at grant.
+    pub config_file: Option<&'a Path>,
     /// The slot state root (`<state dir>/slots`).
     pub root: &'a Path,
     pub argv: &'a [String],

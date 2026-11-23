@@ -2,6 +2,8 @@
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
+pub(super) const MAX_PARALLEL_LEASES: u8 = 3;
+
 /// A command shape that `slots.boat.allow_shapes` can permit on Boat. The slot route
 /// classifies each request's argv into at most one shape.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -21,6 +23,7 @@ pub struct BoatConfig {
     pub reserve_hours: f64,
     pub timeout_seconds: u64,
     pub jobs: u16,
+    pub max_parallel_leases: u8,
     /// Removed with warm reuse: parsed so older files load, ignored, and reported by
     /// [`BoatConfig::tombstone`]. Ignoring it is safe: nothing is reused either way.
     pub snapshot: Option<String>,
@@ -64,6 +67,11 @@ impl BoatConfig {
 
     fn validate(&self) -> Result<(), String> {
         let boat = self;
+        if !(1..=MAX_PARALLEL_LEASES).contains(&boat.max_parallel_leases) {
+            return Err(format!(
+                "invalid slots.boat.max_parallel_leases: use an integer from 1 through {MAX_PARALLEL_LEASES}"
+            ));
+        }
         if boat.allow_shapes.iter().collect::<BTreeSet<_>>().len() != boat.allow_shapes.len()
             || boat.environment.is_empty()
             || boat.environment == "base"
@@ -92,6 +100,7 @@ impl Default for BoatConfig {
             reserve_hours: 2.0,
             timeout_seconds: 3600,
             jobs: 4,
+            max_parallel_leases: 1,
             snapshot: None,
             large_max_memory_gib: 0,
         }
@@ -101,6 +110,22 @@ impl Default for BoatConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_lease_limit_defaults_to_one_and_refuses_out_of_range_or_non_integer_values() {
+        assert_eq!(BoatConfig::from_text("").unwrap().max_parallel_leases, 1);
+        for value in [1, 2, MAX_PARALLEL_LEASES] {
+            let text = format!("[slots.boat]\nmax_parallel_leases = {value}");
+            assert_eq!(
+                BoatConfig::from_text(&text).unwrap().max_parallel_leases,
+                value
+            );
+        }
+        for value in ["0", "-1", "4", "256", "2.0", "'2'"] {
+            let text = format!("[slots.boat]\nmax_parallel_leases = {value}");
+            assert!(BoatConfig::from_text(&text).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn boat_shapes_accept_each_known_name_once_and_refuse_unknown_or_repeated_names() {

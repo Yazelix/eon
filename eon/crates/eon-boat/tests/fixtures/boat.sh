@@ -11,9 +11,56 @@ while [[ $1 == --* ]]; do
 done
 verb=$1; shift
 printf '%s\n' "$verb" >> "$root/calls"
-mode=$(cat "$root/mode" 2>/dev/null || true)
 id=bx_test
-[ ! -e "$root/deleted" ] || id=bx_next
+active=0
+if [ -d "$root/pool" ]; then
+  case "$verb" in
+    new)
+      [ "$1" = --name ]
+      id="bx_${2#eon-build-}"
+      root="$root/pool/$id"
+      mkdir "$root"
+      printf '%s\n' "$2" > "$root/name"
+      printf '%s\n' "${BOAT_TEST_VM_MODE:-}" > "$root/mode"
+      [ "${BOAT_TEST_VM_MODE:-}" != hold ] || touch "$root/hold"
+      if [ "${BOAT_TEST_VM_MODE:-}" = publish-fails ]; then
+        chmod 500 "$root/../../../state/slots/boat"
+      fi
+      ;;
+    limits)
+      for machine in "$root/pool/"*/state; do
+        [ -f "$machine" ] || continue
+        case "$(cat "$machine")" in running|stopping) active=$((active + 1)) ;; esac
+      done
+      ;;
+    list)
+      printf '{"sandboxes":['
+      comma=
+      for vm in "$root/pool/"*; do
+        [ -f "$vm/state" ] || continue
+        state=$(cat "$vm/state")
+        [ "$state" != deleted ] || continue
+        printf '%s{"id":"%s","name":"%s","state":"%s","type":"%s"}' \
+          "$comma" "${vm##*/}" "$(cat "$vm/name")" "$state" "$(cat "$vm/type")"
+        comma=,
+      done
+      printf ']}\n'
+      exit 0
+      ;;
+    info|exec|push|stop|usage|delete|scp)
+      case "$verb" in
+        delete) id=$2 ;;
+        scp) id=${1%%:*} ;;
+        *) id=$1 ;;
+      esac
+      root="$root/pool/$id"
+      [ -d "$root" ] || exit 1
+      ;;
+  esac
+else
+  [ ! -e "$root/deleted" ] || id=bx_next
+fi
+mode=$(cat "$root/mode" 2>/dev/null || true)
 case "$verb" in
 env)
   [ "$1" = info ]; [ "$2" = eon-builds ]
@@ -33,13 +80,14 @@ limits)
   if [ "$mode" = break-local-queue ]; then chmod 000 "$root/../state/slots/queue/.lock"; echo '{"ok":false}'; exit 1; fi
   if [ "$mode" = break-local-slot ]; then chmod 000 "$root/../legacy/old-1.lock"; echo '{"ok":false}'; exit 1; fi
   if [ "$mode" = break-local-holder ]; then chmod 500 "$root/../state/slots/holders"; echo '{"ok":false}'; exit 1; fi
-  if [ "$mode" = break-fallback-record ]; then for ticket in "$root/../state/slots/queue"/*.json; do chmod 000 "$ticket"; done; echo '{"ok":false}'; exit 1; fi
+  if [ "$mode" = break-fallback-record ]; then chmod 500 "$root/../state/slots/queue"; echo '{"ok":false}'; exit 1; fi
   if [ "$mode" = unreachable ]; then echo '{"ok":false}'; exit 1; fi
   fi
   touch "$root/policy-probed"
   large=true
   [ "$mode" != large-unavailable ] || large=false
   used=2000
+  if [ -f "$root/trial-used" ]; then used=$(cat "$root/trial-used"); fi
   [ "$mode" != exhausted ] || used=90000
   tier=trial
   status=trialing
@@ -51,7 +99,7 @@ limits)
     case "$mode" in post-reserve-loss*) used=90000 ;; esac
     if [ "$mode" = post-plan-loss ]; then tier=paid; status=active; plan=box_20; active_plan=box_100; fi
   fi
-  printf '{"canStart":true,"activeSandboxes":0,"keepGoing":{"enabled":false},"nextStartDollars":0,"machineTypes":[{"type":"default","available":true},{"type":"large","available":%s}],"starts":{"minute":{"remaining":3},"hour":{"remaining":20},"day":{"remaining":74}},"planIncluded":{"vmHoursRemaining":555,"periodEnd":"2099-01-01T00:00:00.000Z"},"subscriptionRemainingSeconds":1998000,"accessTier":"%s","subscriptionStatus":"%s","sandboxPlanKey":"%s","activeSandboxPlanKey":"%s","trialComputeCapSeconds":90000,"trialComputeUsedSeconds":%s,"subscriptionTrialEndsAt":"2099-01-01T00:00:00.000Z"}\n' "$large" "$tier" "$status" "$plan" "$active_plan" "$used"
+  printf '{"canStart":true,"activeSandboxes":%s,"keepGoing":{"enabled":false},"nextStartDollars":0,"machineTypes":[{"type":"default","available":true},{"type":"large","available":%s}],"starts":{"minute":{"remaining":3},"hour":{"remaining":20},"day":{"remaining":74}},"planIncluded":{"vmHoursRemaining":555,"periodEnd":"2099-01-01T00:00:00.000Z"},"subscriptionRemainingSeconds":1998000,"accessTier":"%s","subscriptionStatus":"%s","sandboxPlanKey":"%s","activeSandboxPlanKey":"%s","trialComputeCapSeconds":90000,"trialComputeUsedSeconds":%s,"subscriptionTrialEndsAt":"2099-01-01T00:00:00.000Z"}\n' "$active" "$large" "$tier" "$status" "$plan" "$active_plan" "$used"
   ;;
 new)
   if [ "$mode" = create-refused ]; then echo '{"ok":false}'; exit 1; fi
@@ -66,7 +114,7 @@ new)
   done
   echo running > "$root/state"
   echo '{"event":"creating"}'
-  printf '{"sandbox":{"id":"%s"}}\n' "$id"
+  printf '{"sandbox":{"id":"%s"}}\n' "${BOAT_TEST_COLLISION:-$id}"
   echo '{"event":"ready"}'
   ;;
 info)
@@ -258,6 +306,10 @@ scp)
   esac
   ;;
 stop)
+  if [ "$mode" = publish-fails ]; then
+    touch "$root/../../retiring-unpublished"
+    while [ ! -e "$root/../../continue-retirement" ]; do sleep 0.05; done
+  fi
   if [ "$mode" = delayed-stop ]; then echo stopping > "$root/state"; echo 6 > "$root/stop-polls";
   elif [ "$mode" = stuck-stop ] || [ -e "$root/slow-retire" ]; then echo stopping > "$root/state"; echo 1000 > "$root/stop-polls";
   else echo stopped > "$root/state"; fi
@@ -266,6 +318,7 @@ stop)
   ;;
 delete)
   [ "$1" = --yes ]; [ "$2" = "$id" ]
+  [ ! -e "$root/delete-refused" ] || exit 1
   [ ! -e "$root/slow-retire" ] || sleep 10
   touch "$root/deleted"
   rm -f "$root/old-command"

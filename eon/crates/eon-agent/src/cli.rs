@@ -205,21 +205,28 @@ fn run(
         return ps::run(&config, &options, host.program).map(|()| 0);
     }
     if args.first().is_some_and(|s| s == "slot") {
-        let ((config, warnings), rest) =
+        let (loaded, rest) =
             if host.slot_config_flag && args.get(1).is_some_and(|s| s == "--config") {
                 let path = args
                     .get(2)
                     .ok_or_else(|| (2, "slot --config needs a file".into()))?;
                 let text = fs::read_to_string(path).map_err(|e| (2, e.to_string()))?;
-                (parse_config(&text, host).map_err(|e| (2, e))?, &args[3..])
+                let (config, warnings) = parse_config(&text, host).map_err(|e| (2, e))?;
+                (
+                    Loaded {
+                        config,
+                        path: path.into(),
+                        warnings,
+                    },
+                    &args[3..],
+                )
             } else {
-                let loaded = load().map_err(|e| (2, e))?;
-                ((loaded.config, loaded.warnings), &args[1..])
+                (load().map_err(|e| (2, e))?, &args[1..])
             };
-        for text in warnings {
+        for text in loaded.warnings {
             let _ = writeln!(std::io::stderr(), "{}: warning: {text}", host.program);
         }
-        let keys = config.slots.route_keys();
+        let keys = loaded.config.slots.route_keys();
         if host.route.is_none() && !keys.is_empty() {
             let program = host.program;
             let need = if keys.len() == 1 { "needs" } else { "need" };
@@ -230,7 +237,7 @@ fn run(
             );
         }
         let options = slots::parse(rest, host.program)?;
-        return slots::run(&config, options, host);
+        return slots::run_with_config_file(&loaded.config, options, host, Some(&loaded.path));
     }
     if args != ["status"] && args != ["status", "--json"] {
         return Err((2, usage));

@@ -43,7 +43,14 @@ fn delegate(f: &Fixture, pause: bool) {
 [ -z "${{EON_SLOT_QUEUED_NS+x}}${{EON_SLOT_CLASS+x}}${{EON_SLOT_RUN_KEY+x}}${{EON_SLOT_DELEGATE+x}}" ] || exit 88
 flock -n legacy/old-1.lock true
 flock -n state/slots/queue/.lock true
-[ ! -e state/slots/boat/lease.lock ] || flock -n state/slots/boat/lease.lock true
+for lock in state/slots/boat/lease*.lock state/slots/boat/admission.lock; do
+  [ -e "$lock" ] || continue
+  if [ "$lock" = "${{BOAT_TEST_EXPECT_HELD_LOCK:-}}" ]; then
+    ! flock -n "$lock" true
+  else
+    flock -n "$lock" true
+  fi
+done
 printf '%s %s' "$ROTA_SLOT_QUEUED_NS" "$ROTA_SLOT_CLASS" > provider/handoff
 printf '%s' "$ROTA_SLOT_RUN_KEY" > provider/run-key
 touch provider/delegated
@@ -466,6 +473,9 @@ fn local_queue_failure_after_remote_attempt_is_unresolved_125() {
             .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
             .output()
             .unwrap();
+        if mode == "break-fallback-record" {
+            fs::set_permissions(f.root().join("queue"), fs::Permissions::from_mode(0o700)).unwrap();
+        }
         assert_eq!(out.status.code(), Some(125), "{mode}");
         assert_eq!(f.events().last().unwrap()["exit_code"], 125, "{mode}");
         assert!(!f.dir.path().join("local-ran").exists());
@@ -728,6 +738,61 @@ high = ['never-start-this', '{{prompt}}']
         fixture
     }
 
+    fn parallel_boat() -> Self {
+        let fixture = Self::boat_fixture();
+        fs::create_dir(fixture.dir.path().join("provider/pool")).unwrap();
+        fixture.pool_limit(3);
+        fixture
+    }
+
+    fn pool_limit(&self, limit: u8) {
+        let path = self.dir.path().join("config.toml");
+        let text = fs::read_to_string(&path).unwrap();
+        let mut text = text
+            .lines()
+            .filter(|line| !line.starts_with("max_parallel_leases = "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        text = text.replace(
+            "[slots.boat]\n",
+            &format!("[slots.boat]\nmax_parallel_leases = {limit}\n"),
+        );
+        let replacement = self.dir.path().join("provider/slot-config");
+        fs::write(&replacement, text).unwrap();
+        fs::rename(replacement, path).unwrap();
+    }
+
+    fn pool_command(&self) -> Command {
+        self.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
+    }
+
+    fn pool_start(&self, mode: &str) -> Running {
+        Running(
+            self.pool_command()
+                .env("BOAT_TEST_VM_MODE", mode)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    fn pool_attached(&self, run: &Running) -> PathBuf {
+        until(|| {
+            let listing = self.list();
+            let holder = listing["holders"]
+                .as_array()?
+                .iter()
+                .find(|holder| holder["pid"] == run.pid())?;
+            let vm = self
+                .dir
+                .path()
+                .join("provider/pool")
+                .join(holder["vm_id"].as_str()?);
+            vm.join("attached").exists().then_some(vm)
+        })
+    }
+
     fn boat_command(&self, args: &[&str]) -> Command {
         let mut command = self.rota(args);
         command
@@ -945,6 +1010,343 @@ fn ns() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64
+}
+
+#[test]
+fn three_boat_leases_run_together_and_grant_waiters_in_fifo_order() {
+    let f = Fixture::parallel_boat();
+    let mut first = f.pool_start("hold");
+    let first_vm = f.pool_attached(&first);
+    let mut second = f.pool_start("hold");
+    let second_vm = f.pool_attached(&second);
+    let mut third = f.pool_start("hold");
+    let third_vm = f.pool_attached(&third);
+    let listing = f.list();
+    let holders = listing["holders"].as_array().unwrap();
+    assert_eq!(holders.len(), 3, "{listing}");
+    assert_eq!(
+        listing["boat_leases"].as_array().unwrap().len(),
+        3,
+        "{listing}"
+    );
+    assert!(listing.get("boat_lease_pid").is_none(), "{listing}");
+    assert_ne!(first_vm, second_vm);
+    assert_ne!(second_vm, third_vm);
+    assert_ne!(first_vm, third_vm);
+
+    let mut fourth = f.pool_start("hold");
+    f.queued(fourth.pid());
+    let mut fifth = f.pool_start("hold");
+    f.queued(fifth.pid());
+    fs::remove_file(second_vm.join("hold")).unwrap();
+    second.success();
+    let fourth_vm = f.pool_attached(&fourth);
+    f.queued(fifth.pid());
+    fs::remove_file(first_vm.join("hold")).unwrap();
+    first.success();
+    let fifth_vm = f.pool_attached(&fifth);
+    let grants: Vec<_> = f
+        .events()
+        .into_iter()
+        .filter(|e| e["event"] == "grant")
+        .map(|e| e["pid"].as_u64().unwrap() as u32)
+        .collect();
+    assert_eq!(
+        grants,
+        [
+            first.pid(),
+            second.pid(),
+            third.pid(),
+            fourth.pid(),
+            fifth.pid()
+        ]
+    );
+
+    let mut lowered = f.pool_start("hold");
+    f.queued(lowered.pid());
+    f.pool_limit(1);
+    fs::remove_file(fourth_vm.join("hold")).unwrap();
+    fourth.success();
+    fs::remove_file(fifth_vm.join("hold")).unwrap();
+    fifth.success();
+    f.queued(lowered.pid());
+    assert_eq!(
+        fs::read_to_string(third_vm.join("state")).unwrap().trim(),
+        "running"
+    );
+    fs::remove_file(third_vm.join("hold")).unwrap();
+    third.success();
+    let lowered_vm = f.pool_attached(&lowered);
+    fs::remove_file(lowered_vm.join("hold")).unwrap();
+    lowered.success();
+    assert_eq!(f.list()["boat_lease_held"], false);
+    assert!(!f.dir.path().join("local-ran").exists());
+}
+
+#[test]
+fn listing_shows_preflight_beside_a_live_sibling_and_reports_unsafe_inspection() {
+    let f = Fixture::parallel_boat();
+    let mut sibling = f.pool_start("hold");
+    let vm = f.pool_attached(&sibling);
+    fs::write(f.dir.path().join("provider/mode"), "preflight-hold").unwrap();
+    let mut preparing = f.pool_start("");
+    until(|| {
+        f.dir
+            .path()
+            .join("provider/preflight")
+            .exists()
+            .then_some(())
+    });
+    let listing = f.list();
+    assert_eq!(listing["holders"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        listing["boat_leases"][1],
+        serde_json::json!({
+            "slot": 2, "held": true, "pid": preparing.pid()
+        })
+    );
+    rustix::process::kill_process(Pid::from_raw(preparing.pid() as i32).unwrap(), Signal::TERM)
+        .unwrap();
+    assert_eq!(preparing.wait().code(), Some(143));
+    let gate = f.root().join("boat/admission.lock");
+    fs::set_permissions(&gate, fs::Permissions::from_mode(0o664)).unwrap();
+    let listing = f.list();
+    assert!(listing["boat_lease_held"].is_null());
+    assert!(listing.get("boat_lease_pid").is_none());
+    assert!(listing["boat_error"].as_str().unwrap().contains("unsafe"));
+    assert_eq!(listing["holders"][0]["pid"], sibling.pid());
+    fs::set_permissions(gate, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let state = f.dir.path().join("state");
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+    let listing = f.list();
+    assert!(listing["boat_lease_held"].is_null());
+    assert!(listing["boat_leases"][0]["held"].is_null());
+    assert_eq!(listing["holders"][0]["pid"], sibling.pid());
+    assert_eq!(listing["boat"]["pid"], sibling.pid());
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o775)).unwrap();
+    let listing = f.list();
+    assert!(listing["boat_lease_held"].is_null());
+    assert!(listing["holders"].as_array().unwrap().is_empty());
+    fs::set_permissions(state, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::remove_file(vm.join("hold")).unwrap();
+    sibling.success();
+}
+
+#[test]
+fn unpublished_vm_identity_keeps_admission_closed_during_retirement() {
+    let f = Fixture::parallel_boat();
+    let mut unpublished = f.pool_start("publish-fails");
+    let provider = f.dir.path().join("provider");
+    until(|| provider.join("retiring-unpublished").exists().then_some(()));
+    let boat = f.root().join("boat");
+    let gate = File::open(boat.join("admission.lock")).unwrap();
+    let lock_result = gate.try_lock_exclusive();
+    drop(gate);
+    fs::set_permissions(boat, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut waiting = f.pool_start("hold");
+    f.queued(waiting.pid());
+    fs::write(provider.join("continue-retirement"), "").unwrap();
+    assert_eq!(
+        lock_result.unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    assert_eq!(unpublished.wait().code(), Some(125));
+    let vm = f.pool_attached(&waiting);
+    fs::remove_file(vm.join("hold")).unwrap();
+    waiting.success();
+}
+
+#[test]
+fn abandoned_slot_recovery_oom_and_cancel_leave_sibling_running() {
+    let f = Fixture::parallel_boat();
+    f.pool_limit(2);
+    let mut sibling = f.pool_start("hold");
+    let sibling_vm = f.pool_attached(&sibling);
+    let mut crashed = f.pool_start("hold");
+    let crashed_vm = f.pool_attached(&crashed);
+    crashed.0.kill().unwrap();
+    assert!(!crashed.wait().success());
+    fs::write(crashed_vm.join("delete-refused"), "").unwrap();
+    let refused = f.pool_command().output().unwrap();
+    assert!(refused.status.success(), "{refused:?}");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("remote-cleanup-unknown"));
+    assert_eq!(
+        fs::read_to_string(sibling_vm.join("state")).unwrap().trim(),
+        "running"
+    );
+    assert!(!sibling_vm.join("deleted").exists());
+    fs::remove_file(crashed_vm.join("delete-refused")).unwrap();
+    fs::remove_file(f.dir.path().join("local-ran")).unwrap();
+
+    let oom = f
+        .pool_command()
+        .env("BOAT_TEST_VM_MODE", "job-oom")
+        .output()
+        .unwrap();
+    assert_eq!(oom.status.code(), Some(137), "{oom:?}");
+    assert!(crashed_vm.join("deleted").exists());
+    assert_eq!(f.list()["boat"]["memory"]["cause"], "job-limit");
+    let mut canceled = f.pool_start("hold");
+    let canceled_vm = f.pool_attached(&canceled);
+    rustix::process::kill_process(Pid::from_raw(canceled.pid() as i32).unwrap(), Signal::TERM)
+        .unwrap();
+    assert_eq!(canceled.wait().code(), Some(143));
+    assert!(canceled_vm.join("deleted").exists());
+    assert!(canceled_vm.join("kills").exists());
+    assert_eq!(
+        fs::read_to_string(sibling_vm.join("state")).unwrap().trim(),
+        "running"
+    );
+    assert!(!sibling_vm.join("kills").exists());
+    assert!(!f.dir.path().join("local-ran").exists());
+    fs::remove_file(sibling_vm.join("hold")).unwrap();
+    sibling.success();
+}
+
+#[test]
+fn duplicate_provider_or_journal_identity_never_retires_the_live_vm() {
+    let f = Fixture::parallel_boat();
+    let mut sibling = f.pool_start("hold");
+    let vm = f.pool_attached(&sibling);
+    let id = vm.file_name().unwrap().to_str().unwrap();
+    let duplicate = f
+        .pool_command()
+        .env("BOAT_TEST_COLLISION", id)
+        .output()
+        .unwrap();
+    assert!(duplicate.status.success(), "{duplicate:?}");
+    assert!(
+        String::from_utf8_lossy(&duplicate.stderr).contains("remote-create-id-conflict-reconciled")
+    );
+    let stale_path = f.root().join("boat/current-2.json");
+    let mut stale: Value = serde_json::from_slice(&fs::read(&stale_path).unwrap()).unwrap();
+    assert_eq!(stale["phase"], "stopped");
+    let recovered_id = stale["vm_id"].as_str().unwrap();
+    assert_ne!(recovered_id, id);
+    assert!(
+        f.dir
+            .path()
+            .join("provider/pool")
+            .join(recovered_id)
+            .join("deleted")
+            .exists()
+    );
+    stale["vm_id"] = id.into();
+    stale["phase"] = "running".into();
+    fs::write(&stale_path, serde_json::to_vec(&stale).unwrap()).unwrap();
+    let duplicate = f.pool_command().output().unwrap();
+    assert!(duplicate.status.success(), "{duplicate:?}");
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("remote-vm-id-conflict"));
+    assert_eq!(
+        fs::read_to_string(vm.join("state")).unwrap().trim(),
+        "running"
+    );
+    assert!(!vm.join("deleted").exists());
+    fs::remove_file(vm.join("hold")).unwrap();
+    sibling.success();
+}
+
+#[test]
+fn queued_boat_request_waits_for_invalid_live_limit_to_be_fixed() {
+    let f = Fixture::parallel_boat();
+    f.pool_limit(1);
+    let mut sibling = f.pool_start("hold");
+    let sibling_vm = f.pool_attached(&sibling);
+    let stderr = f.dir.path().join("provider/waiting-stderr");
+    let mut waiter = Running(
+        f.pool_command()
+            .env("BOAT_TEST_VM_MODE", "hold")
+            .stdout(Stdio::null())
+            .stderr(File::create(&stderr).unwrap())
+            .spawn()
+            .unwrap(),
+    );
+    let ticket = f.queued(waiter.pid());
+    f.pool_limit(4);
+    until(|| {
+        assert!(waiter.0.try_wait().unwrap().is_none());
+        fs::read_to_string(&stderr)
+            .unwrap()
+            .contains("waiting for readable and valid [slots.boat] configuration")
+            .then_some(())
+    });
+    f.pool_limit(2);
+    let vm = f.pool_attached(&waiter);
+    let grant = f
+        .events()
+        .into_iter()
+        .find(|e| e["event"] == "grant" && e["pid"] == waiter.pid())
+        .unwrap();
+    assert_eq!(
+        grant["run_key"],
+        format!("{}:{}", ticket["queued_ns"], waiter.pid())
+    );
+    fs::remove_file(vm.join("hold")).unwrap();
+    assert!(
+        waiter.wait().success(),
+        "{}",
+        fs::read_to_string(stderr).unwrap()
+    );
+    fs::remove_file(sibling_vm.join("hold")).unwrap();
+    sibling.success();
+}
+
+#[test]
+fn sibling_allowance_identity_and_memory_refusals_keep_local_queue_age_and_isolation() {
+    let f = Fixture::parallel_boat();
+    let mut sibling = f.pool_start("hold");
+    let vm = f.pool_attached(&sibling);
+    let used = f.dir.path().join("provider/trial-used");
+    fs::write(&used, "65000").unwrap();
+    let local_lock = f.hold(1);
+    let mut refused = f.pool_start("");
+    let local = until(|| {
+        f.list()["waiters"]
+            .as_array()?
+            .iter()
+            .find(|ticket| ticket["pid"] == refused.pid() && ticket["where"] == "local")
+            .cloned()
+    });
+    let queue_key = format!("{}:{}", local["queued_ns"], refused.pid());
+    let initial = f
+        .events()
+        .into_iter()
+        .find(|e| e["pid"] == refused.pid() && e["event"] == "queue")
+        .unwrap();
+    assert_eq!(initial["run_key"], queue_key);
+    drop(local_lock);
+    refused.success();
+    assert!(refused.stderr().contains("budget-reserve-or-trial-cap"));
+    fs::remove_file(&used).unwrap();
+
+    let cap = f.pool_command().env("HEAVY_MEM", "12G").output().unwrap();
+    assert!(cap.status.success(), "{cap:?}");
+    assert!(String::from_utf8_lossy(&cap.stderr).contains("unqualified-ceiling"));
+    let name = fs::read(vm.join("name")).unwrap();
+    fs::write(vm.join("name"), "unowned").unwrap();
+    delegate(&f, false);
+    let unowned = f
+        .pool_command()
+        .env("BOAT_TEST_EXPECT_HELD_LOCK", "state/slots/boat/lease.lock")
+        .output()
+        .unwrap();
+    assert!(unowned.status.success(), "{unowned:?}");
+    assert!(String::from_utf8_lossy(&unowned.stderr).contains("boat-unowned-active-vm"));
+    let handoff = fs::read_to_string(f.dir.path().join("provider/run-key")).unwrap();
+    assert!(
+        f.events()
+            .iter()
+            .any(|e| e["event"] == "queue" && e["run_key"] == handoff)
+    );
+    fs::write(vm.join("name"), name).unwrap();
+    assert_eq!(
+        fs::read_to_string(vm.join("state")).unwrap().trim(),
+        "running"
+    );
+    assert!(!vm.join("deleted").exists());
+    fs::remove_file(vm.join("hold")).unwrap();
+    sibling.success();
 }
 
 #[test]

@@ -17,6 +17,10 @@ installation, and proven contract changes.
   time materially before expiry; exhausted fresh windows remain judged
   (`eon-gz0vi`).
 
+- `eon agent slot` supports up to three concurrent Boat VM leases through
+  `slots.boat.max_parallel_leases` (default 1). Upgrade all readers of the
+  shared agent configuration before setting the key.
+
 - `eon agent run` emits started and finished JSON receipts on stdout for
   headless builders and reviewers. The receipts name the run and its private
   log and report paths. The finished receipt includes the outcome and exit

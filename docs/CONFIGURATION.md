@@ -399,6 +399,7 @@ environment = "eon-builds"
 reserve_hours = 2
 timeout_seconds = 3600
 jobs = 4
+max_parallel_leases = 1
 ```
 
 `allow_shapes = ["nix-gate"]` permits Eon's repository-local `nix build`
@@ -485,7 +486,7 @@ Only large has a qualified image, so every remote run uses large. The ceiling
 defaults to 0, meaning the large VM is unqualified, and accepts 0 or 8–12; set
 it to at least 8 to route remote runs. A cap that only the default type covers
 enters local admission with reason `image-unpinned`, and a cap above every
-ceiling with `unqualified-ceiling`. Both sizes share one lease. A large job
+ceiling with `unqualified-ceiling`. Both sizes draw from the same lease pool. A large job
 requires twice the default rate of included credit.
 
 The guest checks the actual per-job limit, no swap, ancestor limits, a local
@@ -503,8 +504,18 @@ is the same repository-relative directory.
 Export writes raw Git blobs and verifies their bytes and modes locally before
 upload; local checkout/smudge filters cannot inject data into the upload.
 
-Remote runs hold one separate Boat lease, leaving local heavy capacity free.
-Quiet policy still applies. Before remote execution, policy/connectivity or
+Each remote run holds a separate Boat lease, leaving local heavy capacity free.
+`max_parallel_leases` accepts integers from 1 through 3 and defaults to 1 when
+omitted. Cooperating callers share a state directory and a slot configuration.
+At capacity, eligible requests stay in the existing queue order. Queued
+requests reread the limit at grant. If the file becomes unreadable or invalid,
+they stay queued until it can be read and validated again. Reducing the limit
+lets holders finish and makes
+requests wait until occupancy falls below the configured limit. Quiet policy
+still applies. Admission checks
+included compute for the new run and live siblings. Upgrade every `eon agent`
+reader of the shared file before setting this key. Remove the key before
+rolling back to an older reader. Before remote execution, policy/connectivity or
 budget refusal falls back through the local slot queue and reports a reason.
 A dropped output stream does not end a remote run. When `boat exec --attach`
 fails, Eon reads the command's status with `boat exec --status`, and
@@ -552,11 +563,15 @@ usage and deleted after its run. `slots.boat.snapshot` is removed; a leftover
 setting loads with a warning and has no effect.
 
 `eon agent slot ls --json` identifies remote holders with `where: "boat"` and
-shows the last Boat receipt. `boat_lease_held` is `true` or `false` when the
-existing lease inode can be inspected, including during preflight before a
-receipt exists; `null` with `boat_error` means inspection is unavailable or
-unsafe. Listing neither creates nor claims that lease. A held lease, an
-observed `boat_lease_pid` (when the kernel exposes its owner), an
+shows the latest Boat receipt in `boat`. `boat_lease_held` reports whether any
+lease is held, including during preflight before a receipt exists. A value of
+`null` with `boat_error` means lock inspection is unavailable or unsafe.
+`boat_leases` lists held leases and slots with an unfinished record, with
+`slot`, `held`, and `pid` when the kernel identifies the lock owner. `holders`
+includes each unfinished Boat record with its `boat_slot`. The existing
+`boat_lease_pid` is present when exactly one held lease has a known owner.
+Listing observes the locks without creating or claiming them. A held lease, an
+observed lease PID, an
 unfinished receipt or unknown cleanup cannot be treated as idle. A stopped
 receipt alone does not establish that the lease is free. Listing fails rather
 than omitting a configured required local lock or an unreadable queue lock;

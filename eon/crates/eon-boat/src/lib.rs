@@ -3,13 +3,14 @@
 mod attach;
 mod config;
 pub(crate) mod image;
+mod lease;
 pub(crate) mod local;
 mod memory;
 pub(crate) mod tree;
 
 pub use config::{BoatConfig, Shape};
-use fs2::FileExt;
 use image::{Image, Refusal};
+use lease::{Admission, Lease};
 use memory::{Cause, Machine, Observation, Report};
 use rota::launch::atomic_write;
 use rota::slots::private;
@@ -20,10 +21,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Boat's noun in private-state error tokens (`unsafe-boat-state-directory`, ...).
@@ -80,94 +82,9 @@ pub(crate) struct Record {
     queue_wait_reason: Option<String>,
 }
 
-pub(crate) struct Lease {
-    _lock: File,
-    root: PathBuf,
-}
-
-impl Lease {
-    pub fn claim(root: &Path) -> Result<Option<Self>, String> {
-        let directory = root.join("boat");
-        private::directory(&directory, NOUN)?;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .mode(0o600)
-            .open(directory.join("lease.lock"))
-            .map_err(|_| "boat-lease-open")?;
-        let meta = lock.metadata().map_err(|_| "boat-lease-metadata")?;
-        if !meta.is_file()
-            || meta.uid() != rustix::process::geteuid().as_raw()
-            || meta.mode() & 0o077 != 0
-        {
-            return Err("unsafe-boat-lease".into());
-        }
-        match lock.try_lock_exclusive() {
-            Ok(()) => Ok(Some(Self {
-                _lock: lock,
-                root: root.to_owned(),
-            })),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
-            Err(_) => Err("boat-lease-lock".into()),
-        }
-    }
-
-    fn save(&self, record: &Record) -> Result<(), String> {
-        let bytes = serde_json::to_vec(record).map_err(|_| "boat-record-format")?;
-        atomic_write(&self.root.join("boat/current.json"), &bytes)
-            .map_err(|_| "boat-record-write")?;
-        atomic_write(
-            &self
-                .root
-                .join("runs")
-                .join(&record.run_id)
-                .join("receipt.json"),
-            &bytes,
-        )
-        .map_err(|_| "boat-receipt-write".to_owned())
-    }
-}
-
-pub(crate) fn listing(root: &Path) -> Result<Option<Record>, String> {
-    let record: Option<Record> = private::read(&root.join("boat/current.json"), NOUN)?;
-    if record.as_ref().is_some_and(|record| {
-        record.schema != 1
-            || record.location != "boat"
-            || record.run_id.len() != 32
-            || !record
-                .run_id
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    }) {
-        return Err("incompatible-boat-record".into());
-    }
-    Ok(record)
-}
-
-/// Observe the existing lease inode only: listing must never claim or create it.
-pub(crate) fn lease_metadata(root: &Path) -> Result<Option<fs::Metadata>, String> {
-    let directory = root.join("boat");
-    match fs::symlink_metadata(&directory) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err("boat-lease-directory-unreadable".into()),
-        Ok(_) => (),
-    }
-    for path in [root.parent().unwrap_or(root), root, &directory] {
-        private::check(path, NOUN)?;
-    }
-    match fs::symlink_metadata(directory.join("lease.lock")) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Ok(meta)
-            if meta.is_file()
-                && meta.uid() == rustix::process::geteuid().as_raw()
-                && meta.mode() & 0o077 == 0 =>
-        {
-            Ok(Some(meta))
-        }
-        _ => Err("unsafe-or-unreadable-boat-lease".into()),
+impl Record {
+    fn has_live_vm(&self) -> bool {
+        matches!(self.phase.as_str(), "preparing" | "running" | "stopping")
     }
 }
 
@@ -175,6 +92,7 @@ struct Client {
     deadline: Instant,
     cleanup: bool,
     reserve_seconds: f64,
+    parallel_leases: u8,
     machine: Machine,
 }
 
@@ -202,6 +120,7 @@ impl Client {
             deadline: Instant::now() + Duration::from_secs(seconds),
             cleanup: !cancelable,
             reserve_seconds: 0.0,
+            parallel_leases: 1,
             machine,
         }
     }
@@ -469,10 +388,13 @@ fn safe_id(id: &str) -> bool {
 fn delete_vm(client: &Client, id: &str) -> Result<(), String> {
     let _ = client.json(&["delete", "--yes", id]);
     let list = client.json(&["list", "--all"])?;
-    if list["sandboxes"]
-        .as_array()
-        .is_some_and(|vms| vms.iter().all(|vm| vm["id"].as_str() != Some(id)))
-    {
+    if list["sandboxes"].as_array().is_some_and(|vms| {
+        vms.iter().all(|vm| {
+            vm["id"]
+                .as_str()
+                .is_some_and(|other| safe_id(other) && other != id)
+        })
+    }) {
         Ok(())
     } else {
         Err("remote-cleanup-unknown".into())
@@ -522,8 +444,17 @@ fn usage(client: &Client, id: &str, started: u64) -> Option<Value> {
     })
 }
 
+fn check_owned_id(root: &Path, slot: u8, id: &str) -> Result<(), String> {
+    for other in lease::SLOTS.filter(|other| *other != slot) {
+        if lease::record(root, other)?.is_some_and(|record| record.vm_id.as_deref() == Some(id)) {
+            return Err("remote-vm-id-conflict".into());
+        }
+    }
+    Ok(())
+}
+
 fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
-    let Some(mut old) = listing(&lease.root)? else {
+    let Some(mut old) = lease::record(&lease.root, lease.slot)? else {
         return Ok(());
     };
     if old.phase == "stopped" {
@@ -550,10 +481,12 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
         if matched.len() != 1 {
             return Err("remote-create-unknown".into());
         }
-        old.vm_id = matched[0]["id"]
+        let id = matched[0]["id"]
             .as_str()
             .filter(|id| safe_id(id))
-            .map(str::to_owned);
+            .ok_or("remote-create-unknown")?;
+        check_owned_id(&lease.root, lease.slot, id)?;
+        old.vm_id = Some(id.to_owned());
         lease.save(&old)?;
     }
     let id = old
@@ -561,6 +494,7 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
         .as_deref()
         .filter(|id| safe_id(id))
         .ok_or("remote-create-unknown")?;
+    check_owned_id(&lease.root, lease.slot, id)?;
     // Startup reconciliation runs under the run client and stays cancelable.
     let (usage, retired) = retire(client.machine, !client.cleanup, (id, old.started), None);
     if usage.is_some() {
@@ -572,6 +506,40 @@ fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
         .get_or_insert_with(|| "recovered-after-wrapper-loss".into());
     // `duration_seconds` stays the run's own: reconciliation time is not run time.
     lease.save(&old)
+}
+
+/// While starts are serialized, recover only the journals whose locks we can take.
+fn reconcile(client: &Client, own: &Lease) -> Result<Vec<Record>, String> {
+    let mut siblings = Vec::new();
+    for slot in lease::SLOTS {
+        if slot == own.slot {
+            recover(client, own)?;
+            continue;
+        }
+        if lease::record(&own.root, slot)?.is_none_or(|record| record.phase == "stopped") {
+            continue;
+        }
+        if let Some(abandoned) = Lease::claim(&own.root, slot)? {
+            recover(client, &abandoned)?;
+        } else if let Some(record) = lease::record(&own.root, slot)?
+            && record.phase != "stopped"
+        {
+            let id = record
+                .vm_id
+                .as_deref()
+                .filter(|id| safe_id(id))
+                .ok_or("remote-sibling-unverified")?;
+            if !record.has_live_vm()
+                || record.expires_at.is_none()
+                || record.machine != Machine::Large
+            {
+                return Err("remote-sibling-unverified".into());
+            }
+            check_owned_id(&own.root, slot, id)?;
+            siblings.push(record);
+        }
+    }
+    Ok(siblings)
 }
 
 pub(crate) enum Outcome {
@@ -600,8 +568,8 @@ fn fallback(reason: String) -> Result<Outcome, String> {
     })
 }
 
-pub(crate) fn run(
-    lease: Lease,
+fn run(
+    admission: Admission,
     config: &BoatConfig,
     argv: &[String],
     shape: Shape,
@@ -609,6 +577,8 @@ pub(crate) fn run(
     identity: &mut Option<tree::Identity>,
     patience: u64,
 ) -> Result<Outcome, String> {
+    let Admission { lease, gate } = admission;
+    let mut gate = Some(gate);
     let (limit, image) = memory;
     let machine = image.machine;
     let _signals = Signals::install();
@@ -618,14 +588,16 @@ pub(crate) fn run(
         deadline: Instant::now() + Duration::from_secs(config.timeout_seconds - CLEANUP),
         cleanup: false,
         reserve_seconds: config.reserve_hours * 3600.0 * machine.weight(),
+        parallel_leases: config.max_parallel_leases,
         machine,
     };
     if qualification_blocked(&lease.root, machine) {
         return fallback("boat-capacity qualification-stale".into());
     }
-    if let Err(reason) = recover(&client, &lease) {
-        return fallback(reason);
-    }
+    let siblings = match reconcile(&client, &lease) {
+        Ok(siblings) => siblings,
+        Err(reason) => return fallback(reason),
+    };
     let source = match tree::Source::capture(&std::env::current_dir().map_err(|_| "source-cwd")?) {
         Ok(source) => source,
         Err(reason) => return fallback(reason),
@@ -640,12 +612,7 @@ pub(crate) fn run(
         if env_version != image.environment_version {
             return Err(Refusal::Mismatch("environment").into());
         }
-        budget(
-            &client.json(&["limits", "--all"])?,
-            config,
-            machine,
-            rota::slots::now_ns() / rota::slots::SECOND,
-        )?;
+        start_limits(&client, config, &siblings)?;
         pinned_row(&client, image)?;
         Ok::<_, String>(env_version)
     };
@@ -682,10 +649,7 @@ pub(crate) fn run(
         tree: source.tree.clone(),
         base: source.base.clone(),
         started,
-        // Include both bounded admission/create requests before the provider TTL.
-        expires_at: Some(
-            rota::slots::now_ns() / rota::slots::SECOND + config.timeout_seconds + 2 * CONTROL,
-        ),
+        expires_at: None,
         duration_seconds: None,
         exit_code: None,
         memory: None,
@@ -701,27 +665,21 @@ pub(crate) fn run(
         queue_wait_avoided_seconds: None,
         queue_wait_reason: Some("deferred-to-child26".into()),
     };
-    lease.save(&record)?;
     let name = format!("eon-build-{run_id}");
     let ttl = config.timeout_seconds.to_string();
-    let allowance_before = client.json(&["limits", "--all"]);
-    if let Err(reason) = allowance_before
-        .as_ref()
-        .map_err(Clone::clone)
-        .and_then(|limits| {
-            budget(
-                limits,
-                config,
-                machine,
-                rota::slots::now_ns() / rota::slots::SECOND,
-            )
-        })
+    let allowance_before = match reconcile(&client, &lease)
+        .and_then(|siblings| start_limits(&client, config, &siblings))
     {
-        record.phase = "stopped".into();
-        record.reason = Some(reason.clone());
-        lease.save(&record)?;
-        return fallback(reason);
+        Ok(limits) => limits,
+        Err(reason) => return fallback(reason),
+    };
+    if qualification_blocked(&lease.root, machine) {
+        return fallback("boat-capacity qualification-stale".into());
     }
+    // Include the bounded create call before the provider's VM lifetime.
+    record.expires_at =
+        Some(rota::slots::now_ns() / rota::slots::SECOND + config.timeout_seconds + CONTROL);
+    lease.save(&record)?;
     // Every run starts fresh from the pinned image; captures stay off because the VM is
     // deleted after its run.
     let created = client.json(&[
@@ -765,11 +723,24 @@ pub(crate) fn run(
                 .unwrap_or_else(|| "remote-create-invalid-response-reconciled".into()),
         );
     };
+    if let Err(reason) = check_owned_id(&lease.root, lease.slot, &id) {
+        record.reason = Some(reason);
+        let saved = lease.save(&record);
+        let recovered = recover(&Client::cleanup(machine, CLEANUP, false), &lease);
+        saved?;
+        recovered?;
+        return fallback("remote-create-id-conflict-reconciled".into());
+    }
     record.vm_id = Some(id.clone());
     record.phase = "preparing".into();
+    let saved = lease.save(&record);
+    // Keep admission closed through retirement if the VM identity could not be published.
+    if saved.is_ok() {
+        drop(gate.take());
+    }
     let mut released = false;
     let execution = (|| {
-        lease.save(&record)?;
+        saved?;
         // Nothing but these reads and the marker check runs before the image is verified.
         let info = client
             .json(&["info", &id])
@@ -1054,10 +1025,8 @@ pub(crate) fn run(
     let record_saved = lease.save(&record);
     let (usage, retired) = retire(machine, false, (&id, started), Some(&evidence));
     record.usage = usage;
-    if let (Ok(before), Ok(after)) = (
-        allowance_before.as_ref(),
-        Client::cleanup(machine, CONTROL, false).json(&["limits", "--all"]),
-    ) {
+    if let Ok(after) = Client::cleanup(machine, CONTROL, false).json(&["limits", "--all"]) {
+        let before = &allowance_before;
         if billing_policy(before) == Ok(true) && billing_policy(&after) == Ok(true) {
             record.trial_seconds_used = before["trialComputeUsedSeconds"]
                 .as_u64()
@@ -1366,6 +1335,7 @@ pub(crate) fn available(machine: Machine) -> bool {
         deadline: Instant::now() + Duration::from_secs(CONTROL),
         cleanup: false,
         reserve_seconds: 0.0,
+        parallel_leases: 1,
         machine,
     };
     client
@@ -1383,14 +1353,69 @@ pub(crate) fn qualification_blocked(root: &Path, machine: Machine) -> bool {
         .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
 }
 
-fn budget(limits: &Value, config: &BoatConfig, machine: Machine, now: u64) -> Result<(), String> {
+fn start_limits(
+    client: &Client,
+    config: &BoatConfig,
+    siblings: &[Record],
+) -> Result<Value, String> {
+    let limits = client.json(&["limits", "--all"])?;
+    let now = rota::slots::now_ns() / rota::slots::SECOND;
+    budget(&limits, config, client.machine, now, siblings)?;
+    let active = limits["activeSandboxes"]
+        .as_u64()
+        .ok_or("unsupported-provider-output")?;
+    if active != 0 || !siblings.is_empty() {
+        let inventory = client.json(&["list", "--all"])?;
+        let rows = inventory["sandboxes"]
+            .as_array()
+            .ok_or("unsupported-provider-output")?;
+        let mut seen = std::collections::BTreeSet::new();
+        for row in rows.iter().filter(|row| {
+            !matches!(
+                row["state"].as_str(),
+                Some("stopped" | "archived" | "deleted")
+            )
+        }) {
+            let id = row["id"]
+                .as_str()
+                .filter(|id| safe_id(id))
+                .ok_or("unsupported-provider-output")?;
+            if !seen.insert(id)
+                || !siblings.iter().any(|record| {
+                    record.vm_id.as_deref() == Some(id)
+                        && row["name"] == format!("eon-build-{}", record.run_id)
+                        && row["type"] == record.machine.as_str()
+                })
+            {
+                return Err("boat-unowned-active-vm".into());
+            }
+        }
+        if seen.len() as u64 != active {
+            return Err("boat-active-inventory-mismatch".into());
+        }
+    }
+    Ok(limits)
+}
+
+fn budget(
+    limits: &Value,
+    config: &BoatConfig,
+    machine: Machine,
+    now: u64,
+    siblings: &[Record],
+) -> Result<(), String> {
     if limits["canStart"].as_bool() != Some(true)
         || limits["keepGoing"]["enabled"].as_bool() != Some(false)
         || limits["nextStartDollars"].as_f64() != Some(0.0)
-        || limits["activeSandboxes"].as_u64() != Some(0)
         || !type_available(limits, machine)
     {
         return Err("boat-unavailable-or-paid-start".into());
+    }
+    if limits["activeSandboxes"]
+        .as_u64()
+        .is_none_or(|active| active > siblings.len() as u64)
+    {
+        return Err("boat-unowned-active-vm".into());
     }
     for window in ["minute", "hour", "day"] {
         if limits["starts"][window]["remaining"]
@@ -1400,8 +1425,13 @@ fn budget(limits: &Value, config: &BoatConfig, machine: Machine, now: u64) -> Re
             return Err("start-limit".into());
         }
     }
-    let required = machine.weight()
+    let mut required = machine.weight()
         * (config.reserve_hours * 3600.0 + config.timeout_seconds as f64 + TEARDOWN as f64);
+    for sibling in siblings {
+        let expires = sibling.expires_at.ok_or("remote-sibling-unverified")?;
+        required +=
+            sibling.machine.weight() * (expires.saturating_sub(now) as f64 + TEARDOWN as f64);
+    }
     if remaining(limits)? < required {
         return Err("budget-reserve-or-trial-cap".into());
     }
@@ -1537,12 +1567,28 @@ impl Route for Boat {
         granted: &mut dyn FnMut(),
         source: &mut Option<Value>,
     ) -> Remote {
-        let Ok(config) = BoatConfig::from_table(&request.config.boat) else {
+        let Ok(mut config) = BoatConfig::from_table(&request.config.boat) else {
             return Remote::Failed {
                 reason: "boat-config-invalid".into(),
                 memory: None,
             };
         };
+        if let Some(path) = request.config_file {
+            let current = fs::read_to_string(path)
+                .ok()
+                .and_then(|text| BoatConfig::from_text(&text).ok());
+            let Some(current) = current else {
+                static WARNED_CONFIG: AtomicBool = AtomicBool::new(false);
+                if !WARNED_CONFIG.swap(true, Ordering::Relaxed) {
+                    let _ = writeln!(
+                        io::stderr(),
+                        "eon agent slot: waiting for readable and valid [slots.boat] configuration"
+                    );
+                }
+                return Remote::Wait;
+            };
+            config.max_parallel_leases = current.max_parallel_leases;
+        }
         let config = &config;
         let mut prepared = match identity(source.as_ref()) {
             Ok(prepared) => prepared,
@@ -1562,8 +1608,8 @@ impl Route for Boat {
         if qualification_blocked(request.root, image.machine) || !enabled(request) {
             return Remote::Wait;
         }
-        let lease = match Lease::claim(request.root) {
-            Ok(Some(lease)) => lease,
+        let admission = match Admission::claim(request.root, config.max_parallel_leases) {
+            Ok(Some(admission)) => admission,
             Ok(None) => return Remote::Wait,
             Err(reason) => {
                 return Remote::Failed {
@@ -1575,7 +1621,7 @@ impl Route for Boat {
         granted();
         let memory = |report: Option<Report>| report.and_then(|r| serde_json::to_value(r).ok());
         match run(
-            lease,
+            admission,
             config,
             request.argv,
             shape,
@@ -1639,55 +1685,7 @@ impl Route for Boat {
         root: &Path,
         lock_owner: &dyn Fn(&fs::Metadata) -> Option<Option<u32>>,
     ) -> Result<Listing, String> {
-        let (record, mut error) = match listing(root) {
-            Ok(record) => (record, None),
-            Err(reason) => (None, Some(reason)),
-        };
-        let (lease_held, lease_pid) = match lease_metadata(root) {
-            Ok(metadata) => {
-                let owner = metadata.as_ref().and_then(lock_owner);
-                (Some(owner.is_some()), owner.flatten())
-            }
-            Err(reason) => {
-                error.get_or_insert(reason);
-                (None, None)
-            }
-        };
-        let mut out = Listing::default();
-        if lease_held == Some(true) {
-            out.lines
-                .push("boat lease held (including preflight)".into());
-        }
-        if let Some(reason) = &error {
-            out.lines.push(format!("boat record unavailable: {reason}"));
-        }
-        let format = |_| "boat-record-format".to_owned();
-        if let Some(active) = record.as_ref().filter(|record| record.phase != "stopped") {
-            out.lines.push(format!(
-                "boat held pid={} vm={} phase={} run={}",
-                active.pid,
-                active.vm_id.as_deref().unwrap_or("unknown"),
-                active.phase,
-                active.run_id
-            ));
-            out.holders
-                .push(serde_json::to_value(active).map_err(format)?);
-            out.busy.push(active.pid);
-        }
-        out.busy.extend(lease_pid);
-        out.fields
-            .insert("boat_lease_held".into(), lease_held.into());
-        if let Some(pid) = lease_pid {
-            out.fields.insert("boat_lease_pid".into(), pid.into());
-        }
-        if let Some(record) = record {
-            out.fields
-                .insert("boat".into(), serde_json::to_value(record).map_err(format)?);
-        }
-        if let Some(reason) = error {
-            out.fields.insert("boat_error".into(), reason.into());
-        }
-        Ok(out)
+        lease::listing(root, lock_owner)
     }
 }
 
@@ -2031,13 +2029,15 @@ mod tests {
     fn trial_cap_start_prices_and_missing_safety_fields_refuse_remote() {
         let config = BoatConfig::default();
         let good = limits();
-        assert!(budget(&good, &config, Machine::Default, 1).is_ok());
+        assert!(budget(&good, &config, Machine::Default, 1, &[]).is_ok());
         let mut bad = good.clone();
         bad["trialComputeUsedSeconds"] = json!(89999);
-        assert!(budget(&bad, &config, Machine::Default, 1).is_err());
+        assert!(budget(&bad, &config, Machine::Default, 1, &[]).is_err());
         for (pointer, value) in [
             ("/keepGoing/enabled", json!(true)),
             ("/nextStartDollars", json!(0.03)),
+            ("/activeSandboxes", Value::Null),
+            ("/activeSandboxes", json!(1)),
             ("/starts/minute/remaining", json!(0)),
             ("/subscriptionRemainingSeconds", Value::Null),
             ("/trialComputeUsedSeconds", Value::Null),
@@ -2046,16 +2046,16 @@ mod tests {
             let mut bad = good.clone();
             *bad.pointer_mut(pointer).unwrap() = value;
             assert!(
-                budget(&bad, &config, Machine::Default, 1).is_err(),
+                budget(&bad, &config, Machine::Default, 1, &[]).is_err(),
                 "{pointer}"
             );
         }
         assert!(timestamp(&json!("2026-02-30T00:00:00.000Z")).is_none());
         let mut boundary = good;
         boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 240);
-        assert!(budget(&boundary, &config, Machine::Default, 1).is_ok());
+        assert!(budget(&boundary, &config, Machine::Default, 1, &[]).is_ok());
         boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 239);
-        assert!(budget(&boundary, &config, Machine::Default, 1).is_err());
+        assert!(budget(&boundary, &config, Machine::Default, 1, &[]).is_err());
     }
 
     #[test]
@@ -2071,7 +2071,7 @@ mod tests {
         let mut trial = limits();
         trial["trialComputeUsedSeconds"] = json!(90000);
         trial["wallet"] = json!({"balanceDollars": 10000});
-        assert!(budget(&trial, &BoatConfig::default(), Machine::Default, 1).is_err());
+        assert!(budget(&trial, &BoatConfig::default(), Machine::Default, 1, &[]).is_err());
     }
 
     #[test]
@@ -2097,6 +2097,7 @@ mod tests {
         let argv = words(&["nix", "build", ".#default"]);
         let request = Request {
             config: &config,
+            config_file: None,
             root: directory.path(),
             argv: &argv,
             quiet_exempt: false,
@@ -2131,6 +2132,7 @@ mod tests {
             config.boat.insert(key.into(), value);
             let request = Request {
                 config: &config,
+                config_file: None,
                 root: directory.path(),
                 argv: &argv,
                 quiet_exempt: false,
