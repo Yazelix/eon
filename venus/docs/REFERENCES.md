@@ -76,7 +76,7 @@ and leave only non-tab titlebar areas draggable. These are UX comparisons, not
 dependencies or implementation sources.
 
 Exact patched winit 0.30.13 at
-`7c209ec5bebbd2963f75a39f79b320af6b03f72c` owns native movement. Its
+`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` owns native movement. Its
 `Window::drag_window` contract requires an immediately preceding left press;
 the Wayland implementation uses the latest pointer-button serial and requires
 the cursor inside the window. Venus therefore exposes one Scene-owned empty
@@ -305,7 +305,7 @@ space between stacked cards; Renderer paints it once. Popup and sidebar fills
 follow their own rounded outer edges. Above and outside those fills, the gaps
 and footer take the header's opaque color. Hover adds
 a label pill; keyboard focus adds a mint pill outline.
-Pinned winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`, Wayland
+Pinned winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`, Wayland
 `window/state.rs::set_blur`, already requests blur over the entire surface; its
 `types/bgr_effects.rs` routes compositor support. The regression uses a colored
 underlay to expose missing paint.
@@ -322,7 +322,7 @@ default/off interaction are the falsifiers. Eon delivery remains separate.
 for cell-authored targets and inspection of the actual URI. The preserved
 2020-05-31 document supplies protocol semantics, not current terminal support
 claims. Current Ghostty and Kitty documentation supplied UX comparisons only.
-The exact selected winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c` cursor and
+The exact selected winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` cursor and
 event APIs own the native pointer boundary. Foot
 `85655c74a4ded119392ea8b632626c3920042807` (`url-mode.c`, `doc/foot.ini.5.scd`)
 demonstrates explicit keyboard traversal, clipboard activation and a distinct
@@ -375,7 +375,7 @@ and unicode-script 0.5.8's `Script`. Explicit primary names preserve ordered
 fallback before generic family search. Keep the existing font fitter and
 `CellMetrics`; reject another resolver or geometry owner.
 
-Patched winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c` owns native sizing.
+Patched winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` owns native sizing.
 Its Wayland event loop consumes `ScaleFactorChanged`'s `InnerSizeWriter`
 synchronously; use that one admission to preserve the requested grid when the
 initial output scale arrives after the first buffer. Later user size/scale
@@ -720,11 +720,14 @@ revision-bound nearest-first row window and one signed atomic viewport commit;
 Venus does not infer routing, edges, cells, or revisions.
 
 Patched winit 0.30.13 at
-`7c209ec5bebbd2963f75a39f79b320af6b03f72c` maps Wayland discrete axes to
-`LineDelta`, continuous axes to physical `PixelDelta`, and available axis-stop
-to `Ended`. It discards axis source and hardware event time and documents that
-discrete wheel sequences may lack `Ended`. Venus therefore gives momentum only
-to phase-complete pixel sequences and adds no device or source heuristic.
+`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` maps Wayland discrete axes to
+`LineDelta` and precision axes to physical `PixelDelta`. It retains activity
+per pointer and emits `Ended` when the last active precision axis stops.
+A gesture that starts and stops within one frame carries its delta in a
+single `Ended` event. When that frame replaces an active gesture from a
+different explicit source, winit cancels the previous gesture first.
+Loss of pointer focus clears both axes. Venus gives momentum only to
+phase-complete pixel sequences.
 `Window::request_redraw` with `pre_present_notify` owns compositor callback
 pacing. Wgpu 30.0.0 retains guaranteed FIFO and its default desired frame
 latency of two until installed measurements justify a change. Glyphon 0.12 and
@@ -757,7 +760,7 @@ terminal-state inference, dependency, or unreleased winit API.
 `ven-adopt-orbit-click-selection-ladder-23e` consumes accepted Orbit
 `6bc269c40b18f08b95778939518f77556ba91c67` through unchanged ORBF v2 / ORBS v13
 and package tree `d1151ce365f371cd06498c8d65fbcf6831ee0afe`. Exact patched winit
-`7c209ec5bebbd2963f75a39f79b320af6b03f72c` delivers native button phases;
+`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` delivers native button phases;
 Venus forwards position, modifiers and monotonic delivery time through its
 existing release-presentation gate. Orbit owns words at two clicks, punctuation
 spans at three and logical lines at four or later, including drag/upward-tick
@@ -794,7 +797,7 @@ Venus's presentation owner separates content dirtiness from input geometry:
 ordinary frames with unchanged dimensions/screen advance the renderer cache
 without withdrawing the last actually presented revision. Structural changes
 still invalidate publication. Finish retains its authoritative presentation
-gate. Patched winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`
+gate. Patched winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`
 `Window::request_redraw` gives no strong ordering guarantee, so input eligibility
 cannot depend on the next output frame being repainted first.
 
@@ -870,7 +873,7 @@ persistent Venus setting is introduced.
 ## Required for compositor-owned background blur
 
 The current exact winit 0.30.13 patch is `Yazelix/winit-0.30` commit
-`7c209ec5bebbd2963f75a39f79b320af6b03f72c`. It retains ancestor
+`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`. It retains ancestor
 `fb45fbf901fbe70cc9a877b5d651d0b60c206b08`, directly above the v0.30.13 tag
 and an exact backport of verified merged upstream commit
 `c4afadbfabf7b1e7989b40b493db1a4c7bd8ff4e`. That ancestor prefers
@@ -881,7 +884,7 @@ Apache-2.0.
 ## Required for caller-owned application identity
 
 Exact patched winit 0.30.13 commit
-`7c209ec5bebbd2963f75a39f79b320af6b03f72c` documents and implements
+`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` documents and implements
 `WindowAttributesExtWayland::with_name`: its general name becomes the Wayland
 application ID and should match the distributed desktop-file ID; its instance
 name is unused on Wayland. VEN-C17 reuses only this existing native window
@@ -975,8 +978,8 @@ added `!hasMarkedText()` to that deactivation guard. An initial one-Enter
 diagnostic stopped after candidate selection and incorrectly suggested the
 separate `unmarkText`/`insertText` change in upstream PR 4650 was also needed.
 The corrected Kotoeri sequence uses one Enter to select and a second to commit;
-an A/B run then proved the guard-only candidate delivered exact `日本`. The
-published fork tip reverts the temporary PR 4650 addition and has the same tree
+an A/B run then proved the guard-only candidate delivered exact `日本`.
+Commit `7c209ec5` reverted the temporary PR 4650 addition and has the same tree
 `4e4784e6bbfee70d901000fa4c47470ff6ef52d2` as the guard-only commit. AppKit
 remains the marked-text owner, non-composition source changes keep their prior
 behavior, and Venus gains no platform-specific input branch.

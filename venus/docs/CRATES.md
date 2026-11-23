@@ -114,13 +114,21 @@ for one zero-payload semantic action without a new dependency or adapter.
 
 - **Selected shape:** winit 0.30.13 with Wayland, dynamic Wayland loading, and
   raw-window-handle 0.6 only, patched to exact `Yazelix/winit-0.30` commit
-  `7c209ec5bebbd2963f75a39f79b320af6b03f72c`
+  `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`
 - **Status:** Active on native Linux Wayland
 - **Owner consequence:** The host owns window and event-loop lifecycle, native input and IME
   collection, compositor blur protocol selection, resize, surface recovery, socket
   scheduling, and bounded client failure UX. X11 and Xwayland compatibility are unsupported.
+  The Wayland backend keeps each precision scroll axis active until it stops
+  and clears both on pointer focus departure. Venus owns scroll momentum.
   Replace the patch with the first accepted stable winit containing the
-  background-effect backport and marked-text source-transition correction.
+  background-effect backport, marked-text source-transition correction,
+  and the Wayland precision scroll fix.
+- **Next IME pin:** The macOS IME integration (eon-yp6vg.47) and root pin
+  move (eon-yp6vg.57) must keep this Wayland revision in their winit
+  ancestry. Check the proposed IME revision with
+  `git merge-base --is-ancestor` and repeat the split-axis and compact-frame
+  scroll regressions before moving the root pin.
 
 ### GPU and text
 
@@ -399,7 +407,7 @@ dependency decision does not establish public-distribution proof.
   | `parley_engine` | UAX #9 L1, shaping reuse; needed to resolve | root patch, same Git rev |
   | `wgpu-hal` | DXGI/DX12 only | not applied: Windows only |
   | `accesskit_windows` | Windows only | not applied |
-  | `winit` | Windows taskbar and placement; macOS IME APIs (`set_ime_text`, `take_ime_clauses`, `take_ime_replacement`); Wayland finger and continuous scroll gain ×12 | not applied. The IME APIs belong to eon-yp6vg.47/.57, whose winit `78b8f28` has them. Neither root winit `7c209ec5` nor `78b8f28` has the scroll gain. Root winit is shared with shipping Venus, so the decision is eon-yp6vg.7.2's |
+  | `winit` | Windows taskbar and placement; macOS IME APIs (`set_ime_text`, `take_ime_clauses`, `take_ime_replacement`); Wayland finger and continuous scroll gain ×12 | not applied. The IME APIs belong to eon-yp6vg.47/.57, whose winit `78b8f28` has them. Root winit `c1dacc9d` and `78b8f28` both lack the scroll gain. Root winit is shared with shipping Venus, so the decision is eon-yp6vg.7.2's |
   | `accesskit_macos` | `AXHeading`, a main-thread borrow panic guard, text runs past 64 KiB | not applied. A root patch would change shipping Darwin Venus's `accesskit_macos 0.27.2`. Gap for Darwin qualification (eon-yp6vg.58) |
 
   `tiny-skia-path` is a path dependency inside the Rune Git source, so it is
@@ -560,10 +568,10 @@ duplicate windowing, GPU, shaping, font fallback, and accessibility.
 Stable winit 0.30.13 exposes blur but binds only KDE's Wayland protocol. The
 selected exact fork retains `fb45fbf901fbe70cc9a877b5d651d0b60c206b08`,
 which backports the merged upstream `ext-background-effect-v1` implementation:
-200 additions and 30 deletions across eight winit files. Its only additional
-change is the AppKit IME guard below. No new Venus dependency, native library,
-build tool, service, unsafe code, or event-loop owner is added. One winit
-remains shared with `accesskit_winit`.
+200 additions and 30 deletions across eight winit files. The fork also carries
+the AppKit IME guard and the Wayland precision scroll fixes. No new Venus
+dependency, native library, build tool, service, unsafe code, or event-loop
+owner is added. One winit remains shared with `accesskit_winit`.
 
 The Git workspace resolves `dpi` 0.1.1 instead of registry 0.1.2. The older
 source lacks only the later no-std and inset additions, which neither winit
@@ -585,9 +593,10 @@ no marked text retain the existing `Ime::Disabled` event. Physical Kotoeri
 proof converted `にほん` and committed selected `日本` exactly once to Orbit.
 Upstream PR 4087 remains rejected because its broader rewrite routes ordinary
 input through IME commit; corrected two-Enter A/B showed PR 4650 unnecessary.
-The selected tree is identical to guard-only commit
-`92722876415d5f2e3e97b2897b84c9a768c79b82` and adds no package, API, Venus
-branch, or second input owner.
+The IME-qualified commit `7c209ec5bebbd2963f75a39f79b320af6b03f72c` has the
+same tree as guard-only commit `92722876415d5f2e3e97b2897b84c9a768c79b82`.
+The current winit pin adds the Wayland precision scroll fixes on top of that
+tree. The package graph, public API, and input owners stay the same.
 
 ## Native clipboard decision
 

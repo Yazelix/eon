@@ -54,6 +54,27 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Wayland precision scroll pin (eon-yp6vg.65)
+
+From Eon `03e7f81a`, the `dpi` and `winit` source records move
+from `7c209ec5` to `c1dacc9d`. Reversing the winit revision in the
+canonical graphs reproduces the landed Eon, Orbit, and Venus graphs
+byte for byte. This includes the normalized lock and the winit
+source identities in Venus's linked dependency and binary audit.
+The producer feature selections and audit exception identities match
+the landed base.
+
+The exact Cargo trees and producer logs confirm the same classifications.
+Eon has 9 host-only and 2 unselected exceptions, Orbit has 6 and 1,
+and Venus has 15 and 4. The `inspect-audit` replays reproduce the
+graphs and binary observations on both sides. The strict
+`propose-audit-renewal` output changes six fingerprints. Zoxide's
+dependency-omission probe still rejects removal of `anyhow 1.0.98`.
+
+- Vendor at `/nix/store/ckj07fdk9h5s2wc2sm1d34n7np4rgl7l-cargo-vendor-dir`.
+- Landed input at `/nix/store/4kwkgmnic25iqv0kj544jj952i4adxs9-eon-archive-notice-input.json`.
+- Proposal input at `/nix/store/bh87dwl4zkm34kkrnfbj56j5xr0cvgxl-eon-archive-notice-input.json` (before renewal).
+
 ### Rune typed skip pin (eon-yp6vg.64)
 
 Compared with Eon `5269709b`, the Eon, Orbit and Venus contexts change
@@ -454,6 +475,18 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed for `eon-yp6vg.65` to context
+`719abf85530c7a58b71ffe3bc31e4e2ff9e38a672781d14f59925a1cbf9edc3f`.
+Reversing the winit revision reproduces `fcc65995…`.
+
+- Source at `/nix/store/rjgyhv701j20byai1yhq5040sj1vwm3p-source`.
+- Observation at `/nix/store/y580vy3fjm015dkmiylmh8kgk15i21n7-eon-cargo-notices-0.1.28`.
+- Binary at `/nix/store/71n7737p6dz4r638jqqa06n0dlnqi9jv-eon-rust-0.1.28/bin/eon`
+  with SHA-256 `ccd6dbdbe99b21f0004c58cd8a87c6abb5668ae944a3c6c8cbf3a5970675626c`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-yp6vg.64`):
+
 Renewed for `eon-yp6vg.64` to context
 `fcc659959879bac1ea6617cd3b3e373882908d9219cf8609ce07611af1b65a08`.
 Restoring the base normalized lock reproduces `cc33db7b…`.
@@ -744,6 +777,18 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed for `eon-yp6vg.65` to context
+`5d34d02cd6996269ae52cffb3cf052f4beea24ea038a028b171c08bb6cdef2aa`.
+Reversing the winit revision reproduces `85cfb652…`.
+
+- Source at `/nix/store/lq4dhksi8rs6rmrw5wr3js4kb23k2fqs-source`.
+- Observation at `/nix/store/s8mm0q7gz8skzra6hmjlrwf1z44ikhx2-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/8si875gvh6hh2ad6m99y4i57100smmi6-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `49c5e6b7f9bbde1dff5d3d566e108b1a6cc8e52067da10a80fd34dbd88d47e05`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-yp6vg.64`):
+
 Renewed for `eon-yp6vg.64` to context
 `85cfb652e1bdb17c8866849e0ea994f8f1582750422f5b20a9fb78943c7fe5c0`.
 Restoring the base normalized lock reproduces `2052ecbf…`.
@@ -1026,6 +1071,18 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed for `eon-yp6vg.65` to context
+`aea9642c863c30538d7d94edc5e3d789f176d31fdc6fa8e6f696a66fc596a04d`.
+Reversing the winit revision reproduces `9a0a1140…`.
+
+- Source at `/nix/store/fq7a4nkiph7mwm9zz7vs9pd8ir28i4dy-source`.
+- Observation at `/nix/store/9ig4z2pcq9bidkvdynfyscjr7lfarcdx-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/lv6h2j48bws63ckyk6a196wyfqy2x4qm-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `19ab1bd1e45e3570d5b006ce46f01579369ab3c38c37341ead972ec900eae0b0`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-yp6vg.64`):
 
 Renewed for `eon-yp6vg.64` to context
 `9a0a1140afdadf90f5f0245f0ade55355716ed3d22f57bd74bcc6471f933b024`.

@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- On Wayland, stopping one touchpad scroll axis no longer starts momentum
+  while the other axis is still active.
+
 - Use `[keys] release` in `config.toml` to pass any of `Alt+M`, `Alt+W`,
   `Alt+Q` and `Alt+G` to the focused terminal. Shortcuts and `eon keys`
   reflect the release set of the running window. The setting takes effect
