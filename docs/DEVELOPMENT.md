@@ -78,6 +78,15 @@ prefixing `nix develop` has no effect: run
 inside the shell. Switching the value rebuilds the target directory once, and
 backtraces keep file and line but drop module prefixes from function names.
 
+Run `nix develop -c eon-darwin-clippy` from the repository root before review.
+It compiles and lints all targets in the root Cargo workspace, including test
+targets, for `aarch64-apple-darwin` with warnings treated as errors. The Linux
+dev shell supplies the Darwin Rust standard library. The Apple Silicon dev
+shell uses its native standard library. Pass Cargo options for a focused
+check, for example `nix develop -c eon-darwin-clippy -p agent-bench`.
+Standalone Cargo workspaces have separate proof routes. Native builds and
+test execution use the macOS proof routes below.
+
 One Cargo workspace holds Orbit (`orbit/`), Venus (`venus/`), Eon Runtime with
 EONW (`runtime/`) and Eon (`eon/`). `eon/crates/eon` owns executable assembly
 and defaults; `runtime/` owns the runtime mechanisms behind `run(Inputs)` and
@@ -173,10 +182,11 @@ and canonical slot-home resolution returns an explicit Unsupported error there.
 
 ### CI failure collection
 
-For Darwin evidence before landing, push the reviewed commit to `ci/<bead>`.
-Choose `workspace-tests` for the workspace suite, `build` for the package, or
-`both` (the default). When `review-tier classify` prints a `darwin:` line,
-use the jobs it lists and skip the dispatch for `darwin: none`.
+Filtered pushes to `edge` run only `build`. For Darwin evidence before
+landing, push the reviewed commit to `ci/<bead>` and dispatch the workflow
+manually. Choose `workspace-tests` for the workspace suite, `build` for the
+package, or `both` (the default). When `review-tier classify` prints a
+`darwin:` line, use the jobs it lists and skip the dispatch for `darwin: none`.
 
 ```sh
 candidate=FULL_COMMIT_SHA
@@ -205,10 +215,10 @@ Record the run IDs with the reviewed commit. After landing, delete the scratch
 branch with `git push origin --delete "$branch"`.
 
 The `build` job keeps the strict Nix package gate. With `legs=both`, the jobs
-use separate Apple Silicon runners and finish independently. Filtered `edge`
-pushes run only `build`. Both jobs retain a 90-minute timeout and read-only
-cache access. A newer run of either workflow replaces its earlier run on the
-same ref. Runs on other refs have their own cancellation groups.
+use separate Apple Silicon runners and finish independently. Both jobs retain
+a 90-minute timeout and read-only cache access. A newer run of either workflow
+replaces its earlier run on the same ref. Runs on other refs have their own
+cancellation groups.
 
 `workspace-tests` builds release Orbit directly from source and supplies it as
 `ORBIT_BIN`, so a failing package dependency cannot block test collection. It

@@ -47,6 +47,8 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # Filtered edge pushes run build. Manual dispatch selects workspace-tests,
+      # build, or both (the default).
       matrix:
         check: >-
           ${{ fromJSON('{"workspace-tests":["workspace-tests"],"build":["build"],"both":["build","workspace-tests"]}')

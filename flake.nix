@@ -78,6 +78,12 @@
             overlays = [ rust-overlay.overlays.default ];
           };
           rustToolchain = pkgs.rust-bin.stable."1.96.1".default;
+          darwinRustTarget = "aarch64-apple-darwin";
+          devRustToolchain =
+            if system == "x86_64-linux" then
+              rustToolchain.override { targets = [ darwinRustTarget ]; }
+            else
+              rustToolchain;
           rustPlatform = pkgs.makeRustPlatform {
             cargo = rustToolchain;
             rustc = rustToolchain;
@@ -1834,13 +1840,31 @@
           } // orbitChecks;
           devShells.${system}.default = pkgs.mkShell ({
             packages = [
-              rustToolchain
+              devRustToolchain
               pkgs.git
               pkgs.ncurses
               pkgs.pkg-config
               zig
               pkgs.bun
               (import ./nix/test-sandbox.nix { inherit pkgs; })
+              (pkgs.writeShellApplication {
+                name = "eon-darwin-clippy";
+                text = ''
+                  workspace=(--workspace)
+                  for arg in "$@"; do
+                    case "$arg" in
+                      -p|-p?*|--package|--package=*|--workspace|--all|--manifest-path|--manifest-path=*)
+                        workspace=()
+                        ;;
+                      --)
+                        echo 'eon-darwin-clippy: pass Cargo options without --' >&2
+                        exit 2
+                        ;;
+                    esac
+                  done
+                  exec cargo clippy --locked --target ${darwinRustTarget} "''${workspace[@]}" --all-targets "$@" -- -D warnings
+                '';
+              })
               # Runtime tests paste printed commands into Eon's Nushell.
               nushellPackage
               br
