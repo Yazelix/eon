@@ -183,7 +183,13 @@ agents report through OSC 7501. A selected terminal's finish or error stays
 unseen while its Eon window is unfocused. Reading session state or focusing
 a terminal by CLI does not activate the desktop window.
 
-Use `eon keys --json` to inspect the addressed window's effective shortcuts
+Use `eon lock` or `eon unlock` to set the addressed window's keyboard
+pass-through mode. They preserve selection and focus, and work without an
+attached presentation. `eon session --json` and `eon keys --json` report
+the live window-wide `input_locked` boolean. Both setters accept the same
+`--window ID` targeting as `eon session`.
+
+Use `eon keys --json` to inspect the addressed window's bindings
 matching `Alt+/` without taking focus or changing state: `groups` matches the
 native viewer, `bindings` gives fixed actions with active chords and popup
 overrides (respecting sidebar state and on-disk `[session] number_keys` from
@@ -191,7 +197,9 @@ overrides (respecting sidebar state and on-disk `[session] number_keys` from
 `number_keys` on disk show in `eon keys` immediately while `Alt+/` keeps the
 window's launch or reloaded value until reload), `popups` lists bound,
 overridden, and unbound enabled popups, and `reserved` lists `strict` and
-`focus` keys. Accepts `--window ID`.
+`focus` keys. The `toggle_input_lock` binding reports the accepted toggle
+chord. When `input_locked` is true, the other rows describe bindings that
+resume on unlock. Accepts `--window ID`.
 
 Use `env -u EON_TERMINAL eon ...` only when asked to act on the shown session
 instead of your own. Keep `--json` on the command you substitute.

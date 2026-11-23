@@ -1,6 +1,6 @@
 //! Eon's shared shortcut descriptors. This is Rust data, not an EONW codec.
 
-use crate::v48::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
+use crate::v49::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
 
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
@@ -93,6 +93,7 @@ pub enum Side {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    ToggleInputLock,
     ToggleViewer,
     ToggleInbox,
     ToggleHints,
@@ -127,6 +128,7 @@ impl Action {
     /// Stable lowercase ASCII `snake_case` action identifier (`EON-C10`).
     pub const fn id(self) -> &'static str {
         match self {
+            Self::ToggleInputLock => "toggle_input_lock",
             Self::ToggleViewer => "toggle_viewer",
             Self::ToggleInbox => "toggle_inbox",
             Self::ToggleHints => "toggle_hints",
@@ -413,7 +415,7 @@ pub fn popup_entry_for_chord<'a>(
     })
 }
 
-/// Config spelling for `(modifiers, key)` when `v48::Shortcut` accepts it, else `None`.
+/// Config spelling for `(modifiers, key)` when `v49::Shortcut` accepts it, else `None`.
 pub fn config_chord_if_valid(modifiers: u8, key: &str) -> Option<String> {
     ProtocolShortcut {
         modifiers,
@@ -424,11 +426,38 @@ pub fn config_chord_if_valid(modifiers: u8, key: &str) -> Option<String> {
     .map(|()| config_chord(modifiers, key))
 }
 
+const INPUT_LOCK_GROUP: &str = "Host";
+const INPUT_LOCK_LABEL: &str = "Toggle input lock";
+
+/// A toggle cannot take a fixed shortcut or one of the bundled AppKit menu equivalents.
+/// Runtime and the Snapshot codec also check the window's effective popup catalog.
+pub fn validate_input_lock(chord: &ProtocolShortcut) -> crate::v49::Result<()> {
+    chord.validate()?;
+    let appkit_hide = chord.key == "KeyH" && [SUPER, ALT | SUPER].contains(&chord.modifiers);
+    let reverse_traversal = chord.key == "Tab" && chord.modifiers == SHIFT;
+    let fixed = FIXED_SHORTCUTS.iter().any(|shortcut| {
+        [Platform::Linux, Platform::Macos]
+            .into_iter()
+            .any(|platform| {
+                shortcut
+                    .trigger
+                    .matches_key(platform, &chord.key, chord.modifiers)
+            })
+    });
+    if appkit_hide || reverse_traversal || fixed {
+        return Err(crate::v49::Error::InvalidValue {
+            field: "input lock shortcut",
+        });
+    }
+    Ok(())
+}
+
+/// Looks up a fixed action in the shared shortcut table.
 pub fn shortcut(action: Action) -> &'static Shortcut {
     FIXED_SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.action == action)
-        .expect("every action has a descriptor")
+        .expect("every fixed action has a descriptor")
 }
 
 pub fn popup_policy(modifiers: u8, key: &str) -> PopupPolicy {
@@ -877,6 +906,7 @@ pub fn viewer_groups(
     running: bool,
     number_keys: bool,
     released: ReleasedShortcuts,
+    input_lock: &ProtocolShortcut,
 ) -> Vec<ViewerGroup> {
     let row = |shortcut: &Shortcut| {
         if released.includes(shortcut.action) {
@@ -950,6 +980,12 @@ pub fn viewer_groups(
                     Some(_) => {}
                     None => rows.push(row(shortcut)),
                 }
+            }
+            if title == INPUT_LOCK_GROUP {
+                rows.push(ViewerRow {
+                    shortcut: display_chord(platform, input_lock.modifiers, &input_lock.key),
+                    label: INPUT_LOCK_LABEL.to_owned(),
+                });
             }
             ViewerGroup {
                 title: title.to_owned(),
@@ -1123,7 +1159,7 @@ fn reserved_chords(platform: Platform) -> ReservedChords {
     ReservedChords { strict, focus }
 }
 
-/// Complete effective keymap derived from the shared table, popups, and window flags.
+/// Complete keymap. The input-lock pair carries the accepted chord and the product default.
 pub fn effective_keymap(
     platform: Platform,
     entries: &[PopupEntry],
@@ -1131,14 +1167,43 @@ pub fn effective_keymap(
     running: bool,
     number_keys: bool,
     released: ReleasedShortcuts,
+    input_lock: (&ProtocolShortcut, &ProtocolShortcut),
 ) -> EffectiveKeymap {
+    let (input_lock, default_input_lock) = input_lock;
+    let mut bindings =
+        effective_bindings(platform, entries, sidebar, running, number_keys, released);
+    let display = display_chord(platform, input_lock.modifiers, &input_lock.key);
+    bindings.push(EffectiveBinding {
+        action: Action::ToggleInputLock.id(),
+        group: INPUT_LOCK_GROUP,
+        label: INPUT_LOCK_LABEL,
+        display: Some(display.clone()),
+        chords: vec![KeyChord {
+            config: Some(config_chord(input_lock.modifiers, &input_lock.key)),
+            display,
+        }],
+        source: if input_lock == default_input_lock {
+            "default"
+        } else {
+            "configured"
+        },
+        overridden_by: Vec::new(),
+    });
     EffectiveKeymap {
         platform,
         sidebar,
         number_keys,
         running,
-        groups: viewer_groups(platform, entries, sidebar, running, number_keys, released),
-        bindings: effective_bindings(platform, entries, sidebar, running, number_keys, released),
+        groups: viewer_groups(
+            platform,
+            entries,
+            sidebar,
+            running,
+            number_keys,
+            released,
+            input_lock,
+        ),
+        bindings,
         popups: effective_popups(platform, entries),
         reserved: reserved_chords(platform),
     }
@@ -1147,6 +1212,53 @@ pub fn effective_keymap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::v49::fixture_input_lock;
+
+    #[test]
+    fn input_lock_reserves_reverse_chrome_traversal() {
+        let chord = ProtocolShortcut {
+            modifiers: SHIFT,
+            key: "Tab".into(),
+        };
+        assert!(chord.validate().is_ok());
+        assert!(validate_input_lock(&chord).is_err());
+    }
+
+    #[test]
+    fn input_lock_projection_uses_the_accepted_chord_and_native_label() {
+        for (platform, label) in [
+            (Platform::Linux, "Alt+Shift+P"),
+            (Platform::Macos, "Option+Shift+P"),
+        ] {
+            let input_lock = ProtocolShortcut {
+                key: "KeyP".into(),
+                ..fixture_input_lock()
+            };
+            validate_input_lock(&input_lock).unwrap();
+            for (default, source) in [
+                (&fixture_input_lock(), "configured"),
+                (&input_lock, "default"),
+            ] {
+                let keymap = effective_keymap(
+                    platform,
+                    &[],
+                    Sidebar::Off,
+                    false,
+                    false,
+                    ReleasedShortcuts::default(),
+                    (&input_lock, default),
+                );
+                let binding = keymap.bindings.last().unwrap();
+                let row = keymap.groups.last().unwrap().rows.last().unwrap();
+                assert_eq!(binding.action, "toggle_input_lock");
+                assert_eq!(binding.source, source);
+                assert_eq!(binding.chords[0].config.as_deref(), Some("Alt+Shift+P"));
+                assert_eq!(binding.display.as_deref(), Some(label));
+                assert_eq!(row.shortcut, label);
+                assert_eq!(row.label, binding.label);
+            }
+        }
+    }
 
     #[test]
     fn policy_and_native_alternatives_preserve_their_distinct_boundaries() {
@@ -1178,10 +1290,10 @@ mod tests {
         assert_eq!(
             [SHIFT, CTRL, ALT, SUPER],
             [
-                crate::v48::SHIFT,
-                crate::v48::CTRL,
-                crate::v48::ALT,
-                crate::v48::SUPER
+                crate::v49::SHIFT,
+                crate::v49::CTRL,
+                crate::v49::ALT,
+                crate::v49::SUPER
             ]
         );
     }
@@ -1303,6 +1415,7 @@ mod tests {
             true,
             true,
             Default::default(),
+            (&fixture_input_lock(), &fixture_input_lock()),
         );
         assert_eq!(
             linux
@@ -1436,6 +1549,7 @@ mod tests {
             false,
             false,
             Default::default(),
+            (&fixture_input_lock(), &fixture_input_lock()),
         );
         assert_eq!(filtered.groups.len(), 3);
         assert!(
@@ -1459,6 +1573,7 @@ mod tests {
             true,
             true,
             Default::default(),
+            (&fixture_input_lock(), &fixture_input_lock()),
         );
         let mac_quit = mac_partial
             .bindings
@@ -1489,6 +1604,7 @@ mod tests {
             true,
             true,
             Default::default(),
+            (&fixture_input_lock(), &fixture_input_lock()),
         );
         let mac_quit_full = mac_full
             .bindings
@@ -1520,6 +1636,7 @@ mod tests {
                         true,
                         true,
                         Default::default(),
+                        (&fixture_input_lock(), &fixture_input_lock()),
                     );
                     let overridden_bindings: Vec<_> = keymap
                         .bindings

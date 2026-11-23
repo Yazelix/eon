@@ -24,11 +24,11 @@ use super::{
         terminal_text_json,
     },
 };
-use eon_workspace_protocol::v48::{
-    Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure, InvokeIntent,
-    MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side, Snapshot, Tab,
-    TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction, WorkspaceInfo,
-    WorkspaceTarget as SessionTarget, entry_popup, valid_caller, validate_paste,
+use eon_workspace_protocol::v49::{
+    Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure, InputLock,
+    InvokeIntent, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side,
+    Snapshot, Tab, TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction,
+    WorkspaceInfo, WorkspaceTarget as SessionTarget, entry_popup, valid_caller, validate_paste,
 };
 use std::{
     env,
@@ -1131,7 +1131,8 @@ fn renamed_command(arguments: &[OsString]) -> Option<Error> {
 /// The first words `execute` hands to `parse_control_arguments`.
 fn control_command(command: &OsStr) -> bool {
     [
-        "session", "tab", "pane", "column", "popup", "sidebar", "edit", "focus", "keys", "--window",
+        "session", "tab", "pane", "column", "popup", "sidebar", "edit", "focus", "keys", "lock",
+        "unlock", "--window",
     ]
     .iter()
     .any(|word| command == *word)
@@ -1227,6 +1228,8 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("", "ones, or all"),
             ("keys [--json]", "Show effective shortcuts for"),
             ("", "this window"),
+            ("lock [--json]", "Pass shortcuts to the terminal"),
+            ("unlock [--json]", "Restore this window's shortcuts"),
         ],
     ),
     (
@@ -2182,9 +2185,9 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
     let json = send.json;
     let action = |input, expected_terminal| Action::SendTerminal {
         target: if send.target == "focused" {
-            eon_workspace_protocol::v48::SendTarget::Focused { expected_terminal }
+            eon_workspace_protocol::v49::SendTarget::Focused { expected_terminal }
         } else {
-            eon_workspace_protocol::v48::SendTarget::Id(send.target.clone())
+            eon_workspace_protocol::v49::SendTarget::Id(send.target.clone())
         },
         input,
         force: send.force,
@@ -2395,7 +2398,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v48::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v49::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -2663,11 +2666,22 @@ fn keys(inputs: &Inputs, json: bool, target: WorkspaceTarget) -> Result<i32, Str
         snapshot.running.is_some(),
         number_keys,
         snapshot.released_shortcuts,
+        (&snapshot.input_lock, &inputs.defaults.popups.input_lock),
     );
     let output = if json {
-        keys_json(&resolved.generation, resolved.window.as_deref(), &keymap)
+        keys_json(
+            &resolved.generation,
+            resolved.window.as_deref(),
+            &keymap,
+            snapshot.input_locked,
+        )
     } else {
-        keys_human(&resolved.generation, resolved.window.as_deref(), &keymap)
+        keys_human(
+            &resolved.generation,
+            resolved.window.as_deref(),
+            &keymap,
+            snapshot.input_locked,
+        )
     };
     write_stdout(output)?;
     Ok(0)
@@ -3044,6 +3058,8 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         }
     }
     let action = match values.as_slice() {
+        ["lock"] => Action::InputLock(InputLock::Lock),
+        ["unlock"] => Action::InputLock(InputLock::Unlock),
         ["session"] | ["session", "ls"] => Action::Workspace(WorkspaceAction::Inspect),
         ["tab", "create"] => Action::Workspace(WorkspaceAction::CreateTab),
         ["tab", "switch", tab] if tab_number(tab).is_some() => {
@@ -3119,7 +3135,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         ),
         _ => return Err(Error::usage(EON_USAGE)),
     };
-    eon_workspace_protocol::v48::validate_pane_rename(name, tag)
+    eon_workspace_protocol::v49::validate_pane_rename(name, tag)
         .map_err(|error| Error::usage(error.to_string()))?;
     Ok((
         Action::RenamePane {
@@ -3606,7 +3622,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v48::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v49::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -4724,7 +4740,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v48::{
+        use eon_workspace_protocol::v49::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -4749,6 +4765,8 @@ mod tests {
         };
         let base_snapshot = || Snapshot {
             focus: None,
+            input_lock: crate::fixtures::input_lock(),
+            input_locked: false,
             released_shortcuts: Default::default(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
@@ -4982,12 +5000,14 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v48::{
+        use eon_workspace_protocol::v49::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
         let mut snap = Snapshot {
             focus: None,
+            input_lock: crate::fixtures::input_lock(),
+            input_locked: false,
             released_shortcuts: Default::default(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),

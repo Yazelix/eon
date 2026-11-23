@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v48 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v49 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -27,7 +27,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 48;
+pub const VERSION: u16 = 49;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -158,6 +158,7 @@ const CREATE_COLUMN: u8 = 22;
 const CLOSE_PANE: u8 = 23;
 const CLOSE_COLUMN: u8 = 44;
 const SET_SIDEBAR: u8 = 45;
+const INPUT_LOCK: u8 = 47;
 const RENAME_PANE: u8 = 36;
 const LAUNCH_TAB: u8 = 37;
 const MOVE_PANE_LEFT: u8 = 24;
@@ -257,9 +258,18 @@ pub enum Side {
     Right,
 }
 
+/// A window-wide input lock operation (EON-C10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputLock {
+    Unlock,
+    Lock,
+    Toggle,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Workspace(WorkspaceAction),
+    InputLock(InputLock),
     InvokePopup {
         tab: String,
         entry: String,
@@ -470,6 +480,14 @@ pub struct Column {
 pub struct Shortcut {
     pub modifiers: u8,
     pub key: String,
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_input_lock() -> Shortcut {
+    Shortcut {
+        modifiers: ALT | SHIFT,
+        key: "KeyI".into(),
+    }
 }
 
 impl Shortcut {
@@ -733,6 +751,8 @@ pub struct Snapshot {
     pub focus: Option<Focus>,
     /// Window-wide fixed shortcuts released to ordinary terminal input.
     pub released_shortcuts: ReleasedShortcuts,
+    pub input_locked: bool,
+    pub input_lock: Shortcut,
     pub generation: String,
     pub created_build: String,
     pub active_build: String,
@@ -1164,6 +1184,14 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             }
             payload.byte(u8::from(*focus));
         }
+        Action::InputLock(operation) => {
+            payload.byte(INPUT_LOCK);
+            payload.byte(match operation {
+                InputLock::Unlock => 0,
+                InputLock::Lock => 1,
+                InputLock::Toggle => 2,
+            });
+        }
         Action::ToggleSidebar => payload.byte(TOGGLE_SIDEBAR),
         Action::SetSidebar { open } => {
             payload.byte(SET_SIDEBAR);
@@ -1407,6 +1435,17 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                 focus,
             })
         }
+        INPUT_LOCK => Some(Action::InputLock(match decoder.byte()? {
+            0 => InputLock::Unlock,
+            1 => InputLock::Lock,
+            2 => InputLock::Toggle,
+            value => {
+                return Err(Error::InvalidTag {
+                    field: "input lock operation",
+                    value,
+                });
+            }
+        })),
         TOGGLE_SIDEBAR => Some(Action::ToggleSidebar),
         SET_SIDEBAR => Some(Action::SetSidebar {
             open: decode_bool(&mut decoder, "sidebar open")?,
@@ -1799,6 +1838,7 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::Edit { .. }
         | Action::CreatePane { .. }
         | Action::LaunchTab { .. }
+        | Action::InputLock(_)
         | Action::ToggleSidebar
         | Action::SetSidebar { .. }
         | Action::FocusAttention { .. }
@@ -1912,7 +1952,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
                 });
                 encode_caller(&mut payload, focus.target.as_ref());
             }
-            payload.byte(snapshot.released_shortcuts.0);
+            encode_window_keys(&mut payload, snapshot);
             SNAPSHOT
         }
         Response::Failure(failure) => {
@@ -2412,6 +2452,8 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         None
     };
     snapshot.released_shortcuts = ReleasedShortcuts(decoder.byte()?);
+    snapshot.input_locked = decode_bool(&mut decoder, "input locked")?;
+    snapshot.input_lock = decode_shortcut(&mut decoder)?;
     validate_focus(snapshot.focus.as_ref())?;
     validate_snapshot_identity(&snapshot)?;
     validate_busy(snapshot.busy.as_ref())?;
@@ -2630,6 +2672,11 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
     let snapshot = Snapshot {
         focus: None,
         released_shortcuts: ReleasedShortcuts::default(),
+        input_locked: false,
+        input_lock: Shortcut {
+            modifiers: 0,
+            key: String::new(),
+        },
         generation: String::new(),
         created_build: String::new(),
         active_build: String::new(),
@@ -2709,39 +2756,47 @@ fn decode_popup(decoder: &mut Decoder<'_>) -> Result<Popup> {
     })
 }
 
+fn encode_window_keys(encoder: &mut Encoder, snapshot: &Snapshot) {
+    encoder.byte(snapshot.released_shortcuts.0);
+    encoder.byte(u8::from(snapshot.input_locked));
+    encode_shortcut(encoder, &snapshot.input_lock);
+}
+
+fn encode_shortcut(encoder: &mut Encoder, shortcut: &Shortcut) {
+    encoder.byte(shortcut.modifiers);
+    encoder.string(&shortcut.key);
+}
+
+fn decode_shortcut(decoder: &mut Decoder<'_>) -> Result<Shortcut> {
+    Ok(Shortcut {
+        modifiers: decoder.byte()?,
+        key: decoder.string("shortcut key", MAX_KEY_BYTES)?,
+    })
+}
+
 /// A tag (0 bound, 1 unbound, 2 overridden), then a bound or default
 /// shortcut as modifiers and key, then an overriding entry's id.
 fn encode_popup_key(encoder: &mut Encoder, key: &PopupKey) {
-    let shortcut = |encoder: &mut Encoder, shortcut: &Shortcut| {
-        encoder.byte(shortcut.modifiers);
-        encoder.string(&shortcut.key);
-    };
     match key {
         PopupKey::Bound(bound) => {
             encoder.byte(0);
-            shortcut(encoder, bound);
+            encode_shortcut(encoder, bound);
         }
         PopupKey::Unbound => encoder.byte(1),
         PopupKey::Overridden { default, by } => {
             encoder.byte(2);
-            shortcut(encoder, default);
+            encode_shortcut(encoder, default);
             encoder.string(by);
         }
     }
 }
 
 fn decode_popup_key(decoder: &mut Decoder<'_>) -> Result<PopupKey> {
-    let shortcut = |decoder: &mut Decoder<'_>| -> Result<Shortcut> {
-        Ok(Shortcut {
-            modifiers: decoder.byte()?,
-            key: decoder.string("shortcut key", MAX_KEY_BYTES)?,
-        })
-    };
     Ok(match decoder.byte()? {
-        0 => PopupKey::Bound(shortcut(decoder)?),
+        0 => PopupKey::Bound(decode_shortcut(decoder)?),
         1 => PopupKey::Unbound,
         2 => PopupKey::Overridden {
-            default: shortcut(decoder)?,
+            default: decode_shortcut(decoder)?,
             by: decoder.string("entry id", MAX_ENTRY_ID_BYTES)?,
         },
         value => {
@@ -2782,6 +2837,7 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
             field: "released shortcuts",
         });
     }
+    crate::shortcuts::validate_input_lock(&snapshot.input_lock)?;
     let mut entries = HashSet::new();
     let mut shortcuts = HashSet::new();
     for entry in &snapshot.entries {
@@ -2798,6 +2854,11 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
                 if snapshot.released_shortcuts.includes_chord(shortcut) {
                     return Err(Error::InvalidSnapshot {
                         field: "released shortcuts",
+                    });
+                }
+                if shortcut == &snapshot.input_lock {
+                    return Err(Error::InvalidSnapshot {
+                        field: "input lock shortcut",
                     });
                 }
                 shortcuts.insert(shortcut)
@@ -4450,18 +4511,18 @@ mod tests {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e57300001000700000002007231002d00",
+                "454f4e57310001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e57300001000700000002007231002d01",
+                "454f4e57310001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e57300001000b00000002007231002c0200703200",
+                "454f4e57310001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -4497,14 +4558,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57300001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e57310001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e5730008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e5731008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -4991,6 +5052,8 @@ mod tests {
         Snapshot {
             focus: None,
             released_shortcuts: Default::default(),
+            input_locked: false,
+            input_lock: fixture_input_lock(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -5090,8 +5153,75 @@ mod tests {
         payload.string(&snapshot.created_build);
         payload.string(&snapshot.active_build);
         payload.byte(0); // no window focus in this forged snapshot
-        payload.byte(snapshot.released_shortcuts.0);
+        encode_window_keys(&mut payload, snapshot);
         frame(SNAPSHOT, payload.bytes).unwrap()
+    }
+
+    #[test]
+    fn input_lock_snapshot_rejects_invalid_state_and_conflicting_chords() {
+        let mut snapshot = snapshot();
+        snapshot.input_locked = true;
+        snapshot.input_lock.key = "KeyP".into();
+        let response = Response::Snapshot(snapshot.clone());
+        let bytes = encode_response(&response).unwrap();
+        let tail = bytes.len() - 8;
+        assert_eq!(
+            &bytes[tail..],
+            &[1, ALT | SHIFT, 4, 0, b'K', b'e', b'y', b'P']
+        );
+        assert_eq!(decode_response(&bytes).unwrap(), response);
+        let mut invalid_bit = bytes;
+        invalid_bit[tail] = 2;
+        assert_eq!(
+            decode_response(&invalid_bit),
+            Err(Error::InvalidValue {
+                field: "input locked"
+            })
+        );
+        let rejected = |snapshot: &Snapshot| {
+            let encoded = encode_response(&Response::Snapshot(snapshot.clone()));
+            assert!(encoded.is_err(), "{snapshot:?}");
+            assert_eq!(decode_response(&forge(snapshot)), Err(encoded.unwrap_err()));
+        };
+        snapshot.entries[0].shortcut = PopupKey::Bound(snapshot.input_lock.clone());
+        rejected(&snapshot);
+        snapshot.entries[0].shortcut = PopupKey::Unbound;
+        for (modifiers, key) in [
+            (ALT, "Slash"),
+            (ALT, "KeyM"),
+            (ALT | SHIFT, "Digit0"),
+            (SHIFT, "Tab"),
+            (SUPER, "KeyV"),
+            (SUPER, "KeyH"),
+            (ALT | SUPER, "KeyH"),
+            (0, "KeyI"),
+            (0xf0, "KeyI"),
+            (ALT, "NotAKey"),
+        ] {
+            snapshot.input_lock = Shortcut {
+                modifiers,
+                key: key.into(),
+            };
+            rejected(&snapshot);
+        }
+    }
+
+    #[test]
+    fn input_lock_requests_keep_exact_operation_bytes() {
+        for (operation, byte) in [
+            (InputLock::Unlock, 0),
+            (InputLock::Lock, 1),
+            (InputLock::Toggle, 2),
+        ] {
+            let request = Request {
+                id: "r1".into(),
+                caller: None,
+                action: Action::InputLock(operation),
+            };
+            let encoded = encode_request(&request).unwrap();
+            assert_eq!(&encoded[encoded.len() - 2..], &[47, byte]);
+            assert_eq!(decode_request(&encoded).unwrap(), request);
+        }
     }
 
     #[test]
@@ -5102,7 +5232,10 @@ mod tests {
             snapshot.released_shortcuts = ReleasedShortcuts(mask);
             let response = Response::Snapshot(snapshot.clone());
             let bytes = encode_response(&response).unwrap();
-            assert_eq!(bytes.last(), Some(&mask));
+            assert_eq!(
+                &bytes[bytes.len() - 9..],
+                &[mask, 0, ALT | SHIFT, 4, 0, b'K', b'e', b'y', b'I']
+            );
             assert_eq!(decode_response(&bytes).unwrap(), response);
         }
         let invalid = Error::InvalidSnapshot {
@@ -6069,14 +6202,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57300001000a00000002007231001202007431",
+                "454f4e57310001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57300001001000000002007231000c0200743104002f746d70",
+                "454f4e57310001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -6085,7 +6218,7 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e573000010015000000020072310013020074310300676974010200753101",
+                "454f4e573100010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::InvokePopup {
@@ -6094,22 +6227,22 @@ mod tests {
                     expected_instance: None,
                     intent: InvokeIntent::Show,
                 },
-                "454f4e5730000100110000000200723100130200743103006769740002",
+                "454f4e5731000100110000000200723100130200743103006769740002",
             ),
-            (Action::CreateColumn, "454f4e573000010006000000020072310016"),
+            (Action::CreateColumn, "454f4e573100010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57300001000a00000002007231001702007032",
+                "454f4e57310001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e573000010006000000020072310019",
+                "454f4e573100010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57300001000e00000002007231001a06002f746d702f61",
+                "454f4e57310001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreatePane {
@@ -6117,7 +6250,7 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57300001001100000002007231001b0000020002006878010061",
+                "454f4e57310001001100000002007231001b0000020002006878010061",
             ),
             (
                 Action::CreatePane {
@@ -6125,7 +6258,7 @@ mod tests {
                     argv: vec![b"hx".to_vec()],
                     focus: true,
                 },
-                "454f4e57300001001200000002007231001b010102007433010002006878",
+                "454f4e57310001001200000002007231001b010102007433010002006878",
             ),
             (
                 Action::CreatePane {
@@ -6133,7 +6266,7 @@ mod tests {
                     argv: vec![],
                     focus: false,
                 },
-                "454f4e57300001000e00000002007231001b0001020074330000",
+                "454f4e57310001000e00000002007231001b0001020074330000",
             ),
             (
                 Action::LaunchTab {
@@ -6141,7 +6274,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57300001000f00000002007231002504002f746d70000001",
+                "454f4e57310001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -6149,44 +6282,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57300001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57310001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57300001000600000002007231001c",
+                "454f4e57310001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57300001000e00000002007231001d0200743102007032",
+                "454f4e57310001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57300001000600000002007231001e",
+                "454f4e57310001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57300001000600000002007231001f",
+                "454f4e57310001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57300001000a00000002007231002602007032",
+                "454f4e57310001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57300001000a00000002007231002902007032",
+                "454f4e57310001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57300001000a00000002007231002a02007032",
+                "454f4e57310001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -6195,7 +6328,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e57300001001300000002007231002700020070320000020000006869",
+                "454f4e57310001001300000002007231002700020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -6203,7 +6336,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57300001000d00000002007231002700020075310101",
+                "454f4e57310001000d00000002007231002700020075310101",
             ),
         ] {
             let request = Request {
@@ -6227,7 +6360,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57300001001a00000002007231010e007465726d696e616c2d322e392d311b01000000",
+            "454f4e57310001001a00000002007231010e007465726d696e616c2d322e392d311b01000000",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -6241,6 +6374,8 @@ mod tests {
         let snapshot = Response::Snapshot(Snapshot {
             focus: None,
             released_shortcuts: Default::default(),
+            input_locked: false,
+            input_lock: fixture_input_lock(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -6351,7 +6486,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5730008100c601000001000200020001000100000002007431000000410000804001000300",
+                    "454f4e5731008100ce01000001000200020001000100000002007431000000410000804001000300",
                     "6769740300476974000404004b65794701000200743104002f746d70000102007033010200753103",
                     "0002007031030073703103002f7031010200703100000002007032030073703203002f7032010200",
                     "703200000002007033030073703303002f7033010200703300000102ff0500636f6465780600656f",
@@ -6362,10 +6497,10 @@ mod tests {
                     "396162636465663030303030303030303030303030303100000100010000000000230067312d3030",
                     "303030303030303030303030303030303030303030303030303030303031230067312d3030303030",
                     "303030303030303030303030303030303030303030303030303031230067312d3030303030303030",
-                    "3030303030303030303030303030303030303030303030310000",
+                    "3030303030303030303030303030303030303030303030310000000504004b657949",
                 ),
             ),
-            (failure, "454f4e57300082000a00000004006275737902006e6f"),
+            (failure, "454f4e57310082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -6380,7 +6515,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e573000860038000000",
+                    "454f4e573100860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -6403,7 +6538,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5730008d003c000000",
+                    "454f4e5731008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -6419,7 +6554,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e573000870036000000020073310200743100020070320a007465726d696e616c2d32010200",
+                    "454f4e573100870036000000020073310200743100020070320a007465726d696e616c2d32010200",
                     "73310200743101020075310a007465726d696e616c2d33012c01",
                 ),
             ),
@@ -6430,7 +6565,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e5730008e0033000000",
+                    "454f4e5731008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -6441,7 +6576,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57300085000400000002006731",
+                "454f4e57310085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -6481,8 +6616,8 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e5730008300b6000000230067312d3030303030303030303030303030303030303030303030",
-                "3030303030303030310500302e392e30300002006f6b010002007331010500726561647900040062",
+                "454f4e5731008300b6000000230067312d3030303030303030303030303030303030303030303030",
+                "3030303030303030310500302e392e30310002006f6b010002007331010500726561647900040062",
                 "7573790000000000000000000000230067312d303030303030303030303030303030303030303030",
                 "3030303030303030303031230067312d303030303030303030303030303030303030303030303030",
                 "30303030303030310100020073310b00666978747572652d72756e00080001000000",
@@ -6522,6 +6657,8 @@ mod tests {
         Snapshot {
             focus: None,
             released_shortcuts: Default::default(),
+            input_locked: false,
+            input_lock: fixture_input_lock(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -6583,14 +6720,14 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e57300081003201000001000100010000000100740000000000000000000001000100740100",
+                "454f4e57310081003a01000001000100010000000100740000000000000000000001000100740100",
                 "2f00010100700001000100700200737002002f700101007000000101280000000000000000010000",
                 "00000000000000000000010000000000000202007331020073310100020073310130003031323334",
                 "35363738396162636465663031323334353637383961626364656630303030303030303030303030",
                 "30303100000100010001000200733101007401007001012800000000000000000100000000000000",
                 "0000000000230067312d303030303030303030303030303030303030303030303030303030303030",
                 "3031230067312d303030303030303030303030303030303030303030303030303030303030303123",
-                "0067312d30303030303030303030303030303030303030303030303030303030303030310000",
+                "0067312d30303030303030303030303030303030303030303030303030303030303030310000000504004b657949",
             ),
         );
         assert_eq!(decode_response(&bytes).unwrap(), snapshot);
@@ -6627,7 +6764,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5730008100f101000001000100010000000100740000000000000000000001000100740100",
+                "454f4e5731008100f901000001000100010000000100740000000000000000000001000100740100",
                 "2f00010100700001000100700200737002002f700101007000000101280000000000000000010000",
                 "00000000000000000000010000000000000202007331020073310100020073310130003031323334",
                 "35363738396162636465663031323334353637383961626364656630303030303030303030303030",
@@ -6639,7 +6776,7 @@ mod tests {
                 "30303030303030303030303030303030303030303030303030303032000000010007000023006731",
                 "2d3030303030303030303030303030303030303030303030303030303030303031230067312d3030",
                 "303030303030303030303030303030303030303030303030303030303031230067312d3030303030",
-                "3030303030303030303030303030303030303030303030303030310000",
+                "3030303030303030303030303030303030303030303030303030310000000504004b657949",
             )
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
@@ -6674,8 +6811,8 @@ mod tests {
         let bytes = encode_response(&response).unwrap();
         snapshot.busy = None;
         let without = hex(&encode_response(&Response::Snapshot(snapshot)).unwrap());
-        // Identity, absent focus and the release byte follow the busy list.
-        let identity_at = without.len() - 2 * (111 + 1 + 1);
+        // Identity, absent focus and window key settings follow the busy list.
+        let identity_at = without.len() - 2 * (111 + 1 + 9);
         assert_eq!(
             &hex(&bytes)[24..],
             format!(
@@ -6712,8 +6849,8 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5730008300d1000000230067312d3030303030303030303030303030303030303030303030",
-                "3030303030303030310500302e392e30300002006f6b000001050072656164790105007265616479",
+                "454f4e5731008300d1000000230067312d3030303030303030303030303030303030303030303030",
+                "3030303030303030310500302e392e30310002006f6b000001050072656164790105007265616479",
                 "000000000000000000",
             )
             .to_owned()
@@ -6742,6 +6879,10 @@ mod tests {
             (
                 edit(4, &12_u16.to_le_bytes()),
                 Error::UnsupportedVersion { version: 12 },
+            ),
+            (
+                edit(4, &48_u16.to_le_bytes()),
+                Error::UnsupportedVersion { version: 48 },
             ),
             (edit(6, &[SNAPSHOT]), Error::InvalidKind { value: SNAPSHOT }),
             (edit(7, &[1]), Error::InvalidFlags { value: 1 }),
@@ -7073,7 +7214,7 @@ mod tests {
             assert_eq!(field(decoded), expected, "{request:?}");
         }
 
-        let decode_only: [(&[u8], Error); 15] = [
+        let decode_only: [(&[u8], Error); 16] = [
             // The retired picker opcode.
             (
                 &[13],
@@ -7093,11 +7234,12 @@ mod tests {
                 },
             ),
             (&[43], Error::Truncated),
+            (&[INPUT_LOCK], Error::Truncated),
             (
-                &[47],
+                &[INPUT_LOCK, 3],
                 Error::InvalidTag {
-                    field: "action",
-                    value: 47,
+                    field: "input lock operation",
+                    value: 3,
                 },
             ),
             (
@@ -7127,7 +7269,7 @@ mod tests {
                     field: "presentation mode",
                 },
             ),
-            // v48 carries both pane creations on tag 27; tag 2 is retired.
+            // v47 carries both pane creations on tag 27; tag 2 is retired.
             (
                 &[2, 1],
                 Error::InvalidTag {
@@ -7306,7 +7448,13 @@ mod tests {
             },
         });
         let mut bytes = forge(&empty);
-        *bytes.last_mut().unwrap() = 0;
+        let mut queue = Encoder::default();
+        encode_attention_queue(&mut queue, &empty.attention_queue);
+        let start = bytes
+            .windows(queue.bytes.len())
+            .position(|part| part == queue.bytes)
+            .unwrap();
+        bytes[start + queue.bytes.len() - 1] = 0;
         assert!(decode_response(&bytes).is_err());
     }
 

@@ -258,7 +258,7 @@ exec "$EON_TEST_EXE" --exact supervisor::update::preflight::tests::target_proces
     fn protected(
         &self,
     ) -> (
-        eon_workspace_protocol::v48::Snapshot,
+        eon_workspace_protocol::v49::Snapshot,
         Vec<u8>,
         Vec<(OsString, u64, u64)>,
     ) {
@@ -433,7 +433,7 @@ fn admission_and_lost_reply_leave_a_live_window_untouched() {
         wrong.with_extension("verdict"),
         TargetVerdict {
             target_build: OTHER.into(),
-            eonw: 48,
+            eonw: 49,
             update_schema: 1,
         }
         .encode()
@@ -495,7 +495,7 @@ fn admission_and_lost_reply_leave_a_live_window_untouched() {
     assert_eq!(last.refusal, None, "{last:?}");
     assert_eq!(
         last.detail,
-        format!("target EONW {}", eon_workspace_protocol::v48::VERSION)
+        format!("target EONW {}", eon_workspace_protocol::v49::VERSION)
     );
     assert_eq!(
         sockets,
@@ -653,7 +653,7 @@ fn pipe_failures_and_early_refusal_reap_the_exact_child() {
     );
     let verdict = TargetVerdict {
         target_build: OTHER.into(),
-        eonw: 48,
+        eonw: 49,
         update_schema: 1,
     };
     fs::write(&response, verdict.encode().unwrap()).unwrap();

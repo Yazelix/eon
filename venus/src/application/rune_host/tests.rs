@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::tests::busy_window_snapshot;
-use eon_workspace_protocol::v48::Response;
+use eon_workspace_protocol::v49::Response;
 use std::ffi::OsString;
 use winit::keyboard::{KeyCode, PhysicalKey};
 

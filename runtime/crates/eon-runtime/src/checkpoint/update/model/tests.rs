@@ -9,7 +9,7 @@ use crate::sessions::tests::{finish, rerun, tombstoned_session};
 use crate::workspace::checkpoint::tests::{Source, source_a, source_b};
 use crate::workspace::tests::{catalog, invoke, new_pane, prepared};
 use crate::workspace::{SessionEnd, SessionOperation};
-use eon_workspace_protocol::v48::{Action, WorkspaceAction};
+use eon_workspace_protocol::v49::{Action, WorkspaceAction};
 use orbit_protocol::management::TerminationReason;
 use std::io::Read;
 use std::os::unix::{ffi::OsStrExt, net::UnixStream};

@@ -78,3 +78,4 @@ Option+Shift+H	Show or hide the agent sidebar
 Command+C	Copy selected text or focused link
 Command+V or Paste	Paste
 Command+click	Open link
+Option+Shift+I	Toggle input lock

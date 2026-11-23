@@ -1,5 +1,5 @@
 use super::*;
-use eon_workspace_protocol::v48::{Popup, PopupKey, Shortcut, Snapshot};
+use eon_workspace_protocol::v49::{Popup, PopupKey, Shortcut, Snapshot};
 
 mod chrome;
 mod native;
@@ -15,13 +15,15 @@ pub(super) const GENERATION_G7: &str = "g1-00000000000000000000000000000007";
 /// A workspace snapshot whose one window, g7, is running with p1 (at `endpoint`) busy: a close
 /// request asks before it quits (VEN-C8).
 pub(super) fn busy_window_snapshot(endpoint: Vec<u8>) -> Snapshot {
-    use eon_workspace_protocol::v48::{
+    use eon_workspace_protocol::v49::{
         self as workspace, BusyTerminal, BusyTerminals, Pane, RunningWindows, Tab, TargetId,
         TerminalTarget, WindowEntry, WindowState,
     };
     workspace::Snapshot {
         focus: None,
         released_shortcuts: Default::default(),
+        input_locked: false,
+        input_lock: crate::fixture_input_lock(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
@@ -133,7 +135,7 @@ pub(super) fn show_test_popup(snapshot: &mut Snapshot) {
             id: "project".into(),
             label: "Quick search".into(),
             shortcut: PopupKey::Bound(Shortcut {
-                modifiers: eon_workspace_protocol::v48::ALT,
+                modifiers: eon_workspace_protocol::v49::ALT,
                 key: "KeyZ".into(),
             }),
         },
@@ -141,7 +143,7 @@ pub(super) fn show_test_popup(snapshot: &mut Snapshot) {
             id: "files".into(),
             label: "Files".into(),
             shortcut: PopupKey::Bound(Shortcut {
-                modifiers: eon_workspace_protocol::v48::ALT | eon_workspace_protocol::v48::SHIFT,
+                modifiers: eon_workspace_protocol::v49::ALT | eon_workspace_protocol::v49::SHIFT,
                 key: "KeyY".into(),
             }),
         },

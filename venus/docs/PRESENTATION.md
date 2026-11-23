@@ -91,6 +91,12 @@ those integrations.
   between them. Close's `×` lies as far from the window's right edge as from
   its top. A small empty area lets users drag an undecorated window without
   taking clicks from tabs or controls.
+- While input lock is active, the Eon Bar shows a read-only **LOCKED** badge
+  just before Shortcuts. Its accessible description names the configured
+  unlock chord. Other optional bar items yield before the badge. If the badge
+  cannot fit beside the minimum tab area and the controls, it disappears
+  whole. Shortcuts remains available from the bar and shows which key resumes
+  Eon shortcuts.
 - Codex and Claude facts show one read-only chip per window, five-hour then
   seven-day, each with its provider's mark (the monochrome OpenAI Blossom, or
   Claude's splat in its terracotta `#D97757`),
@@ -694,7 +700,7 @@ Venus                   -> native presentation, interaction, client failure UX
 Orbit                   -> PTYs, terminal state, session lifetime, wire authority
 ```
 
-Venus consumes EONW v48 through the in-tree `eon-workspace-protocol` 0.1.0
+Venus consumes EONW v49 through the in-tree `eon-workspace-protocol` 0.1.0
 crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
 live session and popup state, Session mappings, and provider quota collection

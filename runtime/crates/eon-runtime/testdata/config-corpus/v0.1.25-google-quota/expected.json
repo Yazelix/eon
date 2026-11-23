@@ -102,6 +102,7 @@
       "warning_close_last_tab": true
     },
     "keys": {
+      "input_lock": "Alt+Shift+I",
       "release": []
     },
     "panels": {

@@ -20,7 +20,7 @@ use crate::{
         ShortcutHintsScene, TabBadge, WorkspaceControl, tokens,
     },
 };
-use eon_workspace_protocol::v48::AttentionState;
+use eon_workspace_protocol::v49::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
     RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Wrap,
@@ -2528,6 +2528,11 @@ impl Renderer {
                 );
             }
         }
+        let row_style = if matches!(viewer.kind(), crate::DialogKind::Shortcuts { .. }) {
+            DrawStyleKind::DialogShortcut
+        } else {
+            DrawStyleKind::Status(Wrap::WordOrGlyph)
+        };
         for group in &viewer.groups {
             for row in &group.rows {
                 if row.focused {
@@ -2545,7 +2550,7 @@ impl Renderer {
                     row.label_width,
                     row.rect.height,
                     palette::DARK.shortcut_key_text,
-                    DrawStyleKind::Status(Wrap::WordOrGlyph),
+                    row_style,
                     viewer.content,
                 );
                 let action_left = row.rect.left + row.label_width + viewer.label_gap;
@@ -2557,7 +2562,7 @@ impl Renderer {
                     (row.rect.right() - action_left).max(1.0),
                     row.rect.height,
                     palette::DARK.shortcut_action_text,
-                    DrawStyleKind::Status(Wrap::WordOrGlyph),
+                    row_style,
                     viewer.content,
                 );
             }
@@ -3032,6 +3037,21 @@ impl Renderer {
                 visual,
                 first_text,
                 Some(load_color(label.load)),
+            );
+        }
+        if let Some((bounds, _)) = workspace.input_lock.as_ref() {
+            let visual =
+                workspace.bar_pill_rect(header_item_visual(*bounds, self.metrics), self.metrics);
+            push_bar_widget(rectangles, visual);
+            self.push_chip_label(
+                crate::scene::INPUT_LOCK_LABEL,
+                SceneRect {
+                    left: bounds.left + self.metrics.padding,
+                    width: bounds.width - self.metrics.padding * 2.0,
+                    ..visual
+                },
+                palette::DARK.primary_text,
+                *bounds,
             );
         }
         for control in &workspace.controls {
@@ -4253,10 +4273,12 @@ mod tests {
 
     #[test]
     fn placed_control_glyphs_stay_inside_their_targets() {
-        use eon_workspace_protocol::v48::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v49::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let snapshot = Snapshot {
             focus: None,
             released_shortcuts: Default::default(),
+            input_locked: false,
+            input_lock: crate::fixture_input_lock(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -4557,7 +4579,7 @@ mod tests {
                     .then(|| vertex_color(&triangle[..24]))
             })
         }
-        use eon_workspace_protocol::v48::{CodexQuota, CodexQuotaState, QuotaWindow};
+        use eon_workspace_protocol::v49::{CodexQuota, CodexQuotaState, QuotaWindow};
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let mut renderer = Renderer::hosted(
             device,
@@ -5688,8 +5710,8 @@ mod tests {
         }
     }
 
-    fn popup_sidebar_snapshot() -> eon_workspace_protocol::v48::Snapshot {
-        use eon_workspace_protocol::v48::{
+    fn popup_sidebar_snapshot() -> eon_workspace_protocol::v49::Snapshot {
+        use eon_workspace_protocol::v49::{
             Attention, AttentionRecord, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Snapshot, Tab,
         };
@@ -5721,12 +5743,14 @@ mod tests {
         Snapshot {
             focus: None,
             released_shortcuts: Default::default(),
+            input_locked: false,
+            input_lock: crate::fixture_input_lock(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v49::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -7110,7 +7134,7 @@ mod tests {
         attention.state = AttentionState::Working;
         let record = attention.record.as_mut().unwrap();
         record.app = "antigravity".into();
-        snapshot.attention_queue = vec![eon_workspace_protocol::v48::QueueEntry {
+        snapshot.attention_queue = vec![eon_workspace_protocol::v49::QueueEntry {
             workspace: snapshot.workspace.clone(),
             tab: "t1".into(),
             target: "p1".into(),
@@ -7269,7 +7293,7 @@ mod tests {
                         record.message = "A question on the third line".into();
                         record.app = app.into();
                         record.stale = stale;
-                        snapshot.attention_queue = vec![eon_workspace_protocol::v48::QueueEntry {
+                        snapshot.attention_queue = vec![eon_workspace_protocol::v49::QueueEntry {
                             workspace: snapshot.workspace.clone(),
                             tab: "t1".into(),
                             target: "p1".into(),
@@ -7409,7 +7433,7 @@ mod tests {
             .unwrap();
             let metrics = renderer.metrics();
             let mut snapshot = popup_sidebar_snapshot();
-            snapshot.sidebar = eon_workspace_protocol::v48::Sidebar::Closed;
+            snapshot.sidebar = eon_workspace_protocol::v49::Sidebar::Closed;
             let mut tab = snapshot.tabs.remove(0);
             tab.popups.clear();
             tab.attention_rollup = Some(AttentionState::Background);
@@ -7535,7 +7559,7 @@ mod tests {
                     let record = attention.record.as_mut().unwrap();
                     record.app = app.into();
                     record.message = message.into();
-                    snapshot.attention_queue = vec![eon_workspace_protocol::v48::QueueEntry {
+                    snapshot.attention_queue = vec![eon_workspace_protocol::v49::QueueEntry {
                         workspace: snapshot.workspace.clone(),
                         tab: "t1".into(),
                         target: "p1".into(),
@@ -8173,7 +8197,7 @@ mod tests {
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn long_workspace_labels_stay_on_the_visible_line() {
         use crate::EonBar;
-        use eon_workspace_protocol::v48::{Pane, Snapshot, Tab};
+        use eon_workspace_protocol::v49::{Pane, Snapshot, Tab};
         use winit::{
             application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
@@ -8242,10 +8266,10 @@ mod tests {
                 }
             }
             let mut snapshot = popup_sidebar_snapshot();
-            snapshot.codex_quota = Some(eon_workspace_protocol::v48::CodexQuota {
-                state: eon_workspace_protocol::v48::CodexQuotaState::Fresh,
+            snapshot.codex_quota = Some(eon_workspace_protocol::v49::CodexQuota {
+                state: eon_workspace_protocol::v49::CodexQuotaState::Fresh,
                 observed_at: 1_000_000,
-                windows: vec![eon_workspace_protocol::v48::QuotaWindow {
+                windows: vec![eon_workspace_protocol::v49::QuotaWindow {
                     duration_minutes: 300,
                     remaining_percent: 50,
                     resets_at: Some(1_009_000),
@@ -8487,7 +8511,7 @@ mod tests {
                     quota_dot_color(quota.remaining_percent, quota.pace),
                 );
             }
-            use eon_workspace_protocol::v48::{
+            use eon_workspace_protocol::v49::{
                 ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, GoogleQuota,
                 GoogleQuotaState, QuotaWindow,
             };
@@ -8860,7 +8884,7 @@ mod tests {
             }
             grey_text(painted);
             let dialog = DialogScene::new(
-                crate::DialogKind::Shortcuts,
+                crate::DialogKind::Shortcuts { locked: false },
                 vec![crate::ShortcutGroup::new(
                     "Chrome group",
                     (0..200)
@@ -8954,12 +8978,14 @@ mod tests {
                 let snapshot = Snapshot {
                     focus: None,
                     released_shortcuts: Default::default(),
+                    input_locked: false,
+                    input_lock: crate::fixture_input_lock(),
                     generation: "g1-00000000000000000000000000000001".into(),
                     created_build: "g1-00000000000000000000000000000001".into(),
                     active_build: "g1-00000000000000000000000000000001".into(),
                     workspace: "s1".into(),
                     active_workspace: "s1".into(),
-                    workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
+                    workspaces: vec![eon_workspace_protocol::v49::WorkspaceInfo {
                         id: "s1".into(),
                         persistent_id: Some("s1".into()),
                         registration_error: None,
@@ -8969,7 +8995,7 @@ mod tests {
                         recency: 0,
                     }],
                     active_tab: "t2".into(),
-                    geometry: eon_workspace_protocol::v48::PopupGeometry {
+                    geometry: eon_workspace_protocol::v49::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -8984,7 +9010,7 @@ mod tests {
                             id: format!("t{}", index + 1),
                             directory: format!("/tmp/{directory}").into_bytes(),
                             selected_pane: Some(format!("p{}", index + 1)),
-                            columns: vec![eon_workspace_protocol::v48::Column {
+                            columns: vec![eon_workspace_protocol::v49::Column {
                                 panes: vec![Pane {
                                     label: format!("p{}", index + 1),
                                     pinned_name: None,
@@ -9009,7 +9035,7 @@ mod tests {
                     claude_quota_failure: None,
                     running: None,
                     busy: None,
-                    sidebar: eon_workspace_protocol::v48::Sidebar::Open,
+                    sidebar: eon_workspace_protocol::v49::Sidebar::Open,
                     attention_queue: Vec::new(),
                 };
                 let workspace = WorkspaceScene::from_snapshot(
@@ -9444,19 +9470,19 @@ mod tests {
                 // Shared popup/sidebar titles use the pane metric and interrupt their top edge.
                 snapshot
                     .entries
-                    .push(eon_workspace_protocol::v48::PopupEntry {
+                    .push(eon_workspace_protocol::v49::PopupEntry {
                         id: "files".into(),
                         label: "Files".into(),
-                        shortcut: eon_workspace_protocol::v48::PopupKey::Bound(
-                            eon_workspace_protocol::v48::Shortcut {
-                                modifiers: eon_workspace_protocol::v48::ALT,
+                        shortcut: eon_workspace_protocol::v49::PopupKey::Bound(
+                            eon_workspace_protocol::v49::Shortcut {
+                                modifiers: eon_workspace_protocol::v49::ALT,
                                 key: "KeyF".into(),
                             },
                         ),
                     });
                 snapshot.tabs[1]
                     .popups
-                    .push(eon_workspace_protocol::v48::Popup {
+                    .push(eon_workspace_protocol::v49::Popup {
                         id: "u1".into(),
                         entry: "files".into(),
                         session: "files-session".into(),
@@ -9547,7 +9573,7 @@ mod tests {
                 }
                 self.0 = true;
                 // Popup text must stay clear of its marker, including RTL and zero-width lines.
-                use eon_workspace_protocol::v48::{
+                use eon_workspace_protocol::v49::{
                     Attention, AttentionRecord, Popup, PopupEntry, PopupKey,
                 };
                 let attention = Attention {
@@ -9639,7 +9665,7 @@ mod tests {
     /// by whole pixels to keep the descenders inside.
     #[test]
     fn chip_label_descenders_stay_inside_their_clip_and_chip() {
-        use eon_workspace_protocol::v48::{
+        use eon_workspace_protocol::v49::{
             Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab, WorkspaceInfo,
         };
 
@@ -9671,6 +9697,8 @@ mod tests {
         let snapshot = Snapshot {
             focus: None,
             released_shortcuts: Default::default(),
+            input_locked: false,
+            input_lock: crate::fixture_input_lock(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),

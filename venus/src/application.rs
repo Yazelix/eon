@@ -16,7 +16,7 @@ use crate::{
 use crate::{Result, launch::LaunchArguments};
 use crate::{WindowCommand, external_command};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
-use eon_workspace_protocol::v48::{
+use eon_workspace_protocol::v49::{
     Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, FocusReport, PopupEntry,
     Sidebar, Snapshot, WorkspaceAction as CommonAction,
 };
@@ -28,6 +28,7 @@ use orbit_protocol::{
     },
 };
 use std::{
+    borrow::Cow,
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
     ffi::OsString,
@@ -79,7 +80,7 @@ use shortcuts::{
 };
 
 #[cfg(test)]
-use eon_workspace_protocol::v48::Direction as WorkspaceDirection;
+use eon_workspace_protocol::v49::Direction as WorkspaceDirection;
 #[cfg(test)]
 use shortcuts::{copy_paste_modifiers, native_key_shortcut_for};
 #[cfg(test)]
@@ -247,11 +248,12 @@ impl PresentationState {
     }
 }
 
-fn link_hint(uri: &str, entries: &[PopupEntry]) -> String {
-    link_hint_for(NATIVE_PLATFORM, uri, entries)
-}
-
-fn link_hint_for(platform: NativePlatform, uri: &str, entries: &[PopupEntry]) -> String {
+fn link_hint_for(
+    platform: NativePlatform,
+    uri: &str,
+    entries: &[PopupEntry],
+    input_locked: bool,
+) -> String {
     let open = format!(
         "{}\n{} Open",
         uri.escape_default(),
@@ -260,7 +262,7 @@ fn link_hint_for(platform: NativePlatform, uri: &str, entries: &[PopupEntry]) ->
             .display_label_for(platform),
     );
     let copy = shortcut(NativeShortcutAction::Copy);
-    if copy.overriding_popup(platform, entries).is_none() {
+    if !input_locked && copy.overriding_popup(platform, entries).is_none() {
         format!("{open} · {} Copy", copy.trigger.display_label_for(platform))
     } else {
         open
@@ -268,7 +270,10 @@ fn link_hint_for(platform: NativePlatform, uri: &str, entries: &[PopupEntry]) ->
 }
 
 /// What the window says while Eon refuses refreshes after a failed Stop: Quit retries it.
-fn stop_incomplete_notice(entries: &[PopupEntry]) -> String {
+fn stop_incomplete_notice(entries: &[PopupEntry], input_locked: bool) -> String {
+    if input_locked {
+        return "Quit did not finish. Retry with eon quit.".into();
+    }
     match quit_retry_chord(entries) {
         Some(chord) => format!("Quit did not finish; press {chord} to retry."),
         None => "Quit did not finish.".into(),
@@ -575,7 +580,7 @@ type Wake = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone)]
 enum EventSink {
     Winit(EventLoopProxy<UserEvent>),
-    #[cfg(feature = "candidate-rune")]
+    #[cfg(any(test, feature = "candidate-rune"))]
     Host(Arc<dyn Fn(UserEvent) -> bool + Send + Sync>),
 }
 
@@ -584,7 +589,7 @@ impl EventSink {
     fn send(&self, event: UserEvent) -> bool {
         match self {
             Self::Winit(proxy) => proxy.send_event(event).is_ok(),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Host(send) => send(event),
         }
     }
@@ -592,7 +597,7 @@ impl EventSink {
     fn winit_proxy(&self) -> Option<&EventLoopProxy<UserEvent>> {
         match self {
             Self::Winit(proxy) => Some(proxy),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Host(_) => None,
         }
     }
@@ -772,8 +777,8 @@ struct AttentionInboxState {
 impl AttentionInboxState {
     fn entries<'a>(
         &self,
-        snapshot: &'a eon_workspace_protocol::v48::Snapshot,
-    ) -> impl Iterator<Item = &'a eon_workspace_protocol::v48::QueueEntry> {
+        snapshot: &'a eon_workspace_protocol::v49::Snapshot,
+    ) -> impl Iterator<Item = &'a eon_workspace_protocol::v49::QueueEntry> {
         let filter = self.filter;
         snapshot
             .attention_queue
@@ -781,13 +786,13 @@ impl AttentionInboxState {
             .filter(move |entry| filter.matches(entry.attention.state))
     }
 
-    fn index(&self, snapshot: &eon_workspace_protocol::v48::Snapshot) -> Option<usize> {
+    fn index(&self, snapshot: &eon_workspace_protocol::v49::Snapshot) -> Option<usize> {
         let (tab, target) = self.highlighted.as_ref()?;
         self.entries(snapshot)
             .position(|entry| entry.tab == *tab && entry.target == *target)
     }
 
-    fn select(&mut self, snapshot: &eon_workspace_protocol::v48::Snapshot, index: usize) {
+    fn select(&mut self, snapshot: &eon_workspace_protocol::v49::Snapshot, index: usize) {
         let entries: Vec<_> = self.entries(snapshot).collect();
         self.highlighted = entries
             .get(index.min(entries.len().saturating_sub(1)))
@@ -796,7 +801,7 @@ impl AttentionInboxState {
 
     fn set_filter(
         &mut self,
-        snapshot: &eon_workspace_protocol::v48::Snapshot,
+        snapshot: &eon_workspace_protocol::v49::Snapshot,
         filter: AttentionFilter,
     ) {
         self.filter = filter;
@@ -806,7 +811,7 @@ impl AttentionInboxState {
 
     fn move_highlight(
         &mut self,
-        snapshot: &eon_workspace_protocol::v48::Snapshot,
+        snapshot: &eon_workspace_protocol::v49::Snapshot,
         backwards: bool,
     ) {
         let index = self.index(snapshot).unwrap_or(0);
@@ -822,7 +827,7 @@ impl AttentionInboxState {
 
     fn reconcile(
         &mut self,
-        snapshot: &eon_workspace_protocol::v48::Snapshot,
+        snapshot: &eon_workspace_protocol::v49::Snapshot,
         previous_index: usize,
     ) {
         if self.index(snapshot).is_none() {
@@ -832,7 +837,7 @@ impl AttentionInboxState {
 
     fn refresh(
         &mut self,
-        snapshot: &eon_workspace_protocol::v48::Snapshot,
+        snapshot: &eon_workspace_protocol::v49::Snapshot,
         previous_index: usize,
         presentation: &mut PresentationState,
     ) -> bool {
@@ -884,7 +889,7 @@ impl PendingPaneAction {
     /// None waits for this request's answer; false retires a failed or displaced target.
     fn update(
         &mut self,
-        snapshot: Option<&eon_workspace_protocol::v48::Snapshot>,
+        snapshot: Option<&eon_workspace_protocol::v49::Snapshot>,
         answer: Option<(u64, bool)>,
     ) -> Option<bool> {
         if let Some((_, accepted)) = answer.filter(|(ticket, _)| *ticket == self.ticket) {
@@ -929,7 +934,7 @@ impl PendingClose {
     fn on_workspace(slot: &mut Option<Self>, event: &WorkspaceEvent) -> Option<(CloseScope, bool)> {
         let pending = slot.as_mut()?;
         match event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v48::Response::Confirm(scope)) => {
+            WorkspaceEvent::Response(eon_workspace_protocol::v49::Response::Confirm(scope)) => {
                 pending.answer = (scope.pane == pending.pane).then(|| scope.clone());
             }
             WorkspaceEvent::Answered { ticket, .. } if *ticket == pending.ticket => {
@@ -1063,7 +1068,7 @@ impl ClosePrompt {
 
     /// Whether the snapshot still holds what the prompt names: the tab and pane of a close, or
     /// the running window of a quit.
-    fn names_live_target(&self, snapshot: &eon_workspace_protocol::v48::Snapshot) -> bool {
+    fn names_live_target(&self, snapshot: &eon_workspace_protocol::v49::Snapshot) -> bool {
         match &self.target {
             PromptTarget::CloseTab { tab, action } => snapshot
                 .tabs
@@ -1115,7 +1120,7 @@ fn has_quota(snapshot: &Snapshot) -> bool {
 }
 
 /// Whether `pane` is a pane of some tab of the snapshot.
-fn snapshot_has_pane(snapshot: &eon_workspace_protocol::v48::Snapshot, pane: &str) -> bool {
+fn snapshot_has_pane(snapshot: &eon_workspace_protocol::v49::Snapshot, pane: &str) -> bool {
     snapshot
         .tabs
         .iter()
@@ -1123,7 +1128,7 @@ fn snapshot_has_pane(snapshot: &eon_workspace_protocol::v48::Snapshot, pane: &st
 }
 
 /// The one-based number of the Stack holding `pane`, unless its tab has one column.
-fn stack_number(snapshot: &eon_workspace_protocol::v48::Snapshot, pane: &str) -> Option<usize> {
+fn stack_number(snapshot: &eon_workspace_protocol::v49::Snapshot, pane: &str) -> Option<usize> {
     snapshot.tabs.iter().find_map(|tab| {
         let index = tab
             .columns
@@ -1135,7 +1140,7 @@ fn stack_number(snapshot: &eon_workspace_protocol::v48::Snapshot, pane: &str) ->
 
 /// The Stop `eon quit` sends for the snapshot's window; None without a running-windows
 /// summary (eonbase).
-fn quit_action(snapshot: &eon_workspace_protocol::v48::Snapshot) -> Option<Outgoing> {
+fn quit_action(snapshot: &eon_workspace_protocol::v49::Snapshot) -> Option<Outgoing> {
     let running = snapshot.running.as_ref()?;
     Some(Outgoing::Stop {
         generation: running.this.generation.clone(),
@@ -1144,7 +1149,7 @@ fn quit_action(snapshot: &eon_workspace_protocol::v48::Snapshot) -> Option<Outgo
 
 /// Whether quitting asks first. An absent busy list reads as every terminal busy; an empty one
 /// quits without asking, as `eon quit` does (EON-C11).
-fn quit_asks(snapshot: &eon_workspace_protocol::v48::Snapshot) -> bool {
+fn quit_asks(snapshot: &eon_workspace_protocol::v49::Snapshot) -> bool {
     snapshot
         .busy
         .as_ref()
@@ -1164,7 +1169,7 @@ enum CloseRequest {
 /// quit does, and one without a running-windows summary (eonbase), without a snapshot yet, or
 /// while the workspace is unavailable, detaches.
 fn close_request(
-    snapshot: Option<&eon_workspace_protocol::v48::Snapshot>,
+    snapshot: Option<&eon_workspace_protocol::v49::Snapshot>,
     unavailable: bool,
 ) -> CloseRequest {
     if !unavailable && snapshot.is_some_and(|snapshot| snapshot.running.is_some()) {
@@ -1176,10 +1181,10 @@ fn close_request(
 
 /// Whether an open quit prompt words `next` differently from `current`.
 fn quit_prompt_changed(
-    current: &eon_workspace_protocol::v48::Snapshot,
-    next: &eon_workspace_protocol::v48::Snapshot,
+    current: &eon_workspace_protocol::v49::Snapshot,
+    next: &eon_workspace_protocol::v49::Snapshot,
 ) -> bool {
-    let inputs = |snapshot: &eon_workspace_protocol::v48::Snapshot| {
+    let inputs = |snapshot: &eon_workspace_protocol::v49::Snapshot| {
         (
             snapshot
                 .running
@@ -1242,7 +1247,7 @@ impl QuitProgress {
     /// already under way.
     fn begin(
         &mut self,
-        snapshot: Option<&eon_workspace_protocol::v48::Snapshot>,
+        snapshot: Option<&eon_workspace_protocol::v49::Snapshot>,
     ) -> Option<QuitStep> {
         let snapshot = snapshot.filter(|snapshot| snapshot.running.is_some())?;
         if *self != Self::Idle {
@@ -1260,11 +1265,11 @@ impl QuitProgress {
     /// model holds and `quit_prompt` whether the quit prompt is open.
     fn on_workspace(
         &mut self,
-        current: Option<&eon_workspace_protocol::v48::Snapshot>,
+        current: Option<&eon_workspace_protocol::v49::Snapshot>,
         quit_prompt: bool,
         event: &WorkspaceEvent,
     ) -> QuitEffects {
-        use eon_workspace_protocol::v48::Response;
+        use eon_workspace_protocol::v49::Response;
         let (decides_on, refresh) = match event {
             WorkspaceEvent::Response(Response::Snapshot(snapshot)) => (
                 Some(snapshot),
@@ -2007,7 +2012,7 @@ impl Application {
     fn workspace_scene(&self) -> Option<WorkspaceScene> {
         let state = self.window.as_ref()?;
         self.workspace_model.snapshot().map(|snapshot| {
-            let picker = workspace_picker_tooltip(&snapshot.entries);
+            let picker = workspace_picker_tooltip(&snapshot.entries, snapshot.input_locked);
             let now = local_now();
             WorkspaceScene::from_snapshot_with_zoom(
                 snapshot,
@@ -2064,6 +2069,12 @@ impl Application {
             .map_or_else(ReleasedShortcuts::default, |snapshot| {
                 snapshot.released_shortcuts
             })
+    }
+
+    fn input_locked(&self) -> bool {
+        self.workspace_model
+            .snapshot()
+            .is_some_and(|snapshot| snapshot.input_locked)
     }
 
     /// Whether a dialog takes input from the workspace and terminal.
@@ -2170,6 +2181,11 @@ impl Application {
         };
         let state = self.window.as_ref()?;
         let snapshot = self.workspace_model.snapshot()?;
+        let detach = || {
+            (!snapshot.input_locked)
+                .then(|| detach_chord(&snapshot.entries))
+                .flatten()
+        };
         let tab = match &prompt.target {
             PromptTarget::CloseTab { tab, .. } => tab,
             PromptTarget::QuitOtherWindow(action) => {
@@ -2187,9 +2203,7 @@ impl Application {
                 return Some(DialogScene::close_stack(
                     scope,
                     stack_number(snapshot, &scope.pane),
-                    (scope.end != CloseEnd::Column)
-                        .then(|| detach_chord(&snapshot.entries))
-                        .flatten(),
+                    (scope.end != CloseEnd::Column).then(detach).flatten(),
                     *changed,
                     state.renderer.size(),
                     state.renderer.metrics(),
@@ -2202,7 +2216,7 @@ impl Application {
                 return Some(DialogScene::quit_window(
                     snapshot.running.as_ref()?.this.live_terminals,
                     snapshot.busy.as_ref(),
-                    detach_chord(&snapshot.entries),
+                    detach(),
                     state.renderer.size(),
                     state.renderer.metrics(),
                     prompt.scroll,
@@ -2215,7 +2229,7 @@ impl Application {
         Some(DialogScene::close_last_tab(
             tab,
             &snapshot.entries,
-            detach_chord(&snapshot.entries),
+            detach(),
             close_prompt_workspace(snapshot),
             state.renderer.size(),
             state.renderer.metrics(),
@@ -2230,19 +2244,19 @@ impl Application {
 
     fn shortcut_viewer_scene_with(&self, measure: &dyn DialogText) -> Option<DialogScene> {
         let state = self.window.as_ref()?;
+        let snapshot = self.workspace_model.snapshot()?;
         self.shortcut_viewer.open.then(|| {
             DialogScene::new(
-                DialogKind::Shortcuts,
+                DialogKind::Shortcuts {
+                    locked: snapshot.input_locked,
+                },
                 shortcut_groups(
-                    self.popup_entries(),
-                    self.workspace_model
-                        .snapshot()
-                        .map_or(Sidebar::Off, |snapshot| snapshot.sidebar),
-                    self.workspace_model
-                        .snapshot()
-                        .is_some_and(|snapshot| snapshot.running.is_some()),
+                    &snapshot.entries,
+                    snapshot.sidebar,
+                    snapshot.running.is_some(),
                     self.number_keys,
-                    self.released_shortcuts(),
+                    snapshot.released_shortcuts,
+                    &snapshot.input_lock,
                 ),
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -2473,6 +2487,9 @@ impl Application {
             ),
             PhysicalKey::Unidentified(_) => None,
         };
+        let command = command.filter(|command| {
+            !self.input_locked() || !matches!(command, AttentionInboxCommand::Toggle)
+        });
         let captures = self.attention_inbox.open
             || command.is_some() && self.workspace_model.snapshot().is_some();
         if !self
@@ -2750,17 +2767,45 @@ impl Application {
         if event.state == ElementState::Pressed {
             self.forget_pending();
         }
+        let locked = self.input_locked();
         self.input
             .suppresses_retired_key(event.physical_key, event.state, event.repeat)
-            || self.handle_command_q(event)
+            || self.handle_input_lock_key(event)
+            || (!locked && self.handle_command_q(event))
+            || (locked && self.handle_quit_hold_key(event))
             || self.handle_attention_inbox_key(event)
-            || self.handle_detach_key(event)
-            || self.handle_quit_hold_key(event)
+            || (!locked && (self.handle_detach_key(event) || self.handle_quit_hold_key(event)))
             || self.handle_close_prompt_key(event)
             || self.handle_window_menu_key(event)
             || self.handle_shortcut_viewer_key(event)
-            || self.handle_link_copy(event.physical_key, event.state, event.repeat)
+            || (locked && self.dialog_open())
+            || (!locked && self.handle_link_copy(event.physical_key, event.state, event.repeat))
             || self.handle_workspace_key(event)
+    }
+
+    /// Runtime toggles the current value, which may have changed since Venus last read it.
+    fn handle_input_lock_key(&mut self, event: &ShortcutKey) -> bool {
+        let recognized = shortcut_is_ready(event.state, event.repeat)
+            && self.workspace_model.snapshot().is_some_and(|snapshot| {
+                let chord = &snapshot.input_lock;
+                matches!(event.physical_key, PhysicalKey::Code(code)
+                    if self.input.modifiers() == shortcuts::native_modifiers(chord.modifiers)
+                        && format!("{code:?}") == chord.key)
+            });
+        if !self.input.consumes_input_lock(
+            event.physical_key,
+            event.state,
+            event.repeat,
+            recognized,
+        ) {
+            return false;
+        }
+        if recognized {
+            self.queue_workspace(WorkspaceAction::InputLock(
+                eon_workspace_protocol::v49::InputLock::Toggle,
+            ));
+        }
+        true
     }
 
     /// While a Stop is in flight, Enter's press and its matching release reach nothing.
@@ -2782,12 +2827,14 @@ impl Application {
         if !self.shortcut_viewer.open && self.workspace_model.snapshot().is_none() {
             return false;
         }
-        if native_key_shortcut(
-            event.physical_key,
-            self.input.modifiers(),
-            self.popup_entries(),
-        )
-        .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::NewWindow)
+        let locked = self.input_locked();
+        if !locked
+            && native_key_shortcut(
+                event.physical_key,
+                self.input.modifiers(),
+                self.popup_entries(),
+            )
+            .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::NewWindow)
         {
             return false;
         }
@@ -2804,13 +2851,13 @@ impl Application {
             event.physical_key,
             event.state,
             event.repeat,
-            self.shortcut_viewer.open || command.is_some(),
+            self.shortcut_viewer.open || command.is_some() && !locked,
         ) {
             return false;
         }
         if event.state == ElementState::Pressed {
             match command {
-                Some(ShortcutViewerCommand::Toggle) => {
+                Some(ShortcutViewerCommand::Toggle) if !locked => {
                     self.set_shortcut_viewer(!self.shortcut_viewer.open)
                 }
                 Some(ShortcutViewerCommand::Close) => self.set_shortcut_viewer(false),
@@ -2975,6 +3022,8 @@ impl Application {
             ShortcutHintsScene::new(
                 if self.attention_inbox.open {
                     crate::attention_inbox_hints()
+                } else if snapshot.input_locked {
+                    Vec::new()
                 } else {
                     shortcut_hints_for(
                         NATIVE_PLATFORM,
@@ -2999,7 +3048,7 @@ impl Application {
         self.tab_texts.clear();
         self.quota_widths.clear();
         self.fitted_texts.clear();
-        let picker = workspace_picker_tooltip(&snapshot.entries);
+        let picker = workspace_picker_tooltip(&snapshot.entries, snapshot.input_locked);
         let now = local_now();
         Some(WorkspaceScene::from_snapshot_with_zoom(
             snapshot,
@@ -4067,7 +4116,7 @@ impl Application {
             // generation; exit as on control loss.
             if matches!(
                 event,
-                WorkspaceEvent::Response(eon_workspace_protocol::v48::Response::Ended(_))
+                WorkspaceEvent::Response(eon_workspace_protocol::v49::Response::Ended(_))
             ) {
                 self.native_requests.exit = true;
                 return;
@@ -4144,14 +4193,30 @@ impl Application {
             badge_only,
             labels_only,
             sidebar_toggled,
+            lock_changed,
         ) = match &event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v48::Response::Snapshot(snapshot)) => {
+            WorkspaceEvent::Response(eon_workspace_protocol::v49::Response::Snapshot(snapshot)) => {
                 let current = self.workspace_model.snapshot();
+                let without_lock_change = current
+                    .filter(|current| {
+                        current.input_locked != snapshot.input_locked
+                            || current.input_lock != snapshot.input_lock
+                    })
+                    .map_or(Cow::Borrowed(snapshot), |current| {
+                        Cow::Owned(Snapshot {
+                            input_locked: current.input_locked,
+                            input_lock: current.input_lock.clone(),
+                            ..snapshot.clone()
+                        })
+                    });
+                let lock_changed = matches!(without_lock_change, Cow::Owned(_));
+                let comparable = without_lock_change.as_ref();
                 let attention_only =
-                    current.is_some_and(|current| attention_only_change(current, snapshot));
+                    current.is_some_and(|current| attention_only_change(current, comparable));
                 let (quota_changed, quota_only) =
-                    current.map_or((false, false), |current| quota_change(current, snapshot));
-                let metadata_only = attention_only || quota_only;
+                    current.map_or((false, false), |current| quota_change(current, comparable));
+                let lock_only = lock_changed && current == Some(comparable);
+                let metadata_only = attention_only || quota_only || lock_only;
                 (
                     true,
                     current != Some(snapshot),
@@ -4159,11 +4224,12 @@ impl Application {
                     quota_changed,
                     // Another workspace's attention moves no tab, pane or sidebar row (VEN-C21).
                     attention_only && current.is_some_and(|current| current.tabs == snapshot.tabs),
-                    current.is_some_and(|current| labels_only_change(current, snapshot)),
+                    current.is_some_and(|current| labels_only_change(current, comparable)),
                     current.is_some_and(|current| current.sidebar != snapshot.sidebar),
+                    lock_changed,
                 )
             }
-            _ => (false, false, false, false, false, false, false),
+            _ => (false, false, false, false, false, false, false, false),
         };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable { .. });
         let sidebar_before = (received_snapshot && snapshot_changed)
@@ -4171,13 +4237,14 @@ impl Application {
             .flatten();
         let quota_expired = unavailable && self.workspace_model.snapshot().is_some_and(has_quota);
         let (mut view_changed, workspace_changed) = match event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v48::Response::Failure(failure))
+            WorkspaceEvent::Response(eon_workspace_protocol::v49::Response::Failure(failure))
                 if failure.code == "stop-incomplete" =>
             {
                 let notice = stop_incomplete_notice(
                     self.workspace_model
                         .snapshot()
                         .map_or(&[], |snapshot| &snapshot.entries),
+                    self.input_locked(),
                 );
                 (self.workspace_model.stop_incomplete(notice), false)
             }
@@ -4263,7 +4330,10 @@ impl Application {
             // Bar and sidebar controls wait for repaint; metadata never moves terminal links.
             if labels_only || badge_only || metadata_only {
                 self.presentation.content_changed();
-                if quota_changed || !labels_only && !badge_only && scene.sidebar().is_some() {
+                if quota_changed
+                    || lock_changed
+                    || !labels_only && !badge_only && scene.sidebar().is_some()
+                {
                     self.presentation.unpublish();
                 }
             } else {
@@ -4565,28 +4635,36 @@ impl Application {
             .tabs
             .iter()
             .find(|tab| tab.id == snapshot.active_tab);
-        let position = position_key_action(code, modifiers, snapshot, self.number_keys);
+        let position = if snapshot.input_locked {
+            None
+        } else {
+            position_key_action(code, modifiers, snapshot, self.number_keys)
+        };
         let positional = position.is_some();
-        let action = position.unwrap_or_else(|| {
-            popup_shortcut(
-                code,
-                modifiers,
-                snapshot,
-                has_terminal && terminal_focused(self.window_focused, focus),
-            )
-            .or_else(|| {
-                let selected_pane = active_tab.and_then(|tab| tab.selected_pane.as_deref());
-                workspace_shortcut(
+        let action = if snapshot.input_locked {
+            None
+        } else {
+            position.unwrap_or_else(|| {
+                popup_shortcut(
                     code,
                     modifiers,
-                    &snapshot.entries,
-                    &snapshot.active_tab,
-                    selected_pane,
-                    snapshot.sidebar,
-                    snapshot.released_shortcuts,
+                    snapshot,
+                    has_terminal && terminal_focused(self.window_focused, focus),
                 )
+                .or_else(|| {
+                    let selected_pane = active_tab.and_then(|tab| tab.selected_pane.as_deref());
+                    workspace_shortcut(
+                        code,
+                        modifiers,
+                        &snapshot.entries,
+                        &snapshot.active_tab,
+                        selected_pane,
+                        snapshot.sidebar,
+                        snapshot.released_shortcuts,
+                    )
+                })
             })
-        });
+        };
         let opens_column = match &action {
             Some(WorkspaceAction::CreateColumn) => true,
             Some(WorkspaceAction::MovePaneSideways(side)) => {
@@ -4600,15 +4678,16 @@ impl Application {
             event.physical_key,
             event.state,
             event.repeat,
-            opens_window
-                || quits
-                || toggles_hints
-                || toggles_zoom
-                || cycles_focus
-                || returns_to_terminal
-                || positional
-                || closes_pane
-                || action.is_some(),
+            returns_to_terminal
+                || !snapshot.input_locked
+                    && (opens_window
+                        || quits
+                        || toggles_hints
+                        || toggles_zoom
+                        || cycles_focus
+                        || positional
+                        || closes_pane
+                        || action.is_some()),
         ) {
             if event.state == ElementState::Pressed {
                 self.forget_pending();
@@ -5254,7 +5333,12 @@ impl Application {
                 "Link target exceeds {MAX_LINK_BYTES} bytes; opening and copying are disabled."
             ));
         }
-        Some(link_hint(&link.uri, self.popup_entries()))
+        Some(link_hint_for(
+            NATIVE_PLATFORM,
+            &link.uri,
+            self.popup_entries(),
+            self.input_locked(),
+        ))
     }
 
     fn handle_link_copy(&mut self, key: PhysicalKey, state: ElementState, repeat: bool) -> bool {
@@ -6261,9 +6345,11 @@ impl Application {
                     return;
                 };
                 let modifiers = self.input.modifiers();
-                let pastes = paste_shortcut(event.physical_key, modifiers, self.popup_entries());
-                let copies =
-                    native_key_shortcut(event.physical_key, modifiers, self.popup_entries())
+                let locked = self.input_locked();
+                let pastes =
+                    !locked && paste_shortcut(event.physical_key, modifiers, self.popup_entries());
+                let copies = !locked
+                    && native_key_shortcut(event.physical_key, modifiers, self.popup_entries())
                         .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy);
                 if self.handle_shortcut_key(&ShortcutKey::of(&event)) {
                     bench_trace("input_consumed", "shortcut");
@@ -7178,7 +7264,7 @@ struct ZoomTarget {
     columns: Vec<(String, Vec<String>)>,
 }
 
-fn zoom_target(snapshot: &eon_workspace_protocol::v48::Snapshot) -> Option<ZoomTarget> {
+fn zoom_target(snapshot: &eon_workspace_protocol::v49::Snapshot) -> Option<ZoomTarget> {
     let tab = snapshot
         .tabs
         .iter()
@@ -7252,7 +7338,7 @@ fn diagnose(event: WorkspaceEvent, report: impl FnOnce(&str)) -> Option<Workspac
 /// starts a fresh Venus. Without a snapshot Venus exits before its window opens, and knows
 /// neither its namespace nor its window, so it says only what failed. Fixed error text, as
 /// VEN-C8's notices are.
-fn no_worker_notice(snapshot: Option<&eon_workspace_protocol::v48::Snapshot>) -> String {
+fn no_worker_notice(snapshot: Option<&eon_workspace_protocol::v49::Snapshot>) -> String {
     const FAILED: &str = "Venus could not start its link to Eon.";
     let Some(snapshot) = snapshot else {
         return FAILED.into();
@@ -7542,7 +7628,7 @@ fn step_sidebar_row<'a>(
 /// target's tab is selected; otherwise nowhere yet.
 fn jump_focus(
     jump: &AttentionJump,
-    snapshot: &eon_workspace_protocol::v48::Snapshot,
+    snapshot: &eon_workspace_protocol::v49::Snapshot,
     answer: bool,
 ) -> Option<WorkspaceFocus> {
     if focused_terminal(snapshot) == Some(jump.target.as_str()) {
@@ -7622,12 +7708,12 @@ fn accessibility_workspace_focus(
 /// What a heading's button sends: the popup's dismissal that `eon popup hide` sends, the
 /// sidebar's closing while the sidebar is open, or a Stack's first, unconsented close.
 fn heading_request(
-    snapshot: &eon_workspace_protocol::v48::Snapshot,
+    snapshot: &eon_workspace_protocol::v49::Snapshot,
     action: HeadingAction,
 ) -> Option<WorkspaceAction> {
     match action {
         HeadingAction::HidePopup => active_popup(snapshot).map(|popup| {
-            WorkspaceAction::DismissPopup(eon_workspace_protocol::v48::PopupTarget {
+            WorkspaceAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
                 tab: snapshot.active_tab.clone(),
                 instance: popup.id.clone(),
             })
@@ -7641,7 +7727,7 @@ fn heading_request(
 /// What a Stack's Close button sends: a column close naming that column's expanded pane, with
 /// no consent, which stops nothing (EON-C8). Every Stack asks this way, one pane or many.
 fn stack_close_request(
-    snapshot: &eon_workspace_protocol::v48::Snapshot,
+    snapshot: &eon_workspace_protocol::v49::Snapshot,
     index: usize,
 ) -> Option<WorkspaceAction> {
     if active_popup(snapshot).is_some() {
@@ -7682,7 +7768,7 @@ fn focus_after_stack_close(focus: WorkspaceFocus) -> WorkspaceFocus {
 /// What releasing a held heading button sends: what it sent when `pressed`, while the heading
 /// still sends that. A popup shown in place of the pressed one is not dismissed for it.
 fn held_heading_request(
-    snapshot: &eon_workspace_protocol::v48::Snapshot,
+    snapshot: &eon_workspace_protocol::v49::Snapshot,
     action: HeadingAction,
     pressed: &WorkspaceAction,
 ) -> Option<WorkspaceAction> {
@@ -7693,7 +7779,7 @@ fn held_heading_request(
 /// last pane. That close ends the window, or with other workspaces removes just this one
 /// (EON-C33). Runtime refuses a pane close under a popup, so that close is not asked about.
 fn final_close_tab(
-    snapshot: &eon_workspace_protocol::v48::Snapshot,
+    snapshot: &eon_workspace_protocol::v49::Snapshot,
     action: &WorkspaceAction,
 ) -> Option<String> {
     let [tab] = snapshot.tabs.as_slice() else {
@@ -7714,7 +7800,7 @@ fn final_close_tab(
 
 /// The shown workspace's name or `sN`, which a final close removes while other workspaces
 /// remain; `None` while that close ends the window.
-fn close_prompt_workspace(snapshot: &eon_workspace_protocol::v48::Snapshot) -> Option<String> {
+fn close_prompt_workspace(snapshot: &eon_workspace_protocol::v49::Snapshot) -> Option<String> {
     shown_workspace(snapshot)
         .filter(|&(_, _, count)| count >= 2)
         .map(|(name, _, _)| name.to_owned())
@@ -7894,9 +7980,9 @@ fn next_window_action(
 }
 
 fn peer_window<'a>(
-    snapshot: &'a eon_workspace_protocol::v48::Snapshot,
+    snapshot: &'a eon_workspace_protocol::v49::Snapshot,
     action: &WindowMenuAction,
-) -> Option<&'a eon_workspace_protocol::v48::WindowEntry> {
+) -> Option<&'a eon_workspace_protocol::v49::WindowEntry> {
     snapshot
         .running
         .as_ref()?
@@ -7907,7 +7993,7 @@ fn peer_window<'a>(
 }
 
 fn peer_quit_id<'a>(
-    snapshot: &eon_workspace_protocol::v48::Snapshot,
+    snapshot: &eon_workspace_protocol::v49::Snapshot,
     action: &'a WindowMenuAction,
 ) -> std::result::Result<&'a str, String> {
     let Some(peer) = peer_window(snapshot, action) else {
@@ -7946,7 +8032,7 @@ fn peer_quit_id<'a>(
 
 fn stop_other_window(
     executable: &WindowCommand,
-    snapshot: &eon_workspace_protocol::v48::Snapshot,
+    snapshot: &eon_workspace_protocol::v49::Snapshot,
     action: &WindowMenuAction,
 ) -> std::result::Result<(), String> {
     let id = peer_quit_id(snapshot, action)?;
@@ -8196,7 +8282,7 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     let mut application = Application::new(arguments, EventSink::Winit(event_loop.create_proxy()));
     if application.startup_admission && application.workspace_socket.is_some() {
         let response = crate::read_workspace_response(&mut io::stdin().lock())?;
-        if !matches!(response, eon_workspace_protocol::v48::Response::Snapshot(_)) {
+        if !matches!(response, eon_workspace_protocol::v49::Response::Snapshot(_)) {
             return Err("Venus startup admission requires an Eon workspace snapshot".into());
         }
         application.workspace_model.apply(response);
@@ -8357,7 +8443,7 @@ fn send_focus(mailbox: &FocusMailbox, mut output: impl Write) -> io::Result<()> 
     let mut sent = None;
     while let Some(focused) = mailbox.take() {
         if sent.as_ref() != Some(&focused) {
-            let bytes = eon_workspace_protocol::v48::encode_focus_report(&focused)
+            let bytes = eon_workspace_protocol::v49::encode_focus_report(&focused)
                 .map_err(io::Error::other)?;
             output.write_all(&bytes)?;
             sent = Some(focused);

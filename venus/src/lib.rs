@@ -28,6 +28,15 @@ fn launch_arguments_from_env() -> Result<launch::LaunchArguments> {
     )
 }
 
+#[cfg(test)]
+fn fixture_input_lock() -> eon_workspace_protocol::v49::Shortcut {
+    use eon_workspace_protocol::v49::{ALT, SHIFT, Shortcut};
+    Shortcut {
+        modifiers: ALT | SHIFT,
+        key: "KeyI".into(),
+    }
+}
+
 mod accessibility;
 mod application;
 mod contour;

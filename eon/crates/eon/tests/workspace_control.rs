@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v48::{
+use eon_workspace_protocol::v49::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -334,6 +334,7 @@ fn config_check_validates_offline_without_changing_state() {
         "[terminal]\nfont_size = 18\n[bar]\ncpu_warning_percent = 85\n",
         "[terminal]\nfont_sise = 18\n",
         "[keys]\nrelease = ['Alt+M', 'Alt+W', 'Alt+Q', 'Alt+G']\n",
+        "[keys]\ninput_lock = 'Alt+Shift+P'\n",
     ] {
         fs::write(&path, source).unwrap();
         check(&config);
@@ -494,6 +495,7 @@ fn config_schema_is_complete_offline_and_uses_config_cli_conventions() {
     }
     for path in [
         "editor.kind",
+        "keys.input_lock",
         "keys.release",
         "terminal.font_size",
         "updates.nix_entry",
@@ -514,6 +516,16 @@ fn config_schema_is_complete_offline_and_uses_config_cli_conventions() {
     );
     assert_eq!(
         release["takes_effect"],
+        serde_json::json!(["next-supervisor-start"])
+    );
+    let input_lock = keys
+        .iter()
+        .find(|key| key["path"] == "keys.input_lock")
+        .unwrap();
+    assert_eq!(input_lock["kind"], "string");
+    assert_eq!(input_lock["default"], "Alt+Shift+I");
+    assert_eq!(
+        input_lock["takes_effect"],
         serde_json::json!(["next-supervisor-start"])
     );
     let widgets = keys
@@ -8856,6 +8868,10 @@ fn invalid_presentation_configuration_precedes_supervisor_generation_and_childre
             "[keys]\nrelease = ['Alt+M']\n[popups.project]\nkeybinding = 'alt+m'\n",
             "keys.release: Alt+M is bound to popup \"project\"",
         ),
+        (
+            "[popups.project]\nkeybinding = 'Alt+Shift+I'\n",
+            "keys.input_lock: Alt+Shift+I is bound to popup \"project\"",
+        ),
     ] {
         fs::write(config.join("config.toml"), source).unwrap();
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
@@ -9239,9 +9255,11 @@ cat >/dev/null
         2
     );
 
-    let workspace = invoke(&eon, &runtime, &config, &["session", "--json"]);
-    assert_eq!(workspace.status.code(), Some(1));
-    assert!(stdout(&workspace).contains("\"code\":\"session-unavailable\""));
+    for command in ["session", "lock", "unlock"] {
+        let workspace = invoke(&eon, &runtime, &config, &[command, "--json"]);
+        assert_eq!(workspace.status.code(), Some(1), "{command}: {workspace:?}");
+        assert!(stdout(&workspace).contains("\"code\":\"session-unavailable\""));
+    }
     let wrong_mode = invoke(&binary, &runtime, &config, &[]);
     assert!(!wrong_mode.status.success());
     assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("usage: eonbase"));
@@ -9687,7 +9705,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -9697,7 +9715,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -9708,7 +9726,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -9723,7 +9741,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -9741,14 +9759,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -9770,7 +9788,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -12420,7 +12438,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -16173,7 +16191,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v48::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v49::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -17912,7 +17930,7 @@ fn previous_runtime(id: &str) -> Runtime {
     Runtime {
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
-        terminal_inventory: vec![eon_workspace_protocol::v48::TerminalInventory {
+        terminal_inventory: vec![eon_workspace_protocol::v49::TerminalInventory {
             terminal: "terminal-1".into(),
             run: "fixture-run".into(),
             origin_build: None,
@@ -18049,7 +18067,7 @@ fn default_alias_fixture(
             snapshot.active_build = record.active_build.clone();
             snapshot.running = None;
             if current && id == ids.last().unwrap() {
-                use eon_workspace_protocol::v48::{RunningWindows, WindowEntry, WindowState};
+                use eon_workspace_protocol::v49::{RunningWindows, WindowEntry, WindowState};
                 snapshot.running = Some(RunningWindows {
                     this: WindowEntry {
                         window: None,
@@ -19034,7 +19052,7 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     stream.read_to_end(&mut reply).unwrap();
     assert_eq!(
         decode_response(&reply),
-        Err(eon_workspace_protocol::v48::Error::UnsupportedVersion {
+        Err(eon_workspace_protocol::v49::Error::UnsupportedVersion {
             version: VERSION - 1
         })
     );
@@ -19070,6 +19088,8 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
         ),
         (&["quit"][..], &b""[..]),
         (&["session", "--json"][..], &b""[..]),
+        (&["lock", "--json"][..], &b""[..]),
+        (&["unlock", "--json"][..], &b""[..]),
         (&["pane", "read", "p2", "--json"][..], &b""[..]),
         (
             &["pane", "rename", "p2", "two words", "--json"][..],
@@ -20070,7 +20090,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             &control,
             id,
             ProtocolAction::SendTerminal {
-                target: eon_workspace_protocol::v48::SendTarget::Id(pane.id.clone()),
+                target: eon_workspace_protocol::v49::SendTarget::Id(pane.id.clone()),
                 force: false,
                 input,
             },
@@ -22407,7 +22427,7 @@ fn popup_show_scrollback_access_precedes_stale_and_replay_checks() {
         protocol_action(
             &window.control(),
             "hide",
-            ProtocolAction::DismissPopup(eon_workspace_protocol::v48::PopupTarget {
+            ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
                 tab: "t1".into(),
                 instance: popup.id
             })
@@ -22548,7 +22568,7 @@ fn popup_show_refusals_precede_history_pair_and_input_effects() {
     protocol_action(
         &window.control(),
         "hide-scrollback",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v48::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
             tab: "t1".into(),
             instance: popup.id,
         }),
@@ -22672,7 +22692,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
     protocol_action(
         &window.control(),
         "hide-background",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v48::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
             tab: target.id.clone(),
             instance: popup.id.clone(),
         }),
@@ -22740,7 +22760,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
         &window.control(),
         "hide-hidden",
         Some(&caller),
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v48::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
             tab: target.id.clone(),
             instance: hidden_popup.id.clone(),
         }),
@@ -23497,7 +23517,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
 
 #[test]
 fn focused_send_reports_the_persons_terminal_and_guards_enter() {
-    use eon_workspace_protocol::v48::{FocusReport, encode_focus_report};
+    use eon_workspace_protocol::v49::{FocusReport, encode_focus_report};
     let root = temporary_directory();
     let fifo = root.join("focus-reports");
     assert!(
@@ -23700,7 +23720,7 @@ fn focused_send_reports_the_persons_terminal_and_guards_enter() {
     let before = sent();
     assert!(
         matches!(protocol_action(&control, "guarded-old-pane", ProtocolAction::SendTerminal {
-        target: eon_workspace_protocol::v48::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
+        target: eon_workspace_protocol::v49::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
         force: true, input: TerminalInput::Enter,
     }), Response::Failure(failure) if failure.code == "focus-changed")
     );
@@ -25432,7 +25452,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
                         created_build: "g1-00000000000000000000000000000001".into(),
                         active_build: "g1-00000000000000000000000000000001".into(),
-                        terminal_inventory: vec![eon_workspace_protocol::v48::TerminalInventory {
+                        terminal_inventory: vec![eon_workspace_protocol::v49::TerminalInventory {
                             terminal: "terminal-1".into(),
                             run: "fixture-run".into(),
                             origin_build: None,
@@ -26016,6 +26036,16 @@ fn tutor_consumes_the_real_effective_keymap_projection() {
         );
         let after = presented(&run(&["session", "--json"]));
         assert_eq!(after, before);
+        if !override_tab {
+            assert_eq!(presented(&run(&["lock", "--json"]))["input_locked"], true);
+            let lesson = run(&["tutor", "1"]);
+            assert!(lesson.status.success(), "{lesson:?}");
+            assert!(!stdout(&lesson).contains("Key:"), "{lesson:?}");
+            assert!(
+                stdout(&lesson).contains("CLI: eon tab create"),
+                "{lesson:?}"
+            );
+        }
         window.stop_generation(&mut supervisor);
     }
 }
@@ -26070,7 +26100,7 @@ fn keys_cli_errors_and_live_projection() {
     // Live workspace with sidebar disabled, unbound editor popup, fixed-key override (Alt+M),
     // and popup-vs-popup override (Alt+Shift+J on git).
     let (root, mut default) = quit_workspace_with_config(
-        "[keys]\nrelease = ['Alt+W', 'Alt+G']\n\n[sidebar]\nenabled = false\n\n[popups.editor]\nkeybinding = \"\"\n\n[popups.custom]\ncommand = [\"sh\"]\nkeybinding = \"Alt+M\"\nlabel = \"Custom\"\n\n[popups.clash]\ncommand = [\"sh\"]\nkeybinding = \"Alt+Shift+J\"\nlabel = \"Clash\"\n",
+        "[keys]\ninput_lock = 'Alt+Shift+P'\nrelease = ['Alt+W', 'Alt+G']\n\n[sidebar]\nenabled = false\n\n[popups.editor]\nkeybinding = \"\"\n\n[popups.custom]\ncommand = [\"sh\"]\nkeybinding = \"Alt+M\"\nlabel = \"Custom\"\n\n[popups.clash]\ncommand = [\"sh\"]\nkeybinding = \"Alt+Shift+J\"\nlabel = \"Clash\"\n",
     );
     let run = |args: &[&str], caller: Option<&[u8]>| {
         let mut command = quit_command(&root);
@@ -26106,6 +26136,7 @@ fn keys_cli_errors_and_live_projection() {
     assert_eq!(keymap["number_keys"], true);
     assert_eq!(keymap["number_keys_source"], "config");
     assert_eq!(keymap["running"], true);
+    assert_eq!(keymap["input_locked"], false);
 
     // Groups in `eon keys --json` match `viewer_groups` built directly from snapshot.
     let socket = generation_runtime(&root.join("r")).join("eon.sock");
@@ -26120,6 +26151,7 @@ fn keys_cli_errors_and_live_projection() {
         snapshot.running.is_some(),
         true,
         snapshot.released_shortcuts,
+        &snapshot.input_lock,
     );
     let json_groups: Vec<(String, Vec<(String, String)>)> = keymap["groups"]
         .as_array()
@@ -26154,6 +26186,18 @@ fn keys_cli_errors_and_live_projection() {
     assert_eq!(json_groups, direct_groups);
 
     let bindings = keymap["bindings"].as_array().unwrap();
+    let toggle = |keymap: &serde_json::Value| {
+        keymap["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|binding| binding["action"] == "toggle_input_lock")
+            .unwrap()
+            .clone()
+    };
+    let lock_binding = toggle(&keymap);
+    assert_eq!(lock_binding["source"], "configured");
+    assert_eq!(lock_binding["chords"][0]["config"], "Alt+Shift+P");
     let released = |keymap: &serde_json::Value| {
         keymap["bindings"]
             .as_array()
@@ -26251,6 +26295,20 @@ fn keys_cli_errors_and_live_projection() {
     assert_eq!(win_out.status.code(), Some(0), "{win_out:?}");
     let win_json: serde_json::Value = serde_json::from_slice(&win_out.stdout).unwrap();
     assert_eq!(win_json["window"], window_id);
+    for _ in 0..2 {
+        let locked = presented(&run(&["lock", "--window", &window_id, "--json"], None));
+        assert_eq!(locked["window"], window_id);
+        assert_eq!(locked["input_locked"], true);
+    }
+    assert_eq!(
+        presented(&run(&["session", "--json"], None)),
+        session_before
+    );
+    let locked_keys = run(&["--window", &window_id, "keys", "--json"], None);
+    assert!(locked_keys.status.success(), "{locked_keys:?}");
+    let locked_keys: serde_json::Value = serde_json::from_slice(&locked_keys.stdout).unwrap();
+    assert_eq!(locked_keys["input_locked"], true);
+    assert_eq!(toggle(&locked_keys), lock_binding);
 
     // Updating [session] number_keys on disk updates `eon keys` without supervisor reload.
     let config_path = root.join("config/config.toml");
@@ -26259,7 +26317,9 @@ fn keys_cli_errors_and_live_projection() {
         &config_path,
         format!(
             "{}\n[session]\nnumber_keys = false\n",
-            valid_config.replace("release = ['Alt+W', 'Alt+G']", "release = []")
+            valid_config
+                .replace("release = ['Alt+W', 'Alt+G']", "release = []")
+                .replace("input_lock = 'Alt+Shift+P'", "input_lock = 'Alt+Shift+I'")
         ),
     )
     .unwrap();
@@ -26269,6 +26329,7 @@ fn keys_cli_errors_and_live_projection() {
     assert_eq!(disk_json["number_keys"], false);
     assert_eq!(disk_json["number_keys_source"], "config");
     assert_eq!(released(&disk_json), released(&keymap));
+    assert_eq!(toggle(&disk_json), lock_binding);
     let attached = run(&["window", "attach", "default"], None);
     assert!(attached.status.success(), "{attached:?}");
     let caller = quit_caller(&root.join("r"));
@@ -26292,6 +26353,8 @@ fn keys_cli_errors_and_live_projection() {
     assert_eq!(bad_json.status.code(), Some(1), "{bad_json:?}");
     let bad_err: serde_json::Value = serde_json::from_slice(&bad_json.stdout).unwrap();
     assert_eq!(bad_err["error"]["code"], "invalid-configuration");
+    let unlocked = presented(&run(&["unlock", "--window", &window_id, "--json"], None));
+    assert_eq!(unlocked["input_locked"], false);
     let bad_human = run(&["keys"], None);
     assert_eq!(bad_human.status.code(), Some(1), "{bad_human:?}");
     assert!(bad_human.stdout.is_empty());
@@ -26378,7 +26441,7 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
     );
     assert_eq!(
         failure.reason,
-        eon_workspace_protocol::v48::QuotaFailureReason::Start
+        eon_workspace_protocol::v49::QuotaFailureReason::Start
     );
     drop(supervisor);
 }
@@ -26760,10 +26823,10 @@ fn native_quota_deadline_bounds_the_window_and_leaves_time_for_the_store() {
         let id = format!("g1-{:032x}", 151);
         write_native_quota_config(&root);
         let mut snapshot = inspected_snapshot();
-        snapshot.codex_quota = Some(eon_workspace_protocol::v48::CodexQuota {
-            state: eon_workspace_protocol::v48::CodexQuotaState::Fresh,
+        snapshot.codex_quota = Some(eon_workspace_protocol::v49::CodexQuota {
+            state: eon_workspace_protocol::v49::CodexQuotaState::Fresh,
             observed_at: 1,
-            windows: vec![eon_workspace_protocol::v48::QuotaWindow {
+            windows: vec![eon_workspace_protocol::v49::QuotaWindow {
                 duration_minutes: 300,
                 remaining_percent: 80,
                 resets_at: None,
@@ -27177,10 +27240,10 @@ fn native_quota_fills_only_the_providers_the_window_lacks_from_the_store() {
     let id = format!("g1-{:032x}", 156);
     let now = unix_seconds();
     let mut snapshot = inspected_snapshot();
-    snapshot.codex_quota = Some(eon_workspace_protocol::v48::CodexQuota {
-        state: eon_workspace_protocol::v48::CodexQuotaState::Fresh,
+    snapshot.codex_quota = Some(eon_workspace_protocol::v49::CodexQuota {
+        state: eon_workspace_protocol::v49::CodexQuotaState::Fresh,
         observed_at: now - 5,
-        windows: vec![eon_workspace_protocol::v48::QuotaWindow {
+        windows: vec![eon_workspace_protocol::v49::QuotaWindow {
             duration_minutes: 300,
             remaining_percent: 90,
             resets_at: None,

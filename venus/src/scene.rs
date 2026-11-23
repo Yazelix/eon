@@ -9,8 +9,8 @@ use crate::{
     render::CellMetrics,
 };
 #[cfg(test)]
-use eon_workspace_protocol::v48::{ALT, SHIFT};
-use eon_workspace_protocol::v48::{
+use eon_workspace_protocol::v49::{ALT, SHIFT};
+use eon_workspace_protocol::v49::{
     Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
     CloseScope, CodexQuotaState, GoogleQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, Sidebar,
     Snapshot, Tab, TargetId,
@@ -404,7 +404,7 @@ pub enum WorkspaceHeaderControl {
 impl WorkspaceHeaderControl {
     /// The tooltip and accessible name, which drop the chord when a configured popup takes
     /// this control's key (VEN-C20). Eon reserves Alt+/.
-    fn label(self, entries: &[PopupEntry]) -> String {
+    fn label(self, entries: &[PopupEntry], input_locked: bool) -> String {
         use eon_workspace_protocol::shortcuts::{Action, Platform, PopupPolicy, shortcut};
         let (label, action) = match self {
             Self::WindowMenu => return "Window menu".into(),
@@ -423,7 +423,7 @@ impl WorkspaceHeaderControl {
                     .bound()
                     .is_some_and(|key| key.modifiers == chord.modifiers && key.key == chord.key)
             });
-        if taken {
+        if input_locked || taken {
             label.into()
         } else {
             format!("{label} — {}", chord.display(Platform::CURRENT))
@@ -511,6 +511,8 @@ pub(crate) enum QuotaWindowIdentity {
     /// EONW index before presentation filtering; source removal/reordering can change it.
     Google(u8),
 }
+
+pub(crate) const INPUT_LOCK_LABEL: &str = "LOCKED";
 
 /// One read-only informational label in the workspace header.
 #[derive(Clone, Debug, PartialEq)]
@@ -795,7 +797,7 @@ pub enum WindowMenuAction {
 
 impl WindowMenuAction {
     #[must_use]
-    pub fn peer(window: &eon_workspace_protocol::v48::WindowEntry) -> Self {
+    pub fn peer(window: &eon_workspace_protocol::v49::WindowEntry) -> Self {
         Self::QuitOther {
             // The full generation hex names a default-namespace peer across upgrades.
             id: window.window.clone().unwrap_or_else(|| {
@@ -811,8 +813,8 @@ impl WindowMenuAction {
 }
 
 #[must_use]
-pub fn window_summary(window: &eon_workspace_protocol::v48::WindowEntry) -> String {
-    use eon_workspace_protocol::v48::WindowState;
+pub fn window_summary(window: &eon_workspace_protocol::v49::WindowEntry) -> String {
+    use eon_workspace_protocol::v49::WindowState;
     let id = window
         .window
         .as_deref()
@@ -1255,7 +1257,10 @@ pub fn attention_inbox_hints() -> Vec<ShortcutHint> {
 }
 
 /// How the Shortcuts viewer closes, its whole footer while every row shows.
-fn shortcuts_close() -> String {
+fn shortcuts_close(locked: bool) -> String {
+    if locked {
+        return "Esc to close".into();
+    }
     use eon_workspace_protocol::shortcuts::{Action, Platform, shortcut};
     format!(
         "Esc or {} to close",
@@ -1268,7 +1273,9 @@ fn shortcuts_close() -> String {
 /// What the one native dialog shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogKind {
-    Shortcuts,
+    Shortcuts {
+        locked: bool,
+    },
     AttentionInbox,
     WindowMenu,
     QuitOtherWindow {
@@ -1308,9 +1315,9 @@ impl DialogKind {
     #[must_use]
     pub(crate) fn title(&self) -> Cow<'static, str> {
         match self {
-            Self::Shortcuts => "Shortcuts".into(),
+            Self::Shortcuts { .. } => "Shortcuts".into(),
             Self::AttentionInbox => "Attention inbox".into(),
-            Self::WindowMenu => WorkspaceHeaderControl::WindowMenu.label(&[]).into(),
+            Self::WindowMenu => WorkspaceHeaderControl::WindowMenu.label(&[], false).into(),
             Self::QuitOtherWindow { .. } => "Quit this other window?".into(),
             Self::CloseLastTab { .. } => "Close the last tab?".into(),
             Self::QuitWindow { .. } => "Quit this window?".into(),
@@ -1331,7 +1338,10 @@ impl DialogKind {
     #[must_use]
     pub(crate) fn subtitle(&self) -> Cow<'static, str> {
         match self {
-            Self::Shortcuts => "Eon surface · physical keys".into(),
+            Self::Shortcuts { locked: false } => "Eon surface · physical keys".into(),
+            Self::Shortcuts { locked: true } => {
+                "Input locked · shortcuts resume after unlock".into()
+            }
             Self::AttentionInbox => "Agents needing your attention".into(),
             Self::WindowMenu => "Running Eon windows".into(),
             Self::QuitOtherWindow { name } => name.clone().into(),
@@ -1394,7 +1404,12 @@ impl DialogKind {
     #[must_use]
     pub(crate) fn footer(&self) -> Vec<String> {
         match self {
-            Self::Shortcuts => vec![format!("Wheel or ↑↓ to scroll · {}", shortcuts_close())],
+            Self::Shortcuts { locked } => {
+                vec![format!(
+                    "Wheel or ↑↓ to scroll · {}",
+                    shortcuts_close(*locked)
+                )]
+            }
             Self::WindowMenu => {
                 vec!["↑↓ or Tab to choose · Enter to activate · Esc to close".into()]
             }
@@ -1520,7 +1535,7 @@ pub struct DialogScene {
 impl DialogScene {
     #[must_use]
     pub fn quit_other_window(
-        window: &eon_workspace_protocol::v48::WindowEntry,
+        window: &eon_workspace_protocol::v49::WindowEntry,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
@@ -1553,7 +1568,7 @@ impl DialogScene {
     }
     #[must_use]
     pub fn window_menu(
-        running: &eon_workspace_protocol::v48::RunningWindows,
+        running: &eon_workspace_protocol::v49::RunningWindows,
         entries: &[PopupEntry],
         highlighted: Option<&WindowMenuAction>,
         size: PhysicalSize<u32>,
@@ -1625,8 +1640,10 @@ impl DialogScene {
     /// The footer's hint lines; Shortcuts mention scrolling only while their rows overflow.
     #[must_use]
     pub(crate) fn footer(&self) -> Vec<String> {
-        if self.kind == DialogKind::Shortcuts && self.max_scroll == 0.0 {
-            vec![shortcuts_close()]
+        if let DialogKind::Shortcuts { locked } = self.kind
+            && self.max_scroll == 0.0
+        {
+            vec![shortcuts_close(locked)]
         } else {
             self.kind.footer()
         }
@@ -1693,10 +1710,13 @@ impl DialogScene {
         let padding = dialog_padding(metrics, width - side * 2.0);
         let chrome_height = padding + line * 3.0 + footer_height;
         let heading_height = line * 1.4;
-        // Whole-pixel rows keep their edges on the pixel grid wherever they stack.
-        let row_height = (line * 1.3).round();
-        // Status text wraps onto lines this tall.
-        let wrapped_line = line * WRAPPED_LINE_ROWS;
+        let shortcuts = matches!(kind, DialogKind::Shortcuts { .. });
+        // The shortcuts grid uses the same compact line advance as its renderer.
+        let (row_height, wrapped_line) = if shortcuts {
+            (chrome_title_metrics(metrics).text_height.ceil(), line)
+        } else {
+            ((line * 1.3).round(), line * WRAPPED_LINE_ROWS)
+        };
         let group_gap = line * 0.5;
         let label_gap = metrics.padding * 1.5;
         let column_gap = metrics.padding * 2.5;
@@ -1798,7 +1818,7 @@ impl DialogScene {
             .fold(0.0, f32::max);
         let mut desc = natural.min(usable - fixed(&[widest_label])).max(1.0);
         let mut chosen = place(&[desc], None);
-        let max_columns = if kind == DialogKind::Shortcuts { 3 } else { 1 };
+        let max_columns = if shortcuts { 3 } else { 1 };
         for columns in 2..=max_columns {
             if chosen.3 <= room {
                 break;
@@ -2320,6 +2340,8 @@ pub struct WorkspaceScene {
     pub(crate) disk: Option<WorkspaceLabel>,
     pub(crate) gpu: Option<WorkspaceLabel>,
     pub(crate) clock: Option<WorkspaceLabel>,
+    /// The input-lock status bounds and the native label of the unlock chord.
+    pub(crate) input_lock: Option<(SceneRect, String)>,
     pub(crate) controls: [WorkspaceControl; 3],
     pub hints: Option<ShortcutHintsScene>,
     /// The selected column's headers and terminal; `other_columns` holds the rest.
@@ -2785,9 +2807,10 @@ fn workspace_header_geometry(
     tab_height: f32,
     metrics: CellMetrics,
     requested_lead: f32,
-    requested_quota_width: Option<f32>,
+    requested_status_width: Option<f32>,
     edge: f32,
     entries: &[PopupEntry],
+    input_locked: bool,
 ) -> (
     SceneRect,
     SceneRect,
@@ -2819,7 +2842,7 @@ fn workspace_header_geometry(
     let spare = (width - controls_width - drag_width - minimum_tabs).max(0.0);
     let lead_fits = requested_lead.is_finite() && requested_lead <= spare;
     let lead = if lead_fits { requested_lead } else { 0.0 };
-    let quota_width = requested_quota_width
+    let quota_width = requested_status_width
         .filter(|quota| lead_fits && quota.is_finite() && *quota <= spare - lead)
         .unwrap_or(0.0);
     let tab_width = (width - controls_width - drag_width - lead - quota_width).max(0.0);
@@ -2866,7 +2889,7 @@ fn workspace_header_geometry(
                 ..SceneRect::default()
             },
             centre: left + width.min(control_width) / 2.0,
-            label: kind.label(entries),
+            label: kind.label(entries, input_locked),
         };
         left += width;
         control
@@ -3587,7 +3610,7 @@ impl WorkspaceScene {
         let tab_height = header_heights(metrics).0.min(size.height as f32);
         let edge = bar_edge(metrics, tab_height, tab_height);
         let (_, tab_viewport, _, _, _) =
-            workspace_header_geometry(size, tab_height, metrics, 0.0, None, edge, &[]);
+            workspace_header_geometry(size, tab_height, metrics, 0.0, None, edge, &[], false);
         (tab_max_width(metrics, tab_viewport.width) - metrics.padding * 2.0)
             .max(0.0)
             .floor()
@@ -3872,9 +3895,16 @@ impl WorkspaceScene {
         let button = tab_row(metrics, tab_height);
         let circle = (pill_band.end - pill_band.start).round().min(button);
         let before_shortcuts = (chip_inset - (button - circle) / 2.0).max(0.0);
+        let mut lock_width = if snapshot.input_locked {
+            header_text(HeaderText::Fact, INPUT_LOCK_LABEL).1.ceil() + metrics.padding * 2.0
+        } else {
+            0.0
+        };
         let geometry = loop {
-            let requested = (!quotas.is_empty()).then(|| {
-                quotas.iter().map(|quota| quota.rect.width).sum::<f32>() + before_shortcuts
+            let requested = (!quotas.is_empty() || lock_width > 0.0).then(|| {
+                quotas.iter().map(|quota| quota.rect.width).sum::<f32>()
+                    + lock_width
+                    + before_shortcuts
             });
             let geometry = workspace_header_geometry(
                 size,
@@ -3884,21 +3914,27 @@ impl WorkspaceScene {
                 requested,
                 edge,
                 &snapshot.entries,
+                snapshot.input_locked,
             );
             if geometry.3.is_none() && !quotas.is_empty() {
                 // The chip closest to the tabs yields first.
                 quotas.remove(0);
                 continue;
             }
-            if geometry.1.left == 0.0 && workspace_label.is_some() {
-                workspace_label = None;
+            if (geometry.1.left == 0.0 || lock_width > 0.0 && geometry.3.is_none())
+                && workspace_label.take().is_some()
+            {
                 lead = eon_icon.map_or(0.0, |_| start);
+                continue;
+            }
+            if lock_width > 0.0 && geometry.3.is_none() {
+                lock_width = 0.0;
                 continue;
             }
             break geometry;
         };
         let (header, mut tab_viewport, mut drag_region, quota_rect, mut controls) = geometry;
-        let mut spaced = !quotas.is_empty();
+        let mut spaced = !quotas.is_empty() || lock_width > 0.0;
         // Without room for the tabs' minimum after them, the label and the icon are dropped.
         let crowded = tab_viewport.left == 0.0;
         if crowded {
@@ -3911,7 +3947,8 @@ impl WorkspaceScene {
                 .map(|icon| WorkspaceControl {
                     kind: WorkspaceHeaderControl::WindowMenu,
                     centre: icon.left + icon.width / 2.0,
-                    label: WorkspaceHeaderControl::WindowMenu.label(&snapshot.entries),
+                    label: WorkspaceHeaderControl::WindowMenu
+                        .label(&snapshot.entries, snapshot.input_locked),
                     rect: SceneRect {
                         top: 0.0,
                         height: header.height,
@@ -4030,10 +4067,17 @@ impl WorkspaceScene {
         controls[0].centre += tab_viewport.right() - controls[0].rect.left;
         controls[0].rect.left = tab_viewport.right();
         drag_region.left = controls[0].rect.right();
-        drag_region.width = (quotas
-            .first()
-            .map_or(controls[1].rect.left, |quota| quota.rect.left)
-            - drag_region.left)
+        drag_region.width = (quotas.first().map_or_else(
+            || {
+                controls[1].rect.left
+                    - if lock_width > 0.0 {
+                        lock_width + before_shortcuts
+                    } else {
+                        0.0
+                    }
+            },
+            |quota| quota.rect.left,
+        ) - drag_region.left)
             .max(0.0);
         // Read-only labels take spare header space without shortening tabs, in this order, and
         // stop at the first that does not fit: GPU yields first, then disk, RAM and CPU use. The
@@ -4147,7 +4191,25 @@ impl WorkspaceScene {
             }
         }
         let [(_, cpu), (_, ram), (_, disk), (_, gpu)] = labels;
-        // Shortcuts' target reaches back over that space, so it only grows.
+        let input_lock = (lock_width > 0.0).then(|| {
+            let bounds = SceneRect {
+                left,
+                width: lock_width,
+                height: tab_height,
+                ..SceneRect::default()
+            };
+            left = bounds.right();
+            let chord = &snapshot.input_lock;
+            (
+                bounds,
+                eon_workspace_protocol::shortcuts::display_chord(
+                    eon_workspace_protocol::shortcuts::Platform::CURRENT,
+                    chord.modifiers,
+                    &chord.key,
+                ),
+            )
+        });
+        // Shortcuts' target reaches back over the gap, stopping at the last status item.
         let grow = if spaced { before_shortcuts } else { 0.0 };
         controls[1].centre += left + grow - controls[1].rect.left;
         controls[1].rect.left = left;
@@ -4240,6 +4302,7 @@ impl WorkspaceScene {
                 disk,
                 gpu,
                 clock,
+                input_lock,
                 controls,
                 hints,
                 panes: Vec::new(),
@@ -4480,6 +4543,7 @@ impl WorkspaceScene {
             disk,
             gpu,
             clock,
+            input_lock,
             controls,
             hints,
             panes,

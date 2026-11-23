@@ -796,8 +796,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     prompt: "Close the last tab? This quits the window and stops N
     terminals." It lists the tab's panes and popups by title from the current
     snapshot, then "Enter Quit · Esc Cancel", then the hint line "Alt+Shift+D
-    keeps it running instead", which is left out while a popup takes
-    Alt+Shift+D (EON-C20); Alt+Shift+D works while the prompt is open. While
+    keeps it running instead" when that shortcut is available (EON-C20,
+    VEN-C8). The admitted detach shortcut works while the prompt is open. While
     other sessions remain, the prompt shows too, with EON-C33's wording:
     "This closes session NAME and stops N terminals." and "Enter Close ·
     Esc Cancel". The prompt follows the current snapshot, so an open prompt
@@ -806,8 +806,9 @@ names its socket. CLI JSON names a session `session` and a terminal
     stays. When the setting is false, a final close happens at once.
     Venus receives the setting as a launch argument (VEN-C8).
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
-    Ctrl+W remains terminal input. Alt+Shift+D detaches every session
-    together without asking; attach then shows the last shown session
+    Ctrl+W remains terminal input. When dispatched under VEN-C8,
+    Alt+Shift+D detaches every session together without asking; attach
+    then shows the last shown session
     (EON-C11). Closing the window itself quits it as Alt+Shift+Q does, prompt
     included, and a close request while the quit prompt is open leaves it
     open; where there is no Quit key (eonbase), while the session is
@@ -850,15 +851,16 @@ names its socket. CLI JSON names a session `session` and a terminal
     nothing and does not delay the detach, and a later detach tries again. A
     Venus crash sends none, nor does a detach while the supervisor is
     stopping. Linux only; on macOS a detach sends no notification.
-    Alt+Shift+Q quits the window: Venus sends the Stop that `eon quit` uses
+    When dispatched under VEN-C8, Alt+Shift+Q quits the window. Venus
+    sends the Stop that `eon quit` uses
     (EON-C11) for the window's generation, which ends every session, and
     exits once it is confirmed. While the snapshot lists a busy terminal
     (EON-C11), Venus first shows a prompt in the final-close prompt's style:
     "Quit this window?", "This stops N terminals; M still running." (the
     second part is left out while nothing is busy), the busy terminals by name
     from the current snapshot and how many more are busy, then "Enter Quit ·
-    Esc Cancel" and the hint line "Alt+Shift+D keeps it running instead",
-    which is left out while a popup takes Alt+Shift+D (EON-C20); Alt+Shift+D
+    Esc Cancel" and, when the shortcut is available (EON-C20, VEN-C8),
+    "Alt+Shift+D keeps it running instead". The admitted detach shortcut
     works while the prompt is open. N counts the window's live terminals
     (EON-C23); without that count the subtitle reads "This stops every
     terminal of this window.". While no terminal is busy it quits without
@@ -1858,12 +1860,27 @@ names its socket. CLI JSON names a session `session` and a terminal
     The human output prints a matching `caller` line. Without `EON_TERMINAL`, JSON `caller` is null
     and the line is absent. `EON_TERMINAL` stays opaque; `caller` is the supported way to find the
     calling pane.
+  - **Window input lock (Candidate):** `eon lock [--json]` and `eon unlock [--json]`
+    set input lock on the addressed full-Eon window, including when its
+    presentation is detached or unfocused. They use session window targeting,
+    caller validation, controlling-build routing and workspace action replies.
+    They require neither a configuration read nor confirmation. Setting the
+    current value succeeds. The action leaves the shown session, active tab,
+    selected pane, shown popup, keyboard focus and desktop focus unchanged.
+    A successful reply and `eon session --json` report the top-level boolean
+    `input_locked`, including for a caller in a hidden session. The native
+    toggle changes the same bit atomically in Runtime and shares the existing
+    duplicate-request protection. The bit starts false, applies across all
+    sessions in that window, and survives presentation reload, detach,
+    reconnect, reattach and native focus changes. A newly constructed Runtime,
+    including a successful build Update, starts unlocked. These commands use
+    the existing usage, routing and unavailable-workspace failures.
   - **Keymap inspection (Candidate):** `eon keys [--json]` projects the
-    effective keyboard and link shortcuts of the addressed Eon session window,
-    derived from `eon-workspace-protocol`'s shared shortcut table (`EON-C20`),
+    keyboard and link bindings of the addressed Eon session window,
+    derived from `eon-workspace-protocol`'s shared shortcut table (EON-C20),
     that window's live EONW snapshot (`entries`, `sidebar`, `running` presence,
-    and the accepted EON-C20 release set), and `[session] number_keys`. It
-    resolves the calling terminal
+    accepted key settings and input-lock state), and `[session] number_keys`.
+    It resolves the calling terminal
     (`EON_TERMINAL`), `--window ID`, runtime namespace, and `EON-C11` routing as
     `eon session` does; absence of a compatible session window fails explicitly
     (`missing-supervisor` or `supervisor-unavailable` exit 4, `unknown-window`,
@@ -1873,7 +1890,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     `[session] number_keys`) fails with exit 1 (`unreadable-configuration` or
     `invalid-configuration`, JSON when `--json` is passed) before writing output.
     When the on-disk setting changes to another valid configuration, the CLI
-    still projects the release set accepted by the window.
+    still projects the release set and toggle chord accepted by the window.
     Since the snapshot does not carry `[session] number_keys`, the CLI reads
     `[session] number_keys` from `config.toml` on disk (matching
     `warning_close_last_tab`), which can differ from an already-running
@@ -1885,7 +1902,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     Stable fixed action IDs follow lowercase ASCII `snake_case` derived from
     each `eon-workspace-protocol::shortcuts::Action` variant and subject
     (`Move(Left|Right)` maps to tab moves; `Move(Up|Down)` and
-    `MovePaneSideways(Left|Right)` map to pane moves). The full set of 38
+    `MovePaneSideways(Left|Right)` map to pane moves). The full set of 39
     stable IDs emitted here—stable names that `[keys]` configuration (`eon-configurability-qkq8.12`)
     and scripts use; renaming or removing one is a contract change—is: `next_tab`,
     `previous_tab`, `focus_left`, `focus_right`, `focus_up`, `focus_down`,
@@ -1896,7 +1913,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     `close_tab`, `close_pane`, `toggle_zoom`, `move_tab_left`, `move_tab_right`,
     `move_pane_left`, `move_pane_right`, `move_pane_up`, `move_pane_down`,
     `new_window`, `detach`, `quit`, `toggle_viewer`, `toggle_hints`,
-    `toggle_sidebar`, `copy`, `paste`, and `open_link`.
+    `toggle_sidebar`, `toggle_input_lock`, `copy`, `paste`, and `open_link`.
 
     With `--json`, stdout is one JSON object containing: `generation` (string),
     `window` (string or null, null for the default namespace), `platform`
@@ -1910,17 +1927,23 @@ names its socket. CLI JSON names a session `session` and a terminal
     `ShowWorkspacePosition` when `number_keys`
     is false, omitted `Quit` when `running` is false, and omission of an empty
     popup group), `bindings` (ordered array of applicable fixed actions, each
-    `{ "action": string, "group": string, "label": string, "display": string | null, "chords": [{ "config": string | null, "display": string }], "source": "default" | "overridden" | "released", "overridden_by": [{ "config": string | null, "display": string, "kind": "popup", "id": string, "label": string }] }`,
+    `{ "action": string, "group": string, "label": string, "display": string | null, "chords": [{ "config": string | null, "display": string }], "source": "default" | "overridden" | "released" | "configured", "overridden_by": [{ "config": string | null, "display": string, "kind": "popup", "id": string, "label": string }] }`,
     retaining non-overridden chords while `"source"` is `"default"` and
     setting `"source"` to `"overridden"` and `"display"` to null when every
     chord is overridden. For an action whose fixed chord is released,
     `"source"` is `"released"`, `"display"` is null, and `"chords"`
     and `"overridden_by"` are empty), `popups` (enabled popup entries in snapshot order,
     each `{ "id": string, "label": string, "keybinding": string | null, "display": string | null, "default_keybinding": string | null, "default_display": string | null, "overridden_by": string | null, "overridden_by_label": string | null, "source": "bound" | "unbound" | "overridden" }`),
-    and `reserved` (`{ "strict": [...], "focus": [...] }` from the shared
-    table's popup policies, each `{ "action": string, "config": string, "display": string }`).
-    Human output prints the window header, each viewer group and row, any
-    unbound enabled popups, and the reserved sets. Closed standard output
+    `reserved` (`{ "strict": [...], "focus": [...] }` from the shared
+    table's popup policies, each `{ "action": string, "config": string, "display": string }`),
+    and `input_locked` (boolean). The `toggle_input_lock` binding has one
+    chord with the accepted config spelling and native display name. Its
+    source is `"default"` when the chord equals the default and
+    `"configured"` otherwise. This binding leaves the `reserved` sets unchanged. While `input_locked` is true, the other rows
+    describe the configured bindings that resume after unlock. VEN-C8 owns
+    which keys reach the focused terminal.
+    Human output prints the window header including input-lock state, each
+    viewer group and row, any unbound enabled popups, and the reserved sets. Closed standard output
     exits 0 without stderr; write failures exit 1. Consumers ignore additional
     object fields.
   - A terminal's supplied PATH initially names its creation build's managed
@@ -2322,7 +2345,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v48 and accepted Orbit management operations.
+- **Consumes:** Current EONW v49 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -2334,13 +2357,23 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v48 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v49 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
   EONW v48 appends one byte to the v47 Snapshot payload. Bits 0, 1, 2, and 3
   mean that the window has released physical Alt+M, Alt+W, Alt+Q, and Alt+G,
   respectively. Zero means no fixed chord is released. Bits 4 through 7 must
   be zero. The byte applies to the whole window, including projections of
-  hidden sessions.
+  hidden sessions. Snapshot encode and decode reject undefined release bits
+  and any bound popup whose shortcut matches a released chord.
+  EONW v49 appends `input_locked` (one byte, 0 or 1) and the accepted input-lock
+  toggle chord (one modifier byte and the bounded physical-key string, using
+  the existing Shortcut encoding) to the v48 Snapshot payload. Snapshot
+  encode and decode reject invalid values, a toggle chord disallowed by
+  EON-C20 or a bound popup with the same chord. Request discriminator 47
+  carries one operation byte (0 unlock, 1 lock, 2 toggle). Other values are
+  invalid. An accepted request returns the ordinary Snapshot result with
+  the resulting bit. The six-byte prefix and Reserved Stop are unchanged
+  (EON-C11). Workspace requests and snapshots keep exact-version admission.
   The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
   failure records to Snapshot: fresh/stale state, observation and windows,
   with at most six scoped windows, only 300/10080-minute periods and unique
@@ -2648,8 +2681,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   terminals are represented. Reject malformed framing, invalid or aliased
   identities/endpoints, broken selections, duplicate entry/chord assignments,
   invalid geometry and stale popup targets. Both the Snapshot encoder and
-  decoder reject an undefined release bit or a bound popup whose shortcut
-  matches a released chord. No terminal contents cross EONW,
+  decoder enforce the release and input-lock values defined under Package
+  owner, including the bounds on the toggle and its conflicts.
+  No terminal contents cross EONW,
   except a program's own status report text (`app`, `title`, `msg`) and its
   terminal title (`name`), which are not screen content: Orbit has validated,
   sanitized and bounded them under ORB-C15; and EON-C35's read of visible
@@ -4339,8 +4373,10 @@ popup or automatic tutorial launch.
   by `eon-30skm` (S3): its prose says session for the product concept.
   Amended on 2026-11-23 by `eon-ici95.1` (approved by Lucca, relayed by
   eon-lead): individual fixed-shortcut releases in `config.toml`.
-- **Consumer:** One installed full-Eon user on native Linux Wayland.
-- **Trigger:** The user presses physical Alt+Slash from the Eon session.
+- **Consumer:** One installed full-Eon user under EON-C7.
+- **Trigger:** The Shortcuts control or the admitted Alt+Slash shortcut
+  opens the viewer (VEN-C20). Runtime resolves the input-lock shortcut
+  when it accepts the window's key configuration.
 - **Result:** The exact accepted Venus client toggles one native, read-only
   shortcut viewer containing its fixed Eon-surface bindings and the current
   enabled popup catalog supplied through EONW. Opening, refreshing,
@@ -4360,6 +4396,13 @@ popup or automatic tutorial launch.
   the normal terminal input rules (VEN-C2). The viewer shows the same chord
   and marks its action "(released to terminal)". Fixed hints omit that
   action. `eon keys` projects the accepted set as specified in EON-C10.
+  In `[keys]`, `input_lock` is one modified physical chord in the popup
+  keybinding grammar. It defaults to `"Alt+Shift+I"` and uses `Alt` in
+  configuration on both platforms. Runtime resolves it with the release set
+  and popup catalog at supervisor start and retains the accepted chord across
+  presentation reload and reopen. Shortcuts lists the toggle with the native
+  modifier names, including Option on macOS. `eon keys` projects the accepted
+  chord as specified in EON-C10.
   On Alt+Shift+0 through Alt+Shift+9 a popup takes only its own key: the other
   session position keys stay bound, and the viewer names the taken key as
   overridden by the popup.
@@ -4379,6 +4422,12 @@ popup or automatic tutorial launch.
   session mutation. A diagnostic identifies the setting and any invalid,
   unsupported or duplicate chord. If an enabled popup's effective shortcut
   is also released, the diagnostic identifies that chord and popup.
+  Eon rejects an invalid `keys.input_lock` value or a normalized toggle chord
+  matching a fixed keyboard binding on either supported native
+  host, the bundled AppKit Hide or Hide Others chord (Super+H or
+  Alt+Super+H), or an enabled popup's effective shortcut. Fixed bindings
+  still count when conditional, released or overridden. Validation precedes session
+  mutation and identifies the setting and offending key or popup.
   Eon rejects configured popup shortcuts on Alt+Slash
   or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
   before session mutation. A configured popup shortcut on Alt+H, Alt+J,
@@ -4390,16 +4439,17 @@ popup or automatic tutorial launch.
   client until a normal restart.
 - **Owner:** Eon owns component/default selection, profile delivery and
   installed acceptance; Eon Runtime resolves popup keys and enforces
-  configured popup collisions and fixed-key releases.
+  configured popup collisions, fixed-key releases and input-lock toggle
+  collisions.
   Venus owns viewer state, input, rendering, focus, accessibility, and a
   configured popup's precedence over its other fixed bindings.
-- **Consumes:** Venus VEN-C20 and VEN-C5, EONW v48 and Orbit terminals.
+- **Consumes:** Venus VEN-C20, VEN-C8 and VEN-C5, EON-C10 and Orbit terminals.
 - **Boundary:** No Eon-rendered viewer, second shortcut catalog,
   Orbit update, child-application bindings, rebinding UI, command palette,
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. The same snapshot supplies `sidebar`, each popup entry's override,
-  and the accepted release set.
+  the accepted release set and input-lock toggle, and live input-lock state.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Qualification:** The evidence at
     `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import

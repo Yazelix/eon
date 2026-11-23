@@ -78,3 +78,4 @@ Alt+Shift+H	Show or hide the agent sidebar
 Ctrl+Shift+C	Copy selected text or focused link
 Ctrl+Shift+V or Paste	Paste
 Ctrl+click	Open link
+Alt+Shift+I	Toggle input lock

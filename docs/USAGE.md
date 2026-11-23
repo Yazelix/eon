@@ -248,9 +248,9 @@ Reconnect with:
 eon window attach
 ```
 
-Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
-fixed bindings and every enabled popup binding. Escape, Alt+/ or a
-click outside it closes it.
+Press **Alt+/** inside Eon to open the native Shortcuts dialog while unlocked.
+It lists the input-lock toggle, fixed bindings and enabled popup bindings.
+Escape or a click outside closes it. Alt+/ also closes it while unlocked.
 
 From a terminal or script, run `eon keys` or `eon keys --json` to inspect the
 addressed window's effective shortcuts—including `Alt+/` groups and rows,
@@ -562,7 +562,8 @@ one, and clicking another column's terminal selects it.
 
 | Shortcut | Action |
 |---|---|
-| Alt+/ | Open or close shortcut help |
+| Alt+/ | Open or close shortcut help while unlocked |
+| Alt+Shift+I | Toggle input lock for this window |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
 | Alt+Shift+H | Show or hide the agent sidebar |
 | Alt+G / Alt+Shift+G | Jump to the next or previous agent needing attention |
@@ -594,6 +595,29 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+E | Open the shown terminal's scrollback in the configured editor, or dismiss it |
 | Alt+Shift+S | Open the Sessions picker; in the picker, Alt+Shift+S or Enter shows the highlighted session, Enter on an unmatched name creates one, Ctrl+X closes the highlighted one |
 
+### Input lock
+
+Press **Alt+Shift+I** (**Option+Shift+I** on macOS) when a terminal program
+needs keys that Eon normally handles. The Eon Bar shows **LOCKED**.
+With a pane or popup terminal focused, Eon sends every other key it
+receives to that terminal, including Alt+/, popup shortcuts, and keyboard
+copy and paste. Pointer actions still work. Open Shortcuts from the bar
+while locked to see the unlock key. An already open dialog keeps its focus
+and local navigation, so press Escape to return to the terminal.
+
+Press the toggle again or run `eon unlock`. Scripts can use `eon lock` and
+`eon unlock` from this window, or `eon --window ID unlock` from outside it,
+even while it is detached. Each command sets the window state and preserves
+focus and selection. `eon session --json` reports `input_locked` and
+`eon keys --json` also reports the live `toggle_input_lock` chord in
+`bindings`. The other key rows describe the bindings that resume on unlock.
+
+Input lock applies across every session in this window. It survives a focus
+change, detach, reattach, or presentation reload. A new Runtime starts
+unlocked. To remap the toggle, set
+[`[keys] input_lock`](CONFIGURATION.md#keyboard-shortcuts) in `config.toml` before starting
+a fresh window.
+
 ### Keybinding clashes
 
 Eon binds `Alt+` and `Alt+Shift+` chords (`Option+` and `Option+Shift+` on
@@ -618,7 +642,7 @@ Common clashes:
 | `Alt+Shift+J` | Git popup (`[popups.git]`) | Helix `Alt+Shift+J` (`join_selections_space`) | `[popups.git] keybinding` or `enabled` |
 | `Alt+Shift+A`, `E`, `L`, `M`, `O`, `S`, `Y` | Built-in popups (`anima`, `scrollback`, `agent`, `commands`, `editor`, `sessions`, `files`) | App-defined `Alt+Shift+` chords | `[popups.<id>] keybinding` or `enabled` (`files` stays enabled) |
 
-Run `eon keys` or press `Alt+/` (`Option+/` on macOS) in an Eon window.
+Run `eon keys` or open Shortcuts with `Alt+/` (`Option+/` on macOS) while unlocked.
 Both mark released chords as “released to terminal”. `eon keys --json`
 reports each released action with `"source": "released"` and an empty
 `chords` array.
@@ -1243,7 +1267,8 @@ line points agents to `eon --skill`.
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon sidebar show\|hide\|toggle [--json]` | Show, hide or toggle the window's agent sidebar, as Alt+Shift+H and the sidebar's Hide button do, and print the session, whose `sidebar` reads `open`, `closed` or `off`. `show` and `hide` set the state directly in Runtime, so repeating either changes nothing; the command or keypress that ran last determines visibility. With `[sidebar] enabled = false`, `hide` succeeds and `show` and `toggle` fail `unavailable` (exit 1) |
 | `eon focus PANE\|POPUP\|left\|right\|up\|down [--json]` | Focus a pane or exact existing popup `uN`, selecting its tab, or traverse the session; switch tabs with `eon tab switch` |
-| `eon keys [--json]` | List effective keyboard and link shortcuts for this window: JSON emits `generation`, `window`, `platform`, `sidebar`, `number_keys` (read from `config.toml` on disk; edits there take effect in `eon keys` immediately while `Alt+/` keeps the window's launch/reloaded value until reload), `number_keys_source` (`"config"`), `running`, `groups` matching the `Alt+/` dialog, `bindings` with active chords and popup overrides, enabled `popups` (including unbound and overridden ones), and `reserved` (`strict` and `focus`); human output prints the header, `Alt+/` groups, unbound popups, and reserved sets |
+| `eon lock [--json]` / `eon unlock [--json]` | Enable or disable [input lock](#input-lock) for the addressed window, leaving focus and selection in place. Repeat either command to set the same state. JSON includes `input_locked` |
+| `eon keys [--json]` | List keyboard and link bindings for this window, with `input_locked` and the accepted toggle in `bindings`. JSON emits `generation`, `window`, `platform`, `sidebar`, `number_keys` (read from `config.toml` on disk; edits there take effect in `eon keys` immediately while `Alt+/` keeps the window's launch/reloaded value until reload), `number_keys_source` (`"config"`), `running`, `groups` matching the `Alt+/` dialog, `bindings` with active chords and popup overrides, enabled `popups` (including unbound and overridden ones), and `reserved` (`strict` and `focus`); human output prints the header, `Alt+/` groups, unbound popups, and reserved sets |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon doctor [--json]` | Check the local Eon setup and give one fix for each warning or failure |
 | `eon report` | Print a redacted Markdown bug report for this window, including Doctor results, to read and paste into the bug form |

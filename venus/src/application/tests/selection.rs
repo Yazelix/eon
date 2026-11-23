@@ -106,7 +106,7 @@ fn hyperlink_actions_require_current_presentation_and_safe_exact_uri() {
     assert!(validate_copy_uri("https://example.com/\n").is_err());
     let target = "https://example.com/\u{202e}abc";
     assert_eq!(
-        link_hint_for(NativePlatform::Linux, target, &[]),
+        link_hint_for(NativePlatform::Linux, target, &[], false),
         "https://example.com/\\u{202e}abc\nCtrl+click Open · Ctrl+Shift+C Copy"
     );
     let copy_modifiers = copy_paste_modifiers(NATIVE_PLATFORM);

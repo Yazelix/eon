@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v48 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v49 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -154,10 +154,12 @@ re-proved when that platform or feature is next touched.
   target is shown with Open and Copy actions. The highlight and hint are derived
   from the frame being presented, so a target that stays under a still pointer
   stays highlighted while output arrives. Linux uses `Ctrl+click` and
-  `Ctrl+Shift+C`; macOS uses `Command+click` and `Command+C`. When a current Eon
-  popup takes the Copy key under VEN-C20, the hint omits Copy and that key
-  invokes the popup; the AccessKit Copy button remains. Opening requires a press
-  and release on the same target: the same URI over the same cells, presented
+  `Ctrl+Shift+C`; macOS uses `Command+click` and `Command+C`. VEN-C8 governs
+  keyboard Copy under input lock. When a current Eon popup takes the Copy
+  key under VEN-C20, the hint omits Copy and that key invokes the popup when
+  unlocked. While locked, the hover hint keeps pointer Open and omits the
+  keyboard Copy hint. The AccessKit Copy button remains. Opening requires a
+  press and release on the same target: the same URI over the same cells, presented
   at both; output revisions between them keep the press, and every other change
   in Failures retires it. Copy uses the current hovered target unless terminal
   selection retains precedence. AccessKit exposes each current visible target as
@@ -572,8 +574,8 @@ re-proved when that platform or feature is next touched.
     presenting the authoritative completion revision reported by Orbit.
   - A successful selection release writes Orbit's frozen text to both the
     ordinary Wayland clipboard and primary selection. `Ctrl+Shift+C` remains an
-    explicit ordinary-clipboard copy. On macOS, every destination maps to the
-    general pasteboard.
+    explicit ordinary-clipboard copy when admitted by VEN-C8. On macOS,
+    every destination maps to the general pasteboard.
 - **Important failures:** Future authority, stale coordinate- or phase-bound
   input, failed gesture admission, resize, capture loss, lifecycle change,
   terminal-owned routing, history edge, or Orbit rejection cancels synthetic
@@ -697,6 +699,26 @@ re-proved when that platform or feature is next touched.
   durable topology, a workspace action changes tab, pane, focus, order,
   lifetime, liveness, endpoint, or metadata, or the user toggles zoom.
 - **Result:**
+  - **Input lock.** Venus follows the bit and toggle chord from the accepted
+    EON-C10 snapshot. A new press of the configured toggle requests one
+    atomic toggle in Runtime, including when chrome or a dialog has keyboard
+    focus. Venus consumes that press and its repeats and matching release.
+    While locked, the toggle is the only Eon shortcut intercepted with
+    terminal keyboard focus. All other host-delivered keys use VEN-C2's
+    ordinary input path to the focused pane or popup terminal, including
+    configured and fixed workspace shortcuts, Alt+Slash, detach and quit
+    chords, and keyboard copy, paste and link chords. Repeats and releases
+    keep their press's owner across mode changes, subject to ordinary
+    focus and attachment retirement. The pending-Stop Enter guard applies
+    in both modes. Loss of the snapshot or attachment cannot route input to a
+    stale terminal or make the window act unlocked.
+    Applying the bit preserves the active tab, pane, shown popup and
+    keyboard focus. Local keyboard navigation, activation and dismissal in
+    a focused dialog or chrome remain available. Window-wide accelerators
+    remain suppressed there while locked, including F6 even from chrome.
+    Escape can still return chrome focus to the terminal. With no focused
+    terminal, the pass-through path sends no input. Pointer, accessibility and platform
+    window commands retain their usual behavior.
   - Venus materializes ordered horizontal tabs and lays the active tab's one to
     four columns side by side at equal widths, the last taking the remainder.
     Each column shows every fitting header around its one expanded pane. Each
@@ -920,9 +942,10 @@ re-proved when that platform or feature is next touched.
     shows the EON-C8 prompt, which Venus owns: Enter sends the held close
     directly by its named target, without first focusing its tab. If another
     tab became active, that tab stays active. Escape dismisses the prompt,
-    Alt+Shift+D detaches, the wheel and the viewer's navigation keys scroll a
-    long list, and other keys and pointer input reach nothing while it is
-    open.
+    the admitted Alt+Shift+D shortcut detaches, and the wheel and the
+    viewer's navigation keys scroll a long list. The input-lock toggle follows
+    VEN-C8's input-lock rule. Other keys and pointer input reach nothing
+    while the prompt is open.
     The prompt closes itself when its named tab or pane leaves the snapshot or
     the workspace becomes unavailable; it is an AccessKit alert dialog. Venus
     words it from the current snapshot whenever it draws it, so an open prompt
@@ -947,8 +970,8 @@ re-proved when that platform or feature is next touched.
     untracked runs as running. The prompt lists every terminal the close stops,
     one row each, by the answer's names: a row marked busy ends " · running",
     and a run no tab tracks shows as its terminal ID with " · in no tab". It
-    shares the final-close prompt's owner, scrolling, Alt+Shift+D mapping and
-    AccessKit alert dialog, and closes itself when the answer's pane leaves the
+    shares the final-close prompt's owner, scrolling, admitted Alt+Shift+D
+    shortcut and AccessKit alert dialog, and closes itself when the answer's pane leaves the
     snapshot. Enter is ignored until 400 ms after a frame showing that answer's
     list was first presented, and until one full turn of Venus's event loop
     that began after that presentation has finished. An Enter that arrives
@@ -965,12 +988,12 @@ re-proved when that platform or feature is next touched.
     input since its request (a key, a pointer press, a wheel step, a chrome
     focus change, or the window gaining or losing focus), or while another
     dialog is open, opens nothing.
-    Alt+Shift+D is a non-repeating key that detaches (VEN-C14).
-    Alt+Shift+Q is a non-repeating key that quits the window under EON-C8
-    while the snapshot carries a running-windows summary. A compositor close
-    request acts as Alt+Shift+Q, and detaches without a running-windows
-    summary, while the workspace is unavailable, and while it refuses refreshes
-    after a failed Stop. On macOS, Command+Q in an Eon window acts as
+    While unlocked, Alt+Shift+D is a non-repeating key that detaches
+    (VEN-C14), and Alt+Shift+Q is a non-repeating key that quits the window under
+    EON-C8 while the snapshot carries a running-windows summary. A compositor
+    close request retains the same quit behavior in either mode. It detaches
+    without a running-windows summary, while the workspace is unavailable,
+    and while it refuses refreshes after a failed Stop. On macOS, Command+Q in an unlocked Eon window acts as
     a close request, so it quits as Option+Shift+Q does, prompt included, and
     detaches where a close request detaches, and the viewer lists it beside
     Option+Shift+Q; a popup on one of the two keys takes only that key, and
@@ -980,8 +1003,8 @@ re-proved when that platform or feature is next touched.
     session keeps AppKit's quit, which exits Venus and leaves Orbit live.
     While the snapshot's `busy` lists a terminal, or is absent, Venus first
     shows the EON-C8 quit prompt, which shares the final-close prompt's owner,
-    key answers, scrolling, Alt+Shift+D mapping, self-closing on workspace
-    loss and AccessKit alert dialog, and is worded from the current snapshot,
+    key answers, scrolling, admitted Alt+Shift+D shortcut, self-closing on
+    workspace loss and AccessKit alert dialog, and is worded from the current snapshot,
     again whenever only `busy` or `running.this` changes. While `busy` is empty,
     Venus decides on the next workspace response, then asks or sends Stop as
     that response's snapshot says; a `stop-incomplete` failure leaves the
@@ -993,10 +1016,9 @@ re-proved when that platform or feature is next touched.
     `Failure` shows as a refused action's notice. Until the Stop is answered,
     Alt+Shift+Q does nothing, and Venus consumes each unmodified Enter press
     and its matching release without forwarding either to the selected
-    terminal; Alt+Shift+D still detaches. Venus consumes
-    each exact press and matching release without forwarding either to the
-    selected terminal. Ctrl+T, Ctrl+Shift+W, and lowercase Ctrl+W remain terminal
-    input, and none of these shortcuts enters a mode.
+    terminal. When admitted, Alt+Shift+D still detaches. Venus consumes
+    each intercepted shortcut press and matching release. With no Eon binding
+    on them, Ctrl+T, Ctrl+Shift+W, and lowercase Ctrl+W remain terminal input.
   - Compatible terminal output does not withdraw tab/pane focus actions or
     presented header hit targets while a repaint is pending.
   - Hit testing, AccessKit node identity, and actions retain the exact `tN`.
@@ -1222,7 +1244,8 @@ re-proved when that platform or feature is next touched.
   and the separately recorded Apple Silicon paste observation retains its
   scope.
 - **Consumer:** One attached focused Venus terminal surface.
-- **Trigger:** Native Paste, Linux Ctrl+Shift+V, or macOS Command+V.
+- **Trigger:** Native Paste or the platform paste shortcut (Linux
+  Ctrl+Shift+V, macOS Command+V), subject to VEN-C8 in an Eon window.
 - **Result:** Venus reads ordinary native clipboard text once, admits at most
   1 MiB, and submits exactly one canonical semantic paste to Orbit; Orbit alone
   owns normal and bracketed terminal encoding.
@@ -1333,13 +1356,15 @@ re-proved when that platform or feature is next touched.
   window focus reports.
 - **Consumer:** One Eon-supervised Venus process.
 - **Trigger:** A complete private Present command, control EOF, terminal read
-  failure, Alt+Shift+D, a compositor close request, an EONW `Ended` reply, or
+  failure, Alt+Shift+D when admitted (VEN-C8), a compositor close request,
+  an EONW `Ended` reply, or
   the `Stopped` reply to its own Quit (VEN-C8).
 - **Result:** Present preserves process and terminal attachment while requesting
   presentation of the existing native window; control loss exits through the
   native event loop, releases attachments, and leaves Orbit live; replacement
-  may retry transient Busy while the old client releases. Alt+Shift+D
-  detaches, and a compositor close request quits under VEN-C8, including one
+  may retry transient Busy while the old client releases. The admitted
+  Alt+Shift+D shortcut detaches. A compositor close request quits under
+  VEN-C8, including one
   a desktop sends to each window at logout; an EONW `Ended` reply, which
   answers a
   close that stopped the window's last terminal, and the `Stopped` reply to
@@ -1628,8 +1653,8 @@ re-proved when that platform or feature is next touched.
   Toggle intent from terminal focus and Focus intent from workspace chrome.
   Structural repeats remain consumed without sending duplicate actions.
   Tab traversal and structural actions use the existing semantic workspace
-  path; Eon decides their admission. F6 cycles visible focus regions, and
-  Escape returns chrome focus to the terminal. While the terminal is focused,
+  path; Eon decides their admission. While unlocked, F6 cycles visible
+  focus regions (VEN-C8). Escape returns chrome focus to the terminal. While the terminal is focused,
   Escape, Ctrl+C, Tab and Enter reach its application through ordinary Orbit
   input. Popup entry labels also name the accessible tab panel.
 - **v7 expansion:** Venus accepts multiple pending tabs and their independent
@@ -1750,11 +1775,15 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-23 by `eon-ici95.1` (approved by Lucca, relayed by
   eon-lead): the live release set in the Shortcuts viewer and footer.
 - **Consumer:** One person using a Venus surface attached to an Eon workspace.
-- **Trigger:** Physical Alt+Slash toggles the viewer; Escape or a pointer
-  press outside the dialog closes it, and that press reaches no other target.
+- **Trigger:** Physical Alt+Slash toggles the viewer while unlocked (VEN-C8).
+  The Shortcuts control can open it in either mode. Escape or a pointer press
+  outside closes it, and that press reaches no other target.
 - **Result:** Venus presents one ephemeral, read-only native dialog containing
   grouped native workspace, host, and current Eon popup shortcuts. Fixed
-  bindings share their descriptor owner with dispatch; popup rows use the exact
+  bindings share their descriptor owner with dispatch. The input-lock row
+  shows the accepted toggle chord in native modifier names. While locked,
+  the viewer identifies the mode and shows the other configured rows as the
+  bindings restored on unlock. Popup rows use the exact
   enabled label and normalized physical shortcut from the current Eon
   snapshot; an entry the snapshot marks overridden is listed with its default
   shortcut as "<label> (overridden by <popup label>)", and an entry without a
@@ -1790,10 +1819,11 @@ re-proved when that platform or feature is next touched.
   workspace actions do not reach their normal targets.
 - **Owner:** Venus owns viewer state, fixed native binding descriptors, scene,
   rendering, input precedence, and AccessKit projection. Eon owns the
-  fixed-key release set and the enabled popup catalog and its key resolution.
+  accepted input-lock toggle, fixed-key release set, and enabled popup
+  catalog and its key resolution.
   It must reserve Alt+Slash, Alt+0 through Alt+9, and Alt+H, Alt+J, Alt+K and
   Alt+L before full-product delivery.
-- **Consumes:** Canonical EONW v48 through the in-tree `eon-workspace-protocol`
+- **Consumes:** Canonical EONW through the in-tree `eon-workspace-protocol`
   0.1.0.
 - **Boundary:** No Orbit Session, Eon configuration parsing, child-application
   shortcuts, action execution from rows, search, filtering, rebinding,
@@ -1936,7 +1966,8 @@ re-proved when that platform or feature is next touched.
   as far from the window's right edge as from its top while that keeps every ink pixel inside
   Close's rectangle; otherwise its ink is centred on Close's glyph position, moved only as far as
   keeps it inside the rectangle. Hover and accessibility rectangles follow the drawn order: the
-  icon has a Window menu target while actionable, Shortcuts' rectangle reaches back over the space after a chip, and Close's
+  icon has a Window menu target while actionable, Shortcuts' rectangle may
+  reach back over the blank gap after the final status item, and Close's
   reaches the window's right edge. Width fitting keeps its order after the icon, and the blank
   drag region keeps its minimum. Scrollable tabs keep the leading space and retain their labels,
   overflow, reveal, selection, hover path, stable identity, and accessibility.
@@ -1952,11 +1983,14 @@ re-proved when that platform or feature is next touched.
   `New tab — Alt+Shift+T`, `Keyboard shortcuts — Alt+/`, and
   `Close tab — Alt+Shift+W`. A button whose key a current Eon popup takes
   under VEN-C20 drops the chord from its tooltip and accessible name
-  (`New tab`, `Close tab`). A bounded empty region between New tab and the
+  (`New tab`, `Close tab`). While locked (VEN-C8), each of these three
+  controls uses only its action name, including `Keyboard shortcuts`.
+  A bounded empty region between New tab and the
   trailing controls starts compositor-owned window movement only from its
   immediate left press.
-  The accessibility tree orders the Window menu while it shows, the session label while it shows, tabs, New
-  tab, optional quota, Shortcuts, then Close tab.
+  The accessibility tree orders the Window menu while it shows, the
+  session label while it shows, tabs, New tab, optional quota, input-lock
+  status while it shows, Shortcuts, then Close tab.
   It yields before tabs or controls when width contracts. Tab and Shift+Tab
   traverse focused header controls; Enter and Space activate them. Hover,
   pressed, and focus states remain distinct, and focus includes an outline.
@@ -2004,8 +2038,12 @@ re-proved when that platform or feature is next touched.
   - a tab's accessible name appends its state, for example
     `Tab 3 of 5  /home/me/site, needs input`;
   - clicking a badged tab behaves like any tab click.
-- **Quota placement:** The optional quota chip sits in the slot New tab
-  vacates, adjacent to Shortcuts, so the blank drag region stays continuous.
+- **Quota placement:** The optional quota chip sits toward Shortcuts in the
+  slot New tab vacates so the blank drag region stays continuous.
+- **Input-lock status:** While the EON-C10 snapshot reports input lock,
+  the bar presents a noninteractive status immediately to the left of
+  Shortcuts where both can fit. The status is named in the accessibility
+  tree. Its rectangle neither becomes a drag target nor covers a control.
 - **Important failures:** Buttons, tab gaps, pane chrome, terminal content,
   popup content, tooltips, and the shortcut viewer never become drag targets.
   Narrow surfaces preserve an active-tab region and all visible controls without
@@ -2023,9 +2061,9 @@ re-proved when that platform or feature is next touched.
   configuration, Nova compatibility, inactive-tab close, protocol change,
   dependency, native-decoration policy, or platform-support expansion. The
   exceptions are the EON-C31 tab attention marker and the EON-C33 session
-  label, read from the EONW v32 snapshot that Venus already polls, the label
-  and its badge from its `workspace` and `workspaces`, and the
-  `--animate-working-badge` launch argument.
+  label and its badge from the snapshot Venus already polls, the
+  `--animate-working-badge` launch argument, and the EON-C10 input-lock state
+  and toggle chord for the status and shortcut labels.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Qualification:** The evidence at
     `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
@@ -2248,8 +2286,8 @@ re-proved when that platform or feature is next touched.
   by eon-overseer under Lucca's standing rule) by `eon-30skm` (S3): it names
   Orbit's terminals and the new Eon window instead of Sessions and a workspace.
 - **Consumer:** A Venus window supervised by full Eon on x86_64 Linux Wayland.
-- **Trigger:** Physical Alt+Shift+N, including while Shortcuts is open, unless
-  a current Eon popup takes that key under VEN-C20.
+- **Trigger:** Physical Alt+Shift+N while unlocked (VEN-C8), including while
+  Shortcuts is open, unless a current Eon popup takes that key under VEN-C20.
 - **Result:** Venus runs the exact Eon executable supplied by its supervisor
   with `window new` on a worker thread. The action appears in native Shortcuts;
   the current terminal does not receive the key. Eon owns the new window,
@@ -2435,15 +2473,16 @@ re-proved when that platform or feature is next touched.
   pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. When
-  bound, Alt+G and Alt+Shift+G work under `Off` too.
+  admitted under VEN-C8 and VEN-C20, Alt+G and Alt+Shift+G work under `Off` too.
 - **Trigger:**
-  - Alt+Shift+H;
+  - Alt+Shift+H when admitted (VEN-C8, VEN-C20);
   - a new EONW v32 snapshot;
   - the pointer, keyboard or AccessKit acts on the sidebar;
   - the window is resized.
 - **Result:**
   - **Visibility.** The sidebar shows while the snapshot's `sidebar` is
-    `Open`, on every tab of the window. Alt+Shift+H sends `ToggleSidebar`, so
+    `Open`, on every tab of the window. When admitted, Alt+Shift+H sends
+    `ToggleSidebar`, so
     one press always flips the choice between open and closed. That shows on
     screen unless the window is too narrow (see Layout). The Agents heading's
     Hide button (VEN-C18) sends `SetSidebar { open: false }`, and only while the
@@ -2473,7 +2512,7 @@ re-proved when that platform or feature is next touched.
       cells. This leaves `sidebar` unchanged, and VEN-C21's markers then show.
     - Above that threshold, individual columns may still drop below 40 cells,
       as VEN-C8 already allows when the window shrinks.
-    - While the sidebar is hidden for width, Alt+Shift+H still toggles
+    - While the sidebar is hidden for width, the admitted Alt+Shift+H still toggles
       `sidebar`. The new value applies once the window is wide enough.
     - **VEN-C8 and VEN-C18 amendment.** While the sidebar is visible:
       - the side gaps and the 40-column CreateColumn check are measured from
@@ -2592,20 +2631,22 @@ re-proved when that platform or feature is next touched.
     - Activating a row sends `FocusAttention`, and keyboard focus moves to the
       target terminal, or stays on the tab when the covered-target rule only
       selects the tab. It never stops a terminal.
-    - F6 cycles Terminal → Sidebar → Tabs → Panes, and skips Sidebar while it
+    - While unlocked (VEN-C8), F6 cycles Terminal → Sidebar → Tabs → Panes,
+      and skips Sidebar while it
       is not visible or has no rows, since the empty state holds no focus
       target. This amends the F6 order in VEN-C18 and
       `venus/docs/INTERACTION.md`, and the F6 label in
       `venus/src/application/shortcuts.rs`.
     - Arrows traverse rows, Enter activates and Esc returns focus to the
       terminal.
-    - **Focus rule.** Alt+Shift+H never moves keyboard focus into the sidebar;
+    - **Focus rule.** the admitted Alt+Shift+H never moves keyboard focus into the sidebar;
       focus stays on the terminal. Keyboard focus returns to the terminal in
       three cases:
       - the sidebar closes while it holds focus;
       - it is hidden for width while it holds focus;
       - the focused row's target is removed.
-    - When bound (VEN-C20), Alt+G and Alt+Shift+G send `NextAttention` and
+    - When admitted (VEN-C8, VEN-C20), Alt+G and Alt+Shift+G send
+      `NextAttention` and
       `PreviousAttention`, whether the sidebar is visible or not.
     - Venus shows the `no-attention` rejection as the VEN-C8 notice `No agent needs
       attention`, without taking focus. Unlike other rejected-action notices, it also clears
@@ -3032,15 +3073,15 @@ re-proved when that platform or feature is next touched.
 - **Consumer:** One person using a Venus window attached to a full Eon workspace, under every
   `sidebar` value.
 - **Trigger:**
-  - Alt+Q when bound (VEN-C20);
+  - Alt+Q when bound (VEN-C20) and unlocked (VEN-C8);
   - a new EONW v32 snapshot while the inbox is open;
   - the pointer, keyboard or AccessKit acts on the inbox;
   - the window is resized.
 - **Result:**
-  - **Opening.** When bound, Alt+Q opens the inbox as one ephemeral native dialog, as
-    the shortcut viewer (VEN-C20) opens, with keyboard focus inside it. Alt+Q again or
-    Escape closes it and returns
-    keyboard focus where it was. Opening, filtering, moving the highlight and closing send no
+  - **Opening.** When admitted, Alt+Q opens the inbox as one ephemeral native
+    dialog with keyboard focus inside it, as with the shortcut viewer (VEN-C20).
+    The admitted Alt+Q or Escape closes it and returns keyboard focus where it
+    was. Opening, filtering, moving the highlight and closing send no
     workspace action and no terminal bytes.
   - **Contents.**
     - It lists the snapshot's `attention_queue` (EON-C31) in the order received, across every

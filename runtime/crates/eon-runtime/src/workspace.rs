@@ -5,14 +5,15 @@ use super::session_registry::{Completion, Operation, Registration, Registry};
 use eon_workspace_protocol::shortcuts::{
     EffectiveBinding, EffectiveKeymap, EffectivePopup, ReservedChord,
 };
-use eon_workspace_protocol::v48::{
+use eon_workspace_protocol::v49::{
     Action, Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuota, ClaudeQuotaState,
     CloseEnd, CodexQuota, CodexQuotaState, Column as SnapshotColumn, Direction, Editing,
-    FILES_ENTRY, Failure, GoogleQuotaState, InvokeIntent, MAX_COLUMNS, MAX_DIRECTORY_BYTES,
-    MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY, Pane as SnapshotPane, Popup as SnapshotPopup,
-    PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaFailure, QuotaWindow, Screen, Sent,
-    Side, Sidebar, Snapshot, Tab as SnapshotTab, TargetId, TerminalHistory, TerminalTarget,
-    TerminalText, WorkspaceAction, WorkspaceTarget, check_popup_action,
+    FILES_ENTRY, Failure, GoogleQuotaState, InputLock, InvokeIntent, MAX_COLUMNS,
+    MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, PROJECT_ENTRY, Pane as SnapshotPane,
+    Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupKey, PopupTarget, QuotaFailure,
+    QuotaWindow, Screen, Sent, Side, Sidebar, Snapshot, Tab as SnapshotTab, TargetId,
+    TerminalHistory, TerminalTarget, TerminalText, WorkspaceAction, WorkspaceTarget,
+    check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -232,6 +233,7 @@ pub(crate) struct WorkspaceSet {
     registry: Option<Registry>,
     workspaces: Vec<Workspace>,
     shown: usize,
+    input_locked: bool,
     ids: IdAllocator,
     recent_inspections: VecDeque<String>,
     recent_mutations: VecDeque<String>,
@@ -325,6 +327,7 @@ impl WorkspaceSet {
             registry,
             workspaces: Vec::new(),
             shown: 0,
+            input_locked: false,
             ids,
             recent_inspections: VecDeque::new(),
             recent_workspaces: VecDeque::new(),
@@ -344,7 +347,7 @@ impl WorkspaceSet {
     }
 
     fn pending_allowance(&self) -> Result<usize, Failure> {
-        if self.workspaces.len() >= eon_workspace_protocol::v48::MAX_WORKSPACES {
+        if self.workspaces.len() >= eon_workspace_protocol::v49::MAX_WORKSPACES {
             return Err(action_error(
                 "session-limit",
                 "a window holds at most 32 sessions",
@@ -440,6 +443,7 @@ impl WorkspaceSet {
             registry,
             workspaces: vec![workspace],
             shown: 0,
+            input_locked: false,
             ids,
             recent_inspections: VecDeque::new(),
             recent_workspaces,
@@ -459,7 +463,7 @@ impl WorkspaceSet {
         match action {
             Action::Workspace(WorkspaceAction::NewWorkspace { name, .. }) => {
                 if let Some(name) = name {
-                    eon_workspace_protocol::v48::validate_workspace_name(name)
+                    eon_workspace_protocol::v49::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -474,7 +478,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v48::validate_workspace_name(name)
+                    eon_workspace_protocol::v49::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -611,11 +615,12 @@ impl WorkspaceSet {
             None => self.shown,
         };
         let mut snapshot = self.workspaces[index].snapshot();
+        snapshot.input_locked = self.input_locked;
         snapshot.active_workspace = self.workspaces[self.shown].id.clone();
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v48::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v49::WorkspaceInfo {
                 id: workspace.id.clone(),
                 persistent_id: workspace.persistent_id.clone(),
                 registration_error: workspace.registration_error.clone(),
@@ -642,6 +647,7 @@ impl WorkspaceSet {
             .iter()
             .map(|workspace| {
                 let mut snapshot = workspace.snapshot();
+                snapshot.input_locked = self.input_locked;
                 snapshot.active_workspace = shown.clone();
                 snapshot
             })
@@ -787,13 +793,13 @@ impl WorkspaceSet {
         });
         name.chars()
             .map(|character| {
-                if eon_workspace_protocol::v48::pane_label_character(character) {
+                if eon_workspace_protocol::v49::pane_label_character(character) {
                     character
                 } else {
                     '\u{fffd}'
                 }
             })
-            .take(eon_workspace_protocol::v48::MAX_WINDOW_NAME_CHARS)
+            .take(eon_workspace_protocol::v49::MAX_WINDOW_NAME_CHARS)
             .collect()
     }
 
@@ -1031,10 +1037,17 @@ impl WorkspaceSet {
             Action::Workspace(WorkspaceAction::Inspect | WorkspaceAction::InspectWorkspace { .. })
         );
         match action {
+            Action::InputLock(operation) => {
+                self.input_locked = match operation {
+                    InputLock::Unlock => false,
+                    InputLock::Lock => true,
+                    InputLock::Toggle => !self.input_locked,
+                };
+            }
             Action::RenamePane { pane, name, tag } => {
                 let name = name.as_deref().map(str::trim);
                 let tag = tag.as_deref().map(str::trim);
-                eon_workspace_protocol::v48::validate_pane_rename(name, tag)
+                eon_workspace_protocol::v49::validate_pane_rename(name, tag)
                     .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 let target = self.workspaces[index]
                     .tabs
@@ -1052,7 +1065,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v48::validate_workspace_name(name)
+                    eon_workspace_protocol::v49::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 self.pending_allowance()?;
@@ -1107,7 +1120,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v48::validate_workspace_name(&name)
+                    eon_workspace_protocol::v49::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -1562,13 +1575,15 @@ impl Workspace {
         Snapshot {
             focus: None,
             released_shortcuts: self.catalog.released_shortcuts,
+            input_lock: self.catalog.input_lock.clone(),
+            input_locked: false,
             // Runtime stamps identity at the public projection boundary.
             generation: String::new(),
             created_build: String::new(),
             active_build: String::new(),
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v49::WorkspaceInfo {
                 id: self.id.clone(),
                 persistent_id: self.persistent_id.clone(),
                 registration_error: self.registration_error.clone(),
@@ -1749,6 +1764,7 @@ impl Workspace {
             // The supervisor's attention owner flips visibility once this
             // request is accepted.
             Action::ToggleSidebar | Action::SetSidebar { .. } => {}
+            Action::InputLock(_) => unreachable!("the window owns input lock"),
             Action::FocusAttention { tab, target } => self.focus_attention(&tab, &target)?,
             Action::NextAttention | Action::PreviousAttention => {
                 return Err(action_error(
@@ -3612,9 +3628,10 @@ pub(crate) fn target_id_json(id: &TargetId) -> String {
 
 pub(crate) fn human(snapshot: &Snapshot) -> String {
     let mut output = format!(
-        "active {}\nsidebar {}\n",
+        "active {}\nsidebar {}\ninput_locked {}\n",
         snapshot.active_tab,
-        sidebar_name(snapshot.sidebar)
+        sidebar_name(snapshot.sidebar),
+        snapshot.input_locked,
     );
     for tab in &snapshot.tabs {
         output.push_str(&format!(
@@ -3808,7 +3825,7 @@ pub(crate) fn json_tab(output: &mut String, tab: &SnapshotTab) {
     output.push_str("]}");
 }
 
-pub(crate) fn json_inventory(hosts: &[eon_workspace_protocol::v48::TerminalInventory]) -> String {
+pub(crate) fn json_inventory(hosts: &[eon_workspace_protocol::v49::TerminalInventory]) -> String {
     serde_json::Value::Array(hosts.iter().map(|host| serde_json::json!({
         "terminal": host.terminal, "run": host.run, "origin_build": host.origin_build,
         "management_version": host.management_version, "record_generation": host.record_generation,
@@ -3828,11 +3845,12 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         }),
     }));
     let mut output = format!(
-        "{{\"focus\":{},\"created_build\":\"{}\",\"active_build\":\"{}\",\"active_tab\":\"{}\",\"geometry\":{{\"side_margin\":{},\"vertical_margin\":{}}},\"entries\":[",
+        "{{\"focus\":{},\"created_build\":\"{}\",\"active_build\":\"{}\",\"active_tab\":\"{}\",\"input_locked\":{},\"geometry\":{{\"side_margin\":{},\"vertical_margin\":{}}},\"entries\":[",
         serde_json::to_string(&focus).expect("focus JSON is representable"),
         json_escape(&snapshot.created_build),
         json_escape(&snapshot.active_build),
         json_escape(&snapshot.active_tab),
+        snapshot.input_locked,
         snapshot.geometry.side_margin,
         snapshot.geometry.vertical_margin
     );
@@ -3931,8 +3949,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-fn window_state(state: eon_workspace_protocol::v48::WindowState) -> &'static str {
-    use eon_workspace_protocol::v48::WindowState;
+fn window_state(state: eon_workspace_protocol::v49::WindowState) -> &'static str {
+    use eon_workspace_protocol::v49::WindowState;
     match state {
         WindowState::Live => "live",
         WindowState::Incompatible => "incompatible",
@@ -3942,7 +3960,7 @@ fn window_state(state: eon_workspace_protocol::v48::WindowState) -> &'static str
 
 fn json_window(
     output: &mut String,
-    entry: &eon_workspace_protocol::v48::WindowEntry,
+    entry: &eon_workspace_protocol::v49::WindowEntry,
     include_state: bool,
 ) {
     output.push_str("{\"window\":");
@@ -4131,7 +4149,7 @@ pub(crate) fn list_human(snapshot: &Snapshot) -> String {
 /// One session object, shared by inspection and event output.
 pub(crate) fn json_workspace(
     output: &mut String,
-    workspace: &eon_workspace_protocol::v48::WorkspaceInfo,
+    workspace: &eon_workspace_protocol::v49::WorkspaceInfo,
     shown: bool,
 ) {
     output.push_str(&format!(
@@ -4148,7 +4166,7 @@ pub(crate) fn json_workspace(
     output.push_str(&format!(",\"recency\":{}}}", workspace.recency));
 }
 
-pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v48::WorkspaceInfo) -> String {
+pub(crate) fn registration_json(workspace: &eon_workspace_protocol::v49::WorkspaceInfo) -> String {
     let mut output = String::from("\"persistent_id\":");
     json_option(&mut output, workspace.persistent_id.as_deref());
     output.push_str(",\"registration_error\":");
@@ -4323,6 +4341,7 @@ pub(crate) fn required_effects(
         | Action::MovePaneSideways(_)
         | Action::ToggleSidebar
         | Action::SetSidebar { .. }
+        | Action::InputLock(_)
         | Action::FocusAttention { .. }
         | Action::NextAttention
         | Action::PreviousAttention => Required::new(of(Arrange)),
@@ -4431,7 +4450,7 @@ pub(crate) fn resolve_target<'a>(
 ) -> Result<usize, Failure> {
     match target {
         WorkspaceTarget::Selector(selector) => {
-            eon_workspace_protocol::v48::validate_workspace_name(selector)
+            eon_workspace_protocol::v49::validate_workspace_name(selector)
                 .map_err(|error| action_error("malformed-action", error.to_string()))?;
             resolve_selector(workspaces.map(|(id, name, _)| (id, name)), selector)
         }
@@ -4496,7 +4515,7 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v48::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v49::Shortcut) -> String {
     eon_workspace_protocol::shortcuts::config_chord(shortcut.modifiers, &shortcut.key)
 }
 
@@ -4600,6 +4619,7 @@ pub(crate) fn keys_json(
     generation: &str,
     window: Option<&str>,
     keymap: &EffectiveKeymap,
+    input_locked: bool,
 ) -> String {
     let output = serde_json::json!({
         "generation": generation,
@@ -4609,6 +4629,7 @@ pub(crate) fn keys_json(
         "number_keys": keymap.number_keys,
         "number_keys_source": "config",
         "running": keymap.running,
+        "input_locked": input_locked,
         "groups": keymap
             .groups
             .iter()
@@ -4643,15 +4664,17 @@ pub(crate) fn keys_human(
     generation: &str,
     window: Option<&str>,
     keymap: &EffectiveKeymap,
+    input_locked: bool,
 ) -> String {
     let mut output = format!(
-        "window={} generation={} platform={} sidebar={} number_keys={} number_keys_source=config running={}\n",
+        "window={} generation={} platform={} sidebar={} number_keys={} number_keys_source=config running={} input_locked={}\n",
         window.unwrap_or("default"),
         generation,
         keymap.platform.name(),
         sidebar_name(keymap.sidebar),
         keymap.number_keys,
         keymap.running,
+        input_locked,
     );
     let width = keymap
         .groups
@@ -4737,7 +4760,7 @@ pub(crate) mod tests {
     fn inspect() -> Action {
         Action::Workspace(WorkspaceAction::Inspect)
     }
-    use eon_workspace_protocol::v48::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
+    use eon_workspace_protocol::v49::{ALT, PopupGeometry, QuotaFailureReason, Shortcut};
 
     fn c38_set(root: &Path) -> (Registry, WorkspaceSet) {
         let registry = Registry::in_test_directory(root.join("sessions"));
@@ -5227,6 +5250,43 @@ pub(crate) mod tests {
         set
     }
 
+    #[test]
+    fn input_lock_is_window_wide_and_replays_do_not_toggle_it() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        let tab = set.snapshot().active_tab;
+        set.dispatch("open", None, invoke(&tab, "git"), prepared, |_| Ok(()))
+            .unwrap();
+        let before = set.snapshot();
+        let caller = set.workspaces[1].sessions().next().unwrap().id.clone();
+        let hidden = set.workspaces[1].id.clone();
+        let apply = |set: &mut WorkspaceSet, id, operation| {
+            set.dispatch(
+                id,
+                Some(&caller),
+                Action::InputLock(operation),
+                |_, _| panic!("input lock never prepares a popup"),
+                |_| panic!("input lock never operates a terminal"),
+            )
+        };
+
+        assert!(!before.input_locked);
+        for (id, operation, locked) in [
+            ("lock", InputLock::Lock, true),
+            ("lock-again", InputLock::Lock, true),
+            ("unlock", InputLock::Unlock, false),
+            ("toggle", InputLock::Toggle, true),
+        ] {
+            apply(&mut set, id, operation).unwrap();
+            assert_eq!(set.snapshot().input_locked, locked);
+            assert_eq!(set.snapshot_in(Some(&hidden)).unwrap().input_locked, locked);
+            let mut after = set.snapshot();
+            after.input_locked = false;
+            assert_eq!(after, before, "only the lock may change");
+        }
+        assert!(apply(&mut set, "toggle", InputLock::Toggle).is_err());
+        assert!(set.snapshot().input_locked);
+    }
+
     pub(crate) fn invoke(tab: &str, entry: &str) -> Action {
         Action::InvokePopup {
             tab: tab.into(),
@@ -5536,8 +5596,8 @@ pub(crate) mod tests {
             ("s1", "s3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v48::encode_response(
-            &eon_workspace_protocol::v48::Response::Snapshot(wire_snapshot(caller_view)),
+        eon_workspace_protocol::v49::encode_response(
+            &eon_workspace_protocol::v49::Response::Snapshot(wire_snapshot(caller_view)),
         )
         .unwrap();
 
@@ -5547,7 +5607,7 @@ pub(crate) mod tests {
                 "ambiguous",
                 None,
                 Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector(
+                    workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector(
                         "work".into(),
                     ),
                 }),
@@ -5562,7 +5622,7 @@ pub(crate) mod tests {
             "same",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s3".into()),
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s3".into()),
             }),
             prepared,
             |_| panic!("a switch starts nothing"),
@@ -5635,7 +5695,7 @@ pub(crate) mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v48::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v49::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -5691,8 +5751,8 @@ pub(crate) mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v48::encode_response(
-            &eon_workspace_protocol::v48::Response::Snapshot(wire_snapshot(snapshot.clone())),
+        eon_workspace_protocol::v49::encode_response(
+            &eon_workspace_protocol::v49::Response::Snapshot(wire_snapshot(snapshot.clone())),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -5764,8 +5824,8 @@ pub(crate) mod tests {
         assert_eq!(error.code, "terminal-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v48::encode_response(
-            &eon_workspace_protocol::v48::Response::Snapshot(wire_snapshot(snapshot.clone())),
+        eon_workspace_protocol::v49::encode_response(
+            &eon_workspace_protocol::v49::Response::Snapshot(wire_snapshot(snapshot.clone())),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "s1");
@@ -5779,7 +5839,7 @@ pub(crate) mod tests {
             "name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v48::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v49::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s2".into(),
@@ -5792,7 +5852,7 @@ pub(crate) mod tests {
             "live-id",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5803,7 +5863,7 @@ pub(crate) mod tests {
             "absent-id-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v48::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v49::WorkspaceTarget::Selector(
                     "s1".into(),
                 )),
                 name: "s99".into(),
@@ -5816,7 +5876,7 @@ pub(crate) mod tests {
             "switch-name",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s99".into()),
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s99".into()),
             }),
             prepared,
             |_| panic!("switching starts nothing"),
@@ -5827,7 +5887,7 @@ pub(crate) mod tests {
             "rename-name",
             None,
             Action::Workspace(WorkspaceAction::RenameWorkspace {
-                workspace: Some(eon_workspace_protocol::v48::WorkspaceTarget::Selector(
+                workspace: Some(eon_workspace_protocol::v49::WorkspaceTarget::Selector(
                     "s99".into(),
                 )),
                 name: "s100".into(),
@@ -5874,7 +5934,7 @@ pub(crate) mod tests {
         );
         for (request, workspace) in [("third", "s3"), ("second", "s2")] {
             let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector(workspace.into()),
             });
             set.dispatch(request, None, switch, prepared, |_| Ok(()))
                 .unwrap();
@@ -6055,7 +6115,7 @@ pub(crate) mod tests {
             "switch",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -6075,7 +6135,7 @@ pub(crate) mod tests {
             "show-second",
             None,
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s2".into()),
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into()),
             }),
             prepared,
             |_| Ok(()),
@@ -6468,7 +6528,7 @@ pub(crate) mod tests {
             focus: false,
         });
         let switch = Action::Workspace(WorkspaceAction::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into()),
         });
         set.dispatch("create", None, create.clone(), prepared, |_| Ok(()))
             .unwrap();
@@ -6757,7 +6817,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_json_carries_running_windows() {
-        use eon_workspace_protocol::v48::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v49::{RunningWindows, WindowEntry, WindowState};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6830,7 +6890,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_json_carries_busy_terminals() {
-        use eon_workspace_protocol::v48::{BusyTerminal, BusyTerminals};
+        use eon_workspace_protocol::v49::{BusyTerminal, BusyTerminals};
         let set = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -6891,7 +6951,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_json_carries_the_full_attention_record_and_quotas_but_human_output_does_not() {
-        use eon_workspace_protocol::v48::{
+        use eon_workspace_protocol::v49::{
             AttentionKind, AttentionRecord, ClaudeQuota, ClaudeQuotaState, CodexQuota,
             CodexQuotaState, GoogleQuota, QuotaWindow,
         };
@@ -7018,7 +7078,7 @@ pub(crate) mod tests {
             reason: QuotaFailureReason::Start,
         });
         snapshot.attention_queue = vec![
-            eon_workspace_protocol::v48::QueueEntry {
+            eon_workspace_protocol::v49::QueueEntry {
                 workspace: "s1".into(),
                 tab: "t1".into(),
                 target: "p1".into(),
@@ -7027,7 +7087,7 @@ pub(crate) mod tests {
                     .clone()
                     .unwrap(),
             },
-            eon_workspace_protocol::v48::QueueEntry {
+            eon_workspace_protocol::v49::QueueEntry {
                 workspace: "s2".into(),
                 tab: "t\"2".into(),
                 target: "p\\2".into(),
@@ -7081,7 +7141,7 @@ pub(crate) mod tests {
             assert!(output.contains(&format!("\"{field}\":18446744073709551615000")));
         }
         let human = human(&snapshot);
-        assert!(human.starts_with("active t1\nsidebar closed\ntab t1 "));
+        assert!(human.starts_with("active t1\nsidebar closed\ninput_locked false\ntab t1 "));
         assert!(human.contains(" attention=needs-input\n"));
         assert!(human.contains(" attention=needs-input app=codex name=eon \\\"9a\\\"\n"));
         assert!(human.contains(" attention=none app=none name=none\n"));
@@ -7660,6 +7720,7 @@ pub(crate) mod tests {
             Action::EditTerminalHistory { .. } => 33,
             Action::SendTerminal { .. } => 34,
             Action::Subscribe { .. } => 35,
+            Action::InputLock(_) => 36,
         }
     }
 
@@ -7683,7 +7744,10 @@ pub(crate) mod tests {
         what: &str,
     ) {
         use crate::admission::Effect::{Arrange, Close, Run};
-        if before.workspaces != after.workspaces || before.shown != after.shown {
+        if before.workspaces != after.workspaces
+            || before.shown != after.shown
+            || before.input_locked != after.input_locked
+        {
             observed = observed.with(Arrange);
         }
         for effect in [Run, Close, Arrange] {
@@ -8187,6 +8251,13 @@ pub(crate) mod tests {
             (
                 &plain,
                 None,
+                Action::InputLock(InputLock::Toggle),
+                new(&[Arrange]),
+                true,
+            ),
+            (
+                &plain,
+                None,
                 Action::SetSidebar { open: true },
                 new(&[Arrange]),
                 true,
@@ -8234,8 +8305,8 @@ pub(crate) mod tests {
                 &plain,
                 None,
                 Action::SendTerminal {
-                    target: eon_workspace_protocol::v48::SendTarget::Id(p.clone()),
-                    input: eon_workspace_protocol::v48::TerminalInput::Enter,
+                    target: eon_workspace_protocol::v49::SendTarget::Id(p.clone()),
+                    input: eon_workspace_protocol::v49::TerminalInput::Enter,
                     force: false,
                 },
                 governed(&[Send]),
@@ -8253,7 +8324,7 @@ pub(crate) mod tests {
             ),
         ];
 
-        let mut covered = [false; 36];
+        let mut covered = [false; 37];
         for (state, caller, action, expected, apply) in &cases {
             covered[action_index(action)] = true;
             assert_eq!(
@@ -8354,7 +8425,7 @@ pub(crate) mod tests {
             }
         }
         assert!(applied >= 7, "the edit routes ran: {applied}");
-        assert_eq!(covered, [true; 36], "every action has a case");
+        assert_eq!(covered, [true; 37], "every action has a case");
         // Without a workspace owner or a routable caller, only the
         // unconditional effects apply.
         assert_eq!(
@@ -8556,6 +8627,7 @@ pub(crate) mod tests {
 
     pub(crate) fn catalog() -> PopupCatalog {
         PopupCatalog {
+            input_lock: crate::fixtures::input_lock(),
             released_shortcuts: Default::default(),
             geometry: PopupGeometry {
                 side_margin: 8.0,
@@ -8792,8 +8864,8 @@ pub(crate) mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v48::encode_response(
-            &eon_workspace_protocol::v48::Response::Snapshot(wire_snapshot(after)),
+        eon_workspace_protocol::v49::encode_response(
+            &eon_workspace_protocol::v49::Response::Snapshot(wire_snapshot(after)),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -8963,7 +9035,7 @@ pub(crate) mod tests {
         assert_eq!(before.tabs[1].selected_pane.as_deref(), Some("p4"));
         let popup = before.tabs[1].selected_popup.clone();
         assert!(popup.is_some());
-        let ids = |tab: &eon_workspace_protocol::v48::Tab, column: usize| {
+        let ids = |tab: &eon_workspace_protocol::v49::Tab, column: usize| {
             tab.columns[column]
                 .panes
                 .iter()
@@ -10530,7 +10602,7 @@ pub(crate) mod tests {
         };
         let switch = |workspace: &str| {
             Action::Workspace(WorkspaceAction::SwitchWorkspace {
-                workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector(workspace.into()),
+                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector(workspace.into()),
             })
         };
         // Opens the picker over the shown terminal and returns its terminal.
@@ -11562,8 +11634,8 @@ pub(crate) mod tests {
             .unwrap_err();
         assert_eq!(error.code, "terminal-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v48::encode_response(
-            &eon_workspace_protocol::v48::Response::Snapshot(wire_snapshot(workspace.snapshot())),
+        eon_workspace_protocol::v49::encode_response(
+            &eon_workspace_protocol::v49::Response::Snapshot(wire_snapshot(workspace.snapshot())),
         )
         .unwrap();
 
@@ -11626,8 +11698,8 @@ pub(crate) mod tests {
             assert!(json(&state).contains(
                 r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
             ));
-            eon_workspace_protocol::v48::encode_response(
-                &eon_workspace_protocol::v48::Response::Snapshot(wire_snapshot(state)),
+            eon_workspace_protocol::v49::encode_response(
+                &eon_workspace_protocol::v49::Response::Snapshot(wire_snapshot(state)),
             )
             .unwrap();
         }
@@ -12559,7 +12631,7 @@ pub(crate) mod tests {
             },
         };
         let compact_parsed: serde_json::Value =
-            serde_json::from_str(&keys_json("g1-test", Some("work"), &compact)).unwrap();
+            serde_json::from_str(&keys_json("g1-test", Some("work"), &compact, true)).unwrap();
         assert_eq!(
             compact_parsed,
             serde_json::json!({
@@ -12570,6 +12642,7 @@ pub(crate) mod tests {
                 "number_keys": false,
                 "number_keys_source": "config",
                 "running": true,
+                "input_locked": true,
                 "groups": [
                     {
                         "title": "Navigate",
@@ -12681,7 +12754,7 @@ pub(crate) mod tests {
                 label: "Agent".into(),
                 shortcut: PopupKey::Overridden {
                     default: Shortcut {
-                        modifiers: ALT | eon_workspace_protocol::v48::SHIFT,
+                        modifiers: ALT | eon_workspace_protocol::v49::SHIFT,
                         key: "KeyL".into(),
                     },
                     by: "pane-maker".into(),
@@ -12700,9 +12773,13 @@ pub(crate) mod tests {
             true,
             false,
             Default::default(),
+            (
+                &crate::fixtures::input_lock(),
+                &crate::fixtures::input_lock(),
+            ),
         );
         let parsed: serde_json::Value =
-            serde_json::from_str(&keys_json("g1-test", None, &keymap)).unwrap();
+            serde_json::from_str(&keys_json("g1-test", None, &keymap, false)).unwrap();
         assert_eq!(
             parsed.as_object().unwrap().get("window"),
             Some(&serde_json::Value::Null)
@@ -12763,6 +12840,7 @@ pub(crate) mod tests {
                 "copy",
                 "paste",
                 "open_link",
+                "toggle_input_lock",
             ]
         );
         assert_eq!(
@@ -12804,9 +12882,9 @@ pub(crate) mod tests {
             ["focus_left", "focus_right", "focus_up", "focus_down"]
         );
 
-        let human = keys_human("g1-test", None, &keymap);
+        let human = keys_human("g1-test", None, &keymap, false);
         assert!(human.starts_with(
-            "window=default generation=g1-test platform=linux sidebar=closed number_keys=false number_keys_source=config running=true\n"
+            "window=default generation=g1-test platform=linux sidebar=closed number_keys=false number_keys_source=config running=true input_locked=false\n"
         ));
         assert!(human.contains("Unbound popups\n"));
         assert!(human.contains("silent"));

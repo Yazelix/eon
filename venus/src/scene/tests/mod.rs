@@ -1,5 +1,5 @@
 use super::*;
-use eon_workspace_protocol::v48::Pane;
+use eon_workspace_protocol::v49::Pane;
 
 pub(crate) mod bar;
 mod links;

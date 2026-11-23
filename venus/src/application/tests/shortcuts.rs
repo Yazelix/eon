@@ -4,7 +4,7 @@ use crate::application::shortcuts::{
     command_q_for, native_modifiers, native_pointer_shortcut_for, shortcut_groups_for,
 };
 use eon_workspace_protocol::shortcuts::PAIRED_ROWS;
-use eon_workspace_protocol::v48::{InvokeIntent, Side, Tab};
+use eon_workspace_protocol::v49::{InvokeIntent, Side, Tab};
 
 #[test]
 fn new_window_shortcut_invokes_the_supplied_eon_command() {
@@ -23,7 +23,7 @@ fn new_window_shortcut_invokes_the_supplied_eon_command() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v48::Sidebar::Open,
+            eon_workspace_protocol::v49::Sidebar::Open,
             true
         )
         .iter()
@@ -192,14 +192,14 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         id: "project".into(),
         label: "Money ops".into(),
         shortcut: PopupKey::Bound(Shortcut {
-            modifiers: eon_workspace_protocol::v48::ALT,
+            modifiers: eon_workspace_protocol::v49::ALT,
             key: "KeyZ".into(),
         }),
     }];
     let groups = shortcut_groups_for(
         NativePlatform::Linux,
         &entries,
-        eon_workspace_protocol::v48::Sidebar::Open,
+        eon_workspace_protocol::v49::Sidebar::Open,
         true,
     );
     let key_shortcut = |key, modifiers| {
@@ -216,7 +216,7 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
             .filter(|group| group.title != "Projects and tools")
             .map(|group| group.rows.len())
             .sum::<usize>(),
-        FIXED_SHORTCUTS.len() - PAIRED_ROWS.len()
+        FIXED_SHORTCUTS.len() - PAIRED_ROWS.len() + 1
     );
     let display_of = |action| {
         FIXED_SHORTCUTS
@@ -348,7 +348,7 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
                 key: "ArrowLeft".into(),
             }),
         }],
-        eon_workspace_protocol::v48::Sidebar::Open,
+        eon_workspace_protocol::v49::Sidebar::Open,
         true,
     );
     let split = split
@@ -363,7 +363,7 @@ fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         shortcut_groups_for(
             NativePlatform::Linux,
             &[],
-            eon_workspace_protocol::v48::Sidebar::Open,
+            eon_workspace_protocol::v49::Sidebar::Open,
             true
         )
         .iter()
@@ -500,7 +500,7 @@ fn macos_uses_command_for_standard_host_actions_only() {
     let rows = shortcut_groups_for(
         NativePlatform::Macos,
         &[],
-        eon_workspace_protocol::v48::Sidebar::Open,
+        eon_workspace_protocol::v49::Sidebar::Open,
         true,
     )
     .into_iter()
@@ -518,7 +518,7 @@ fn macos_uses_command_for_standard_host_actions_only() {
         assert!(rows.iter().any(|row| row == label), "{label}");
     }
     assert_eq!(
-        link_hint_for(NativePlatform::Macos, "https://example.com/", &[]),
+        link_hint_for(NativePlatform::Macos, "https://example.com/", &[], false),
         "https://example.com/\nCommand+click Open · Command+C Copy"
     );
 
@@ -588,12 +588,14 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
     let mut snapshot = Snapshot {
         focus: None,
         released_shortcuts: Default::default(),
+        input_locked: false,
+        input_lock: crate::fixture_input_lock(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v49::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -603,7 +605,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
             recency: 0,
         }],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v48::PopupGeometry {
+        geometry: eon_workspace_protocol::v49::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -626,7 +628,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v48::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v49::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     show_test_popup(&mut snapshot);
@@ -651,7 +653,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
                     intent
                 }
             );
-            eon_workspace_protocol::v48::check_popup_action(&snapshot, &action).unwrap();
+            eon_workspace_protocol::v49::check_popup_action(&snapshot, &action).unwrap();
         }
         let action = popup_shortcut(
             KeyCode::KeyZ,
@@ -660,7 +662,7 @@ fn structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit() {
             focused,
         )
         .unwrap();
-        eon_workspace_protocol::v48::check_popup_action(&snapshot, &action).unwrap();
+        eon_workspace_protocol::v49::check_popup_action(&snapshot, &action).unwrap();
         assert!(!sends_workspace_shortcut(
             &action,
             ElementState::Pressed,
@@ -710,7 +712,7 @@ fn attention_inbox_binding_opens_under_every_sidebar() {
 
 #[test]
 fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
-    use eon_workspace_protocol::v48::{
+    use eon_workspace_protocol::v49::{
         Attention, AttentionState, PopupGeometry, QueueEntry, WorkspaceInfo,
     };
     use orbit_protocol::session::Modifiers;
@@ -728,6 +730,8 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     let mut snapshot = Snapshot {
         focus: None,
         released_shortcuts: Default::default(),
+        input_locked: false,
+        input_lock: crate::fixture_input_lock(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
@@ -762,9 +766,9 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
                 pending: false,
                 selected_pane: Some(id.replace('t', "p")),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v48::Column {
+                columns: vec![eon_workspace_protocol::v49::Column {
                     expanded: id.replace('t', "p"),
-                    panes: vec![eon_workspace_protocol::v48::Pane {
+                    panes: vec![eon_workspace_protocol::v49::Pane {
                         id: id.replace('t', "p"),
                         label: id.replace('t', "p"),
                         pinned_name: None,
@@ -805,7 +809,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             target: target.into(),
             attention: Attention {
                 state,
-                record: Some(eon_workspace_protocol::v48::AttentionRecord {
+                record: Some(eon_workspace_protocol::v49::AttentionRecord {
                     kind: None,
                     progress: None,
                     app: "codex".into(),
@@ -859,7 +863,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     assert_eq!(inbox.filter, AttentionFilter::Error);
     assert_eq!(scene(&inbox, &snapshot).attention_rows[0].target, "p2");
     let mut model = WorkspaceModel::default();
-    model.apply(eon_workspace_protocol::v48::Response::Snapshot(
+    model.apply(eon_workspace_protocol::v49::Response::Snapshot(
         snapshot.clone(),
     ));
     let index = inbox.index(&snapshot).unwrap();
@@ -867,7 +871,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     tagged.tabs[1].columns[0].panes[0].tag = Some("work".into());
     assert!(labels_only_change(&snapshot, &tagged));
     assert_eq!(
-        model.apply(eon_workspace_protocol::v48::Response::Snapshot(tagged)),
+        model.apply(eon_workspace_protocol::v49::Response::Snapshot(tagged)),
         (true, false)
     );
     let mut tag_presentation = PresentationState::default();
@@ -878,7 +882,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     assert_eq!(inbox.scroll, 17.0);
     snapshot = model.snapshot().unwrap().clone();
     snapshot.attention_queue[1].attention.record =
-        Some(eon_workspace_protocol::v48::AttentionRecord {
+        Some(eon_workspace_protocol::v49::AttentionRecord {
             kind: None,
             progress: None,
             app: "codex".into(),
@@ -890,7 +894,7 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
             others: 0,
         });
     assert_eq!(
-        model.apply(eon_workspace_protocol::v48::Response::Snapshot(
+        model.apply(eon_workspace_protocol::v49::Response::Snapshot(
             snapshot.clone()
         )),
         (false, false),
@@ -1034,8 +1038,8 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
     let files = [PopupEntry {
         id: "files".into(),
         label: "Files".into(),
-        shortcut: PopupKey::Bound(eon_workspace_protocol::v48::Shortcut {
-            modifiers: eon_workspace_protocol::v48::SUPER,
+        shortcut: PopupKey::Bound(eon_workspace_protocol::v49::Shortcut {
+            modifiers: eon_workspace_protocol::v49::SUPER,
             key: "KeyQ".into(),
         }),
     }];
@@ -1057,8 +1061,8 @@ fn quit_key_lists_hints_and_yields_to_a_popup() {
     let monitor = [PopupEntry {
         id: "monitor".into(),
         label: "Monitor".into(),
-        shortcut: PopupKey::Bound(eon_workspace_protocol::v48::Shortcut {
-            modifiers: eon_workspace_protocol::v48::ALT | eon_workspace_protocol::v48::SHIFT,
+        shortcut: PopupKey::Bound(eon_workspace_protocol::v49::Shortcut {
+            modifiers: eon_workspace_protocol::v49::ALT | eon_workspace_protocol::v49::SHIFT,
             key: "KeyQ".into(),
         }),
     }];
@@ -1138,7 +1142,7 @@ fn literal_shortcut_defaults_preserve_both_platforms() {
         for group in shortcut_groups_for(
             platform,
             &[],
-            eon_workspace_protocol::v48::Sidebar::Open,
+            eon_workspace_protocol::v49::Sidebar::Open,
             true,
         ) {
             writeln!(actual, "[{}]", group.title).unwrap();
@@ -1150,10 +1154,11 @@ fn literal_shortcut_defaults_preserve_both_platforms() {
         let direct = eon_workspace_protocol::shortcuts::effective_keymap(
             platform,
             &[],
-            eon_workspace_protocol::v48::Sidebar::Open,
+            eon_workspace_protocol::v49::Sidebar::Open,
             true,
             true,
             Default::default(),
+            (&crate::fixture_input_lock(), &crate::fixture_input_lock()),
         );
         let direct_viewer: Vec<(&str, Vec<(&str, &str)>)> = direct
             .groups
@@ -1171,7 +1176,7 @@ fn literal_shortcut_defaults_preserve_both_platforms() {
         let venus_viewer = shortcut_groups_for(
             platform,
             &[],
-            eon_workspace_protocol::v48::Sidebar::Open,
+            eon_workspace_protocol::v49::Sidebar::Open,
             true,
         );
         let venus_viewer: Vec<(&str, Vec<(&str, &str)>)> = venus_viewer
@@ -1215,4 +1220,156 @@ fn ordinary_shortcuts_keep_exact_modifiers_and_native_paste_stays_unconditional(
             );
         }
     }
+}
+
+#[test]
+fn input_lock_respects_key_ownership_and_the_focused_surface() {
+    use eon_workspace_protocol::v49::{ALT, Response, SHIFT};
+    use winit::keyboard::ModifiersState;
+
+    let mut app = Application::new(
+        crate::launch::launch_arguments(["--workspace", "eon.sock"].map(OsString::from), None)
+            .unwrap(),
+        EventSink::Host(Arc::new(|_| true)),
+    );
+    app.window_focused = true;
+    let mut snapshot = super::chrome::stack_snapshot(&[&["p1"]]);
+    snapshot.input_lock = Shortcut {
+        key: "KeyP".into(),
+        modifiers: ALT | SHIFT,
+    };
+    snapshot.released_shortcuts.insert("Alt+M").unwrap();
+    let install = |app: &mut Application, snapshot: &Snapshot| {
+        app.workspace_model
+            .apply(Response::Snapshot(snapshot.clone()));
+    };
+    install(&mut app, &snapshot);
+    let key = |app: &mut Application, code, mods, state, repeat| {
+        app.input.set_modifiers(mods);
+        app.handle_shortcut_key(&ShortcutKey {
+            physical_key: PhysicalKey::Code(code),
+            state,
+            repeat,
+        })
+    };
+    use ElementState::{Pressed, Released};
+    let none = ModifiersState::empty();
+    let alt = ModifiersState::ALT;
+    let shift_alt = alt | ModifiersState::SHIFT;
+
+    // A lock arriving from the CLI cannot turn a held Eon shortcut into a terminal release.
+    assert!(key(&mut app, KeyCode::Slash, alt, Pressed, false));
+    assert!(app.shortcut_viewer.open);
+    snapshot.input_locked = true;
+    install(&mut app, &snapshot);
+    assert!(key(&mut app, KeyCode::Slash, none, Released, false));
+    for (code, mods) in [
+        (KeyCode::KeyN, shift_alt),
+        (KeyCode::Slash, alt),
+        (KeyCode::KeyQ, alt),
+        (KeyCode::KeyD, shift_alt),
+    ] {
+        assert!(key(&mut app, code, mods, Pressed, false));
+        assert!(key(&mut app, code, none, Released, false));
+        assert!(app.shortcut_viewer.open);
+    }
+    assert!(!app.native_requests.exit);
+    assert!(key(&mut app, KeyCode::Escape, none, Pressed, false));
+    assert!(!app.shortcut_viewer.open);
+    assert!(key(&mut app, KeyCode::Escape, none, Released, false));
+
+    // Every intercepted accelerator stays local while the inbox has focus.
+    app.set_attention_inbox(true);
+    for (code, mods) in [
+        (KeyCode::KeyN, shift_alt),
+        (KeyCode::Slash, alt),
+        (KeyCode::KeyQ, alt),
+    ] {
+        assert!(key(&mut app, code, mods, Pressed, false));
+        assert!(key(&mut app, code, none, Released, false));
+        assert!(app.attention_inbox.open);
+    }
+    app.set_attention_inbox(false);
+
+    // The same keys use ordinary terminal input when no dialog or chrome owns focus.
+    show_test_popup(&mut snapshot);
+    install(&mut app, &snapshot);
+    for (code, mods) in [
+        (KeyCode::KeyN, shift_alt),
+        (KeyCode::Slash, alt),
+        (KeyCode::KeyQ, alt),
+        (KeyCode::KeyM, alt),
+        (KeyCode::KeyH, alt),
+        (KeyCode::KeyY, shift_alt),
+        (KeyCode::KeyI, shift_alt),
+        (KeyCode::F6, none),
+    ] {
+        assert!(!key(&mut app, code, mods, Pressed, false));
+    }
+
+    app.set_workspace_focus(WorkspaceFocus::Tabs);
+    assert!(key(&mut app, KeyCode::F6, none, Pressed, false));
+    assert_eq!(app.workspace_focus, WorkspaceFocus::Tabs);
+    assert!(key(&mut app, KeyCode::Escape, none, Pressed, false));
+    assert_eq!(app.workspace_focus, WorkspaceFocus::Terminal);
+
+    app.quit = QuitProgress::Stopping(1);
+    assert!(key(&mut app, KeyCode::Enter, none, Pressed, false));
+    assert!(key(&mut app, KeyCode::Enter, none, Released, false));
+
+    assert!(key(&mut app, KeyCode::KeyP, shift_alt, Pressed, false));
+    assert!(key(&mut app, KeyCode::KeyP, shift_alt, Pressed, true));
+    snapshot.input_locked = false;
+    install(&mut app, &snapshot);
+    assert!(key(&mut app, KeyCode::KeyP, none, Released, false));
+    assert!(key(&mut app, KeyCode::Slash, alt, Pressed, false));
+    assert!(app.shortcut_viewer.open);
+}
+
+#[test]
+fn input_lock_repeat_stays_with_toggle_when_its_modifier_releases_first() {
+    use eon_workspace_protocol::v49::{ALT, Attention, AttentionState, QueueEntry, Response};
+    use winit::keyboard::ModifiersState;
+
+    let mut app = Application::new(
+        crate::launch::launch_arguments(["--workspace", "eon.sock"].map(OsString::from), None)
+            .unwrap(),
+        EventSink::Host(Arc::new(|_| true)),
+    );
+    app.window_focused = true;
+    let mut snapshot = super::chrome::stack_snapshot(&[&["p1", "p2"]]);
+    snapshot.input_lock = Shortcut {
+        key: "ArrowDown".into(),
+        modifiers: ALT,
+    };
+    snapshot.attention_queue = ["p1", "p2"]
+        .into_iter()
+        .map(|target| QueueEntry {
+            workspace: snapshot.workspace.clone(),
+            tab: snapshot.active_tab.clone(),
+            target: target.into(),
+            attention: Attention {
+                state: AttentionState::NeedsInput,
+                record: None,
+            },
+        })
+        .collect();
+    app.workspace_model.apply(Response::Snapshot(snapshot));
+    app.set_attention_inbox(true);
+    let send = |app: &mut Application, state, repeat| {
+        app.handle_shortcut_key(&ShortcutKey {
+            physical_key: PhysicalKey::Code(KeyCode::ArrowDown),
+            state,
+            repeat,
+        })
+    };
+    assert_eq!(app.attention_inbox.target(), Some(("t1", "p1")));
+    app.input.set_modifiers(ModifiersState::ALT);
+    assert!(send(&mut app, ElementState::Pressed, false));
+    app.input.set_modifiers(ModifiersState::empty());
+    assert!(send(&mut app, ElementState::Pressed, true));
+    assert!(send(&mut app, ElementState::Released, false));
+    assert_eq!(app.attention_inbox.target(), Some(("t1", "p1")));
+    assert!(send(&mut app, ElementState::Pressed, false));
+    assert_eq!(app.attention_inbox.target(), Some(("t1", "p2")));
 }

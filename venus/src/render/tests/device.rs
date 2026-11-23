@@ -31,7 +31,7 @@ fn blink_test_scene() -> Scene {
 }
 
 fn blink_test_workspace(metrics: CellMetrics) -> WorkspaceScene {
-    use eon_workspace_protocol::v48::{Column, Pane};
+    use eon_workspace_protocol::v49::{Column, Pane};
     let mut snapshot = super::outlines::popup_title_snapshot("", 4.0);
     let tab = &mut snapshot.tabs[0];
     tab.selected_popup = None;
@@ -331,7 +331,7 @@ fn dynamic_cursors_keep_column_clips_and_selected_scroll_dialog_gates() {
         other.cursor.as_mut().unwrap().blinking = false;
         let columns = [Some(&other)];
         let dialog = DialogScene::new(
-            crate::DialogKind::Shortcuts,
+            crate::DialogKind::Shortcuts { locked: false },
             vec![],
             PhysicalSize::new(900, 600),
             metrics,
@@ -624,7 +624,7 @@ fn content_cache_separates_generations_and_viewer_state() {
             &crate::CellText(CellMetrics::for_scale(1.0)),
         ))
     };
-    let viewer = |scroll| dialog(crate::DialogKind::Shortcuts, scroll);
+    let viewer = |scroll| dialog(crate::DialogKind::Shortcuts { locked: false }, scroll);
     assert_ne!(key(1, None), key(2, None));
     assert_ne!(key(1, None), key(1, viewer(0.0)));
     assert_ne!(key(1, viewer(0.0)), key(1, viewer(1.0)));

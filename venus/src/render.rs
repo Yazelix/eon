@@ -3221,6 +3221,7 @@ enum DrawStyleKind {
     Preedit,
     Monospace,
     Status(Wrap),
+    DialogShortcut,
     PopupLabel,
 }
 
@@ -3256,6 +3257,13 @@ fn shape_styled_text(
             cell_font.attrs(),
             Some(metrics.width),
             Wrap::None,
+        ),
+        DrawStyleKind::DialogShortcut => (
+            chrome_title_metrics(metrics).font_size,
+            metrics.height,
+            Attrs::new().family(Family::SansSerif),
+            None,
+            Wrap::WordOrGlyph,
         ),
         DrawStyleKind::Status(wrap) => (
             chrome_title_metrics(metrics).font_size,

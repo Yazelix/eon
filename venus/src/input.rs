@@ -15,6 +15,12 @@ use winit::{
 
 const IME_REJECTED: &str = "native input method commit is not accepted semantic key text";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShortcutOwner {
+    InputLock,
+    Other,
+}
+
 /// Stateful translation from native events to Orbit-owned semantic values.
 #[derive(Clone, Debug, Default)]
 pub struct InputState {
@@ -28,7 +34,7 @@ pub struct InputState {
     pressed_buttons: Vec<WinitMouseButton>,
     scroll: (f64, f64),
     selection_position: Option<SelectionPosition>,
-    captured_shortcuts: Vec<WinitPhysicalKey>,
+    captured_shortcuts: Vec<(WinitPhysicalKey, ShortcutOwner)>,
     /// Native physical key, its resolved key pinned at press (VEN-C2), and
     /// whether its sequence is still live rather than retired.
     resolved_keys: Vec<(WinitPhysicalKey, WinitPhysicalKey, bool)>,
@@ -91,7 +97,7 @@ impl InputState {
     /// The returned loss retires an attached endpoint without changing the focus replay state.
     pub fn retire_orbit_generation(&mut self) -> Option<ClientMessage> {
         let mut retired = std::mem::take(&mut self.pressed_keys);
-        retired.append(&mut self.captured_shortcuts);
+        retired.extend(self.captured_shortcuts.drain(..).map(|(key, _)| key));
         for (_, key, live) in &mut self.resolved_keys {
             *live &= !retired.contains(key);
         }
@@ -241,8 +247,13 @@ impl InputState {
         }
         match (state, repeat) {
             (ElementState::Pressed, false) => {
-                if shared && self.captured_shortcuts.contains(&key) {
-                    self.captured_shortcuts.retain(|captured| *captured != key);
+                if shared
+                    && let Some(index) = self
+                        .captured_shortcuts
+                        .iter()
+                        .position(|(captured, _)| *captured == key)
+                {
+                    self.captured_shortcuts.swap_remove(index);
                     for (other, held, held_live) in &mut self.resolved_keys {
                         *held_live &= *other == native || *held != key;
                     }
@@ -505,11 +516,35 @@ impl InputState {
         repeat: bool,
         recognized: bool,
     ) -> bool {
+        self.consumes_owned_shortcut(key, state, repeat, recognized, ShortcutOwner::Other)
+    }
+
+    pub(crate) fn consumes_input_lock(
+        &mut self,
+        key: WinitPhysicalKey,
+        state: ElementState,
+        repeat: bool,
+        recognized: bool,
+    ) -> bool {
+        self.consumes_owned_shortcut(key, state, repeat, recognized, ShortcutOwner::InputLock)
+    }
+
+    fn consumes_owned_shortcut(
+        &mut self,
+        key: WinitPhysicalKey,
+        state: ElementState,
+        repeat: bool,
+        recognized: bool,
+        owner: ShortcutOwner,
+    ) -> bool {
         if let Some(index) = self
             .captured_shortcuts
             .iter()
-            .position(|candidate| *candidate == key)
+            .position(|(candidate, _)| *candidate == key)
         {
+            if self.captured_shortcuts[index].1 != owner {
+                return false;
+            }
             if state == ElementState::Released {
                 self.captured_shortcuts.swap_remove(index);
                 // Another native key on the same resolved key (VEN-C2) still
@@ -519,7 +554,7 @@ impl InputState {
             return true;
         }
         if state == ElementState::Pressed && !repeat && recognized {
-            self.captured_shortcuts.push(key);
+            self.captured_shortcuts.push((key, owner));
             return true;
         }
         false

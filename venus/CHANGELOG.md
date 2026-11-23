@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Consume EONW v49 input-lock state and the resolved toggle. While locked,
+  send other keys through ordinary focused terminal input, suppress their
+  Eon shortcut hints, and show a **LOCKED** status in the Eon Bar
+  (`eon-ici95.2`).
+
 - Consume the EONW v48 release set. Route released fixed chords through
   ordinary terminal input, mark them in Shortcuts, and omit their footer
   hints (`eon-ici95.1`).

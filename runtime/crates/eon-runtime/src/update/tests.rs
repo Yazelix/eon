@@ -900,7 +900,7 @@ fn a_window_that_cannot_read_its_own_record_refuses_internally() {
 #[test]
 fn the_endpoint_module_names_no_workspace_module() {
     // The Runtime side of EONU never learns EONW either: no versioned
-    // module path (`v48::`, `crate::v48`, any version) in update.rs.
+    // module path (`v49::`, `crate::v49`, any version) in update.rs.
     let source = include_str!("../update.rs");
     let bytes = source.as_bytes();
     for (at, _) in source.match_indices('v') {

@@ -223,7 +223,11 @@ fn binding<'a>(keys: Option<&'a Value>, line: &Line) -> Option<&'a str> {
         Popup(id, _) => ("popups", "id", *id),
         Text(_) => return None,
     };
-    let display = keys?[array]
+    let keys = keys?;
+    if keys["input_locked"] == true {
+        return None;
+    }
+    let display = keys[array]
         .as_array()?
         .iter()
         .find(|row| row[field] == id)?["display"]
@@ -399,6 +403,21 @@ fn execute(arguments: &[OsString], json_output: bool) -> Result<String, (u8, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locked_input_shows_the_cli_step_for_a_bound_chord() {
+        let mut keys = json!({
+            "bindings": [{"action": "create_pane", "display": "Alt+M", "source": "default"}],
+            "popups": [],
+            "input_locked": true
+        });
+        let progress = state::Progress::default();
+        let locked = render(1, &progress, Some(&keys)).join("\n");
+        assert!(locked.contains("CLI: eon pane create"), "{locked}");
+        keys["input_locked"] = false.into();
+        let unlocked = render(1, &progress, Some(&keys)).join("\n");
+        assert!(unlocked.contains("Key: Alt+M"), "{unlocked}");
+    }
 
     #[test]
     fn released_pane_shortcut_shows_the_cli_step() {

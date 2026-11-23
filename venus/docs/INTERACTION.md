@@ -52,6 +52,19 @@ Recovery continues only while that exact attachment remains current and live;
 endpoint replacement or authoritative offline state cancels obsolete retry
 state.
 
+### Input lock
+
+Press Alt+Shift+I (Option+Shift+I on macOS) to toggle the window's input
+lock, or use its configured replacement. When a pane or terminal popup has
+keyboard focus, the toggle is the only Eon shortcut Venus intercepts. Other
+keys reach that terminal through ordinary input. Pointer actions, accessibility
+actions and platform window commands still work. A focused dialog keeps its
+own navigation, confirmation and dismissal keys. Window-wide accelerators do
+not act inside it, and its keys do not go to the terminal behind it.
+
+Click the Shortcuts control to see the accepted unlock chord while locked.
+`eon unlock` can recover a window even when its presenter is detached.
+
 ### Workspace controls
 
 Click a tab or pane header to select it, or click another column's terminal

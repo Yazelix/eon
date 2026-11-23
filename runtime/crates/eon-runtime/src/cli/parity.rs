@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v48::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v49::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -27,6 +27,8 @@ enum CliPath {
     Popup(Vec<Vec<OsString>>),
     /// These arguments parse to the `sidebar toggle` that sends this action.
     Sidebar(Vec<OsString>),
+    /// The toggle's two outcomes have explicit state-setting commands.
+    InputLockToggle,
 }
 
 fn cli_path(action: &Action) -> CliPath {
@@ -126,6 +128,9 @@ fn cli_path(action: &Action) -> CliPath {
         Action::SetSidebar { open } => {
             return Sidebar(words(&["sidebar", if *open { "show" } else { "hide" }]));
         }
+        Action::InputLock(InputLock::Lock) => words(&["lock"]),
+        Action::InputLock(InputLock::Unlock) => words(&["unlock"]),
+        Action::InputLock(InputLock::Toggle) => return CliPath::InputLockToggle,
         Action::CreateColumn
         | Action::FocusAttention { .. }
         | Action::NextAttention
@@ -142,8 +147,8 @@ fn cli_path(action: &Action) -> CliPath {
             force,
         } => {
             let target = match target {
-                eon_workspace_protocol::v48::SendTarget::Id(id) => id.as_str(),
-                eon_workspace_protocol::v48::SendTarget::Focused { .. } => "focused",
+                eon_workspace_protocol::v49::SendTarget::Id(id) => id.as_str(),
+                eon_workspace_protocol::v49::SendTarget::Focused { .. } => "focused",
             };
             let mut arguments = words(&["pane", "send", target]);
             if *force {
@@ -247,7 +252,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::Present { workspace: true },
         WorkspaceAction::ReloadPresentation {
             venus: "/nix/store/fixture/bin/venus".into(),
-            eonw: eon_workspace_protocol::v48::VERSION,
+            eonw: eon_workspace_protocol::v49::VERSION,
             orbs: 14,
             orbf: 3,
         },
@@ -368,6 +373,9 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::ToggleSidebar,
         Action::SetSidebar { open: true },
         Action::SetSidebar { open: false },
+        Action::InputLock(InputLock::Lock),
+        Action::InputLock(InputLock::Unlock),
+        Action::InputLock(InputLock::Toggle),
         Action::FocusAttention {
             tab: text("t1"),
             target: text("p1"),
@@ -378,22 +386,22 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::ReadTerminalHistory { target: text("u1") },
         Action::EditTerminalHistory { target: text("p1") },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v48::SendTarget::Id(text("u1")),
+            target: eon_workspace_protocol::v49::SendTarget::Id(text("u1")),
             force: false,
             input: TerminalInput::Paste(text("echo hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v48::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v49::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Enter,
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v48::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v49::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Paste(text("hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v48::SendTarget::Focused {
+            target: eon_workspace_protocol::v49::SendTarget::Focused {
                 expected_terminal: None,
             },
             force: false,
@@ -470,11 +478,11 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                 assert_eq!(
                     Action::SendTerminal {
                         target: if send.target == "focused" {
-                            eon_workspace_protocol::v48::SendTarget::Focused {
+                            eon_workspace_protocol::v49::SendTarget::Focused {
                                 expected_terminal: None,
                             }
                         } else {
-                            eon_workspace_protocol::v48::SendTarget::Id(send.target)
+                            eon_workspace_protocol::v49::SendTarget::Id(send.target)
                         },
                         force: send.force,
                         input
@@ -559,6 +567,23 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                     _ => panic!("{action:?}"),
                 };
                 assert_eq!(parsed, Ok(Some((verb, false))), "{arguments:?}");
+            }
+            CliPath::InputLockToggle => {
+                assert_eq!(action, Action::InputLock(InputLock::Toggle));
+                for (command, operation) in
+                    [("lock", InputLock::Lock), ("unlock", InputLock::Unlock)]
+                {
+                    let arguments = [OsString::from(command)];
+                    assert!(control_command(&arguments[0]));
+                    assert!(
+                        help.lines()
+                            .any(|line| line.trim_start().starts_with(&format!("{command} ")))
+                    );
+                    assert_eq!(
+                        parse_control_arguments(&arguments).unwrap(),
+                        (Action::InputLock(operation), false),
+                    );
+                }
             }
             CliPath::Exception(reason) => {
                 assert!(reason.contains("eon-"), "{action:?}: {reason}");

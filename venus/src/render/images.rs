@@ -1638,7 +1638,7 @@ mod tests {
     fn images_draw_in_panes_and_popups_and_refusals_keep_the_renderer() {
         use super::super::{FontSettings, FontSetup, PaddingColor, PresentOutcome, Renderer};
         use crate::{WorkspaceFocus, WorkspaceScene};
-        use eon_workspace_protocol::v48::{
+        use eon_workspace_protocol::v49::{
             ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Sidebar,
             Snapshot, Tab, WorkspaceInfo,
         };
@@ -1679,6 +1679,8 @@ mod tests {
             Snapshot {
                 focus: None,
                 released_shortcuts: Default::default(),
+                input_locked: false,
+                input_lock: crate::fixture_input_lock(),
                 generation: "g1-00000000000000000000000000000001".into(),
                 created_build: "g1-00000000000000000000000000000001".into(),
                 active_build: "g1-00000000000000000000000000000001".into(),

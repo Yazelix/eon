@@ -3,7 +3,7 @@ use eon_runtime::{
     PopupDefinition, ReleaseStage, ShellConfig, SlotClass, SlotPolicy, StartupAnimation,
     TerminalAccess, TerminalConfig,
 };
-use eon_workspace_protocol::v48::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v49::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) const RELEASE_STAGE: ReleaseStage = ReleaseStage::Alpha;
 
@@ -125,6 +125,10 @@ pub(crate) fn inputs(launch: Result<eon_runtime::LaunchInputs, String>) -> Input
             send_typing_quiet_ms: 2000,
             popups: PopupCatalog {
                 released_shortcuts: Default::default(),
+                input_lock: Shortcut {
+                    modifiers: ALT | SHIFT,
+                    key: "KeyI".into(),
+                },
                 geometry: PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,

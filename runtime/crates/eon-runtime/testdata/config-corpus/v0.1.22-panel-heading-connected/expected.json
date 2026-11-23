@@ -107,6 +107,7 @@
       "pane_frames": true
     },
     "keys": {
+      "input_lock": "Alt+Shift+I",
       "release": []
     },
     "panels": {

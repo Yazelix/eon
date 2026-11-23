@@ -490,7 +490,7 @@ fn notched_dialog_preserves_text_in_its_exposed_top_cutout() {
     let mut fonts = FontSetup::new(&FontSettings::default()).unwrap();
     let metrics = fonts.metrics(1.0);
     let viewer = DialogScene::new(
-        DialogKind::Shortcuts,
+        DialogKind::Shortcuts { locked: false },
         vec![],
         PhysicalSize::new(1280, 800),
         metrics,

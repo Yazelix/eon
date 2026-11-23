@@ -8,6 +8,14 @@ installation, and proven contract changes.
 - On Wayland, stopping one touchpad scroll axis no longer starts momentum
   while the other axis is still active.
 
+- Use Alt+Shift+I (Option+Shift+I on macOS) or `eon lock` to pass Eon
+  shortcuts through to the focused terminal. The Eon Bar shows **LOCKED**.
+  Toggle again or run `eon unlock` to restore shortcuts. Remap the toggle
+  with `[keys] input_lock`. Inspect the live state in `eon session --json`
+  and the accepted toggle in `eon keys --json` (EONW v49, `eon-ici95.2`).
+  If a popup uses `Alt+Shift+I`, change or unbind its shortcut, or set
+  `[keys] input_lock` to another chord before starting or updating a window.
+
 - Use `[keys] release` in `config.toml` to pass any of `Alt+M`, `Alt+W`,
   `Alt+Q` and `Alt+G` to the focused terminal. Shortcuts and `eon keys`
   reflect the release set of the running window. The setting takes effect

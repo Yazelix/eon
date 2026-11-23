@@ -19,9 +19,10 @@ use std::{
 };
 
 use eon_workspace_protocol::shortcuts::{
-    PopupPolicy, RELEASE_CHOICES, ReleasedShortcuts, popup_policy,
+    PopupPolicy, RELEASE_CHOICES, ReleasedShortcuts, config_chord, popup_policy,
+    validate_input_lock,
 };
-use eon_workspace_protocol::v48::{
+use eon_workspace_protocol::v49::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES,
     MAX_QUOTA_SCOPE_BYTES, PopupGeometry, PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -582,6 +583,7 @@ struct SessionSettings {
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct KeysSettings {
+    input_lock: Option<String>,
     release: Vec<String>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
@@ -717,6 +719,7 @@ pub struct PopupDefinition {
 pub struct PopupCatalog {
     pub geometry: PopupGeometry,
     pub entries: Vec<PopupDefinition>,
+    pub input_lock: Shortcut,
     pub released_shortcuts: ReleasedShortcuts,
 }
 
@@ -1221,6 +1224,13 @@ fn configuration_metadata() -> &'static [ConfigKey] {
                 &["next-supervisor-start"],
             ),
             ConfigKey::new(
+                "keys.input_lock",
+                "string",
+                "Toggle terminal input pass-through for this window.",
+                &["next-supervisor-start"],
+            )
+            .rules(&["Use a modified physical chord free of fixed shortcuts and enabled popup bindings."]),
+            ConfigKey::new(
                 "keys.release",
                 "string-array",
                 "Pass these fixed physical shortcuts to the focused terminal.",
@@ -1573,7 +1583,13 @@ fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String>
             number_keys: Some(defaults.number_keys),
             unknown: BTreeMap::new(),
         },
-        keys: KeysSettings::default(),
+        keys: KeysSettings {
+            input_lock: Some(config_chord(
+                defaults.popups.input_lock.modifiers,
+                &defaults.popups.input_lock.key,
+            )),
+            ..KeysSettings::default()
+        },
         sidebar: SidebarSettings {
             enabled: Some(defaults.sidebar_enabled),
             unknown: BTreeMap::new(),
@@ -1892,9 +1908,9 @@ pub(crate) fn prepare_edit(
     live: Option<&Path>,
     available: bool,
     log: Option<&DiagnosticLog>,
-) -> Result<super::editor::EditCommand, eon_workspace_protocol::v48::Failure> {
+) -> Result<super::editor::EditCommand, eon_workspace_protocol::v49::Failure> {
     use super::editor::{self, EditCommand, ListenerKind};
-    let command_error = |detail| eon_workspace_protocol::v48::Failure {
+    let command_error = |detail| eon_workspace_protocol::v49::Failure {
         code: "edit-command".into(),
         detail,
     };
@@ -2241,6 +2257,14 @@ fn resolve_popups(
     keys: KeysSettings,
     defaults: &Defaults,
 ) -> Result<PopupCatalog, String> {
+    let input_lock = match keys.input_lock.as_deref() {
+        Some(value) => parse_shortcut("keys.input_lock", value)?,
+        None => defaults.popups.input_lock.clone(),
+    };
+    validate_input_lock(&input_lock).map_err(|_| {
+        let chord = config_chord(input_lock.modifiers, &input_lock.key);
+        format!("keys.input_lock: {chord} conflicts with a fixed keyboard shortcut")
+    })?;
     let mut released_shortcuts = ReleasedShortcuts::default();
     for name in &keys.release {
         released_shortcuts
@@ -2326,19 +2350,26 @@ fn resolve_popups(
     }
     resolve_popup_entries(&mut entries, &configured)?;
     for entry in &entries {
-        if let Some(key) = entry.shortcut.bound()
-            && released_shortcuts.includes_chord(key)
-        {
-            let chord = eon_workspace_protocol::shortcuts::config_chord(key.modifiers, &key.key);
-            return Err(format!(
-                "keys.release: {chord} is bound to popup {:?}",
-                entry.id
-            ));
-        }
+        let Some(key) = entry.shortcut.bound() else {
+            continue;
+        };
+        let setting = if key == &input_lock {
+            "keys.input_lock"
+        } else if released_shortcuts.includes_chord(key) {
+            "keys.release"
+        } else {
+            continue;
+        };
+        let chord = config_chord(key.modifiers, &key.key);
+        return Err(format!(
+            "{setting}: {chord} is bound to popup {:?}",
+            entry.id
+        ));
     }
     Ok(PopupCatalog {
         geometry,
         entries,
+        input_lock,
         released_shortcuts,
     })
 }
@@ -3823,6 +3854,53 @@ mod tests {
         }
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn input_lock_resolves_modified_chords_and_refuses_effective_collisions() {
+        let defaults = crate::fixtures::inputs().defaults;
+        let resolve = |source: &str| {
+            let config =
+                super::parse_configuration_text(source, Path::new("config.toml"), &defaults)?;
+            super::resolve_popups(config.popups, config.keys, &defaults)
+        };
+        assert_eq!(resolve("").unwrap().input_lock, defaults.popups.input_lock);
+        let configured = resolve(
+            "[keys]\ninput_lock = 'shift+alt+p'\nrelease = ['Alt+W']\n\
+             [popups.extra]\nenabled = false\nkeybinding = 'Alt+Shift+P'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            configured.input_lock,
+            Shortcut {
+                modifiers: ALT | SHIFT,
+                key: "KeyP".into(),
+            }
+        );
+        for key in [
+            "",
+            "P",
+            "Alt+Alt+P",
+            "Alt+1",
+            "Alt+W",
+            "Alt+Shift+H",
+            "Shift+Tab",
+            "Super+H",
+            "Alt+Super+H",
+        ] {
+            let source = format!("[keys]\ninput_lock = {key:?}\n");
+            assert!(
+                resolve(&source).unwrap_err().contains("keys.input_lock"),
+                "{key}"
+            );
+        }
+        let collision =
+            resolve("[popups.take-default]\ncommand = ['sh']\nkeybinding = 'shift+alt+i'\n")
+                .unwrap_err();
+        assert_eq!(
+            collision,
+            "keys.input_lock: Alt+Shift+I is bound to popup \"take-default\""
+        );
     }
 
     #[test]
@@ -5826,7 +5904,7 @@ label = "Browse"
 
     #[test]
     fn editor_popup_settings_round_trip_and_count_against_the_catalog_limit() {
-        use eon_workspace_protocol::v48::MAX_ENTRIES;
+        use eon_workspace_protocol::v49::MAX_ENTRIES;
 
         let mut defaults = crate::fixtures::inputs().defaults;
         let editor = PopupDefinition {

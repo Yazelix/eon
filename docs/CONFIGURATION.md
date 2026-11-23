@@ -722,6 +722,7 @@ number_keys = true # Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10; false l
 warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
 [keys]
+input_lock = "Alt+Shift+I" # Toggle terminal input pass-through for this window.
 release = [] # Pass these fixed physical shortcuts to the focused terminal.
 
 [sidebar]
@@ -1288,6 +1289,25 @@ Emacs's M-% on Alt+Shift+5. A popup configured on one of them takes only that
 key either way; with `true`, Alt+/ lists that key as overridden. The window reads the setting when it starts.
 See [Keybinding clashes](USAGE.md#keybinding-clashes).
 
+### Keyboard shortcuts
+
+`[keys] input_lock` sets the window's input-lock toggle. The default is
+`"Alt+Shift+I"`, shown as Option+Shift+I on macOS. Use the same modified
+physical-key spelling as [popup bindings](#popups). For example:
+
+```toml
+[keys]
+input_lock = "Alt+Shift+P"
+```
+
+Choose a chord that is free on both platforms. Fixed Eon bindings, the
+bundled macOS Hide and Hide Others keys (`Super+H` and `Alt+Super+H`), and
+effective bindings of enabled popups conflict with the toggle. A conflict
+fails configuration validation and names the setting and conflicting chord.
+Start a fresh window to apply a changed toggle. Reopening or reloading the
+presentation keeps the supervisor's accepted toggle and lock state.
+See [Input lock](USAGE.md#input-lock).
+
 `[keys] release` passes individual fixed shortcuts to the focused terminal.
 The default is `[]`. Use any combination of `"Alt+M"`, `"Alt+W"`,
 `"Alt+Q"` and `"Alt+G"`, with that exact spelling on Linux and macOS.
@@ -1630,7 +1650,8 @@ Window labels use `/` for Slash and, on macOS, Option, Control and Command
 for Alt, Ctrl and Super. These labels refer to the same physical chords.
 
 To resolve clashes with terminal programs and agents that use `Alt+` chords,
-remap or unbind popup entries here, list fixed chords in `[keys] release`,
+remap or unbind popup entries here, use [input lock](USAGE.md#input-lock),
+list fixed chords in `[keys] release`,
 set `[session] number_keys = false` to release `Alt+Shift+0` through
 `Alt+Shift+9`, or set `[sidebar] enabled = false` to release `Alt+Shift+H`.
 See
