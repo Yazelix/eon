@@ -361,13 +361,18 @@ dependency decision does not establish public-distribution proof.
   (`required-features` for the binary and test). The single switch
   (eon-yp6vg.54) removes the feature.
 - **Source:** `https://github.com/Yazelix/eon-rune` at
-  `77cc200da9d8ff2491f5a611130b3af082cc21b1` (tree
-  `646bc1a599f5d9eedb9c976e751ba2ad37395440`, protected branch
-  `eon-pin-5a9kx`). It restacks the X11 gate (`7134a9fb`, eon-irxtu) and
-  synthetic-clock overlay tests (`488484bc`, eon-yp6vg.62) on eon-yp6vg.7.5's
-  `App::attention_wait` commit `52f6f6c9`. Rune's own `Cargo.lock` is
-  unchanged. The stack keeps `caeb0472`'s winit configuration without
-  `wayland-csd-adwaita-notitle`. With that feature on,
+  `c22cc2d459cc6b80a3f4ecf45b136eed1d205507` (tree
+  `1c804c14b592c85afcf9551f023b380f81c96322`, protected branch
+  `eon-pin-yp6vg-64`). It applies the typed skip report from `d191ba64`
+  (eon-yp6vg.28) on `77cc200d`. That parent carries the X11 gate
+  (`7134a9fb`, eon-irxtu) and synthetic-clock overlay tests
+  (`488484bc`, eon-yp6vg.62) on eon-yp6vg.7.5's `App::attention_wait`
+  commit `52f6f6c9`. For `FrameOutcome::Skipped`,
+  `FrameEncoded::skipped()` provides the `FrameSkip` reason
+  (`Covered`, `Timeout`, or `Surface`).
+  Venus's response to these reasons belongs to eon-yp6vg.7.10.
+  Rune's own `Cargo.lock` is unchanged. The stack keeps `caeb0472`'s winit
+  configuration without `wayland-csd-adwaita-notitle`. With that feature on,
   sctk-adwaita's `tiny-skia` brought the published `tiny-skia-path 0.11.4`
   beside Rune's vendored copy of the same name and version. nixpkgs
   `importCargoLock` vendors by name and version, so it failed for the whole
@@ -399,9 +404,10 @@ dependency decision does not establish public-distribution proof.
 
   `tiny-skia-path` is a path dependency inside the Rune Git source, so it is
   vendored from the same rev.
-- **Lock delta from post-7.9:** 474 → 472. Six Git packages move to the new
-  revision. The lock removes `as-raw-xcb-connection 1.0.1` and
-  `x11-dl 2.21.0` and drops dependency edges from `arboard`, `rune`,
+- **Lock:** 472 packages. This pin changes only the source revision of
+  the six Git packages. The earlier eon-5a9kx lock change removed
+  `as-raw-xcb-connection 1.0.1` and
+  `x11-dl 2.21.0` and dropped dependency edges from `arboard`, `rune`,
   `winit` and `x11rb`. Remaining registry versions and checksums match the
   prior lock. The all-target lock still records `x11rb` and
   `x11rb-protocol` through `arboard`. Neither selected Eon graph reaches
@@ -420,8 +426,8 @@ dependency decision does not establish public-distribution proof.
   - `tinystr` 0.8.5, `yoke` 0.8.4, `zerovec` 0.11.9 and `zerovec-derive`
     0.11.7.
 - **Nix:** `workspaceCargoLock.outputHashes."rune-0.0.1"` =
-  `sha256-x3FJKrlPQp5yjWyVu7jfe7JabTysjiwjyp3Y+2dhc30=` (`77cc200d`), which covers the
-  six crates from the rev. Their vendored contents equal `git archive` of
+  `sha256-YzugFz3uEg7vGK/+N/YfJyGm0nHfmkSy/ZFmPzudNQg=` (`c22cc2d`), which
+  covers the six crates from the rev. Their vendored contents equal `git archive` of
   the rev, apart from the files nixpkgs adds (`.cargo-checksum.json`,
   `.cargo-config`) and its workspace-value substitution in `Cargo.toml`.
 - **Licenses:** Rune is MIT. The pin adds no registry packages or license
@@ -448,7 +454,11 @@ dependency decision does not establish public-distribution proof.
   packages is 1.88 (the parley family and `image 0.25.10`). Rune declares
   none. The workspace builds the enabled graph with Rust 1.96.1: Venus
   clippy and tests with `candidate-rune`. The fork's own locked builds and
-  overlay tests use its pinned Rust 1.99.1.
+  overlay tests use its pinned Rust 1.99.1. The fork's native Apple Silicon
+  qualification used the same toolchain with defaults off and accessibility
+  on. It exercised all three hidden acquisition arms with injected misses and
+  observed a subsequent hidden draw for each.
+  [Native Rune qualification](https://github.com/Yazelix/eon/actions/runs/45128427810).
 - **Feature-off identity:** with the feature off, `cargo tree --locked` is
   identical to the parent on `x86_64-unknown-linux-gnu` and
   `aarch64-apple-darwin`. That covers 68 trees: every workspace package and

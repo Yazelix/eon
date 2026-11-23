@@ -241,7 +241,7 @@
             lockFile = ./Cargo.lock;
             outputHashes."dpi-0.1.1" = "sha256-fJQqcXhKPGtivKo1AyyGhy1oNebTFGyzWDmOesFsltI=";
             outputHashes."libghostty-vt-0.2.1" = "sha256-wkBrC+C/VOlallPH1m6Rtl81ys7HE67WamKFXrxpQ1o=";
-            outputHashes."rune-0.0.1" = "sha256-x3FJKrlPQp5yjWyVu7jfe7JabTysjiwjyp3Y+2dhc30=";
+            outputHashes."rune-0.0.1" = "sha256-YzugFz3uEg7vGK/+N/YfJyGm0nHfmkSy/ZFmPzudNQg=";
           };
           candidateRuneGraphCheck = pkgs.stdenvNoCC.mkDerivation {
             name = "eon-candidate-rune-graph";

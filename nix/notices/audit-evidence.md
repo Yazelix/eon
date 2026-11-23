@@ -54,6 +54,24 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Rune typed skip pin (eon-yp6vg.64)
+
+Compared with Eon `5269709b`, the Eon, Orbit and Venus contexts change
+through the normalized lock. The six package source records for Rune move
+from `77cc200d` to `c22cc2d`. Reversing that replacement reproduces the
+three preceding canonical graphs byte for byte.
+
+The exact vendor trees and producer logs confirm the same exception
+classifications: Eon 9 host and 2 unselected, Orbit 6 and 1, and Venus
+15 and 4. Those producers build with `candidate-rune` disabled. The
+`inspect-audit` replays reproduce the graphs and binary observations.
+The strict `propose-audit-renewal` result changes six fingerprints.
+Zoxide's dependency-omission probe rejects removal of `anyhow 1.0.98`
+with the preceding and the renewed exception data.
+
+- Vendor at `/nix/store/qar39p9zbzipvqzg7y0g9ccw7y1jl7a9-cargo-vendor-dir`.
+- Proposal input at `/nix/store/yfz4d9nyjdma6jdb2ap5lgvyi5cp81bz-eon-archive-notice-input.json` (before renewal).
+
 ### Rune X11 gate (eon-5a9kx)
 
 Compared with `bdcc26d6`, the Eon, Orbit and Venus audit contexts change
@@ -436,6 +454,18 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed for `eon-yp6vg.64` to context
+`fcc659959879bac1ea6617cd3b3e373882908d9219cf8609ce07611af1b65a08`.
+Restoring the base normalized lock reproduces `cc33db7b…`.
+
+- Source at `/nix/store/izivbjrb7da5mgywcrnjsmhnhvqsm55k-source`.
+- Observation at `/nix/store/3gnai0kkyf8ff0ki289qmpbnndvh1c18-eon-cargo-notices-0.1.28`.
+- Binary at `/nix/store/6m9g0lkvbf6zdpm61222vn7avf6p2s0p-eon-rust-0.1.28/bin/eon`
+  with SHA-256 `46dd7c25bf5e53cc367d924548e6dbb8d2653bb4fdf4ebde6706d49bb9b1906d`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-5a9kx`):
+
 Renewed for `eon-5a9kx` to context
 `cc33db7bce3523dac61613a891715935b958e6869f6f76452d7415fb1566a525`.
 Restoring the base normalized lock reproduces `e5bb007e…`.
@@ -714,6 +744,18 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed for `eon-yp6vg.64` to context
+`85cfb652e1bdb17c8866849e0ea994f8f1582750422f5b20a9fb78943c7fe5c0`.
+Restoring the base normalized lock reproduces `2052ecbf…`.
+
+- Source at `/nix/store/8ai2rh1ysr15c4i92zsbnxlxiyh7z5kx-source`.
+- Observation at `/nix/store/5ialgakris5wgdg5qjn3zpn61yzvrz5j-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/g55gd6siss84nvir1zx3bwhdfj87bhvn-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `49c5e6b7f9bbde1dff5d3d566e108b1a6cc8e52067da10a80fd34dbd88d47e05`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-5a9kx`):
+
 Renewed for `eon-5a9kx` to context
 `2052ecbfedc0033a0d8442b8334fde5de29bd1bfbb20a7b67757322b6ae217ad`.
 Restoring the base normalized lock reproduces `c06ba4ab…`.
@@ -984,6 +1026,18 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed for `eon-yp6vg.64` to context
+`9a0a1140afdadf90f5f0245f0ade55355716ed3d22f57bd74bcc6471f933b024`.
+Restoring the base normalized lock reproduces `59d6fb26…`.
+
+- Source at `/nix/store/vfd3bsjm86axvd7g6znlrj6x3r1c9fp7-source`.
+- Observation at `/nix/store/zi1hcwfqn2x9hdmxgv3vivr5hwmcgygz-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/a0yk1im0xxh0vpar6w79zjqb0ra5r41y-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `83369a2ca3301fad164afad8027b146cff97894ff147f4aaaad2682b10aa22f0`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-5a9kx`):
 
 Renewed for `eon-5a9kx` to context
 `59d6fb26d4ede50795fd68c6757170fe457be4f1daa1cfe118338a16b9c87023`.
