@@ -241,7 +241,51 @@
             lockFile = ./Cargo.lock;
             outputHashes."dpi-0.1.1" = "sha256-fJQqcXhKPGtivKo1AyyGhy1oNebTFGyzWDmOesFsltI=";
             outputHashes."libghostty-vt-0.2.1" = "sha256-wkBrC+C/VOlallPH1m6Rtl81ys7HE67WamKFXrxpQ1o=";
-            outputHashes."rune-0.0.1" = "sha256-xMMh2e/na/R1Q780zhmsjucCICQ8l+iJhwY8zlHZQXo=";
+            outputHashes."rune-0.0.1" = "sha256-x3FJKrlPQp5yjWyVu7jfe7JabTysjiwjyp3Y+2dhc30=";
+          };
+          candidateRuneGraphCheck = pkgs.stdenvNoCC.mkDerivation {
+            name = "eon-candidate-rune-graph";
+            src = crateSource;
+            cargoDeps = rustPlatform.importCargoLock workspaceCargoLock;
+            nativeBuildInputs = [ rustToolchain rustPlatform.cargoSetupHook ];
+            dontBuild = true;
+            installPhase = ''
+              if ! cargo tree --locked --offline --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} \
+                -p ${workspacePackages.venus} --features candidate-rune --edges normal,build \
+                --prefix none --format '{p}|{f}|' > candidate-rune-graph; then
+                echo "candidate-rune: could not resolve the locked dependency graph" >&2
+                exit 1
+              fi
+              awk -F '[|]' -v linux=${lib.boolToString pkgs.stdenv.isLinux} '
+                {
+                  split($1, identity, " ")
+                  package = identity[1]
+                  present[package] = 1
+                  if (package ~ /^(x11|x11-dl|x11rb|x11rb-protocol|as-raw-xcb-connection|xcb|xkbcommon-x11)$/ ||
+                      (linux == "true" && package == "arboard")) {
+                    print "candidate-rune: forbidden dependency " package > "/dev/stderr"
+                    failed = 1
+                  }
+                  if (package == "rune" || package == "winit") {
+                    count = split($2, features, ",")
+                    for (i = 1; i <= count; i++) {
+                      if (features[i] == "x11" || (package == "rune" && features[i] == "default")) {
+                        print "candidate-rune: forbidden feature " package "/" features[i] > "/dev/stderr"
+                        failed = 1
+                      }
+                    }
+                  }
+                }
+                END {
+                  if (!present["rune"] || !present["winit"]) {
+                    print "candidate-rune: expected Rune and winit in the resolved graph" > "/dev/stderr"
+                    failed = 1
+                  }
+                  exit failed
+                }
+              ' candidate-rune-graph
+              touch "$out"
+            '';
           };
           codexbarIdentity = component "codexbar";
           animaIdentity = component "anima";
@@ -1136,7 +1180,7 @@
                 export TMPDIR="$eonTestBuildTmpdir"
               '';
               # Runtime tests paste printed commands into Eon's Nushell.
-              nativeCheckInputs = [ nushellPackage pkgs.cargo-nextest ];
+              nativeCheckInputs = [ nushellPackage pkgs.cargo-nextest candidateRuneGraphCheck ];
             }));
           eonHelix =
             assert helix.rev == helixIdentity.revision;
@@ -1329,6 +1373,7 @@
             # eon-test does not set this, so it fails there when bwrap cannot start (eon-w5udv).
             ROTA_TEST_ALLOW_NO_BWRAP = "1";
             nativeCheckInputs = [
+              candidateRuneGraphCheck
               nushellPackage # Runtime command round-trips.
               pkgs.jq # Test inventory in preCheck.
             ] ++ testTools.common;
@@ -1756,6 +1801,7 @@
           };
           checks.${system} = {
             default = if pkgs.stdenv.isLinux then eonProduct else eonPackage;
+            candidate-rune-graph = candidateRuneGraphCheck;
             source-receipt = eonProduct;
             macos-app = macosApp;
             accelerando = accelerandoPackageCheck eonPackage;

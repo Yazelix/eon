@@ -208,7 +208,6 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "windows-sys 0.59.0",
- "wl-clipboard-rs",
  "x11rb",
 ]
 
@@ -231,12 +230,6 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
-
-[[package]]
-name = "as-raw-xcb-connection"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175571dd1d178ced59193a6fc02dde1b972eb0bc56c892cde9beeceac5bf0f6b"
 
 [[package]]
 name = "ash"
@@ -2506,7 +2499,7 @@ checksum = "9c4482d912d7671a7cd2089794f90ef3bb5f5f8c738230fb0fcd50fa020f0ed3"
 [[package]]
 name = "parley_engine"
 version = "0.12.0"
-source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
+source = "git+https://github.com/Yazelix/eon-rune?rev=77cc200da9d8ff2491f5a611130b3af082cc21b1#77cc200da9d8ff2491f5a611130b3af082cc21b1"
 dependencies = [
  "fontique",
  "harfrust 0.12.0",
@@ -2917,7 +2910,7 @@ dependencies = [
 [[package]]
 name = "rune"
 version = "0.0.1"
-source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
+source = "git+https://github.com/Yazelix/eon-rune?rev=77cc200da9d8ff2491f5a611130b3af082cc21b1#77cc200da9d8ff2491f5a611130b3af082cc21b1"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2985,7 +2978,6 @@ dependencies = [
  "windows-sys 0.59.0",
  "winit",
  "wl-clipboard-rs",
- "x11rb",
  "xkbcommon",
  "zeroize",
 ]
@@ -2993,12 +2985,12 @@ dependencies = [
 [[package]]
 name = "rune-motion"
 version = "0.1.0"
-source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
+source = "git+https://github.com/Yazelix/eon-rune?rev=77cc200da9d8ff2491f5a611130b3af082cc21b1#77cc200da9d8ff2491f5a611130b3af082cc21b1"
 
 [[package]]
 name = "rune-staging"
 version = "0.0.1"
-source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
+source = "git+https://github.com/Yazelix/eon-rune?rev=77cc200da9d8ff2491f5a611130b3af082cc21b1#77cc200da9d8ff2491f5a611130b3af082cc21b1"
 dependencies = [
  "wgpu",
 ]
@@ -3006,7 +2998,7 @@ dependencies = [
 [[package]]
 name = "rune-taffy"
 version = "0.0.1"
-source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
+source = "git+https://github.com/Yazelix/eon-rune?rev=77cc200da9d8ff2491f5a611130b3af082cc21b1#77cc200da9d8ff2491f5a611130b3af082cc21b1"
 dependencies = [
  "taffy",
 ]
@@ -3530,7 +3522,7 @@ dependencies = [
 [[package]]
 name = "tiny-skia-path"
 version = "0.11.4"
-source = "git+https://github.com/Yazelix/eon-rune?rev=52f6f6c9bc31f6016641f01899814d7b74d41a0a#52f6f6c9bc31f6016641f01899814d7b74d41a0a"
+source = "git+https://github.com/Yazelix/eon-rune?rev=77cc200da9d8ff2491f5a611130b3af082cc21b1#77cc200da9d8ff2491f5a611130b3af082cc21b1"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -4387,7 +4379,6 @@ dependencies = [
  "atomic-waker",
  "bitflags 2.13.1",
  "block2 0.5.1",
- "bytemuck",
  "calloop",
  "cfg_aliases",
  "concurrent-queue",
@@ -4404,7 +4395,6 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "objc2-ui-kit",
  "orbclient",
- "percent-encoding",
  "pin-project",
  "raw-window-handle",
  "redox_syscall 0.4.1",
@@ -4422,8 +4412,6 @@ dependencies = [
  "web-sys",
  "web-time",
  "windows-sys 0.52.0",
- "x11-dl",
- "x11rb",
  "xkbcommon-dl",
 ]
 
@@ -4476,27 +4464,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
-name = "x11-dl"
-version = "2.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38735924fedd5314a6e548792904ed8c6de6636285cb9fec04d5b1db85c1516f"
-dependencies = [
- "libc",
- "once_cell",
- "pkg-config",
-]
-
-[[package]]
 name = "x11rb"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9993aa5be5a26815fe2c3eacfc1fde061fc1a1f094bf1ad2a18bf9c495dd7414"
 dependencies = [
- "as-raw-xcb-connection",
  "gethostname",
- "libc",
- "libloading",
- "once_cell",
  "rustix 1.1.4",
  "x11rb-protocol",
 ]

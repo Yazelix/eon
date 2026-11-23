@@ -14,8 +14,7 @@ use std::process::ExitCode;
 use yazelix_venus::rune_candidate::{Host, run};
 
 fn main() -> ExitCode {
-    // Before anything else, and before any event loop exists: the Rune pin compiles winit's
-    // X11 backend, which winit picks when no Wayland display is set (lead ruling 2026-11-20).
+    // Both candidate hosts need a native Wayland display. Refuse before creating an event loop.
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none_or(|display| display.is_empty()) {
         eprintln!(

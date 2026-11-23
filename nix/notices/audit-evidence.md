@@ -54,6 +54,39 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Rune X11 gate (eon-5a9kx)
+
+Compared with `bdcc26d6`, the Eon, Orbit and Venus audit contexts change
+through the normalized workspace lock. Six Rune Git package stanzas move
+from `52f6f6c9` to `77cc200d`. The lock drops `as-raw-xcb-connection 1.0.1`
+and `x11-dl 2.21.0`, and removes dependency edges from `arboard`, `rune`,
+`winit` and `x11rb`. Every existing registry version and checksum carried
+forward matches the base.
+
+The three `inspect-audit` replays reproduced the canonical graphs and actual
+binary observations. Restoring the base normalized lock in each candidate
+graph reproduces the base bytes. All producers keep the same runtime and
+native Cargo trees and audit exception sets. The exact vendors and build
+logs confirm the same host and unselected classifications on both sides
+(Eon 9/2, Orbit 6/1, Venus 15/4). The archive producers leave
+`candidate-rune` disabled.
+
+The strict `propose-audit-renewal` output changes six graph fingerprints.
+Every exception identity, reason and evidence anchor matches the base.
+Zoxide's `prove-audit-omission` accepts the retained root with the root-only
+baseline and rejects omission of the actual audited runtime dependency
+`anyhow 1.0.98`.
+
+- Eon: `cc33db7bce3523dac61613a891715935b958e6869f6f76452d7415fb1566a525`.
+- Orbit: `2052ecbfedc0033a0d8442b8334fde5de29bd1bfbb20a7b67757322b6ae217ad`.
+- Venus: `59d6fb26d4ede50795fd68c6757170fe457be4f1daa1cfe118338a16b9c87023`.
+- Vendor at `/nix/store/cmwhc8m51rvfdnnlrpqkz5n5z35lnzbz-cargo-vendor-dir`.
+- Proposal input at `/nix/store/2yxznhjnfwjcr25xag909msy9p21y7an-eon-archive-notice-input.json` (before renewal).
+
+### Attention-wait pin (eon-yp6vg.7.9)
+
+Historical (`eon-yp6vg.7.9`):
+
 For eon-yp6vg.7.9 over `ffc97873`, the Eon, Orbit and Venus contexts change
 through the normalized workspace lock. The `eon-rune` revision moves from
 `caeb0472` to `52f6f6c9` in the source fields for `parley_engine`, `rune`,
@@ -403,6 +436,18 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed for `eon-5a9kx` to context
+`cc33db7bce3523dac61613a891715935b958e6869f6f76452d7415fb1566a525`.
+Restoring the base normalized lock reproduces `e5bb007e…`.
+
+- Source at `/nix/store/qxypiava4cfsyxanccys18ncy3vd76ww-source`.
+- Observation at `/nix/store/52jigm5k44dyrmvq7zcsdjjw8q8zs2nv-eon-cargo-notices-0.1.28`.
+- Binary at `/nix/store/rrjzp58hkchv9mlyvz2g6crrqpgfrly0-eon-rust-0.1.28/bin/eon`
+  with SHA-256 `6f20bd9fbd4221d9518028092a475de798a7183cb6d4e1ee02508ea4d690e776`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-yp6vg.7.9`):
+
 Renewed on 2026-11-22 for `eon-yp6vg.7.9` to context
 `e5bb007e31c6737e0c60bd13b6273ed8bd053815091be70065dcd4f6413a8549`
 in the single archive variant. Restoring the parent Rune revision in the
@@ -669,6 +714,18 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed for `eon-5a9kx` to context
+`2052ecbfedc0033a0d8442b8334fde5de29bd1bfbb20a7b67757322b6ae217ad`.
+Restoring the base normalized lock reproduces `c06ba4ab…`.
+
+- Source at `/nix/store/bgcn84l6693glmvdap8iv5b7c3zmqis5-source`.
+- Observation at `/nix/store/i5am9jkwdazjl9wznfazsviw5p7cjhav-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/mz1j4bq931yz2xnhwc8jrk705g83h4kr-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `49c5e6b7f9bbde1dff5d3d566e108b1a6cc8e52067da10a80fd34dbd88d47e05`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-yp6vg.7.9`):
+
 Renewed on 2026-11-22 for `eon-yp6vg.7.9` to context
 `c06ba4abdcb8266bd7877235e7b3323f100b0ec3f6df153dc324ad9f1d95880c`
 in the single archive variant. Restoring the parent Rune revision in the
@@ -927,6 +984,18 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed for `eon-5a9kx` to context
+`59d6fb26d4ede50795fd68c6757170fe457be4f1daa1cfe118338a16b9c87023`.
+Restoring the base normalized lock reproduces `bfa4519b…`.
+
+- Source at `/nix/store/pa1n580and17i6ylp15xqf6z83wk05hf-source`.
+- Observation at `/nix/store/hk4y8igbcfqlk1nlbcsf7xwxfkgqax4n-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/m0spn6p8sknxcr8811xrxgcwqw4nq31s-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `7dc214b4c304e3e3397c02f2535c03a8a6571f756db39b04e350c7fa446ff547`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-yp6vg.7.9`):
 
 Renewed on 2026-11-22 for `eon-yp6vg.7.9` to context
 `bfa4519b8698ca3dbd7cce90191ea0b93a3236dfa3d7031ced53a2eeb8778a80`

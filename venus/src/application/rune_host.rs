@@ -15,9 +15,9 @@
 //! - presentation control runs on its own thread and calls the session window's handle
 //!   itself: Present is `WindowHandle::focus` and EOF `WindowHandle::close` on the same handle,
 //!   whose requests run in order, each stamped as it is sent, under `App::attention_wait`
-//!   (VEN-C14). Rune's `focus` only requests attention on Wayland, the one Linux backend once
-//!   eon-5a9kx turns Rune's X11 off; elsewhere it activates and unminimizes, which VEN-C14 rules
-//!   out, so there Present is refused ([`FOCUS_IS_ATTENTION`]) until Rune has an attention-only
+//!   (VEN-C14). Rune's `focus` only requests attention on Wayland, Eon's Linux backend.
+//!   Elsewhere it activates and unminimizes, so VEN-C14 requires Venus to refuse Present
+//!   ([`FOCUS_IS_ATTENTION`]) until Rune has an attention-only
 //!   request (eon-yp6vg.57 and .54 bring the candidate to macOS).
 //!
 //! Limits kept for later beads: the hosted renderer draws the active terminal only, without
@@ -85,8 +85,8 @@ impl RuneWindow {
 
 /// One window's ordered native request lane: Rune's `WindowHandle`.
 /// Whether Rune's `WindowHandle::focus` only requests attention here, as Present must (VEN-C14:
-/// no direct focus or unminimize). It does on Wayland, the only Linux backend Eon's candidate
-/// keeps once eon-5a9kx turns Rune's X11 off; on macOS and Windows it activates the window.
+/// no direct focus or unminimize). It does on Wayland, Eon's Linux backend. On macOS and Windows
+/// it activates the window.
 pub(super) const FOCUS_IS_ATTENTION: bool = cfg!(target_os = "linux");
 
 pub(super) trait Lane: Send + Sync + 'static {

@@ -99,13 +99,14 @@ timeout 60s cargo test --locked --lib images_draw_in_panes_and_popups_and_refusa
 `venus-rune-candidate` is the private Rune host candidate (eon-yp6vg.7.7). It
 draws the canonical Venus grid with the hosted renderer inside one Rune
 device and frame pass. It shows fixed fixture frames, never a live terminal,
-and it has no input. Only the non-default `candidate-rune` feature builds it,
-so no package, test or CI root contains it. eon-yp6vg.54 removes it.
+and it has no input. Building the entry requires the non-default
+`candidate-rune` feature. Shipping packages leave the feature off, and the
+Nix graph check resolves it separately. eon-yp6vg.54 removes it.
 
-On Linux it refuses to start without `WAYLAND_DISPLAY`, before any event loop
-exists: the Rune pin compiles winit's X11 backend. On macOS both hosts use the
-native event loop. The launcher below and the lavapipe check are Linux-only;
-the candidate's first Darwin build and proof belong to eon-yp6vg.57.
+On Linux it requires `WAYLAND_DISPLAY` before creating the event loop. Rune
+uses winit's Wayland backend with X11 disabled. On macOS both hosts use the
+native event loop. The launcher below and the lavapipe check are Linux-only.
+The candidate's first Darwin build and proof belong to eon-yp6vg.57.
 
 Each line on stdin advances one fixture step. After the last step, the first
 step comes back as a fresh attachment. After a step's first presentation, the

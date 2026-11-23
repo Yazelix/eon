@@ -353,33 +353,33 @@ dependency decision does not establish public-distribution proof.
 
 - **Selected shape:** an optional `rune` Git dependency behind the
   non-default `candidate-rune` feature (`eon-yp6vg.7.6`), with
-  `default-features = false` and `features = ["accessibility"]`. No package,
-  test, CI or tool root enables the feature. Its first user is the private
-  entry from eon-yp6vg.7.7: the `rune_candidate` module and the
+  `default-features = false` and `features = ["accessibility"]`. Shipping
+  packages, ordinary tests and archive producers use the feature-off graph.
+  The Nix graph check resolves the candidate separately. Its first user is the
+  private entry from eon-yp6vg.7.7: the `rune_candidate` module and the
   `venus-rune-candidate` binary and test, each behind the feature
   (`required-features` for the binary and test). The single switch
   (eon-yp6vg.54) removes the feature.
 - **Source:** `https://github.com/Yazelix/eon-rune` at
-  `52f6f6c9bc31f6016641f01899814d7b74d41a0a` (tree `4470697f`, protected
-  branch `eon-pin-yp6vg-7-5`), eon-yp6vg.7.5's `App::attention_wait` on
-  `caeb04729e1dc378c8fdcbf12a22c333daf30d1d` (tree `92aa6b61`); eon-yp6vg.7.9
-  moved the pin there, and the commit changes no Rune manifest or lock, so
-  the dependency graph is the one recorded here. `caeb0472`'s parent
-  is `e267be6e`, the fork rebased onto upstream `55ef5268` and qualified
-  under eon-yp6vg.46. The pin adds one manifest line: `crates/rune` builds
-  winit without `wayland-csd-adwaita-notitle`. With that feature on,
+  `77cc200da9d8ff2491f5a611130b3af082cc21b1` (tree
+  `646bc1a599f5d9eedb9c976e751ba2ad37395440`, protected branch
+  `eon-pin-5a9kx`). It restacks the X11 gate (`7134a9fb`, eon-irxtu) and
+  synthetic-clock overlay tests (`488484bc`, eon-yp6vg.62) on eon-yp6vg.7.5's
+  `App::attention_wait` commit `52f6f6c9`. Rune's own `Cargo.lock` is
+  unchanged. The stack keeps `caeb0472`'s winit configuration without
+  `wayland-csd-adwaita-notitle`. With that feature on,
   sctk-adwaita's `tiny-skia` brought the published `tiny-skia-path 0.11.4`
   beside Rune's vendored copy of the same name and version. nixpkgs
   `importCargoLock` vendors by name and version, so it failed for the whole
   workspace. A root patch onto Rune's copy does not compile either (E0004:
-  the copy adds `PathSegment::ConicTo`). Rune's own `Cargo.lock` is
-  unchanged by the commit. The pin is durable because each commit sits on a
-  fork branch the `eon-pin-*` ruleset protects (`caeb0472` on
-  `eon-pin-yp6vg-7-6`, `52f6f6c9` on `eon-pin-yp6vg-7-5`).
+  the copy adds `PathSegment::ConicTo`). The base `caeb0472` follows
+  `e267be6e`, the fork rebased onto upstream `55ef5268` and qualified
+  under eon-yp6vg.46.
 - **Features:** `accessibility` is on, because the chrome needs it.
   Off:
   - `embedded-fonts`: Venus registers its own packaged fonts.
   - `dbus` and `svg`: no Venus surface uses them.
+  - `x11`: Eon uses native Wayland on Linux. Rune keeps X11 in its own defaults.
   - `metal-backend` and `ogg-audio`: refused.
   - `tooling`: debug builds keep upstream's tooling paths.
   - `frame-profile`: frame proofs opt in (eon-yp6vg.7.8).
@@ -399,15 +399,14 @@ dependency decision does not establish public-distribution proof.
 
   `tiny-skia-path` is a path dependency inside the Rune Git source, so it is
   vendored from the same rev.
-- **Lock delta:** 0 identities removed or changed, 83 added (390 → 473), and
-  0 checksum changes. 14 existing stanzas gain lock-level dependency entries
-  only: arboard, codespan-reporting, cosmic-text, fontconfig-parser,
-  gpu-allocator, objc2-core-foundation, objc2-io-surface, objc2-metal, sha2,
-  wgpu, wgpu-hal, winit, x11rb and yazelix-venus. Three of them
-  (cosmic-text, fontconfig-parser, sha2) only qualify an existing entry with
-  its version, because a second version is now locked. No name and version
-  appears twice.
-- **Versions:** after the minimal resolution, each added crates.io package
+- **Lock delta from post-7.9:** 474 → 472. Six Git packages move to the new
+  revision. The lock removes `as-raw-xcb-connection 1.0.1` and
+  `x11-dl 2.21.0` and drops dependency edges from `arboard`, `rune`,
+  `winit` and `x11rb`. Remaining registry versions and checksums match the
+  prior lock. The all-target lock still records `x11rb` and
+  `x11rb-protocol` through `arboard`. Neither selected Eon graph reaches
+  them. Each package name and version appears once.
+- **Versions:** in the original 7.6 pin, each added crates.io package
   is set to the version in Rune's own lock, the versions eon-yp6vg.46
   qualified. The minimal resolution chose `image 0.25.9` for the workspace's
   lowest declared Rust (1.85), and it lacks the `LoopCount` API that Rune
@@ -421,11 +420,14 @@ dependency decision does not establish public-distribution proof.
   - `tinystr` 0.8.5, `yoke` 0.8.4, `zerovec` 0.11.9 and `zerovec-derive`
     0.11.7.
 - **Nix:** `workspaceCargoLock.outputHashes."rune-0.0.1"` =
-  `sha256-xMMh2e/na/R1Q780zhmsjucCICQ8l+iJhwY8zlHZQXo=` (`52f6f6c9`), which covers the
+  `sha256-x3FJKrlPQp5yjWyVu7jfe7JabTysjiwjyp3Y+2dhc30=` (`77cc200d`), which covers the
   six crates from the rev. Their vendored contents equal `git archive` of
   the rev, apart from the files nixpkgs adds (`.cargo-checksum.json`,
   `.cargo-config`) and its workspace-value substitution in `Cargo.toml`.
-- **Licenses:** Rune is MIT. The 83 added packages:
+- **Licenses:** Rune is MIT. The pin adds no registry packages or license
+  terms. The two packages removed from the lock were MIT
+  (`x11-dl`) and MIT OR Apache-2.0 (`as-raw-xcb-connection`). The original
+  83 packages added in 7.6 had these licenses:
 
   | Licenses | Count |
   | --- | ---: |
@@ -445,48 +447,35 @@ dependency decision does not establish public-distribution proof.
 - **Rust version:** the highest declared `rust-version` among the added
   packages is 1.88 (the parley family and `image 0.25.10`). Rune declares
   none. The workspace builds the enabled graph with Rust 1.96.1: Venus
-  clippy and tests with `candidate-rune`, and `cargo check --locked -p
-  rune` in the fork.
+  clippy and tests with `candidate-rune`. The fork's own locked builds and
+  overlay tests use its pinned Rust 1.99.1.
 - **Feature-off identity:** with the feature off, `cargo tree --locked` is
   identical to the parent on `x86_64-unknown-linux-gnu` and
-  `aarch64-apple-darwin`. That covers 62 trees: every workspace package and
+  `aarch64-apple-darwin`. That covers 68 trees: every workspace package and
   the workspace, with edges `normal,build` and `normal,build,dev`. No tree
   contains `rune`, and no workspace package depends on Venus. The shipping
   Linux closure, binaries, notices and source companion match the parent
-  under the bead's allow-lists. The Darwin build evidence is the lead's
-  darwin-build.yml run, recorded on the bead.
+  under the 7.6 comparison rules. Darwin package and workspace evidence
+  follows the lead's landing checks.
 - **Enabled graph** (normal edges, unique packages):
-  - **Linux:** 210 → 284. Feature unification gives winit `x11`, `x11-dl`
-    and `x11rb` for the whole binary, so Venus's own event loop gets them in
-    a `candidate-rune` build. winit has no client-side decorations, as in
-    shipping Venus. wgpu gains `parking_lot` and `metal`, which does nothing
-    off Apple; Vulkan stays the only Linux backend. Rune adds Linux
-    `arboard`, whose Linux backend also carries X11. Venus refused that edge
-    in "Native clipboard decision" and keeps `wl-clipboard-rs`. `zbus` comes
-    from `accesskit_unix`, which Venus already ships.
+  - **Linux:** 210 feature-off, 277 with the candidate, down from 284 at
+    `52f6f6c9`. The candidate graph drops `arboard`,
+    `as-raw-xcb-connection`, `gethostname`, `percent-encoding`, `x11-dl`,
+    `x11rb` and `x11rb-protocol`. winit uses Wayland with its X11 and
+    client-side decoration features off. Rune and Venus share the existing
+    `wl-clipboard-rs 0.9.3` dependency. wgpu gains `parking_lot` and
+    `metal`, with Vulkan still the Linux backend. `accesskit_unix` remains
+    the source of `zbus`.
   - **Darwin:** 130 → 202, from resolution only, because eon-yp6vg.57
     blocks the build. wgpu gains `custom`, and shipping `accesskit_macos
     0.27.2` gets Rune as a second dependent.
-- **X11 waiver:** this applies to the unpackaged graph only, by the lead's
-  ruling of 2026-11-20. Rune brings winit `x11`, `x11rb` and Linux
-  `arboard`. Nothing reaches them while no root enables the feature. This
-  search (Markdown and `.beads/` excluded) finds only the feature's own
-  manifest lines in `venus/Cargo.toml` (the feature, and the candidate
-  binary's and test's `required-features`) and the root `Cargo.toml`, the
-  candidate's `cfg` lines in `venus/src/lib.rs`, `venus/src/application.rs`
-  (the Rune host module and its seams), `venus/src/application/tests/mod.rs`,
-  `venus/src/render.rs` and `venus/src/render/tests/mod.rs`, the gate check
-  in `venus/src/render/tests/hosted_state.rs`, the module comments of
-  `venus/src/rune_candidate.rs`, `venus/src/application/rune_host.rs`,
-  `venus/src/bin/venus-rune-candidate.rs` and
-  `venus/src/render/hosted_backdrop.rs`, plus the six existing Helix and
-  notice-producer hits in `flake.nix` and `nix/notices/default.nix`:
-  `rg -n --hidden -g '!.git' -g '!*.md' -g '!.beads' -e 'candidate-rune' -e '--all-features' -e '--features' -e 'cargoBuildFeatures' -e 'buildFeatures' -e 'cargoTestFeatures' -e 'cargo[^\n]* -F ' .`
+- **Graph guard:** eon-5a9kx replaces the temporary eon-yp6vg.7.14 X11
+  waiver. The `candidate-rune-graph` check in `flake.nix` resolves the
+  candidate against the locked vendor for the platform. It rejects Rune's
+  `default` and `x11` features, winit's `x11` feature and X11 client crates.
+  The Linux eon-tests check and the Darwin package check both run it.
+  The Linux candidate entry still requires `WAYLAND_DISPLAY`.
   Related work:
-  - eon-yp6vg.7.14 removes X11 from the Rune graph and blocks eon-yp6vg.7.4
-    and .54.
-  - eon-yp6vg.7.7's private entry refuses to start without
-    `WAYLAND_DISPLAY`.
   - eon-yp6vg.58 owns the `accesskit_macos` gap.
   - eon-yp6vg.7.2 owns the scroll gain.
 - **Version policy:** the pin moves only by a reviewed fork commit on a

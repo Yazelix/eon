@@ -22,7 +22,7 @@ path = "tests/rune_candidate.rs"
 required-features = ["candidate-rune"]
 
 [features]
-# Private Rune host candidate (eon-yp6vg.7); no package, test or CI root enables it.
+# Private Rune host candidate (eon-yp6vg.7). Shipping builds omit this feature.
 # The single switch (eon-yp6vg.54) removes it. See docs/CRATES.md, Rune candidate dependency.
 candidate-rune = ["dep:rune"]
 
@@ -35,9 +35,9 @@ jiff = { version = "=0.2.38", default-features = false, features = ["std", "tz-s
 orbit-protocol = { path = "../orbit/crates/protocol" }
 pollster = { version = "=1.0.1", default-features = false }
 # Only `accessibility`, which the chrome needs. Off: embedded-fonts (Venus registers its own),
-# dbus and svg (unused), metal-backend and ogg-audio (refused), tooling and frame-profile
-# (debug builds keep tooling; frame proofs opt in).
-rune = { git = "https://github.com/Yazelix/eon-rune", rev = "52f6f6c9bc31f6016641f01899814d7b74d41a0a", default-features = false, features = ["accessibility"], optional = true }
+# dbus and svg (unused), x11 (Linux uses Wayland), metal-backend and ogg-audio (refused),
+# tooling and frame-profile (debug builds keep tooling; frame proofs opt in).
+rune = { git = "https://github.com/Yazelix/eon-rune", rev = "77cc200da9d8ff2491f5a611130b3af082cc21b1", default-features = false, features = ["accessibility"], optional = true }
 serde_json = "=1.0.151"
 unicode-script = "=0.5.8"
 # `noop` serves the headless renderer tests; wgpu never uses it unless enabled. Here
