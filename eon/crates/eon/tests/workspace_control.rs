@@ -15986,6 +15986,68 @@ fn quit_all_asks_only_busy_windows() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn only_inspected_peer(others: &serde_json::Value, window: Option<&str>) -> bool {
+    let Some([peer]) = others.as_array().map(Vec::as_slice) else {
+        return false;
+    };
+    let expected_window = match window {
+        Some(id) => peer["window"] == id,
+        None => peer.get("window").is_some_and(serde_json::Value::is_null),
+    };
+    expected_window
+        && peer["state"] == "live"
+        && peer["generation"].as_str().is_some()
+        && peer["name"].as_str().is_some()
+        && peer["started_at"].as_u64().is_some()
+        && peer["live_terminals"].as_u64().is_some()
+}
+
+#[test]
+fn running_window_peer_readiness_requires_inspected_metadata() {
+    use serde_json::{Value, json};
+
+    let window = Some("0a1b2c3d");
+    let mut others = json!([{
+        "window": window,
+        "generation": "0123456789abcdef0123456789abcdef",
+        "state": "unreachable",
+        "name": null,
+        "started_at": null,
+        "live_terminals": null,
+    }]);
+    assert!(!only_inspected_peer(&Value::Null, window));
+    assert!(!only_inspected_peer(&others, window));
+
+    others[0]["state"] = json!("live");
+    others[0]["name"] = json!("peer");
+    others[0]["live_terminals"] = json!(1);
+    assert!(
+        !only_inspected_peer(&others, window),
+        "accepted a peer without its start time"
+    );
+    others[0]["started_at"] = json!(123);
+    assert!(only_inspected_peer(&others, window));
+
+    assert!(!only_inspected_peer(&json!([]), window));
+    assert!(!only_inspected_peer(&json!([others[0], others[0]]), window));
+    for (field, malformed) in [
+        ("started_at", json!("123")),
+        ("live_terminals", json!(-1)),
+        ("generation", json!(123)),
+        ("name", json!(123)),
+    ] {
+        let mut invalid = others.clone();
+        invalid[0][field] = malformed;
+        assert!(!only_inspected_peer(&invalid, window), "accepted {field}");
+    }
+
+    others[0]["window"] = Value::Null;
+    assert!(!only_inspected_peer(&others, window));
+    assert!(only_inspected_peer(&others, None));
+    others[0].as_object_mut().unwrap().remove("window");
+    assert!(!only_inspected_peer(&others, None));
+}
+
 #[test]
 fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     let root = (0_u32..)
@@ -16042,24 +16104,38 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         );
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["running"].clone()
     };
-    let wait = |window: Option<&str>, expected: usize| {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let running = query(window);
-            if running["others"]
-                .as_array()
-                .is_some_and(|others| others.len() == expected)
-            {
-                break running;
+    let wait =
+        |window: Option<&str>, expected: &str, ready: &dyn Fn(&serde_json::Value) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let running = query(window);
+                if ready(&running["others"]) {
+                    break running;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "window {} did not report {expected}: {running}",
+                    window.unwrap_or("default")
+                );
+                thread::sleep(Duration::from_millis(20));
             }
-            assert!(
-                Instant::now() < deadline,
-                "summary did not refresh: {running}"
-            );
-            thread::sleep(Duration::from_millis(20));
-        }
+        };
+    let wait_for_count = |window, count| {
+        wait(window, &format!("{count} peers"), &|others| {
+            others
+                .as_array()
+                .is_some_and(|others| others.len() == count)
+        })
     };
-    let single = wait(None, 0);
+    // A lock-held peer can appear before the observer has inspected its metadata.
+    let wait_for_inspected_peer = |window, peer: Option<&str>| {
+        wait(
+            window,
+            &format!("one inspected peer for {}", peer.unwrap_or("default")),
+            &|others| only_inspected_peer(others, peer),
+        )
+    };
+    let single = wait_for_count(None, 0);
     assert!(single["this"]["window"].is_null());
     assert_eq!(single["this"]["live_terminals"], 1);
     assert_eq!(
@@ -16114,8 +16190,8 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
     let second = stdout(&output).trim().to_owned();
     let second_control = generation_runtime(&runtime.join("w").join(&second)).join("eon.sock");
     wait_for_ready(&second_control);
-    let a = wait(None, 1);
-    let b = wait(Some(&second), 1);
+    let a = wait_for_inspected_peer(None, Some(&second));
+    let b = wait_for_inspected_peer(Some(&second), None);
     assert_eq!(a["others"][0]["window"], second);
     assert!(b["others"][0]["window"].is_null());
     assert_eq!(a["others"][0]["generation"], b["this"]["generation"]);
@@ -16132,18 +16208,9 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         ),
         Response::Snapshot(_)
     ));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let running = query(None);
-        if running["others"][0]["name"] == "second" {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "renamed peer is stale: {running}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait(None, "the peer's new name (second)", &|others| {
+        others[0]["name"] == "second"
+    });
     assert!(matches!(
         protocol_action(
             &second_control,
@@ -16156,18 +16223,9 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         ),
         Response::Snapshot(_)
     ));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let running = query(None);
-        if running["others"][0]["live_terminals"] == 2 {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "peer terminal count is stale: {running}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait(None, "two live terminals for the peer", &|others| {
+        others[0]["live_terminals"] == 2
+    });
     let inventory = invoke(&binary, &runtime, &config, &["window", "ls", "--json"]);
     let inventory: serde_json::Value = serde_json::from_slice(&inventory.stdout).unwrap();
     let listed = inventory["windows"]
@@ -16188,50 +16246,33 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         String::from_utf8_lossy(&output.stderr)
     );
     let third = stdout(&output).trim().to_owned();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let summary = query(Some(&second));
-        if summary["others"].as_array().is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry["window"].is_null() && entry["state"] == "unreachable")
-        }) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "paused peer was not marked unreachable: {summary}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    let wait_for_default_peer_state = |state: &str| {
+        wait(
+            Some(&second),
+            &format!("the default peer in state {state}"),
+            &|others| {
+                others.as_array().is_some_and(|entries| {
+                    entries
+                        .iter()
+                        .any(|entry| entry["window"].is_null() && entry["state"] == state)
+                })
+            },
+        )
+    };
+    wait_for_default_peer_state("unreachable");
     // Let the initial candidate-list change and its in-flight probes settle.
     thread::sleep(Duration::from_millis(2200));
     assert_eq!(
         rustix::process::kill_process(Pid::from_child(&first.child), Signal::CONT),
         Ok(())
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let summary = query(Some(&second));
-        if summary["others"].as_array().is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry["window"].is_null() && entry["state"] == "live")
-        }) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "resumed peer stayed unreachable: {summary}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-    let three = wait(None, 2);
+    wait_for_default_peer_state("live");
+    let three = wait_for_count(None, 2);
     let peers = three["others"].as_array().unwrap();
     assert!(peers[0]["window"].as_str().unwrap() < peers[1]["window"].as_str().unwrap());
     assert_eq!(three["omitted"], 0);
-    wait(Some(&second), 2);
-    wait(Some(&third), 2);
+    wait_for_count(Some(&second), 2);
+    wait_for_count(Some(&third), 2);
     let stopped = invoke(
         &binary,
         &runtime,
@@ -16239,10 +16280,10 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         &["window", "stop", &third, "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
-    wait(None, 1);
+    wait_for_count(None, 1);
     first.child.kill().unwrap();
     first.child.wait().unwrap();
-    wait(Some(&second), 0);
+    wait_for_count(Some(&second), 0);
     thread::sleep(Duration::from_millis(1200));
     assert!(
         control.parent().unwrap().is_dir(),
@@ -16255,7 +16296,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         .spawn()
         .unwrap();
     wait_for_ready(&control);
-    wait(Some(&second), 1);
+    wait_for_inspected_peer(Some(&second), None);
     assert!(
         query(None)["this"]["started_at"].as_u64().unwrap()
             > single["this"]["started_at"].as_u64().unwrap()
@@ -16267,7 +16308,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         &["window", "stop", &second, "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
-    wait(None, 0);
+    wait_for_count(None, 0);
     let stopped = invoke(
         &binary,
         &runtime,
