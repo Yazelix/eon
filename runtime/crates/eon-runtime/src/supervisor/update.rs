@@ -1,8 +1,7 @@
 //! Update's two halves: a full-Eon supervisor's checkpoint, taken only at a
 //! settled boundary (`export`), and the supervisor rebuilt from it in the
 //! target build (`import`, checked read-only by `validate_target`).
-// S4a-2 (eon-t3fyd.16) exports and validates through the test-gated Update
-// exchange. S4b-1 (eon-t3fyd.8) will import after exec.
+// The test-gated Update exchange validates the target and exercises import after exec.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{
@@ -34,7 +33,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod handoff;
 mod preflight;
+pub(super) use handoff::{InheritedPresentation, Owner};
+pub(crate) use handoff::{RESUME_UPDATE, resume_update};
 pub(super) use preflight::PreflightState;
 pub(crate) use preflight::{VALIDATE_UPDATE_TARGET, validate_update_target};
 
@@ -136,6 +138,32 @@ pub(super) fn validate_target(
     boot: Duration,
 ) -> Result<()> {
     let decoded = decoded(target, bytes, scope, boot)?;
+    validated(target, &decoded, now, true).map(drop)
+}
+
+pub(super) fn validate_handoff_target(
+    target: &Target,
+    bytes: &[u8],
+    scope: &Scope,
+    hosts: &[eon_workspace_protocol::update::Host],
+    now: Instant,
+    boot: Duration,
+) -> Result<()> {
+    let decoded = decoded(target, bytes, scope, boot)?;
+    let slots = decoded.update.slots(&decoded.core)?;
+    if slots.len() != hosts.len()
+        || slots.iter().any(|slot| {
+            hosts
+                .iter()
+                .filter(|host| host.terminal == slot.run.terminal_id && host.run == slot.run.run_id)
+                .count()
+                != 1
+        })
+    {
+        return Err(Error::Unrestorable(
+            "the retained hosts differ from the checkpoint",
+        ));
+    }
     validated(target, &decoded, now, true).map(drop)
 }
 

@@ -449,6 +449,11 @@ impl Attention {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn defer_poll_until(&mut self, when: Instant) {
+        self.next_poll = when;
+    }
+
     /// Baselines notifications for an adopted run without changing Seen.
     // shortcut: recovery's first reply is quiet; persist consumption if those changes must notify.
     pub(super) fn recover(&mut self, run: &str) {

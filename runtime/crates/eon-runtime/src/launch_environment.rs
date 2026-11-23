@@ -89,6 +89,10 @@ impl LaunchFacts {
         })
     }
 
+    pub(crate) fn wrapper(&self) -> &Path {
+        &self.wrapper
+    }
+
     /// An absolute executable locator declared by the installed composition.
     pub fn program(&self, name: &str) -> Option<&Path> {
         self.operations

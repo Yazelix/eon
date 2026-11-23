@@ -61,22 +61,11 @@ fn target_process() {
     let Some(lifetime) = std::env::var_os("EON_TEST_PREFLIGHT_LIFETIME") else {
         return;
     };
-    let root = nonempty_environment_path(WINDOW_RUNTIME).unwrap();
     let mut reply = fs::OpenOptions::new()
         .write(true)
         .open("/dev/fd/3")
         .unwrap();
-    reply
-        .write_all(
-            &target_response(
-                &target_inputs(),
-                &lifetime,
-                Some(&root),
-                &mut target_stdin().unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    reply_for_test(&target_inputs(), &lifetime, &mut reply);
 }
 
 struct Window {
@@ -215,6 +204,7 @@ exec "$EON_TEST_EXE" --exact supervisor::update::preflight::tests::target_proces
             &self.root,
             &self.runtime,
             &log,
+            None,
         );
     }
 

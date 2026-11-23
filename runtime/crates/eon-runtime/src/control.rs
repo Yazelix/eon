@@ -666,6 +666,7 @@ pub(super) struct PrivateListener {
     listener: UnixListener,
     path: PathBuf,
     identity: (u64, u64),
+    cleanup: bool,
 }
 
 impl PrivateListener {
@@ -680,6 +681,7 @@ impl PrivateListener {
             listener,
             path: path.into(),
             identity: (identity.0, identity.1),
+            cleanup: true,
         };
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|error| format!("cannot protect {what} socket {}: {error}", path.display()))?;
@@ -688,6 +690,23 @@ impl PrivateListener {
             .set_nonblocking(true)
             .map_err(|error| format!("cannot configure {what} socket: {error}"))?;
         Ok(private)
+    }
+
+    pub(super) fn inherited(listener: UnixListener, path: PathBuf, identity: (u64, u64)) -> Self {
+        Self {
+            listener,
+            path,
+            identity,
+            cleanup: false,
+        }
+    }
+
+    pub(super) fn enable_cleanup(&mut self) {
+        self.cleanup = true;
+    }
+
+    pub(super) fn identity(&self) -> (u64, u64) {
+        self.identity
     }
 
     /// Where the listener is bound.
@@ -703,17 +722,18 @@ impl PrivateListener {
 impl Drop for PrivateListener {
     fn drop(&mut self) {
         // The open listener prevents inode reuse; chmod may legitimately change ctime.
-        if socket_identity(&self.path)
-            .ok()
-            .flatten()
-            .is_some_and(|identity| (identity.0, identity.1) == self.identity)
+        if self.cleanup
+            && socket_identity(&self.path)
+                .ok()
+                .flatten()
+                .is_some_and(|identity| (identity.0, identity.1) == self.identity)
         {
             let _ = fs::remove_file(&self.path);
         }
     }
 }
 
-pub(super) struct ControlListener(PrivateListener);
+pub(super) struct ControlListener(pub(super) PrivateListener);
 
 impl ControlListener {
     pub(super) fn bind(path: &Path) -> Result<Self, String> {

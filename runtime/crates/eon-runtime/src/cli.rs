@@ -130,6 +130,14 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
             supervisor::validate_update_target(&inputs, &arguments[1..]),
         );
     }
+    if super::update::serves_update()
+        && Path::new(&invocation).file_name() == Some(OsStr::new("eon"))
+        && arguments
+            .first()
+            .is_some_and(|flag| flag == supervisor::RESUME_UPDATE)
+    {
+        return ("eon", supervisor::resume_update(&inputs, &arguments[1..]));
+    }
     let _trace = super::diagnostics::BenchTrace::start();
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),

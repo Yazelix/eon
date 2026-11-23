@@ -486,7 +486,7 @@ fn acquire_management_lease(
     deadline: Instant,
 ) -> Result<LeaseAcquisition, String> {
     let unavailable = "cannot validate terminal management peer credentials";
-    let sent = match platform::peer_identity(stream) {
+    let sent = match platform::peer_identity(&*stream) {
         Ok(peer) => {
             validate_management_peer(peer, expected)?;
             let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
@@ -581,34 +581,40 @@ fn acquire_management(
         .and_then(|()| bound_io(&stream, stream.set_write_timeout(None)))
         .and_then(|()| stream.set_nonblocking(true))
         .map_err(|error| format!("cannot configure terminal management lease: {error}"))?;
-    let orbit_log = orbit_logs.map(|directory| {
-        diagnostics::orbit_log_path(
-            directory,
-            &candidate.identity.component_generation,
-            &candidate.identity.session_id,
-            &candidate.identity.run_id,
-        )
-    });
-    Ok(RunningSession {
-        number: candidate.number,
-        id: candidate.identity.session_id.clone(),
-        endpoint: candidate.endpoint,
-        record: candidate.record_path,
-        record_object: candidate.record,
-        identity: candidate.identity,
-        orbit_log,
-        origin_build: None,
-        presentation_protocols: None,
-        lease: stream,
-        request: None,
-        answered_status: None,
-        naming: None,
-        stop_sent: false,
-        reap_failure_reported: false,
-        default_shell: false,
-        child: None,
-        finished: None,
-    })
+    Ok(candidate.with_lease(stream, orbit_logs))
+}
+
+impl ManagedCandidate {
+    fn with_lease(self, stream: UnixStream, orbit_logs: Option<&Path>) -> RunningSession {
+        let orbit_log = orbit_logs.map(|directory| {
+            diagnostics::orbit_log_path(
+                directory,
+                &self.identity.component_generation,
+                &self.identity.session_id,
+                &self.identity.run_id,
+            )
+        });
+        RunningSession {
+            number: self.number,
+            id: self.identity.session_id.clone(),
+            endpoint: self.endpoint,
+            record: self.record_path,
+            record_object: self.record,
+            identity: self.identity,
+            orbit_log,
+            origin_build: None,
+            presentation_protocols: None,
+            lease: stream,
+            request: None,
+            answered_status: None,
+            naming: None,
+            stop_sent: false,
+            reap_failure_reported: false,
+            default_shell: false,
+            child: None,
+            finished: None,
+        }
+    }
 }
 
 /// Marks a pending tab's pair, whose terminal `endpoint` names, until its tab
@@ -728,7 +734,7 @@ fn retire_dead_run(
     deadline: Instant,
 ) -> Result<Option<ProcessOutcome>, String> {
     remove_dead_endpoints(identity)?;
-    let host_outcome = reap_child_process(child, identity.process_id, deadline)?;
+    let host_outcome = reap_child_process(child, identity, deadline)?;
     cleanup_record(record, object)?;
     Ok(host_outcome)
 }
@@ -857,7 +863,7 @@ fn reconcile_tombstone(
         thread::sleep(Duration::from_millis(25));
     }
     recorded_process_is_dead(&tombstone.identity)?;
-    reap_untracked_child(tombstone.identity.process_id, deadline)?;
+    reap_untracked_child(&tombstone.identity, deadline)?;
     cleanup_record(record_path, object)
 }
 
@@ -1090,8 +1096,8 @@ enum RequestKind {
 /// the unit Orbit publishes as `process_start`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct AttachName {
-    process_id: u32,
-    process_start: u64,
+    pub(super) process_id: u32,
+    pub(super) process_start: u64,
 }
 
 impl AttachName {
@@ -1751,6 +1757,120 @@ fn naming_failed(
 }
 
 impl RunningSession {
+    pub(super) fn carry_lease(&self) -> (&UnixStream, ObjectIdentity, &LiveIdentity) {
+        (&self.lease, self.record_object, &self.identity)
+    }
+
+    pub(super) fn resume_lease(
+        candidate: ManagedCandidate,
+        stream: UnixStream,
+        host: eon_workspace_protocol::update::Host,
+        orbit_logs: Option<&Path>,
+    ) -> Self {
+        let mut row = candidate.with_lease(stream, orbit_logs);
+        row.origin_build = host.origin;
+        row.presentation_protocols = host.orbs.zip(host.orbf).map(|(orbs, orbf)| [orbs, orbf]);
+        row
+    }
+}
+
+/// Reads a carried lease's identity and record without taking the lease or
+/// consuming anything from it. A final record can replace the Live inode.
+pub(super) fn validate_carried_lease(
+    fd: impl std::os::fd::AsFd,
+    runtime: &Path,
+    generation: &str,
+    host: &eon_workspace_protocol::update::Host,
+    record: ObjectIdentity,
+    identity: LiveIdentity,
+) -> Result<ManagedCandidate, String> {
+    let (number, endpoint) =
+        validate_management_identity(&identity, generation, Some(&host.run), false)?;
+    if identity.session_id != host.terminal
+        || identity.management_generation != host.management
+        || identity.record_generation != host.record_generation
+        || endpoint != super::workspace::terminal_endpoint(runtime, number)
+    {
+        return Err("inherited lease inventory differs from its run".into());
+    }
+    let record_path = artifact_path(&endpoint, ".record");
+    let closed = || platform::stream_closed(&fd).map_err(|error| error.to_string());
+    let validate_peer = || {
+        let peer = platform::peer_identity(&fd).map_err(|error| error.to_string())?;
+        validate_management_peer(peer, &identity)?;
+        let address = fd
+            .as_fd()
+            .try_clone_to_owned()
+            .and_then(|fd| UnixStream::from(fd).peer_addr())
+            .map_err(|error| error.to_string())?;
+        if address
+            .as_pathname()
+            .map(|path| path.as_os_str().as_bytes())
+            != Some(identity.management.path.as_slice())
+        {
+            return Err("inherited lease names a different management socket".into());
+        }
+        Ok(())
+    };
+    let mut current = read_management_record(&record_path)?;
+    let mut live_error = None;
+    loop {
+        match current {
+            Some(RecordSnapshot {
+                record: ManagementRecord::Live(ref live),
+                object,
+            }) if live == &identity && object == record => {
+                if let Some(error) = live_error {
+                    return Err(error);
+                }
+                let validate_live = || {
+                    if closed()? {
+                        if recorded_process_is_dead(&identity)? {
+                            return Ok(());
+                        }
+                        return Err(
+                            "inherited lease closed while Orbit still holds a Live record".into(),
+                        );
+                    }
+                    let management = Path::new(OsStr::from_bytes(&identity.management.path));
+                    endpoint_matches(&endpoint, &identity.presentation)?;
+                    endpoint_matches(management, &identity.management)?;
+                    validate_peer()
+                };
+                match validate_live() {
+                    Ok(()) => break,
+                    Err(error) => live_error = Some(error),
+                }
+                // Orbit publishes its final record before it removes the endpoints.
+                current = read_management_record(&record_path)?;
+            }
+            Some(RecordSnapshot {
+                record: ManagementRecord::Tombstone(ref final_record),
+                ..
+            }) if final_record.identity == identity => {
+                if !closed()?
+                    && let Err(error) = validate_peer()
+                    && !closed()?
+                {
+                    return Err(error);
+                }
+                recorded_process_is_dead(&identity)?;
+                break;
+            }
+            None if closed()? && recorded_process_is_dead(&identity)? => break,
+            _ => return Err("inherited terminal record differs from its run".into()),
+        }
+    }
+    Ok(ManagedCandidate {
+        number,
+        endpoint,
+        record_path,
+        record,
+        identity,
+    })
+}
+
+impl RunningSession {
     pub(super) fn inventory(&self) -> eon_workspace_protocol::v47::TerminalInventory {
         eon_workspace_protocol::v47::TerminalInventory {
             terminal: self.id.clone(),
@@ -2274,10 +2394,15 @@ fn outcome_from_wait_status(status: rustix::process::WaitStatus) -> Option<Proce
 }
 
 fn reap_untracked_child(
-    process_id: u32,
+    identity: &LiveIdentity,
     deadline: Instant,
 ) -> Result<Option<ProcessOutcome>, String> {
-    let pid = i32::try_from(process_id)
+    if !platform::process(identity.process_id)?.is_some_and(|process| {
+        process.parent == std::process::id() && process.start == identity.process_start
+    }) {
+        return Ok(None);
+    }
+    let pid = i32::try_from(identity.process_id)
         .ok()
         .and_then(rustix::process::Pid::from_raw)
         .ok_or("invalid ended terminal process identity")?;
@@ -2298,11 +2423,11 @@ fn reap_untracked_child(
 
 fn reap_child_process(
     child: Option<&mut Child>,
-    process_id: u32,
+    identity: &LiveIdentity,
     deadline: Instant,
 ) -> Result<Option<ProcessOutcome>, String> {
     let Some(child) = child else {
-        return reap_untracked_child(process_id, deadline);
+        return reap_untracked_child(identity, deadline);
     };
     loop {
         if let Some(status) = child
@@ -2361,11 +2486,8 @@ fn wait_and_finalize_tombstone(
             if recorded_process_is_dead(&session.identity)? {
                 remove_dead_endpoints(&session.identity)?;
                 super::pair::terminal_ended(&session.endpoint)?;
-                let host_outcome = reap_child_process(
-                    session.child.as_mut(),
-                    session.identity.process_id,
-                    deadline,
-                )?;
+                let host_outcome =
+                    reap_child_process(session.child.as_mut(), &session.identity, deadline)?;
                 return owner_lost(session, reason, host_outcome);
             }
             if Instant::now() >= deadline {
@@ -2425,11 +2547,7 @@ fn wait_and_finalize_tombstone(
         operation_timeout(deadline, "terminal endpoint cleanup")?;
         thread::sleep(Duration::from_millis(25));
     }
-    reap_child_process(
-        session.child.as_mut(),
-        session.identity.process_id,
-        deadline,
-    )?;
+    reap_child_process(session.child.as_mut(), &session.identity, deadline)?;
     cleanup_record(&session.record, record_object)?;
     let end = SessionEnd::Managed(reason, outcome);
     session.finished = Some(end);
@@ -3500,7 +3618,7 @@ pub(crate) mod tests {
     }
 
     fn untracked_host(own_child: bool) -> UntrackedHost {
-        let root = temporary_directory();
+        let root = fs::canonicalize(temporary_directory()).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = root.join("terminal-2.sock");
         let management = super::artifact_path(&endpoint, ".management");
@@ -3561,6 +3679,47 @@ pub(crate) mod tests {
             reason: TerminationReason::NaturalExit,
             outcome: ProcessOutcome::ExitCode(0),
         })
+    }
+
+    #[test]
+    fn carried_lease_accepts_exact_tombstone_before_peer_closes() {
+        let host = untracked_host(false);
+        let mut lease = UnixStream::connect(&host.management).unwrap();
+        let (mut peer, _) = host._listeners[1].accept().unwrap();
+        let identity = &host.identity;
+        let live = super::read_management_record(&host.record)
+            .unwrap()
+            .unwrap();
+        let inventory = eon_workspace_protocol::update::Host {
+            terminal: identity.session_id.clone(),
+            run: identity.run_id.clone(),
+            origin: None,
+            management: identity.management_generation,
+            record_generation: identity.record_generation,
+            orbs: None,
+            orbf: None,
+        };
+        let validate = |stream: &UnixStream| {
+            super::validate_carried_lease(
+                stream,
+                &host.root,
+                &identity.component_generation,
+                &inventory,
+                live.object,
+                identity.clone(),
+            )
+        };
+        publish_record(&host, &tombstone_of(identity));
+        peer.write_all(b"end").unwrap();
+        assert!(validate(&lease).is_ok());
+        let mut pending = [0; 3];
+        lease.read_exact(&mut pending).unwrap();
+        assert_eq!(&pending, b"end");
+
+        let (wrong, _peer) = UnixStream::pair().unwrap();
+        assert!(validate(&wrong).is_err());
+        drop(peer);
+        assert!(validate(&lease).is_ok());
     }
 
     fn end_unreaped(child: &mut Child) {

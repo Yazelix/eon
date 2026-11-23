@@ -2,7 +2,10 @@
 
 use std::{
     io,
-    os::{fd::AsRawFd, unix::net::UnixStream},
+    os::{
+        fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
+        unix::{ffi::OsStrExt, net::UnixStream},
+    },
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -88,10 +91,180 @@ pub(crate) fn read_available(stream: &UnixStream, buffer: &mut [u8]) -> io::Resu
         .map_err(Into::into)
 }
 
+/// Inspect a descriptor inherited by the single-threaded resume entry.
+pub(crate) fn inspect_inherited<T>(
+    number: RawFd,
+    inspect: impl FnOnce(BorrowedFd<'_>) -> io::Result<T>,
+) -> io::Result<T> {
+    if number < 3 {
+        return Err(io::Error::other("invalid inherited descriptor number"));
+    }
+    // SAFETY: F_GETFD takes only the integer. A successful query proves the
+    // fd is open; the resume entry starts no thread or other owner during inspection.
+    let (flags, fd) = unsafe {
+        let flags = libc::fcntl(number, libc::F_GETFD);
+        if flags < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        (flags, BorrowedFd::borrow_raw(number))
+    };
+    if flags & libc::FD_CLOEXEC != 0 {
+        return Err(io::Error::other("descriptor was not carried through exec"));
+    }
+    inspect(fd)
+}
+
+/// Take one fully validated and uniquely listed descriptor. Marking it
+/// close-on-exec also prevents a second call from taking the same number.
+pub(crate) fn take_inherited(number: RawFd) -> io::Result<OwnedFd> {
+    use rustix::io::{FdFlags, fcntl_getfd, fcntl_setfd};
+    inspect_inherited(number, |fd| {
+        fcntl_setfd(fd, fcntl_getfd(fd)? | FdFlags::CLOEXEC)?;
+        Ok(())
+    })?;
+    // SAFETY: the fd was open with CLOEXEC clear at the single-threaded entry,
+    // validation has finished, and the claim above excludes a second owner.
+    Ok(unsafe { OwnedFd::from_raw_fd(number) })
+}
+
+/// Replace this process using only the command's explicit environment.
+/// A returned error keeps the current environment, signals and stdio intact.
+pub(crate) fn exec_inheriting(
+    command: &std::process::Command,
+    descriptors: &[BorrowedFd<'_>],
+) -> io::Result<()> {
+    use rustix::io::{FdFlags, fcntl_getfd, fcntl_setfd};
+    use std::ffi::{CString, OsStr};
+
+    let program = command.get_program();
+    if !Path::new(program).is_absolute() {
+        return Err(io::Error::other("update executable is not absolute"));
+    }
+    let cstring = |value: &OsStr| CString::new(value.as_bytes()).map_err(io::Error::other);
+    let path = cstring(program)?;
+    let arguments = std::iter::once(program)
+        .chain(command.get_args())
+        .map(cstring)
+        .collect::<io::Result<Vec<_>>>()?;
+    let environment = command
+        .get_envs()
+        .filter_map(|(key, value)| value.map(|value| (key, value)))
+        .map(|(key, value)| {
+            let mut entry = key.to_os_string();
+            entry.push("=");
+            entry.push(value);
+            cstring(&entry)
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    let pointers = |strings: &[CString]| {
+        strings
+            .iter()
+            .map(|value| value.as_ptr())
+            .chain([std::ptr::null()])
+            .collect::<Vec<_>>()
+    };
+    let argv = pointers(&arguments);
+    let envp = pointers(&environment);
+    let flags = descriptors
+        .iter()
+        .map(fcntl_getfd)
+        .collect::<rustix::io::Result<Vec<_>>>()?;
+    if flags.iter().any(|flag| !flag.contains(FdFlags::CLOEXEC)) {
+        return Err(io::Error::other("update resource lacks close-on-exec"));
+    }
+    let mut changed = 0;
+    let result = (|| {
+        for (fd, flags) in descriptors.iter().zip(&flags) {
+            fcntl_setfd(fd, *flags - FdFlags::CLOEXEC)?;
+            changed += 1;
+        }
+        // SAFETY: path, argv and envp point to live NUL-terminated strings
+        // and both pointer arrays end with null.
+        unsafe { libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        Err(io::Error::last_os_error())
+    })();
+    for (fd, flags) in descriptors.iter().zip(flags).take(changed) {
+        // These are still borrowed from live owners. A restoration failure
+        // must not let this process spawn with leaking descriptors.
+        if fcntl_setfd(fd, flags).is_err() {
+            std::process::exit(1);
+        }
+    }
+    result
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn socket_listening(fd: impl AsFd) -> io::Result<bool> {
+    rustix::net::sockopt::socket_acceptconn(fd).map_err(Into::into)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn socket_listening(fd: impl AsFd) -> io::Result<bool> {
+    // XNU sys/proc_info.h: socket_fdinfo starts with proc_fileinfo (24 bytes)
+    // and vinfo_stat (136), then two u64 handles and three ints before soi_options.
+    const OPTIONS: usize = 24 + 136 + 2 * 8 + 3 * 4;
+    const PROC_PIDFDSOCKETINFO: libc::c_int = 3;
+    let mut info = [0u8; 1024];
+    // SAFETY: the descriptor belongs to this process, and the buffer is writable
+    // for the full advertised length. libproc copies the fixed result into it.
+    let length = unsafe {
+        libc::proc_pidfdinfo(
+            std::process::id() as libc::pid_t,
+            fd.as_fd().as_raw_fd(),
+            PROC_PIDFDSOCKETINFO,
+            info.as_mut_ptr().cast(),
+            info.len() as libc::c_int,
+        )
+    };
+    if length <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if (length as usize) < OPTIONS + 2 {
+        return Err(io::Error::other("incomplete Darwin socket information"));
+    }
+    let options = u16::from_ne_bytes([info[OPTIONS], info[OPTIONS + 1]]);
+    Ok(options & libc::SO_ACCEPTCONN as u16 != 0)
+}
+
+/// Inspect queued bytes without consuming an inherited stream.
+pub(crate) fn stream_closed(fd: impl AsFd) -> io::Result<bool> {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        io::Errno,
+        net::{RecvFlags, recv},
+    };
+    // HUP is useful even when a final frame still precedes EOF.
+    let mut readiness = [PollFd::new(&fd, PollFlags::IN)];
+    loop {
+        match poll(&mut readiness, Some(&Timespec::default())) {
+            Err(Errno::INTR) => continue,
+            result => result?,
+        };
+        break;
+    }
+    if readiness[0].revents().contains(PollFlags::HUP) {
+        return Ok(true);
+    }
+    loop {
+        match recv(
+            &fd,
+            &mut [0u8; 1][..],
+            RecvFlags::PEEK | RecvFlags::DONTWAIT,
+        ) {
+            Ok((_, count)) => return Ok(count == 0),
+            Err(Errno::INTR) => continue,
+            Err(Errno::CONNRESET | Errno::NOTCONN) => return Ok(true),
+            Err(Errno::AGAIN) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 /// What the kernel reports about a process that still has its pid.
 pub(crate) struct Process {
     /// The start identity, in the unit Orbit publishes as `process_start`.
     pub(crate) start: u64,
+    pub(crate) parent: u32,
     /// Whether the process has exited and awaits reaping.
     pub(crate) ended: bool,
 }
@@ -184,7 +357,7 @@ pub(crate) fn helper_process(pid: u32, read_arguments: bool) -> Option<HelperPro
 
 /// The pid and uid of the stream's peer.
 #[cfg(target_os = "linux")]
-pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
+pub(crate) fn peer_identity(stream: impl AsFd) -> io::Result<(libc::pid_t, libc::uid_t)> {
     let mut credentials = libc::ucred {
         pid: 0,
         uid: 0,
@@ -195,7 +368,7 @@ pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, lib
     // which rustix 1.1.4 cannot represent (eon-ojwmi).
     if unsafe {
         libc::getsockopt(
-            stream.as_raw_fd(),
+            stream.as_fd().as_raw_fd(),
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
             (&raw mut credentials).cast(),
@@ -216,14 +389,14 @@ pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, lib
 
 /// The pid and uid of the stream's peer.
 #[cfg(target_os = "macos")]
-pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, libc::uid_t)> {
+pub(crate) fn peer_identity(stream: impl AsFd) -> io::Result<(libc::pid_t, libc::uid_t)> {
     let mut pid: libc::pid_t = 0;
     let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
     // SAFETY: no supported safe API reads Darwin LOCAL_PEERPID; pid points to
     // writable pid_t storage of the declared length.
     if unsafe {
         libc::getsockopt(
-            stream.as_raw_fd(),
+            stream.as_fd().as_raw_fd(),
             libc::SOL_LOCAL,
             libc::LOCAL_PEERPID,
             (&raw mut pid).cast(),
@@ -242,7 +415,7 @@ pub(crate) fn peer_identity(stream: &UnixStream) -> io::Result<(libc::pid_t, lib
     let (mut uid, mut gid) = (0, 0);
     // SAFETY: std peer_cred is unstable and rustix has no getpeereid wrapper;
     // the live stream and writable UID/GID storage remain valid for this call.
-    if unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) } == -1 {
+    if unsafe { libc::getpeereid(stream.as_fd().as_raw_fd(), &raw mut uid, &raw mut gid) } == -1 {
         return Err(io::Error::last_os_error());
     }
     Ok((pid, uid))
@@ -265,12 +438,17 @@ pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
         .map(|(_, fields)| fields.split_whitespace())
         .ok_or("invalid terminal process identity")?;
     let state = fields.next().ok_or("invalid terminal process identity")?;
+    let parent = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or("invalid terminal process parent")?;
     let start = fields
-        .nth(18)
+        .nth(17)
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or("invalid terminal process identity")?;
     Ok(Some(Process {
         start,
+        parent,
         ended: matches!(state, "Z" | "X"),
     }))
 }
@@ -317,6 +495,7 @@ pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
         .ok_or("invalid terminal process identity")?;
     Ok(Some(Process {
         start,
+        parent: info.pbi_ppid,
         ended: info.pbi_status == libc::SZOMB,
     }))
 }

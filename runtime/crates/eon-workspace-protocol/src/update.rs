@@ -8,7 +8,7 @@
 //! the version from them alone and answers another version without reading
 //! further. Each Update slice codes the frames it uses; this module has the
 //! header, every kind's number, direction and bound, and the inspection,
-//! preflight and target validation payloads.
+//! preflight, commit, carry and target validation payloads.
 
 /// The frozen magic.
 pub const MAGIC: [u8; 4] = *b"EONU";
@@ -305,6 +305,37 @@ pub struct Preflighted {
     pub eonw: u16,
 }
 
+/// CARRY: an admitted COMMIT's final reply state in the replacement image.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Carry {
+    pub request: RequestId,
+    pub lifetime: String,
+    pub from_build: String,
+    pub target_build: String,
+    pub target_wrapper: Vec<u8>,
+    pub caller: Option<String>,
+    pub caller_origin: Option<String>,
+    pub reply_sent: bool,
+}
+
+/// UPDATED's target presentation result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdatedPresentation {
+    Detached = 0,
+    Ready = 1,
+}
+
+/// UPDATED: a completed COMMIT.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Updated {
+    pub request: RequestId,
+    pub lifetime: String,
+    pub from_build: String,
+    pub to_build: String,
+    pub changed: bool,
+    pub presentation: UpdatedPresentation,
+}
+
 /// TARGET_CHECK: the owner identifies and supplies a settled checkpoint over a private pipe.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TargetCheck {
@@ -405,6 +436,14 @@ impl Inspect {
 
 impl Preflight {
     pub fn encode(&self) -> Result<Vec<u8>> {
+        self.encode_request(Kind::Preflight)
+    }
+
+    pub fn encode_commit(&self) -> Result<Vec<u8>> {
+        self.encode_request(Kind::Commit)
+    }
+
+    fn encode_request(&self, kind: Kind) -> Result<Vec<u8>> {
         let mut out = Writer::default();
         out.bytes(&self.request);
         out.id35(&self.lifetime)?;
@@ -414,11 +453,19 @@ impl Preflight {
         out.optional(self.caller.as_deref(), |out, caller| {
             out.text(caller, MAX_ID_BYTES)
         })?;
-        frame(Kind::Preflight, out.0)
+        frame(kind, out.0)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut input = Reader(payload(bytes, Kind::Preflight, Direction::Request)?);
+        Self::decode_request(bytes, Kind::Preflight)
+    }
+
+    pub fn decode_commit(bytes: &[u8]) -> Result<Self> {
+        Self::decode_request(bytes, Kind::Commit)
+    }
+
+    fn decode_request(bytes: &[u8], kind: Kind) -> Result<Self> {
+        let mut input = Reader(payload(bytes, kind, Direction::Request)?);
         let request = Self {
             request: input.request()?,
             lifetime: input.id35()?,
@@ -429,6 +476,75 @@ impl Preflight {
         };
         input.finish()?;
         Ok(request)
+    }
+}
+
+impl Carry {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Writer::default();
+        out.bytes(&self.request);
+        out.u8(Operation::Commit as u8);
+        for id in [&self.lifetime, &self.from_build, &self.target_build] {
+            out.id35(id)?;
+        }
+        out.path(&self.target_wrapper)?;
+        out.optional(self.caller.as_deref(), |out, caller| {
+            out.text(caller, MAX_ID_BYTES)
+        })?;
+        out.optional(self.caller_origin.as_deref(), Writer::id35)?;
+        out.u8(self.reply_sent.into());
+        frame(Kind::Carry, out.0)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut input = Reader(payload(bytes, Kind::Carry, Direction::Carry)?);
+        let request = input.request()?;
+        if input.u8()? != Operation::Commit as u8 {
+            return Err(Error::Malformed("carry operation"));
+        }
+        let result = Self {
+            request,
+            lifetime: input.id35()?,
+            from_build: input.id35()?,
+            target_build: input.id35()?,
+            target_wrapper: input.path()?,
+            caller: input.optional(|input| input.text(MAX_ID_BYTES))?,
+            caller_origin: input.optional(Reader::id35)?,
+            reply_sent: input.boolean("reply progress")?,
+        };
+        input.finish()?;
+        Ok(result)
+    }
+}
+
+impl Updated {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Writer::default();
+        out.bytes(&self.request);
+        for id in [&self.lifetime, &self.from_build, &self.to_build] {
+            out.id35(id)?;
+        }
+        out.u8(self.changed.into());
+        out.u8(self.presentation as u8);
+        frame(Kind::Updated, out.0)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut input = Reader(payload(bytes, Kind::Updated, Direction::Reply)?);
+        let result = Self {
+            request: input.request()?,
+            lifetime: input.id35()?,
+            from_build: input.id35()?,
+            to_build: input.id35()?,
+            changed: input.boolean("updated changed")?,
+            presentation: match input.u8()? {
+                0 => UpdatedPresentation::Detached,
+                1 => UpdatedPresentation::Ready,
+                _ => return Err(Error::Malformed("updated presentation")),
+            },
+        };
+        input.finish()?;
+        Ok(result)
     }
 }
 
@@ -731,6 +847,14 @@ impl<'a> Reader<'a> {
         self.0 = rest;
         Ok(taken)
     }
+    fn boolean(&mut self, field: &'static str) -> Result<bool> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Error::Malformed(field)),
+        }
+    }
+
     fn u8(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }

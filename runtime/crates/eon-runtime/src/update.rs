@@ -3,8 +3,8 @@
 //! codec in `eon-workspace-protocol`, its one-request exchange. Nothing here
 //! decodes EONW. A failure here never fails the window's start or ends its
 //! supervisor: the window then cannot be updated in place.
-// Served only in tests until S4b-1 (eon-t3fyd.8) serves every EONU v1
-// request; S4a-2 and S5b-1 (eon-t3fyd.12) are the client's first callers.
+// The isolated adoption route serves EONU in tests. Production waits for
+// quiescing, restore-failure handling and native presentation replacement.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use crate::{
@@ -36,10 +36,7 @@ use std::{
 /// The endpoint's name in a lifetime directory.
 pub(crate) const SOCKET: &str = "update.sock";
 
-/// Whether this build serves `update.sock`. A window that served EONU v1
-/// but refused its PREFLIGHT or COMMIT would make clients probe what it can
-/// do, so production windows bind nothing until S4b-1 serves every v1
-/// request (lead ruling 2026-11-21).
+/// The production bind remains gated while the adoption route is private.
 pub(crate) fn serves_update() -> bool {
     cfg!(test)
 }
@@ -47,7 +44,7 @@ pub(crate) fn serves_update() -> bool {
 /// Whether a test asked to fail at `point`: this thread's
 /// `inject` (in-process tests) or the process's `EON_UPDATE_TEST_FAULT`
 /// (a window under test). Never in production.
-fn fault(point: &str) -> bool {
+pub(crate) fn fault(point: &str) -> bool {
     #[cfg(test)]
     if INJECTED.with(|injected| injected.get().contains(&point)) {
         return true;
@@ -134,7 +131,7 @@ fn await_hangup(stream: &UnixStream, point: &str) -> io::Result<()> {
 }
 
 /// A bound `update.sock`.
-pub(crate) struct UpdateListener(PrivateListener);
+pub(crate) struct UpdateListener(pub(crate) PrivateListener);
 
 impl UpdateListener {
     /// The window's endpoint in `runtime`, or none, with the reason in the
@@ -227,6 +224,35 @@ pub(crate) struct Reply {
 }
 
 impl Reply {
+    pub(crate) fn stream(&self) -> &UnixStream {
+        &self.stream
+    }
+
+    pub(crate) fn inherited(stream: UnixStream) -> Self {
+        Self {
+            stream,
+            read_deadline: Instant::now(),
+        }
+    }
+
+    pub(crate) fn commit(self, result: Result<eonu::Updated, Refused>) {
+        self.send(
+            result.and_then(|reply| {
+                reply
+                    .encode()
+                    .map(|bytes| (Kind::Updated, bytes))
+                    .map_err(|error| {
+                        refusal(
+                            reply.request,
+                            Code::Internal,
+                            format!("cannot encode commit: {error}"),
+                        )
+                    })
+            }),
+            true,
+        );
+    }
+
     fn send(mut self, result: Result<(Kind, Vec<u8>), Refused>, deferred: bool) -> Served {
         let (kind, code, bytes) = match result {
             Ok((kind, bytes)) => (kind, None, bytes),
@@ -298,7 +324,7 @@ pub(crate) fn decode_preflight(bytes: &[u8]) -> Result<Preflight, Refused> {
         .map_err(|error| refusal(frame_request(bytes), Code::Malformed, error.to_string()))
 }
 
-fn frame_request(bytes: &[u8]) -> RequestId {
+pub(crate) fn frame_request(bytes: &[u8]) -> RequestId {
     bytes
         .get(HEADER_BYTES..HEADER_BYTES + 16)
         .and_then(|id| id.try_into().ok())

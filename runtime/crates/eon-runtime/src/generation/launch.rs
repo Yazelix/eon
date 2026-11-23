@@ -21,7 +21,7 @@ use std::{
 
 pub(crate) struct NamespaceLock {
     root: PathBuf,
-    _file: LifecycleLock,
+    file: LifecycleLock,
 }
 
 impl NamespaceLock {
@@ -29,8 +29,25 @@ impl NamespaceLock {
         validate_private_directory(root)?;
         Ok(Self {
             root: root.into(),
-            _file: lock_supervisor_lifecycle(&root.join("launch.lock"))?,
+            file: lock_supervisor_lifecycle(&root.join("launch.lock"))?,
         })
+    }
+
+    pub(crate) fn try_acquire(root: &Path) -> Result<Option<Self>, String> {
+        validate_private_directory(root)?;
+        Ok(try_lock_supervisor_lifecycle(&root.join("launch.lock"))?
+            .map(|file| Self::inherited(root, file)))
+    }
+
+    pub(crate) fn inherited(root: &Path, file: LifecycleLock) -> Self {
+        Self {
+            root: root.into(),
+            file,
+        }
+    }
+
+    pub(crate) fn lock(&self) -> &LifecycleLock {
+        &self.file
     }
 
     pub(crate) fn inventory(&self) -> Result<Vec<(std::ffi::OsString, PathBuf)>, String> {

@@ -44,7 +44,7 @@ use std::{
     fs,
     io::{self, Read, Write},
     net::Shutdown,
-    os::fd::OwnedFd,
+    os::fd::{AsFd, OwnedFd},
     os::unix::{
         ffi::OsStrExt,
         fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -61,7 +61,9 @@ use std::{
 };
 
 mod update;
-pub(crate) use update::{VALIDATE_UPDATE_TARGET, validate_update_target};
+pub(crate) use update::{
+    RESUME_UPDATE, VALIDATE_UPDATE_TARGET, resume_update, validate_update_target,
+};
 
 pub(super) use eon_workspace_protocol::{
     PRESENTATION_ADMISSION_TIMEOUT, SESSION_CLEANUP_TIMEOUT, TERMINAL_START_TIMEOUT,
@@ -872,6 +874,7 @@ struct PresentationProcess {
     control: UnixStream,
     log: Arc<DiagnosticLog>,
     relay: Option<JoinHandle<()>>,
+    retained_stderr: Option<OwnedFd>,
     reported: bool,
     /// This process's own reports; a replacement starts unknown.
     focus: NativeFocus,
@@ -924,6 +927,9 @@ impl PresentationProcess {
             })
             .ok();
         let stderr = child.stderr.take().expect("Eon Desktop stderr is piped");
+        let retained_stderr = crate::update::serves_update()
+            .then(|| stderr.as_fd().try_clone_to_owned().ok())
+            .flatten();
         let mut process = Self {
             child,
             executable,
@@ -932,6 +938,7 @@ impl PresentationProcess {
             control,
             log: Arc::clone(log),
             relay: None,
+            retained_stderr,
             reported: false,
             focus: NativeFocus::default(),
         };
@@ -1699,9 +1706,44 @@ fn supervise(
         }
     };
     // Terminals started after an admitted Venus spawned.
-    state.name_presentation(true);
+    state.name_presentation(true, None);
 
-    let mut preflight = update::PreflightState::default();
+    service(
+        inputs,
+        config,
+        &_lifecycle_lock,
+        runtime,
+        generation,
+        mode,
+        log,
+        state,
+        control_listener,
+        update_listener,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn service(
+    inputs: &Inputs,
+    config: &Path,
+    lifecycle: &LifecycleLock,
+    runtime: &Path,
+    generation: &str,
+    mode: LaunchMode,
+    log: &Arc<DiagnosticLog>,
+    mut state: SupervisorState,
+    control_listener: ControlListener,
+    update_listener: Option<UpdateListener>,
+    last: Option<eon_workspace_protocol::update::Outcome>,
+    mut inherited: Option<update::InheritedPresentation>,
+) -> Result<i32, String> {
+    let root = runtime
+        .parent()
+        .and_then(Path::parent)
+        .expect("generation runtime has a root");
+    let mut preflight = update::PreflightState::with_last(last);
     let status = loop {
         let result: Result<i32, String> = (|| {
             loop {
@@ -1730,7 +1772,16 @@ fn supervise(
                 }
                 }
 
-                state.tend(Instant::now());
+                // Like native presentation reaping, a wait error ends supervision.
+                if let Some(presentation) = inherited.as_ref()
+                    && presentation.exited().map_err(|error| error.to_string())?
+                {
+                    inherited.take();
+                }
+                state.tend(
+                    Instant::now(),
+                    inherited.as_ref().map(update::InheritedPresentation::name),
+                );
                 // Also while an incomplete Stop waits, so the notice's confirmed
                 // Quit retries it.
                 if answer_detach_notice(&mut state, runtime, mode) {
@@ -1738,7 +1789,20 @@ fn supervise(
                 }
 
                 if let Some(listener) = &update_listener {
-                    preflight.serve(listener, &mut state, inputs, root, runtime, log);
+                    let owner = update::Owner {
+                        lifecycle,
+                        control: &control_listener,
+                        inherited_attached: inherited.is_some(),
+                    };
+                    preflight.serve(
+                        listener,
+                        &mut state,
+                        inputs,
+                        root,
+                        runtime,
+                        log,
+                        Some(&owner),
+                    );
                 }
 
                 // Clients held while a terminal started go first, in arrival order.
@@ -1796,6 +1860,9 @@ fn supervise(
     drop(control_listener);
     if let Some(process) = state.venus.take() {
         drop(process);
+    }
+    if let Some(presentation) = inherited {
+        presentation.close();
     }
     state.notices.close_and_wait(NOTICE_CLOSE_TIMEOUT);
     state.retain_popup_files(Instant::now());
@@ -2123,8 +2190,8 @@ impl SupervisorState {
     }
 
     /// Names the running Venus to each terminal not yet named to it.
-    fn name_presentation(&mut self, wait: bool) {
-        let venus = self.presentation_name();
+    fn name_presentation(&mut self, wait: bool, inherited: Option<AttachName>) {
+        let venus = self.presentation_name().or(inherited);
         name_presentation(&mut self.sessions, venus, wait, &self.log);
     }
 
@@ -2296,7 +2363,7 @@ impl SupervisorState {
     /// The loop turn's work before its control request: follows the window's
     /// terminals, focus and attention. The turn publishes it to subscribers
     /// once, with its action's change (EON-C39).
-    fn tend(&mut self, now: Instant) {
+    fn tend(&mut self, now: Instant, inherited: Option<AttachName>) {
         self.failed_starts.reap(&self.log);
         managed_environment::note_desktop_locale(&self.log);
         self.pair_dispatches.reap();
@@ -2308,7 +2375,7 @@ impl SupervisorState {
         if self.stopping.is_none() {
             sessions::drain_given_up_requests(&mut self.sessions);
             // The backstop for a naming that failed or came late.
-            self.name_presentation(false);
+            self.name_presentation(false, inherited);
             self.follow_attention();
             if let Some(running) = &mut self.running {
                 running.tick(now, || {
@@ -3656,6 +3723,15 @@ pub(super) fn supervisor_lock_path(root: &Path, generation: &str) -> PathBuf {
 pub(super) struct LifecycleLock {
     file: fs::File,
     created: bool,
+}
+
+impl LifecycleLock {
+    fn inherited(file: fs::File) -> Self {
+        Self {
+            file,
+            created: false,
+        }
+    }
 }
 
 impl std::ops::Deref for LifecycleLock {
@@ -5666,7 +5742,7 @@ mod tests {
         state.sessions[0].default_shell = true;
         let deadline = Instant::now() + Duration::from_secs(10);
         let idle = loop {
-            state.tend(Instant::now());
+            state.tend(Instant::now(), None);
             let scope = column_scope(&mut state, &root, "p1");
             if !scope.terminals[0].busy {
                 break scope;
@@ -6223,7 +6299,7 @@ mod tests {
         state.sessions.push(shell);
         let deadline = Instant::now() + Duration::from_secs(10);
         let idle = loop {
-            state.tend(Instant::now());
+            state.tend(Instant::now(), None);
             let scope = column_scope(&mut state, &root, "p1");
             if !scope.terminals[0].busy {
                 break scope;
@@ -6234,7 +6310,7 @@ mod tests {
         fs::write(gate, "\n").unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            state.tend(Instant::now());
+            state.tend(Instant::now(), None);
             if column_scope(&mut state, &root, "p1").terminals[0].busy {
                 break;
             }
@@ -7425,7 +7501,7 @@ mod tests {
         inputs: &crate::cli::Inputs,
         root: &Path,
     ) {
-        state.tend(Instant::now());
+        state.tend(Instant::now(), None);
         let accepted = control
             .accept(|request, peer| {
                 super::dispatch(
@@ -7594,7 +7670,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(20);
         let mut read = None;
         loop {
-            state.tend(Instant::now());
+            state.tend(Instant::now(), None);
             state.end_turn(Instant::now());
             for message in subscription_messages(&mut peer) {
                 if let SubscriptionMessage::Event(event) = message
@@ -8606,7 +8682,7 @@ mod tests {
             });
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
-            state.tend(Instant::now());
+            state.tend(Instant::now(), None);
             state.end_turn(Instant::now());
             let attention = shown(state);
             if let Some(shown) = attention.as_ref().map(|attention| attention.state)
@@ -8676,10 +8752,10 @@ mod tests {
 
         // Native focus sees it; losing focus leaves the next finish queued.
         peer.write_all(&focus_frame(true)).unwrap();
-        state.tend(Instant::now());
+        state.tend(Instant::now(), None);
         assert_eq!(queued(&mut state), (Some(Idle), 0));
         peer.write_all(&focus_frame(false)).unwrap();
-        state.tend(Instant::now());
+        state.tend(Instant::now(), None);
         assert_eq!(raise_finish(&mut state, &gate), Finished);
         assert_eq!(queued(&mut state), (Some(Finished), 1));
 
@@ -9527,7 +9603,7 @@ mod tests {
         let run = state.sessions[0].run_id().to_owned();
         let (mut first, original) = attach_reporting_venus(&mut state);
         first.write_all(&focus_frame(true)).unwrap();
-        state.tend(Instant::now());
+        state.tend(Instant::now(), None);
         assert_eq!(raise_finish(&mut state, &gate), Idle, "seen while focused");
 
         drop(original);
@@ -9535,13 +9611,13 @@ mod tests {
         let (mut second, original) = attach_reporting_venus(&mut state);
         assert_eq!(raise_finish(&mut state, &gate), Finished, "inherited focus");
         second.write_all(&focus_frame(true)).unwrap();
-        state.tend(Instant::now());
+        state.tend(Instant::now(), None);
         assert_eq!(
             inspected(&mut state).0.map(|attention| attention.state),
             Some(Idle)
         );
         second.shutdown(Shutdown::Write).unwrap();
-        state.tend(Instant::now());
+        state.tend(Instant::now(), None);
         assert_eq!(
             raise_finish(&mut state, &gate),
             Finished,
@@ -9556,7 +9632,7 @@ mod tests {
         drop(original);
         state.venus.as_mut().unwrap().child.wait().unwrap();
         third.shutdown(Shutdown::Write).unwrap();
-        state.tend(Instant::now());
+        state.tend(Instant::now(), None);
         let ended = fs::read_dir(root.join("logs"))
             .unwrap()
             .filter_map(|entry| fs::read_to_string(entry.unwrap().path()).ok())

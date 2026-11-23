@@ -559,7 +559,7 @@ fn a_terminal_ended_in_a_turn_is_pruned_by_the_next_tend_before_export() {
         window.export(Instant::now()),
         Err(Error::Unsettled("attention holds a run no terminal has"))
     );
-    window.state.tend(Instant::now());
+    window.state.tend(Instant::now(), None);
     assert!(window.export(Instant::now()).is_ok());
 }
 

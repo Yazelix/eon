@@ -215,6 +215,15 @@ pub(super) fn route(root: &Path, generation: &str, command: &[OsString]) -> Opti
     ))
 }
 
+pub(super) fn installed_launcher(inputs: &Inputs) -> Option<PathBuf> {
+    inputs
+        .managed
+        .shell_bin
+        .as_ref()
+        .map(|bin| bin.join("eon"))
+        .filter(|path| path.is_absolute() && path.is_file())
+}
+
 /// Records this build's `eon`, from its session bin, in the workspace
 /// generation directory `runtime`.
 pub(super) fn record_launcher(inputs: &Inputs, runtime: &Path) -> Result<Identity, String> {
@@ -223,12 +232,7 @@ pub(super) fn record_launcher(inputs: &Inputs, runtime: &Path) -> Result<Identit
         identity.require_build(&build)?;
         return Ok(identity);
     }
-    let launcher = inputs
-        .managed
-        .shell_bin
-        .as_ref()
-        .map(|bin| bin.join("eon"))
-        .filter(|path| path.is_absolute() && path.is_file());
+    let launcher = installed_launcher(inputs);
     let generation = runtime
         .file_name()
         .and_then(|name| name.to_str())

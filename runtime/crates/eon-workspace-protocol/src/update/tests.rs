@@ -606,3 +606,89 @@ fn golden_preflight_and_target_frames() {
         Err(Error::Malformed("trailing bytes"))
     );
 }
+
+#[test]
+fn golden_commit_carry_and_updated() {
+    let request = Preflight {
+        request: REQUEST,
+        lifetime: LIFETIME.into(),
+        expected_active_build: BUILD.into(),
+        target_wrapper: b"/bin/e".to_vec(),
+        target_build: LIFETIME.into(),
+        caller: Some("t".into()),
+    };
+    let carry = Carry {
+        request: REQUEST,
+        lifetime: LIFETIME.into(),
+        from_build: BUILD.into(),
+        target_build: LIFETIME.into(),
+        target_wrapper: b"/bin/e".to_vec(),
+        caller: Some("t".into()),
+        caller_origin: Some(BUILD.into()),
+        reply_sent: false,
+    };
+    let updated = Updated {
+        request: REQUEST,
+        lifetime: LIFETIME.into(),
+        from_build: BUILD.into(),
+        to_build: LIFETIME.into(),
+        changed: true,
+        presentation: UpdatedPresentation::Detached,
+    };
+    let commit_bytes = [
+        b"EONU\x01\0\x03\0\x85\0\0\0".as_slice(),
+        &REQUEST,
+        LIFETIME.as_bytes(),
+        BUILD.as_bytes(),
+        b"\x06\0/bin/e",
+        LIFETIME.as_bytes(),
+        b"\x01\x01\0t",
+    ]
+    .concat();
+    let carry_bytes = [
+        b"EONU\x01\0\x41\0\xab\0\0\0".as_slice(),
+        &REQUEST,
+        b"\x03",
+        LIFETIME.as_bytes(),
+        BUILD.as_bytes(),
+        LIFETIME.as_bytes(),
+        b"\x06\0/bin/e\x01\x01\0t\x01",
+        BUILD.as_bytes(),
+        b"\0",
+    ]
+    .concat();
+    let updated_bytes = [
+        b"EONU\x01\0\x84\0\x7b\0\0\0".as_slice(),
+        &REQUEST,
+        LIFETIME.as_bytes(),
+        BUILD.as_bytes(),
+        LIFETIME.as_bytes(),
+        b"\x01\0",
+    ]
+    .concat();
+    assert_eq!(request.encode_commit().unwrap(), commit_bytes);
+    assert_eq!(carry.encode().unwrap(), carry_bytes);
+    assert_eq!(updated.encode().unwrap(), updated_bytes);
+    assert_eq!(Preflight::decode_commit(&commit_bytes), Ok(request));
+    assert_eq!(Carry::decode(&carry_bytes).as_ref(), Ok(&carry));
+    assert_eq!(Updated::decode(&updated_bytes), Ok(updated));
+    let progress_offset = carry_bytes.len() - 1;
+    let sent = Carry {
+        reply_sent: true,
+        ..carry
+    };
+    let sent_bytes = with(&carry_bytes, progress_offset, 1);
+    assert_eq!(sent.encode().unwrap(), sent_bytes);
+    assert_eq!(Carry::decode(&sent_bytes), Ok(sent));
+    assert!(Carry::decode(&with(&carry_bytes, progress_offset, 2)).is_err());
+
+    assert!(Preflight::decode(&commit_bytes).is_err());
+    assert!(kind_of(&carry_bytes, Direction::Request).is_err());
+    assert!(Carry::decode(&with(&carry_bytes, HEADER_BYTES + 16, 2)).is_err());
+    for size in 0..carry_bytes.len() {
+        assert!(Carry::decode(&carry_bytes[..size]).is_err());
+    }
+    for offset in [updated_bytes.len() - 2, updated_bytes.len() - 1] {
+        assert!(Updated::decode(&with(&updated_bytes, offset, 2)).is_err());
+    }
+}

@@ -102,6 +102,11 @@ names its socket. CLI JSON names a session `session` and a terminal
     EON-C11 Reload may replace only Venus with the requesting build's immutable
     store artifact at exactly equal EONW/ORBS/ORBF versions; the other
     components and their owner retain their existing identities.
+  - For planned in-place Update (EON-C11), the same Orbit hosts retain their
+    original binaries, PTYs and terminal state under the same Runtime
+    supervisor PID. The target Runtime checks the retained hosts' exact
+    management, record, ORBS and ORBF versions before taking ownership of
+    their existing management leases.
   - `assets/eon.png` is the transparent canonical application icon; Nix derives
     exact hicolor sizes and the Eon Bar's icon image from it, and installed
     desktop metadata names `eon`.
@@ -3090,6 +3095,14 @@ popup or automatic tutorial launch.
     contents. Changes to its schema version it; EONW-only changes do not. It is
     transient, read once by the replacing Runtime, and adds no durable recovery
     database or retained old-schema reader.
+  - Planned Update keeps the same supervisor PID, window lifetime, directory,
+    listeners, locks, Orbit host, run, process, start, endpoint and record
+    identities, management leases, PTYs, running programs and Orbit terminal
+    state. It restores the window's workspace from the checkpoint under the
+    same lifetime. Natural terminal exits are reconciled once and not revived.
+    Future launches use the target build. The old Venus control connection and
+    diagnostic pipe stay open through re-exec. The target verifies the exact
+    Venus child and its process start before taking ownership of its handles.
   - Planned Update control is independent of EONW. Runtime's canonical
     `eon-workspace-protocol` crate owns one Update-only format, EONU, which is
     versioned apart from EONW; EONW-only changes never change it. Its 6-byte
@@ -3115,10 +3128,13 @@ popup or automatic tutorial launch.
     oversized or malformed input, or input in another EONU version, is
     refused and never authorizes exec, signal or mutation.
 
-    Planned Update inspection reports the lifetime, creation and active builds,
-    active executable, and actual presentation status. It reports the last
-    admitted Preflight outcome by request ID, including the target EONW on
-    success, so a lost reply can be disambiguated without a workspace decoder.
+    Planned Update carries the initiating connection, request identity,
+    validated caller and origin, selected target and reply progress through
+    re-exec for one bounded final outcome. Inspection reports the lifetime,
+    creation and active builds, active executable, and actual presentation
+    status. It reports the last admitted Preflight or Commit outcome by
+    request ID, including the target EONW on successful Preflight, so a lost
+    reply can be disambiguated without a workspace decoder.
   - Update discovery reads a selected lifetime directory without decoding its
     EONW. It verifies the directory's privacy, the socket object and the
     peer's user. It also verifies that the answering supervisor reports that
@@ -3145,8 +3161,11 @@ popup or automatic tutorial launch.
     publication and never waits on a lifecycle while holding it. Competing
     launches converge. Publishing a target build already owned by another
     lifetime in that namespace refuses; independent namespaces may use it.
-    The lifecycle lock retains listener/teardown ownership. Public Update
-    adoption remains planned.
+    The lifecycle lock retains listener/teardown ownership. For planned
+    Update, the live supervisor already holding the lifecycle lock tries the
+    namespace launch lock without waiting and refuses if it cannot acquire it.
+    It holds both through active-build publication and then releases the
+    namespace launch lock. Public Update adoption remains planned.
 
     At the existing generation-entry bound, launch and cleanup-enabled discovery
     first attempt a bounded dead-record sweep under namespace arbitration,

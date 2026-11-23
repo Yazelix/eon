@@ -1,4 +1,4 @@
-use super::{Target, validate_target};
+use super::{Target, handoff, validate_target};
 use crate::{
     checkpoint::{self, Header, update::Scope},
     control::Error,
@@ -49,6 +49,14 @@ pub(in crate::supervisor) struct PreflightState {
 }
 
 impl PreflightState {
+    pub(in crate::supervisor) fn with_last(last: Option<Outcome>) -> Self {
+        Self {
+            last,
+            ..Self::default()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::supervisor) fn serve(
         &mut self,
         listener: &UpdateListener,
@@ -57,6 +65,7 @@ impl PreflightState {
         root: &Path,
         runtime: &Path,
         log: &Arc<DiagnosticLog>,
+        owner: Option<&handoff::Owner<'_>>,
     ) {
         if self
             .pending
@@ -69,15 +78,33 @@ impl PreflightState {
             pending.reply.take().unwrap().preflight(result, true);
         }
         listener.serve(log, |kind, bytes, reply| {
-            if kind != Kind::Preflight {
+            let commit = (kind == Kind::Commit
+                && cfg!(test)
+                && std::env::var_os("EON_UPDATE_TEST_COMMIT").is_some())
+            .then_some(owner)
+            .flatten();
+            if kind != Kind::Preflight && commit.is_none() {
                 reply.inspect(kind, bytes, |request| {
                     let mut inspected = state.inspected(request, runtime)?;
+                    if owner.is_some_and(|owner| owner.inherited_attached) {
+                        inspected.presentation = eonu::Presentation::Attached;
+                    }
                     inspected.last = self.last.clone();
                     Ok(inspected)
                 });
                 return;
             }
-            let request = match update::decode_preflight(bytes) {
+            let request = match if commit.is_some() {
+                Preflight::decode_commit(bytes).map_err(|error| {
+                    refusal(
+                        update::frame_request(bytes),
+                        Code::Malformed,
+                        error.to_string(),
+                    )
+                })
+            } else {
+                update::decode_preflight(bytes)
+            } {
                 Ok(request) => request,
                 Err(error) => {
                     reply.preflight(Err(error), false);
@@ -92,8 +119,18 @@ impl PreflightState {
                     return;
                 }
             };
-            let result = (|| {
-                let internal = |detail| refusal(id, Code::Internal, detail);
+            let internal = |detail| refusal(id, Code::Internal, detail);
+            if commit.is_some() && request.target_build == request.expected_active_build {
+                let result = Err(refusal(
+                    id,
+                    Code::TargetRefused,
+                    "the target build is already active".into(),
+                ));
+                self.last = Some(handoff::commit_outcome(id, &result));
+                reply.commit(result);
+                return;
+            }
+            let prepared = (|| {
                 let launch = inputs
                     .launch
                     .as_ref()
@@ -118,16 +155,50 @@ impl PreflightState {
                     created_build: scope.header.created_build,
                     active_build: scope.header.active_build,
                     identity_range: scope.range,
-                    target_build: request.target_build,
+                    target_build: request.target_build.clone(),
                     hosts: state.update_hosts(),
                     checkpoint: exported.bytes,
                 };
-                let timeout = CHILD_DEADLINE;
-                #[cfg(test)]
-                let timeout = self.child_timeout.unwrap_or(timeout);
+                Ok((command, check))
+            })();
+            let timeout = CHILD_DEADLINE;
+            #[cfg(test)]
+            let timeout = self.child_timeout.unwrap_or(timeout);
+            if let Some(owner) = commit {
+                // The isolated Commit holds this settled turn through validation.
+                let result = prepared.and_then(|(command, check)| {
+                    let (cancelled, _cancel) =
+                        io::pipe().map_err(|error| internal(error.to_string()))?;
+                    validate_exchange(
+                        id,
+                        command,
+                        &check,
+                        &cancelled,
+                        caller_origin.clone(),
+                        log,
+                        timeout,
+                    )?;
+                    Err(handoff::begin(
+                        owner,
+                        listener,
+                        state,
+                        inputs,
+                        root,
+                        &facts,
+                        request,
+                        caller_origin,
+                        check,
+                        &reply,
+                    ))
+                });
+                self.last = Some(handoff::commit_outcome(id, &result));
+                reply.commit(result);
+                return;
+            }
+            let result = prepared.and_then(|(command, check)| {
                 Pending::start(id, command, check, caller_origin, Arc::clone(log), timeout)
                     .map_err(|error| internal(format!("cannot start target validation: {error}")))
-            })();
+            });
             match result {
                 Ok(mut pending) => {
                     pending.reply = Some(reply);
@@ -231,41 +302,15 @@ impl Pending {
         let worker = thread::Builder::new()
             .name("eon-update-preflight".into())
             .spawn(move || {
-                let result =
-                    exchange(command, &check, &cancelled, &log, timeout).map_err(|error| {
-                        match wire_version(&error) {
-                            Some(found) => refusal(
-                                request,
-                                Code::Version,
-                                update::version_refusal(eonu::VERSION, found),
-                            ),
-                            None => refusal(
-                                request,
-                                Code::Internal,
-                                format!("target validation failed: {error}"),
-                            ),
-                        }
-                    })?;
-                match result {
-                    Ok(verdict) if verdict.target_build == check.target_build => Ok(Preflighted {
-                        request,
-                        caller_origin,
-                        target_build: verdict.target_build,
-                        eonw: verdict.eonw,
-                    }),
-                    Ok(_) => Err(refusal(
-                        request,
-                        Code::TargetRefused,
-                        "validation answered for a different target build".into(),
-                    )),
-                    Err(refused) => {
-                        let code = match refused.code {
-                            Code::HostProtocol => Code::HostProtocol,
-                            _ => Code::TargetRefused,
-                        };
-                        Err(refusal(request, code, refused.detail))
-                    }
-                }
+                validate_exchange(
+                    request,
+                    command,
+                    &check,
+                    &cancelled,
+                    caller_origin,
+                    &log,
+                    timeout,
+                )
             })?;
         Ok(Self {
             request,
@@ -301,6 +346,51 @@ impl Drop for ValidationChild {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+    }
+}
+
+fn validate_exchange(
+    request: RequestId,
+    command: Command,
+    check: &TargetCheck,
+    cancelled: &PipeReader,
+    caller_origin: Option<String>,
+    log: &DiagnosticLog,
+    timeout: Duration,
+) -> Verdict {
+    let result = exchange(command, check, cancelled, log, timeout).map_err(|error| {
+        match wire_version(&error) {
+            Some(found) => refusal(
+                request,
+                Code::Version,
+                update::version_refusal(eonu::VERSION, found),
+            ),
+            None => refusal(
+                request,
+                Code::Internal,
+                format!("target validation failed: {error}"),
+            ),
+        }
+    })?;
+    match result {
+        Ok(verdict) if verdict.target_build == check.target_build => Ok(Preflighted {
+            request,
+            caller_origin,
+            target_build: verdict.target_build,
+            eonw: verdict.eonw,
+        }),
+        Ok(_) => Err(refusal(
+            request,
+            Code::TargetRefused,
+            "validation answered for a different target build".into(),
+        )),
+        Err(refused) => {
+            let code = match refused.code {
+                Code::HostProtocol => Code::HostProtocol,
+                _ => Code::TargetRefused,
+            };
+            Err(refusal(request, code, refused.detail))
+        }
     }
 }
 
@@ -509,6 +599,14 @@ pub(crate) fn validate_update_target(
     Ok(0)
 }
 
+#[cfg(test)]
+pub(super) fn reply_for_test(inputs: &Inputs, lifetime: &OsStr, out: &mut impl Write) {
+    let root = nonempty_environment_path(WINDOW_RUNTIME).unwrap();
+    let frame =
+        target_response(inputs, lifetime, Some(&root), &mut target_stdin().unwrap()).unwrap();
+    out.write_all(&frame).unwrap();
+}
+
 fn target_stdin() -> io::Result<File> {
     // Stdin's buffered reader can read beyond the frozen prefix.
     io::stdin().as_fd().try_clone_to_owned().map(File::from)
@@ -604,13 +702,36 @@ fn validate_check(
         registry: Registry::new().ok(),
         log: None,
     };
-    for host in &check.hosts {
+    check_host_versions(&check.hosts)?;
+    let scope = Scope {
+        header: Header {
+            namespace: root
+                .to_str()
+                .ok_or_else(|| failed("invalid checkpoint namespace".into()))?
+                .into(),
+            generation: identity.generation,
+            created_build: identity.created_build,
+            active_build: identity.active_build,
+        },
+        range: check.identity_range,
+    };
+    let boot = platform::boot_time().map_err(|error| failed(error.to_string()))?;
+    validate_target(&target, &check.checkpoint, &scope, Instant::now(), boot)
+        .map_err(|error| failed(error.to_string()))?;
+    Ok(TargetVerdict {
+        target_build,
+        eonw: eon_workspace_protocol::v47::VERSION,
+        update_schema: checkpoint::update::SCHEMA,
+    })
+}
+
+pub(super) fn check_host_versions(hosts: &[eonu::Host]) -> Result<(), Refused> {
+    let management = orbit_protocol::management::VERSION;
+    #[cfg(test)]
+    let management = management + u16::from(update::fault("host-version"));
+    for host in hosts {
         let versions = [
-            (
-                "management",
-                Some(host.management),
-                orbit_protocol::management::VERSION,
-            ),
+            ("management", Some(host.management), management),
             (
                 "record generation",
                 Some(host.record_generation),
@@ -634,26 +755,7 @@ fn validate_check(
             }
         }
     }
-    let scope = Scope {
-        header: Header {
-            namespace: root
-                .to_str()
-                .ok_or_else(|| failed("invalid checkpoint namespace".into()))?
-                .into(),
-            generation: identity.generation,
-            created_build: identity.created_build,
-            active_build: identity.active_build,
-        },
-        range: check.identity_range,
-    };
-    let boot = platform::boot_time().map_err(|error| failed(error.to_string()))?;
-    validate_target(&target, &check.checkpoint, &scope, Instant::now(), boot)
-        .map_err(|error| failed(error.to_string()))?;
-    Ok(TargetVerdict {
-        target_build,
-        eonw: eon_workspace_protocol::v47::VERSION,
-        update_schema: checkpoint::update::SCHEMA,
-    })
+    Ok(())
 }
 
 #[cfg(test)]
