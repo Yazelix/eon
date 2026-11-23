@@ -185,13 +185,14 @@ impl GpuUse {
             .collect::<Vec<_>>();
         devices.sort();
         let mut contention = None;
-        let mut gate = match gpu_cache_lock(cache).transpose() {
+        let mut cache_lock = match gpu_cache_lock(cache).transpose() {
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 contention = Some(error);
                 None
             }
             result => result?,
         };
+        let mut gate = cache_lock.as_mut().map(|lock| &mut lock.file);
         let wait = devices.iter().filter(|(_, nvidia, _)| *nvidia).fold(
             gpu_interval(interval, None),
             |wait, (bdf, _, _)| {
@@ -408,7 +409,20 @@ fn gpu_cache_file(path: &Path) -> Option<std::fs::File> {
 }
 
 #[cfg(target_os = "linux")]
-fn gpu_cache_lock(cache: &Path) -> Option<std::io::Result<std::fs::File>> {
+struct GpuQueryLock {
+    file: std::fs::File,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for GpuQueryLock {
+    fn drop(&mut self) {
+        // A child can inherit the locked file description until it runs a new program.
+        let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::NonBlockingUnlock);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_cache_lock(cache: &Path) -> Option<std::io::Result<GpuQueryLock>> {
     use std::os::unix::fs::DirBuilderExt;
     if !cache.is_absolute() {
         return None;
@@ -426,7 +440,7 @@ fn gpu_cache_lock(cache: &Path) -> Option<std::io::Result<std::fs::File>> {
     let lock = gpu_cache_file(&cache.join("query.lock"))?;
     Some(
         rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-            .map(|()| lock)
+            .map(|()| GpuQueryLock { file: lock })
             .map_err(Into::into),
     )
 }
@@ -1651,6 +1665,34 @@ mod tests {
             Duration::from_secs(2)
         ));
         assert!(current.is_none(), "actual failures clear the reading");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gpu_query_lock_releases_while_a_duplicate_descriptor_is_open() {
+        let f = GpuFixture::new("inherited-lock");
+        f.device("0000:01:00.0", "active");
+        let cache = f.0.join("cache");
+        let assert_busy = || {
+            let contender = gpu_cache_lock(&cache).unwrap();
+            assert_eq!(
+                contender.err().map(|error| error.kind()),
+                Some(std::io::ErrorKind::WouldBlock)
+            );
+        };
+        let held = gpu_cache_lock(&cache).unwrap().unwrap();
+        let inherited = held.file.try_clone().unwrap();
+        assert_busy();
+        drop(held);
+
+        let shown = f
+            .read(&mut |_| {
+                assert_busy();
+                Some((37, "NVIDIA".into()))
+            })
+            .unwrap();
+        assert_eq!(shown.percent, 37);
+        drop(inherited);
     }
 
     #[cfg(target_os = "linux")]
