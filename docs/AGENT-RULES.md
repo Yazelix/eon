@@ -145,31 +145,33 @@ crate.
   (`AP-PROOF-001`) with a fresh Opus reviewer and the second-lab reviewer
   (Codex at `xhigh` when it holds the seat).
 - **Medium** (ordinary product code, tests, assets, and Markdown that a build
-  or test reads): the `converge` skill with a fresh Opus reviewer and the
-  second-lab reviewer (Codex at `high` when it holds the seat).
+  or test reads): `converge` with fresh Codex (`gpt-6.1-sol`) and Gemini 4
+  Neon reviewers, both read-only and at `high` effort. The same two seats
+  apply for every builder. Neon provides the cross-lab review for an
+  OpenAI-built slice, and Codex provides it for a Gemini-built slice.
+  Both are cross-lab for a Claude-built slice. Each reviewer runs in a
+  fresh session independent of the builder. If either reviewer is
+  unavailable, the slice waits and the lead reports the hold.
 - **Low** (other Markdown, and Beads planning): one fresh read-only
   second-lab review.
-- **Second-lab seat.** It defaults to Gemini 4 Neon at `high` effort at
-  every tier, run headless and read-only, with the diff and `REVIEW.md`
+- **Second-lab seat at High and Low.** It defaults to Gemini 4 Neon at
+  `high` effort, run headless and read-only, with the diff and `REVIEW.md`
   given to it as files. Codex (`gpt-6.1-sol` at the tier's effort: `xhigh`
-  for High, `high` for Medium and Low) is the fallback when the Google pools
+  for High, `high` for Low) is the fallback when the Google pools
   are under the floors that the lead's Google-account policy sets, the
   account is at its run cap, or Neon fails twice. A fresh Claude review is the
   last fallback at Low. The seat never goes to the builder's lab: when Gemini
   built the change, Codex takes it; when an OpenAI model built it, Neon keeps
   it and Codex does not fall back in; when Claude built it, a Claude review is
   not a fallback. When no eligible reviewer is available, the slice waits and
-  the lead reports it. The Opus seat is unchanged and stays with fresh Opus
-  even on a Claude-built change. Where a tier wants three labs, the third is
-  Codex when Neon holds the seat and Neon when Codex holds it; a third lab
-  that is the builder's lab is not used and the slice waits. Lucca decided
-  this on 2026-11-21.
+  the lead reports it. The High Opus seat stays with fresh Opus even on a
+  Claude-built change. Lucca decided the High and Low routing on 2026-11-21.
 - **Re-checks.** After the first round, each reviewer re-checks only fixes to
   its own findings and the author's rebuttals; text-only fixes need no
   re-check. A full re-review is required only when a fix changes behavior
-  beyond its finding or crosses a trust boundary. The second-lab reviewer
-  runs at its seat's effort (Neon at `high`, Codex at the tier's) and
-  replaces converge's own Codex round.
+  beyond its finding or crosses a trust boundary. The tier's reviewer
+  assignments replace converge's default reviewers for the full review
+  and any re-checks. Codex and Neon re-check at their seat's effort.
 - **Checks.** The author runs the checks on the exact staged tree. The
   bead's proof record leads with evidence: the tree, and for each check its
   command, environment, exit status and summary line (nextest's `Summary`
@@ -183,18 +185,20 @@ crate.
   brief, the diff and `REVIEW.md` as files that it reads next to the
   candidate tree; it runs no commands. The brief names `REVIEW.md` and the
   tier. Keep the brief, report and log outside the repository, as for Codex,
-  and stop a run at 30 minutes. Require a non-empty report: an empty one or a
-  timeout counts as a failed run, and a second failure moves the seat to
-  Codex, unless an OpenAI model built the change.
+  and stop a run at 30 minutes. Require a non-empty report. An empty report
+  or a timeout counts as a failed run. After two failures, apply the tier's
+  seat rules. Standard and rolled-back Medium reviews wait for Neon.
 - **Running Codex.** Every review brief names `REVIEW.md` and the tier. Keep
   the brief, report and log outside the repository, under
   `~/.cache/eon-agents/<session>/` (the scratchpad may be wiped), and run,
   in the background, `timeout 40m codex exec -m gpt-6.1-sol -c
   model_reasoning_effort=<effort> -s read-only -C <repo> -o <report> - <
   <brief> > <log> 2>&1`, so stdin is the brief and ends; check `<log>` for
-  progress within a few minutes. For gate or validator code, every review
-  brief carries a scope line: corner cases that no supported closure
-  produces are nits unless they let a real defect pass.
+  progress within a few minutes. Require a completed, non-empty report to
+  fill the seat. Medium waits when its Codex seat is unavailable.
+  For gate or validator code, every review brief carries a scope line:
+  corner cases that no supported closure produces are nits unless they
+  let a real defect pass.
 - **Reviewer evals.** `eon/tools/review-tier/evals/cases.toml` holds the
   reverts and regressions since 2026-10-14 whose bad commit is known and
   whose defect shows in the diff: the commit, the file and lines, and the
@@ -208,11 +212,15 @@ crate.
 - **Guardrail.** The lead checks each tier on its own after every 50 slices
   at that tier, against the per-tier baseline recorded on `eon-uxgal`, and
   records the counts there. Any revert, regression or failed landing from a
-  Low slice moves Low to Medium review; two or more regressions from Medium
-  slices move Medium to High's reviewers, with the third lab named under
-  Second-lab seat added. A rolled-back tier returns only when each
-  cause has an eval case that the reduced review catches, 50 slices under
-  the stricter review are recorded, and Lucca approves.
+  Low slice moves Low to Medium review. Two or more regressions from Medium
+  slices require subsequent Medium slices to use High's converge process
+  with fresh Opus, Codex at `xhigh`, and Neon at `high`. Medium's reviewer
+  eligibility still applies to Codex and Neon, so a fresh same-lab
+  reviewer can fill its lab's seat. Every reviewer runs in a fresh session
+  independent of the builder. The slice waits if any reviewer is unavailable.
+  A rolled-back tier returns only when each cause has an eval case that
+  the reduced review catches, 50 slices under the stricter review are
+  recorded, and Lucca approves.
 - **Close record.** The lead closes each landed bead with `br close
   --reason "Landed; see the close record."` and a `--transition-comment`
   holding `review-tier record render`'s output, passing the builder's
@@ -226,7 +234,7 @@ crate.
   paths, accounts, quotas or session IDs.
 
 Record one ledger line per slice in its bead: the `classify` output's tier
-and trees, pass count and findings, including the second-lab reviewer's.
+and trees, pass count and findings from every reviewer.
 
 ## Testing Discipline
 

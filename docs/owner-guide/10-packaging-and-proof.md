@@ -82,15 +82,15 @@ replace a missing observation ([REVIEW.md:111](../../REVIEW.md)).
 
 <!-- owner-only:start -->
 **Owner only: review workflow.** A **risk tier** is the review tool's
-classification of a change. High/Medium get fresh Opus and a second-lab
-reviewer (Neon by default, Codex as the fallback); Low gets one second-lab
-review. Proof and Review lists the fallbacks and the lab-separation rule.
+classification of a change. High uses fresh Opus and a second-lab reviewer.
+Medium uses fresh Codex and Neon at high effort, with at least one reviewer
+outside the builder's lab. Low gets one second-lab review. Proof and Review
+lists the seat and fallback rules.
 **Converge** names the review, fix-or-rebut and required finder-re-check loop.
 The ledger records findings
 and candidate trees; missing required author evidence blocks landing
-([docs/AGENT-RULES.md:123](../AGENT-RULES.md),
-[docs/AGENT-RULES.md:139-155](../AGENT-RULES.md),
-[docs/AGENT-RULES.md:192](../AGENT-RULES.md), [REVIEW.md:111](../../REVIEW.md)).
+([Proof and Review](../AGENT-RULES.md#proof-and-review),
+[REVIEW.md:111](../../REVIEW.md)).
 <!-- owner-only:end -->
 
 ## The hardest question
@@ -108,7 +108,7 @@ not name its independent reviewers; request the review ledger for the change
 you are assessing. A policy requiring review is not evidence that it happened
 ([docs/INSTALLER.md:198](../INSTALLER.md),
 [docs/CONTRACTS.md:28-41](../CONTRACTS.md),
-[docs/AGENT-RULES.md:192](../AGENT-RULES.md)).
+[Proof and Review](../AGENT-RULES.md#proof-and-review)).
 
 <!-- owner-only:start -->
 ## Explain it back (owner only)

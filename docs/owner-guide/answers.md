@@ -100,7 +100,7 @@ not identify its independent reviewers; request a change's review ledger.
 [Chapter 10](10-packaging-and-proof.md);
 [docs/CONTRACTS.md:22](../CONTRACTS.md),
 [docs/DISTRIBUTION.md:47](../DISTRIBUTION.md), [SECURITY.md:9](../../SECURITY.md),
-[docs/INSTALLER.md:198](../INSTALLER.md), [docs/AGENT-RULES.md:192](../AGENT-RULES.md).
+[docs/INSTALLER.md:198](../INSTALLER.md), [Proof and Review](../AGENT-RULES.md#proof-and-review).
 
 **11. “How is this different from Tencent's LoopForge?”**
 
@@ -114,8 +114,8 @@ and evidence, an inference from the two documented workflows
 [docs/AGENT-RULES.md:139](../AGENT-RULES.md)).
 
 Eon's product is the terminal workspace: persistent terminals, native views
-and reported agent attention. Its project rules require fresh Opus and Codex
-review for High/Medium changes, with versioned contracts and proof records.
+and reported agent attention. Its project rules require fresh review at each
+risk tier, with versioned contracts and proof records.
 These sources establish product and governance choices, not a model-quality
 advantage or proof of independent invention
 ([docs/ARCHITECTURE.md:17](../ARCHITECTURE.md),
