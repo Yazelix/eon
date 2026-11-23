@@ -401,6 +401,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn released_pane_shortcut_shows_the_cli_step() {
+        let keys = json!({
+            "bindings": [{"action": "create_pane", "display": null, "source": "released"}],
+            "popups": []
+        });
+        let text = render(1, &state::Progress::default(), Some(&keys)).join("\n");
+        assert!(text.contains("CLI: eon pane create"), "{text}");
+    }
+
+    #[test]
     fn unbound_popup_instructions_distinguish_retained_and_absent_instances() {
         let keys = json!({"bindings": [], "popups": [
             {"id": "files", "display": null}, {"id": "git", "display": null},

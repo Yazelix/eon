@@ -892,7 +892,7 @@ fn dispatch(
 }
 
 #[cfg(target_os = "linux")]
-fn snapshot(state: &SupervisorState) -> eon_workspace_protocol::v47::Snapshot {
+fn snapshot(state: &SupervisorState) -> eon_workspace_protocol::v48::Snapshot {
     state.workspaces.as_ref().unwrap().snapshot()
 }
 
@@ -975,7 +975,7 @@ fn a_pending_picker_completes_once_after_import_and_requests_stay_deduplicated()
     use crate::sessions::{
         mark_pending_pair, pending_pair_marker, stop_managed_sessions, tests::leased_orbit_at,
     };
-    use eon_workspace_protocol::v47::PopupTarget;
+    use eon_workspace_protocol::v48::PopupTarget;
 
     let mut source = source_b();
     source.advance_ids(10);

@@ -1626,6 +1626,37 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_alt_input_pairs_its_release_after_alt_goes_up() {
+        let mut input = InputState::default();
+        let key = WinitPhysicalKey::Code(KeyCode::KeyM);
+        input.set_modifiers(ModifiersState::ALT);
+        for (state, repeat, action) in [
+            (ElementState::Pressed, false, KeyAction::Press),
+            (ElementState::Pressed, true, KeyAction::Repeat),
+            (ElementState::Released, false, KeyAction::Release),
+        ] {
+            if state == ElementState::Released {
+                input.set_modifiers(ModifiersState::empty());
+            }
+            assert!(!input.consumes_shortcut(key, state, repeat, false));
+            let Some(ClientMessage::Key(event)) = input.key_event(
+                key,
+                &Key::Character("m".into()),
+                state,
+                repeat,
+                (state == ElementState::Pressed).then_some("m"),
+                Key::Character("m".into()),
+            ) else {
+                panic!("ordinary terminal input lost {action:?}");
+            };
+            assert_eq!(event.action, action);
+            assert_eq!(event.key, physical_key(KeyCode::KeyM));
+            input.commit_key(key, state);
+        }
+        assert!(!input.key_is_current(key, ElementState::Released, false));
+    }
+
+    #[test]
     fn pointer_motion_keeps_the_remaining_pressed_button() {
         for (released, expected) in [
             (WinitMouseButton::Left, MouseButton::Right),

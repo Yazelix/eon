@@ -605,11 +605,11 @@ Common clashes:
 
 | Shortcut | Eon action | Terminal app or shell action | Configurable in `config.toml` |
 |---|---|---|---|
-| `Alt+M` | Create a pane in the selected column | Antigravity (`agy`) send-immediately; Nushell (`eon-nu`) backspace-word; Emacs `M-m` (`back-to-indentation`) | Fixed |
-| `Alt+W` | Close the selected pane and stop its terminal | Emacs `M-w` (`kill-ring-save`) | Fixed |
+| `Alt+M` | Create a pane in the selected column | Antigravity (`agy`) send-immediately; Nushell (`eon-nu`) backspace-word; Emacs `M-m` (`back-to-indentation`) | `[keys] release` |
+| `Alt+W` | Close the selected pane and stop its terminal | Emacs `M-w` (`kill-ring-save`) | `[keys] release` |
 | `Alt+H` / `Alt+J` / `Alt+K` / `Alt+L` | Move focus across columns, tabs and panes | GNU Readline and Nushell `Alt+L` (lowercase word); Emacs `M-h`, `M-j`, `M-k`, `M-l`; Zellij focus keys | Fixed |
-| `Alt+Q` | Open or close the attention inbox | Emacs `M-q` (`fill-paragraph`) | Fixed |
-| `Alt+G` | Jump to the next agent needing attention | Emacs `M-g` (goto prefix) | Fixed |
+| `Alt+Q` | Open or close the attention inbox | Emacs `M-q` (`fill-paragraph`) | `[keys] release` |
+| `Alt+G` | Jump to the next agent needing attention | Emacs `M-g` (goto prefix) | `[keys] release` |
 | `Alt+1` … `Alt+9`, `Alt+0` | Select tabs 1 … 10 | GNU Readline and Emacs `M-0` … `M-9` (`digit-argument`) | Fixed |
 | `Alt+/` | Open or close Shortcuts | Emacs `M-/` (`dabbrev-expand`) | Fixed |
 | `Alt+Z` | Quick search popup (`[popups.project]`) | Emacs `M-z` (`zap-to-char`) | `[popups.project] keybinding` |
@@ -618,14 +618,20 @@ Common clashes:
 | `Alt+Shift+J` | Git popup (`[popups.git]`) | Helix `Alt+Shift+J` (`join_selections_space`) | `[popups.git] keybinding` or `enabled` |
 | `Alt+Shift+A`, `E`, `L`, `M`, `O`, `S`, `Y` | Built-in popups (`anima`, `scrollback`, `agent`, `commands`, `editor`, `sessions`, `files`) | App-defined `Alt+Shift+` chords | `[popups.<id>] keybinding` or `enabled` (`files` stays enabled) |
 
-Run `eon keys` (or press `Alt+/`) inside an Eon window to list every active
-shortcut, unbound popup and reserved key.
+Run `eon keys` or press `Alt+/` (`Option+/` on macOS) in an Eon window.
+Both mark released chords as “released to terminal”. `eon keys --json`
+reports each released action with `"source": "released"` and an empty
+`chords` array.
 
 #### Remap or disable Eon shortcuts in `config.toml`
 
-Three shortcut groups can be released to the terminal in `config.toml`
+Configure shortcut releases in `config.toml`
 (`eon config path` prints its path):
 
+- **Individual fixed shortcuts (`[keys] release`).** List any of `Alt+M`,
+  `Alt+W`, `Alt+Q` or `Alt+G` to pass them to the focused terminal. Start
+  a fresh Eon window to apply changes. If a popup uses one of the chords,
+  remove or change that popup's binding before releasing it.
 - **Popup shortcuts (`[popups.<id>]`).** Set `keybinding = ""` on any built-in
   popup to unbind it and pass its default chord to the terminal (or on a custom
   popup to leave it unbound), or set `keybinding` to another modified physical
@@ -642,10 +648,14 @@ Three shortcut groups can be released to the terminal in `config.toml`
   to the terminal. Use `Alt+Shift+S`, the Eon Bar session label or
   `eon session switch` to switch sessions.
 - **Agent sidebar toggle (`[sidebar] enabled`).** Set `enabled = false` to
-  turn off the agent sidebar and pass `Alt+Shift+H` to the terminal. `Alt+G`,
-  `Alt+Shift+G` and `Alt+Q` stay active.
+  turn off the agent sidebar and pass `Alt+Shift+H` to the terminal.
+  `Alt+Shift+G` keeps its usual behavior. Use `[keys] release` for
+  `Alt+G` or `Alt+Q`.
 
 ```toml
+[keys]
+release = ["Alt+M", "Alt+W"]
+
 [session]
 number_keys = false
 
@@ -665,16 +675,13 @@ enabled = false
 `config.toml` uses physical key names (`Alt`, `Ctrl` or `Control`, `Shift`,
 `Super`) on both Linux and macOS. Run `eon config check` after editing.
 `[session] number_keys` applies on open, reopen or `eon window reload ID`;
-`[popups.*]` and `[sidebar]` changes apply in a fresh window.
+`[keys] release`, `[popups.*]` and `[sidebar]` changes apply in a fresh window.
 
 #### Workarounds for fixed Eon shortcuts
 
-Fixed Eon shortcuts cannot be released to the terminal in full Eon windows.
-Assigning a popup `keybinding` to an overridable fixed key (`Alt+M`, `Alt+W`,
-`Alt+Q`, `Alt+G`) moves that key to the popup, where Eon still intercepts it
-before the terminal sees it. `Alt+H`/`J`/`K`/`L`, `Alt+1` … `Alt+0` and
-`Alt+/` cannot be taken by a popup (`Alt+H`/`J`/`K`/`L` load any popup assigned
-there unbound; `Alt+1` … `Alt+0` and `Alt+/` are reserved).
+`Alt+H`/`J`/`K`/`L` remain available for moving focus, `Alt+1` … `Alt+0`
+for selecting tabs, and `Alt+/` for Shortcuts. For these keys, use an
+app-side workaround.
 
 - **Remap the shortcut in the app or shell.**
   - **Antigravity (`agy`):** Check your installed `agy` documentation or

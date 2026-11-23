@@ -5,7 +5,7 @@ use crate::{
     PopupDefinition, ShellConfig, SlotClass, SlotPolicy, StartupAnimation, TerminalAccess,
     TerminalConfig,
 };
-use eon_workspace_protocol::v47::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v48::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn assert_not_update_validator(resource: &str) {
     assert!(
@@ -84,7 +84,7 @@ pub(crate) fn inputs() -> Inputs {
         skill: "fixture-skill",
         component_report: Ok("fixture-components".into()),
         presentation_protocols: Ok([
-            eon_workspace_protocol::v47::VERSION,
+            eon_workspace_protocol::v48::VERSION,
             orbit_protocol::session::VERSION,
             orbit_protocol::VERSION,
         ]),
@@ -184,6 +184,7 @@ pub(crate) fn inputs() -> Inputs {
             send_enter_delay_ms: 300,
             send_typing_quiet_ms: 2000,
             popups: PopupCatalog {
+                released_shortcuts: Default::default(),
                 geometry: PopupGeometry {
                     side_margin: 11.0,
                     vertical_margin: 7.0,

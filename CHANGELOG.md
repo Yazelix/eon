@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Use `[keys] release` in `config.toml` to pass any of `Alt+M`, `Alt+W`,
+  `Alt+Q` and `Alt+G` to the focused terminal. Shortcuts and `eon keys`
+  reflect the release set of the running window. The setting takes effect
+  at the next supervisor start (`eon-ici95.1`, EONW v48).
+
 - Quota pace chips in the Eon Bar (Codex, Claude, and Google) now wait for
   minimum window history (`min(duration / 10, 4h)` elapsed — 30m for 5h, 4h for
   7d — and at least 5% used) before showing a pace verdict or warning colour,

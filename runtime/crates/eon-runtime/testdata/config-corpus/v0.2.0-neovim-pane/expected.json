@@ -108,6 +108,9 @@
       "padding_color": "extend",
       "pane_frames": true
     },
+    "keys": {
+      "release": []
+    },
     "panels": {
       "heading": "connected"
     }

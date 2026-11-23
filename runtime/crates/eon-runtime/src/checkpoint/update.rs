@@ -27,7 +27,7 @@ use super::{
     number, path, read_popup, text, unique, validate_popup, write_popup,
 };
 use crate::workspace::{IDS_PER_SUPERVISOR, MAX_RECENT_REQUESTS};
-use eon_workspace_protocol::v47::{
+use eon_workspace_protocol::v48::{
     FILES_ENTRY, MAX_COMMAND_ARGUMENT_BYTES, MAX_COMMAND_ARGUMENTS, MAX_DETAIL_BYTES,
     MAX_DIRECTORY_BYTES, MAX_ENTRIES, MAX_SESSIONS, MAX_TABS, MAX_WORKSPACES, Sidebar,
 };

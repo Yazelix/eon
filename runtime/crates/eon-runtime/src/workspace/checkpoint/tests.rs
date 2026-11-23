@@ -1,7 +1,7 @@
 use super::super::tests::{catalog, invoke, new_pane, prepared};
 use super::*;
 use crate::supervisor::temporary_directory;
-use eon_workspace_protocol::v47::{Action, WorkspaceAction};
+use eon_workspace_protocol::v48::{Action, WorkspaceAction};
 use std::fs;
 
 /// A window built through the owner's own operations, its registry, and the

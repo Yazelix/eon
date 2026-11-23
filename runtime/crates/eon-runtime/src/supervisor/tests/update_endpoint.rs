@@ -104,7 +104,7 @@ impl Window {
     fn state(
         &self,
     ) -> (
-        eon_workspace_protocol::v47::Snapshot,
+        eon_workspace_protocol::v48::Snapshot,
         Option<Vec<u8>>,
         Vec<std::ffi::OsString>,
     ) {
@@ -268,7 +268,7 @@ fn a_real_window_answers_inspect_and_keeps_serving_eonw() {
         .unwrap_or_else(|refusal| panic!("{refusal}"));
     assert_eq!(inspected.lifetime, window.generation);
     assert_eq!(inspected.pid, window.pid());
-    assert_eq!(inspected.eonw, eon_workspace_protocol::v47::VERSION);
+    assert_eq!(inspected.eonw, eon_workspace_protocol::v48::VERSION);
     assert_eq!(inspected.eonr, crate::checkpoint::VERSION);
     assert!(
         inspected

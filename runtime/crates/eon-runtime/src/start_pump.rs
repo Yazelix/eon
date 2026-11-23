@@ -13,7 +13,7 @@ use super::{
     control::{self, Client, ControlResponse, Dispatched, Incoming},
     diagnostics::DiagnosticLog,
 };
-use eon_workspace_protocol::v47::{
+use eon_workspace_protocol::v48::{
     Action, BusyTerminals, LifecycleResponse, Request, Response, WorkspaceAction,
 };
 use std::{
@@ -227,7 +227,7 @@ mod tests {
         control::{Incoming, failure},
         supervisor::temporary_directory,
     };
-    use eon_workspace_protocol::v47::{
+    use eon_workspace_protocol::v48::{
         Action, HEADER_BYTES, Request, Response, WorkspaceAction, declared_message_len,
         decode_response, encode_request,
     };

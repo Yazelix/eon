@@ -464,7 +464,7 @@ fn encoders_refuse_what_decoders_would() {
 #[test]
 fn codec_names_no_workspace_module() {
     // EONU must never grow a workspace decoder: its source names no
-    // versioned module path (`v47::`, `crate::v47`, any version).
+    // versioned module path (`v48::`, `crate::v48`, any version).
     let source = include_str!("../update.rs");
     let bytes = source.as_bytes();
     for (at, _) in source.match_indices('v') {

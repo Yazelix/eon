@@ -13,7 +13,7 @@ use crate::checkpoint::{
 };
 use crate::managed_environment::{PopupCatalog, PopupDefinition};
 use crate::session_registry::Registry;
-use eon_workspace_protocol::v47::Failure;
+use eon_workspace_protocol::v48::Failure;
 use std::{
     collections::VecDeque,
     ffi::OsString,

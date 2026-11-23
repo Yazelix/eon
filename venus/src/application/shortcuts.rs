@@ -5,10 +5,10 @@ pub(super) use eon_workspace_protocol::shortcuts::{
     Shortcut as NativeShortcut, Side as ShortcutSide, Trigger as NativeShortcutTrigger, shortcut,
 };
 use eon_workspace_protocol::shortcuts::{
-    display_chord as physical_shortcut_label_for, key_label as physical_key_label,
-    popup_entry_for_chord, viewer_groups,
+    ReleasedShortcuts, display_chord as physical_shortcut_label_for,
+    key_label as physical_key_label, popup_entry_for_chord, viewer_groups,
 };
-use eon_workspace_protocol::v47::{
+use eon_workspace_protocol::v48::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, Side,
     Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
 };
@@ -207,8 +207,16 @@ pub(super) fn shortcut_groups(
     sidebar: Sidebar,
     running: bool,
     number_keys: bool,
+    released: ReleasedShortcuts,
 ) -> Vec<ShortcutGroup> {
-    shortcut_groups_with(NATIVE_PLATFORM, entries, sidebar, running, number_keys)
+    shortcut_groups_with(
+        NATIVE_PLATFORM,
+        entries,
+        sidebar,
+        running,
+        number_keys,
+        released,
+    )
 }
 
 #[cfg(test)]
@@ -218,7 +226,14 @@ pub(super) fn shortcut_groups_for(
     sidebar: Sidebar,
     running: bool,
 ) -> Vec<ShortcutGroup> {
-    shortcut_groups_with(platform, entries, sidebar, running, true)
+    shortcut_groups_with(
+        platform,
+        entries,
+        sidebar,
+        running,
+        true,
+        ReleasedShortcuts::default(),
+    )
 }
 
 /// The viewer's groups; `number_keys = false` leaves out the workspace position keys (VEN-C8).
@@ -228,8 +243,9 @@ fn shortcut_groups_with(
     sidebar: Sidebar,
     running: bool,
     number_keys: bool,
+    released: ReleasedShortcuts,
 ) -> Vec<ShortcutGroup> {
-    viewer_groups(platform, entries, sidebar, running, number_keys)
+    viewer_groups(platform, entries, sidebar, running, number_keys, released)
         .into_iter()
         .map(|group| {
             ShortcutGroup::new(
@@ -284,12 +300,14 @@ pub(super) fn shortcut_hints_for(
     entries: &[PopupEntry],
     sidebar: Sidebar,
     running: bool,
+    released: ReleasedShortcuts,
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     // The key axis each fixed hint ended with: HJKL, 1..9 or an arrow pair.
     let mut axes = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
         if !shortcut.bound(sidebar, running)
+            || released.includes(shortcut.action)
             || shortcut.overriding_popup(platform, entries).is_some()
         {
             continue;
@@ -458,7 +476,7 @@ pub(super) fn workspace_direction(direction: ShortcutDirection) -> WorkspaceDire
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v47 as wire;
+    use eon_workspace_protocol::v48 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -483,10 +501,11 @@ pub(super) fn workspace_shortcut(
     active_tab: &str,
     selected_pane: Option<&str>,
     sidebar: Sidebar,
+    released: ReleasedShortcuts,
 ) -> Option<WorkspaceAction> {
     // Quit is no workspace action, so its binding does not matter here.
     let shortcut = native_key_shortcut(PhysicalKey::Code(code), modifiers, entries)
-        .filter(|shortcut| shortcut.bound(sidebar, false))?;
+        .filter(|shortcut| shortcut.bound(sidebar, false) && !released.includes(shortcut.action))?;
     let action = match shortcut.action {
         NativeShortcutAction::Focus(direction) => {
             CommonAction::Focus(workspace_direction(direction))
@@ -598,7 +617,7 @@ pub(super) fn position_key_action(
         .filter(|workspace| workspace.id != snapshot.active_workspace);
     Some(workspace.map(|workspace| {
         WorkspaceAction::Workspace(CommonAction::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector(workspace.id.clone()),
+            workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector(workspace.id.clone()),
         })
     }))
 }
@@ -649,7 +668,7 @@ pub(super) fn invoke_popup(
         .iter()
         .find(|tab| tab.id == snapshot.active_tab)?;
     // Project names its tab's Files pair, as the runtime checks it (EON-C18).
-    let instance = eon_workspace_protocol::v47::entry_popup(tab, &entry.id);
+    let instance = eon_workspace_protocol::v48::entry_popup(tab, &entry.id);
     Some(WorkspaceAction::InvokePopup {
         tab: tab.id.clone(),
         entry: entry.id.clone(),
@@ -673,12 +692,12 @@ fn popup_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v47::{PopupKey, WorkspaceInfo};
+    use eon_workspace_protocol::v48::{PopupKey, WorkspaceInfo};
 
     /// Eon's default popup catalog, copied from eon/crates/eon/src/product.rs, which this crate
     /// cannot depend on; keep the two in step.
     fn default_entries() -> [PopupEntry; 8] {
-        use eon_workspace_protocol::v47::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v48::{ALT, SHIFT, Shortcut};
 
         [
             ("project", "Quick search", "KeyZ", ALT),
@@ -702,7 +721,7 @@ mod tests {
 
     #[test]
     fn keys_popup_lists_actions_then_popups_by_short_label() {
-        use eon_workspace_protocol::v47::{ALT, CTRL, Shortcut};
+        use eon_workspace_protocol::v48::{ALT, CTRL, Shortcut};
 
         // A custom popup follows the built-ins under Popups, in the runtime's order.
         let entries = default_entries().into_iter().chain([PopupEntry {
@@ -719,6 +738,7 @@ mod tests {
             &entries.collect::<Vec<_>>(),
             Sidebar::Open,
             true,
+            Default::default(),
         );
         let group = |names: &str| {
             hints
@@ -793,8 +813,14 @@ mod tests {
         // centred, clear of the clock and the version label, while the terminal or the tabs have
         // focus.
         for focus in [WorkspaceFocus::Terminal, WorkspaceFocus::Tabs] {
-            let hints =
-                shortcut_hints_for(NativePlatform::Linux, focus, &entries, Sidebar::Open, true);
+            let hints = shortcut_hints_for(
+                NativePlatform::Linux,
+                focus,
+                &entries,
+                Sidebar::Open,
+                true,
+                Default::default(),
+            );
             for scale in [1.0, 2.0] {
                 let metrics = fonts.metrics(scale);
                 let size =
@@ -873,7 +899,15 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                workspace_shortcut(key, modifiers, &[], "t2", Some("p3"), Sidebar::Open),
+                workspace_shortcut(
+                    key,
+                    modifiers,
+                    &[],
+                    "t2",
+                    Some("p3"),
+                    Sidebar::Open,
+                    Default::default()
+                ),
                 Some(WorkspaceAction::Workspace(action))
             );
         }
@@ -884,7 +918,8 @@ mod tests {
                 &[],
                 "t2",
                 None,
-                Sidebar::Open
+                Sidebar::Open,
+                Default::default()
             ),
             Some(WorkspaceAction::CreatePane {
                 tab: None,
@@ -899,7 +934,8 @@ mod tests {
                 &[],
                 "t2",
                 Some("p3"),
-                Sidebar::Open
+                Sidebar::Open,
+                Default::default()
             ),
             Some(WorkspaceAction::CreateColumn)
         );
@@ -911,7 +947,8 @@ mod tests {
                     &[],
                     "t2",
                     Some("p3"),
-                    Sidebar::Open
+                    Sidebar::Open,
+                    Default::default()
                 ),
                 Some(WorkspaceAction::MovePaneSideways(side))
             );
@@ -923,7 +960,8 @@ mod tests {
                 &[],
                 "t2",
                 Some("p3"),
-                Sidebar::Open
+                Sidebar::Open,
+                Default::default()
             ),
             Some(WorkspaceAction::ClosePane { pane: "p3".into() })
         );
@@ -934,7 +972,8 @@ mod tests {
                 &[],
                 "t2",
                 None,
-                Sidebar::Open
+                Sidebar::Open,
+                Default::default()
             ),
             None
         );
@@ -954,7 +993,15 @@ mod tests {
             .filter(|&(key, modifiers)| (key, modifiers) != (KeyCode::KeyW, Modifiers::ALT))
         {
             assert_eq!(
-                workspace_shortcut(key, modifiers, &[], "t2", Some("p3"), Sidebar::Open),
+                workspace_shortcut(
+                    key,
+                    modifiers,
+                    &[],
+                    "t2",
+                    Some("p3"),
+                    Sidebar::Open,
+                    Default::default()
+                ),
                 None
             );
         }
@@ -972,6 +1019,7 @@ mod tests {
                     "t2",
                     Some("p3"),
                     sidebar,
+                    Default::default(),
                 ),
                 action
             );
@@ -996,7 +1044,15 @@ mod tests {
                 ),
             ] {
                 assert_eq!(
-                    workspace_shortcut(KeyCode::KeyG, modifiers, &[], "t2", None, sidebar),
+                    workspace_shortcut(
+                        KeyCode::KeyG,
+                        modifiers,
+                        &[],
+                        "t2",
+                        None,
+                        sidebar,
+                        Default::default()
+                    ),
                     Some(action)
                 );
             }
@@ -1005,7 +1061,7 @@ mod tests {
 
     #[test]
     fn sideways_moves_open_a_column_only_for_a_stacked_outer_pane() {
-        use eon_workspace_protocol::v47::{Column, Pane};
+        use eon_workspace_protocol::v48::{Column, Pane};
 
         let pane = |id: &str| Pane {
             label: id.into(),
@@ -1048,9 +1104,9 @@ mod tests {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v47::PopupKey::Bound(
-                eon_workspace_protocol::v47::Shortcut {
-                    modifiers: eon_workspace_protocol::v47::SUPER,
+            shortcut: eon_workspace_protocol::v48::PopupKey::Bound(
+                eon_workspace_protocol::v48::Shortcut {
+                    modifiers: eon_workspace_protocol::v48::SUPER,
                     key: "KeyF".into(),
                 },
             ),
@@ -1058,9 +1114,9 @@ mod tests {
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v47::PopupKey::Bound(
-                eon_workspace_protocol::v47::Shortcut {
-                    modifiers: eon_workspace_protocol::v47::ALT,
+            shortcut: eon_workspace_protocol::v48::PopupKey::Bound(
+                eon_workspace_protocol::v48::Shortcut {
+                    modifiers: eon_workspace_protocol::v48::ALT,
                     key: "KeyZ".into(),
                 },
             ),
@@ -1073,6 +1129,7 @@ mod tests {
                 &entries,
                 Sidebar::Open,
                 true,
+                Default::default(),
             );
             assert!(terminal.iter().all(|hint| hint.label != project.label));
             // The viewer and hints list the sidebar toggle unless `[sidebar]` turned it off.
@@ -1087,9 +1144,16 @@ mod tests {
                     bound
                 );
                 assert_eq!(
-                    shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar, true)
-                        .iter()
-                        .any(|hint| hint.label == "side" && hint.accessible_label.contains(label)),
+                    shortcut_hints_for(
+                        platform,
+                        WorkspaceFocus::Terminal,
+                        &entries,
+                        sidebar,
+                        true,
+                        Default::default()
+                    )
+                    .iter()
+                    .any(|hint| hint.label == "side" && hint.accessible_label.contains(label)),
                     bound
                 );
                 // The inbox and agent jumps stay in the viewer but leave the footer to save width.
@@ -1111,6 +1175,7 @@ mod tests {
                             &entries,
                             sidebar,
                             true,
+                            Default::default(),
                         )
                         .iter()
                         .all(|hint| !hint.accessible_label.contains(label))
@@ -1152,7 +1217,7 @@ mod tests {
                         && row.shortcut
                             == physical_shortcut_label_for(
                                 platform,
-                                eon_workspace_protocol::v47::ALT,
+                                eon_workspace_protocol::v48::ALT,
                                 "KeyZ",
                             ))
             );
@@ -1174,7 +1239,7 @@ mod tests {
                     "{} — {}",
                     physical_shortcut_label_for(
                         platform,
-                        eon_workspace_protocol::v47::SUPER,
+                        eon_workspace_protocol::v48::SUPER,
                         "KeyF"
                     ),
                     entry.label,
@@ -1201,9 +1266,9 @@ mod tests {
             let alt_k = PopupEntry {
                 id: "k".into(),
                 label: "K tool".into(),
-                shortcut: eon_workspace_protocol::v47::PopupKey::Bound(
-                    eon_workspace_protocol::v47::Shortcut {
-                        modifiers: eon_workspace_protocol::v47::ALT,
+                shortcut: eon_workspace_protocol::v48::PopupKey::Bound(
+                    eon_workspace_protocol::v48::Shortcut {
+                        modifiers: eon_workspace_protocol::v48::ALT,
                         key: "KeyK".into(),
                     },
                 ),
@@ -1214,7 +1279,8 @@ mod tests {
                     WorkspaceFocus::Terminal,
                     &[alt_k],
                     Sidebar::Open,
-                    true
+                    true,
+                    Default::default()
                 )
                 .iter()
                 .any(|hint| hint.label == "focus" && hint.key == "HJKL · 1..9")
@@ -1233,16 +1299,30 @@ mod tests {
                     && !hint.key.contains("Left")
             }));
             assert!(
-                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[], Sidebar::Open, true)
-                    .iter()
-                    .all(|hint| hint.label != entry.label)
+                shortcut_hints_for(
+                    platform,
+                    WorkspaceFocus::Terminal,
+                    &[],
+                    Sidebar::Open,
+                    true,
+                    Default::default()
+                )
+                .iter()
+                .all(|hint| hint.label != entry.label)
             );
             for focus in [
                 WorkspaceFocus::Tabs,
                 WorkspaceFocus::Panes,
                 WorkspaceFocus::Sidebar,
             ] {
-                let chrome = shortcut_hints_for(platform, focus, &[], Sidebar::Open, true);
+                let chrome = shortcut_hints_for(
+                    platform,
+                    focus,
+                    &[],
+                    Sidebar::Open,
+                    true,
+                    Default::default(),
+                );
                 assert!(
                     chrome
                         .iter()
@@ -1302,7 +1382,7 @@ mod tests {
 
     #[test]
     fn hints_carry_full_names_and_full_help_descriptions() {
-        use eon_workspace_protocol::v47::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v48::{ALT, SHIFT, Shortcut};
 
         let scrollback = PopupEntry {
             id: "scrollback".into(),
@@ -1319,6 +1399,7 @@ mod tests {
                 std::slice::from_ref(&scrollback),
                 Sidebar::Open,
                 true,
+                Default::default(),
             );
             assert!(hints.iter().all(|hint| !hint.description.is_empty()));
             for hint in &hints {
@@ -1350,14 +1431,21 @@ mod tests {
             assert_eq!(described("Scrollback"), Some("Scrollback"));
         }
         let modifiers = |platform| {
-            shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[], Sidebar::Open, true)
-                .iter()
-                .fold(Vec::new(), |mut names, hint| {
-                    if !names.contains(&hint.modifier_names) {
-                        names.push(hint.modifier_names.clone());
-                    }
-                    names
-                })
+            shortcut_hints_for(
+                platform,
+                WorkspaceFocus::Terminal,
+                &[],
+                Sidebar::Open,
+                true,
+                Default::default(),
+            )
+            .iter()
+            .fold(Vec::new(), |mut names, hint| {
+                if !names.contains(&hint.modifier_names) {
+                    names.push(hint.modifier_names.clone());
+                }
+                names
+            })
         };
         assert_eq!(
             modifiers(NativePlatform::Linux),
@@ -1401,7 +1489,7 @@ mod tests {
 
     #[test]
     fn ctrl_alt_shift_group_holds_the_tab_moves() {
-        use eon_workspace_protocol::v47::{ALT, CTRL, SHIFT, Shortcut};
+        use eon_workspace_protocol::v48::{ALT, CTRL, SHIFT, Shortcut};
 
         let tabs = |entries: &[PopupEntry]| {
             shortcut_hints_for(
@@ -1410,6 +1498,7 @@ mod tests {
                 entries,
                 Sidebar::Open,
                 true,
+                Default::default(),
             )
             .into_iter()
             .filter(|hint| hint.modifiers == "CAS")
@@ -1448,7 +1537,7 @@ mod tests {
 
     #[test]
     fn configured_popups_take_fixed_bindings_except_reserved_keys() {
-        use eon_workspace_protocol::v47::{ALT, CTRL, SHIFT, Shortcut};
+        use eon_workspace_protocol::v48::{ALT, CTRL, SHIFT, Shortcut};
 
         let popup = |id: &str, modifiers, key: &str| PopupEntry {
             id: id.into(),
@@ -1541,6 +1630,7 @@ mod tests {
                 &entries,
                 Sidebar::Open,
                 true,
+                Default::default(),
             );
             for taken in [
                 "Show the attention inbox",
@@ -1569,12 +1659,13 @@ mod tests {
         let entries = vec![popup("closer", ALT, "KeyW")];
         let snapshot = Snapshot {
             focus: None,
+            released_shortcuts: Default::default(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -1584,7 +1675,7 @@ mod tests {
                 recency: 0,
             }],
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v47::PopupGeometry {
+            geometry: eon_workspace_protocol::v48::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1607,7 +1698,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v47::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v48::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         assert!(matches!(
@@ -1621,7 +1712,8 @@ mod tests {
                 &entries,
                 "t1",
                 Some("p1"),
-                Sidebar::Open
+                Sidebar::Open,
+                Default::default()
             ),
             None
         );
@@ -1643,7 +1735,8 @@ mod tests {
                 &entries,
                 "t1",
                 Some("p1"),
-                Sidebar::Open
+                Sidebar::Open,
+                Default::default()
             ),
             Some(WorkspaceAction::Workspace(CommonAction::Focus(
                 WorkspaceDirection::Up
@@ -1653,7 +1746,7 @@ mod tests {
 
     #[test]
     fn keyless_popup_entries_list_overrides_and_never_dispatch() {
-        use eon_workspace_protocol::v47::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v48::{ALT, SHIFT, Shortcut};
 
         let chord = Shortcut {
             modifiers: ALT | SHIFT,
@@ -1706,6 +1799,7 @@ mod tests {
                 &entries,
                 Sidebar::Open,
                 true,
+                Default::default(),
             );
             assert!(hints.iter().any(|hint| hint.label == "Editor"));
             assert!(
@@ -1719,6 +1813,7 @@ mod tests {
     fn tabs_snapshot(ids: &[&str], active: &str) -> Snapshot {
         Snapshot {
             focus: None,
+            released_shortcuts: Default::default(),
             generation: "g1-00000000000000000000000000000001".into(),
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
@@ -1726,7 +1821,7 @@ mod tests {
             active_workspace: "s1".into(),
             workspaces: Vec::new(),
             active_tab: active.into(),
-            geometry: eon_workspace_protocol::v47::PopupGeometry {
+            geometry: eon_workspace_protocol::v48::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1794,7 +1889,7 @@ mod tests {
 
     #[test]
     fn alt_shift_digits_show_workspace_list_positions_unless_a_popup_takes_the_key() {
-        use eon_workspace_protocol::v47::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v48::{ALT, SHIFT, Shortcut};
         let ids = ["s3", "s2", "s1", "s4", "s5", "s6", "s7", "s8", "s9", "s10"];
         let mut snapshot = tabs_snapshot(&["t1"], "t1");
         assert_eq!(snapshot.active_workspace, "s1");
@@ -1816,7 +1911,7 @@ mod tests {
         let switch = |id: &str| {
             Some(Some(WorkspaceAction::Workspace(
                 CommonAction::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v47::WorkspaceTarget::Selector(id.into()),
+                    workspace: eon_workspace_protocol::v48::WorkspaceTarget::Selector(id.into()),
                 },
             )))
         };
@@ -1866,6 +1961,7 @@ mod tests {
                 Sidebar::Open,
                 true,
                 number_keys,
+                Default::default(),
             )
             .iter()
             .flat_map(|group| &group.rows)
@@ -1902,6 +1998,113 @@ mod tests {
         // Plain Tab and Shift+Tab stay chrome traversal or terminal input.
         for modifiers in [session::Modifiers::empty(), session::Modifiers::SHIFT] {
             assert_eq!(target_id(KeyCode::Tab, modifiers, &snapshot("t1")), None);
+        }
+    }
+
+    #[test]
+    fn released_shortcuts_leave_workspace_actions_and_hints() {
+        use orbit_protocol::session::Modifiers;
+
+        let mut all = ReleasedShortcuts::default();
+        for (name, key) in [
+            ("Alt+M", KeyCode::KeyM),
+            ("Alt+W", KeyCode::KeyW),
+            ("Alt+G", KeyCode::KeyG),
+        ] {
+            let action = |released| {
+                workspace_shortcut(
+                    key,
+                    Modifiers::ALT,
+                    &[],
+                    "t1",
+                    Some("p1"),
+                    Sidebar::Open,
+                    released,
+                )
+            };
+            assert!(action(ReleasedShortcuts::default()).is_some());
+            let mut one = ReleasedShortcuts::default();
+            one.insert(name).unwrap();
+            assert!(action(one).is_none());
+            all.insert(name).unwrap();
+        }
+        all.insert("Alt+Q").unwrap();
+        assert!(
+            workspace_shortcut(
+                KeyCode::KeyW,
+                Modifiers::ALT,
+                &[],
+                "t1",
+                None,
+                Sidebar::Open,
+                all,
+            )
+            .is_none()
+        );
+        for (key, modifiers) in [
+            (KeyCode::KeyG, ALT_SHIFT),
+            (KeyCode::KeyW, ALT_SHIFT),
+            (KeyCode::KeyM, CTRL_ALT),
+            (KeyCode::KeyK, Modifiers::ALT),
+        ] {
+            assert!(
+                workspace_shortcut(key, modifiers, &[], "t1", Some("p1"), Sidebar::Open, all,)
+                    .is_some(),
+                "{key:?} {modifiers:?}"
+            );
+        }
+
+        for (platform, alt) in [
+            (NativePlatform::Linux, "Alt"),
+            (NativePlatform::Macos, "Option"),
+        ] {
+            let hints = shortcut_hints_for(
+                platform,
+                WorkspaceFocus::Terminal,
+                &[],
+                Sidebar::Open,
+                true,
+                all,
+            );
+            assert!(
+                hints
+                    .iter()
+                    .all(|hint| !matches!(hint.label.as_str(), "pane" | "close pane"))
+            );
+
+            let groups = shortcut_groups_with(platform, &[], Sidebar::Open, true, true, all);
+            let released: Vec<_> = groups
+                .iter()
+                .flat_map(|group| &group.rows)
+                .filter(|row| row.action.ends_with("(released to terminal)"))
+                .map(|row| row.shortcut.as_str())
+                .collect();
+            assert_eq!(
+                released,
+                ["G", "Q", "M", "W"].map(|key| format!("{alt}+{key}"))
+            );
+
+            let metrics = crate::CellMetrics::for_scale(1.0);
+            let scene = crate::DialogScene::new(
+                crate::DialogKind::Shortcuts,
+                groups,
+                winit::dpi::PhysicalSize::new(1280, 800),
+                metrics,
+                0.0,
+                &crate::CellText(metrics),
+            );
+            assert!(scene.title.bottom() <= scene.subtitle.top);
+            assert!(scene.subtitle.bottom() <= scene.groups[0].heading.top);
+            for row in scene
+                .groups
+                .iter()
+                .flat_map(|group| &group.rows)
+                .filter(|row| row.action.ends_with("(released to terminal)"))
+            {
+                assert!(row.rect.right() <= scene.content.right() + 1.0);
+                assert!(row.rect.bottom() <= scene.content.bottom() + 1.0);
+                assert!(row.label_width + scene.label_gap < row.rect.width);
+            }
         }
     }
 }

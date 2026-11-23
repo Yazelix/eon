@@ -18,8 +18,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eon_workspace_protocol::shortcuts::{PopupPolicy, popup_policy};
-use eon_workspace_protocol::v47::{
+use eon_workspace_protocol::shortcuts::{
+    PopupPolicy, RELEASE_CHOICES, ReleasedShortcuts, popup_policy,
+};
+use eon_workspace_protocol::v48::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES,
     MAX_QUOTA_SCOPE_BYTES, PopupGeometry, PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -39,6 +41,7 @@ struct EonConfig {
     bar: BarSettings,
     anima: AnimationSettings,
     session: SessionSettings,
+    keys: KeysSettings,
     sidebar: SidebarSettings,
     attention: AttentionSettings,
     agents: AgentSettings,
@@ -60,7 +63,7 @@ impl EonConfig {
     fn validate(self, defaults: &Defaults) -> Result<(), String> {
         resolve_bar(self.bar, defaults)?;
         resolve_terminal(self.terminal, self.panels, defaults)?;
-        resolve_popups(self.popups, defaults)?;
+        resolve_popups(self.popups, self.keys, defaults)?;
         shell_config(self.shell, defaults)?;
         resolve_agents(self.agents, defaults)?;
         resolve_editor(self.editor, defaults)?;
@@ -79,6 +82,7 @@ impl EonConfig {
             ("bar.", &self.bar.unknown),
             ("anima.", &self.anima.unknown),
             ("session.", &self.session.unknown),
+            ("keys.", &self.keys.unknown),
             ("sidebar.", &self.sidebar.unknown),
             ("attention.", &self.attention.unknown),
             ("agents.", &self.agents.unknown),
@@ -577,6 +581,14 @@ struct SessionSettings {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
+struct KeysSettings {
+    release: Vec<String>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 struct SidebarSettings {
     enabled: Option<bool>,
     #[serde(flatten)]
@@ -705,6 +717,7 @@ pub struct PopupDefinition {
 pub struct PopupCatalog {
     pub geometry: PopupGeometry,
     pub entries: Vec<PopupDefinition>,
+    pub released_shortcuts: ReleasedShortcuts,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -1208,6 +1221,14 @@ fn configuration_metadata() -> &'static [ConfigKey] {
                 &["next-supervisor-start"],
             ),
             ConfigKey::new(
+                "keys.release",
+                "string-array",
+                "Pass these fixed physical shortcuts to the focused terminal.",
+                &["next-supervisor-start"],
+            )
+            .choices(&RELEASE_CHOICES.map(|(name, _)| name))
+            .rules(&["Use each chord at most once. An enabled popup cannot use a released chord."]),
+            ConfigKey::new(
                 "attention.notify",
                 "boolean",
                 "Send desktop agent attention notifications on Linux.",
@@ -1552,6 +1573,7 @@ fn all_defaults_config(defaults: &Defaults) -> Result<serde_json::Value, String>
             number_keys: Some(defaults.number_keys),
             unknown: BTreeMap::new(),
         },
+        keys: KeysSettings::default(),
         sidebar: SidebarSettings {
             enabled: Some(defaults.sidebar_enabled),
             unknown: BTreeMap::new(),
@@ -1636,6 +1658,7 @@ fn format_defaults(mut config: serde_json::Value, json: bool) -> Result<String, 
         "shell",
         "anima",
         "session",
+        "keys",
         "sidebar",
         "attention",
         "agents",
@@ -1869,9 +1892,9 @@ pub(crate) fn prepare_edit(
     live: Option<&Path>,
     available: bool,
     log: Option<&DiagnosticLog>,
-) -> Result<super::editor::EditCommand, eon_workspace_protocol::v47::Failure> {
+) -> Result<super::editor::EditCommand, eon_workspace_protocol::v48::Failure> {
     use super::editor::{self, EditCommand, ListenerKind};
-    let command_error = |detail| eon_workspace_protocol::v47::Failure {
+    let command_error = |detail| eon_workspace_protocol::v48::Failure {
         code: "edit-command".into(),
         detail,
     };
@@ -2209,13 +2232,21 @@ pub(crate) fn popup_catalog(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<PopupCatalog, String> {
-    resolve_popups(read_config(root, defaults, log)?.popups, defaults)
+    let config = read_config(root, defaults, log)?;
+    resolve_popups(config.popups, config.keys, defaults)
 }
 
 fn resolve_popups(
     mut popups: BTreeMap<String, PopupEntrySettings>,
+    keys: KeysSettings,
     defaults: &Defaults,
 ) -> Result<PopupCatalog, String> {
+    let mut released_shortcuts = ReleasedShortcuts::default();
+    for name in &keys.release {
+        released_shortcuts
+            .insert(name)
+            .map_err(|reason| format!("keys.release: {name:?}: {reason}"))?;
+    }
     // Popup margins are Eon's fixed values, not configuration (EON-C10).
     let geometry = defaults.popups.geometry;
 
@@ -2294,7 +2325,22 @@ fn resolve_popups(
         });
     }
     resolve_popup_entries(&mut entries, &configured)?;
-    Ok(PopupCatalog { geometry, entries })
+    for entry in &entries {
+        if let Some(key) = entry.shortcut.bound()
+            && released_shortcuts.includes_chord(key)
+        {
+            let chord = eon_workspace_protocol::shortcuts::config_chord(key.modifiers, &key.key);
+            return Err(format!(
+                "keys.release: {chord} is bound to popup {:?}",
+                entry.id
+            ));
+        }
+    }
+    Ok(PopupCatalog {
+        geometry,
+        entries,
+        released_shortcuts,
+    })
 }
 
 /// An empty keybinding leaves the popup without a key.
@@ -3794,7 +3840,7 @@ mod tests {
                     .unwrap()
             };
             let parsed = super::parse_configuration_text(&source, path, &defaults).unwrap();
-            let resolved = super::resolve_popups(parsed.popups, &defaults).unwrap();
+            let resolved = super::resolve_popups(parsed.popups, parsed.keys, &defaults).unwrap();
             let popup = resolved.entries.iter().find(|popup| popup.id == id);
             assert_eq!(key("enabled").default, serde_json::json!(popup.is_some()));
             let popup = popup.unwrap();
@@ -5780,7 +5826,7 @@ label = "Browse"
 
     #[test]
     fn editor_popup_settings_round_trip_and_count_against_the_catalog_limit() {
-        use eon_workspace_protocol::v47::MAX_ENTRIES;
+        use eon_workspace_protocol::v48::MAX_ENTRIES;
 
         let mut defaults = crate::fixtures::inputs().defaults;
         let editor = PopupDefinition {

@@ -1,5 +1,5 @@
 use super::{Failure, MAX_BYTES};
-use eon_workspace_protocol::v47::{
+use eon_workspace_protocol::v48::{
     GoogleQuota, GoogleQuotaState, MAX_GOOGLE_QUOTA_WINDOWS, MAX_QUOTA_SCOPE_BYTES, QuotaWindow,
 };
 use serde_json::Value;

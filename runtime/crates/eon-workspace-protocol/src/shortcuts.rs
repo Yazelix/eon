@@ -1,6 +1,6 @@
 //! Eon's shared shortcut descriptors. This is Rust data, not an EONW codec.
 
-use crate::v47::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
+use crate::v48::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
 
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
@@ -10,6 +10,50 @@ const ALT_SHIFT: u8 = ALT | SHIFT;
 const CTRL_ALT: u8 = CTRL | ALT;
 const CTRL_SHIFT: u8 = CTRL | SHIFT;
 const CTRL_ALT_SHIFT: u8 = CTRL | ALT | SHIFT;
+
+/// Fixed shortcuts that config.toml may release, in EONW bit order.
+pub const RELEASE_CHOICES: [(&str, Action); 4] = [
+    ("Alt+M", Action::CreatePane),
+    ("Alt+W", Action::ClosePane),
+    ("Alt+Q", Action::ToggleInbox),
+    ("Alt+G", Action::NextAttention),
+];
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReleasedShortcuts(pub(crate) u8);
+
+impl ReleasedShortcuts {
+    pub fn insert(&mut self, name: &str) -> Result<(), &'static str> {
+        let index = RELEASE_CHOICES
+            .iter()
+            .position(|(choice, _)| *choice == name)
+            .ok_or("unsupported chord (expected Alt+M, Alt+W, Alt+Q or Alt+G)")?;
+        let bit = 1 << index;
+        if self.0 & bit != 0 {
+            return Err("duplicate chord");
+        }
+        self.0 |= bit;
+        Ok(())
+    }
+
+    pub fn includes(self, action: Action) -> bool {
+        self.0 != 0
+            && RELEASE_CHOICES
+                .iter()
+                .enumerate()
+                .any(|(index, (_, candidate))| *candidate == action && self.0 & (1 << index) != 0)
+    }
+
+    pub fn includes_chord(self, chord: &ProtocolShortcut) -> bool {
+        self.0 != 0
+            && FIXED_SHORTCUTS.iter().any(|shortcut| {
+                shortcut
+                    .trigger
+                    .matches_key(Platform::CURRENT, &chord.key, chord.modifiers)
+                    && self.includes(shortcut.action)
+            })
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
@@ -369,7 +413,7 @@ pub fn popup_entry_for_chord<'a>(
     })
 }
 
-/// Config spelling for `(modifiers, key)` when `v47::Shortcut` accepts it, else `None`.
+/// Config spelling for `(modifiers, key)` when `v48::Shortcut` accepts it, else `None`.
 pub fn config_chord_if_valid(modifiers: u8, key: &str) -> Option<String> {
     ProtocolShortcut {
         modifiers,
@@ -832,8 +876,15 @@ pub fn viewer_groups(
     sidebar: Sidebar,
     running: bool,
     number_keys: bool,
+    released: ReleasedShortcuts,
 ) -> Vec<ViewerGroup> {
     let row = |shortcut: &Shortcut| {
+        if released.includes(shortcut.action) {
+            return ViewerRow {
+                shortcut: shortcut.trigger.display_label_for(platform),
+                label: format!("{} (released to terminal)", shortcut.label),
+            };
+        }
         let label = match shortcut.overriding_popup(platform, entries) {
             Some(entry) => format!("{} (overridden by {})", shortcut.label, entry.label),
             None => {
@@ -946,11 +997,23 @@ fn effective_bindings(
     sidebar: Sidebar,
     running: bool,
     number_keys: bool,
+    released: ReleasedShortcuts,
 ) -> Vec<EffectiveBinding> {
     FIXED_SHORTCUTS
         .iter()
         .filter(|shortcut| shortcut.applicable(sidebar, running, number_keys))
         .map(|&shortcut| {
+            if released.includes(shortcut.action) {
+                return EffectiveBinding {
+                    action: shortcut.action.id(),
+                    group: shortcut.group,
+                    label: shortcut.label,
+                    display: None,
+                    chords: Vec::new(),
+                    source: "released",
+                    overridden_by: Vec::new(),
+                };
+            }
             let mut chords = Vec::new();
             let mut overridden_by = Vec::new();
             for chord in shortcut.trigger.chords(platform) {
@@ -1067,14 +1130,15 @@ pub fn effective_keymap(
     sidebar: Sidebar,
     running: bool,
     number_keys: bool,
+    released: ReleasedShortcuts,
 ) -> EffectiveKeymap {
     EffectiveKeymap {
         platform,
         sidebar,
         number_keys,
         running,
-        groups: viewer_groups(platform, entries, sidebar, running, number_keys),
-        bindings: effective_bindings(platform, entries, sidebar, running, number_keys),
+        groups: viewer_groups(platform, entries, sidebar, running, number_keys, released),
+        bindings: effective_bindings(platform, entries, sidebar, running, number_keys, released),
         popups: effective_popups(platform, entries),
         reserved: reserved_chords(platform),
     }
@@ -1114,10 +1178,10 @@ mod tests {
         assert_eq!(
             [SHIFT, CTRL, ALT, SUPER],
             [
-                crate::v47::SHIFT,
-                crate::v47::CTRL,
-                crate::v47::ALT,
-                crate::v47::SUPER
+                crate::v48::SHIFT,
+                crate::v48::CTRL,
+                crate::v48::ALT,
+                crate::v48::SUPER
             ]
         );
     }
@@ -1232,7 +1296,14 @@ mod tests {
                 shortcut: PopupKey::Unbound,
             },
         ];
-        let linux = effective_keymap(Platform::Linux, &entries, Sidebar::Open, true, true);
+        let linux = effective_keymap(
+            Platform::Linux,
+            &entries,
+            Sidebar::Open,
+            true,
+            true,
+            Default::default(),
+        );
         assert_eq!(
             linux
                 .groups
@@ -1364,6 +1435,7 @@ mod tests {
             Sidebar::Off,
             false,
             false,
+            Default::default(),
         );
         assert_eq!(filtered.groups.len(), 3);
         assert!(
@@ -1386,6 +1458,7 @@ mod tests {
             Sidebar::Open,
             true,
             true,
+            Default::default(),
         );
         let mac_quit = mac_partial
             .bindings
@@ -1409,7 +1482,14 @@ mod tests {
                 }),
             },
         ];
-        let mac_full = effective_keymap(Platform::Macos, &mac_both, Sidebar::Open, true, true);
+        let mac_full = effective_keymap(
+            Platform::Macos,
+            &mac_both,
+            Sidebar::Open,
+            true,
+            true,
+            Default::default(),
+        );
         let mac_quit_full = mac_full
             .bindings
             .iter()
@@ -1433,7 +1513,14 @@ mod tests {
                             key: chord.key.into(),
                         }),
                     }];
-                    let keymap = effective_keymap(platform, &entries, Sidebar::Open, true, true);
+                    let keymap = effective_keymap(
+                        platform,
+                        &entries,
+                        Sidebar::Open,
+                        true,
+                        true,
+                        Default::default(),
+                    );
                     let overridden_bindings: Vec<_> = keymap
                         .bindings
                         .iter()

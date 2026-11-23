@@ -706,6 +706,9 @@ animate_working_badge = true # Animate Working and Background badges; false keep
 number_keys = true # Alt+Shift+1..9 and Alt+Shift+0 show sessions 1..10; false leaves the keys to the terminal.
 warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
+[keys]
+release = [] # Pass these fixed physical shortcuts to the focused terminal.
+
 [sidebar]
 enabled = true # Enable this feature or popup.
 
@@ -1270,9 +1273,19 @@ Emacs's M-% on Alt+Shift+5. A popup configured on one of them takes only that
 key either way; with `true`, Alt+/ lists that key as overridden. The window reads the setting when it starts.
 See [Keybinding clashes](USAGE.md#keybinding-clashes).
 
+`[keys] release` passes individual fixed shortcuts to the focused terminal.
+The default is `[]`. Use any combination of `"Alt+M"`, `"Alt+W"`,
+`"Alt+Q"` and `"Alt+G"`, with that exact spelling on Linux and macOS.
+For example, `release = ["Alt+M", "Alt+W"]` releases pane creation and pane
+close. Invalid values, repeated chords, and chords also bound to an enabled
+popup fail configuration validation. The next supervisor start applies the
+setting. Reopening or reloading a window with its existing supervisor keeps
+that window's applied releases.
+
 `[sidebar] enabled = true` offers the agent sidebar, which lists
 the coding agents in the window's tabs that report their status. `false` turns
-it off; Alt+G and Alt+Shift+G still jump between agents. The window reads the
+it off. With their bindings active, Alt+G and Alt+Shift+G still jump between
+agents. The window reads the
 setting when it starts. Alt+Shift+H shows or hides the sidebar; it also steps
 aside while the window leaves fewer than 80 cells for the terminals beside it.
 See [Agent sidebar](USAGE.md#agent-sidebar).
@@ -1602,12 +1615,10 @@ Window labels use `/` for Slash and, on macOS, Option, Control and Command
 for Alt, Ctrl and Super. These labels refer to the same physical chords.
 
 To resolve clashes with terminal programs and agents that use `Alt+` chords,
-remap or unbind popup entries here, set `[session] number_keys = false` to
-release `Alt+Shift+0` through `Alt+Shift+9`, or set `[sidebar] enabled = false`
-to release `Alt+Shift+H`. Fixed Eon shortcuts cannot be released to the terminal:
-a popup may take overridable fixed keys (`Alt+M`, `Alt+W`, `Alt+Q`, `Alt+G`),
-while `Alt+1` … `Alt+0` and `Alt+/` stay reserved and `Alt+H`/`J`/`K`/`L` keep
-focus (a popup configured on a focus key loads unbound). See
+remap or unbind popup entries here, list fixed chords in `[keys] release`,
+set `[session] number_keys = false` to release `Alt+Shift+0` through
+`Alt+Shift+9`, or set `[sidebar] enabled = false` to release `Alt+Shift+H`.
+See
 [Keybinding clashes](USAGE.md#keybinding-clashes) for common clashes and
 app-side workarounds.
 

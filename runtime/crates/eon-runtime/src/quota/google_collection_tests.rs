@@ -1,5 +1,5 @@
 use super::{tests::script, *};
-use eon_workspace_protocol::v47::{PopupGeometry, Sidebar};
+use eon_workspace_protocol::v48::{PopupGeometry, Sidebar};
 use serde_json::json;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -67,6 +67,7 @@ fn start_google(program: &Path, unit: Duration, store: Option<PathBuf>) -> Quota
 fn snapshot(quotas: &Quotas) -> Snapshot {
     let mut snapshot = Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),

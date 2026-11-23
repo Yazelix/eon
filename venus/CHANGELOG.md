@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume the EONW v48 release set. Route released fixed chords through
+  ordinary terminal input, mark them in Shortcuts, and omit their footer
+  hints (`eon-ici95.1`).
+
 - Require minimum window history (`min(duration / 10, 4h)` elapsed — 30m for
   5h, 4h for 7d — and at least 5% used) before projecting quota pace or
   colouring quota dots across Codex, Claude, and Google windows, and re-anchor

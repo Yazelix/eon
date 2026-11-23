@@ -2,16 +2,17 @@ use super::*;
 
 #[test]
 fn compact_pane_headers_share_title_height_and_full_row_targets() {
-    use eon_workspace_protocol::v47::{Column, PopupGeometry};
+    use eon_workspace_protocol::v48::{Column, PopupGeometry};
 
     let snapshot = Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -113,7 +114,7 @@ fn compact_pane_headers_share_title_height_and_full_row_targets() {
             );
         }
         if scale <= 1.3 {
-            use eon_workspace_protocol::v47::{CodexQuota, CodexQuotaState};
+            use eon_workspace_protocol::v48::{CodexQuota, CodexQuotaState};
             let mut snapshot = snapshot.clone();
             snapshot.codex_quota = Some(CodexQuota {
                 state: CodexQuotaState::Unknown,
@@ -318,7 +319,7 @@ fn band_space_keeps_one_terminal_height_whichever_pane_is_expanded() {
                 let tab = &mut snapshot.tabs[0];
                 let pane = tab.columns[0].panes[0].clone();
                 tab.columns[0].panes = (1..=4)
-                    .map(|n| eon_workspace_protocol::v47::Pane {
+                    .map(|n| eon_workspace_protocol::v48::Pane {
                         label: format!("p{n}"),
                         id: format!("p{n}"),
                         ..pane.clone()
@@ -396,18 +397,19 @@ fn band_space_keeps_one_terminal_height_whichever_pane_is_expanded() {
 
 #[test]
 fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-    use eon_workspace_protocol::v47::{
+    use eon_workspace_protocol::v48::{
         ALT, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Tab,
     };
 
     let mut snapshot = Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -435,7 +437,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v47::Column {
+            columns: vec![eon_workspace_protocol::v48::Column {
                 panes: vec![Pane {
                     label: "p1".into(),
                     pinned_name: None,
@@ -465,7 +467,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v47::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v48::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     // Even the smallest windows keep terminal padding; only the gaps and empty grid yield.
@@ -663,7 +665,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
                     let id = format!("p{}", index + 1);
                     let mut column = column.clone();
                     column.panes[0].id.clone_from(&id);
-                    column.panes[0].attention = Some(eon_workspace_protocol::v47::Attention {
+                    column.panes[0].attention = Some(eon_workspace_protocol::v48::Attention {
                         state: AttentionState::Unavailable,
                         record: None,
                     });
@@ -844,7 +846,7 @@ fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
     for index in 2..=3 {
         columns.tabs[0]
             .columns
-            .push(eon_workspace_protocol::v47::Column {
+            .push(eon_workspace_protocol::v48::Column {
                 panes: vec![Pane {
                     label: format!("p{index}"),
                     pinned_name: None,
@@ -1161,11 +1163,11 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
         pending: false,
         selected_pane: Some("p1".into()),
         selected_popup: None,
-        columns: vec![eon_workspace_protocol::v47::Column {
+        columns: vec![eon_workspace_protocol::v48::Column {
             panes: vec![pane("p1"), pane("p2")],
             expanded: "p1".into(),
         }],
-        popups: vec![eon_workspace_protocol::v47::Popup {
+        popups: vec![eon_workspace_protocol::v48::Popup {
             id: "u1".into(),
             entry: "agent".into(),
             session: "popup-session".into(),
@@ -1177,8 +1179,8 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
     let entries = [PopupEntry {
         id: "agent".into(),
         label: "Agent".into(),
-        shortcut: eon_workspace_protocol::v47::PopupKey::Bound(
-            eon_workspace_protocol::v47::Shortcut {
+        shortcut: eon_workspace_protocol::v48::PopupKey::Bound(
+            eon_workspace_protocol::v48::Shortcut {
                 modifiers: ALT | SHIFT,
                 key: "KeyL".into(),
             },
@@ -1265,7 +1267,7 @@ fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
 
 #[test]
 fn quit_prompt_words_counts_and_lists_busy_terminals() {
-    use eon_workspace_protocol::v47::{BusyTerminal, BusyTerminals, TargetId, TerminalTarget};
+    use eon_workspace_protocol::v48::{BusyTerminal, BusyTerminals, TargetId, TerminalTarget};
 
     let busy = |id: TargetId, name: &str| BusyTerminal {
         target: TerminalTarget {
@@ -1358,7 +1360,7 @@ fn quit_prompt_words_counts_and_lists_busy_terminals() {
 /// A one-tab snapshot of columns holding `counts` panes each, numbered `p1` onward, with the
 /// first pane of column `selected` selected and no sidebar.
 fn stack_columns_snapshot(counts: &[usize], selected: usize) -> Snapshot {
-    use eon_workspace_protocol::v47::{Column, PopupGeometry};
+    use eon_workspace_protocol::v48::{Column, PopupGeometry};
 
     let mut next = 1;
     let columns = counts
@@ -1385,12 +1387,13 @@ fn stack_columns_snapshot(counts: &[usize], selected: usize) -> Snapshot {
         .collect::<Vec<_>>();
     Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -1551,17 +1554,17 @@ fn stack_close_targets_sit_in_the_stack_band_and_hide_while_zoomed() {
         // A shown popup covers the columns: only its own Hide remains.
         let mut popup = stack_columns_snapshot(&[1, 1], 0);
         popup.tabs[0].selected_popup = Some("u1".into());
-        popup.tabs[0].popups = vec![eon_workspace_protocol::v47::Popup {
+        popup.tabs[0].popups = vec![eon_workspace_protocol::v48::Popup {
             id: "u1".into(),
             entry: "files".into(),
             session: "popup".into(),
             endpoint: b"/tmp/popup.sock".to_vec(),
             attention: None,
         }];
-        popup.entries = vec![eon_workspace_protocol::v47::PopupEntry {
+        popup.entries = vec![eon_workspace_protocol::v48::PopupEntry {
             id: "files".into(),
             label: "Files".into(),
-            shortcut: eon_workspace_protocol::v47::PopupKey::Unbound,
+            shortcut: eon_workspace_protocol::v48::PopupKey::Unbound,
         }];
         let covered = project(&popup, (1400, 900), metrics, false);
         assert_eq!(
@@ -1573,7 +1576,7 @@ fn stack_close_targets_sit_in_the_stack_band_and_hide_while_zoomed() {
 
 #[test]
 fn close_stack_prompt_words_each_end_and_lists_every_terminal() {
-    use eon_workspace_protocol::v47::{
+    use eon_workspace_protocol::v48::{
         CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
     };
 
@@ -1708,7 +1711,7 @@ fn close_stack_prompt_words_each_end_and_lists_every_terminal() {
 
 #[test]
 fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
-    use eon_workspace_protocol::v47::{Column, PopupGeometry};
+    use eon_workspace_protocol::v48::{Column, PopupGeometry};
 
     let column = |first: usize, count: usize| Column {
         panes: (first..first + count)
@@ -1727,12 +1730,13 @@ fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
     };
     let snapshot = |columns: Vec<Column>| Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -1812,17 +1816,17 @@ fn stack_bands_label_columns_yield_whole_and_clip_scrolled_headers() {
         // A popup covers the columns with its own card and no Stack band.
         let mut popup = snapshot(vec![column(1, 1)]);
         popup.tabs[0].selected_popup = Some("u1".into());
-        popup.tabs[0].popups = vec![eon_workspace_protocol::v47::Popup {
+        popup.tabs[0].popups = vec![eon_workspace_protocol::v48::Popup {
             id: "u1".into(),
             entry: "files".into(),
             session: "popup".into(),
             endpoint: b"/tmp/popup.sock".to_vec(),
             attention: None,
         }];
-        popup.entries = vec![eon_workspace_protocol::v47::PopupEntry {
+        popup.entries = vec![eon_workspace_protocol::v48::PopupEntry {
             id: "files".into(),
             label: "Files".into(),
-            shortcut: eon_workspace_protocol::v47::PopupKey::Unbound,
+            shortcut: eon_workspace_protocol::v48::PopupKey::Unbound,
         }];
         let covered = project(&popup, 900, metrics, 0.0);
         assert_eq!(labels(&covered), [None]);

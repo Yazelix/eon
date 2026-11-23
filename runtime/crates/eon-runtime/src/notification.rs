@@ -12,7 +12,7 @@ use super::{
     running::window_label,
     windows::durable_window_id,
 };
-use eon_workspace_protocol::v47::WindowEntry;
+use eon_workspace_protocol::v48::WindowEntry;
 
 /// The notification service's well-known bus name.
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -1584,7 +1584,7 @@ mod tests {
             generation: "g1-0123456789abcdef0123456789abcdef".into(),
             started_at: None,
             live_terminals: Some(terminals),
-            state: eon_workspace_protocol::v47::WindowState::Live,
+            state: eon_workspace_protocol::v48::WindowState::Live,
         })
     }
 

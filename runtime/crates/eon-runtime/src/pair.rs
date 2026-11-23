@@ -10,7 +10,7 @@ use super::{
     diagnostics::DiagnosticLog,
     sessions::{self, RunningSession},
 };
-use eon_workspace_protocol::v47::{InvokeIntent, PROJECT_ENTRY};
+use eon_workspace_protocol::v48::{InvokeIntent, PROJECT_ENTRY};
 use orbit_protocol::{
     management::LeaseInput,
     session::{Modifiers, PhysicalKey},

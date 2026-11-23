@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v47 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v48 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -690,6 +690,8 @@ re-proved when that platform or feature is next touched.
   Presentation amended by `eon-wuau8.3`, approved by Lucca on 2026-11-10
   (selection, accents and labels), with zoom and contrast decisions relayed
   by eon-overseer under Lucca's auto-decide mandate on 2026-11-11.
+  Amended on 2026-11-23 by `eon-ici95.1` (approved by Lucca, relayed by
+  eon-lead): EONW v48 and terminal routing for released shortcuts.
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology, a workspace action changes tab, pane, focus, order,
@@ -877,8 +879,9 @@ re-proved when that platform or feature is next touched.
     projections, and a 250 ms reinspection exposes accepted external workspace changes without native
     input.
   - Pointer input, Alt+H/L column and tab traversal, Alt+K/J pane traversal,
-    Alt+M pane creation, Alt+Shift+T tab requests, focused arrow traversal, and
-    selected-terminal attachment retain their existing owners. Alt+H/L remains
+    Alt+M pane creation when bound (VEN-C20), Alt+Shift+T tab requests,
+    focused arrow traversal, and selected-terminal attachment retain their
+    existing owners. Alt+H/L remains
     admitted while a popup is visible; inactive popup selections do not replace
     the active tab's projection. Popup-only tabs may have no pane or selected
     pane. Hiding their last visible popup yields an empty body with actionable
@@ -907,8 +910,8 @@ re-proved when that platform or feature is next touched.
     Ctrl+Alt+H/L sends one EONW v12 sideways move of that pane into the
     neighbouring column. When that move would open a column at the tab's edge,
     Venus applies Ctrl+Alt+M's 40-terminal-column refusal. Alt+Shift+W sends one
-    non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
-    one EONW v11 close naming the active tab's selected `pN` and is consumed
+    non-repeating close naming the snapshot's active stable `tN`; when bound
+    (VEN-C20), Alt+W sends one EONW v11 close naming the active tab's selected `pN` and is consumed
     without an action when the tab has none. A pane's Close button sends the
     same close naming its `pN`, with the same final-close prompt. Both may
     target the final tab and
@@ -1744,6 +1747,8 @@ re-proved when that platform or feature is next touched.
   rule) by `eon-gl1xo`: a pointer press outside the dialog closes it.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): the Shortcuts row says session.
+  Amended on 2026-11-23 by `eon-ici95.1` (approved by Lucca, relayed by
+  eon-lead): the live release set in the Shortcuts viewer and footer.
 - **Consumer:** One person using a Venus surface attached to an Eon workspace.
 - **Trigger:** Physical Alt+Slash toggles the viewer; Escape or a pointer
   press outside the dialog closes it, and that press reaches no other target.
@@ -1756,7 +1761,12 @@ re-proved when that platform or feature is next touched.
   shortcut otherwise has no row. A popup on the key of a fixed binding other than Alt+Slash,
   Alt+0 through Alt+9, and Alt+H, Alt+J, Alt+K and Alt+L takes that key: dispatch invokes the
   popup, the footer omits the fixed hint, and the viewer row reads "<action>
-  (overridden by <popup label>)". A popup on one of Alt+Shift+0 through
+  (overridden by <popup label>)". The accepted EONW release set (EON-C20)
+  removes the configured fixed chords from Eon dispatch and the footer
+  hints. With terminal focus, Venus sends a released chord through its
+  ordinary terminal input and key pairing path (VEN-C2). A released
+  chord's viewer row reads "<action> (released to terminal)" and shows the
+  chord with native modifier names. A popup on one of Alt+Shift+0 through
   Alt+Shift+9 takes only that key; the other positions stay bound, and the row
   reads "Show session by position (<key> overridden by <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
   refreshing, scrolling, and closing send no terminal bytes or workspace
@@ -1779,10 +1789,11 @@ re-proved when that platform or feature is next touched.
   presentation. While open, keyboard, pointer, IME, clipboard, link, and
   workspace actions do not reach their normal targets.
 - **Owner:** Venus owns viewer state, fixed native binding descriptors, scene,
-  rendering, input precedence, and AccessKit projection. Eon owns the enabled
-  popup catalog and its key resolution and must reserve Alt+Slash, Alt+0 through Alt+9, and
-  Alt+H, Alt+J, Alt+K and Alt+L before full-product delivery.
-- **Consumes:** Canonical EONW through the in-tree `eon-workspace-protocol`
+  rendering, input precedence, and AccessKit projection. Eon owns the
+  fixed-key release set and the enabled popup catalog and its key resolution.
+  It must reserve Alt+Slash, Alt+0 through Alt+9, and Alt+H, Alt+J, Alt+K and
+  Alt+L before full-product delivery.
+- **Consumes:** Canonical EONW v48 through the in-tree `eon-workspace-protocol`
   0.1.0.
 - **Boundary:** No Orbit Session, Eon configuration parsing, child-application
   shortcuts, action execution from rows, search, filtering, rebinding,
@@ -2361,6 +2372,8 @@ re-proved when that platform or feature is next touched.
   i like it"); its live acceptance follows landing. The bare translucent-row
   badges, contour fallback and font-sized row badges (`eon-0ntg1`) have
   scale-1 installed proof on x86_64 Linux Wayland; Lucca's live look is pending.
+  Amended on 2026-11-23 by `eon-ici95.1` (approved by Lucca, relayed by
+  eon-lead): release of the next-attention shortcut.
   Lucca approved the sidebar contract on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`, there under an earlier draft ID). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
@@ -2421,8 +2434,8 @@ re-proved when that platform or feature is next touched.
   mask; the label and the other programs' marks are unchanged; installed proof
   pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
-  workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
-  Alt+Shift+G work under `Off` too.
+  workspace. The sidebar itself needs `sidebar` other than `Off`. When
+  bound, Alt+G and Alt+Shift+G work under `Off` too.
 - **Trigger:**
   - Alt+Shift+H;
   - a new EONW v32 snapshot;
@@ -2592,8 +2605,8 @@ re-proved when that platform or feature is next touched.
       - the sidebar closes while it holds focus;
       - it is hidden for width while it holds focus;
       - the focused row's target is removed.
-    - Alt+G and Alt+Shift+G send `NextAttention` and `PreviousAttention`,
-      whether the sidebar is visible or not.
+    - When bound (VEN-C20), Alt+G and Alt+Shift+G send `NextAttention` and
+      `PreviousAttention`, whether the sidebar is visible or not.
     - Venus shows the `no-attention` rejection as the VEN-C8 notice `No agent needs
       attention`, without taking focus. Unlike other rejected-action notices, it also clears
       when a terminal's attention state changes and on the next input Venus sends to the
@@ -3014,16 +3027,19 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
   by `eon-30skm` (S3): its prose says session, and a row of another session
   adds `, in session NAME` to its accessible name.
+  Amended on 2026-11-23 by `eon-ici95.1` (approved by Lucca, relayed by
+  eon-lead): release of the attention inbox shortcut.
 - **Consumer:** One person using a Venus window attached to a full Eon workspace, under every
   `sidebar` value.
 - **Trigger:**
-  - Alt+Q;
+  - Alt+Q when bound (VEN-C20);
   - a new EONW v32 snapshot while the inbox is open;
   - the pointer, keyboard or AccessKit acts on the inbox;
   - the window is resized.
 - **Result:**
-  - **Opening.** Alt+Q opens the inbox as one ephemeral native dialog, as the shortcut viewer
-    (VEN-C20) opens, with keyboard focus inside it. Alt+Q again or Escape closes it and returns
+  - **Opening.** When bound, Alt+Q opens the inbox as one ephemeral native dialog, as
+    the shortcut viewer (VEN-C20) opens, with keyboard focus inside it. Alt+Q again or
+    Escape closes it and returns
     keyboard focus where it was. Opening, filtering, moving the highlight and closing send no
     workspace action and no terminal bytes.
   - **Contents.**
@@ -3053,7 +3069,7 @@ re-proved when that platform or feature is next touched.
   - **Shortcuts.** Alt+/ lists Alt+Q (VEN-C20). The footer ([Eon Bar and
     tabs](../../docs/USAGE.md#eon-bar-and-tabs)) has no inbox hint; while the inbox is open, it
     shows the inbox's own keys. A popup configured on Alt+Q takes the key, as with other fixed
-    bindings.
+    bindings. The viewer marks Alt+Q as released when configured through EON-C20.
   - **Accessibility.** The inbox is one named AccessKit dialog, "Attention inbox". It holds the
     four filters, each named with its count and marked when selected, and the rows, each named
     as its sidebar row would be, plus `, in session NAME` for a row of another session. Accessibility
@@ -3071,7 +3087,8 @@ re-proved when that platform or feature is next touched.
 - **Consumes:** EONW v32 (`attention_queue`, `workspaces`) and the agent sidebar's row
   presentation (VEN-C30).
 - **Boundary:** no sorting, text search, multi-select, previews, notifications, kept filter, or
-  Runtime state for opening; the key stays fixed until `[keys]` (`eon-configurability-qkq8.12`).
+  Runtime state for opening. EON-C20 allows release of Alt+Q. Remapping it remains
+  scoped to `eon-configurability-qkq8.12`.
 - **Proof:** The checks and observations below; Open proof lists what they
   leave out.
   - **Automated (`eon-ngwf.2`, commit `1dabfde`):**

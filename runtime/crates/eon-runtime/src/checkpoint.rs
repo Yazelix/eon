@@ -4,7 +4,7 @@
 // export and S4b-1 (eon-t3fyd.8) its import.
 #![cfg_attr(not(test), allow(dead_code))]
 
-use eon_workspace_protocol::v47::{
+use eon_workspace_protocol::v48::{
     MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES,
     MAX_PANE_NAME_BYTES, MAX_PANE_NAME_CHARS, MAX_SESSIONS, MAX_TABS, MAX_WORKSPACES,
     validate_pane_name,

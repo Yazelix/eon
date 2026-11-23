@@ -108,6 +108,9 @@
       "number_keys": true,
       "warning_close_last_tab": true
     },
+    "keys": {
+      "release": []
+    },
     "panels": {
       "heading": "connected"
     }

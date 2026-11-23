@@ -1,10 +1,10 @@
 use super::*;
 use crate::application::shortcuts::ALT_SHIFT;
-use eon_workspace_protocol::v47::{InvokeIntent, Pane, Tab};
+use eon_workspace_protocol::v48::{InvokeIntent, Pane, Tab};
 
 #[test]
 fn sidebar_wheel_routes_only_the_visible_card() {
-    use eon_workspace_protocol::v47::{Attention, AttentionState, Column, Sidebar};
+    use eon_workspace_protocol::v48::{Attention, AttentionState, Column, Sidebar};
     let mut snapshot = quit_snapshot();
     snapshot.sidebar = Sidebar::Open;
     let pane = Pane {
@@ -144,7 +144,7 @@ fn close_prompt_asks_for_a_final_close() {
         pending: false,
         selected_pane: panes.first().map(|pane| (*pane).into()),
         selected_popup: None,
-        columns: vec![eon_workspace_protocol::v47::Column {
+        columns: vec![eon_workspace_protocol::v48::Column {
             panes: panes.iter().map(|id| pane(id)).collect(),
             expanded: panes
                 .first()
@@ -155,12 +155,13 @@ fn close_prompt_asks_for_a_final_close() {
     };
     let snapshot = |tabs: Vec<Tab>| Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -170,7 +171,7 @@ fn close_prompt_asks_for_a_final_close() {
             recency: 0,
         }],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v47::PopupGeometry {
+        geometry: eon_workspace_protocol::v48::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -184,7 +185,7 @@ fn close_prompt_asks_for_a_final_close() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v47::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v48::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let close_tab =
@@ -220,7 +221,7 @@ fn close_prompt_asks_for_a_final_close() {
     let mut shared = one.clone();
     shared
         .workspaces
-        .push(eon_workspace_protocol::v47::WorkspaceInfo {
+        .push(eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s2".into(),
             persistent_id: Some("s2".into()),
             registration_error: None,
@@ -240,11 +241,11 @@ fn close_prompt_asks_for_a_final_close() {
     // An open prompt is worded from each snapshot, so one that adds a workspace repaints
     // it as closing the shown workspace.
     let mut model = WorkspaceModel::default();
-    model.apply(eon_workspace_protocol::v47::Response::Snapshot(one.clone()));
+    model.apply(eon_workspace_protocol::v48::Response::Snapshot(one.clone()));
     let worded = |model: &WorkspaceModel| close_prompt_workspace(model.snapshot().unwrap());
     assert_eq!(worded(&model), None);
     assert_eq!(
-        model.apply(eon_workspace_protocol::v47::Response::Snapshot(shared)),
+        model.apply(eon_workspace_protocol::v48::Response::Snapshot(shared)),
         (true, false)
     );
     assert_eq!(worded(&model).as_deref(), Some("s1"));
@@ -293,7 +294,7 @@ fn close_prompt_asks_for_a_final_close() {
         id: "files".into(),
         label: "Files".into(),
         shortcut: PopupKey::Bound(Shortcut {
-            modifiers: eon_workspace_protocol::v47::ALT | eon_workspace_protocol::v47::SHIFT,
+            modifiers: eon_workspace_protocol::v48::ALT | eon_workspace_protocol::v48::SHIFT,
             key: "KeyD".into(),
         }),
     }];
@@ -317,7 +318,7 @@ fn close_prompt_asks_for_a_final_close() {
         id: "agent".into(),
         label: "Agent".into(),
         shortcut: PopupKey::Bound(Shortcut {
-            modifiers: eon_workspace_protocol::v47::ALT | eon_workspace_protocol::v47::SHIFT,
+            modifiers: eon_workspace_protocol::v48::ALT | eon_workspace_protocol::v48::SHIFT,
             key: "KeyQ".into(),
         }),
     }];
@@ -336,7 +337,7 @@ fn zoom_names_the_tab_panes_columns_and_selected_pane() {
         live: true,
         attention: None,
     };
-    let column = |panes: &[&str]| eon_workspace_protocol::v47::Column {
+    let column = |panes: &[&str]| eon_workspace_protocol::v48::Column {
         panes: panes.iter().map(|id| pane(id)).collect(),
         expanded: panes[0].into(),
     };
@@ -352,12 +353,13 @@ fn zoom_names_the_tab_panes_columns_and_selected_pane() {
     };
     let snapshot = |active: &str, tabs: Vec<Tab>| Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -368,7 +370,7 @@ fn zoom_names_the_tab_panes_columns_and_selected_pane() {
         }],
         active_tab: active.into(),
         tabs,
-        geometry: eon_workspace_protocol::v47::PopupGeometry {
+        geometry: eon_workspace_protocol::v48::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -381,7 +383,7 @@ fn zoom_names_the_tab_panes_columns_and_selected_pane() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v47::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v48::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let two = |selected| {
@@ -485,7 +487,8 @@ fn zoom_names_the_tab_panes_columns_and_selected_pane() {
                 &[],
                 "t1",
                 Some("p2"),
-                eon_workspace_protocol::v47::Sidebar::Open
+                eon_workspace_protocol::v48::Sidebar::Open,
+                Default::default()
             ),
             Some(WorkspaceAction::Workspace(CommonAction::Focus(direction)))
         );
@@ -667,7 +670,7 @@ fn heading_hide_sends_the_cli_actions() {
     assert_eq!(
         heading_request(&snapshot, HeadingAction::HidePopup),
         Some(WorkspaceAction::DismissPopup(
-            eon_workspace_protocol::v47::PopupTarget {
+            eon_workspace_protocol::v48::PopupTarget {
                 tab: "t1".into(),
                 instance: "u1".into(),
             }
@@ -707,7 +710,7 @@ pub(super) fn stack_snapshot(columns: &[&[&str]]) -> Snapshot {
         attention_rollup: None,
         columns: columns
             .iter()
-            .map(|panes| eon_workspace_protocol::v47::Column {
+            .map(|panes| eon_workspace_protocol::v48::Column {
                 panes: panes
                     .iter()
                     .map(|id| Pane {
@@ -730,7 +733,7 @@ pub(super) fn stack_snapshot(columns: &[&[&str]]) -> Snapshot {
 
 /// Runtime's answer to a column close naming `pane`: one idle pane terminal.
 fn close_scope(pane: &str) -> CloseScope {
-    use eon_workspace_protocol::v47::{CloseTerminal, TargetId, TerminalTarget};
+    use eon_workspace_protocol::v48::{CloseTerminal, TargetId, TerminalTarget};
     CloseScope {
         generation: "g7".into(),
         pane: pane.into(),
@@ -833,7 +836,7 @@ fn held_popup_hide_never_dismisses_a_popup_shown_in_its_place() {
 
 #[test]
 fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
-    use eon_workspace_protocol::v47::{Attention, AttentionState, Column, PopupGeometry};
+    use eon_workspace_protocol::v48::{Attention, AttentionState, Column, PopupGeometry};
 
     // F6 visits the sidebar between the terminal and the tabs, only while it has rows.
     assert_eq!(
@@ -901,12 +904,13 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
     };
     let mut snapshot = Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v47::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v48::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -933,7 +937,7 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v47::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v48::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let scene = WorkspaceScene::from_snapshot(
@@ -996,6 +1000,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
     );
     let mut snapshot = Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
@@ -1003,7 +1008,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
         active_workspace: "s1".into(),
         workspaces: Vec::new(),
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v47::PopupGeometry {
+        geometry: eon_workspace_protocol::v48::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -1026,7 +1031,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v47::Sidebar::Off,
+        sidebar: eon_workspace_protocol::v48::Sidebar::Off,
         attention_queue: Vec::new(),
     };
     assert_eq!(workspace_picker_tooltip(&snapshot.entries), None);
@@ -1035,7 +1040,7 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
         id: WORKSPACES_ENTRY.into(),
         label: "Sessions".into(),
         shortcut: PopupKey::Bound(Shortcut {
-            modifiers: eon_workspace_protocol::v47::ALT | eon_workspace_protocol::v47::SHIFT,
+            modifiers: eon_workspace_protocol::v48::ALT | eon_workspace_protocol::v48::SHIFT,
             key: "KeyS".into(),
         }),
     });
@@ -1141,10 +1146,11 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
 
 /// A running window, generation g7, with three live terminals and none busy.
 pub(super) fn quit_snapshot() -> Snapshot {
-    use eon_workspace_protocol::v47::{BusyTerminals, RunningWindows, WindowEntry, WindowState};
+    use eon_workspace_protocol::v48::{BusyTerminals, RunningWindows, WindowEntry, WindowState};
 
     Snapshot {
         focus: None,
+        released_shortcuts: Default::default(),
         generation: "g1-00000000000000000000000000000001".into(),
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
@@ -1152,7 +1158,7 @@ pub(super) fn quit_snapshot() -> Snapshot {
         active_workspace: "s1".into(),
         workspaces: vec![],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v47::PopupGeometry {
+        geometry: eon_workspace_protocol::v48::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -1182,7 +1188,7 @@ pub(super) fn quit_snapshot() -> Snapshot {
             terminals: vec![],
             omitted: 0,
         }),
-        sidebar: eon_workspace_protocol::v47::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v48::Sidebar::Open,
         attention_queue: Vec::new(),
     }
 }
@@ -1237,8 +1243,8 @@ fn window_menu_navigation_keeps_peer_identity_and_rejects_ended_targets() {
 }
 
 /// p1 runs a command.
-pub(super) fn busy_p1() -> eon_workspace_protocol::v47::BusyTerminals {
-    use eon_workspace_protocol::v47::{BusyTerminal, BusyTerminals, TargetId, TerminalTarget};
+pub(super) fn busy_p1() -> eon_workspace_protocol::v48::BusyTerminals {
+    use eon_workspace_protocol::v48::{BusyTerminal, BusyTerminals, TargetId, TerminalTarget};
 
     BusyTerminals {
         terminals: vec![BusyTerminal {
@@ -1305,7 +1311,7 @@ fn quit_asks_only_while_busy() {
 
 #[test]
 fn a_link_result_stays_newer_than_a_notice_shown_again_after_the_slow_notice() {
-    use eon_workspace_protocol::v47::Response;
+    use eon_workspace_protocol::v48::Response;
 
     let snapshot = quit_snapshot();
     let mut model = WorkspaceModel::default();
@@ -1355,7 +1361,7 @@ fn a_link_result_stays_newer_than_a_notice_shown_again_after_the_slow_notice() {
 
 #[test]
 fn quit_progress_follows_workspace_events() {
-    use eon_workspace_protocol::v47::{Failure, Response};
+    use eon_workspace_protocol::v48::{Failure, Response};
 
     let idle = quit_snapshot();
     let mut busy = idle.clone();
@@ -1488,7 +1494,7 @@ fn quit_progress_follows_workspace_events() {
 
 #[test]
 fn a_stack_close_answer_is_the_confirm_before_its_ticket() {
-    use eon_workspace_protocol::v47::{Failure, Response};
+    use eon_workspace_protocol::v48::{Failure, Response};
 
     let confirm = |pane: &str| WorkspaceEvent::Response(Response::Confirm(close_scope(pane)));
     let answered = |ticket| WorkspaceEvent::Answered {
@@ -1586,7 +1592,7 @@ fn a_stack_close_answer_is_the_confirm_before_its_ticket() {
 
 #[test]
 fn a_window_focus_change_forgets_a_pending_stack_close() {
-    use eon_workspace_protocol::v47::Response;
+    use eon_workspace_protocol::v48::Response;
     use winit::event::{DeviceId, TouchPhase};
 
     let device_id = DeviceId::dummy();
@@ -1791,7 +1797,7 @@ fn a_stack_close_prompt_waits_for_its_own_frame_and_discards_early_enters() {
 
 #[test]
 fn a_stack_close_consent_repeats_exactly_what_was_listed() {
-    use eon_workspace_protocol::v47::{CloseTerminal, TargetId, TerminalTarget, UntrackedRun};
+    use eon_workspace_protocol::v48::{CloseTerminal, TargetId, TerminalTarget, UntrackedRun};
 
     let mut scope = close_scope("p3");
     scope.end = CloseEnd::Window;
@@ -1877,7 +1883,7 @@ fn a_close_request_quits_where_alt_shift_q_does() {
 #[test]
 fn a_window_whose_worker_did_not_start_keeps_its_way_back_and_detaches_on_close() {
     let mut model = WorkspaceModel::default();
-    model.apply(eon_workspace_protocol::v47::Response::Snapshot(
+    model.apply(eon_workspace_protocol::v48::Response::Snapshot(
         quit_snapshot(),
     ));
     assert_eq!(
@@ -1955,7 +1961,7 @@ fn a_degraded_report_reaches_the_diagnostics_and_nothing_else() {
         WorkspaceEvent::NoWorker {
             detail: "os text".into(),
         },
-        WorkspaceEvent::Response(eon_workspace_protocol::v47::Response::Snapshot(
+        WorkspaceEvent::Response(eon_workspace_protocol::v48::Response::Snapshot(
             quit_snapshot(),
         )),
     ] {
@@ -2097,7 +2103,7 @@ fn stack_close_focus_stays_on_a_shown_button_and_returns_to_the_titles() {
 
 #[test]
 fn google_quota_events_keep_navigation() {
-    use eon_workspace_protocol::v47::{
+    use eon_workspace_protocol::v48::{
         GoogleQuota, GoogleQuotaState, QuotaFailure, QuotaFailureReason, QuotaWindow,
     };
     let base = quit_snapshot();
@@ -2146,7 +2152,7 @@ fn google_quota_events_keep_navigation() {
 
 #[test]
 fn google_quota_expiry_depends_on_facts() {
-    use eon_workspace_protocol::v47::{
+    use eon_workspace_protocol::v48::{
         GoogleQuota, GoogleQuotaState, QuotaFailure, QuotaFailureReason, QuotaWindow,
     };
     let mut snapshot = quit_snapshot();
