@@ -70,6 +70,27 @@ pub use images::ImageResync;
 const VERTEX_SIZE: u64 = 24;
 #[cfg(test)]
 const VERTICES_PER_QUAD: u32 = 6;
+#[cfg(test)]
+const VERTEX_BYTES: usize = VERTEX_SIZE as usize;
+#[cfg(test)]
+const TRIANGLE_BYTES: usize = VERTEX_BYTES * 3;
+#[cfg(test)]
+const QUAD_BYTES: usize = VERTEX_BYTES * VERTICES_PER_QUAD as usize;
+
+#[cfg(test)]
+fn vertex_chunks(bytes: &[u8]) -> &[[u8; VERTEX_BYTES]] {
+    bytes.as_chunks::<VERTEX_BYTES>().0
+}
+
+#[cfg(test)]
+fn triangle_chunks(bytes: &[u8]) -> &[[u8; TRIANGLE_BYTES]] {
+    bytes.as_chunks::<TRIANGLE_BYTES>().0
+}
+
+#[cfg(test)]
+fn quad_chunks(bytes: &[u8]) -> &[[u8; QUAD_BYTES]] {
+    bytes.as_chunks::<QUAD_BYTES>().0
+}
 const DEVICE_LOST: &str = "the Venus GPU device was lost";
 const DEFAULT_METRICS: CellMetrics = CellMetrics {
     scale: 1.0,
@@ -3785,7 +3806,7 @@ impl RectangleBatch {
             };
             if bounds.intersection(card.middle()) != Some(bounds) {
                 for band in card.bands().filter_map(|band| band.intersection(bounds)) {
-                    for triangle in points.chunks_exact(3) {
+                    for triangle in points.as_chunks::<3>().0 {
                         let polygon = clip_polygon(triangle, band);
                         for index in 1..polygon.len().saturating_sub(1) {
                             self.write_points(

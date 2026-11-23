@@ -224,21 +224,18 @@ fn frame_timings_footer_exposes_a_dropped_final_presentation() {
 }
 
 fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_ {
-    batch
-        .bytes
-        .chunks_exact(VERTEX_SIZE as usize * 6)
-        .map(|quad| {
-            let value = |vertex: usize, component: usize| {
-                let offset = vertex * VERTEX_SIZE as usize + component * 4;
-                f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
-            };
-            SceneRect {
-                left: (value(0, 0) + 1.0) * batch.width as f32 / 2.0,
-                top: (1.0 - value(0, 1)) * batch.height as f32 / 2.0,
-                width: (value(2, 0) - value(0, 0)) * batch.width as f32 / 2.0,
-                height: (value(0, 1) - value(2, 1)) * batch.height as f32 / 2.0,
-            }
-        })
+    quad_chunks(&batch.bytes).iter().map(|quad| {
+        let value = |vertex: usize, component: usize| {
+            let offset = vertex * VERTEX_SIZE as usize + component * 4;
+            f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+        };
+        SceneRect {
+            left: (value(0, 0) + 1.0) * batch.width as f32 / 2.0,
+            top: (1.0 - value(0, 1)) * batch.height as f32 / 2.0,
+            width: (value(2, 0) - value(0, 0)) * batch.width as f32 / 2.0,
+            height: (value(0, 1) - value(2, 1)) * batch.height as f32 / 2.0,
+        }
+    })
 }
 
 fn padding_scene() -> Scene {
@@ -279,39 +276,36 @@ fn padding_scene() -> Scene {
 }
 
 fn padding_pixel(batch: &RectangleBatch, x: f32, y: f32) -> Option<SceneColor> {
-    batch
-        .bytes
-        .chunks_exact(3 * VERTEX_SIZE as usize)
-        .find_map(|triangle| {
-            let value = |vertex: usize, component: usize| {
-                let offset = vertex * VERTEX_SIZE as usize + component * 4;
-                f32::from_ne_bytes(triangle[offset..offset + 4].try_into().unwrap())
-            };
-            let points = [0, 1, 2].map(|v| {
-                (
-                    (value(v, 0) + 1.0) * batch.width as f32 / 2.0,
-                    (1.0 - value(v, 1)) * batch.height as f32 / 2.0,
-                )
-            });
-            let cross = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
-                (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
-            };
-            let signs = [
-                cross(points[0], points[1], (x, y)),
-                cross(points[1], points[2], (x, y)),
-                cross(points[2], points[0], (x, y)),
-            ];
-            (cross(points[0], points[1], points[2]).abs() > 0.0001
-                && (signs.iter().all(|v| *v >= 0.0) || signs.iter().all(|v| *v <= 0.0)))
-            .then(|| {
-                assert_eq!(value(0, 5), 1.0, "explicit backgrounds stay opaque");
-                SceneColor {
-                    r: (value(0, 2) * 255.0).round() as u8,
-                    g: (value(0, 3) * 255.0).round() as u8,
-                    b: (value(0, 4) * 255.0).round() as u8,
-                }
-            })
+    triangle_chunks(&batch.bytes).iter().find_map(|triangle| {
+        let value = |vertex: usize, component: usize| {
+            let offset = vertex * VERTEX_SIZE as usize + component * 4;
+            f32::from_ne_bytes(triangle[offset..offset + 4].try_into().unwrap())
+        };
+        let points = [0, 1, 2].map(|v| {
+            (
+                (value(v, 0) + 1.0) * batch.width as f32 / 2.0,
+                (1.0 - value(v, 1)) * batch.height as f32 / 2.0,
+            )
+        });
+        let cross = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
+            (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+        };
+        let signs = [
+            cross(points[0], points[1], (x, y)),
+            cross(points[1], points[2], (x, y)),
+            cross(points[2], points[0], (x, y)),
+        ];
+        (cross(points[0], points[1], points[2]).abs() > 0.0001
+            && (signs.iter().all(|v| *v >= 0.0) || signs.iter().all(|v| *v <= 0.0)))
+        .then(|| {
+            assert_eq!(value(0, 5), 1.0, "explicit backgrounds stay opaque");
+            SceneColor {
+                r: (value(0, 2) * 255.0).round() as u8,
+                g: (value(0, 3) * 255.0).round() as u8,
+                b: (value(0, 4) * 255.0).round() as u8,
+            }
         })
+    })
 }
 
 fn clipping_test_fonts() -> FontSetup {

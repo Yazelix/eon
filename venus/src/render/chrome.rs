@@ -3847,10 +3847,9 @@ mod tests {
         if let Some((dot, color)) = dot {
             expected.push_rounded(dot, tokens::capsule_radius(dot.height), color);
         }
-        let actual: Vec<u8> = rectangles
-            .bytes
-            .chunks_exact(72)
-            .filter(|triangle| triangle.chunks_exact(24).all(within))
+        let actual: Vec<u8> = triangle_chunks(&rectangles.bytes)
+            .iter()
+            .filter(|triangle| vertex_chunks(*triangle).iter().all(|v| within(v)))
             .flatten()
             .copied()
             .collect();
@@ -4510,9 +4509,9 @@ mod tests {
                     );
                     assert_eq!(actual.bytes, expected.bytes);
                     assert!(!actual.bytes.is_empty());
-                    for rectangle in actual.bytes.chunks_exact(144) {
-                        let coordinates: Vec<_> = rectangle
-                            .chunks_exact(24)
+                    for rectangle in quad_chunks(&actual.bytes) {
+                        let coordinates: Vec<_> = vertex_chunks(rectangle)
+                            .iter()
                             .map(|vertex| {
                                 let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0)
                                     * 800.0;
@@ -4532,7 +4531,7 @@ mod tests {
                             "no meter or fill across the capsule interior"
                         );
                     }
-                    for vertex in actual.bytes.chunks_exact(24) {
+                    for vertex in vertex_chunks(&actual.bytes) {
                         assert_eq!(vertex_color(vertex), color);
                         let value = |at| f32::from_ne_bytes(vertex[at..at + 4].try_into().unwrap());
                         let x = (value(0) + 1.0) * 800.0;
@@ -4550,34 +4549,37 @@ mod tests {
     #[test]
     fn bar_dots_follow_text_ink_and_only_critical_outlines_light_up() {
         fn paint_at(batch: &RectangleBatch, point: (f32, f32)) -> Option<SceneColor> {
-            batch.bytes.chunks_exact(72).rev().find_map(|triangle| {
-                let vertices: Vec<_> = triangle
-                    .chunks_exact(24)
-                    .map(|v| {
-                        (
-                            (f32::from_ne_bytes(v[..4].try_into().unwrap()) + 1.0)
-                                * batch.width as f32
-                                / 2.0,
-                            (1.0 - f32::from_ne_bytes(v[4..8].try_into().unwrap()))
-                                * batch.height as f32
-                                / 2.0,
-                        )
-                    })
-                    .collect();
-                let cross = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
-                    (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
-                };
-                if cross(vertices[0], vertices[1], vertices[2]).abs() < 0.0001 {
-                    return None;
-                }
-                let sides = [
-                    cross(vertices[0], vertices[1], point),
-                    cross(vertices[1], vertices[2], point),
-                    cross(vertices[2], vertices[0], point),
-                ];
-                (sides.iter().all(|s| *s >= 0.0) || sides.iter().all(|s| *s <= 0.0))
-                    .then(|| vertex_color(&triangle[..24]))
-            })
+            triangle_chunks(&batch.bytes)
+                .iter()
+                .rev()
+                .find_map(|triangle| {
+                    let vertices: Vec<_> = vertex_chunks(triangle)
+                        .iter()
+                        .map(|v| {
+                            (
+                                (f32::from_ne_bytes(v[..4].try_into().unwrap()) + 1.0)
+                                    * batch.width as f32
+                                    / 2.0,
+                                (1.0 - f32::from_ne_bytes(v[4..8].try_into().unwrap()))
+                                    * batch.height as f32
+                                    / 2.0,
+                            )
+                        })
+                        .collect();
+                    let cross = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
+                        (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+                    };
+                    if cross(vertices[0], vertices[1], vertices[2]).abs() < 0.0001 {
+                        return None;
+                    }
+                    let sides = [
+                        cross(vertices[0], vertices[1], point),
+                        cross(vertices[1], vertices[2], point),
+                        cross(vertices[2], vertices[0], point),
+                    ];
+                    (sides.iter().all(|s| *s >= 0.0) || sides.iter().all(|s| *s <= 0.0))
+                        .then(|| vertex_color(&triangle[..24]))
+                })
         }
         use eon_workspace_protocol::v49::{CodexQuota, CodexQuotaState, QuotaWindow};
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
@@ -5023,20 +5025,13 @@ mod tests {
             );
             assert_eq!(widget.bytes, tab.bytes, "scale {scale}");
             // A filled capsule includes an opaque interior, unlike the old outline.
-            assert!(
-                widget
-                    .bytes
-                    .chunks_exact(VERTEX_SIZE as usize)
-                    .any(|vertex| {
-                        let value = |component: usize| {
-                            f32::from_ne_bytes(
-                                vertex[component * 4..component * 4 + 4].try_into().unwrap(),
-                            )
-                        };
-                        (value(1) - (1.0 - (visual.top + visual.height / 2.0) / 64.0)).abs() < 0.1
-                            && value(5) == 1.0
-                    })
-            );
+            assert!(vertex_chunks(&widget.bytes).iter().any(|vertex| {
+                let value = |component: usize| {
+                    f32::from_ne_bytes(vertex[component * 4..component * 4 + 4].try_into().unwrap())
+                };
+                (value(1) - (1.0 - (visual.top + visual.height / 2.0) / 64.0)).abs() < 0.1
+                    && value(5) == 1.0
+            }));
         }
     }
 
@@ -5117,7 +5112,7 @@ mod tests {
                 ] {
                     let surface = bytes(draw, state);
                     let expected = [fill.r, fill.g, fill.b].map(|v| f32::from(v) / 255.0);
-                    let last = surface.chunks_exact(VERTEX_SIZE as usize).last().unwrap();
+                    let last = vertex_chunks(&surface).last().unwrap();
                     for (i, value) in expected.into_iter().enumerate() {
                         let offset = (i + 2) * 4;
                         assert_eq!(
@@ -5215,8 +5210,10 @@ mod tests {
                 );
                 rectangles
                     .bytes
-                    .chunks_exact(4)
-                    .map(|value| f32::from_ne_bytes(value.try_into().unwrap()))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&value| f32::from_ne_bytes(value))
                     .collect::<Vec<_>>()
             };
             assert!(badge_inside(badge, viewport));
@@ -5228,7 +5225,12 @@ mod tests {
                 assert_eq!(turned, glyph(phase, viewport));
                 assert_eq!(turned.len(), first.len());
                 // Each vertex is x, y, r, g, b, alpha: only alpha changes.
-                for (vertex, first) in turned.chunks_exact(6).zip(first.chunks_exact(6)) {
+                for (vertex, first) in turned
+                    .as_chunks::<6>()
+                    .0
+                    .iter()
+                    .zip(first.as_chunks::<6>().0)
+                {
                     assert_eq!(vertex[..5], first[..5]);
                 }
                 if size < 6.0 {
@@ -5237,7 +5239,9 @@ mod tests {
                 // Six dots of six vertices each; a lit dot's column and row name its braille dot.
                 // Vertices are in clip space, whose y points up.
                 let dots = turned
-                    .chunks_exact(36)
+                    .as_chunks::<36>()
+                    .0
+                    .iter()
                     .map(|dot| (dot[0], -dot[1], dot[5]))
                     .collect::<Vec<_>>();
                 assert_eq!(dots.len(), 6);
@@ -5285,7 +5289,7 @@ mod tests {
         let side = size as usize;
         let mut rows = vec![vec![' '; side]; side];
         // Each dot is one quad of six vertices of x, y, r, g, b, alpha, in clip space.
-        for dot in rectangles.bytes.chunks_exact(24 * 6) {
+        for dot in quad_chunks(&rectangles.bytes) {
             let value = |at: usize| f32::from_ne_bytes(dot[at..at + 4].try_into().unwrap());
             let xs = [0, 24, 48].map(|at| (value(at) + 1.0) * 400.0);
             let ys = [4, 28, 52].map(|at| (1.0 - value(at)) * 300.0);
@@ -5404,13 +5408,13 @@ mod tests {
         for phase in 0..30 {
             let current = draw(Some(phase));
             assert_eq!(current.len(), first.len());
-            for (current, first) in current.chunks_exact(24).zip(first.chunks_exact(24)) {
+            for (current, first) in vertex_chunks(&current).iter().zip(vertex_chunks(&first)) {
                 assert_eq!(current[..20], first[..20], "ticks change alpha only");
             }
         }
         let peaks = |bytes: &[u8]| {
             let mut peaks = [0.0_f32; 3];
-            for quad in bytes.chunks_exact(24 * 6) {
+            for quad in quad_chunks(bytes) {
                 let x = (f32::from_ne_bytes(quad[..4].try_into().unwrap()) + 1.0) * 400.0;
                 let dot =
                     (((x - badge.rect.left) / badge.rect.width * 3.0).floor() as usize).min(2);
@@ -5453,7 +5457,7 @@ mod tests {
                         push_badge_glyph(&mut batch, badge, None, DEFAULT_FOCUS, outline, true);
                         let opacity = if dimmed { 0.45 } else { 1.0 };
                         assert!(
-                            batch.bytes.chunks_exact(24).any(|v| {
+                            vertex_chunks(&batch.bytes).iter().any(|v| {
                                 let alpha = f32::from_ne_bytes(v[20..24].try_into().unwrap());
                                 alpha > 0.0 && alpha < opacity
                             }),
@@ -5468,10 +5472,10 @@ mod tests {
                             "{state:?} size={size} outline={outline:?}: {} vertices",
                             batch.bytes.len() / 24
                         );
-                        for quad in batch.bytes.chunks_exact(24 * 6) {
+                        for quad in quad_chunks(&batch.bytes) {
                             let mut xs = Vec::new();
                             let mut ys = Vec::new();
-                            for vertex in quad.chunks_exact(24) {
+                            for vertex in vertex_chunks(quad) {
                                 let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0)
                                     * 400.0;
                                 let y = (1.0
@@ -5555,14 +5559,15 @@ mod tests {
                         );
                         assert_eq!(tick.bytes.len(), slot.length);
                         let original = &batch.bytes[slot.offset..slot.offset + slot.length];
-                        for (first, current) in
-                            original.chunks_exact(24).zip(tick.bytes.chunks_exact(24))
+                        for (first, current) in vertex_chunks(original)
+                            .iter()
+                            .zip(vertex_chunks(&tick.bytes))
                         {
                             assert_eq!(first[..20], current[..20]);
                         }
                         if slot.badge.state == AttentionState::Background {
                             assert!(
-                                tick.bytes.chunks_exact(24).any(|v| {
+                                vertex_chunks(&tick.bytes).iter().any(|v| {
                                     let alpha = f32::from_ne_bytes(v[20..24].try_into().unwrap());
                                     alpha > 0.0 && alpha < 0.45 * tokens::BACKGROUND_PULSE_MIN_ALPHA
                                 }),
@@ -5618,7 +5623,7 @@ mod tests {
                     let mut batch = RectangleBatch::new(800, 600);
                     push_badge_glyph(&mut batch, badge, None, DEFAULT_FOCUS, outline, true);
                     let mut coverage = vec![vec![0.0_f32; size as usize]; size as usize];
-                    for quad in batch.bytes.chunks_exact(24 * 6) {
+                    for quad in quad_chunks(&batch.bytes) {
                         let value = |at| f32::from_ne_bytes(quad[at..at + 4].try_into().unwrap());
                         let left = (((value(0) + 1.0) * 400.0 - badge.rect.left).round()) as usize;
                         let right =
@@ -6077,8 +6082,8 @@ mod tests {
                                     batch.bytes, expected.bytes,
                                     "scale={scale}, {background:?}, {focus:?}, {state:?}, current={current}, focused={focused}, hovered={hovered}, opacity={opacity}"
                                 );
-                                for vertex in batch.bytes[outline_start..outline_end]
-                                    .chunks_exact(VERTEX_SIZE as usize)
+                                for vertex in
+                                    vertex_chunks(&batch.bytes[outline_start..outline_end])
                                 {
                                     let ndc = [0, 1].map(|i| {
                                         f32::from_ne_bytes(
@@ -6107,7 +6112,7 @@ mod tests {
                                         card_surfaces(color, opacity, srgb)
                                     }
                                 };
-                                for vertex in badge.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                                for vertex in vertex_chunks(&badge.bytes) {
                                     let color = vertex_color(vertex);
                                     for under in surfaces {
                                         assert!(
@@ -6183,9 +6188,8 @@ mod tests {
                 let stroke = full_stroke.min(((side - 1.0) / 2.0).floor());
                 let mut batch = RectangleBatch::new(2048, 2048);
                 push_popup_marker(&mut batch, marker, full_stroke, color);
-                let ink = batch
-                    .bytes
-                    .chunks_exact(VERTEX_SIZE as usize * 6)
+                let ink = quad_chunks(&batch.bytes)
+                    .iter()
                     .map(|quad| {
                         let value = |vertex: usize, component: usize| {
                             let offset = vertex * VERTEX_SIZE as usize + component * 4;
@@ -6266,7 +6270,7 @@ mod tests {
                 ] {
                     assert!(coverage(x, y) < 1.0, "square corner remains");
                 }
-                for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                for vertex in vertex_chunks(&batch.bytes) {
                     for (component, channel) in [color.r, color.g, color.b].into_iter().enumerate()
                     {
                         let offset = (component + 2) * 4;
@@ -6369,7 +6373,7 @@ mod tests {
                             );
                             assert!(!actual.bytes.is_empty());
                             let alpha = if dimmed { 0.45 } else { 1.0 };
-                            for vertex in actual.bytes.chunks_exact(24) {
+                            for vertex in vertex_chunks(&actual.bytes) {
                                 let color = vertex_color(vertex);
                                 let value = f32::from_ne_bytes(vertex[20..24].try_into().unwrap());
                                 assert!((0.0..=alpha).contains(&value));
@@ -6530,19 +6534,18 @@ mod tests {
                     slot.row,
                 );
                 assert_eq!(turned.bytes.len(), batch.bytes.len());
-                for (first, turned) in batch
-                    .bytes
-                    .chunks_exact(24)
-                    .zip(turned.bytes.chunks_exact(24))
+                for (first, turned) in vertex_chunks(&batch.bytes)
+                    .iter()
+                    .zip(vertex_chunks(&turned.bytes))
                 {
                     assert_eq!(first[..20], turned[..20], "ticks only change dot alpha");
                 }
-                for (index, dot) in turned.bytes.chunks_exact(24 * 6).enumerate() {
+                for (index, dot) in quad_chunks(&turned.bytes).iter().enumerate() {
                     if f32::from_ne_bytes(dot[20..24].try_into().unwrap()) == 0.0 {
                         continue;
                     }
                     visited[index] = true;
-                    for vertex in dot.chunks_exact(24) {
+                    for vertex in vertex_chunks(dot) {
                         let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 400.0;
                         let y =
                             (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap())) * 300.0;
@@ -6687,9 +6690,8 @@ mod tests {
                         batch.bytes, unclipped.bytes,
                         "the contour must fit before clipping"
                     );
-                    let rects = batch
-                        .bytes
-                        .chunks_exact(24 * 6)
+                    let rects = quad_chunks(&batch.bytes)
+                        .iter()
                         .map(|quad| {
                             let value = |i| f32::from_ne_bytes(quad[i..i + 4].try_into().unwrap());
                             let x = |i| (value(i) + 1.0) * 400.0;
@@ -6761,9 +6763,8 @@ mod tests {
                         }
                     }
                     if state == AttentionState::Working {
-                        let geometry = batch
-                            .bytes
-                            .chunks_exact(24)
+                        let geometry = vertex_chunks(&batch.bytes)
+                            .iter()
                             .map(|v| v[..20].to_vec())
                             .collect::<Vec<_>>();
                         if let Some(first) = &first {
@@ -6772,7 +6773,7 @@ mod tests {
                             first = Some(geometry);
                         }
                         // The six dot cores and contours always leave a strictly positive gap.
-                        let dots = rects.chunks_exact(5).collect::<Vec<_>>();
+                        let dots = rects.as_chunks::<5>().0;
                         assert_eq!(dots.len(), 6);
                         if size >= 12.0 {
                             assert!(
@@ -6898,7 +6899,7 @@ mod tests {
                         Backing::BarPill(fill),
                         &mut rectangles,
                     );
-                    for vertex in rectangles.bytes.chunks_exact(24) {
+                    for vertex in vertex_chunks(&rectangles.bytes) {
                         let color = vertex_color(vertex);
                         for surface in [fill, palette::DARK.bar_background] {
                             assert!(
@@ -6982,7 +6983,7 @@ mod tests {
             for side in [22, 33, 44, 256] {
                 let source = product_mark_raster(id, side, side).unwrap();
                 assert_eq!(source.len(), usize::from(side).pow(2) * 4);
-                for (index, pixel) in source.chunks_exact(4).enumerate() {
+                for (index, pixel) in source.as_chunks::<4>().0.iter().enumerate() {
                     assert!(
                         pixel[..3].iter().all(|channel| *channel <= pixel[3]),
                         "mark {id}, {side}px source, pixel {index} must be premultiplied: {pixel:?}"
@@ -7024,32 +7025,38 @@ mod tests {
                 assert!(
                     image
                         .data
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .any(|p| p[3] == 255 && p[..3] == [ink; 3])
                 );
                 assert!(
                     image
                         .data
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .all(|p| p[0] == p[1] && p[1] == p[2])
                 );
             } else {
                 assert!(
                     image
                         .data
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .any(|pixel| { pixel[3] > 200 && pixel[0].abs_diff(pixel[2]) > 30 }),
                     "the product's colour survives instead of a tinted silhouette"
                 );
                 if id == ANTIGRAVITY_MARK_ID {
                     assert!(
-                        image.data.chunks_exact(4).any(|pixel| {
+                        image.data.as_chunks::<4>().0.iter().any(|pixel| {
                             pixel[3] > 200 && pixel[0] > pixel[2].saturating_add(30)
                         }),
                         "Antigravity keeps its warm apex colours at {size}px"
                     );
                     assert!(
-                        image.data.chunks_exact(4).any(|pixel| {
+                        image.data.as_chunks::<4>().0.iter().any(|pixel| {
                             pixel[3] > 200 && pixel[2] > pixel[0].saturating_add(30)
                         }),
                         "Antigravity keeps its cool blue base colours at {size}px"
@@ -7080,8 +7087,10 @@ mod tests {
                 assert!(
                     image
                         .data
-                        .chunks_exact(4)
-                        .zip(source.chunks_exact(4))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(source.as_chunks::<4>().0)
                         .all(|(drawn, original)| drawn[3] == original[3])
                 );
                 if id == CODEX_SYMBOL_ID {
@@ -7381,17 +7390,15 @@ mod tests {
         let mut expected = RectangleBatch::new(batch.width, batch.height);
         push_badge_glyph(&mut expected, badge, phase, DEFAULT_FOCUS, None, row);
         let mut peaks = [0.0_f32; 3];
-        for quad in expected.bytes.chunks_exact(24 * 6) {
-            let actual = batch
-                .bytes
-                .chunks_exact(24 * 6)
+        for quad in quad_chunks(&expected.bytes) {
+            let actual = quad_chunks(&batch.bytes)
+                .iter()
                 .find(|actual| {
-                    actual
-                        .chunks_exact(24)
-                        .zip(quad.chunks_exact(24))
-                        .all(|(actual, expected)| {
+                    vertex_chunks(*actual).iter().zip(vertex_chunks(quad)).all(
+                        |(actual, expected)| {
                             actual[..8] == expected[..8] && actual[20..24] == expected[20..24]
-                        })
+                        },
+                    )
                 })
                 .expect("production caller emits the badge geometry and phase alpha");
             if badge.state == AttentionState::Background {
@@ -7497,7 +7504,7 @@ mod tests {
                     assert_eq!(slot.badge.state, AttentionState::Background);
                     let bytes = &batch.bytes[slot.offset..slot.offset + slot.length];
                     assert!(
-                        bytes.chunks_exact(24).any(|v| {
+                        vertex_chunks(bytes).iter().any(|v| {
                             let alpha = f32::from_ne_bytes(v[20..24].try_into().unwrap());
                             alpha > 0.0 && alpha < tokens::BACKGROUND_PULSE_MIN_ALPHA
                         }),
@@ -8915,7 +8922,7 @@ mod tests {
             }
             grey_text(&renderer.text);
             let mut neutral_thumb = false;
-            for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
+            for vertex in vertex_chunks(&batch.bytes) {
                 let rgb = [2, 3, 4].map(|i| {
                     (f32::from_ne_bytes(vertex[i * 4..i * 4 + 4].try_into().unwrap()) * 255.0)
                         .round() as u8
@@ -9221,9 +9228,8 @@ mod tests {
                         );
                     }
                     let colors_at = |x: f32, y: f32| {
-                        batch
-                            .bytes
-                            .chunks_exact(144)
+                        quad_chunks(&batch.bytes)
+                            .iter()
                             .filter_map(|quad| {
                                 let value = |vertex: usize, component: usize| {
                                     let offset = vertex * 24 + component * 4;
@@ -9554,7 +9560,7 @@ mod tests {
                         }
                         let x = text.left + line.line_w / 2.0;
                         assert!(
-                            !batch.bytes.chunks_exact(144).any(|quad| {
+                            !quad_chunks(&batch.bytes).iter().any(|quad| {
                                 let value = |vertex: usize, component: usize| {
                                     let offset = vertex * 24 + component * 4;
                                     f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())

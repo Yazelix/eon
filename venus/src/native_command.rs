@@ -65,7 +65,7 @@ fn decode(
                 return Err(invalid());
             }
             let mut bytes = Vec::new();
-            for pair in hex.chunks_exact(2) {
+            for pair in hex.as_chunks::<2>().0 {
                 let nibble = |byte| match byte {
                     b'0'..=b'9' => Some(byte - b'0'),
                     b'a'..=b'f' => Some(byte - b'a' + 10),

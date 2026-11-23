@@ -405,7 +405,9 @@ fn write_rgba_rows(
             PixelFormat::Rgba => target.write_iter(source.iter().copied()),
             PixelFormat::Rgb => target.write_iter(
                 source
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], u8::MAX]),
             ),
         }
@@ -1034,7 +1036,9 @@ mod tests {
     fn image_vertices(batch: &RectangleBatch) -> Vec<[f32; 4]> {
         batch
             .image_bytes
-            .chunks_exact(IMAGE_VERTEX_SIZE as usize)
+            .as_chunks::<{ IMAGE_VERTEX_SIZE as usize }>()
+            .0
+            .iter()
             .map(|vertex| {
                 let value = |index: usize| {
                     f32::from_ne_bytes(vertex[index * 4..index * 4 + 4].try_into().unwrap())
@@ -1260,7 +1264,9 @@ mod tests {
                 assert!((u - expected_u).abs() < 1e-4 && (v - expected_v).abs() < 1e-4);
             }
             let pieces = vertices
-                .chunks_exact(6)
+                .as_chunks::<6>()
+                .0
+                .iter()
                 .map(|piece| SceneRect {
                     left: piece[0][0],
                     top: piece[0][1],

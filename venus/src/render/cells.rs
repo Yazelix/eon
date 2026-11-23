@@ -948,7 +948,9 @@ pub(super) mod tests {
                 foreground: SceneColor::default(),
                 cursor: None,
                 content: colors
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|row| DrawRow {
                         wrapped: false,
                         wrap_continuation: false,

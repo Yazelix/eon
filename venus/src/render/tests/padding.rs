@@ -292,7 +292,7 @@ fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
                         bounds: outline.bounds,
                         radius: outline.radius,
                     });
-                    for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                    for vertex in vertex_chunks(&batch.bytes) {
                         let x = (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 200.0;
                         let y =
                             (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap())) * 150.0;

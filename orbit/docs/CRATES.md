@@ -17,7 +17,7 @@ dependency gate, and Beads retain the full candidate evidence.
 - **Selected shape:** `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from upstream
   `Uzaaft/libghostty-rs` master at `9b598d6528c08c013407052767bb2e885ba869ba`, building
   pinned Ghostty vt-1.0.0 `0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec` with Zig 0.17
-  and Rust 1.96.1
+  and Rust 1.100.0
 - **Status:** Selected for the experiment
 - **Credible alternatives:** Formatter reconstruction with the same crate; waiting for a
   crates.io release that builds Ghostty `8c425a7bd`; replacement by `rio-vt`.

@@ -460,7 +460,7 @@ dependency decision does not establish public-distribution proof.
   dependency. It is locked but built for no Eon target.
 - **Rust version:** the highest declared `rust-version` among the added
   packages is 1.88 (the parley family and `image 0.25.10`). Rune declares
-  none. The workspace builds the enabled graph with Rust 1.96.1: Venus
+  none. The workspace builds the enabled graph with Rust 1.100.0: Venus
   clippy and tests with `candidate-rune`. The fork's own locked builds and
   overlay tests use its pinned Rust 1.99.1. The fork's native Apple Silicon
   qualification used the same toolchain with defaults off and accessibility

@@ -1343,7 +1343,9 @@ mod host {
             let ticks = unsafe { std::slice::from_raw_parts(info, count as usize) };
             Some(
                 ticks
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|ticks| {
                         [
                             ticks[0] as u32,

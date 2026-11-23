@@ -12,7 +12,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     crane.url = "github:ipetkov/crane/79fd63528501446749c09f08cad486a58c7d173e";
     rust-overlay = {
-      url = "github:oxalica/rust-overlay/fe5aee0952e8e1525533d61defd9e36513db811b";
+      url = "github:oxalica/rust-overlay/52db20539ec0ba063479d66092992d9efcf456ff";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     anima = {
@@ -77,7 +77,7 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
-          rustToolchain = pkgs.rust-bin.stable."1.96.1".default;
+          rustToolchain = pkgs.rust-bin.stable."1.100.0".default;
           darwinRustTarget = "aarch64-apple-darwin";
           devRustToolchain =
             if system == "x86_64-linux" then
@@ -445,7 +445,15 @@
             # buildRustPackage installs every top-level executable, including cached dummies.
             preInstall = ''
               find target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/release -maxdepth 1 -type f -executable -delete
-              rm -rf target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/release/build/libghostty-vt-sys-*/out/{zig-cache,zig-global-cache}
+              (
+                shopt -s nullglob
+                zigCaches=(target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/release/build/libghostty-vt-sys/*/out/{zig-cache,zig-global-cache})
+                (( ''${#zigCaches[@]} > 0 )) || {
+                  echo "error: expected libghostty-vt-sys Zig cache directories under target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/release/build/libghostty-vt-sys/*/out/" >&2
+                  exit 1
+                }
+                rm -rf -- "''${zigCaches[@]}"
+              )
             '';
             strictDeps = true;
             doIncludeCrossToolchainEnv = false;
@@ -486,7 +494,7 @@
             '';
           });
           cargoArtifactInputs = [ inheritCargoArtifactsHook pkgs.rsync pkgs.zstd ];
-          # Snapshot only installable files before tests; deps/build trees are never installed.
+          # Snapshot only installable files before tests; build trees are never installed.
           cargoInstallHook = rustPlatform.cargoInstallHook.overrideAttrs (old: {
             buildCommand = old.buildCommand + ''
               substituteInPlace "$out/nix-support/setup-hook" \
@@ -558,8 +566,8 @@
               dontUseZigCheck = true;
               dontUseZigInstall = true;
               postInstall = ''
-                mapfile -t workers < <(find target -type f -path '*/release/build/*/out/yazelix-orbit-worker')
-                mapfile -t realPty < <(find target -type f -path '*/release/deps/real_pty-*' -perm -u+x)
+                mapfile -t workers < <(find target -type f -path '*/release/build/yazelix-orbit/*/out/yazelix-orbit-worker')
+                mapfile -t realPty < <(find target -type f -path '*/release/build/yazelix-orbit/*/out/real_pty-*' -perm -u+x)
                 test ''${#workers[@]} = 1
                 test ''${#realPty[@]} = 1
                 install -Dm755 "''${workers[0]}" "$out/libexec/yazelix-orbit/yazelix-orbit-worker"

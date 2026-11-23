@@ -53,7 +53,7 @@ impl LaunchFacts {
             return Err(invalid());
         }
         let mut operations = Vec::<Operation>::new();
-        for fields in tokens[3..].chunks_exact(3) {
+        for fields in tokens[3..].as_chunks::<3>().0 {
             let name = fields[1];
             if name.is_empty()
                 || !(name[0].is_ascii_alphabetic() || name[0] == b'_')

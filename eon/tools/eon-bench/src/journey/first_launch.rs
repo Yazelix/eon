@@ -234,12 +234,14 @@ fn picker_pixels(picture: &Picture) -> Result<(bool, Value)> {
         let (background, _) = dominant_color(&pixels)?;
         rows.push(
             pixels
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .filter(|pixel| {
                     pixel
                         .iter()
                         .zip(background)
-                        .any(|(&channel, &bg)| channel.abs_diff(bg) >= 128)
+                        .any(|(&channel, bg)| channel.abs_diff(bg) >= 128)
                 })
                 .count(),
         );
@@ -264,7 +266,9 @@ fn pane_pixels(picture: &Picture) -> Result<(bool, Value)> {
     let inset = PANE_INSET;
     let pixels = picture.crop(inset)?;
     let marker = pixels
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .filter(|pixel| pixel[0] >= 160 && pixel[1] <= 96 && pixel[2] >= 160)
         .count();
     let total = pixels.len() / 3;
@@ -288,9 +292,9 @@ fn pane_pixels(picture: &Picture) -> Result<(bool, Value)> {
     ))
 }
 
-fn dominant_color(pixels: &[u8]) -> Result<(&[u8], usize)> {
+fn dominant_color(pixels: &[u8]) -> Result<([u8; 3], usize)> {
     let mut histogram = HashMap::new();
-    for pixel in pixels.chunks_exact(3) {
+    for &pixel in pixels.as_chunks::<3>().0 {
         *histogram.entry(pixel).or_insert(0usize) += 1;
     }
     histogram
@@ -319,10 +323,11 @@ mod tests {
         let colors = [[0, 96, 255], [0, 0, 0], [230, 235, 240]];
         for (index, (row, color)) in PICKER_ROWS.iter().zip(colors).enumerate() {
             let start = (row.y * 1280 + row.x) as usize * 3;
-            for pixel in
-                picture.pixels[start..start + (PICKER_FOREGROUND_FLOOR + 1) * 3].chunks_exact_mut(3)
+            for pixel in picture.pixels[start..start + (PICKER_FOREGROUND_FLOOR + 1) * 3]
+                .as_chunks_mut::<3>()
+                .0
             {
-                pixel.copy_from_slice(&color);
+                *pixel = color;
             }
             assert_eq!(picker_pixels(&picture).unwrap().0, index == 2);
         }

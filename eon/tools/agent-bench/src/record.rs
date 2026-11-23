@@ -66,23 +66,33 @@ macro_rules! checked_string {
 
 checked_string!(
     /// A SHA-256 digest: 64 lowercase hex digits.
-    Digest, |t| t.len() == 64 && is_lower_hex(t), "a SHA-256 hex digest"
+    Digest,
+    |t| t.len() == 64 && is_lower_hex(t),
+    "a SHA-256 hex digest"
 );
 checked_string!(
     /// A git object id: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits.
-    Commit, |t| (t.len() == 40 || t.len() == 64) && is_lower_hex(t), "a git commit id"
+    Commit,
+    |t| (t.len() == 40 || t.len() == 64) && is_lower_hex(t),
+    "a git commit id"
 );
 checked_string!(
     /// Non-empty text with no surrounding whitespace.
-    Text, |t| !t.is_empty() && t.trim() == t, "non-empty text without surrounding whitespace"
+    Text,
+    |t| !t.is_empty() && t.trim() == t,
+    "non-empty text without surrounding whitespace"
 );
 checked_string!(
     /// A UTC timestamp, `YYYY-MM-DDTHH:MM:SSZ`.
-    Utc, time::is_utc, "a YYYY-MM-DDTHH:MM:SSZ timestamp"
+    Utc,
+    time::is_utc,
+    "a YYYY-MM-DDTHH:MM:SSZ timestamp"
 );
 checked_string!(
     /// A semantic version: `MAJOR.MINOR.PATCH` with an optional `-pre` and `+build`.
-    Semver, is_semver, "a semantic version"
+    Semver,
+    is_semver,
+    "a semantic version"
 );
 
 fn is_semver(text: &str) -> bool {

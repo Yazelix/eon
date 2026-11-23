@@ -54,6 +54,56 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Rust 1.100.0 upgrade (eon-tfrjz)
+
+For `eon-tfrjz` over `3028262e` (Rust `1.96.1` → `1.100.0`), all eleven
+exception producers (`eon`, `orbit`, `venus`, `installer`, `anima`, `nushell`,
+`starship`, `zoxide`, `atuin`, `helix`, and `yazi`) change only through
+`context.toolchain.rust` in `nix/notices/inputs.nix`, which moved from
+`/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` to
+`/nix/store/10l4vk1qkvhqzp6xwh6gjbh1b1320w7n-rust-default-1.100.0`. No
+`Cargo.lock` stanza, registry/git package, version, checksum, runtime package,
+native package/feature, or `cargo-auditable` dependency set changes. `eon`,
+`orbit`, and `venus` were rebuilt with Rust 1.100.0 (with `candidate-rune`
+disabled and zero unselected exception compile lines in their build logs); the
+eight non-workspace producers keep byte-identical binaries. Replacing
+`context.toolchain.rust` in each producer's canonical `graph.json` with the
+1.96.1 toolchain store path reproduces every accepted `3028262e` `graph_sha256`
+byte for byte: `3fbd74f7` → `719abf85` for Eon, `3865499b` → `5d34d02c` for
+Orbit, `d2b3ae73` → `aea9642c` for Venus, `064b1b27` → `361bb0c5` for
+Installer, `e4d8399c` → `9981c2ea` for Anima, `ec9549bf` → `8133b268` for
+Nushell, `de4e1b4f` → `51b7eca0` for Starship, `6bd0bb81` → `6759fae7` for
+Zoxide, `9e08c1fc` → `0a9bbc55` for Atuin, `6d9874a0` → `2232f301` for Helix,
+and `eda2a809` → `cb7a1427` for Yazi. For all twelve Cargo reports (including
+`launcher`), `runtime-crates.txt`, `native-packages.txt`, `Cargo.lock`, and the
+1.96.1-restored `graph.json` match the `3028262e` base (`eon-yp6vg.65`)
+observations byte for byte. Every host-only and unselected classification
+therefore carries over unchanged (Eon 9/2, Orbit 6/1, Venus 15/4).
+
+Independent `inspect-audit` replays against the actual binaries reproduce every
+saved `graph.json` byte for byte (all twelve Cargo reports, including
+`launcher`). `prove-audit-omission` on Zoxide's observation accepts the
+retained root under the root-only baseline and rejects omitted `anyhow 1.0.98`
+with both the landed `3028262e` and renewed exception data. The strict
+`propose-audit-renewal` proposal changes only the twenty-four `graph_sha256`
+fingerprints across the eleven producers, and parsed, it equals the checked-in
+file. The new contexts:
+
+- Eon: `3fbd74f79d03931a7624eb62383b3a2ac7ecc206d29adf4e5bfba9a4056f7dc9`.
+- Orbit: `3865499b6087726fd01c4c1d4d397ec85ae751d03a1428d34786eb388fd8884b`.
+- Venus: `d2b3ae735959fe5f29c94b9a8d5712cdf1b83d6b1c29589686d4672bb349c3d1`.
+- Installer: `064b1b27e0f2fde37411911c6c63d940f77b2a21d145a99fb13601aa8de29c95`.
+- Anima: `e4d8399c97de0767c6a479479e1511f5bc4fc0568312f166c588bb830ce36387`.
+- Nushell: `ec9549bf5630de2d91f591752fe60d96b8c90cd09dc25d6d6fda6c0f4e489ff3`.
+- Starship: `de4e1b4fd3b4ae7c57208138f769bc1a553f8df1f96ec0fd689b2d713506de93`.
+- Zoxide: `6bd0bb81256705d6fcbee6af33d7daea9edf44de625c9aae3b94820ebb856ce3`.
+- Atuin: `9e08c1fc8120a85b37396429ff3122b36177d52af9bfe3c8c090c3c04027406d`.
+- Helix: `6d9874a0e927acd202e5a7aade68d70b5cd952f7ad4e3b94683782b275f3c474`.
+- Yazi: `eda2a8090d45061da82295aacd41b0a72b344f70bf42bb19bb38de92c05ae4b4`.
+- Vendor at `/nix/store/dm83ykc5wadridaajbfq5nfkqx6ak914-cargo-vendor-dir`.
+- Base input (`eon-yp6vg.65`) at `/nix/store/bh87dwl4zkm34kkrnfbj56j5xr0cvgxl-eon-archive-notice-input.json`.
+- Proposal input at `/nix/store/nh4mxdga98ja0b2bxfkldyj21pbkwiri-eon-archive-notice-input.json` (before renewal).
+
 ### Wayland precision scroll pin (eon-yp6vg.65)
 
 From Eon `03e7f81a`, the `dpi` and `winit` source records move
@@ -475,6 +525,20 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`3fbd74f79d03931a7624eb62383b3a2ac7ecc206d29adf4e5bfba9a4056f7dc9`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`719abf85…` byte for byte.
+
+- Source at `/nix/store/qw9wq0f9f4ilkfjfsp4xcvv144d61f9p-source` (candidate tree over edge `3028262e`, before this renewal's own edits).
+- Observation at `/nix/store/qzb6md064kq4pyji5ddxppadvnmp04ww-eon-cargo-notices-0.1.28`.
+- Binary at `/nix/store/ky11qw9313shcw6y6q3v0gd7w16rb04f-eon-rust-0.1.28/bin/eon`
+  with SHA-256 `3f3ef683b853ea6b327d00df10872347073b355dcc9654b5a468c3c15f52667f`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-yp6vg.65`):
+
 Renewed for `eon-yp6vg.65` to context
 `719abf85530c7a58b71ffe3bc31e4e2ff9e38a672781d14f59925a1cbf9edc3f`.
 Reversing the winit revision reproduces `fcc65995…`.
@@ -777,6 +841,20 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`3865499b6087726fd01c4c1d4d397ec85ae751d03a1428d34786eb388fd8884b`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`5d34d02c…` byte for byte.
+
+- Source at `/nix/store/mbmp96xvfh9m6g3zmd4g7zwv4nbxck83-source` (candidate tree over edge `3028262e`, before this renewal's own edits).
+- Observation at `/nix/store/d6f8ik9i01hqghy35g726izyb0idjk0h-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/xxbbl50xay8cknrqs31cn51m8x6xxm9x-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `8f4872369f14873999719a76f77bc1653be2b44b3b195c0056a8014bc76ea05a`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-yp6vg.65`):
+
 Renewed for `eon-yp6vg.65` to context
 `5d34d02cd6996269ae52cffb3cf052f4beea24ea038a028b171c08bb6cdef2aa`.
 Reversing the winit revision reproduces `85cfb652…`.
@@ -1071,6 +1149,20 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`d2b3ae735959fe5f29c94b9a8d5712cdf1b83d6b1c29589686d4672bb349c3d1`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`aea9642c…` byte for byte.
+
+- Source at `/nix/store/syff6bhl7hvq1f1g5lg4gcy2vaf7gccg-source` (candidate tree over edge `3028262e`, before this renewal's own edits).
+- Observation at `/nix/store/d3g2imqfdr3mh14fl49gr5v0vx7s1nym-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/cf7l30rc3awn88p2bznqw79ff8dnca8r-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `dbc42fd216f72eec61389f9e62ab493fbd61b6986cce3fee26922f36fe855535`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-yp6vg.65`):
 
 Renewed for `eon-yp6vg.65` to context
 `aea9642c863c30538d7d94edc5e3d789f176d31fdc6fa8e6f696a66fc596a04d`.
@@ -1384,6 +1476,18 @@ Binary `/nix/store/7sz2z1rbi2sgyk5w21bq8v7difbgnwnk-yazelix-venus-0.1.0/bin/.yaz
 
 ## installer
 
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`064b1b27e0f2fde37411911c6c63d940f77b2a21d145a99fb13601aa8de29c95`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`361bb0c5…` byte for byte. The binary SHA-256 is unchanged.
+
+- Observation at `/nix/store/cq328i2dyd9cmhc4z5diipjlq9wryz02-installer-cargo-notices-0.1.0`.
+- Binary at `/nix/store/fhdd1m2fs6jr31819dy2vz4hyjwhcy9a-eon-install-static-x86_64-unknown-linux-musl-0.1.0/bin/eon-install`
+  with SHA-256 `83011d6eb4700295f0836aa9537995167eb2f79630886298a5d7ba2b0de151d1`.
+
+Historical observation:
+
 - Source: `/nix/store/jhbpz34d05k1irhqwr49vdbym93azamd-source`.
 - Vendor: `/nix/store/65w6nyhlqmrcha74zn24pnpkf86cib6i-cargo-vendor-dir`.
 - Manifest: `/nix/store/jhbpz34d05k1irhqwr49vdbym93azamd-source/Cargo.toml`.
@@ -1396,6 +1500,18 @@ Binary `/nix/store/ynf2l9b17pk3m3hnf4nk0ygvw57n6nni-eon-install-static-x86_64-un
 - Result: 0 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## anima
+
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`e4d8399c97de0767c6a479479e1511f5bc4fc0568312f166c588bb830ce36387`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`9981c2ea…` byte for byte. The binary is unchanged.
+
+- Observation at `/nix/store/804pm8r0s356ycmx8dv9dsflrzsfcrns-anima-cargo-notices-0.2.0`.
+- Binary at `/nix/store/8zg64frgyrf01yc6basg06wx6fsx6nv2-anima-0.2.0/bin/anima`
+  with SHA-256 `125b9a2c1554f35464ba194bb01e738c482b1568853185d34aac7cb9451b0a68`.
+
+Historical observation:
 
 - Source: `/nix/store/8d7c3wmsdsa7zq2y07iv42ig9lzmvbz5-source`.
 - Vendor: `/nix/store/2dbpj9yzyn8678m8g6y56k5rq5i9cqsp-cargo-vendor-dir`.
@@ -1415,6 +1531,18 @@ Fallback binary `/nix/store/0pskrfzyj08z2ki854q2cxh7pd2nr9xs-anima-0.2.0/bin/ani
 
 ## nushell
 
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`ec9549bf5630de2d91f591752fe60d96b8c90cd09dc25d6d6fda6c0f4e489ff3`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`8133b268…` byte for byte. The binary is unchanged.
+
+- Observation at `/nix/store/f47aqi1xacnzigrpdv10zy3rab63dxgn-nushell-cargo-notices-0.113.1`.
+- Binary at `/nix/store/6rf5daj415jnir6218pjk6b78phhx6pf-nushell-0.113.1/bin/nu`
+  with SHA-256 `83b03ee3de996d7b85d44beb87fd2e6759781aa72dec64ced5b7e50aa7d4578f`.
+
+Historical observation:
+
 - Source: `/nix/store/3k3wi82n4jcwidzzywgfrvzqsxxaq6r7-source`.
 - Vendor: `/nix/store/cnk4dp68vb4qwyhhh1lxby9mqxmzg303-nushell-0.113.1-vendor`.
 - Manifest: `/nix/store/3k3wi82n4jcwidzzywgfrvzqsxxaq6r7-source/Cargo.toml`.
@@ -1427,6 +1555,18 @@ Binary `/nix/store/6rf5daj415jnir6218pjk6b78phhx6pf-nushell-0.113.1/bin/nu`:
 - Result: 25 exact host exceptions; 39 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## starship
+
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`de4e1b4fd3b4ae7c57208138f769bc1a553f8df1f96ec0fd689b2d713506de93`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`51b7eca0…` byte for byte. The binary is unchanged.
+
+- Observation at `/nix/store/wjxd9apnw6a8xjps72z850sa4pxqsfw7-starship-cargo-notices-1.25.1`.
+- Binary at `/nix/store/2iyzhxjwbpir2n2xaqgq14v8455kbrri-starship-1.25.1/bin/starship`
+  with SHA-256 `e187b6a7784b3520cbc97c8e836036217b25ef9ddc267545aee0837993aac9a6`.
+
+Historical observation:
 
 - Source: `/nix/store/d2aw7ksgaqr03j52jrr4jxan3kxj4fdh-source`.
 - Vendor: `/nix/store/v4d5famarmylaaspras7rv5z1a3fkcg0-starship-1.25.1-vendor`.
@@ -1441,6 +1581,18 @@ Binary `/nix/store/2iyzhxjwbpir2n2xaqgq14v8455kbrri-starship-1.25.1/bin/starship
 
 ## zoxide
 
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`6bd0bb81256705d6fcbee6af33d7daea9edf44de625c9aae3b94820ebb856ce3`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`6759fae7…` byte for byte. The binary is unchanged.
+
+- Observation at `/nix/store/sbsyg7v33ha1w9skjyzn96xnh1kqw61n-zoxide-cargo-notices-0.9.9`.
+- Binary at `/nix/store/5jl0jd7ma5mjl4y2480428jfamy44j9q-zoxide-0.9.9/bin/zoxide`
+  with SHA-256 `004288fb757dc8d54af2f8bf2ec05180ecd823e4ddd2dfbbf3c85cb680dea91b`.
+
+Historical observation:
+
 - Source: `/nix/store/6rv8qxfavygcmx5s9zfd36xvqc4dxs3i-source`.
 - Vendor: `/nix/store/vp6vd00il0kdlv7n610r51zlsnl6mwgp-zoxide-0.9.9-vendor`.
 - Manifest: `/nix/store/6rv8qxfavygcmx5s9zfd36xvqc4dxs3i-source/Cargo.toml`.
@@ -1453,6 +1605,17 @@ Binary `/nix/store/5jl0jd7ma5mjl4y2480428jfamy44j9q-zoxide-0.9.9/bin/zoxide`:
 - Result: 1 exact host exceptions; 3 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## atuin
+
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`9e08c1fc8120a85b37396429ff3122b36177d52af9bfe3c8c090c3c04027406d`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`0a9bbc55…` byte for byte. All three binaries are unchanged.
+
+- Observation at `/nix/store/mvbdh0n3055q3nily0p1f3fsgg1yni8a-atuin-cargo-notices-18.16.1`.
+- Binaries at `/nix/store/sz7rawzyjpixy5yqgad9rlij3gp48bp3-atuin-18.16.1/bin/{atuin,atuin-nucleo-bench,atuin-server}`.
+
+Historical observation:
 
 - Source: `/nix/store/900asnj6vmgw61k3ih3qn0jpm7g30bfd-source`.
 - Vendor: `/nix/store/pwzf101j3yfk8csi3lgn5zx21zxyinn1-atuin-18.16.1-vendor`.
@@ -1477,6 +1640,18 @@ Binary `/nix/store/sz7rawzyjpixy5yqgad9rlij3gp48bp3-atuin-18.16.1/bin/atuin-serv
 
 ## helix
 
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`6d9874a0e927acd202e5a7aade68d70b5cd952f7ad4e3b94683782b275f3c474`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`2232f301…` byte for byte. The binary is unchanged.
+
+- Observation at `/nix/store/8lf2rm764g8lg6iljn6xsjlcmdn8df33-helix-cargo-notices-0`.
+- Binary at `/nix/store/z1ly1fb45yn3mgq6yihkl2ax3520mh3v-helix-term/bin/hx`
+  with SHA-256 `509554c6bf13fac32e01a1d4143c1ff66b34a142bfea09a0392df9ca7e7aa0f9`.
+
+Historical observation:
+
 - Source: `/nix/store/chwv3cyaalw9d6md279pfqbqayylz2kn-source`.
 - Vendor: `/nix/store/q3mbqyl3wxpf5ycaia135sv8gkz37yqa-cargo-vendor-dir`.
 - Manifest: `/nix/store/chwv3cyaalw9d6md279pfqbqayylz2kn-source/helix-term/Cargo.toml`.
@@ -1489,6 +1664,17 @@ Binary `/nix/store/z1ly1fb45yn3mgq6yihkl2ax3520mh3v-helix-term/bin/hx`:
 - Result: 6 exact host exceptions; 117 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## yazi
+
+Renewed on 2026-11-23 for `eon-tfrjz` to context
+`eda2a8090d45061da82295aacd41b0a72b344f70bf42bb19bb38de92c05ae4b4`
+in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
+restoring `/nix/store/n6l7lf1j0p7wxr3jxdp1lhag5jnv1i5n-rust-default-1.96.1` reproduces
+`cb7a1427…` byte for byte. Both binaries are unchanged.
+
+- Observation at `/nix/store/k5yjdvac8yzxhyhln4inq544w8ici8p5-yazi-cargo-notices-26.5.6`.
+- Binaries at `/nix/store/pp4219z22rpc2ah111iv6pkpf4sgxgzf-yazi-26.5.6/bin/{ya,yazi}`.
+
+Historical observation:
 
 - Source: `/nix/store/59clvnpw37rj47yw5a40hlhsgmlh5bh1-source`.
 - Vendor: `/nix/store/y3x24npj865gmsbwmrv6ysr6h500gf9q-yazi-26.5.6-vendor`.

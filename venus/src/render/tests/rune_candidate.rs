@@ -111,8 +111,10 @@ impl Probe {
             .unwrap();
         }
         let differing = candidate
-            .chunks_exact(4)
-            .zip(parent.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(parent.as_chunks::<4>().0)
             .filter(|(a, b)| a != b)
             .count();
         eprintln!("probe {name}: {differing} differing pixels");
@@ -360,7 +362,9 @@ fn rune_hosted_grid_matches_the_venus_parent() {
             let (_, step, name) = parent_entry.position();
             // The image step must show its image, or its match proves nothing about images.
             let checker = parent_pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|pixel| matches!(pixel, [30, 90, 230, 255] | [240, 220, 40, 255]))
                 .count();
             assert_eq!(

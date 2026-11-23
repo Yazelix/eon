@@ -964,7 +964,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                         ] {
                             // The title's two halves each receive exactly one terminal fill.
                             let pixels = painted_rects(&batch)
-                                .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+                                .zip(quad_chunks(&batch.bytes))
                                 .filter(|(rect, _)| rect.contains(text_x + 0.25, y))
                                 .collect::<Vec<_>>();
                             assert_eq!(
@@ -996,7 +996,7 @@ fn popup_tabs_fit_labels_and_partition_translucent_backgrounds() {
                                 [(band.right() - 0.25, 0.8), (band.right() + 0.25, 1.0)]
                             {
                                 let pixels = painted_rects(&batch)
-                                    .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+                                    .zip(quad_chunks(&batch.bytes))
                                     .filter(|(rect, _)| rect.contains(x, y))
                                     .collect::<Vec<_>>();
                                 assert_eq!(
@@ -1113,9 +1113,7 @@ fn popup_tabs_clear_the_bar_and_text_or_keep_the_border_gap_title() {
             0.8,
             &[Some(tab.clone())],
         );
-        for (rect, quad) in
-            painted_rects(&batch).zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
-        {
+        for (rect, quad) in painted_rects(&batch).zip(quad_chunks(&batch.bytes)) {
             if f32::from_ne_bytes(quad[20..24].try_into().unwrap()) == 0.8 {
                 assert!(
                     rect.top >= bar_bottom,
@@ -1476,23 +1474,18 @@ fn tail_cursor_outlines_one_color_and_resets_when_hidden_or_blinking_off() {
         1.0,
         0.0,
     ));
-    assert_eq!(
-        moving.bytes.len(),
-        VERTEX_SIZE as usize * VERTICES_PER_QUAD as usize * 7
-    );
-    let quad = VERTEX_SIZE as usize * VERTICES_PER_QUAD as usize;
+    assert_eq!(moving.bytes.len(), QUAD_BYTES * 7);
     let vertex_color = |vertex: &[u8]| {
         [8, 12, 16].map(|offset| f32::from_ne_bytes(vertex[offset..offset + 4].try_into().unwrap()))
     };
-    for (bytes, color) in moving
-        .bytes
-        .chunks_exact(quad)
+    for (bytes, color) in quad_chunks(&moving.bytes)
+        .iter()
         .zip([outline, trail, trail, outline, outline, outline, outline])
     {
         let expected = [color.r, color.g, color.b].map(|value| f32::from(value) / 255.0);
         assert!(
-            bytes
-                .chunks_exact(VERTEX_SIZE as usize)
+            vertex_chunks(bytes)
+                .iter()
                 .all(|vertex| vertex_color(vertex) == expected)
         );
     }
@@ -1511,10 +1504,10 @@ fn tail_cursor_outlines_one_color_and_resets_when_hidden_or_blinking_off() {
         0.0,
     ));
     let expected = [1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0];
-    assert_eq!(explicit.bytes.len(), 3 * quad);
+    assert_eq!(explicit.bytes.len(), 3 * QUAD_BYTES);
     assert!(
-        explicit.bytes[explicit.bytes.len() - quad..]
-            .chunks_exact(VERTEX_SIZE as usize)
+        vertex_chunks(&explicit.bytes[explicit.bytes.len() - QUAD_BYTES..])
+            .iter()
             .all(|vertex| vertex_color(vertex) == expected)
     );
     scene.cursor.as_mut().unwrap().explicit_color = false;
@@ -1546,12 +1539,12 @@ fn tail_cursor_outlines_one_color_and_resets_when_hidden_or_blinking_off() {
             1.0,
             0.0,
         ));
-        assert_eq!(body.bytes.len(), colors.len() * quad, "{shape:?}");
-        for (bytes, color) in body.bytes.chunks_exact(quad).zip(colors) {
+        assert_eq!(body.bytes.len(), colors.len() * QUAD_BYTES, "{shape:?}");
+        for (bytes, color) in quad_chunks(&body.bytes).iter().zip(colors) {
             let expected = [color.r, color.g, color.b].map(|value| f32::from(value) / 255.0);
             assert!(
-                bytes
-                    .chunks_exact(VERTEX_SIZE as usize)
+                vertex_chunks(bytes)
+                    .iter()
                     .all(|vertex| vertex_color(vertex) == expected)
             );
         }
@@ -1610,9 +1603,8 @@ fn trail_quad_is_two_clipped_finite_triangles_in_stable_order() {
         rectangles.bytes.len(),
         VERTEX_SIZE as usize * VERTICES_PER_QUAD as usize
     );
-    let positions = rectangles
-        .bytes
-        .chunks_exact(VERTEX_SIZE as usize)
+    let positions = vertex_chunks(&rectangles.bytes)
+        .iter()
         .map(|vertex| {
             (
                 f32::from_ne_bytes(vertex[..4].try_into().unwrap()),
@@ -1671,9 +1663,8 @@ fn rounded_outline_keeps_corners_and_interior_clear_when_clipped() {
             let mut batch = RectangleBatch::new(100, 100);
             batch.clip = Some(clip);
             batch.push_rounded_outline(bounds, radius, SceneColor::default());
-            let quads: Vec<_> = batch
-                .bytes
-                .chunks_exact(VERTEX_SIZE as usize * 6)
+            let quads: Vec<_> = quad_chunks(&batch.bytes)
+                .iter()
                 .map(|quad| {
                     let value = |vertex: usize, component: usize| {
                         let offset = vertex * VERTEX_SIZE as usize + component * 4;
@@ -1997,9 +1988,8 @@ fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
                                     },
                                 );
                                 let decode = |batch: &RectangleBatch| {
-                                    let quads = batch
-                                        .bytes
-                                        .chunks_exact(VERTEX_SIZE as usize * 6)
+                                    let quads = quad_chunks(&batch.bytes)
+                                        .iter()
                                         .map(|quad| {
                                             let value = |vertex: usize, component: usize| {
                                                 let offset =
@@ -3473,30 +3463,26 @@ fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
         }],
     };
     let covers = |batch: &RectangleBatch, x: f32, y: f32| {
-        batch
-            .bytes
-            .chunks_exact(3 * VERTEX_SIZE as usize)
-            .any(|triangle| {
-                let points = [0, 1, 2].map(|index| {
-                    let vertex = &triangle[index * VERTEX_SIZE as usize..];
-                    CursorPoint {
-                        x: (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 1000.0,
-                        y: (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap())) * 450.0,
-                    }
-                });
-                let cross = |a: CursorPoint, b: CursorPoint| {
-                    (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)
-                };
-                let signs = [
-                    cross(points[0], points[1]),
-                    cross(points[1], points[2]),
-                    cross(points[2], points[0]),
-                ];
-                let area = (points[1].x - points[0].x) * (points[2].y - points[0].y)
-                    - (points[1].y - points[0].y) * (points[2].x - points[0].x);
-                area.abs() > 0.0001
-                    && (signs.iter().all(|v| *v >= 0.0) || signs.iter().all(|v| *v <= 0.0))
-            })
+        triangle_chunks(&batch.bytes).iter().any(|triangle| {
+            let points = [0, 1, 2].map(|index| {
+                let vertex = &triangle[index * VERTEX_SIZE as usize..];
+                CursorPoint {
+                    x: (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 1000.0,
+                    y: (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap())) * 450.0,
+                }
+            });
+            let cross =
+                |a: CursorPoint, b: CursorPoint| (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+            let signs = [
+                cross(points[0], points[1]),
+                cross(points[1], points[2]),
+                cross(points[2], points[0]),
+            ];
+            let area = (points[1].x - points[0].x) * (points[2].y - points[0].y)
+                - (points[1].y - points[0].y) * (points[2].x - points[0].x);
+            area.abs() > 0.0001
+                && (signs.iter().all(|v| *v >= 0.0) || signs.iter().all(|v| *v <= 0.0))
+        })
     };
     for scale in [1.0, 1.3] {
         let metrics = CellMetrics::for_scale(scale);
@@ -3840,7 +3826,7 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                                     metrics,
                                     terminal,
                                 );
-                                for vertex in cells.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                                for vertex in vertex_chunks(&cells.bytes) {
                                     let y = (1.0
                                         - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
                                         * 450.0;
@@ -3879,11 +3865,15 @@ fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
                             push_card_backdrop(&mut rectangles, frame, &cards, 0.6);
                             let floats = rectangles
                                 .bytes
-                                .chunks_exact(4)
-                                .map(|v| f32::from_ne_bytes(v.try_into().unwrap()))
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
+                                .map(|&v| f32::from_ne_bytes(v))
                                 .collect::<Vec<_>>();
                             let quads = floats
-                                .chunks_exact(36)
+                                .as_chunks::<36>()
+                                .0
+                                .iter()
                                 .map(|quad| {
                                     let x = |i: usize| (quad[i * 6] + 1.0) * 1000.0;
                                     let y = |i: usize| (1.0 - quad[i * 6 + 1]) * 450.0;
@@ -4630,7 +4620,7 @@ fn fallback_dialog_frame_uses_configured_stroke_at_fractional_scale() {
         stroke,
     );
     let ink = painted_rects(&batch)
-        .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+        .zip(quad_chunks(&batch.bytes))
         .filter_map(|(rect, quad)| {
             let channel = |offset| f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap());
             let color = palette::DARK.card_outline;
@@ -4974,7 +4964,7 @@ fn pane_headers_clear_adjacent_descenders_and_preserve_joined_focus_strokes() {
                 ]
                 .map(|value| f32::from(value) / 255.0);
                 let title_focus = painted_rects(&batch)
-                    .zip(batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6))
+                    .zip(quad_chunks(&batch.bytes))
                     .filter(|(_, bytes)| {
                         let color: [f32; 3] = std::array::from_fn(|index| {
                             let start = (index + 2) * 4;
