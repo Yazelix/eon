@@ -857,6 +857,7 @@ fn a_checkpoint_of_another_lifetime_refuses() {
 
 /// A new tab in `directory` running the window's shell (a command tab needs
 /// a caller in an Eon terminal).
+#[cfg(target_os = "linux")]
 fn launch_tab(directory: &Path) -> Action {
     Action::LaunchTab {
         directory: directory.as_os_str().as_encoded_bytes().to_vec(),
@@ -865,6 +866,7 @@ fn launch_tab(directory: &Path) -> Action {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn dispatch(
     state: &mut SupervisorState,
     lifetime: &Lifetime,
@@ -889,6 +891,7 @@ fn dispatch(
     .0
 }
 
+#[cfg(target_os = "linux")]
 fn snapshot(state: &SupervisorState) -> eon_workspace_protocol::v47::Snapshot {
     state.workspaces.as_ref().unwrap().snapshot()
 }

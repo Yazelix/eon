@@ -34,7 +34,8 @@ impl Source {
     }
 
     /// Moves every identity counter `by` past where it stands, as a window
-    /// that has lived a while has them.
+    /// that has lived a while has them. The Linux-only picker restore test uses it.
+    #[cfg(target_os = "linux")]
     pub(crate) fn advance_ids(&mut self, by: usize) {
         let ids = &mut self.set.ids;
         for counter in [
