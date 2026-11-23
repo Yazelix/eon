@@ -12,9 +12,9 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 # Record, declaration and object-set digests.
 sha2 = "=0.10.9"
-# utimensat with SYMLINK_NOFOLLOW: one safe call normalizes the mtime of files, directories
-# and symlinks in a synthetic workspace; std cannot set a symlink's times.
-rustix = { version = "=1.1.4", default-features = false, features = ["fs", "std"] }
+# utimensat with SYMLINK_NOFOLLOW normalizes synthetic workspace mtimes; non-blocking pipe flags
+# and process-group SIGKILL give safe, portable deadline cleanup for usage-read commands.
+rustix = { version = "=1.1.4", default-features = false, features = ["fs", "process", "std"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

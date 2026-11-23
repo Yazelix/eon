@@ -11,6 +11,9 @@
 //!   shown as 12 hex digits.
 //! - [`trial`]: trial (`eon-bench-trial/1`) and local lanes (`eon-bench-lanes/1`) JSON files and
 //!   planned-run expansion (`agent-bench trial check`).
+//! - [`gate`]: pre-start run gates (machine load/memory, bench-wide builder cap, lane run caps,
+//!   pool floors, per-account stagger, rate-limit cooldown/retry/lead notices, hold-never-spill
+//!   queuing, slot-confirmed wall caps) and before/after usage readings.
 //! - [`stream`]: incremental NDJSON stream parsers for Claude Code, Codex CLI, and `agy` into
 //!   one run-event model, plus cross-resume usage accounting.
 //! - [`store`]: a directory holding each record as its canonical bytes under its own hash
@@ -30,6 +33,7 @@
 pub mod cli;
 pub mod diff;
 pub mod fingerprints;
+pub mod gate;
 mod git;
 pub mod jcs;
 pub mod pooling;

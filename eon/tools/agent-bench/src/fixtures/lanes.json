@@ -1,5 +1,9 @@
 {
   "schema": "eon-bench-lanes/1",
+  "machine": {
+    "max_load_1m": 16.0,
+    "min_available_mem_mib": 8192
+  },
   "lanes": {
     "lane-a": {
       "pool": "gemini-pro",
@@ -11,6 +15,11 @@
       "usage_read": {
         "command": [
           "bench-usage",
+          "--lane",
+          "lane-a"
+        ],
+        "in_slot_command": [
+          "bench-usage-inner",
           "--lane",
           "lane-a"
         ],

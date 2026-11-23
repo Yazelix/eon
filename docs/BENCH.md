@@ -14,7 +14,8 @@ namespaces, Bubblewrap, and systemd user scopes. Records, stream parsers, and
 reports remain portable across Linux and `aarch64-darwin`.
 
 `agent-bench` and its companion crates implement the hashed record store,
-trial and lanes JSON schemas (`agent-bench trial check`), stream parsers for
+trial and lanes JSON schemas (`agent-bench trial check`), pre-start run gates
+and usage readings (`eon/tools/agent-bench/src/gate.rs`), stream parsers for
 Claude Code, Codex CLI, and `agy` (`eon/tools/agent-bench/src/stream.rs`),
 synthetic workspaces, warm task environments, fingerprint needles, and the
 Linux jail today; later Bench v2 beads add the unified trial runner,
@@ -24,14 +25,14 @@ catalog:
 | Surface | Exists today | Owned by later Bench v2 beads |
 | --- | --- | --- |
 | Records, hashes, store, diff, pooling, trial check | `eon-bench-config/2` (with `eon-bench-config/1` readable for comparison), `eon-bench-task/1`, `eon-bench-run/1` (including Bench v2 fields), `eon-bench-grade/1`, `eon-bench-pooling/1`, `eon-bench-trial/1`, `eon-bench-lanes/1`; CLI subcommands `record`, `config diff`, `pool declare`, `pool show`, `trial check` (`eon/tools/agent-bench`) | — |
-| Workspaces, task environments, stream parsers, trial runner, scoring, jail, leak checks | `workspace create`, `workspace check`, `tree-hash`, `fingerprints`, `task-env warm`, and `agent_bench::stream` parsers for Claude Code, Codex CLI, and `agy` (`eon/tools/agent-bench`); Linux no-network jail for Claude Code and Codex CLI (`eon/tools/agent-jail`) | Follow-up beads under `eon-2r02l` (plan items `R2`, `R4`–`R8b`, and `SC` of `eon-2r02l.11`), `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level), `eon-2r02l.8` (blind judges; `R7` is its automatic leak audit), `eon-j8iyd` (`agy` in `agent-jail`) |
+| Workspaces, task environments, run gates, stream parsers, trial runner, scoring, jail, leak checks | `workspace create`, `workspace check`, `tree-hash`, `fingerprints`, `task-env warm`, `agent_bench::gate` (`R5` run gates and before/after usage readings), and `agent_bench::stream` parsers for Claude Code, Codex CLI, and `agy` (`eon/tools/agent-bench`); Linux no-network jail for Claude Code and Codex CLI (`eon/tools/agent-jail`) | Follow-up beads under `eon-2r02l` (plan items `R2`, `R4`, `R6`–`R8b`, and `SC` of `eon-2r02l.11`), `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level), `eon-2r02l.8` (blind judges; `R7` is its automatic leak audit), `eon-j8iyd` (`agy` in `agent-jail`) |
 | Cost-beside-quality reporting | — | Follow-up bead under `eon-2r02l` (plan item `R9` of `eon-2r02l.11`): `agent-bench report` |
 | Reviewer evaluation | `review-tier eval check`, `eval prepare`, `eval score` against `eon/tools/review-tier/evals/cases.toml` | Follow-up beads under `eon-2r02l` (plan items `E1a`, `E1b`, `E2`, `E4`, `R10` of `eon-2r02l.11`): case audit/freeze, new cases, scorer rework and `eval prepare --export-diff`, reviewer role runner and reviewer case task kind |
 | Builder task catalog | — | `eon-2r02l.18`: select, verify, tag, and populate [Task table](#task-table) |
 
 Each bench trial is defined by two JSON inputs (`eon/tools/agent-bench/src/trial.rs`),
 validated and expanded into planned runs by `agent-bench trial check` today
-(runner execution in plan items `R2` and `R4`–`R8b` remains planned):
+(runner execution in plan items `R2`, `R4`, and `R6`–`R8b` remains planned):
 
 - **Trial file (tracked JSON, `eon-bench-trial/1`):** names the role
   (`builder` or `reviewer`), the arms (inline `eon-bench-config/2` records or
@@ -40,12 +41,19 @@ validated and expanded into planned runs by `agent-bench trial check` today
   the builder config itself is inline), `tasks` (for builders) or `cases` (for
   reviewers), starting and maximum repeats (`repeats.start` and `repeats.cap`),
   the containment level, the pairing window, and `budget_caps` per pool.
-- **Lanes file (local JSON, `eon-bench-lanes/1`, never tracked):** per lane,
-  supplies its public `pool`, launch template, usage-read command and parser
-  (`claude`, `codex`, `agy`, or `json`), quota pool floors, run cap, live-runs
-  counter (`lock_file` or `caps_file`), stagger interval, heavy-queue command,
-  context handoff threshold (or `null`), extra environment variable names,
-  approved containment levels, and optional `home_settings_files` and
+- **Lanes file (local JSON, `eon-bench-lanes/1`, never tracked):** optionally
+  carries top-level `machine` limits (`max_load_1m`, `min_available_mem_mib`;
+  required by `agent_bench::gate::RunGate`) and, per lane, supplies its public
+  `pool`, optional `account` stagger group (defaulting to the lane name),
+  launch template, usage-read command (with optional `in_slot_command` for
+  held-slot refresh on serialized lock lanes; required by
+  `agent_bench::gate::RunGate` on `lock_file` lanes), parser (`claude`, `codex`,
+  `agy`, `key_value`, or `json`), and optional `group` (valid only with `agy`),
+  quota pool floors, run cap, live-runs counter (`lock_file` or `caps_file`),
+  optional `pool_live_runs_counter` (when the admission counter is shared
+  across multiple quota pools on one account), stagger interval, heavy-queue
+  command, context handoff threshold (or `null`), extra environment variable
+  names, approved containment levels, and optional `home_settings_files` and
   `audit_dirs`. No field defaults to a machine path or account name, so tracked
   files and beads stay clean and other repositories can plug in their own lanes
   and tasks.
@@ -248,21 +256,29 @@ configurations hash differently and never pool.
 
 The pipeline below describes the **planned** Bench v2 runner's behavior — not
 present `agent-bench` behavior. It is owned by follow-up beads under
-`eon-2r02l` (plan items `R2`, `R4`–`R8b`, and `SC` of `eon-2r02l.11`), alongside
-`eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level),
+`eon-2r02l` (plan items `R2`, `R4`, `R6`–`R8b`, and `SC` of `eon-2r02l.11`),
+alongside `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level),
 `eon-2r02l.8` (blind judges), and `eon-j8iyd` (`agy` in `agent-jail`). Both
 containment levels share these steps (scheduled by the planned trial loop,
-plan item `R8`), building on the workspace, fingerprint, warm-target, and
-stream-parser (`R3`) primitives that exist today in `eon/tools/agent-bench`:
+plan item `R8`), building on the workspace, fingerprint, warm-target,
+run-gate (`R5`), and stream-parser (`R3`) primitives that exist today in
+`eon/tools/agent-bench`:
 
-1. **Gates (plan item `R5`):** checks machine load and free memory; allows at
-   most 2 builder runs at once and never takes a live builder slot; runs
-   reviewer jobs up to the lane cap (booked with the coordinator when more than
-   2 run for over an hour); enforces the lane's run cap and pool floors from
-   the lanes file, starting the wall-cap clock only once the slot is held;
-   staggers starts by 60 s per account; on HTTP 429, waits 10 min, retries
-   once, then holds the lane and writes a notice. Held runs wait and never
-   spill to another pool.
+1. **Gates (plan item `R5`, implemented in `eon/tools/agent-bench/src/gate.rs`):**
+   checks machine load and free memory; allows at most 2 builder runs at once
+   across the host (via shared `flock` slots) and never takes a live builder
+   slot; runs reviewer jobs up to the lane cap (booked with the coordinator
+   when more than 2 run for over an hour); enforces the lane's run cap and pool
+   floors from the lanes file, requiring pool-attributable counts for usage
+   snapshots while keeping account aggregates for admission, refreshing usage
+   through a held-slot probe or `in_slot_command` without reacquiring the lane
+   lock, and starting the wall-cap clock only once the lane owner confirms slot
+   acquisition; coordinates 60 s per-account stagger and rate-limit cooldown,
+   single-retry, and lead-hold state across independent processes and restarts
+   via shared gate state under `state_dir`, rechecking them at confirmation and
+   writing an atomic `eon-bench-notice/1` notice if a post-cooldown retry fails
+   again. Held runs keep their lane and FIFO queue position and never spill to
+   another pool.
 2. **Workspace, home, environment, and caps (plan item `R2`):** creates a
    single-commit synthetic workspace at `base_commit` with `.beads/` dropped
    and no remote, reflog, or hooks (`agent-bench workspace create` and

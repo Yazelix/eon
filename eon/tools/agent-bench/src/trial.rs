@@ -192,6 +192,20 @@ fn deserialize_live_runs_counter<'de, D: Deserializer<'de>>(
         .map_err(|error| wrap_de_error("live_runs_counter", error))
 }
 
+fn deserialize_opt_live_runs_counter<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<LiveRunsCounter>, D::Error> {
+    Option::<LiveRunsCounter>::deserialize(deserializer)
+        .map_err(|error| wrap_de_error("pool_live_runs_counter", error))
+}
+
+fn deserialize_opt_machine<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<MachineLimits>, D::Error> {
+    Option::<MachineLimits>::deserialize(deserializer)
+        .map_err(|error| wrap_de_error("machine", error))
+}
+
 fn deserialize_lanes_map<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<BTreeMap<Text, Lane>, D::Error> {
@@ -271,22 +285,27 @@ struct RawTrialFile {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum UsageParser {
     Claude,
     Codex,
     Agy,
     Json,
+    KeyValue,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsageRead {
     pub command: Vec<Text>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_slot_command: Option<Vec<Text>>,
     pub parser: UsageParser,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<Text>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LiveRunsCounterKind {
     LockFile,
@@ -302,8 +321,17 @@ pub struct LiveRunsCounter {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MachineLimits {
+    pub max_load_1m: f64,
+    pub min_available_mem_mib: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Lane {
     pub pool: Text,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<Text>,
     pub launch_template: Vec<Text>,
     #[serde(deserialize_with = "deserialize_usage_read")]
     pub usage_read: UsageRead,
@@ -311,6 +339,12 @@ pub struct Lane {
     pub run_cap: u64,
     #[serde(deserialize_with = "deserialize_live_runs_counter")]
     pub live_runs_counter: LiveRunsCounter,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_opt_live_runs_counter"
+    )]
+    pub pool_live_runs_counter: Option<LiveRunsCounter>,
     pub stagger_s: u64,
     pub heavy_queue_command: Vec<Text>,
     #[serde(deserialize_with = "Option::deserialize")]
@@ -323,10 +357,23 @@ pub struct Lane {
     pub audit_dirs: Vec<Text>,
 }
 
+impl Lane {
+    /// Account key used for stagger enforcement (explicit `account`, falling back to `lane_name`).
+    pub fn account_key<'a>(&'a self, lane_name: &'a str) -> &'a str {
+        self.account.as_ref().map_or(lane_name, Text::as_str)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LanesFile {
     pub schema: Text,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_opt_machine"
+    )]
+    pub machine: Option<MachineLimits>,
     #[serde(deserialize_with = "deserialize_lanes_map")]
     pub lanes: BTreeMap<Text, Lane>,
 }
@@ -719,9 +766,18 @@ fn validate_trial(trial: &TrialFile) -> Result<()> {
     Ok(())
 }
 
-fn validate_lanes(lanes: &LanesFile) -> Result<()> {
+pub(crate) fn validate_lanes(lanes: &LanesFile) -> Result<()> {
     if lanes.schema.as_str() != LANES_SCHEMA {
         fail!("schema {} is not {LANES_SCHEMA}", lanes.schema);
+    }
+    if let Some(machine) = &lanes.machine {
+        check_positive_finite(machine.max_load_1m, "machine.max_load_1m")?;
+        if machine.min_available_mem_mib == 0 {
+            fail!("machine.min_available_mem_mib must be at least 1");
+        }
+        if machine.min_available_mem_mib > jcs::MAX_EXACT {
+            fail!("machine.min_available_mem_mib exceeds exact integer range (2^53 - 1)");
+        }
     }
     if lanes.lanes.is_empty() {
         fail!("lanes: must define at least one lane");
@@ -733,6 +789,9 @@ fn validate_lanes(lanes: &LanesFile) -> Result<()> {
 }
 
 fn validate_lane(name: &str, lane: &Lane) -> Result<()> {
+    if let Some(account) = &lane.account {
+        check_no_nul(account, &format!("lanes.{name}.account"))?;
+    }
     if lane.launch_template.is_empty() {
         fail!("lanes.{name}.launch_template needs at least the program");
     }
@@ -747,6 +806,24 @@ fn validate_lane(name: &str, lane: &Lane) -> Result<()> {
         &lane.usage_read.command,
         &format!("lanes.{name}.usage_read.command"),
     )?;
+    if let Some(in_slot) = &lane.usage_read.in_slot_command {
+        if in_slot.is_empty() {
+            fail!("lanes.{name}.usage_read.in_slot_command needs at least the program");
+        }
+        check_no_nul_list(in_slot, &format!("lanes.{name}.usage_read.in_slot_command"))?;
+    }
+    if let Some(group) = &lane.usage_read.group {
+        if lane.usage_read.parser != UsageParser::Agy {
+            fail!("lanes.{name}.usage_read.group is only valid with the `agy` parser");
+        }
+        if group
+            .as_str()
+            .bytes()
+            .any(|b| matches!(b, b'\0' | b'\n' | b'\r' | b'\t'))
+        {
+            fail!("lanes.{name}.usage_read.group must not contain NUL, tab, or newline characters");
+        }
+    }
     for (meter, floor) in &lane.floors {
         check_non_negative_finite(*floor, &format!("lanes.{name}.floors.{meter}"))?;
     }
@@ -760,6 +837,12 @@ fn validate_lane(name: &str, lane: &Lane) -> Result<()> {
         &lane.live_runs_counter.path,
         &format!("lanes.{name}.live_runs_counter.path"),
     )?;
+    if let Some(pool_counter) = &lane.pool_live_runs_counter {
+        check_no_nul(
+            &pool_counter.path,
+            &format!("lanes.{name}.pool_live_runs_counter.path"),
+        )?;
+    }
     if lane.stagger_s > jcs::MAX_EXACT {
         fail!("lanes.{name}.stagger_s exceeds exact integer range (2^53 - 1)");
     }
@@ -1782,5 +1865,177 @@ pub(crate) mod tests {
             .unwrap_err()
             .0;
         assert!(err.contains("budget_caps"), "{err}");
+    }
+
+    #[test]
+    fn lanes_machine_account_group_and_key_value_validation() {
+        let base_lanes = json_val(LANES);
+
+        // Canonical fixture includes machine limits and parses cleanly.
+        let parsed = parse_lanes(LANES.as_bytes()).unwrap();
+        assert_eq!(
+            parsed.machine,
+            Some(MachineLimits {
+                max_load_1m: 16.0,
+                min_available_mem_mib: 8192,
+            })
+        );
+
+        // Backward compatibility: lanes file without `machine` still parses for `trial check`.
+        let mut without_machine = base_lanes.clone();
+        without_machine.as_object_mut().unwrap().remove("machine");
+        let parsed_no_machine =
+            parse_lanes(&serde_json::to_vec(&without_machine).unwrap()).unwrap();
+        assert_eq!(parsed_no_machine.machine, None);
+
+        // Optional `account`, `usage_read.group` (with `agy`), `usage_read.in_slot_command`,
+        // `pool_live_runs_counter`, and `key_value` parser succeed.
+        let mut extended = base_lanes.clone();
+        extended["lanes"]["lane-a"]["account"] = json!("acct-shared");
+        extended["lanes"]["lane-a"]["usage_read"]["group"] = json!("gemini-pro");
+        extended["lanes"]["lane-a"]["usage_read"]["in_slot_command"] =
+            json!(["bench-usage-inner", "--lane", "lane-a"]);
+        extended["lanes"]["lane-a"]["pool_live_runs_counter"] = json!({
+            "kind": "caps_file",
+            "path": "/var/lib/bench/caps/pool-runs.json"
+        });
+        extended["lanes"]["lane-b"]["usage_read"]["parser"] = json!("key_value");
+        let parsed_ext = parse_lanes(&serde_json::to_vec(&extended).unwrap()).unwrap();
+        let lane_a = &parsed_ext.lanes[&Text::new("lane-a").unwrap()];
+        let lane_b = &parsed_ext.lanes[&Text::new("lane-b").unwrap()];
+        assert_eq!(lane_a.account_key("lane-a"), "acct-shared");
+        assert_eq!(lane_b.account_key("lane-b"), "lane-b");
+        assert_eq!(
+            lane_a.usage_read.group.as_ref().map(Text::as_str),
+            Some("gemini-pro")
+        );
+        assert_eq!(
+            lane_a
+                .usage_read
+                .in_slot_command
+                .as_ref()
+                .map(|c| c.iter().map(Text::as_str).collect::<Vec<_>>()),
+            Some(vec!["bench-usage-inner", "--lane", "lane-a"])
+        );
+        assert_eq!(
+            lane_a.pool_live_runs_counter.as_ref().map(|c| c.kind),
+            Some(LiveRunsCounterKind::CapsFile)
+        );
+        assert_eq!(lane_b.usage_read.parser, UsageParser::KeyValue);
+        // Round-trips cleanly.
+        let round_trip = serde_json::to_vec(&parsed_ext).unwrap();
+        assert_eq!(parse_lanes(&round_trip).unwrap(), parsed_ext);
+
+        // Empty or NUL `usage_read.in_slot_command` and invalid `pool_live_runs_counter` are refused.
+        let mut empty_in_slot = base_lanes.clone();
+        empty_in_slot["lanes"]["lane-a"]["usage_read"]["in_slot_command"] = json!([]);
+        assert!(
+            parse_lanes(&serde_json::to_vec(&empty_in_slot).unwrap())
+                .unwrap_err()
+                .0
+                .contains("usage_read.in_slot_command")
+        );
+        let mut nul_in_slot = base_lanes.clone();
+        nul_in_slot["lanes"]["lane-a"]["usage_read"]["in_slot_command"] = json!(["cmd\0bad"]);
+        assert!(
+            parse_lanes(&serde_json::to_vec(&nul_in_slot).unwrap())
+                .unwrap_err()
+                .0
+                .contains("NUL")
+        );
+        let mut bad_pool_counter = base_lanes.clone();
+        bad_pool_counter["lanes"]["lane-a"]["pool_live_runs_counter"] =
+            json!(["caps_file", "/tmp/a"]);
+        assert!(
+            parse_lanes(&serde_json::to_vec(&bad_pool_counter).unwrap())
+                .unwrap_err()
+                .0
+                .contains("pool_live_runs_counter")
+        );
+        let mut nul_pool_counter = base_lanes.clone();
+        nul_pool_counter["lanes"]["lane-a"]["pool_live_runs_counter"] = json!({
+            "kind": "caps_file",
+            "path": "/var/lib/\0pool.json"
+        });
+        assert!(
+            parse_lanes(&serde_json::to_vec(&nul_pool_counter).unwrap())
+                .unwrap_err()
+                .0
+                .contains("pool_live_runs_counter.path")
+        );
+
+        // Invalid `machine` limits are refused.
+        for (label, value, needle) in [
+            (
+                "zero load",
+                json!({"max_load_1m": 0.0, "min_available_mem_mib": 1024}),
+                "max_load_1m",
+            ),
+            (
+                "negative load",
+                json!({"max_load_1m": -1.5, "min_available_mem_mib": 1024}),
+                "max_load_1m",
+            ),
+            (
+                "zero memory",
+                json!({"max_load_1m": 8.0, "min_available_mem_mib": 0}),
+                "min_available_mem_mib",
+            ),
+            (
+                "memory > MAX_EXACT",
+                json!({"max_load_1m": 8.0, "min_available_mem_mib": 1u64 << 53}),
+                "exact integer range",
+            ),
+            (
+                "unknown machine field",
+                json!({"max_load_1m": 8.0, "min_available_mem_mib": 1024, "extra": 1}),
+                "machine",
+            ),
+            (
+                "machine array",
+                json!([8.0, 1024]),
+                "expected a JSON object",
+            ),
+        ] {
+            let mut bad = base_lanes.clone();
+            bad["machine"] = value;
+            let err = parse_lanes(&serde_json::to_vec(&bad).unwrap())
+                .unwrap_err()
+                .0;
+            assert!(err.contains(needle), "{label}: {err}");
+        }
+
+        // Non-finite `max_load_1m` constructed in Rust is refused by `validate_lanes`.
+        let mut nan_lanes = parsed.clone();
+        nan_lanes.machine.as_mut().unwrap().max_load_1m = f64::NAN;
+        assert!(validate_lanes(&nan_lanes).is_err());
+
+        // `usage_read.group` on non-`agy` parser or with control characters is refused.
+        let mut group_on_claude = base_lanes.clone();
+        group_on_claude["lanes"]["lane-b"]["usage_read"]["group"] = json!("claude");
+        let err = parse_lanes(&serde_json::to_vec(&group_on_claude).unwrap())
+            .unwrap_err()
+            .0;
+        assert!(err.contains("only valid with the `agy` parser"), "{err}");
+
+        for bad_group in ["a\tb", "a\nb", "a\rb", "a\0b"] {
+            let mut bad = base_lanes.clone();
+            bad["lanes"]["lane-a"]["usage_read"]["group"] = json!(bad_group);
+            let err = parse_lanes(&serde_json::to_vec(&bad).unwrap())
+                .unwrap_err()
+                .0;
+            assert!(err.contains("usage_read.group"), "{bad_group:?}: {err}");
+        }
+
+        // NUL in `account` is refused.
+        let mut bad_account = base_lanes.clone();
+        bad_account["lanes"]["lane-a"]["account"] = json!("acct\0bad");
+        let err = parse_lanes(&serde_json::to_vec(&bad_account).unwrap())
+            .unwrap_err()
+            .0;
+        assert!(
+            err.contains("lanes.lane-a.account") && err.contains("NUL"),
+            "{err}"
+        );
     }
 }
