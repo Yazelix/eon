@@ -3239,8 +3239,7 @@ mod tests {
         eon.answer_refresh(&workspace_snapshot());
         drop(transport);
 
-        let mut rest = Vec::new();
-        subscription.read_to_end(&mut rest).unwrap();
+        wait_for_subscription_close(&mut subscription).unwrap();
         // The worker finishes an exchange already begun, then makes no more.
         let dropped = Instant::now();
         let mut last = Instant::now();
@@ -3258,6 +3257,35 @@ mod tests {
             "the worker refreshed {:?} after the drop",
             last.duration_since(dropped)
         );
+    }
+
+    #[test]
+    fn waiting_for_subscription_close_rejects_an_open_peer() {
+        let (mut subscription, peer) = UnixStream::pair().unwrap();
+        subscription
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        write_subscription(&mut subscription, &subscribed());
+
+        let error = wait_for_subscription_close(&mut subscription)
+            .expect_err("open subscription must time out");
+        assert!(
+            matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut),
+            "{error}"
+        );
+
+        peer.shutdown(Shutdown::Both).unwrap();
+        drop(peer);
+        wait_for_subscription_close(&mut subscription).unwrap();
+    }
+
+    fn wait_for_subscription_close(subscription: &mut UnixStream) -> io::Result<()> {
+        match subscription.read_to_end(&mut Vec::new()) {
+            Ok(_) => Ok(()),
+            // Closing a Unix stream with an unread subscription reply can reset its peer.
+            Err(error) if error.kind() == ErrorKind::ConnectionReset => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     /// A fake Eon that sorts its clients into exchanges and subscriptions.
