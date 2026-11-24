@@ -158,7 +158,12 @@ those integrations.
   observed rate linearly to reset. When a provider moves a window's reset time
   materially before expiry (beyond `min(duration / 20, 5m)`), Venus drops prior
   usage and measures elapsed time and usage from that re-anchored reading
-  instead. The dot is yellow at 5% projected shortfall, orange at 10%, and red
+  instead. Venus tracks these reset anchors in memory per running window:
+  tracks survive transient reading blips (missing provider, `Blocked`,
+  `Unknown`, or reset-less snapshots) until the window expires, while a window
+  opened after a reset has already moved does not see the prior reset
+  (supervisor-side persistence belongs to `eon-9mzm5`). The dot is yellow at
+  5% projected shortfall, orange at 10%, and red
   at 25% or more, interpolating between anchors; only the red anchor also
   colours the outline. Healthy judged quota has a neutral dot. Exhausted fresh
   quota (0% remaining) is always judged and keeps at least a yellow dot,

@@ -12,8 +12,8 @@ use crate::{
 use eon_workspace_protocol::v49::{ALT, SHIFT};
 use eon_workspace_protocol::v49::{
     Attention, AttentionKind, AttentionState, BusyTerminals, ClaudeQuotaState, CloseEnd,
-    CloseScope, CodexQuotaState, GoogleQuotaState, MAX_COLUMNS, PopupEntry, QuotaWindow, Sidebar,
-    Snapshot, Tab, TargetId,
+    CloseScope, CodexQuotaState, GoogleQuotaState, MAX_COLUMNS, MAX_QUOTA_WINDOWS, PopupEntry,
+    QuotaWindow, Sidebar, Snapshot, Tab, TargetId,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
@@ -2987,6 +2987,9 @@ const QUOTA_MIN_USED_PERCENT: u8 = 5;
 /// Maximum reset-time jitter treated as the same window (`min(duration / 20, 5m)`).
 const QUOTA_RESET_MOVE_TOLERANCE_DIVISOR: u64 = 20;
 const QUOTA_MAX_RESET_MOVE_TOLERANCE_SECONDS: u64 = 5 * 60;
+/// Hard per-provider cap on retained quota pace tracks (2 × `MAX_QUOTA_WINDOWS` = 12,
+/// bounding total history to at most 36 tracks across Codex, Claude, and Google).
+const MAX_QUOTA_TRACKS_PER_PROVIDER: usize = 2 * MAX_QUOTA_WINDOWS;
 
 fn quota_min_elapsed_seconds(total_seconds: u64) -> u64 {
     (total_seconds / QUOTA_MIN_ELAPSED_DIVISOR).min(QUOTA_MAX_MIN_ELAPSED_SECONDS)
@@ -3002,21 +3005,6 @@ struct QuotaWindowKey {
     duration_minutes: u32,
     scope: Option<String>,
     occurrence: u8,
-}
-
-impl QuotaWindowKey {
-    fn matches(
-        &self,
-        provider: QuotaProvider,
-        duration_minutes: u32,
-        scope: Option<&str>,
-        occurrence: u8,
-    ) -> bool {
-        self.provider == provider
-            && self.duration_minutes == duration_minutes
-            && self.scope.as_deref() == scope
-            && self.occurrence == occurrence
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3037,6 +3025,17 @@ struct OrderedQuotaWindow<'a> {
     window: &'a QuotaWindow,
     occurrence: u8,
     identity: QuotaWindowIdentity,
+}
+
+impl OrderedQuotaWindow<'_> {
+    fn key(&self, provider: QuotaProvider) -> QuotaWindowKey {
+        QuotaWindowKey {
+            provider,
+            duration_minutes: self.window.duration_minutes,
+            scope: self.window.scope.clone(),
+            occurrence: self.occurrence,
+        }
+    }
 }
 
 fn quota_window_occurrence(windows: &[&QuotaWindow], index: usize) -> u8 {
@@ -3133,7 +3132,7 @@ fn ordered_quota_windows(
     }
 }
 
-/// Tracks per-window quota reset anchors across consecutive snapshots so mid-window
+/// Tracks per-window quota reset anchors in memory per running Venus window so mid-window
 /// reset-time moves drop prior usage instead of extrapolating it over the shifted window.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QuotaPaceHistory {
@@ -3141,9 +3140,9 @@ pub struct QuotaPaceHistory {
 }
 
 impl QuotaPaceHistory {
-    /// Update tracked window anchors from `snapshot`, pruning absent or reset-less windows.
+    /// Update tracked window anchors from `snapshot`, keeping unexpired tracks across transient
+    /// reading blips and bounding retained tracks per provider.
     pub fn observe(&mut self, snapshot: &Snapshot) {
-        let mut seen = Vec::new();
         for provider in [
             QuotaProvider::Codex,
             QuotaProvider::Claude,
@@ -3153,35 +3152,52 @@ impl QuotaPaceHistory {
                 continue;
             };
             for entry in windows {
-                if entry.window.duration_minutes == 0 || entry.window.remaining_percent > 100 {
-                    continue;
-                }
                 let Some(reset) = entry.window.resets_at else {
                     continue;
                 };
-                let key = QuotaWindowKey {
-                    provider,
-                    duration_minutes: entry.window.duration_minutes,
-                    scope: entry.window.scope.clone(),
-                    occurrence: entry.occurrence,
+                self.observe_window(entry.key(provider), observed_at, entry.window, reset);
+            }
+            self.tracks.retain(|track| {
+                track.key.provider != provider
+                    || track.last_observed_at >= observed_at
+                    || observed_at
+                        < track
+                            .anchor_resets_at
+                            .saturating_add(quota_reset_move_tolerance_seconds(
+                                u64::from(track.key.duration_minutes) * 60,
+                            ))
+            });
+            let mut provider_tracks = self
+                .tracks
+                .iter()
+                .filter(|track| track.key.provider == provider)
+                .count();
+            while provider_tracks > MAX_QUOTA_TRACKS_PER_PROVIDER {
+                let Some((index, _)) = self
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, track)| track.key.provider == provider)
+                    .min_by_key(|(_, track)| track.last_observed_at)
+                else {
+                    break;
                 };
-                self.observe_window(&key, observed_at, entry.window, reset);
-                seen.push(key);
+                self.tracks.remove(index);
+                provider_tracks -= 1;
             }
         }
-        self.tracks.retain(|track| seen.contains(&track.key));
     }
 
     fn observe_window(
         &mut self,
-        key: &QuotaWindowKey,
+        key: QuotaWindowKey,
         observed_at: u64,
         window: &QuotaWindow,
         reset: u64,
     ) {
-        let Some(track) = self.tracks.iter_mut().find(|track| track.key == *key) else {
+        let Some(track) = self.tracks.iter_mut().find(|track| track.key == key) else {
             self.tracks.push(QuotaWindowTrack {
-                key: key.clone(),
+                key,
                 anchor_resets_at: reset,
                 last_observed_at: observed_at,
                 rebase: None,
@@ -3224,24 +3240,13 @@ impl QuotaPaceHistory {
 
     fn rebase_for(
         &self,
-        provider: QuotaProvider,
+        key: &QuotaWindowKey,
         window: &QuotaWindow,
-        occurrence: u8,
         observed_at: u64,
     ) -> Option<QuotaRebaseAnchor> {
-        if window.duration_minutes == 0 {
-            return None;
-        }
         let reset = window.resets_at?;
         let tolerance = quota_reset_move_tolerance_seconds(u64::from(window.duration_minutes) * 60);
-        let track = self.tracks.iter().find(|track| {
-            track.key.matches(
-                provider,
-                window.duration_minutes,
-                window.scope.as_deref(),
-                occurrence,
-            )
-        })?;
+        let track = self.tracks.iter().find(|track| track.key == *key)?;
         let anchor = track.rebase?;
         (reset.abs_diff(track.anchor_resets_at) <= tolerance && anchor.observed_at <= observed_at)
             .then_some(anchor)
@@ -3257,9 +3262,7 @@ fn quota_shortfall(
     observed_at: u64,
     rebase: Option<QuotaRebaseAnchor>,
 ) -> Option<f32> {
-    if window.duration_minutes == 0 || window.remaining_percent > 100 {
-        return None;
-    }
+    // EONW v49 rejects zero-duration windows and remaining_percent > 100.
     let reset = window.resets_at?;
     let total_seconds = u64::from(window.duration_minutes) * 60;
     let remaining_seconds = reset.saturating_sub(observed_at).min(total_seconds);
@@ -3835,12 +3838,7 @@ impl WorkspaceScene {
                     })
                     .map(|entry| {
                         let rebase = bar.quota_pace.and_then(|history| {
-                            history.rebase_for(
-                                provider,
-                                entry.window,
-                                entry.occurrence,
-                                observed_at,
-                            )
+                            history.rebase_for(&entry.key(provider), entry.window, observed_at)
                         });
                         let mut text = quota_text(
                             provider,

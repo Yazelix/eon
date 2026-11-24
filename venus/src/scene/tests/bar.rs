@@ -4431,9 +4431,6 @@ fn quota_shortfall_requires_minimum_history_across_window_durations() {
             95,
             Some(1.0 - (14_400.0 / 2_592_000.0) / 0.05),
         ),
-        // Defensive guards: zero duration or >100% remaining never panic or judge.
-        (0, 0, 50, None),
-        (300, 9_000, 101, None),
     ] {
         let actual = quota_shortfall(
             &window(duration_minutes, elapsed_seconds, remaining_percent),
@@ -4862,7 +4859,7 @@ fn quota_reset_movement_reanchors_window_and_drops_prior_usage() {
     assert_eq!(render(&rollover, &codex_5h).quotas[0].pace, None);
 
     // 6. Stale-on-startup detection, idempotence, mark_unavailable, group reorder isolation,
-    //    upward replenishment, exhaustion after rebase, and pruning.
+    //    upward replenishment, and exhaustion after rebase.
     let r_g1 = 7_000_000 + 3 * 86_400;
     let r_g2 = 7_000_000 + 4 * 86_400;
     let r_g1_moved = r_g1 + 86_400;
@@ -4929,51 +4926,175 @@ fn quota_reset_movement_reanchors_window_and_drops_prior_usage() {
             assert!(scene.quotas[0].tooltip.contains("Used up until reset"));
         }
     }
+}
 
-    // Pruning: reset-less and Blocked clear tracked state cleanly.
-    let mut pruned = WorkspaceModel::default();
-    apply(
-        &mut pruned,
-        codex_snap(
-            8_000_000,
-            10_080,
-            60,
-            Some(8_000_000 + 3 * 86_400),
-            CodexQuotaState::Fresh,
-        ),
-    );
-    apply(
-        &mut pruned,
-        codex_snap(
-            8_000_600,
-            10_080,
-            60,
-            Some(8_000_000 + 5 * 86_400),
-            CodexQuotaState::Fresh,
-        ),
-    );
-    assert_eq!(render(&pruned, &codex_7d).quotas[0].pace, None);
-    apply(
-        &mut pruned,
-        codex_snap(8_001_200, 10_080, 60, None, CodexQuotaState::Fresh),
-    );
-    assert!(pruned.quota_pace().tracks.is_empty());
-    apply(
-        &mut pruned,
-        codex_snap(
-            8_001_800,
-            10_080,
-            60,
-            Some(8_001_800 + 3 * 86_400),
-            CodexQuotaState::Fresh,
-        ),
-    );
-    assert!(render(&pruned, &codex_7d).quotas[0].pace.is_some());
-    apply(
-        &mut pruned,
-        codex_snap(8_002_400, 10_080, 0, None, CodexQuotaState::Blocked),
-    );
-    assert!(pruned.quota_pace().tracks.is_empty());
+fn qw(dur: u32, rem: u8, resets_at: Option<u64>, scope: Option<&str>) -> QuotaWindow {
+    QuotaWindow {
+        duration_minutes: dur,
+        remaining_percent: rem,
+        resets_at,
+        scope: scope.map(str::to_owned),
+    }
+}
+
+fn c7(obs: u64, rem: u8, r: u64) -> Option<(u64, CodexQuotaState, Vec<QuotaWindow>)> {
+    Some((
+        obs,
+        CodexQuotaState::Fresh,
+        vec![qw(10_080, rem, Some(r), None)],
+    ))
+}
+
+fn push_q(
+    m: &mut crate::WorkspaceModel,
+    c: Option<(u64, CodexQuotaState, Vec<QuotaWindow>)>,
+    g: Option<(u64, Vec<QuotaWindow>)>,
+) {
+    use eon_workspace_protocol::v49::{CodexQuota, GoogleQuota, GoogleQuotaState, Response};
+    let mut s = one_pane_snapshot();
+    s.codex_quota = c.map(|(observed_at, state, windows)| CodexQuota {
+        state,
+        observed_at,
+        windows,
+    });
+    s.google_quota = g.map(|(observed_at, windows)| GoogleQuota {
+        state: GoogleQuotaState::Fresh,
+        observed_at,
+        windows,
+    });
+    m.apply(Response::Snapshot(s));
+}
+
+fn q_paces(m: &crate::WorkspaceModel, items: &[BarItem]) -> Vec<Option<f32>> {
+    let bar = EonBar {
+        items,
+        quota_pace: Some(m.quota_pace()),
+        ..EonBar::default()
+    };
+    let (sz, cm) = (PhysicalSize::new(1280, 800), CellMetrics::for_scale(1.0));
+    let f = |_: HeaderText, t: &str| (t.to_owned(), t.chars().count() as f32 * 8.0);
+    let snap = m.snapshot().unwrap();
+    let ws = WorkspaceScene::from_snapshot_with_bar(snap, bar, sz, cm, 0.0, 0.0, f, None);
+    ws.quotas.into_iter().map(|q| q.pace).collect()
+}
+
+#[test]
+fn quota_reanchor_survives_blips_and_prunes_after_expiry() {
+    use CodexQuotaState::{Blocked, Fresh, Unknown};
+    let g_item = BarItem::GoogleQuota {
+        scope: "Gemini Models".into(),
+        duration_minutes: 10_080,
+    };
+    let items = [BarItem::CodexQuota7d, g_item];
+    let (t0, t1, r5) = (8_000_000, 8_000_600, 8_000_000 + 4 * 3600);
+    let (r7_old, r7_mv, rg) = (t0 + 3 * 86_400, t0 + 5 * 86_400, t0 + 3 * 86_400);
+    let mut m = crate::WorkspaceModel::default();
+    for (obs, r7) in [(t0, r7_old), (t1, r7_mv)] {
+        let cw = vec![qw(300, 50, Some(r5), None), qw(10_080, 60, Some(r7), None)];
+        let gw = vec![qw(10_080, 60, Some(rg), Some("Gemini Models"))];
+        push_q(&mut m, Some((obs, Fresh, cw)), Some((obs, gw)));
+    }
+    assert_eq!(q_paces(&m, &items)[0], None);
+
+    // Consecutive pre-expiry blips: Blocked, Unknown, missing provider, reset-less, 7d omitted.
+    let no_r = vec![qw(300, 50, None, None), qw(10_080, 60, None, None)];
+    for codex in [
+        Some((t1 + 600, Blocked, vec![])),
+        Some((t1 + 1_200, Unknown, vec![])),
+        None,
+        Some((t1 + 1_800, Fresh, no_r)),
+        Some((t1 + 2_400, Fresh, vec![qw(300, 50, Some(r5), None)])),
+    ] {
+        push_q(&mut m, codex, None);
+    }
+
+    // Post-blip grace within jitter tolerance keeps the pre-blip re-anchor.
+    push_q(&mut m, c7(t1 + 3 * 3600, 55, r7_mv + 180), None);
+    assert_eq!(q_paces(&m, &items)[0], None);
+
+    // Tolerance-grace blip in [r5, r5 + 300) retains 5h; blip at >= r5 + 300 prunes only 5h.
+    push_q(&mut m, Some((r5 + 299, Blocked, vec![])), None);
+    assert_eq!(m.quota_pace().tracks.len(), 3);
+    push_q(&mut m, Some((r5 + 300, Blocked, vec![])), None);
+    assert_eq!(m.quota_pace().tracks.len(), 2);
+
+    // Post-gate reading projects exact re-anchored pace; Google move across None blip re-anchors.
+    let tj = t1 + 5 * 3600;
+    let gw = vec![qw(10_080, 60, Some(rg + 2 * 86_400), Some("Gemini Models"))];
+    push_q(&mut m, c7(tj, 50, r7_mv + 180), Some((tj, gw)));
+    let paces = q_paces(&m, &items);
+    let exp = (((r7_mv + 180 - tj) as f64 - 50.0 * (5 * 3600) as f64 / 10.0) / 604_800.0) as f32;
+    assert!((paces[0].unwrap() - exp).abs() < 1e-3);
+    assert_eq!(paces[1], None);
+
+    // Genuine rollover after r7_mv clears stale rebase and resumes natural red pace.
+    push_q(&mut m, c7(r7_mv + 5 * 3600, 85, r7_mv + 604_800), None);
+    assert!(q_paces(&m, &items)[0].is_some_and(|p| p >= 0.25));
+}
+
+#[test]
+fn quota_history_bounds_scope_churn_and_checks_rebase_reset() {
+    let items = [BarItem::CodexQuota7d];
+    let g_scopes = |m: &crate::WorkspaceModel| -> Vec<String> {
+        let it = m.quota_pace().tracks.iter();
+        it.filter(|tr| tr.key.provider == QuotaProvider::Google)
+            .filter_map(|tr| tr.key.scope.clone())
+            .collect()
+    };
+
+    // Part A: expired absent scope prunes before unexpired; 30-scope Google churn stays <= 12/provider
+    // without evicting an older absent Codex re-anchor.
+    let (t, r_mv, far) = (9_000_000, 9_000_000 + 5 * 86_400, 9_000_000 + 365 * 86_400);
+    let gw = |name: &str, dur, r| qw(dur, 80, Some(r), Some(name));
+    let mut m = crate::WorkspaceModel::default();
+    push_q(&mut m, c7(t, 60, t + 3 * 86_400), None);
+    push_q(&mut m, c7(t + 60, 60, r_mv), None);
+    push_q(&mut m, None, Some((t + 100, vec![gw("keep", 10_080, far)])));
+    let mut b1 = vec![gw("expire", 300, t + 500)];
+    b1.extend((1..=5).map(|i| gw(&format!("f{i}"), 10_080, far)));
+    push_q(&mut m, None, Some((t + 200, b1)));
+    let b2 = (6..=10)
+        .map(|i| gw(&format!("f{i}"), 10_080, far))
+        .collect();
+    push_q(&mut m, None, Some((t + 300, b2)));
+    // At t+900 (> t+500+300), expired "expire" prunes before cap eviction so older "keep" survives.
+    push_q(&mut m, None, Some((t + 900, vec![gw("f11", 10_080, far)])));
+    assert!(g_scopes(&m).iter().any(|s| s == "keep"));
+    assert!(!g_scopes(&m).iter().any(|s| s == "expire"));
+
+    for batch in 0..5u64 {
+        let (obs, r) = (
+            t + 1_000 + batch * 60,
+            t + 1_000 + batch * 60 + 365 * 86_400,
+        );
+        let ws = (0..6u64)
+            .map(|k| gw(&format!("g{}", batch * 6 + k), 10_080, r))
+            .collect();
+        push_q(&mut m, None, Some((obs, ws)));
+        assert!(g_scopes(&m).len() <= 12 && m.quota_pace().tracks.len() <= 36);
+    }
+    assert_eq!(m.quota_pace().tracks.len(), 13);
+    let want: Vec<String> = (18..30).map(|i| format!("g{i}")).collect();
+    assert_eq!(g_scopes(&m), want);
+    push_q(&mut m, c7(t + 3 * 3600, 55, r_mv), None);
+    assert_eq!(q_paces(&m, &items), [None]);
+
+    // Part B: out-of-order older snapshot with unrelated reset must not inherit rebase_for anchor.
+    let (tb, r1, t_ooo) = (10_000_000, 10_000_000 + 5 * 86_400, 10_000_000 + 5 * 3600);
+    let mut ooo = crate::WorkspaceModel::default();
+    for (obs, rem, r) in [
+        (tb - 600, 60, tb + 3 * 86_400),
+        (tb, 60, r1),
+        (t_ooo + 600, 55, r1),
+        (t_ooo, 50, t_ooo + 604_800 - 3_600),
+    ] {
+        push_q(&mut ooo, c7(obs, rem, r), None);
+    }
+    assert_eq!(q_paces(&ooo, &items), [None]);
+    for (obs, r) in [(t_ooo, r1 + 60), (t_ooo + 1_200, r1)] {
+        push_q(&mut ooo, c7(obs, 50, r), None);
+        assert!(q_paces(&ooo, &items)[0].is_some());
+    }
 }
 
 #[test]

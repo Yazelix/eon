@@ -768,13 +768,16 @@ resets stay unknown.
 Chip text stays neutral. A small dot at the right warns when projected quota
 shortfall reaches 5% of its window: yellow, through orange at 10%, to red at
 25%. The neutral capsule outline turns red only at 25% or above. Pace is judged
-only after enough window history has accumulated — at least 10% of the window
-(capped at 4 hours: 30m for 5h, 4h for 7d) and at least 5% used, measured from
-the re-anchored reading when a provider shifts a reset time mid-window. An
-exhausted fresh window with a reset (0% remaining) is always judged and keeps at
-least a yellow dot. Healthy judged readings have a neutral dot; old, reset-less,
-blocked, unknown, and below-minimum-history readings have none. Hover and
-accessibility explain the grade in words. There is no progress meter.
+only after enough window history has accumulated (at least 10% of the window,
+capped at 4 hours: 30m for 5h, 4h for 7d, and at least 5% used). When a
+provider shifts a reset time mid-window, each running Eon window tracks that
+re-anchor in memory across transient reading blips until the window expires; a
+window opened after a reset has already moved does not see the prior reset
+(supervisor-side persistence is tracked in `eon-9mzm5`). An exhausted fresh
+window with a reset (0% remaining) is always judged and keeps at least a yellow
+dot. Healthy judged readings have a neutral dot; old, reset-less, blocked,
+unknown, and below-minimum-history readings have none. Hover and accessibility
+explain the grade in words. There is no progress meter.
 Readings say `old` once they are more than an hour old and disappear after 24
 hours. Chips hide one by one under width pressure, the one closest to the tabs
 first, before tabs and controls, and unavailable quota leaves the bar unchanged.

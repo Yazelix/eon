@@ -11,12 +11,16 @@
   ordinary terminal input, mark them in Shortcuts, and omit their footer
   hints (`eon-ici95.1`).
 
-- Require minimum window history (`min(duration / 10, 4h)` elapsed — 30m for
-  5h, 4h for 7d — and at least 5% used) before projecting quota pace or
-  colouring quota dots across Codex, Claude, and Google windows, and re-anchor
-  per-window pace tracking without carried usage when a provider shifts a
-  window's reset time materially before expiry; exhausted fresh windows (0%
-  remaining) stay judged (`eon-gz0vi`).
+- Require minimum window history (`min(duration / 10, 4h)` elapsed: 30m for 5h,
+  4h for 7d, and at least 5% used) before projecting quota pace or colouring
+  quota dots across Codex, Claude, and Google windows, and re-anchor pace
+  tracking without carried usage when a provider shifts a window's reset time
+  materially before expiry. Each running Venus window holds reset anchors in
+  memory across transient reading blips (missing provider, `Blocked`,
+  `Unknown`, or reset-less windows) until the window expires; windows opened
+  after a move do not see the prior reset (supervisor-side persistence belongs
+  to `eon-9mzm5`). Exhausted fresh windows (0% remaining) stay judged
+  (`eon-gz0vi`, `eon-h1vpr`).
 
 - VEN-C14: Present followed by EOF waits, on Wayland, until the compositor has
   processed the Present's attention request, each wait ending within

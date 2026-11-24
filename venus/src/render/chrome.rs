@@ -3856,6 +3856,40 @@ mod tests {
         actual == expected.bytes
     }
 
+    fn paint_at(batch: &RectangleBatch, point: (f32, f32)) -> Option<SceneColor> {
+        triangle_chunks(&batch.bytes)
+            .iter()
+            .rev()
+            .find_map(|triangle| {
+                let vertices: Vec<_> = vertex_chunks(triangle)
+                    .iter()
+                    .map(|v| {
+                        (
+                            (f32::from_ne_bytes(v[..4].try_into().unwrap()) + 1.0)
+                                * batch.width as f32
+                                / 2.0,
+                            (1.0 - f32::from_ne_bytes(v[4..8].try_into().unwrap()))
+                                * batch.height as f32
+                                / 2.0,
+                        )
+                    })
+                    .collect();
+                let cross = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
+                    (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+                };
+                if cross(vertices[0], vertices[1], vertices[2]).abs() < 0.0001 {
+                    return None;
+                }
+                let sides = [
+                    cross(vertices[0], vertices[1], point),
+                    cross(vertices[1], vertices[2], point),
+                    cross(vertices[2], vertices[0], point),
+                ];
+                (sides.iter().all(|s| *s >= 0.0) || sides.iter().all(|s| *s <= 0.0))
+                    .then(|| vertex_color(&triangle[..24]))
+            })
+    }
+
     /// The ink box of `buffer` as glyphon draws it from `left` and `top`: left, top, right and
     /// bottom in physical pixels.
     fn drawn_ink(
@@ -4548,39 +4582,6 @@ mod tests {
 
     #[test]
     fn bar_dots_follow_text_ink_and_only_critical_outlines_light_up() {
-        fn paint_at(batch: &RectangleBatch, point: (f32, f32)) -> Option<SceneColor> {
-            triangle_chunks(&batch.bytes)
-                .iter()
-                .rev()
-                .find_map(|triangle| {
-                    let vertices: Vec<_> = vertex_chunks(triangle)
-                        .iter()
-                        .map(|v| {
-                            (
-                                (f32::from_ne_bytes(v[..4].try_into().unwrap()) + 1.0)
-                                    * batch.width as f32
-                                    / 2.0,
-                                (1.0 - f32::from_ne_bytes(v[4..8].try_into().unwrap()))
-                                    * batch.height as f32
-                                    / 2.0,
-                            )
-                        })
-                        .collect();
-                    let cross = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
-                        (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
-                    };
-                    if cross(vertices[0], vertices[1], vertices[2]).abs() < 0.0001 {
-                        return None;
-                    }
-                    let sides = [
-                        cross(vertices[0], vertices[1], point),
-                        cross(vertices[1], vertices[2], point),
-                        cross(vertices[2], vertices[0], point),
-                    ];
-                    (sides.iter().all(|s| *s >= 0.0) || sides.iter().all(|s| *s <= 0.0))
-                        .then(|| vertex_color(&triangle[..24]))
-                })
-        }
         use eon_workspace_protocol::v49::{CodexQuota, CodexQuotaState, QuotaWindow};
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let mut renderer = Renderer::hosted(
@@ -9961,6 +9962,113 @@ mod tests {
                 bounds.top,
                 bounds.bottom
             );
+        }
+    }
+
+    #[test]
+    fn quota_bar_dot_and_accessibility_hold_reanchor_through_blip_at_1280x800() {
+        use crate::{Accessibility, BarItem, EonBar, HeaderText, WorkspaceModel};
+        use CodexQuotaState::{Blocked, Fresh};
+        use accesskit::ActivationHandler;
+        use eon_workspace_protocol::v49::{CodexQuota, CodexQuotaState, QuotaWindow, Response};
+        let sz = PhysicalSize::new(1280, 800);
+        let (dev, queue) = wgpu::Device::noop(&Default::default());
+        let fonts = FontSetup::new(&FontSettings::default()).unwrap();
+        let fmt = wgpu::TextureFormat::Rgba8Unorm;
+        let mut r = Renderer::hosted(dev, queue, fmt, (1280, 800), 1.0, fonts).unwrap();
+        let m = r.metrics();
+        let (t0, t1, r_old, r_mv) = (8_000_000, 8_000_600, 8_259_200, 8_432_000);
+        let push =
+            |model: &mut WorkspaceModel, obs: Option<u64>, st, win: Option<(u8, Option<u64>)>| {
+                let mut s = popup_sidebar_snapshot();
+                let w = win.map(|(remaining_percent, resets_at)| QuotaWindow {
+                    duration_minutes: 10_080,
+                    remaining_percent,
+                    resets_at,
+                    scope: None,
+                });
+                s.codex_quota = obs.map(|observed_at| CodexQuota {
+                    state: st,
+                    observed_at,
+                    windows: w.into_iter().collect(),
+                });
+                model.apply(Response::Snapshot(s));
+            };
+        let mut model = WorkspaceModel::default();
+        for (obs, st, win) in [
+            (Some(t0), Fresh, Some((60, Some(r_old)))),
+            (Some(t1), Fresh, Some((60, Some(r_mv)))),
+            (Some(t1 + 600), Blocked, None),
+            (None, Fresh, None),
+            (Some(t1 + 1_200), Fresh, Some((60, None))),
+        ] {
+            push(&mut model, obs, st, win);
+        }
+        let items = [BarItem::CodexQuota7d];
+        let tf = WorkspaceFocus::Terminal;
+        for (obs, rem, crit) in [(t1 + 3 * 3600, 55, false), (t1 + 5 * 3600, 50, true)] {
+            push(&mut model, Some(obs), Fresh, Some((rem, Some(r_mv))));
+            let bar = EonBar {
+                items: &items,
+                quota_pace: Some(model.quota_pace()),
+                ..EonBar::default()
+            };
+            let snap = model.snapshot().unwrap();
+            let measure = |k: HeaderText<'_>, t: &str| {
+                if k == HeaderText::Fact {
+                    r.measure_header_text(t)
+                } else {
+                    r.fit_tab_text(t)
+                }
+            };
+            let ws =
+                WorkspaceScene::from_snapshot_with_bar(snap, bar, sz, m, 0.0, 0.0, measure, None);
+            r.text.clear();
+            r.text_overlay = None;
+            let (tt, pt) = (r.workspace_title_tabs(&ws), r.workspace_pane_tabs(&ws));
+            let mut rects = RectangleBatch::new(1280, 800);
+            r.build_workspace(&ws, tf, &mut rects, &[], &tt, &pt);
+            let q = &ws.quotas[0];
+            let mut texts = r.text.iter();
+            let lbl = texts
+                .find(|t| t.buffer.lines.first().is_some_and(|l| l.text() == q.label))
+                .unwrap();
+            let ink = drawn_ink(&mut r.fonts.font_system, &lbl.buffer, lbl.left, lbl.top);
+            let left = (q.rect.right() - m.padding - 6.0).round();
+            let top = ((ink.1 + ink.3) as f32 / 2.0 - 3.0).round();
+            let vis = ws.bar_pill_rect(header_item_visual(q.rect, m), m);
+            let col = crit.then_some(palette::DARK.load_critical);
+            let bg = Some(palette::DARK.tab_idle);
+            assert_eq!(paint_at(&rects, (left + 3.0, top + 3.0)), col.or(bg));
+            let dot_r = SceneRect {
+                left,
+                top,
+                width: 6.0,
+                height: 6.0,
+            };
+            let dot = col.map(|c| (dot_r, c));
+            assert!(chip_surface_matches(&rects, vis, dot, crit, m));
+            r.set_quota_hovered(Some(0));
+            r.build_header_tooltip(&ws, &mut rects);
+            let lines = &r.text[r.text_overlay.as_ref().unwrap().0].buffer.lines;
+            let tip: Vec<_> = lines.iter().map(|l| l.text()).collect();
+            let want_tip = "Runs out about 3d18h before reset";
+            assert_eq!(tip.join("\n"), q.tooltip);
+            assert_eq!(q.tooltip.contains(want_tip), crit);
+            assert!(crit || !q.tooltip.contains("Runs out"));
+            let a11y = Accessibility::new(sz, false);
+            a11y.update(None, None, Some(&ws), None, tf, "", None, None, sz, m, None);
+            let tree = a11y.activation().request_initial_tree().unwrap();
+            let want_lbl = Some(&*q.accessible_label);
+            let (_, n) = tree
+                .nodes
+                .iter()
+                .find(|(_, n)| n.value() == want_lbl)
+                .unwrap();
+            let want_desc = "At this pace it runs out about 3d18h before reset.";
+            assert_eq!(n.description(), Some(&*q.description));
+            assert_eq!(q.description.contains(want_desc), crit);
+            assert!(crit || !q.description.contains("runs out"));
         }
     }
 }

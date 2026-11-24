@@ -26,12 +26,15 @@ installation, and proven contract changes.
   reflect the release set of the running window. The setting takes effect
   at the next supervisor start (`eon-ici95.1`, EONW v48).
 
-- Quota pace chips in the Eon Bar (Codex, Claude, and Google) now wait for
-  minimum window history (`min(duration / 10, 4h)` elapsed — 30m for 5h, 4h for
-  7d — and at least 5% used) before showing a pace verdict or warning colour,
-  and drop prior usage to re-anchor when a provider shifts a window's reset
-  time materially before expiry; exhausted fresh windows remain judged
-  (`eon-gz0vi`).
+- Quota pace chips in the Eon Bar (Codex, Claude, and Google) wait for minimum
+  window history (`min(duration / 10, 4h)` elapsed: 30m for 5h, 4h for 7d, and
+  at least 5% used) before showing a pace verdict or warning colour, and drop
+  prior usage to re-anchor when a provider shifts a window's reset time
+  materially before expiry. Each running window tracks those anchors in memory
+  across transient reading blips until the window expires; windows opened after
+  a move do not see the prior reset (supervisor-side persistence is tracked in
+  `eon-9mzm5`). Exhausted fresh windows remain judged (`eon-gz0vi`,
+  `eon-h1vpr`).
 
 - `eon agent slot` supports up to three concurrent Boat VM leases through
   `slots.boat.max_parallel_leases` (default 1). Upgrade all readers of the
