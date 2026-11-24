@@ -128,6 +128,11 @@ impl<T> ImageStore<T> {
         self.resident
     }
 
+    #[cfg(all(test, feature = "candidate-rune"))]
+    pub(super) fn set_test_budget(&mut self, bytes: u64) {
+        self.budget = bytes;
+    }
+
     pub(super) fn next_marker(&self) -> Option<Instant> {
         self.next_marker
     }

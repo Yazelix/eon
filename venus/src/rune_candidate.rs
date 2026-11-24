@@ -14,6 +14,9 @@
 
 mod fixtures;
 
+#[cfg(test)]
+pub(crate) use fixtures::messages as fixture_messages;
+
 use crate::{
     ImageKey, ModelEffect, Renderer, Scene, SessionModel,
     render::{FontSettings, FontSetup, HOSTED_LOOK, PresentOutcome},
@@ -179,28 +182,6 @@ impl Entry {
     }
 }
 
-/// What a frame's device and format allow the host to do with its renderer.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Admission {
-    /// No renderer yet: make one on this device and format.
-    Create,
-    /// The renderer's own device and format.
-    Draw,
-    /// Another device or format: drawing would use another device's resources.
-    Refuse,
-}
-
-pub(crate) fn admit<K: PartialEq>(
-    current: Option<&(K, wgpu::TextureFormat)>,
-    frame: &(K, wgpu::TextureFormat),
-) -> Admission {
-    match current {
-        None => Admission::Create,
-        Some(current) if current == frame => Admission::Draw,
-        Some(_) => Admission::Refuse,
-    }
-}
-
 /// How close to where it was prepared a slot must draw for the prepared grid to draw in it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Fit {
@@ -340,6 +321,8 @@ pub(crate) mod rune_host {
         render::EffectSite,
     };
 
+    pub(crate) type FrameTarget = (DeviceKey, wgpu::TextureFormat);
+
     /// Rune's app state: the entry, and the step the compositor last drew.
     pub(crate) struct State {
         pub(crate) entry: Entry,
@@ -388,7 +371,7 @@ pub(crate) mod rune_host {
     /// Draws the hosted Venus renderer at the grid slot, inside Rune's frame pass.
     pub(crate) struct GridCompositor {
         fonts: Option<FontSetup>,
-        renderer: Option<(Renderer, (DeviceKey, wgpu::TextureFormat))>,
+        renderer: Option<(Renderer, FrameTarget)>,
         prepared: Option<SlotGeometry>,
         failure: Failure,
         quit: Option<AppHandle<State>>,
@@ -425,33 +408,23 @@ pub(crate) mod rune_host {
         /// Admits the frame's device and format, and prepares the scene at the slot's
         /// geometry before any pass is open.
         fn prepare(&mut self, f: &mut Frame<'_, State>) -> Option<SlotGeometry> {
-            let geometry = match slot_geometry(f) {
-                Ok(geometry) => geometry,
-                Err(message) => {
-                    self.fail(message);
-                    return None;
-                }
-            };
-            let identity = (f.device_key(), f.format);
-            match admit(
-                self.renderer.as_ref().map(|(_, admitted)| admitted),
-                &identity,
-            ) {
-                Admission::Refuse => {
-                    self.fail(refused_device(f.format));
-                    return None;
-                }
-                Admission::Create => {
-                    let fonts = self.fonts.take()?;
-                    match hosted_renderer(f, geometry, fonts) {
-                        Ok(renderer) => self.renderer = Some((renderer, identity)),
-                        Err(error) => {
-                            self.fail(error);
-                            return None;
-                        }
+            let (geometry, target) =
+                match preflight(f, self.renderer.as_ref().map(|(_, target)| *target)) {
+                    Ok(preflight) => preflight,
+                    Err(message) => {
+                        self.fail(message);
+                        return None;
+                    }
+                };
+            if self.renderer.is_none() {
+                let fonts = self.fonts.take()?;
+                match hosted_renderer(f, geometry, fonts) {
+                    Ok(renderer) => self.renderer = Some((renderer, target)),
+                    Err(error) => {
+                        self.fail(error);
+                        return None;
                     }
                 }
-                Admission::Draw => {}
             }
             let (renderer, _) = self.renderer.as_mut()?;
             if self.prepared != Some(geometry) {
@@ -475,7 +448,7 @@ pub(crate) mod rune_host {
                 prepared.and_then(|_| self.renderer.as_ref().map(|(renderer, _)| renderer));
             let drawn = draw_slot(f, renderer.zip(prepared), Fit::Exact);
             self.hook_calls = drawn.hook_calls;
-            self.drew = drawn.drew;
+            self.drew = drawn.slot.is_some();
             // The fixtures' window never resizes, so a moved slot stays a refusal here.
             if let Some(refusal) = drawn.refusal.or_else(|| {
                 prepared
@@ -487,7 +460,7 @@ pub(crate) mod rune_host {
             if let Some((renderer, _)) = self.renderer.as_mut() {
                 renderer.end_frame_hosted();
             }
-            if drawn.drew {
+            if self.drew {
                 let entry = &f.rt.state.entry;
                 f.rt.state.drawn = Some((entry.cycle, entry.step));
             }
@@ -504,22 +477,27 @@ pub(crate) mod rune_host {
             .child(effect(GRID_MARK).key(GRID_KEY).w_full().h_full())
     }
 
-    /// The grid slot's device-pixel geometry in this frame.
-    pub(crate) fn slot_geometry<S: 'static>(
+    /// Check the frame before making or preparing GPU resources.
+    pub(crate) fn preflight<S: 'static>(
         f: &Frame<'_, S>,
-    ) -> std::result::Result<SlotGeometry, String> {
+        admitted: Option<FrameTarget>,
+    ) -> std::result::Result<(SlotGeometry, FrameTarget), String> {
+        let target = (f.device_key(), f.format);
+        if admitted.is_some_and(|admitted| admitted != target) {
+            return Err(format!(
+                "the frame moved to another GPU device or target format ({:?})",
+                f.format
+            ));
+        }
+        if f.srgb_blend() || f.rt.srgb_blend() {
+            return Err("the Venus grid requires a linear-blended frame".into());
+        }
         let Some((rect, _)) = f.rt.presented(GRID_KEY) else {
             return Err("the grid slot is not in the frame".into());
         };
         let scale = f.rt.env.scale;
-        Ok(SlotGeometry::new(rect.map(|value| value * scale), scale))
-    }
-
-    pub(crate) fn refused_device(format: wgpu::TextureFormat) -> String {
-        format!(
-            "the frame moved to another GPU device or target format ({format:?}); the candidate \
-             does not rebuild its renderer (eon-yp6vg.7.10)"
-        )
+        let geometry = SlotGeometry::new(rect.map(|value| value * scale), scale);
+        Ok((geometry, target))
     }
 
     /// A hosted renderer on the frame's device and format, at the slot's geometry.
@@ -551,8 +529,8 @@ pub(crate) mod rune_host {
     pub(crate) struct Drawn {
         /// Effect-slot hook calls in the frame, for the proofs.
         pub(crate) hook_calls: u32,
-        /// Whether the hook drew the grid.
-        pub(crate) drew: bool,
+        /// Where the hook drew the grid, if it drew one.
+        pub(crate) slot: Option<SlotGeometry>,
         /// Why the prepared grid could not draw.
         pub(crate) refusal: Option<String>,
         /// Where the slot drew when it had moved since it was prepared further than the pass's
@@ -579,7 +557,7 @@ pub(crate) mod rune_host {
         let mut refusal = None;
         let mut moved = None;
         let mut calls = 0;
-        let mut drew = false;
+        let mut slot = None;
         f.ui.draw_with(f.encoder, f.target, RUNE_CLEAR, &mut |pass,
                                                               site: &EffectSite<
             '_,
@@ -592,28 +570,28 @@ pub(crate) mod rune_host {
                 return;
             }
             let at = SlotGeometry::new(site.instance.rect, site.scale);
+            if site.format != target_format || site.in_layer || site.srgb_blend {
+                refusal = Some(format!(
+                    "incompatible Venus grid pass ({:?}, in a layer: {}, sRGB blend: {})",
+                    site.format, site.in_layer, site.srgb_blend
+                ));
+                return;
+            }
             let Some([left, top, width, height]) =
                 prepared.viewport(at, fit, site.origin, site.size)
             else {
                 moved = Some(at);
                 return;
             };
-            if site.format != target_format || site.in_layer {
-                refusal = Some(format!(
-                    "the slot's pass ({:?}, in a layer: {}) is not the prepared target",
-                    site.format, site.in_layer
-                ));
-                return;
-            }
             pass.set_viewport(left, top, width, height, 0.0, 1.0);
             match renderer.draw_hosted(pass) {
-                Ok(()) => drew = true,
+                Ok(()) => slot = Some(at),
                 Err(error) => refusal = Some(error.to_string()),
             }
         });
         Drawn {
             hook_calls: calls,
-            drew,
+            slot,
             refusal,
             moved,
         }

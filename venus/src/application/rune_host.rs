@@ -22,23 +22,25 @@
 //!
 //! Limits kept for later beads: the hosted renderer draws the active terminal only, without
 //! workspace chrome or dialogs (eon-yp6vg.8-.16); no keyboard, pointer or IME input
-//! (eon-yp6vg.7.2); no platform accessibility adapter (VEN-C1's Rune-hosted gap); a new GPU
-//! device or target format is fatal (eon-yp6vg.7.10). Since dialogs are not drawn, closing a
+//! (eon-yp6vg.7.2); no platform accessibility adapter (VEN-C1's Rune-hosted gap).
+//! The host admits input from completed frames and treats GPU device loss as terminal.
+//! Since dialogs are not drawn, closing a
 //! busy window opens a Quit prompt nobody can see or answer: that window then ends only through
 //! the `eon` CLI or the supervisor's EOF.
 
 use super::*;
 use crate::rune_candidate::{
-    Admission, Failure, Fit, SlotGeometry, admit,
-    rune_host::{draw_slot, grid_view, hosted_renderer, refused_device, resize_to, slot_geometry},
+    Failure, Fit, SlotGeometry,
+    rune_host::{Drawn, FrameTarget, draw_slot, grid_view, hosted_renderer, preflight, resize_to},
 };
 use eon_workspace_protocol::SESSION_CLEANUP_TIMEOUT;
 use rune::{
-    App, AppHandle, AppSpec, CloseResponse, Compositor, Frame, QuitResponse, Tx, WindowGeometry,
-    WindowHandle, compose::DeviceKey,
+    App, AppHandle, AppSpec, CloseResponse, Compositor, Frame, FrameOutcome, FrameSkip,
+    QuitResponse, Tx, WindowGeometry, WindowHandle,
 };
 use std::{
     cell::{Cell, RefCell},
+    rc::Rc,
     sync::{
         Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -55,6 +57,7 @@ fn window_id() -> WindowId {
 #[derive(Default)]
 pub(super) struct RuneWindow {
     output: Cell<bool>,
+    pub(super) withdrawn: Cell<bool>,
     redraw: Cell<bool>,
     title: RefCell<Option<String>>,
     shown_title: RefCell<String>,
@@ -148,6 +151,11 @@ impl<L: Lane> Control<L> {
         self.admitted.store(admitted, Ordering::Release);
     }
 
+    fn retire(&self) {
+        self.admit(false);
+        self.lane().take();
+    }
+
     /// A presentation control event, on the control thread; false ends the reader.
     pub(super) fn control(&self, event: UserEvent) -> bool {
         match event {
@@ -202,6 +210,56 @@ impl From<WindowGeometry> for Geometry {
     }
 }
 
+impl Geometry {
+    fn matches_slot(self, slot: SlotGeometry) -> bool {
+        // This candidate's grid_view fills the window. Chrome will give the grid its own bounds.
+        let (width, height) = self.size;
+        slot.same_slot(SlotGeometry::new(
+            [0.0, 0.0, width as f32, height as f32],
+            self.scale as f32,
+        ))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Completion {
+    Drawn(Option<PresentationIdentity>),
+    Covered,
+    Surface,
+}
+
+/// The compositor and Rune's post-present hook run in order on the UI thread.
+#[derive(Default)]
+struct FrameHandoff {
+    staged: Cell<Option<PresentationIdentity>>,
+    completed: Cell<Option<Completion>>,
+    queued: Cell<bool>,
+}
+
+impl FrameHandoff {
+    fn report(&self, outcome: FrameOutcome, skip: Option<FrameSkip>) -> bool {
+        let staged = self.staged.take();
+        let completion = match (outcome, skip) {
+            (FrameOutcome::Drawn, _) => Completion::Drawn(staged),
+            (FrameOutcome::Unchanged, _) | (FrameOutcome::Skipped, Some(FrameSkip::Timeout)) => {
+                return false;
+            }
+            (FrameOutcome::Skipped, Some(FrameSkip::Covered)) => Completion::Covered,
+            _ => Completion::Surface,
+        };
+        // A less severe skip can arrive before a pending surface withdrawal is applied.
+        if self.completed.get() != Some(Completion::Surface) {
+            self.completed.set(Some(completion));
+        }
+        !self.queued.replace(true)
+    }
+
+    fn discard(&self) {
+        self.staged.take();
+        self.completed.take();
+    }
+}
+
 /// Native facts that arrive before the first frame makes Venus's window, kept latest-only and
 /// applied once it exists.
 #[derive(Default)]
@@ -214,13 +272,17 @@ struct Early {
 /// The Rune app's state: Venus's `Application` and the host's own bookkeeping.
 pub(super) struct Host {
     app: Application,
+    handle: AppHandle<Self>,
     control: Arc<Control<WindowHandle>>,
     failure: Failure,
+    failed: bool,
+    frames: Rc<FrameHandoff>,
     /// Consumed by the first frame's hosted renderer.
     fonts: Option<FontSetup>,
     early: Early,
     geometry: Option<Geometry>,
-    identity: Option<(DeviceKey, wgpu::TextureFormat)>,
+    identity: Option<FrameTarget>,
+    slot: Option<SlotGeometry>,
     /// The slot's last move between preparing and drawing, and how many frames in a row it
     /// repeated.
     moved: Option<((SlotGeometry, SlotGeometry), u32)>,
@@ -256,8 +318,9 @@ impl Host {
     /// for the exit status, keeps the control thread's Present admission current, and gives the
     /// window its title. True when the view must redraw.
     fn finish(&mut self, tx: &mut Tx) -> bool {
-        if let Some(error) = &self.app.fatal_error {
-            self.failure.set(error.clone());
+        if self.check_failure() {
+            tx.quit();
+            return false;
         }
         while let Some(request) = self.app.native_requests.take() {
             self.apply(request);
@@ -292,6 +355,58 @@ impl Host {
         self.app.handle_window_event(window_id(), event);
     }
 
+    fn begin(&mut self) -> bool {
+        if self.check_failure() {
+            return false;
+        }
+        self.complete_frame();
+        true
+    }
+
+    fn receive_frame(&mut self, tx: &mut Tx) -> bool {
+        self.frames.queued.set(false);
+        self.begin();
+        self.finish(tx)
+    }
+
+    fn complete_frame(&mut self) {
+        match self.frames.completed.take() {
+            Some(Completion::Drawn(Some(candidate))) => {
+                if self.app.window_occluded
+                    || !self.geometry.is_some_and(|geometry| geometry.has_output)
+                    || candidate.generation != self.app.presentation.generation
+                {
+                    return;
+                }
+                self.app.presentation.publish(candidate);
+                if let Some(window) = self.rune_window() {
+                    window.withdrawn.set(false);
+                }
+                if let Some(revision) = candidate.revision {
+                    self.app.flush_deferred_selection(revision);
+                }
+            }
+            Some(Completion::Surface | Completion::Drawn(None)) => self.withdraw_surface(),
+            Some(Completion::Covered) => {
+                self.app.presentation.unpublish();
+                self.app.stop_covered_motion();
+                self.app.reset_cursor_animation();
+            }
+            None => {}
+        }
+    }
+
+    fn withdraw_surface(&mut self) {
+        self.frames.discard();
+        if self
+            .rune_window()
+            .is_some_and(|window| !window.withdrawn.get())
+        {
+            self.app.presentation.invalidate();
+        }
+        self.app.cancel_native_pointer_sequence();
+    }
+
     /// Applies one native geometry report: the output fact, then a scale change and a resize as
     /// winit orders them. The first report after the window exists compares against scale 1,
     /// the scale the initial size was chosen at (VEN-C19).
@@ -300,16 +415,23 @@ impl Host {
             self.early.geometry = Some(geometry);
             return;
         };
-        window.output.set(geometry.has_output);
+        let had_output = window.output.replace(geometry.has_output);
         let (scale_changed, size_changed) = match self.geometry {
             None => (geometry.scale != 1.0, true),
             Some(last) => (last.scale != geometry.scale, last.size != geometry.size),
         };
         self.geometry = Some(geometry);
+        if size_changed || scale_changed {
+            self.frames.discard();
+        } else if had_output && !geometry.has_output {
+            self.withdraw_surface();
+        } else {
+            self.complete_frame();
+        }
         if scale_changed {
             let lane = self.control.lane().clone();
             let scale = geometry.scale;
-            self.app.change_scale(scale, |size| {
+            self.app.apply_scale(scale, |size| {
                 let lane = lane.ok_or("the Rune window has no handle yet")?;
                 lane.resize_instant((
                     (f64::from(size.width) / scale) as f32,
@@ -320,19 +442,31 @@ impl Host {
         }
         // A scale change resizes too, at the same physical size: the renderer and the Orbit grid
         // follow the new cell metrics.
-        if (size_changed || scale_changed) && self.app.fatal_error.is_none() {
+        if (size_changed || scale_changed) && !self.check_failure() {
             let (width, height) = geometry.size;
             self.window_event(WindowEvent::Resized(PhysicalSize::new(width, height)));
+        }
+        if geometry.has_output
+            && !had_output
+            && let Some(window) = self.rune_window()
+        {
+            window.request_redraw();
         }
     }
 
     fn user_event(&mut self, event: UserEvent, tx: &mut Tx) {
+        if !self.begin() {
+            self.finish_live(tx);
+            return;
+        }
         // Requests the event's own catch-up drains go to a queue of their own: put back into
         // Application's, the drain loop that hands them out would never end.
         let mut requested = NativeRequests::default();
         self.app.handle_user_event(event, collect(&mut requested));
-        while let Some(request) = requested.take() {
-            self.apply(request);
+        if !self.check_failure() {
+            while let Some(request) = requested.take() {
+                self.apply(request);
+            }
         }
         self.finish_live(tx);
     }
@@ -353,16 +487,19 @@ impl Host {
             accessibility,
             native: NativeWindow::Rune(RuneWindow::default()),
         });
+        let early = std::mem::take(&mut self.early);
+        if let Some(geometry) = early.geometry {
+            self.apply_geometry(geometry);
+        }
+        if self.check_failure() {
+            return;
+        }
         if self.app.initial_scale_pending {
             self.app.reveal_workspace_selection();
         } else {
             self.app.start_initial_attachment();
         }
         self.app.refresh_client_view();
-        let early = std::mem::take(&mut self.early);
-        if let Some(geometry) = early.geometry {
-            self.apply_geometry(geometry);
-        }
         if let Some(focused) = early.focused {
             self.window_event(WindowEvent::Focused(focused));
         }
@@ -372,49 +509,84 @@ impl Host {
         self.admit_present();
     }
 
-    /// A fatal render or admission failure, from a frame: recorded for the exit status, and the
-    /// exit asked for now, since no callback may follow a frame.
-    fn fail(&mut self, message: String) {
-        report(&message);
-        let message = self.app.fatal_error.get_or_insert(message).clone();
+    fn check_failure(&mut self) -> bool {
+        if !self.failed
+            && let Some(message) = self
+                .app
+                .fatal_error
+                .take()
+                .or_else(|| self.handle.window_error())
+        {
+            self.latch_failure(message);
+        }
+        self.failed
+    }
+
+    fn latch_failure(&mut self, message: String) {
+        self.failed = true;
         self.failure.set(message);
-        self.apply(NativeRequest::Exit);
+        self.control.retire();
+        self.frames.discard();
+        self.app.presentation.invalidate();
+        self.app.terminal.deferred_selection.clear();
+        self.app.input.cancel_selection();
+        self.app.terminal.transport = None;
+        self.app.column_views.clear();
+        self.app.workspace_transport = None;
+        self.app.window = None;
+        self.app.native_requests = NativeRequests::default();
+    }
+
+    /// There is no Tx in a compositor callback. App quit also works if Rune
+    /// has already removed the window and discarded its lane.
+    fn fail(&mut self, message: String) {
+        if !self.failed {
+            self.latch_failure(message);
+            (self.control.quit)();
+        }
     }
 
     /// Admits the frame's device and format, makes the window on the first frame, and prepares
     /// the active terminal at the slot's geometry. None draws only Rune's clear.
     fn prepare(f: &mut Frame<'_, Self>) -> Option<(SlotGeometry, PresentationIdentity)> {
-        let geometry = match slot_geometry(f) {
-            Ok(geometry) => geometry,
+        let (geometry, target) = match preflight(f, f.rt.state.identity) {
+            Ok(preflight) => preflight,
             Err(message) => {
                 f.rt.state.fail(message);
                 return None;
             }
         };
-        let identity = (f.device_key(), f.format);
-        match admit(f.rt.state.identity.as_ref(), &identity) {
-            Admission::Refuse => {
-                let message = refused_device(f.format);
-                f.rt.state.fail(message);
-                return None;
-            }
-            Admission::Create => {
-                let fonts = f.rt.state.fonts.take()?;
-                match hosted_renderer(f, geometry, fonts) {
-                    Ok(renderer) => {
-                        f.rt.state.identity = Some(identity);
-                        f.rt.state.create_window(renderer, geometry);
-                    }
-                    Err(error) => {
-                        f.rt.state.fail(error);
-                        return None;
-                    }
+        if f.rt.state.identity.is_none() {
+            let fonts = f.rt.state.fonts.take()?;
+            match hosted_renderer(f, geometry, fonts) {
+                Ok(renderer) => {
+                    f.rt.state.identity = Some(target);
+                    f.rt.state.create_window(renderer, geometry);
+                }
+                Err(error) => {
+                    f.rt.state.fail(error);
+                    return None;
                 }
             }
-            Admission::Draw => {}
         }
         let host = &mut f.rt.state;
-        let app = &mut host.app;
+        if host.check_failure() {
+            (host.control.quit)();
+            return None;
+        }
+        host.prepare_grid(geometry)
+            .map(|candidate| (geometry, candidate))
+    }
+
+    fn prepare_grid(&mut self, geometry: SlotGeometry) -> Option<PresentationIdentity> {
+        if self
+            .slot
+            .replace(geometry)
+            .is_some_and(|last| last != geometry)
+        {
+            self.withdraw_surface();
+        }
+        let app = &mut self.app;
         // Against the renderer itself: a window Resized may have sized it since the last frame.
         let renderer = &mut app.window.as_mut()?.renderer;
         let (width, height) = geometry.size();
@@ -429,10 +601,45 @@ impl Host {
         let renderer = &mut app.window.as_mut()?.renderer;
         if let Err(error) = renderer.prepare_hosted(scene, app.blink_visible, candidate.generation)
         {
-            host.fail(error.to_string());
+            self.fail(error.to_string());
             return None;
         }
-        Some((geometry, candidate))
+        Some(candidate)
+    }
+
+    fn finish_slot(
+        &mut self,
+        prepared: Option<(SlotGeometry, PresentationIdentity)>,
+        drawn: Drawn,
+    ) -> bool {
+        if let Some(refusal) = drawn.refusal {
+            self.fail(refusal);
+            return false;
+        }
+        // A resize between preparation and drawing needs another frame. Repeating the
+        // same move means the slot cannot draw where the renderer prepared it.
+        if let Some(((prepared, _), at)) = prepared.zip(drawn.moved) {
+            self.withdraw_surface();
+            let repeats = match self.moved {
+                Some((last, count)) if last == (prepared, at) => count + 1,
+                _ => 1,
+            };
+            self.moved = Some(((prepared, at), repeats));
+            if repeats >= MOVED_FRAMES {
+                self.fail(at.moved_from(prepared));
+                return false;
+            }
+            return true;
+        }
+        self.moved = None;
+        if let Some(((prepared, candidate), at)) = prepared.zip(drawn.slot)
+            && self.geometry.is_some_and(|geometry| {
+                geometry.has_output && geometry.matches_slot(prepared) && geometry.matches_slot(at)
+            })
+        {
+            self.frames.staged.set(Some(candidate));
+        }
+        false
     }
 }
 
@@ -444,7 +651,17 @@ const MOVED_FRAMES: u32 = 3;
 
 impl Compositor<Host> for HostCompositor {
     fn render(&mut self, f: &mut Frame<'_, Host>) {
+        if !f.rt.state.begin() {
+            (f.rt.state.control.quit)();
+            return;
+        }
         let prepared = Host::prepare(f);
+        if f.rt.state.failed {
+            if f.rt.state.handle.window_error().is_none() {
+                draw_slot(f, None, Fit::Near);
+            }
+            return;
+        }
         // The renderer leaves the state while Rune's pass borrows the frame.
         let mut window = f.rt.state.app.window.take();
         let drawn = draw_slot(
@@ -460,37 +677,7 @@ impl Compositor<Host> for HostCompositor {
         }
         let host = &mut f.rt.state;
         host.app.window = window;
-        if let Some(refusal) = drawn.refusal {
-            host.fail(refusal);
-        }
-        // A resize that lands between preparing and drawing skips this frame's grid and asks for
-        // another, prepared where the slot now is. The same move frame after frame is a fault.
-        let again = match prepared.zip(drawn.moved) {
-            Some(((prepared, _), at)) => {
-                let repeats = match host.moved {
-                    Some((last, count)) if last == (prepared, at) => count + 1,
-                    _ => 1,
-                };
-                host.moved = Some(((prepared, at), repeats));
-                if repeats >= MOVED_FRAMES {
-                    host.fail(at.moved_from(prepared));
-                }
-                repeats < MOVED_FRAMES
-            }
-            None => {
-                host.moved = None;
-                false
-            }
-        };
-        if drawn.drew
-            && let Some((_, candidate)) = prepared
-        {
-            host.app.presentation.publish(candidate);
-            if let Some(revision) = candidate.revision {
-                host.app.flush_deferred_selection(revision);
-            }
-        }
-        if again {
+        if host.finish_slot(prepared, drawn) {
             f.rt.invalidate();
         }
     }
@@ -503,24 +690,35 @@ fn collect(requested: &mut NativeRequests) -> impl FnMut(&mut Application, Nativ
 }
 
 fn on_geometry(host: &mut Host, geometry: WindowGeometry, tx: &mut Tx) -> bool {
-    host.apply_geometry(geometry.into());
+    if !host.check_failure() {
+        host.apply_geometry(geometry.into());
+    }
     host.finish(tx)
 }
 
 fn on_focus(host: &mut Host, focused: bool, tx: &mut Tx) {
-    if host.app.window.is_none() {
-        host.early.focused = Some(focused);
-    } else {
-        host.window_event(WindowEvent::Focused(focused));
+    if host.begin() {
+        if host.app.window.is_none() {
+            host.early.focused = Some(focused);
+        } else {
+            host.window_event(WindowEvent::Focused(focused));
+        }
     }
     host.finish_live(tx);
 }
 
 fn on_visibility(host: &mut Host, visible: bool, tx: &mut Tx) {
-    if host.app.window.is_none() {
-        host.early.visible = Some(visible);
-    } else {
-        host.window_event(WindowEvent::Occluded(!visible));
+    if !host.check_failure() {
+        if !visible {
+            host.frames.discard();
+        } else {
+            host.complete_frame();
+        }
+        if host.app.window.is_none() {
+            host.early.visible = Some(visible);
+        } else {
+            host.window_event(WindowEvent::Occluded(!visible));
+        }
     }
     host.finish_live(tx);
 }
@@ -528,31 +726,34 @@ fn on_visibility(host: &mut Host, visible: bool, tx: &mut Tx) {
 /// A compositor close request (or macOS Quit) is Venus's to decide under VEN-C8; Rune keeps the
 /// window until Venus exits through its lane.
 fn on_close_request(host: &mut Host, tx: &mut Tx) -> CloseResponse {
-    host.window_event(WindowEvent::CloseRequested);
+    if host.begin() {
+        host.window_event(WindowEvent::CloseRequested);
+    }
     host.finish_live(tx);
     CloseResponse::Defer
 }
 
 fn on_quit_request(host: &mut Host, tx: &mut Tx) -> QuitResponse {
-    host.window_event(WindowEvent::CloseRequested);
-    host.finish_live(tx);
+    on_close_request(host, tx);
     QuitResponse::Defer
 }
 
 /// The window is going: exit, as winit's `Destroyed`; never a Quit, and no second close.
 fn on_close(host: &mut Host, tx: &mut Tx) {
     host.closing = true;
-    host.window_event(WindowEvent::Destroyed);
+    if !host.check_failure() {
+        host.frames.discard();
+        host.window_event(WindowEvent::Destroyed);
+    }
     host.finish_live(tx);
 }
 
 /// Every frame and wake: the end of a native turn, as winit's `about_to_wait`.
 fn poll(host: &mut Host, _clock: f64, tx: &mut Tx) -> bool {
+    if !host.begin() {
+        return host.finish(tx);
+    }
     if host.app.window.is_none() {
-        if host.app.fatal_error.is_some() {
-            // The first frame failed: the exit is under way; nothing more to wake for.
-            return host.finish(tx);
-        }
         // The first frame makes the window; admission is sampled on the turn after it.
         tx.wake_after(Duration::ZERO);
         return true;
@@ -618,6 +819,7 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
     let mut app = App::new(spec)
         .args(Vec::new())
         .srgb_blend(false)
+        .terminal_gpu_loss()
         .attention_wait(SESSION_CLEANUP_TIMEOUT)
         .on_window_geometry(on_geometry)
         .on_focus(on_focus)
@@ -627,6 +829,16 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
         .on_close(on_close)
         .compositor(HostCompositor);
     let _ = handle.set(app.handle());
+    let frames = Rc::new(FrameHandoff::default());
+    let receipt_handle = app.handle();
+    app = app.on_frame_encoded({
+        let frames = Rc::clone(&frames);
+        move |frame| {
+            if frames.report(frame.outcome(), frame.skipped()) {
+                receipt_handle.update_if(Host::receive_frame);
+            }
+        }
+    });
     let control = {
         let quit = app.handle();
         Arc::new(Control::new(move || quit.quit()))
@@ -654,12 +866,16 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
     let failure = Failure::default();
     let host = Host {
         app: application,
+        handle: app.handle(),
         control,
         failure: failure.clone(),
+        failed: false,
+        frames,
         fonts: Some(fonts),
         early: Early::default(),
         geometry: None,
         identity: None,
+        slot: None,
         moved: None,
         closing: false,
     };

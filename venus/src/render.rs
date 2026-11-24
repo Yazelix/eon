@@ -2124,6 +2124,19 @@ impl Renderer {
         self.images.store.resident()
     }
 
+    #[cfg(all(test, feature = "candidate-rune"))]
+    pub(crate) fn set_test_image_budget(&mut self, bytes: u64) {
+        self.images.store.set_test_budget(bytes);
+    }
+
+    #[cfg(all(test, feature = "candidate-rune"))]
+    pub(crate) fn test_image_marker(&mut self, graphics: &crate::scene::SceneGraphics) -> bool {
+        matches!(
+            self.images.store.derive(&[Some(graphics)], Instant::now())[0].as_slice(),
+            [BandItem::Marker(_)]
+        )
+    }
+
     /// When a pending image entry of the last drawn frame shows its marker, which needs a redraw.
     #[must_use]
     pub fn next_marker_deadline(&self) -> Option<Instant> {

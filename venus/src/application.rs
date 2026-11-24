@@ -5663,20 +5663,36 @@ impl Application {
     }
 
     fn cancel_pointer_sequence(&mut self) {
-        self.terminal.selection_scroll.cancel();
-        self.window_menu.pressed = None;
-        self.header_press = None;
-        self.terminal.scrollback_press = None;
         let cancel_server = pointer_sequence_needs_cancel(
             &self.terminal.selection_gate,
             self.input.is_selecting(),
             &self.terminal.deferred_selection,
         );
-        self.terminal.deferred_selection.clear();
-        self.input.cancel_selection();
+        self.clear_pointer_sequence();
         if cancel_server {
             self.send(ClientMessage::Selection(SelectionAction::Cancel));
         }
+    }
+
+    fn clear_pointer_sequence(&mut self) {
+        self.terminal.selection_scroll.cancel();
+        self.window_menu.pressed = None;
+        self.header_press = None;
+        self.terminal.scrollback_press = None;
+        self.terminal.deferred_selection.clear();
+        self.input.cancel_selection();
+    }
+
+    fn cancel_native_pointer_sequence(&mut self) {
+        #[cfg(feature = "candidate-rune")]
+        if let Some(NativeWindow::Rune(window)) = self.window.as_ref().map(|state| &state.native)
+            && window.withdrawn.replace(true)
+        {
+            // New deferred input may have arrived while the surface was withdrawn.
+            self.clear_pointer_sequence();
+            return;
+        }
+        self.cancel_pointer_sequence();
     }
 
     fn send_selection(&mut self, message: ClientMessage) {
@@ -5869,6 +5885,13 @@ impl Application {
                 format!("The authoritative Orbit process exited with status {code}.")
             }
         }
+    }
+
+    fn stop_covered_motion(&mut self) {
+        self.terminal
+            .terminal_scroll
+            .cancel(&mut self.terminal.pending_viewport);
+        self.links.unshifted = false;
     }
 
     fn render(&mut self) {
@@ -6077,12 +6100,7 @@ impl Application {
                 }
             }
             Ok(PresentOutcome::Deferred) => {}
-            Ok(PresentOutcome::Occluded) => {
-                self.terminal
-                    .terminal_scroll
-                    .cancel(&mut self.terminal.pending_viewport);
-                self.links.unshifted = false;
-            }
+            Ok(PresentOutcome::Occluded) => self.stop_covered_motion(),
             Ok(PresentOutcome::Recovered) => {
                 self.links.unshifted = false;
                 self.presentation.invalidate();
@@ -6201,8 +6219,24 @@ impl Application {
         scale_factor: f64,
         request_size: impl FnOnce(PhysicalSize<u32>) -> Result,
     ) {
+        if self.apply_scale(scale_factor, request_size) {
+            self.terminal
+                .terminal_scroll
+                .cancel(&mut self.terminal.pending_viewport);
+            self.presentation.invalidate();
+            self.cancel_pointer_sequence();
+        }
+    }
+
+    /// Apply the native scale before a resize. When both arrive together, Resized
+    /// already invalidates geometry and cancels the pointer sequence.
+    fn apply_scale(
+        &mut self,
+        scale_factor: f64,
+        request_size: impl FnOnce(PhysicalSize<u32>) -> Result,
+    ) -> bool {
         let Some(state) = &mut self.window else {
-            return;
+            return false;
         };
         if self.initial_scale_pending {
             let initial = initial_window_size(
@@ -6215,16 +6249,12 @@ impl Application {
             if let Err(error) = initial.and_then(request_size) {
                 self.fatal_error = Some(error.to_string());
                 self.native_requests.exit = true;
-                return;
+                return false;
             }
         }
-        self.terminal
-            .terminal_scroll
-            .cancel(&mut self.terminal.pending_viewport);
         state.scale_factor = scale_factor;
         report(format_args!("window scale factor {scale_factor}"));
-        self.presentation.invalidate();
-        self.cancel_pointer_sequence();
+        true
     }
 
     fn handle_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
@@ -6289,7 +6319,7 @@ impl Application {
                     .terminal_scroll
                     .cancel(&mut self.terminal.pending_viewport);
                 state.renderer.resize(size, state.scale_factor);
-                self.cancel_pointer_sequence();
+                self.cancel_native_pointer_sequence();
                 self.reveal_workspace_selection();
                 if self.attention_inbox.open {
                     self.reveal_inbox_highlight();
@@ -6318,7 +6348,7 @@ impl Application {
                 state.renderer.reset_cursor_animation();
                 if occluded {
                     self.presentation.invalidate();
-                    self.cancel_pointer_sequence();
+                    self.cancel_native_pointer_sequence();
                 } else {
                     state.native.request_redraw();
                 }

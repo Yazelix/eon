@@ -1,7 +1,14 @@
 use super::*;
 use crate::application::tests::busy_window_snapshot;
+use crate::rune_candidate::fixture_messages;
 use eon_workspace_protocol::v49::Response;
-use std::ffi::OsString;
+use std::{
+    ffi::OsString,
+    io::Read,
+    os::unix::fs::{DirBuilderExt, PermissionsExt},
+    os::unix::net::{UnixListener, UnixStream},
+    sync::mpsc,
+};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// A lane that records what it is asked, in order; `quit` is the app-level end.
@@ -30,7 +37,7 @@ impl Lane for Recorder {
 
 fn new_control(recorder: &Recorder) -> Control<Recorder> {
     let quit = recorder.clone();
-    Control::new(move || quit.push("quit"))
+    Control::with_focus(true, move || quit.push("quit"))
 }
 
 /// Feeds `input` to the production presentation control reader through `control`.
@@ -94,8 +101,7 @@ fn eof_before_the_window_exists_ends_the_app() {
 
 #[test]
 fn venus_follows_presents_with_its_own_exit_on_the_same_lane() {
-    // Ended, Stopped or a fatal error exits through the lane too, after the control thread's
-    // Presents.
+    // A healthy Venus exit follows the control thread's Presents on the same lane.
     let recorder = Recorder::default();
     let control = new_control(&recorder);
     control.bind(recorder.clone());
@@ -112,14 +118,24 @@ fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'st
         Some(admission.into()),
     )
     .unwrap();
+    let native = App::new(AppSpec::new(
+        "test",
+        (960.0, 600.0),
+        || unreachable!(),
+        |_, _| grid_view(),
+    ));
     let mut host = Host {
         app: Application::new(arguments, EventSink::Host(Arc::new(|_| true))),
+        handle: native.handle(),
         control: Arc::new(Control::new(quit)),
         failure: Failure::default(),
+        failed: false,
+        frames: Rc::default(),
         fonts: None,
         early: Early::default(),
         geometry: None,
         identity: None,
+        slot: None,
         moved: None,
         closing: false,
     };
@@ -450,4 +466,586 @@ fn a_scale_change_at_the_same_size_resizes_the_grid() {
         before,
         "cell metrics follow the new scale"
     );
+}
+
+#[test]
+fn output_loss_withdraws_input_and_regain_redraws_at_the_same_size() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    let on_output = Geometry {
+        size: (960, 600),
+        scale: 1.0,
+        has_output: true,
+    };
+    host.apply_geometry(on_output);
+    host.finish(&mut Tx::default());
+    host.frames
+        .staged
+        .set(Some(host.app.presentation.candidate(Some(1))));
+    assert!(host.frames.report(FrameOutcome::Drawn, None));
+    host.receive_frame(&mut Tx::default());
+    assert!(host.app.presentation.has_presented_geometry());
+
+    host.apply_geometry(Geometry {
+        has_output: false,
+        ..on_output
+    });
+    assert!(!host.app.presentation.has_presented_geometry());
+    host.finish(&mut Tx::default());
+    host.apply_geometry(on_output);
+    assert!(
+        host.finish(&mut Tx::default()),
+        "output entry needs a fresh draw"
+    );
+    assert!(!host.app.presentation.has_presented_geometry());
+}
+
+#[test]
+fn fatal_failure_withdraws_admission_and_releases_the_renderer() {
+    let ended = Recorder::default();
+    let mut host = busy_host({
+        let ended = ended.clone();
+        move || ended.push("quit")
+    });
+    host.app
+        .presentation
+        .publish(host.app.presentation.candidate(Some(1)));
+    host.fail("first renderer error".into());
+    host.fail("later error".into());
+    assert_eq!(host.failure.get().as_deref(), Some("first renderer error"));
+    assert!(!host.control.admitted.load(Ordering::Acquire));
+    assert!(!host.app.presentation.has_presented_geometry());
+    assert!(host.app.window.is_none());
+    assert_eq!(host.app.quit, QuitProgress::Idle);
+    assert_eq!(ended.calls(), ["quit"]);
+}
+
+const NATIVE: Geometry = Geometry {
+    size: (960, 600),
+    scale: 1.0,
+    has_output: true,
+};
+const PEER_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn native_slot() -> SlotGeometry {
+    SlotGeometry::new([0.0, 0.0, 960.0, 600.0], 1.0)
+}
+
+fn stage(host: &mut Host, identity: PresentationIdentity) {
+    let slot = native_slot();
+    assert!(!host.finish_slot(
+        Some((slot, identity)),
+        Drawn {
+            hook_calls: 1,
+            slot: Some(slot),
+            moved: None,
+            refusal: None
+        },
+    ));
+}
+
+fn present(host: &mut Host, identity: PresentationIdentity) {
+    stage(host, identity);
+    assert!(host.frames.report(FrameOutcome::Drawn, None));
+    host.receive_frame(&mut Tx::default());
+}
+
+#[test]
+fn skips_withdraw_only_the_input_their_reason_requires() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let receipt = host.app.presentation.candidate(Some(1));
+    present(&mut host, receipt);
+    let copy = ClientMessage::Selection(SelectionAction::Copy);
+    host.app.terminal.deferred_selection.push_back(copy.clone());
+
+    for outcome in [FrameOutcome::Unchanged, FrameOutcome::Skipped] {
+        stage(&mut host, receipt);
+        assert!(!host.frames.report(outcome, Some(FrameSkip::Timeout)));
+        assert!(host.frames.staged.get().is_none());
+        assert!(host.app.presentation.is_current(receipt));
+        assert_eq!(host.app.terminal.deferred_selection.len(), 1);
+    }
+    host.app.terminal.terminal_scroll.phase_active = true;
+    host.app.terminal.pending_viewport = Some(PendingViewportRequest::Scroll {
+        rows: 1,
+        cancelled: false,
+    });
+    host.app.links.unshifted = true;
+    host.app.next_animation = Some(Instant::now());
+    assert!(
+        host.frames
+            .report(FrameOutcome::Skipped, Some(FrameSkip::Covered))
+    );
+    host.receive_frame(&mut Tx::default());
+    assert!(!host.app.presentation.has_presented_geometry());
+    assert_eq!(host.app.terminal.deferred_selection.len(), 1);
+    assert!(!host.app.terminal.terminal_scroll.phase_active);
+    assert_eq!(
+        host.app.terminal.pending_viewport,
+        Some(PendingViewportRequest::Scroll {
+            rows: 1,
+            cancelled: true
+        })
+    );
+    assert!(!host.app.links.unshifted);
+    assert!(host.app.next_animation.is_none());
+
+    assert!(host.frames.report(FrameOutcome::Skipped, None));
+    assert!(
+        !host
+            .frames
+            .report(FrameOutcome::Skipped, Some(FrameSkip::Covered))
+    );
+    host.receive_frame(&mut Tx::default());
+    assert!(
+        host.app.terminal.deferred_selection.is_empty(),
+        "the surface withdrawal wins"
+    );
+    let epoch = host.app.presentation.epoch;
+    assert!(
+        host.frames
+            .report(FrameOutcome::Skipped, Some(FrameSkip::Surface))
+    );
+    host.receive_frame(&mut Tx::default());
+    assert_eq!(
+        host.app.presentation.epoch, epoch,
+        "the same surface stays withdrawn"
+    );
+    present(&mut host, receipt);
+    assert!(
+        !host.app.presentation.has_presented_geometry(),
+        "late old receipt"
+    );
+    let fresh = host.app.presentation.candidate(Some(1));
+    present(&mut host, fresh);
+    assert!(host.app.presentation.is_current(fresh));
+}
+
+#[test]
+fn resize_and_occlusion_supersede_queued_frames_and_moved_slots_never_admit() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let initial = host.app.presentation.candidate(Some(1));
+    stage(&mut host, initial);
+    assert!(host.frames.report(FrameOutcome::Drawn, None));
+    host.apply_geometry(Geometry {
+        size: (800, 600),
+        ..NATIVE
+    });
+    host.receive_frame(&mut Tx::default());
+    assert!(!host.app.presentation.has_presented_geometry());
+    let changed = host.app.presentation.candidate(Some(2));
+    stage(&mut host, changed);
+    assert!(
+        host.frames.staged.get().is_none(),
+        "a provisional slot is too wide"
+    );
+
+    host.apply_geometry(NATIVE);
+    let current = host.app.presentation.candidate(Some(2));
+    stage(&mut host, current);
+    assert!(host.frames.report(FrameOutcome::Drawn, None));
+    on_visibility(&mut host, false, &mut Tx::default());
+    host.receive_frame(&mut Tx::default());
+    assert!(!host.app.presentation.has_presented_geometry());
+    on_visibility(&mut host, true, &mut Tx::default());
+    let current = host.app.presentation.candidate(Some(2));
+    present(&mut host, current);
+    assert!(host.app.presentation.is_current(current));
+
+    for _ in 1..MOVED_FRAMES {
+        assert!(host.finish_slot(
+            Some((native_slot(), current)),
+            Drawn {
+                hook_calls: 1,
+                slot: None,
+                refusal: None,
+                moved: Some(SlotGeometry::new([0.0, 0.0, 800.0, 600.0], 1.0)),
+            },
+        ));
+        assert!(!host.app.presentation.has_presented_geometry());
+    }
+    assert!(!host.finish_slot(
+        Some((native_slot(), current)),
+        Drawn {
+            hook_calls: 1,
+            slot: None,
+            refusal: None,
+            moved: Some(SlotGeometry::new([0.0, 0.0, 800.0, 600.0], 1.0)),
+        },
+    ));
+    assert!(host.failed);
+}
+
+/// A canonical Orbit peer on a private socket with bounded waits for the candidate's drains.
+struct Peer {
+    listener: UnixListener,
+    socket: PathBuf,
+    wakes: mpsc::Receiver<()>,
+}
+
+impl Peer {
+    fn new(host: &mut Host, name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("vr-{:x}-{name}", std::process::id()));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+        let socket = root.join("o");
+        let listener = UnixListener::bind(&socket).unwrap_or_else(|error| {
+            let _ = std::fs::remove_dir(&root);
+            panic!("bind private Orbit peer: {error}");
+        });
+        listener.set_nonblocking(true).unwrap();
+        let (wake, wakes) = mpsc::sync_channel(1);
+        host.app.transport_wake = Arc::new(move || {
+            let _ = wake.try_send(());
+        });
+        host.app.start_orbit(socket.clone());
+        Self {
+            listener,
+            socket,
+            wakes,
+        }
+    }
+
+    fn accept(&self) -> UnixStream {
+        let deadline = Instant::now() + PEER_TIMEOUT;
+        loop {
+            match self.listener.accept() {
+                Ok((stream, _)) => {
+                    // macOS inherits nonblocking mode from the listener.
+                    stream.set_nonblocking(false).unwrap();
+                    stream.set_read_timeout(Some(PEER_TIMEOUT)).unwrap();
+                    assert_eq!(Self::read(&stream), ClientMessage::Hello);
+                    return stream;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                other => panic!("Orbit client did not connect: {other:?}"),
+            }
+        }
+    }
+
+    fn read(mut stream: &UnixStream) -> ClientMessage {
+        let mut packet = vec![0; session::HEADER_BYTES];
+        stream.read_exact(&mut packet).unwrap();
+        packet.resize(session::client_message_len(&packet).unwrap().unwrap(), 0);
+        stream
+            .read_exact(&mut packet[session::HEADER_BYTES..])
+            .unwrap();
+        session::decode_client_message(&packet).unwrap()
+    }
+
+    fn send(
+        &self,
+        mut stream: &UnixStream,
+        host: &mut Host,
+        messages: impl IntoIterator<Item = ServerMessage>,
+        settled: impl Fn(&Host) -> bool,
+    ) {
+        for message in messages {
+            stream
+                .write_all(&session::encode_server_message(&message).unwrap())
+                .unwrap();
+        }
+        let deadline = Instant::now() + PEER_TIMEOUT;
+        while !settled(host) {
+            self.wakes
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap();
+            host.user_event(UserEvent::Transport, &mut Tx::default());
+        }
+    }
+}
+
+impl Drop for Peer {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.socket);
+        let _ = std::fs::remove_dir(self.socket.parent().unwrap());
+    }
+}
+
+fn selection_begin(frame_revision: u64) -> ClientMessage {
+    ClientMessage::Selection(SelectionAction::Begin {
+        frame_revision,
+        position: session::SelectionPosition { x: 0.0, y: 0.0 },
+        time_ns: 0,
+        modifiers: session::Modifiers::empty(),
+    })
+}
+
+#[test]
+fn an_idle_drawn_receipt_flushes_the_new_revision_without_requesting_a_redraw() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let peer = Peer::new(&mut host, "receipt");
+    let private_root = peer.socket.parent().unwrap();
+    assert_ne!(private_root, std::env::temp_dir());
+    assert_eq!(
+        private_root.metadata().unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    let stream = peer.accept();
+    peer.send(&stream, &mut host, fixture_messages(0), |host| {
+        host.app.terminal.model.scene().is_some()
+    });
+    let candidate = host.prepare_grid(native_slot()).unwrap();
+    host.finish(&mut Tx::default());
+    host.app
+        .terminal
+        .deferred_selection
+        .push_back(selection_begin(0));
+    stage(&mut host, candidate);
+    assert!(
+        !host.app.presentation.has_presented_geometry(),
+        "encoding is too early"
+    );
+    assert!(host.frames.report(FrameOutcome::Drawn, None));
+    assert!(
+        !host.receive_frame(&mut Tx::default()),
+        "quiet receipt update"
+    );
+    assert!(host.app.presentation.is_current(candidate));
+    assert!(host.app.terminal.deferred_selection.is_empty());
+    let deadline = Instant::now() + PEER_TIMEOUT;
+    loop {
+        let message = Peer::read(&stream);
+        if let ClientMessage::Selection(_) = message {
+            assert_eq!(message, selection_begin(1));
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+}
+
+#[test]
+fn another_withdrawal_discards_intervening_selection_without_sending_another_cancel() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let peer = Peer::new(&mut host, "withdraw");
+    let stream = peer.accept();
+    peer.send(&stream, &mut host, fixture_messages(0), |host| {
+        host.app.terminal.model.scene().is_some()
+    });
+    let candidate = host.prepare_grid(native_slot()).unwrap();
+    present(&mut host, candidate);
+    host.app.terminal.selection_gate.finish_sent();
+    host.withdraw_surface();
+
+    for withdraw in [
+        (|host: &mut Host| {
+            host.apply_geometry(Geometry {
+                size: (800, 600),
+                ..NATIVE
+            })
+        }) as fn(&mut Host),
+        |host| on_visibility(host, false, &mut Tx::default()),
+        |host| {
+            assert!(
+                host.frames
+                    .report(FrameOutcome::Skipped, Some(FrameSkip::Surface))
+            );
+            host.receive_frame(&mut Tx::default());
+        },
+    ] {
+        host.app.send_or_defer_selection(selection_begin(1), false);
+        assert!(host.app.input.is_selecting());
+        withdraw(&mut host);
+        assert!(host.app.terminal.deferred_selection.is_empty());
+        assert!(!host.app.input.is_selecting());
+    }
+    on_visibility(&mut host, true, &mut Tx::default());
+    host.apply_geometry(NATIVE);
+    host.app.terminal.selection_gate = SelectionGate::Ready;
+    let fresh = host.prepare_grid(native_slot()).unwrap();
+    present(&mut host, fresh);
+    assert!(host.app.send(ClientMessage::ReturnToLive));
+    let mut selections = Vec::new();
+    let deadline = Instant::now() + PEER_TIMEOUT;
+    loop {
+        match Peer::read(&stream) {
+            ClientMessage::Selection(selection) => selections.push(selection),
+            ClientMessage::ReturnToLive => break,
+            _ => {}
+        }
+        assert!(Instant::now() < deadline);
+    }
+    assert_eq!(selections, [SelectionAction::Cancel]);
+}
+
+#[test]
+fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let peer = Peer::new(&mut host, "resync");
+    let first = peer.accept();
+
+    let mut upload = fixture_messages(4);
+    let ServerMessage::Frame(mut image_frame) = upload.pop().unwrap() else {
+        unreachable!()
+    };
+    let ServerMessage::ResourceAnnounce(announcement) = &upload[0] else {
+        unreachable!()
+    };
+    let budget = u64::from(announcement.width) * u64::from(announcement.height) * 4;
+    let window = host.app.window.as_mut().unwrap();
+    window.renderer.set_test_image_budget(budget);
+    let renderer = &window.renderer as *const Renderer;
+    host.app.column_views.push(TerminalView::new(None));
+    for message in fixture_messages(0).into_iter().chain(fixture_messages(4)) {
+        host.app
+            .handle_column_transport(0, TransportEvent::Server(message));
+    }
+    let at_revision = |revision| {
+        move |host: &Host| {
+            host.app
+                .terminal
+                .model
+                .scene()
+                .is_some_and(|scene| scene.revision == revision)
+        }
+    };
+    peer.send(
+        &first,
+        &mut host,
+        fixture_messages(0).into_iter().chain(fixture_messages(4)),
+        at_revision(5),
+    );
+    let old = host.prepare_grid(native_slot()).unwrap();
+    present(&mut host, old);
+    assert_eq!(host.app.presented_revision(), Some(5));
+    let old_graphics = host.app.terminal.model.scene().unwrap().graphics.clone();
+    let referenced =
+        image_references(std::iter::once(&host.app.terminal).chain(&host.app.column_views));
+    let image_renderer = &mut host.app.window.as_mut().unwrap().renderer;
+    assert_eq!(image_renderer.image_resident(), budget);
+    assert_eq!(
+        image_renderer.image_resync(
+            old_graphics.attachment,
+            &old_graphics.placements,
+            &referenced
+        ),
+        Some(ImageResync::NoRoom)
+    );
+    assert!(image_renderer.test_image_marker(&old_graphics));
+
+    host.app.column_views.clear();
+    host.app.sweep_images();
+    assert_eq!(
+        host.app.window.as_ref().unwrap().renderer.image_resident(),
+        0
+    );
+    let retained = host.prepare_grid(native_slot()).unwrap();
+    assert!(host.app.terminal.images_resyncing);
+    assert_eq!(
+        retained.revision, None,
+        "retained scenes cannot admit old input"
+    );
+    present(&mut host, old);
+    assert!(!host.app.presentation.has_presented_geometry());
+    present(&mut host, retained);
+    assert_eq!(host.app.presented_revision(), None);
+
+    let second = peer.accept();
+    image_frame.revision = 6;
+    image_frame.graphics.as_mut().unwrap().placements[0].state = PlacementState::Pending;
+    peer.send(
+        &second,
+        &mut host,
+        [
+            ServerMessage::Attached,
+            ServerMessage::Frame(image_frame.clone()),
+        ],
+        at_revision(6),
+    );
+    let fresh = host.prepare_grid(native_slot()).unwrap();
+    let pending = host.app.terminal.model.scene().unwrap().graphics.clone();
+    assert_ne!(old_graphics.attachment, pending.attachment);
+    assert!(
+        host.app
+            .window
+            .as_mut()
+            .unwrap()
+            .renderer
+            .test_image_marker(&pending)
+    );
+    assert_eq!(
+        host.app
+            .window
+            .as_ref()
+            .unwrap()
+            .renderer
+            .next_marker_deadline(),
+        None
+    );
+    present(&mut host, fresh);
+    assert_eq!(host.app.presented_revision(), Some(6));
+
+    image_frame.revision = 7;
+    image_frame.graphics.as_mut().unwrap().placements[0].state = PlacementState::Ready;
+    peer.send(
+        &second,
+        &mut host,
+        upload
+            .iter()
+            .cloned()
+            .chain([ServerMessage::Frame(image_frame.clone())]),
+        at_revision(7),
+    );
+    let fresh = host.prepare_grid(native_slot()).unwrap();
+    present(&mut host, fresh);
+    assert_eq!(host.app.presented_revision(), Some(7));
+    let replacement = host.app.terminal.model.scene().unwrap().graphics.clone();
+    let current_renderer = &mut host.app.window.as_mut().unwrap().renderer;
+    assert_eq!(current_renderer as *const Renderer, renderer);
+    assert_eq!(current_renderer.image_resident(), budget);
+    assert!(!current_renderer.test_image_marker(&replacement));
+
+    // Refuse a second resource while the replacement is still referenced. When
+    // the frame switches to it, the same target sizes and residency spend no further reattach.
+    for message in &mut upload {
+        match message {
+            ServerMessage::ResourceAnnounce(message) => message.resource += 1,
+            ServerMessage::ResourceChunk(message) => message.resource += 1,
+            _ => unreachable!(),
+        }
+    }
+    image_frame.revision = 8;
+    image_frame.graphics.as_mut().unwrap().placements[0].resource += 1;
+    peer.send(
+        &second,
+        &mut host,
+        upload
+            .into_iter()
+            .chain([ServerMessage::Frame(image_frame)]),
+        at_revision(8),
+    );
+    for _ in 0..2 {
+        assert_eq!(host.prepare_grid(native_slot()).unwrap().revision, Some(8));
+        assert_eq!(
+            host.app.terminal.model.image_attachment(),
+            Some(pending.attachment)
+        );
+        assert_eq!(
+            host.app.window.as_ref().unwrap().renderer.image_resident(),
+            budget
+        );
+    }
+
+    host.app.fatal_error = Some("terminal failure with a resident image".into());
+    let turns = host.app.turns;
+    host.user_event(UserEvent::Transport, &mut Tx::default());
+    assert!(!poll(&mut host, 0.0, &mut Tx::default()));
+    assert_eq!(
+        host.app.turns, turns,
+        "no deadline or retry work after failure"
+    );
+    assert!(host.app.terminal.transport.is_none());
+    assert!(host.app.window.is_none());
+    assert_eq!(host.app.presented_revision(), None);
+    assert_eq!(host.app.quit, QuitProgress::Idle);
 }

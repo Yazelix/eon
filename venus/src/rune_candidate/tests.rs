@@ -71,15 +71,7 @@ fn fixtures_reach_the_scene_through_the_canonical_codec() {
 }
 
 #[test]
-fn admission_creates_once_draws_on_match_and_refuses_a_new_device_or_format() {
-    use wgpu::TextureFormat::{Bgra8UnormSrgb, Rgba16Float};
-    let first = (1, Bgra8UnormSrgb);
-    assert_eq!(admit(None, &first), Admission::Create);
-    assert_eq!(admit(Some(&first), &first), Admission::Draw);
-    assert_eq!(admit(Some(&first), &(2, Bgra8UnormSrgb)), Admission::Refuse);
-    assert_eq!(admit(Some(&first), &(1, Rgba16Float)), Admission::Refuse);
-
-    // Geometry compares on the pixel grid Rune snaps slots to, and on the exact scale.
+fn slot_geometry_compares_snapped_pixels_and_exact_scale() {
     let prepared = SlotGeometry::new([37.0, 23.0, 400.0, 260.0], 1.0);
     assert_eq!(SlotGeometry::new([37.2, 22.8, 400.4, 259.6], 1.0), prepared);
     assert_ne!(SlotGeometry::new([37.0, 23.0, 401.0, 260.0], 1.0), prepared);

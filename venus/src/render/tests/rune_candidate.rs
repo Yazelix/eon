@@ -1,8 +1,9 @@
 //! The hosted renderer under the private Rune candidate (eon-yp6vg.7.7).
 
 use super::*;
-use crate::rune_candidate::{Entry, Failure, STEP_COUNT, rune_host};
+use crate::rune_candidate::{Entry, Failure, Fit, STEP_COUNT, SlotGeometry, rune_host};
 use images::DrawStep;
+use rune::Compositor;
 
 #[test]
 fn hosted_steps_prepare_images_and_text_in_painter_order() {
@@ -140,11 +141,11 @@ fn candidate_frame(
     gpu: &rune::render::Gpu,
     ui: &mut rune::render::Renderer,
     rt: &mut rune::Runtime<rune_host::State>,
-    compositor: &mut rune_host::GridCompositor,
     size: (u32, u32),
+    render: impl FnOnce(&mut rune::Frame<'_, rune_host::State>),
 ) -> Vec<u8> {
-    use rune::Compositor;
-    let target = rune::render::Offscreen::new(&gpu.device, size.0, size.1);
+    let format = ui.format();
+    let target = rune::render::Offscreen::with_format(&gpu.device, size.0, size.1, format);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     {
         let mut frame = rune::Frame {
@@ -152,14 +153,14 @@ fn candidate_frame(
             queue: &gpu.queue,
             encoder: &mut encoder,
             target: &target.view,
-            format: OFFSCREEN,
+            format,
             size,
             dt: 0.0,
             update_ms: 0.0,
             rt,
             ui,
         };
-        compositor.render(&mut frame);
+        render(&mut frame);
     }
     target.copy(&mut encoder);
     gpu.queue.submit([encoder.finish()]);
@@ -269,6 +270,91 @@ fn inset_view(_: &rune_host::State, _: &mut rune::Cx<rune_host::State>) -> rune:
         )
 }
 
+fn isolated_view(_: &rune_host::State, _: &mut rune::Cx<rune_host::State>) -> rune::El {
+    rune::el()
+        .w_full()
+        .h_full()
+        .fill(BEFORE)
+        .layer_opacity(0.5)
+        .child(rune_host::grid_view())
+}
+
+fn disallow_incompatible_passes(gpu: &rune::render::Gpu) {
+    let size = (640, 320);
+    let points = (size.0 as f32, size.1 as f32);
+    let format = OFFSCREEN.remove_srgb_suffix();
+    let mut renderer = Renderer::hosted(
+        gpu.device.clone(),
+        gpu.queue.clone(),
+        format,
+        size,
+        1.0,
+        packaged_fonts(),
+    )
+    .unwrap();
+    let entry = Entry::new().unwrap();
+    renderer
+        .prepare_hosted(entry.scene(), true, entry.generation)
+        .unwrap();
+    let mut ui = rune::render::Renderer::new(&gpu.device, format);
+    for (view, blend, wrong_pass) in [
+        (rune_host::view as _, false, None),
+        (
+            isolated_view as _,
+            false,
+            Some("Rgba16Float, in a layer: true, sRGB blend: false"),
+        ),
+        (
+            rune_host::view as _,
+            true,
+            Some("Rgba8Unorm, in a layer: false, sRGB blend: true"),
+        ),
+    ] {
+        let mut rt = candidate_runtime(view, points, 1.0);
+        rt.set_srgb_blend(blend);
+        ui.set_srgb_blend(blend);
+        rt.frame(0.0);
+        candidate_frame(gpu, &mut ui, &mut rt, size, |f| {
+            let preflight = rune_host::preflight(f, None);
+            if blend {
+                assert_eq!(
+                    preflight.unwrap_err(),
+                    "the Venus grid requires a linear-blended frame"
+                );
+            } else {
+                let target = (f.device_key(), OFFSCREEN);
+                assert!(
+                    rune_host::preflight(f, Some(target)).is_err(),
+                    "same device, wrong format"
+                );
+                assert!(preflight.is_ok());
+            }
+            // Bypass preflight only to test the guard at the actual effect pass.
+            let width = if wrong_pass.is_some() && !blend {
+                points.0 - 20.0
+            } else {
+                points.0
+            };
+            let geometry = SlotGeometry::new([0.0, 0.0, width, points.1], 1.0);
+            let drawn = rune_host::draw_slot(f, Some((&renderer, geometry)), Fit::Exact);
+            assert_eq!(drawn.hook_calls, 1);
+            assert!(
+                drawn.moved.is_none(),
+                "pass mismatch takes precedence over a moved slot"
+            );
+            if let Some(metadata) = wrong_pass {
+                let reason = drawn.refusal.unwrap();
+                assert!(reason.contains(metadata), "{reason}");
+                assert!(drawn.slot.is_none());
+                eprintln!("probe {reason}");
+            } else {
+                assert!(drawn.refusal.is_none());
+                assert!(drawn.slot.is_some());
+            }
+        });
+    }
+}
+
 #[test]
 #[ignore = "needs a real GPU adapter (lavapipe) and the packaged fonts; see venus/docs/DEVELOPMENT.md"]
 fn rune_hosted_grid_matches_the_venus_parent() {
@@ -351,7 +437,7 @@ fn rune_hosted_grid_matches_the_venus_parent() {
                 parent_entry.advance();
             }
             rt.frame(if index == 0 || tiled { 0.0 } else { 1.0 / 60.0 });
-            let candidate = candidate_frame(&gpu, &mut ui, &mut rt, &mut compositor, size);
+            let candidate = candidate_frame(&gpu, &mut ui, &mut rt, size, |f| compositor.render(f));
             assert_eq!(failure.get(), None);
             assert_eq!(
                 compositor.hook_calls, 1,
@@ -383,7 +469,9 @@ fn rune_hosted_grid_matches_the_venus_parent() {
         // A frame on another device is refused through the same compositor, with no draw.
         let other = rune::render::Gpu::headless();
         let mut other_ui = rune_renderer(&other);
-        let _ = candidate_frame(&other, &mut other_ui, &mut rt, &mut compositor, size);
+        let _ = candidate_frame(&other, &mut other_ui, &mut rt, size, |f| {
+            compositor.render(f)
+        });
         assert!(
             !compositor.drew,
             "nothing draws with another device's resources"
@@ -405,7 +493,7 @@ fn rune_hosted_grid_matches_the_venus_parent() {
     let failure = Failure::default();
     let mut compositor = rune_host::GridCompositor::new(packaged_fonts(), failure.clone(), None);
     rt.frame(0.0);
-    let candidate = candidate_frame(&gpu, &mut ui, &mut rt, &mut compositor, size);
+    let candidate = candidate_frame(&gpu, &mut ui, &mut rt, size, |f| compositor.render(f));
     assert_eq!(failure.get(), None);
     assert!(compositor.drew);
     let mut parent = Renderer::hosted(
@@ -460,5 +548,6 @@ fn rune_hosted_grid_matches_the_venus_parent() {
             "inset: {mismatched} slot pixels differ, {wrong_outside} outside pixels wrong"
         ));
     }
+    disallow_incompatible_passes(&gpu);
     assert!(probe.failures.is_empty(), "{:#?}", probe.failures);
 }
