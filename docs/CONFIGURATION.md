@@ -272,19 +272,19 @@ nonterminal invocations and ordinary launch still return immediately.
 and, optionally, a profile that `launch` and `run` follow (EON-C40 clause 6):
 
 ```toml
-[projects.tide]
-repo = "/home/me/src/tide"
-agents_root = "/home/me/.cache/tide-agents"
+[projects.app]
+repo = "/home/me/src/app"
+agents_root = "/home/me/.cache/app-agents"
 max = 2                          # live implement and review agents in total
 
-[projects.tide.backends.codex]   # a configured backend's name
+[projects.app.backends.codex]    # a configured backend's name
 max = 1
 
-[projects.tide.roles.implement]  # implement, review or lead
+[projects.app.roles.implement]   # implement, review or lead
 max = 2                          # not allowed on lead
 guard = ["/usr/local/bin/machine-free"]
 
-[projects.tide.roles.implement.overlay]  # by command executable name
+[projects.app.roles.implement.overlay]  # by command executable name
 codex = ["-s", "danger-full-access", "-a", "never"]
 claude = []
 ```

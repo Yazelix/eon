@@ -5,182 +5,186 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Venus skips unchanged input-method updates and builds workspace layout when input needs it.
-  On Wayland, it updates the input-method caret at most once per presented frame and resends it
-  after text input re-enters (`eon-04qsk`).
+## v0.1.29 (2026-11-24)
 
-- Fresh Eon supervisors isolate inherited descriptors on Linux and macOS.
-  On Linux, only the initial Venus process receives a caller's Wayland socket.
-- The first startup directory picker points to `eon tutor` once per Eon user
-  state directory (`eon-orp67.4`).
+### Upgrading from v0.1.28
 
-- Opening Editor or another popup keeps the color of the Agents sidebar and
-  the workspace around the popup (`eon-cn6v3`).
+For channel-tracking Nix profiles, run `nix profile upgrade --refresh eon`
+(pinned tag installs follow the upgrade steps in `docs/USAGE.md`). Then:
 
-- An `eon.sock` client now has 250 ms from its accept to send its whole
-  request; one that sends it too slowly gets a `malformed-action` failure and
-  its action does not run. The private in-place Update test path finishes
-  management requests already sent to Orbit within 1,000 ms before it
-  captures the window, and refuses when one stays unsettled (EON-C11,
-  `eon-t3fyd.9.2`).
+- Quit running v0.1.28 windows from inside them (`Alt+Shift+Q` or `eon quit`)
+  and open a fresh window from the upgraded launcher or an outside shell.
+  Windows started before the upgrade keep running their old v0.1.28 Venus,
+  supervisor and Orbit processes until quit, and reloading an old window keeps
+  its old build across the EONW mismatch. This release ships EONW v50 and
+  ORBS v15, so all v0.1.29 fixes and features (including the `eon-04qsk`
+  Wayland input-method freeze fix, popup colours, drag selection toward live
+  output, launch-supplied Orbit default colours, `eon lock`, `[keys] release`
+  and `eon files reveal`) require a fresh window. Quitting stops that window's
+  terminals, so save your work first.
+- If an enabled popup binds `Alt+Shift+I` (`Option+Shift+I` on macOS),
+  configuration validation fails until you change or unbind that popup's
+  shortcut or remap `[keys] input_lock`. The default toggle also claims
+  `Alt+Shift+I` from terminal applications (`eon-ici95.2`).
+- An `eon.sock` client now has 250 ms from accept to send its complete request
+  before receiving `malformed-action` (`eon-t3fyd.9.2`).
+- Update any `slots.local_runner` script from `EON_SLOT_*` to
+  `ROTA_SLOT_QUEUED_NS`, `ROTA_SLOT_CLASS`, `ROTA_SLOT_RUN_KEY` and
+  `ROTA_SLOT_DELEGATE`. The old `EON_SLOT_*` environment variables are gone
+  (`eon-eon-agent-lr8sx.40.4`).
+- Remove `limits.ROLE.allow_missing` from `agent.toml` and use
+  `[backends.quota] absent_windows` in its place; configurations with
+  `allow_missing` fail to load. Update scripts that read `eon agent status
+  --json`, because the per-backend `warnings` array is removed (`eon-0nn1p.27`).
+- Remove `slots.boat.snapshot` from `agent.toml` (leftover settings warn and
+  do nothing). Remote Boat runs now require the pinned image
+  `eon-builds-nix-2-34-7-large-klt8h-v1`, `eon-builds` environment version 2
+  and `slots.boat.large_max_memory_gib` of at least 8; other environments fall
+  back to local execution (`eon-klt8h.1`). Multi-lease Boat callers should
+  update `slot ls --json` readers for per-lease fields (`eon-bbqpk`), and
+  standalone `rota` `slot ls --json` drops `boat_lease_held`,
+  `boat_lease_pid`, `boat` and `boat_error` (`eon-eon-agent-lr8sx.40.5`).
+- Upgrade every binary reading a shared `agent.toml` before adding
+  `wait_retry_seconds`, `slots.boat.max_parallel_leases`, backend-level
+  `add_dir`, or the new `[projects.NAME]` profile fields (`max`,
+  `roles.ROLE.max`, `backends.BACKEND.max`, `guard`, `overlay`), because older
+  builds reject those keys. Two project entries pointing to the same
+  repository now make implicit `launch` or `run` exit 2 and require
+  `--project`. Stricter command-template validation also refuses `{prompt}`
+  inside another argument, `{dir}` outside `add_dir`, and any placeholder as
+  the program, so configs that v0.1.28 accepted will fail to load
+  (`eon-eon-agent-lr8sx.39.3`, `eon-eon-agent-lr8sx.39.4`, `eon-bbqpk`).
+- Update scripts that wrap `eon agent`: `eon agent run` emits started and
+  finished JSONL lines on stdout even without `--json` (replacing the `pick:`,
+  `session:`, `pid:`, `log:` and `report:` text lines;
+  `eon-eon-agent-lr8sx.39.5`), admission holds exit 75 (was 3), refusals
+  waiting cannot change exit 69 (was 2 or 3; `eon-eon-agent-lr8sx.39.4`), and
+  a failed final write with unknown cleanup preserves exit 125.
+- Panes and popups no longer inherit `NVIM` or `NVIM_LISTEN_ADDRESS` when Eon
+  starts inside a Neovim terminal. Tools such as `nvr` or lazygit's
+  `nvim-remote` that targeted an outer Neovim server from an Eon pane no
+  longer find it (`eon-260mh.2.3`).
 
-- Use `eon files reveal PATH` to enter a directory or reveal a file in
-  the tab's Files popup. The Helix recipe binds Alt+R to reveal the current
-  buffer (`eon-b3i7g`, EONW v50).
-- Hold a drag selection at or below a pane's bottom row while scrolled back
-  to keep selecting toward live output (`eon-fojjj`).
+### Known limits
 
-- The private in-place Update test path waits for helper and observer work to
-  settle and refuses unexpected inheritable descriptors. After Update, local
-  quota collection waits one normal interval. Usable shared Claude and Google
-  schedules keep governing collection (EON-C27, `eon-t3fyd.9.1`).
-- Agents sidebar and attention inbox rows reserve a shared square icon slot so
-  row text aligns across all rows, including `status unavailable` and popup rows.
-  Unknown OSC 7501 `app` values render an uppercased alphanumeric monogram on a
-  contrast-adapted neutral rounded tile; punctuation-only or missing `app`
-  values render the generic agent glyph (`eon-sidebar-app-icons-y99b7.2`).
+- This release installs and updates through Nix. The Nix-free Linux archive
+  and installer are prepared for v0.2.0, the planned first beta; no GitHub
+  release carries them yet.
+- While a new terminal waits to become ready, other clients' changes, such as
+  a rename, focus or close from another pane or from the window, wait for it,
+  up to about 15 s. A start that never becomes ready fails at about 15 s
+  (v0.1.16: about 5 s) (`eon-6522z`).
+- The Wayland input-method freeze fix (`eon-04qsk`) was reproduced and proved
+  on local Wayland feedback fixtures and native replay (Tier 2 confirmed zero
+  frame regressions on headless Sway), while causality on a live Hyprland
+  setup remains unconfirmed.
 
-- On Wayland, stopping one touchpad scroll axis no longer starts momentum
-  while the other axis is still active.
+### Changes
 
-- Use Alt+Shift+I (Option+Shift+I on macOS) or `eon lock` to pass Eon
+- Stops Venus from spinning one CPU core at 100% and freezing under an active
+  Wayland input method such as `fcitx5` (worst while an agent streams output):
+  Venus skips full view refreshes for unchanged input-method updates, keeps
+  IME disabled while a dialog owns input, coalesces Wayland caret updates to
+  at most one per presented frame, resends the caret after text input
+  re-enters, and avoids unnecessary layout rebuilds (`eon-04qsk`;
+  real-Hyprland causality remains unconfirmed).
+- Opening Editor or another popup preserves the colour of the Agents sidebar
+  and the workspace around the popup (`eon-cn6v3`).
+- Use `Alt+Shift+I` (`Option+Shift+I` on macOS) or `eon lock` to pass Eon
   shortcuts through to the focused terminal. The Eon Bar shows **LOCKED**.
-  Toggle again or run `eon unlock` to restore shortcuts. Remap the toggle
-  with `[keys] input_lock`. Inspect the live state in `eon session --json`
-  and the accepted toggle in `eon keys --json` (EONW v49, `eon-ici95.2`).
-  If a popup uses `Alt+Shift+I`, change or unbind its shortcut, or set
-  `[keys] input_lock` to another chord before starting or updating a window.
-
+  Toggle again or run `eon unlock` to restore shortcuts. Remap the toggle with
+  `[keys] input_lock`. Inspect the live state in `eon session --json` and the
+  accepted toggle in `eon keys --json` (EONW v49, `eon-ici95.2`).
 - Use `[keys] release` in `config.toml` to pass any of `Alt+M`, `Alt+W`,
   `Alt+Q` and `Alt+G` to the focused terminal. Shortcuts and `eon keys`
-  reflect the release set of the running window. The setting takes effect
-  at the next supervisor start (`eon-ici95.1`, EONW v48).
-
-- Quota pace chips in the Eon Bar (Codex, Claude, and Google) wait for minimum
-  window history (`min(duration / 10, 4h)` elapsed: 30m for 5h, 4h for 7d, and
-  at least 5% used) before showing a pace verdict or warning colour, and drop
-  prior usage to re-anchor when a provider shifts a window's reset time
+  reflect the release set of the running window. The setting takes effect at
+  the next supervisor start (EONW v48, `eon-ici95.1`).
+- Use `eon files reveal PATH` to enter a directory or reveal a file in the
+  tab's Files popup. The Helix recipe binds `Alt+R` to reveal the current
+  buffer (EONW v50, `eon-b3i7g`).
+- Hold a drag selection at or below a pane's bottom row while scrolled back
+  to keep selecting toward live output (ORBS v15, `eon-fojjj`).
+- On Wayland, stopping one touchpad scroll axis no longer starts momentum
+  while the other axis is still active, and motion followed by a stop in the
+  same frame no longer triggers a spurious fling (`eon-yp6vg.65`).
+- Agents sidebar and attention inbox rows reserve a shared square icon slot so
+  row text aligns across all rows, including `status unavailable` and popup
+  rows. Antigravity (`app=antigravity`) rows show Google Antigravity's
+  official full-colour icon unaltered beside `Antigravity` (unless a pane pin
+  or record title replaces it), without dimming on stale rows, while the
+  Google Eon Bar quota chip keeps its Gemini spark. Unknown OSC 7501 `app`
+  values render an uppercased alphanumeric monogram on a contrast-adapted
+  neutral rounded tile, and punctuation-only or missing `app` values render
+  the generic agent glyph (`eon-sidebar-app-icons-y99b7.2`,
+  `eon-sidebar-app-icons-y99b7.13`).
+- Quota pace chips in the Eon Bar (Codex, Claude and Google) wait for minimum
+  window history (`min(duration / 10, 4h)` elapsed: 30m for 5h, 4h for 7d,
+  and at least 5% used) before showing a pace verdict or warning colour, and
+  drop prior usage to re-anchor when a provider shifts a window's reset time
   materially before expiry. Each running window tracks those anchors in memory
-  across transient reading blips until the window expires; windows opened after
-  a move do not see the prior reset (supervisor-side persistence is tracked in
-  `eon-9mzm5`). Exhausted fresh windows remain judged (`eon-gz0vi`,
+  across transient reading blips until the window expires; windows opened
+  after a move do not see the prior reset (supervisor-side persistence is
+  tracked in `eon-9mzm5`). Exhausted fresh windows remain judged (`eon-gz0vi`,
   `eon-h1vpr`).
-
-- `eon agent slot` supports up to three concurrent Boat VM leases through
-  `slots.boat.max_parallel_leases` (default 1). Upgrade all readers of the
-  shared agent configuration before setting the key.
-
+- The first startup directory picker points to `eon tutor` once per Eon user
+  state directory (`eon-orp67.4`), and `.#bench` adds `eon-bench journey
+  --case tutor` to verify tutor layout fit (`eon-orp67.2`).
+- Eon supplies its terminal default white foreground and black background to
+  Orbit at launch, so OSC 10/11 query and change the current colours and
+  OSC 110/111 restore the launch values (`eon-jjix`, ORB-C2).
+- Fresh Eon supervisors isolate inherited file descriptors on Linux and macOS.
+  On Linux, only the initial Venus process receives a caller's Wayland socket
+  (`eon-8s1jj`, EON-C9, EON-C11).
+- An `eon.sock` client has 250 ms from accept to send its full request; slower
+  clients receive `malformed-action` and the action does not run
+  (`eon-t3fyd.9.2`, EON-C11).
+- On macOS, Eon keeps a live window's control socket (`eon-t3fyd.17`) and
+  Editor popup listener socket and owner marker (`eon-260mh.17`) when their
+  connection queues are full, and retries scratch directory name collisions in
+  the macOS launcher (`eon-wimo0`). On macOS and Linux, `eon edit` and Files
+  reuse retry a refusal during the Editor's startup between bind and listen
+  within the 100 ms connect deadline.
+- Eon's contract states, and tests verify, that the Editor popup listener, the
+  workspace socket and every terminal socket stay inside the window's runtime
+  root, independent windows included. The security guidance names that root
+  for sandbox deny rules, including its resolved spelling for Seatbelt on
+  macOS (such as `/private/tmp/eon-UID`) (`eon-260mh.2.3`).
+- `eon agent launch` and `eon agent run` support `--wait DURATION` (up to
+  24h), retrying held admissions every `wait_retry_seconds` (default 60) with
+  fresh `agent.toml` and quota reads (`eon-eon-agent-lr8sx.39.4`). A hold
+  exits 75 and a refusal waiting cannot change exits 69, including in the
+  Agent popup.
 - `eon agent run` emits started and finished JSON receipts on stdout for
-  headless builders and reviewers. The receipts name the run and its private
-  log and report paths. The finished receipt includes the outcome and exit
-  code. `run --json` and ordinary `launch --json` also report final admission
-  holds and refusals as JSON.
-
-- On macOS, Eon keeps a live window's control socket when its connection queue
-  is full, so generation cleanup and bind attempts leave the window reachable.
-- On macOS, Eon keeps a live Editor popup's listener socket and owner marker
-  when its connection queue is full. On macOS and Linux, `eon edit` and Files
-  reuse retry a refusal during the Editor's startup, between its bind and
-  listen, within the existing 100 ms connect deadline.
-- Antigravity (`app=antigravity`) rows in the Agents sidebar and attention inbox
-  now display Google Antigravity's official full-colour icon (`Icon`), unaltered
-  and never tinted, beside the row's label (`Antigravity`, unless a pane pin or
-  record title replaces it) without dimming on stale rows
-  (`eon-sidebar-app-icons-y99b7.13`).
-- Antigravity (`app=antigravity`) rows in the Agents sidebar and attention inbox
-  map to the Antigravity app mark and fallback label (`Antigravity`, unless a
-  pane pin or record title replaces it), without dimming on stale rows. Near-miss
-  `app` strings are unchanged, and the Google Eon Bar quota chip keeps its
-  Gemini spark (`eon-sidebar-app-icons-y99b7.12`).
-
-- `eon agent launch` and `eon agent run` take `--wait DURATION` (at most 24h):
-  a held admission retries until it admits or the deadline passes, re-reading
-  `agent.toml` and fresh quota on every attempt and sleeping up to the new
-  optional `wait_retry_seconds` (default 60) between attempts. Only the first
-  attempt may run a backend's `refresh`, and waiters are not ordered.
-  Builds before this one reject an `agent.toml` holding `wait_retry_seconds`.
-  - A hold now exits 75 instead of 3: quota, a spent observation, a cap, an
-    access check, a project cap, a busy admission lock or the `--wait`
-    deadline. A refusal waiting cannot change exits 69 instead of 2 or 3: an
-    unknown project or `--only` backend, or no enabled backend that serves the
-    role, the options or the folder. This applies to the Agent popup too.
-- Terminals, popups and panes no longer inherit `NVIM` or
-  `NVIM_LISTEN_ADDRESS` when Eon itself was started from a Neovim terminal,
-  so no Eon terminal names an editor server it was not started from. A
-  Neovim that Eon starts, such as the Editor popup's, still sets `NVIM` for
-  the programs it runs. Tools such as `nvr` or lazygit's `nvim-remote` that
-  used the outer Neovim from an Eon pane no longer find it.
-- Eon's contract now states, and tests check, that the Editor popup's
-  listener, the workspace socket and every terminal socket stay inside the
-  window's runtime root, independent windows included; no socket moved. The
-  security guidance names that root for sandbox deny rules, in its resolved
-  spelling for Seatbelt on macOS (such as `/private/tmp/eon-UID`).
-- A Boat run under `eon agent slot run` survives a dropped `boat exec --attach`
-  stream. Eon checks the command's status and re-attaches while it runs; if
-  it has ended, its real exit code comes back. Before, the healthy run was
-  killed as `remote-result-unknown`.
-  - After a loss, only the status, the run deadline, the credit guard or a
-    signal can end the run. Status reads that fail without a break for 10
-    minutes give `remote-attach-lost exit=N status=unreadable` (`exit=none` when
-    the last attach could not run).
-  - Each re-attach is marked by one line in the live log and on stderr; stdout
-    carries only the command's output.
-  - A new private `boat.log` beside each run's logs records attach exit codes,
-    error and heartbeat frames, status reads, why a run gave up and the cleanup
-    steps. The Boat CLI's own stderr during an attach reaches the terminal with
-    control characters escaped.
-  - VM retirement gives stop, final usage and delete each their own time
-    budget. A slow stop no longer leaves the VM up as `cleanup-unknown` or
-    hides the run's own reason. A cleanup failure is recorded next to that
-    reason.
-  - `duration_seconds` is the run's time up to its result. Reconciling an
-    earlier run no longer overwrites it, or its recorded usage.
-  - A signal ends startup reconciliation of a leftover VM at once, where
-    before it could wait up to 45 seconds.
-
-- `eon agent slot run` hands a `slots.local_runner` command its queue metadata as
-  `ROTA_SLOT_QUEUED_NS`, `ROTA_SLOT_CLASS`, `ROTA_SLOT_RUN_KEY` and
-  `ROTA_SLOT_DELEGATE`. The `EON_SLOT_*` names are gone; a runner that reads
-  them must switch.
+  headless builders and reviewers, naming the run, private log and report
+  paths, outcome and exit code. `run --json` and `launch --json` report final
+  admission holds and refusals as JSON (`eon-eon-agent-lr8sx.39.5`).
+- `eon agent launch` and `run` follow `[projects.NAME]` profiles with total
+  (`max`), role (`roles.ROLE.max`) and backend (`backends.BACKEND.max`) live
+  caps, role `guard` commands and per-executable `overlay` arguments inserted
+  at `{overlay}` (`eon-eon-agent-lr8sx.39.3`). A reached total cap, role cap
+  or failing guard holds (exit 75) before reading quota; a reached backend cap
+  skips that backend so another candidate can still admit. Leads and the Agent
+  popup stay uncapped. Launch commands gain `{name}`, `{add_dirs}` (via
+  backend `add_dir`), `{overlay}` and `{cwd}` inside any argument, while
+  refusing `{prompt}` inside another argument, `{dir}` outside `add_dir`, and
+  any placeholder as the program.
+- `eon agent slot` supports up to three concurrent Boat VM leases through
+  `slots.boat.max_parallel_leases`, defaulting to 1 (`eon-bbqpk`, EON-C43).
+- `eon agent slot run` starts each Boat run fresh from the pinned qualified
+  large image `eon-builds-nix-2-34-7-large-klt8h-v1` (requiring `eon-builds`
+  environment version 2 and `slots.boat.large_max_memory_gib >= 8`) and
+  deletes the VM after each run (`eon-klt8h.1`).
+- A Boat run under `eon agent slot run` survives a dropped `boat exec
+  --attach` stream by re-attaching while status remains active, records events
+  in a private `boat.log`, gives stop, final usage and delete separate
+  budgets, preserves `duration_seconds` across reconciliation, and ends
+  leftover-VM reconciliation immediately on a signal (`eon-lnfc7`).
 - Standalone `rota` warns that `[slots.boat]` and `slots.local_runner` need
-  `eon agent`, and runs every slot command locally. Its `slot ls --json` no
-  longer prints `boat_lease_held`; `eon agent slot ls --json` keeps it.
-
-- `eon agent launch` and `run` follow project profiles: `[projects.NAME]` can
-  cap live agents in total (`max`), per role (`roles.ROLE.max`) and per
-  backend (`backends.BACKEND.max`). It can give a role a `guard` and give it
-  `overlay` arguments keyed by command executable, inserted at the command's
-  `{overlay}`.
-  - A launch selects the project with `--project NAME`, or by running in its
-    repository or a linked worktree of it.
-  - A reached cap or a failing guard holds (exit 3) before any quota is read.
-    The hold names the live PIDs or the guard's first stderr line.
-  - Leads and the Agent popup are never capped.
-  - Launch commands gain `{name}` (`--name`), `{add_dirs}` (repeatable
-    `--add-dir`, through a new backend-level `add_dir` template) and
-    `{overlay}`. `run` commands gain `{name}` and `{overlay}`.
-  - Launch commands fill `{cwd}` inside any argument, where before only a whole
-    `{cwd}` argument was filled.
-  - Configuration now refuses `{prompt}` inside another argument, `{dir}`
-    outside an `add_dir` template, and any placeholder in the program.
-  - Upgrade every binary that reads a shared configuration before adding
-    these keys, because older builds refuse them (EON-C40 clause 6,
-    `eon-eon-agent-lr8sx.39.3`).
-
-- `eon agent` and rota refuse `limits.ROLE.allow_missing`: a configuration
-  that sets it fails to load, and the error points to `[backends.quota]
-  absent_windows`. `status --json` no longer has a `warnings` array per
-  backend (`eon-0nn1p.27`).
-
-- `eon agent slot run` starts each Boat run fresh from the qualified large
-  build image pinned in Eon, `eon-builds-nix-2-34-7-large-klt8h-v1`, and
-  checks the image Boat reports, before the start and again before anything
-  runs on the VM. A missing, unverified or mismatched image keeps the job
-  local with a named reason. Every remote run uses the large VM, so set
-  `slots.boat.large_max_memory_gib` to at least 8 to route remote runs. The
-  VM is deleted after each run; stopped VMs and warm snapshots are no longer
-  reused. `slots.boat.snapshot` is removed: a leftover setting loads with a
-  warning and has no effect (`eon-klt8h.1`, EON-C43).
+  `eon agent`, runs every slot command locally, and omits `boat_lease_held`,
+  `boat_lease_pid`, `boat` and `boat_error` from `slot ls --json`
+  (`eon-eon-agent-lr8sx.40.5`).
+- `eon agent` and `rota` refuse `limits.ROLE.allow_missing` and drop the
+  per-backend `warnings` array from `status --json` (`eon-0nn1p.27`).
 
 ## v0.1.28 (2026-11-20)
 
