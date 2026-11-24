@@ -18691,6 +18691,14 @@ fn generations_that_predate_the_reserved_stop_say_how_to_quit_them() {
     done.store(true, Ordering::SeqCst);
     server.join().unwrap();
     held.unlock().unwrap();
+    // The Orbit helper writes its tombstone before the supervisor can exit.
+    fs::write(&current.stop, "").unwrap();
+    wait_for_successful_exit(&mut current.child);
+    let generation = control.parent().unwrap();
+    assert!(
+        !generation.try_exists().unwrap(),
+        "current generation remains after supervisor exit: {generation:?}"
+    );
     drop(current);
     fs::remove_dir_all(root).unwrap();
 }
