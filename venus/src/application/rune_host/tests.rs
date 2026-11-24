@@ -9,7 +9,10 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
     sync::mpsc,
 };
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::{
+    event::{DeviceId, TouchPhase},
+    keyboard::{KeyCode, PhysicalKey},
+};
 
 /// A lane that records what it is asked, in order; `quit` is the app-level end.
 #[derive(Clone, Default)]
@@ -134,6 +137,7 @@ fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'st
         fonts: None,
         early: Early::default(),
         geometry: None,
+        raw: None,
         identity: None,
         slot: None,
         moved: None,
@@ -531,7 +535,10 @@ fn native_slot() -> SlotGeometry {
 }
 
 fn stage(host: &mut Host, identity: PresentationIdentity) {
-    let slot = native_slot();
+    stage_at(host, native_slot(), identity);
+}
+
+fn stage_at(host: &mut Host, slot: SlotGeometry, identity: PresentationIdentity) {
     assert!(!host.finish_slot(
         Some((slot, identity)),
         Drawn {
@@ -544,7 +551,11 @@ fn stage(host: &mut Host, identity: PresentationIdentity) {
 }
 
 fn present(host: &mut Host, identity: PresentationIdentity) {
-    stage(host, identity);
+    present_at(host, native_slot(), identity);
+}
+
+fn present_at(host: &mut Host, slot: SlotGeometry, identity: PresentationIdentity) {
+    stage_at(host, slot, identity);
     assert!(host.frames.report(FrameOutcome::Drawn, None));
     host.receive_frame(&mut Tx::default());
 }
@@ -834,7 +845,11 @@ fn another_withdrawal_discards_intervening_selection_without_sending_another_can
     let candidate = host.prepare_grid(native_slot()).unwrap();
     present(&mut host, candidate);
     host.app.terminal.selection_gate.finish_sent();
-    host.withdraw_surface();
+    assert!(host.raw_geometry(Some((800, 600)), None));
+    assert!(
+        !host.app.presentation.has_presented_geometry(),
+        "a raw resize withdraws before the idle report"
+    );
 
     for withdraw in [
         (|host: &mut Host| {
@@ -843,6 +858,9 @@ fn another_withdrawal_discards_intervening_selection_without_sending_another_can
                 ..NATIVE
             })
         }) as fn(&mut Host),
+        |host| assert!(host.raw_geometry(Some((960, 600)), None)),
+        // Back at the applied size before any frame: input queued meanwhile is still stale.
+        |host| assert!(host.raw_geometry(Some((800, 600)), None)),
         |host| on_visibility(host, false, &mut Tx::default()),
         |host| {
             assert!(
@@ -875,6 +893,120 @@ fn another_withdrawal_discards_intervening_selection_without_sending_another_can
         assert!(Instant::now() < deadline);
     }
     assert_eq!(selections, [SelectionAction::Cancel]);
+}
+
+/// The resize and scroll actions the peer reads up to a `ReturnToLive` marker.
+fn actions_until_marker(host: &mut Host, stream: &UnixStream) -> Vec<ClientMessage> {
+    assert!(host.app.send(ClientMessage::ReturnToLive));
+    let mut actions = Vec::new();
+    loop {
+        match Peer::read(stream) {
+            ClientMessage::ReturnToLive => return actions,
+            message @ (ClientMessage::Resize(_)
+            | ClientMessage::PreviewVertical { .. }
+            | ClientMessage::ScrollVertical { .. }) => actions.push(message),
+            _ => {}
+        }
+    }
+}
+
+/// eon-yp6vg.3's step-2 sentinel: Rune's raw Resized and a wheel share one dispatch, and Rune
+/// draws the old revision at the new size, all before the idle geometry report.
+#[test]
+fn a_raw_resize_withdraws_input_until_a_draw_at_the_applied_geometry() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let peer = Peer::new(&mut host, "raw");
+    let stream = peer.accept();
+    peer.send(&stream, &mut host, fixture_messages(0), |host| {
+        host.app.terminal.model.scene().is_some()
+    });
+    let presented = host.prepare_grid(native_slot()).unwrap();
+    present(&mut host, presented);
+    actions_until_marker(&mut host, &stream);
+    assert!(
+        !host.raw_geometry(Some(NATIVE.size), None),
+        "a configure repeat"
+    );
+    assert!(host.app.presentation.is_current(presented));
+    let cell = f64::from(host.app.window.as_ref().unwrap().renderer.metrics().height);
+    host.app.terminal.terminal_scroll.push_lines(1.0, cell);
+
+    let wheel = |host: &mut Host| {
+        host.window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, 1.0),
+            phase: TouchPhase::Moved,
+        });
+    };
+    let half = SlotGeometry::new([0.0, 0.0, 480.0, 600.0], 1.0);
+    assert!(host.raw_geometry(Some((480, 600)), None));
+    // A transport drain drives the motion pushed at the old geometry.
+    host.app.drive_terminal_scroll();
+    wheel(&mut host);
+    let early = host.prepare_grid(half).unwrap();
+    present_at(&mut host, half, early);
+    assert!(
+        !host.app.presentation.has_presented_geometry(),
+        "drawn before the idle report"
+    );
+    wheel(&mut host);
+    host.apply_geometry(Geometry {
+        size: (480, 600),
+        ..NATIVE
+    });
+    wheel(&mut host);
+    let qualifying = host.prepare_grid(half).unwrap();
+    present_at(&mut host, half, qualifying);
+    assert!(host.app.presentation.is_current(qualifying));
+    wheel(&mut host);
+    let resized = host.app.terminal.last_resize.unwrap();
+    assert_eq!(
+        actions_until_marker(&mut host, &stream),
+        [
+            ClientMessage::Resize(resized),
+            ClientMessage::PreviewVertical {
+                frame_revision: presented.revision.unwrap(),
+                direction: session::VerticalDirection::Up,
+            },
+        ]
+    );
+}
+
+#[test]
+fn raw_geometry_holds_admission_through_one_pixel_and_returns_with_the_window() {
+    fn present_current(host: &mut Host, slot: SlotGeometry) -> PresentationIdentity {
+        let identity = host.app.presentation.candidate(Some(1));
+        present_at(host, slot, identity);
+        identity
+    }
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    present_current(&mut host, native_slot());
+    // One pixel is within the tolerance of the slot a hosted grid draws at.
+    assert!(host.raw_geometry(Some((959, 600)), None));
+    present_current(&mut host, SlotGeometry::new([0.0, 0.0, 959.0, 600.0], 1.0));
+    assert!(
+        !host.app.presentation.has_presented_geometry(),
+        "drawn before the idle report"
+    );
+    host.finish(&mut Tx::default());
+    // Back within the burst: the idle report sees no change, so the host asks for the frame.
+    assert!(host.raw_geometry(Some(NATIVE.size), None));
+    assert!(host.finish(&mut Tx::default()), "a fresh draw");
+    let back = present_current(&mut host, native_slot());
+    assert!(host.app.presentation.is_current(back));
+
+    assert!(host.raw_geometry(None, Some(2.0)));
+    assert!(
+        host.raw_geometry(Some(NATIVE.size), None),
+        "a same-size Resized keeps the pending scale"
+    );
+    present_current(&mut host, native_slot());
+    assert!(!host.app.presentation.has_presented_geometry());
+    assert!(host.raw_geometry(None, Some(1.0)));
+    let back = present_current(&mut host, native_slot());
+    assert!(host.app.presentation.is_current(back));
 }
 
 #[test]

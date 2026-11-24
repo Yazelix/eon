@@ -6,6 +6,8 @@
 //! How Rune's callbacks reach the policy:
 //! - `on_window_geometry` (output entry, applied size and scale) is the admission fact winit's
 //!   `current_monitor` is, then `Resized` and the scale change, as winit delivers them;
+//! - `on_window_event` sees each raw size and scale first, in the same dispatch as input: a
+//!   change withdraws input at once, and the next applied geometry and its draw re-admit it;
 //! - `on_focus`, `on_visibility` are `Focused` and `Occluded`;
 //! - a native close request (and macOS Quit) is `CloseRequested`: Venus decides (detach, or quit
 //!   with consent) and Rune always defers, so no native callback stops Orbit or exits by itself;
@@ -281,6 +283,9 @@ pub(super) struct Host {
     fonts: Option<FontSetup>,
     early: Early,
     geometry: Option<Geometry>,
+    /// Rune's raw size and scale while they differ from `geometry`, before the idle report
+    /// applies them: no frame re-admits input meanwhile.
+    raw: Option<Geometry>,
     identity: Option<FrameTarget>,
     slot: Option<SlotGeometry>,
     /// The slot's last move between preparing and drawing, and how many frames in a row it
@@ -421,6 +426,7 @@ impl Host {
             Some(last) => (last.scale != geometry.scale, last.size != geometry.size),
         };
         self.geometry = Some(geometry);
+        self.raw = None;
         if size_changed || scale_changed {
             self.frames.discard();
         } else if had_output && !geometry.has_output {
@@ -452,6 +458,34 @@ impl Host {
         {
             window.request_redraw();
         }
+    }
+
+    /// Rune's raw size or scale, before Rune applies it and before `on_window_geometry` reports
+    /// it. Input admitted at the applied geometry stops at once, and no frame re-admits it until
+    /// the window is back at that geometry or the idle report applies the new one, with the
+    /// canonical Resize. True when state changed.
+    fn raw_geometry(&mut self, size: Option<(u32, u32)>, scale: Option<f64>) -> bool {
+        let Some(applied) = self.geometry else {
+            return false;
+        };
+        let last = self.raw.unwrap_or(applied);
+        let raw = Geometry {
+            size: size.unwrap_or(last.size),
+            scale: scale.unwrap_or(last.scale),
+            ..last
+        };
+        if raw != applied {
+            self.raw = Some(raw);
+        } else if self.raw.take().is_none() {
+            return false;
+        } else if let Some(window) = self.rune_window() {
+            // The idle report will see no change and Rune's own resize asks for no frame.
+            window.request_redraw();
+        }
+        // Input queued since the last move used a geometry the window no longer has.
+        self.withdraw_surface();
+        self.app.cancel_terminal_scroll();
+        true
     }
 
     fn user_event(&mut self, event: UserEvent, tx: &mut Tx) {
@@ -633,6 +667,7 @@ impl Host {
         }
         self.moved = None;
         if let Some(((prepared, candidate), at)) = prepared.zip(drawn.slot)
+            && self.raw.is_none()
             && self.geometry.is_some_and(|geometry| {
                 geometry.has_output && geometry.matches_slot(prepared) && geometry.matches_slot(at)
             })
@@ -692,6 +727,22 @@ fn collect(requested: &mut NativeRequests) -> impl FnMut(&mut Application, Nativ
 fn on_geometry(host: &mut Host, geometry: WindowGeometry, tx: &mut Tx) -> bool {
     if !host.check_failure() {
         host.apply_geometry(geometry.into());
+    }
+    host.finish(tx)
+}
+
+/// Rune's raw native events, before Rune applies them; only size and scale matter here
+/// (eon-lza1n). Rune never consumes these events, so true only marks state changed.
+fn on_window_event(host: &mut Host, window: &Window, event: &WindowEvent, tx: &mut Tx) -> bool {
+    let (size, scale) = match *event {
+        WindowEvent::Resized(size) => (Some((size.width, size.height)), None),
+        WindowEvent::ScaleFactorChanged { scale_factor, .. } => (None, Some(scale_factor)),
+        // On macOS a drag across displays rescales the drawable before winit reports the scale.
+        WindowEvent::Moved(_) => (None, Some(window.scale_factor())),
+        _ => return false,
+    };
+    if !host.check_failure() && !host.raw_geometry(size, scale) {
+        return false;
     }
     host.finish(tx)
 }
@@ -822,6 +873,7 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
         .terminal_gpu_loss()
         .attention_wait(SESSION_CLEANUP_TIMEOUT)
         .on_window_geometry(on_geometry)
+        .on_window_event(on_window_event)
         .on_focus(on_focus)
         .on_visibility(on_visibility)
         .on_close_request(on_close_request)
@@ -874,6 +926,7 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
         fonts: Some(fonts),
         early: Early::default(),
         geometry: None,
+        raw: None,
         identity: None,
         slot: None,
         moved: None,
