@@ -1,8 +1,13 @@
 //! The review eval: past changes that should have been stopped, a blind
 //! review setup for each, and scoring of a reviewer's report.
+//!
+//! A blocker or should-fix citing within five lines of an expected range
+//! locates; matching every mechanism group catches, some groups disputes. A
+//! ruling in `RULINGS` for the case and report SHA-256 replaces the outcome.
 use crate::Result;
 use crate::classify::{self, DarwinCheck, Verdict};
 use crate::git::Git;
+use crate::record::sha256_hex;
 use crate::rules::{DarwinLevel, Tier};
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -10,6 +15,7 @@ use std::fs;
 use std::path::Path;
 
 pub const CASES: &str = "eon/tools/review-tier/evals/cases.toml";
+const RULINGS: &str = "eon/tools/review-tier/evals/rulings.toml";
 
 const CLASSES: &[&str] = &[
     "live-terminals",
@@ -72,6 +78,34 @@ pub struct Case {
     evidence: String,
     mechanism: Vec<Vec<String>>,
     expect: Vec<Expect>,
+    /// Kept so cited IDs stay valid and still checked, but never scored.
+    #[serde(default)]
+    retired: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rulings {
+    #[serde(default)]
+    ruling: Vec<Ruling>,
+}
+
+/// Judges' outcome for one case and one report, by its SHA-256.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Ruling {
+    case: String,
+    report: String,
+    outcome: Ruled,
+    judges: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Ruled {
+    Caught,
+    Missed,
+    Split,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,7 +135,7 @@ fn parse(text: &str) -> Result<Cases> {
     }
     let mut commits = BTreeSet::new();
     for case in &cases.darwin {
-        validate_commit(&case.commit).map_err(|error| format!("{CASES}: Darwin case: {error}"))?;
+        validate_hex(&case.commit, 40).map_err(|error| format!("{CASES}: Darwin case: {error}"))?;
         if !commits.insert(case.commit.as_str()) {
             return Err(format!("{CASES}: duplicate Darwin case {}", case.commit).into());
         }
@@ -112,13 +146,39 @@ fn parse(text: &str) -> Result<Cases> {
     Ok(cases)
 }
 
-fn validate_commit(sha: &str) -> std::result::Result<(), String> {
-    if !(sha.len() == 40
+/// Parses and validates the rulings file text against the cases.
+fn parse_rulings(text: &str, cases: &[Case]) -> Result<Vec<Ruling>> {
+    let rulings: Rulings = toml::from_str(text).map_err(|error| format!("{RULINGS}: {error}"))?;
+    let mut keys = BTreeSet::new();
+    for ruling in &rulings.ruling {
+        let judges: BTreeSet<&str> = ruling.judges.iter().map(String::as_str).collect();
+        let error = if find(cases, &ruling.case).is_err() {
+            format!("no case {}", ruling.case)
+        } else if let Err(error) = validate_hex(&ruling.report, 64) {
+            error
+        } else if judges.len() < 2 || judges.len() != ruling.judges.len() {
+            "needs two or more distinct judges".into()
+        } else if judges.iter().any(|judge| {
+            judge.is_empty() || judge.contains(|c: char| c.is_whitespace() || c == ',' || c == '=')
+        }) {
+            "a judge is empty or holds whitespace, `,` or `=`".into()
+        } else if !keys.insert((ruling.case.as_str(), ruling.report.as_str())) {
+            "duplicate ruling".into()
+        } else {
+            continue;
+        };
+        return Err(format!("{RULINGS}: case {}: {error}", ruling.case).into());
+    }
+    Ok(rulings.ruling)
+}
+
+fn validate_hex(sha: &str, len: usize) -> std::result::Result<(), String> {
+    if !(sha.len() == len
         && sha
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
     {
-        return Err(format!("{sha:?} is not a 40-hex commit id"));
+        return Err(format!("{sha:?} is not {len} lowercase hex digits"));
     }
     Ok(())
 }
@@ -133,7 +193,7 @@ fn validate(case: &Case) -> std::result::Result<(), String> {
         return Err("id must be R or F followed by digits".into());
     }
     for sha in [&case.commit, &case.fixed_by] {
-        validate_commit(sha)?;
+        validate_hex(sha, 40)?;
     }
     if !CLASSES.contains(&case.class.as_str()) {
         return Err(format!("unknown class {:?}", case.class));
@@ -145,7 +205,7 @@ fn validate(case: &Case) -> std::result::Result<(), String> {
         return Err("mechanism needs one or more groups of one or more words".into());
     }
     for word in case.mechanism.iter().flatten() {
-        if word.trim().is_empty() || *word != word.to_lowercase() {
+        if normalize(word).is_empty() || *word != word.to_lowercase() {
             return Err(format!("mechanism word {word:?} is empty or not lowercase"));
         }
     }
@@ -168,11 +228,18 @@ fn validate(case: &Case) -> std::result::Result<(), String> {
     Ok(())
 }
 
-fn load(git: &Git) -> Result<Cases> {
-    let path = git.root().join(CASES);
-    let text = fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    parse(&text)
+fn read(git: &Git, file: &str) -> Result<String> {
+    let path = git.root().join(file);
+    Ok(fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?)
+}
+
+/// The cases, the rulings and the cases file's text.
+fn load(git: &Git) -> Result<(Cases, Vec<Ruling>, String)> {
+    let text = read(git, CASES)?;
+    let cases = parse(&text)?;
+    let rulings = parse_rulings(&read(git, RULINGS)?, &cases.case)?;
+    Ok((cases, rulings, text))
 }
 
 fn find<'a>(cases: &'a [Case], id: &str) -> Result<&'a Case> {
@@ -202,7 +269,7 @@ fn classify_commit(git: &Git, revision: &str) -> Result<Classified> {
 
 /// `eval check`: one line per case; returns whether every case passed.
 pub fn check(git: &Git) -> Result<bool> {
-    let cases = load(git)?;
+    let (cases, ..) = load(git)?;
     let mut passed = true;
     for case in &cases.case {
         match check_case(git, case) {
@@ -290,9 +357,11 @@ fn past_end(content: &[u8], end: u32) -> Option<usize> {
 }
 
 /// `eval prepare`: makes `dir` a repository holding only the case commit and
-/// its ancestors, with the current REVIEW.md, and returns the case block.
-pub fn prepare(git: &Git, id: &str, dir: &Path) -> Result<String> {
-    let cases = load(git)?;
+/// its ancestors, with the current REVIEW.md, and returns the case brief.
+/// With `export`, it also writes the case diff to `change.diff` and the
+/// brief, which then needs no git, to `brief.md`.
+pub fn prepare(git: &Git, id: &str, dir: &Path, export: bool) -> Result<String> {
+    let (cases, ..) = load(git)?;
     let case = find(&cases.case, id)?;
     let review = fs::read(git.root().join("REVIEW.md"))
         .map_err(|error| format!("cannot read REVIEW.md at the repository root: {error}"))?;
@@ -323,19 +392,42 @@ pub fn prepare(git: &Git, id: &str, dir: &Path) -> Result<String> {
     ])?;
     scratch.run(&["checkout", "-q", "--detach", &classified.commit])?;
     fs::write(dir.join("REVIEW.md"), review)?;
-    Ok(format!(
+    let brief = brief(&classified, export);
+    if export {
+        // Pinned so that no git configuration changes the exported bytes.
+        let mut args: Vec<&str> = "diff --no-ext-diff --no-textconv --no-color -U3 \
+            --inter-hunk-context=0 --diff-algorithm=myers --indent-heuristic -O/dev/null \
+            --src-prefix=a/ --dst-prefix=b/"
+            .split_whitespace()
+            .collect();
+        args.extend([classified.base.as_str(), &classified.commit]);
+        fs::write(dir.join("change.diff"), git.run(&args)?)?;
+        fs::write(dir.join("brief.md"), &brief)?;
+    }
+    Ok(brief)
+}
+
+fn brief(classified: &Classified, export: bool) -> String {
+    let diff = if export {
+        "The diff is change.diff in this directory. Read files in this directory.".to_owned()
+    } else {
+        format!(
+            "The diff is `git diff {} HEAD`. Read files at HEAD.",
+            classified.base
+        )
+    };
+    format!(
         "Review this change. Follow REVIEW.md at the repository root.\n\
          candidate: {}\n\
          base: {}\n\
          tier: {}\n\
          {}\
-         The diff is `git diff {} HEAD`. Read files at HEAD. Do not build or run anything.\n",
+         {diff} Do not build or run anything.\n",
         classified.commit,
         classified.base,
         classify::slice_tier(&classified.verdicts),
         classify::render(&classified.verdicts),
-        classified.base,
-    ))
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,14 +440,15 @@ enum Severity {
 #[derive(Debug, PartialEq, Eq)]
 struct Finding {
     severity: Severity,
-    citation: Option<(String, u32, u32)>,
+    citations: Vec<(String, u32, u32)>,
     text: String,
 }
 
 /// Findings in REVIEW.md's format: lines starting (after trimming and an
 /// optional `- ` or `* `) with `[blocker]`, `[should-fix]` or `[nit]`. The
-/// text after the tag, without the citation token, is what mechanism words
-/// must match, so a cited path such as `Cargo.lock` never supplies one.
+/// text after the tag, without its citation tokens and in `normalize`'s
+/// form, is what mechanism words must match, so a cited path such as
+/// `Cargo.lock` never supplies one.
 fn findings(report: &str) -> Vec<Finding> {
     let tags = [
         ("[blocker]", Severity::Blocker),
@@ -371,30 +464,45 @@ fn findings(report: &str) -> Vec<Finding> {
                 .or_else(|| trimmed.strip_prefix("* "))
                 .unwrap_or(trimmed);
             tags.iter().find_map(|(tag, severity)| {
-                let mut words: Vec<&str> = body.strip_prefix(tag)?.split_whitespace().collect();
-                let cited = words
-                    .iter()
-                    .position(|word| citation(word).is_some())
-                    .map(|index| words.remove(index));
+                let (cited, words): (Vec<&str>, Vec<&str>) = body
+                    .strip_prefix(tag)?
+                    .split_whitespace()
+                    .partition(|word| citation(word).is_some());
                 Some(Finding {
                     severity: *severity,
-                    citation: cited.and_then(citation),
-                    text: words.join(" ").to_lowercase(),
+                    citations: cited.into_iter().filter_map(citation).collect(),
+                    text: normalize(&words.join(" ")),
                 })
             })
         })
         .collect()
 }
 
-/// `path:line` or `path:line-line`, with surrounding backticks and trailing
-/// `,;:.` removed.
+/// Lowercase, with hyphens, underscores and whitespace runs as one space.
+fn normalize(text: &str) -> String {
+    text.to_lowercase()
+        .split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `path:line` or `path:line-line`, with surrounding backticks, a leading
+/// `(` or `[`, trailing `,;:.)]`, leading `./` and one git `a/` or `b/`
+/// prefix removed.
 fn citation(token: &str) -> Option<(String, u32, u32)> {
-    let punctuation: &[char] = &[',', ';', ':', '.'];
+    let punctuation: &[char] = &[',', ';', ':', '.', ')', ']'];
     let token = token
+        .trim_start_matches(['(', '['])
         .trim_end_matches(punctuation)
         .trim_matches('`')
         .trim_end_matches(punctuation);
     let (path, range) = token.rsplit_once(':')?;
+    let path = path.trim_start_matches("./");
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path);
     let number = |text: &str| {
         (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
             .then(|| text.parse::<u32>().ok())
@@ -407,38 +515,68 @@ fn citation(token: &str) -> Option<(String, u32, u32)> {
     (!path.is_empty() && start <= end).then(|| (path.into(), start, end))
 }
 
-/// `eval score`: `<id> caught|located|missed blocker=<n> should-fix=<n> nit=<n>`.
+/// `eval score`: `<id> caught|disputed|located|missed|split blocker=<n>
+/// should-fix=<n> nit=<n> report=<sha256> [ruled=<judges>] cases=<12 hex>
+/// scorer=<12 hex>`, or `<id> retired cases=… scorer=…`.
 pub fn score(git: &Git, id: &str, report: &Path) -> Result<String> {
-    let cases = load(git)?;
+    let (cases, rulings, text) = load(git)?;
     let case = find(&cases.case, id)?;
-    let report = fs::read_to_string(report)
-        .map_err(|error| format!("cannot read {}: {error}", report.display()))?;
-    Ok(score_report(case, &report))
+    let line = if case.retired {
+        format!("{} retired", case.id)
+    } else {
+        let report = fs::read_to_string(report)
+            .map_err(|error| format!("cannot read {}: {error}", report.display()))?;
+        score_report(case, &report, &rulings)
+    };
+    Ok(format!("{line} {}", provenance(&text)))
 }
 
-fn score_report(case: &Case, report: &str) -> String {
+/// The SHA-256, 12 hex digits each, of the cases file and of this scorer's
+/// source as compiled.
+fn provenance(cases: &str) -> String {
+    let short = |text: &str| sha256_hex(text.as_bytes())[..12].to_owned();
+    format!(
+        "cases={} scorer={}",
+        short(cases),
+        short(include_str!("eval.rs"))
+    )
+}
+
+fn score_report(case: &Case, report: &str, rulings: &[Ruling]) -> String {
     let findings = findings(report);
     let count = |severity| findings.iter().filter(|f| f.severity == severity).count();
-    let located: Vec<&Finding> = findings
+    let groups = |finding: &Finding| {
+        case.mechanism
+            .iter()
+            .filter(|group| {
+                group
+                    .iter()
+                    .any(|word| finding.text.contains(&normalize(word)))
+            })
+            .count()
+    };
+    let best = findings
         .iter()
         .filter(|finding| finding.severity != Severity::Nit && locates(case, finding))
-        .collect();
-    let caught = located.iter().any(|finding| {
-        case.mechanism.iter().all(|group| {
-            group
-                .iter()
-                .any(|word| finding.text.contains(word.as_str()))
-        })
-    });
-    let outcome = if caught {
-        "caught"
-    } else if located.is_empty() {
-        "missed"
-    } else {
-        "located"
+        .map(groups)
+        .max();
+    let digest = sha256_hex(report.as_bytes());
+    let ruling = rulings
+        .iter()
+        .find(|ruling| ruling.case == case.id && ruling.report == digest);
+    let outcome = match (ruling.map(|ruling| ruling.outcome), best) {
+        (Some(Ruled::Caught), _) => "caught",
+        (Some(Ruled::Missed), _) | (None, None) => "missed",
+        (Some(Ruled::Split), _) => "split",
+        (None, Some(0)) => "located",
+        (None, Some(groups)) if groups == case.mechanism.len() => "caught",
+        (None, Some(_)) => "disputed",
     };
+    let ruled = ruling.map_or(String::new(), |ruling| {
+        format!(" ruled={}", ruling.judges.join(","))
+    });
     format!(
-        "{} {outcome} blocker={} should-fix={} nit={}",
+        "{} {outcome} blocker={} should-fix={} nit={} report={digest}{ruled}",
         case.id,
         count(Severity::Blocker),
         count(Severity::ShouldFix),
@@ -447,20 +585,20 @@ fn score_report(case: &Case, report: &str) -> String {
 }
 
 fn locates(case: &Case, finding: &Finding) -> bool {
-    let Some((path, start, end)) = &finding.citation else {
-        return false;
-    };
-    case.expect.iter().any(|expect| {
-        expect.file == *path
-            && expect.lines.is_none_or(|[low, high]| {
-                *start <= high.saturating_add(5) && *end >= low.saturating_sub(5)
-            })
+    finding.citations.iter().any(|(path, start, end)| {
+        case.expect.iter().any(|expect| {
+            expect.file == *path
+                && expect.lines.is_none_or(|[low, high]| {
+                    *start <= high.saturating_add(5) && *end >= low.saturating_sub(5)
+                })
+        })
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::record::tests::Repo;
 
     const SHA: &str = "ff0b5fe4bc8819b4834f609e57ad5a201b3ea269";
 
@@ -482,7 +620,16 @@ mod tests {
                 file: "eon/crates/eon/src/product.rs".into(),
                 lines,
             }],
+            retired: false,
         }
+    }
+
+    fn case_text(sha: &str) -> String {
+        format!(
+            "[[case]]\nid = \"R01\"\nkind = \"revert\"\ncommit = \"{sha}\"\nfixed_by = \"{sha}\"\n\
+             class = \"release-flip\"\ntier = \"high\"\nsummary = \"s\"\nevidence = \"e\"\n\
+             mechanism = [[\"beta\"]]\n[[case.expect]]\nfile = \"a.rs\"\nlines = [3, 4]\n"
+        )
     }
 
     #[test]
@@ -494,11 +641,7 @@ mod tests {
 
     #[test]
     fn invalid_cases_are_rejected() {
-        let base = format!(
-            "[[case]]\nid = \"R01\"\nkind = \"revert\"\ncommit = \"{SHA}\"\nfixed_by = \"{SHA}\"\n\
-             class = \"release-flip\"\ntier = \"high\"\nsummary = \"s\"\nevidence = \"e\"\n\
-             mechanism = [[\"beta\"]]\n[[case.expect]]\nfile = \"a.rs\"\nlines = [3, 4]\n"
-        );
+        let base = case_text(SHA);
         assert_eq!(parse(&base).unwrap().case.len(), 1);
         let bad = [
             base.replace("id = \"R01\"", "id = \"X01\""),
@@ -512,6 +655,7 @@ mod tests {
             base.replace("[[\"beta\"]]", "[[]]"),
             base.replace("[[\"beta\"]]", "[[\"\"]]"),
             base.replace("[[\"beta\"]]", "[[\"Beta\"]]"),
+            base.replace("[[\"beta\"]]", "[[\"-\"]]"),
             base.replace("[3, 4]", "[4, 3]"),
             base.replace("[3, 4]", "[3]"),
             base.replace("summary", "note = \"x\"\nsummary"),
@@ -540,14 +684,14 @@ mod tests {
         assert_eq!(found.len(), 4);
         assert_eq!(found[0].severity, Severity::Blocker);
         assert_eq!(
-            found[0].citation,
-            Some(("eon/crates/eon/src/product.rs".into(), 12, 14))
+            found[0].citations,
+            at("eon/crates/eon/src/product.rs", 12, 14)
         );
         assert_eq!(found[1].severity, Severity::ShouldFix);
-        assert_eq!(found[1].citation, Some(("venus/src/a.rs".into(), 7, 7)));
+        assert_eq!(found[1].citations, at("venus/src/a.rs", 7, 7));
         assert_eq!(found[2].severity, Severity::Nit);
-        assert_eq!(found[2].citation, None);
-        assert_eq!(found[3].citation, Some(("a.rs".into(), 1, 1)));
+        assert!(found[2].citations.is_empty());
+        assert_eq!(found[3].citations, at("a.rs", 1, 1));
         assert_eq!(citation("a.rs:9-3"), None);
         assert_eq!(citation("a.rs:x"), None);
         assert_eq!(citation(":3"), None);
@@ -560,36 +704,30 @@ mod tests {
         let lined = case(Some([20, 30]));
         let caught = "- [blocker] eon/crates/eon/src/product.rs:35 flips to Beta outside the release cut\n[nit] x";
         assert_eq!(
-            score_report(&lined, caught),
+            line(&lined, caught),
             "R01 caught blocker=1 should-fix=0 nit=1"
         );
         let located = "[should-fix] eon/crates/eon/src/product.rs:15 changes the version";
         assert_eq!(
-            score_report(&lined, located),
+            line(&lined, located),
             "R01 located blocker=0 should-fix=1 nit=0"
         );
         let far = "[blocker] eon/crates/eon/src/product.rs:36 beta at the cut";
-        assert_eq!(
-            score_report(&lined, far),
-            "R01 missed blocker=1 should-fix=0 nit=0"
-        );
+        assert_eq!(line(&lined, far), "R01 missed blocker=1 should-fix=0 nit=0");
         let nit = "[nit] eon/crates/eon/src/product.rs:25 beta at the cut";
-        assert_eq!(
-            score_report(&lined, nit),
-            "R01 missed blocker=0 should-fix=0 nit=1"
-        );
+        assert_eq!(line(&lined, nit), "R01 missed blocker=0 should-fix=0 nit=1");
         let other_file = "[blocker] eon/crates/eon/src/main.rs:25 beta at the cut";
         assert_eq!(
-            score_report(&lined, other_file),
+            line(&lined, other_file),
             "R01 missed blocker=1 should-fix=0 nit=0"
         );
         let anywhere = "[blocker] eon/crates/eon/src/product.rs:900 0.2.0 lands before the cut";
         assert_eq!(
-            score_report(&case(None), anywhere),
+            line(&case(None), anywhere),
             "R01 caught blocker=1 should-fix=0 nit=0"
         );
         assert_eq!(
-            score_report(&case(None), ""),
+            line(&case(None), ""),
             "R01 missed blocker=0 should-fix=0 nit=0"
         );
     }
@@ -600,12 +738,12 @@ mod tests {
         product.mechanism = vec![vec!["beta".into()], vec!["product".into()]];
         let in_path = "[blocker] `eon/crates/eon/src/product.rs:3`, beta at the cut";
         assert_eq!(
-            score_report(&product, in_path),
-            "R01 located blocker=1 should-fix=0 nit=0"
+            line(&product, in_path),
+            "R01 disputed blocker=1 should-fix=0 nit=0"
         );
         let in_text = "[blocker] eon/crates/eon/src/product.rs:3 beta in the product";
         assert_eq!(
-            score_report(&product, in_text),
+            line(&product, in_text),
             "R01 caught blocker=1 should-fix=0 nit=0"
         );
     }
@@ -618,5 +756,197 @@ mod tests {
         assert_eq!(past_end(b"a\nb\nc", 4), Some(3));
         assert_eq!(past_end(b"", 1), Some(0));
         assert_eq!(past_end(b"\n", 1), None);
+    }
+
+    /// The score line up to the report hash.
+    fn line(case: &Case, report: &str) -> String {
+        let line = score_report(case, report, &[]);
+        line.split(" report=").next().unwrap_or_default().into()
+    }
+
+    fn at(path: &str, start: u32, end: u32) -> Vec<(String, u32, u32)> {
+        vec![(path.into(), start, end)]
+    }
+
+    #[test]
+    fn every_citation_locates_and_none_supplies_a_word() {
+        let mut lined = case(Some([20, 30]));
+        let report = "[blocker] eon/crates/eon/src/main.rs:3 and (`./eon/crates/eon/src/product.rs:21`), \
+                      flips beta at the cut";
+        assert_eq!(
+            line(&lined, report),
+            "R01 caught blocker=1 should-fix=0 nit=0"
+        );
+        lined.mechanism = vec![vec!["beta".into()], vec!["main".into()]];
+        assert_eq!(
+            line(&lined, report),
+            "R01 disputed blocker=1 should-fix=0 nit=0"
+        );
+        let found = findings(report);
+        assert_eq!(found[0].text, "and flips beta at the cut");
+        assert_eq!(found[0].citations.len(), 2);
+    }
+
+    #[test]
+    fn cited_paths_lose_dot_and_diff_prefixes() {
+        for token in [
+            "./a.rs:3",
+            "././a.rs:3",
+            "a/a.rs:3",
+            "b/a.rs:3",
+            "`./a.rs:3`.",
+            "(a.rs:3)",
+            "(`b/a.rs:3`).",
+            "[a.rs:3],",
+        ] {
+            assert_eq!(citation(token), Some(("a.rs".into(), 3, 3)), "{token}");
+        }
+        assert_eq!(citation("./:3"), None);
+        assert_eq!(citation("a/:3"), None);
+    }
+
+    #[test]
+    fn a_dot_prefixed_citation_rescores_as_caught() {
+        let cases = parse(include_str!("../evals/cases.toml")).unwrap();
+        let r02 = find(&cases.case, "R02").unwrap();
+        let stored = "[blocker] venus/src/scene.rs:210 — tab_max_width is still sized for the old \
+                      offset, so the point after the first pill hits New tab; inset it too.\n\
+                      verdict: changes needed\n";
+        assert_eq!(line(r02, stored), "R02 caught blocker=1 should-fix=0 nit=0");
+        let prefixed = stored.replace(" venus/", " ./venus/");
+        assert_eq!(
+            line(r02, &prefixed),
+            "R02 caught blocker=1 should-fix=0 nit=0"
+        );
+    }
+
+    #[test]
+    fn hyphen_underscore_and_space_are_one_separator() {
+        let mut focus = case(None);
+        focus.mechanism = vec![vec!["link-focus".into()], vec!["no-op".into()]];
+        for text in [
+            "link_focus is a no op",
+            "link focus is a no_op",
+            "Link--Focus is a NO-OP",
+        ] {
+            let report = format!("[blocker] eon/crates/eon/src/product.rs:1 {text}");
+            assert_eq!(
+                line(&focus, &report),
+                "R01 caught blocker=1 should-fix=0 nit=0",
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_located_finding_matching_some_groups_is_disputed() {
+        let lined = case(Some([20, 30]));
+        let report = "[blocker] eon/crates/eon/src/product.rs:22 renames a field\n\
+                      [should-fix] eon/crates/eon/src/product.rs:23 beta lands here\n\
+                      [should-fix] eon/crates/eon/src/main.rs:23 beta at the cut";
+        assert_eq!(
+            line(&lined, report),
+            "R01 disputed blocker=1 should-fix=2 nit=0"
+        );
+    }
+
+    #[test]
+    fn retired_cases_still_validate() {
+        let text = include_str!("../evals/cases.toml");
+        let text = text.replacen("id = \"R01\"", "id = \"R01\"\nretired = true", 1);
+        let cases = parse(&text).unwrap();
+        assert!(cases.case[0].retired && !cases.case[1].retired);
+        let bad = text.replacen("retired = true", "retired = \"yes\"", 1);
+        assert!(parse(&bad).is_err());
+    }
+
+    #[test]
+    fn rulings_validate_and_replace_the_outcome() {
+        let cases = [case(Some([20, 30]))];
+        let report = "[blocker] eon/crates/eon/src/product.rs:22 beta lands here";
+        let digest = sha256_hex(report.as_bytes());
+        let good = format!(
+            "[[ruling]]\ncase = \"R01\"\nreport = \"{digest}\"\noutcome = \"caught\"\n\
+             judges = [\"opus\", \"neon\"]\n"
+        );
+        let rulings = parse_rulings(&good, &cases).unwrap();
+        assert_eq!(
+            score_report(&cases[0], report, &rulings),
+            format!("R01 caught blocker=1 should-fix=0 nit=0 report={digest} ruled=opus,neon")
+        );
+        for outcome in ["missed", "split"] {
+            let ruled = parse_rulings(&good.replace("caught", outcome), &cases).unwrap();
+            let line = score_report(&cases[0], report, &ruled);
+            assert!(line.starts_with(&format!("R01 {outcome} ")), "{line}");
+        }
+        let other = format!("{report}\n");
+        assert_eq!(
+            score_report(&cases[0], &other, &rulings),
+            format!(
+                "R01 disputed blocker=1 should-fix=0 nit=0 report={}",
+                sha256_hex(other.as_bytes())
+            )
+        );
+        for bad in [
+            good.replace("\"R01\"", "\"R99\""),
+            good.replace(&digest, &digest[..40]),
+            good.replace(&digest, &digest.to_uppercase()),
+            good.replace("\"opus\", \"neon\"", "\"opus\""),
+            good.replace("\"neon\"", "\"opus\""),
+            good.replace("\"neon\"", "\"gemini neon\""),
+            good.replace("\"neon\"", "\"a,b\""),
+            good.replace("\"neon\"", "\"\""),
+            good.replace("\"caught\"", "\"gated\""),
+            good.replace("judges", "note = \"x\"\njudges"),
+            format!("{good}{good}"),
+        ] {
+            assert!(parse_rulings(&bad, &cases).is_err(), "{bad}");
+        }
+        let real = parse(include_str!("../evals/cases.toml")).unwrap();
+        parse_rulings(include_str!("../evals/rulings.toml"), &real.case).unwrap();
+    }
+
+    #[test]
+    fn score_lines_end_with_the_cases_and_scorer_hashes() {
+        let tail = provenance("x");
+        let (cases, scorer) = tail
+            .strip_prefix("cases=")
+            .and_then(|rest| rest.split_once(" scorer="))
+            .unwrap();
+        assert_eq!(cases, &sha256_hex(b"x")[..12]);
+        assert_eq!(scorer.len(), 12);
+    }
+
+    #[test]
+    fn prepare_exports_the_diff_and_score_skips_a_retired_case() {
+        let repo = Repo::new("eval");
+        repo.write("REVIEW.md", "review\n");
+        repo.write("a.rs", "fn a() {}\n");
+        repo.commit("base");
+        repo.write("a.rs", "fn b() {}\n");
+        let commit = repo.commit("candidate");
+        let cases = case_text(&commit).replace("tier", "retired = true\ntier");
+        repo.write(CASES, &cases);
+        repo.write(RULINGS, "");
+        let out = repo.dir.join("exported");
+        let brief = prepare(&repo.git, "R01", &out, true).unwrap();
+        assert_eq!(fs::read_to_string(out.join("brief.md")).unwrap(), brief);
+        assert!(
+            brief.contains("The diff is change.diff in this directory.") && !brief.contains("git")
+        );
+        let diff = fs::read_to_string(out.join("change.diff")).unwrap();
+        assert!(
+            diff.contains("--- a/a.rs\n+++ b/a.rs\n") && diff.contains("-fn a() {}\n+fn b() {}\n")
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("REVIEW.md")).unwrap(),
+            "review\n"
+        );
+        let plain = repo.dir.join("plain");
+        let brief = prepare(&repo.git, "R01", &plain, false).unwrap();
+        assert!(brief.contains("The diff is `git diff "), "{brief}");
+        assert!(!plain.join("change.diff").exists() && !plain.join("brief.md").exists());
+        let line = score(&repo.git, "R01", &repo.dir.join("absent.md")).unwrap();
+        assert_eq!(line, format!("R01 retired {}", provenance(&cases)));
     }
 }

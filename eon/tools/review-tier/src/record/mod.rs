@@ -61,6 +61,8 @@ mod model;
 mod repo;
 mod validate;
 
+pub(crate) use model::sha256_hex;
+
 use crate::Result;
 use crate::git::Git;
 use model::{HEADER, REASON, Record, SCHEMA};
@@ -251,18 +253,18 @@ fn finding(text: String) -> Result<std::result::Result<String, Vec<String>>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::PathBuf;
 
     /// A scratch repository, removed on drop.
-    struct Repo {
-        dir: PathBuf,
-        git: Git,
+    pub(crate) struct Repo {
+        pub(crate) dir: PathBuf,
+        pub(crate) git: Git,
     }
 
     impl Repo {
-        fn new(name: &str) -> Self {
+        pub(crate) fn new(name: &str) -> Self {
             let dir = std::env::temp_dir()
                 .join(format!("review-tier-record-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
@@ -272,7 +274,7 @@ mod tests {
             Self { dir, git }
         }
 
-        fn write(&self, path: &str, text: &str) {
+        pub(crate) fn write(&self, path: &str, text: &str) {
             let path = self.dir.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
@@ -286,7 +288,7 @@ mod tests {
                 .to_string()
         }
 
-        fn commit(&self, message: &str) -> String {
+        pub(crate) fn commit(&self, message: &str) -> String {
             self.git.run(&["add", "-A"]).unwrap();
             self.git
                 .run(&[

@@ -1,0 +1,9 @@
+# Reviewer-eval rulings (format: eon/tools/review-tier/src/eval.rs). A ruling
+# replaces `eval score`'s outcome for one case and report, keyed by the report
+# file's SHA-256 (report= on the score line). Judges from two model families
+# rule blind: caught, missed, or split when they disagree (not caught).
+# [[ruling]]
+# case = "R14"
+# report = "<64 lowercase hex>"
+# outcome = "caught"
+# judges = ["<judge>", "<judge>"]

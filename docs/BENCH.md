@@ -27,7 +27,7 @@ catalog:
 | Records, hashes, store, diff, pooling, trial check | `eon-bench-config/2` (with `eon-bench-config/1` readable for comparison), `eon-bench-task/1`, `eon-bench-run/1` (including Bench v2 fields), `eon-bench-grade/1`, `eon-bench-pooling/1`, `eon-bench-trial/1`, `eon-bench-lanes/1`; CLI subcommands `record`, `config diff`, `pool declare`, `pool show`, `trial check` (`eon/tools/agent-bench`) | — |
 | Workspaces, task environments, run gates, stream parsers, trial runner, scoring, jail, leak checks | `workspace create`, `workspace check`, `tree-hash`, `fingerprints`, `task-env warm`, `agent_bench::gate` (`R5` run gates and before/after usage readings), and `agent_bench::stream` parsers for Claude Code, Codex CLI, and `agy` (`eon/tools/agent-bench`); Linux no-network jail for Claude Code and Codex CLI (`eon/tools/agent-jail`) | Follow-up beads under `eon-2r02l` (plan items `R2`, `R4`, `R6`–`R8b`, and `SC` of `eon-2r02l.11`), `eon-2r02l.4` (jail scorer), `eon-2r02l.7` (`jail` runner level), `eon-2r02l.8` (blind judges; `R7` is its automatic leak audit), `eon-j8iyd` (`agy` in `agent-jail`) |
 | Cost-beside-quality reporting | — | Follow-up bead under `eon-2r02l` (plan item `R9` of `eon-2r02l.11`): `agent-bench report` |
-| Reviewer evaluation | `review-tier eval check`, `eval prepare`, `eval score` against `eon/tools/review-tier/evals/cases.toml` | Follow-up beads under `eon-2r02l` (plan items `E1a`, `E1b`, `E2`, `E4`, `R10` of `eon-2r02l.11`): case audit/freeze, new cases, scorer rework and `eval prepare --export-diff`, reviewer role runner and reviewer case task kind |
+| Reviewer evaluation | `review-tier eval check`, `eval prepare [--export-diff]`, `eval score` against `eon/tools/review-tier/evals/cases.toml` and `rulings.toml` | Follow-up beads under `eon-2r02l` (plan items `E1a`, `E1b`, `E4`, `R10` of `eon-2r02l.11`): case audit/freeze, new cases, reviewer role runner and reviewer case task kind |
 | Builder task catalog | — | `eon-2r02l.18`: select, verify, tag, and populate [Task table](#task-table) |
 
 Each bench trial is defined by two JSON inputs (`eon/tools/agent-bench/src/trial.rs`),
@@ -364,26 +364,26 @@ run-gate (`R5`), and stream-parser (`R3`) primitives that exist today in
 
 ### Reviewer containment
 
-Today, `review-tier eval prepare <case-id> <dir>` creates a git snapshot at the
-case commit (which predates its entry in
-`eon/tools/review-tier/evals/cases.toml`), and
-`review-tier eval score <case-id> <report-file>` scores a reviewer report.
+`review-tier eval prepare [--export-diff] <case-id> <dir>` creates a git
+snapshot at the case commit (which predates its entry in
+`eon/tools/review-tier/evals/cases.toml`) holding [REVIEW.md](../REVIEW.md);
+`--export-diff` adds the case diff as `change.diff` and a brief that needs no
+shell as `brief.md`. `review-tier eval score <case-id> <report-file>` scores a
+reviewer report as `caught`, `disputed` (a located finding names some
+mechanism groups, not all), `located` or `missed`, unless
+`evals/rulings.toml` holds a ruling (`caught`, `missed` or `split`) for that
+case and report SHA-256. Its line ends with the cases-file and scorer hashes;
+a `retired` case keeps its ID and is never scored.
 
-Planned follow-up beads under `eon-2r02l` (plan items `E1a`, `E1b`, `E2`, and
-`R10` of `eon-2r02l.11`) add the reviewer-role containment and scorer rework:
+Planned follow-up beads under `eon-2r02l` (plan items `E1a`, `E1b` and `R10`
+of `eon-2r02l.11`) add the reviewer-role containment:
 
-- `review-tier eval prepare --export-diff` (plan item `E2`) writes the case
-  diff, a no-shell brief, and [REVIEW.md](../REVIEW.md) into a read-only review
-  directory.
 - The reviewer arm runs read-only in a snapshot at the case commit, never in a
   checkout holding `cases.toml` (plan item `R10`).
 - Every reviewer transcript passes through plan item `R7`'s leak audit.
 - Cases are audited, extended with new regressions, and frozen by hash
   (plan items `E1a`, `E1b`) before any arm runs, with a model family other than
-  the editor reviewing the freeze. `eval score` prints the cases-file hash and
-  scorer revision, supports `retired` cases without breaking IDs cited in
-  [REVIEW.md](../REVIEW.md), and records `disputed` outcomes in a rulings file
-  keyed by `(case, report SHA-256)`. The `eval score` result is stored directly
+  the editor reviewing the freeze. The `eval score` result is stored directly
   on the reviewer run row.
 
 ## Settled-result rule

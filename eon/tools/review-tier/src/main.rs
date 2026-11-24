@@ -43,7 +43,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const SOURCE: &str = "eon/tools/review-tier";
 
 const USAGE: &str = "usage: review-tier classify <edge> <candidate> | rules | eval check \
-                     | eval prepare <case-id> <dir> | eval score <case-id> <report-file> \
+                     | eval prepare [--export-diff] <case-id> <dir> | eval score <case-id> <report-file> \
                      | record render <input.toml> | record check <bead> [<revision>]";
 
 fn main() -> ExitCode {
@@ -79,7 +79,10 @@ fn run(args: &[String]) -> Result<bool> {
         }
         ["rules"] => format!("{}\n{}", rules::render(), rules::render_darwin()),
         ["eval", "check"] => return eval::check(&Git::current()?),
-        ["eval", "prepare", id, dir] => eval::prepare(&Git::current()?, id, Path::new(dir))?,
+        ["eval", "prepare", id, dir] => eval::prepare(&Git::current()?, id, Path::new(dir), false)?,
+        ["eval", "prepare", "--export-diff", id, dir] => {
+            eval::prepare(&Git::current()?, id, Path::new(dir), true)?
+        }
         ["eval", "score", id, report] => {
             format!(
                 "{}\n",
@@ -189,6 +192,9 @@ mod tests {
         assert!(run_args(&[]).is_err());
         assert!(run_args(&["classify", "edge"]).is_err());
         assert!(run_args(&["eval", "unknown"]).is_err());
+        assert!(run_args(&["eval", "prepare", "--diff", "R01", "x"]).is_err());
+        let error = run_args(&["eval", "prepare", "--export-diff", "R999", "x"]).unwrap_err();
+        assert_ne!(error.to_string(), USAGE);
         let error = run_args(&["classify", "--output=/tmp/x", "HEAD"]).unwrap_err();
         assert!(error.to_string().contains("invalid revision"));
         let error = run_args(&["classify", "HEAD", "-n"]).unwrap_err();
