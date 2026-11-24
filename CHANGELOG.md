@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Venus skips unchanged input-method updates and builds workspace layout when input needs it.
+  On Wayland, it updates the input-method caret at most once per presented frame and resends it
+  after text input re-enters (`eon-04qsk`).
+
 - Fresh Eon supervisors isolate inherited descriptors on Linux and macOS.
   On Linux, only the initial Venus process receives a caller's Wayland socket.
 - The first startup directory picker points to `eon tutor` once per Eon user

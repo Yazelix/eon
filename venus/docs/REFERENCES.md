@@ -639,6 +639,15 @@ and backend-specific IME cursor-area comparison. Venus reused no source
 and rejected Alacritty's terminal, grid, selection, configuration, auto-copy,
 primary-selection, search, and raw-display clipboard ownership.
 
+For `eon-04qsk`, Venus follows Alacritty's equal-preedit comparison and the pinned
+winit Wayland host's idempotent IME-enable writes. Venus compares caret rectangles
+in the logical integer units winit sends and publishes the latest eligible area
+once per successful present when the rectangle changed or text input re-entered.
+Workspace layout is built at geometry consumers. AppKit retains its native caret
+and enable ordering.
+[Alacritty 0.15.1 preedit](https://github.com/alacritty/alacritty/blob/0c405d53e74ace2980fc5e6c6d5b710c144bc075/alacritty/src/event.rs#L1730)
+[Pinned winit Wayland IME](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/mod.rs#L605)
+
 ## Canonical workspace protocol provider
 
 The current canonical package is the in-tree

@@ -44,8 +44,6 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime},
 };
-#[cfg(target_os = "linux")]
-use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
@@ -53,6 +51,11 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{CursorIcon, UserAttentionType, Window, WindowAttributes, WindowId},
+};
+#[cfg(target_os = "linux")]
+use winit::{
+    dpi::{LogicalPosition, Position, Size},
+    platform::wayland::WindowAttributesExtWayland,
 };
 
 mod geometry;
@@ -610,12 +613,68 @@ struct WindowState {
     native: NativeWindow,
 }
 
+type PhysicalCaretArea = (PhysicalPosition<f64>, PhysicalSize<f64>);
+
+#[cfg(target_os = "linux")]
+type LogicalCaretArea = (LogicalPosition<u32>, LogicalSize<u32>);
+
+#[cfg(target_os = "linux")]
+struct WaylandIme {
+    scale_factor: f64,
+    ready: bool,
+    eligible: Option<LogicalCaretArea>,
+    issued: Option<LogicalCaretArea>,
+}
+
+#[cfg(target_os = "linux")]
+impl WaylandIme {
+    fn new(scale_factor: f64) -> Self {
+        Self {
+            scale_factor,
+            ready: false,
+            eligible: None,
+            issued: None,
+        }
+    }
+
+    fn update(&mut self, allowed: bool, area: Option<PhysicalCaretArea>) {
+        self.ready &= allowed;
+        self.eligible = area.filter(|_| allowed).map(|(position, size)| {
+            (
+                Position::from(position).to_logical(self.scale_factor),
+                Size::from(size).to_logical(self.scale_factor),
+            )
+        });
+        if self.eligible.is_none() {
+            self.issued = None;
+        }
+    }
+
+    fn enabled(&mut self) -> bool {
+        // The enter may have added a peer that has never received our rectangle.
+        self.ready = true;
+        self.issued = None;
+        self.eligible.is_some()
+    }
+
+    fn presented(&mut self) -> Option<LogicalCaretArea> {
+        let area = self.eligible?;
+        if !self.ready || self.issued == Some(area) {
+            return None;
+        }
+        self.issued = Some(area);
+        Some(area)
+    }
+}
+
 /// The native window under Venus's policy: winit's window and its AccessKit adapter, or the
 /// Rune candidate host's window (eon-yp6vg.7.9), which Rune owns.
 enum NativeWindow {
     Winit {
         window: Arc<Window>,
         adapter: accesskit_winit::Adapter,
+        #[cfg(target_os = "linux")]
+        ime: WaylandIme,
     },
     #[cfg(feature = "candidate-rune")]
     Rune(rune_host::RuneWindow),
@@ -665,17 +724,55 @@ impl NativeWindow {
     }
 
     /// Rune: IME is eon-yp6vg.7.2's binding; nothing is set yet.
-    fn set_ime_cursor_area(&self, position: PhysicalPosition<f64>, size: PhysicalSize<f64>) {
+    fn sync_ime(&mut self, allowed: bool, area: Option<PhysicalCaretArea>) {
         match self {
-            Self::Winit { window, .. } => window.set_ime_cursor_area(position, size),
+            #[cfg(target_os = "linux")]
+            Self::Winit { window, ime, .. } => {
+                ime.update(allowed, area);
+                window.set_ime_allowed(allowed);
+            }
+            #[cfg(not(target_os = "linux"))]
+            Self::Winit { window, .. } => {
+                if let Some((position, size)) = area {
+                    window.set_ime_cursor_area(position, size);
+                }
+                window.set_ime_allowed(allowed);
+            }
             #[cfg(feature = "candidate-rune")]
             Self::Rune(_) => {}
         }
     }
 
-    fn set_ime_allowed(&self, allowed: bool) {
+    fn ime_enabled(&mut self) {
+        #[cfg(target_os = "linux")]
         match self {
-            Self::Winit { window, .. } => window.set_ime_allowed(allowed),
+            Self::Winit { window, ime, .. } => {
+                if ime.enabled() {
+                    window.request_redraw();
+                }
+            }
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => {}
+        }
+    }
+
+    fn ime_presented(&mut self) {
+        #[cfg(target_os = "linux")]
+        match self {
+            Self::Winit { window, ime, .. } => {
+                if let Some((position, size)) = ime.presented() {
+                    window.set_ime_cursor_area(position, size);
+                }
+            }
+            #[cfg(feature = "candidate-rune")]
+            Self::Rune(_) => {}
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn ime_resized(&mut self, scale_factor: f64) {
+        match self {
+            Self::Winit { ime, .. } => ime.scale_factor = scale_factor,
             #[cfg(feature = "candidate-rune")]
             Self::Rune(_) => {}
         }
@@ -709,7 +806,9 @@ impl NativeWindow {
 
     fn process_event(&mut self, event: &WindowEvent) {
         match self {
-            Self::Winit { window, adapter } => adapter.process_event(window, event),
+            Self::Winit {
+                window, adapter, ..
+            } => adapter.process_event(window, event),
             #[cfg(feature = "candidate-rune")]
             Self::Rune(_) => {}
         }
@@ -1848,7 +1947,12 @@ impl Application {
             renderer,
             scale_factor,
             accessibility,
-            native: NativeWindow::Winit { window, adapter },
+            native: NativeWindow::Winit {
+                window,
+                adapter,
+                #[cfg(target_os = "linux")]
+                ime: WaylandIme::new(scale_factor),
+            },
         });
         if !self.initial_scale_pending {
             self.start_initial_attachment();
@@ -5193,19 +5297,14 @@ impl Application {
         self.refresh_client_view();
     }
 
-    fn link_scene(&self) -> Option<(&Scene, PresentationIdentity)> {
-        let workspace = self.workspace_scene();
-        let identity = self.presentation_candidate(workspace.as_ref());
+    fn link_scene(&self, identity: PresentationIdentity) -> Option<&Scene> {
         (self.link_surface_available(self.links.unshifted)
             && self.presentation.is_current(identity))
         .then(|| {
-            (
-                self.terminal
-                    .model
-                    .scene()
-                    .expect("presented revision has a scene"),
-                identity,
-            )
+            self.terminal
+                .model
+                .scene()
+                .expect("presented revision has a scene")
         })
     }
 
@@ -5222,44 +5321,56 @@ impl Application {
     }
 
     /// The latest scene with links on screen or due in the next frame, which output may replace.
-    fn visible_link_scene(&self, unshifted: bool) -> Option<&Scene> {
-        let workspace = self.workspace_scene();
-        (self.link_surface_available(unshifted)
-            && self
-                .presentation_candidate(workspace.as_ref())
-                .revision
-                .is_some())
-        .then(|| self.terminal.model.scene())
-        .flatten()
+    fn visible_link_scene(
+        &self,
+        unshifted: bool,
+        identity: PresentationIdentity,
+    ) -> Option<&Scene> {
+        (self.link_surface_available(unshifted) && identity.revision.is_some())
+            .then(|| self.terminal.model.scene())
+            .flatten()
     }
 
-    fn visible_link(&self, unshifted: bool) -> Option<Hyperlink<'_>> {
-        let scene = self.visible_link_scene(unshifted)?;
-        self.links
-            .focus
-            .as_ref()?
-            .find(scene, self.presentation.epoch, self.detect_local_hosts)
+    fn visible_link(
+        &self,
+        unshifted: bool,
+        identity: PresentationIdentity,
+    ) -> Option<Hyperlink<'_>> {
+        let focus = self.links.focus.as_ref()?;
+        let scene = self.visible_link_scene(unshifted, identity)?;
+        focus.find(scene, self.presentation.epoch, self.detect_local_hosts)
     }
 
+    #[cfg(all(test, target_os = "linux"))]
     fn focused_link(&self) -> Option<Hyperlink<'_>> {
-        self.visible_link(self.links.unshifted)
+        let workspace = self.workspace_scene();
+        self.visible_link(
+            self.links.unshifted,
+            self.presentation_candidate(workspace.as_ref()),
+        )
     }
 
     /// Whether a target the latest scene holds is on screen: that scene is presented, or the
     /// presented frame highlighted the target.
-    fn presented(&self, target: &LinkFocus) -> bool {
-        self.link_scene().is_some() || self.links.shown.as_ref() == Some(target)
+    fn presented(&self, target: &LinkFocus, identity: PresentationIdentity) -> bool {
+        self.links.shown.as_ref() == Some(target) || self.link_scene(identity).is_some()
     }
 
     /// The focused target, while presented and still in the latest scene.
     fn current_link(&self) -> Option<Hyperlink<'_>> {
-        let link = self.focused_link()?;
-        self.presented(self.links.focus.as_ref()?).then_some(link)
+        let focus = self.links.focus.as_ref()?;
+        if !self.link_surface_available(self.links.unshifted) {
+            return None;
+        }
+        let workspace = self.workspace_scene();
+        let identity = self.presentation_candidate(workspace.as_ref());
+        self.visible_link(self.links.unshifted, identity)
+            .filter(|_| self.presented(focus, identity))
     }
 
-    fn link_viewport(&self) -> Option<(SceneRect, SceneRect)> {
+    fn link_viewport(&self, workspace: Option<&WorkspaceScene>) -> Option<(SceneRect, SceneRect)> {
         let state = self.window.as_ref()?;
-        if let Some(workspace) = self.workspace_scene() {
+        if let Some(workspace) = workspace {
             Some((workspace.terminal, workspace.visible_terminal()?))
         } else {
             let rect = SceneRect {
@@ -5271,14 +5382,18 @@ impl Application {
         }
     }
 
-    fn pointer_link(&self, unshifted: bool) -> Option<LinkFocus> {
+    fn pointer_link(
+        &self,
+        unshifted: bool,
+        workspace: Option<&WorkspaceScene>,
+    ) -> Option<LinkFocus> {
         if !self.links.pointer_inside || self.input.pointer_busy() {
             return None;
         }
-        let scene = self.visible_link_scene(unshifted)?;
+        let identity = self.presentation_candidate(workspace);
+        let scene = self.visible_link_scene(unshifted, identity)?;
         let state = self.window.as_ref()?;
-        let workspace = self.workspace_scene();
-        let (origin, visible) = self.link_viewport()?;
+        let (origin, visible) = self.link_viewport(workspace)?;
         let x = self.cursor.x as f32;
         let y = self.cursor.y as f32;
         if !visible.contains(x, y) {
@@ -5286,11 +5401,8 @@ impl Application {
         }
         let metrics = state.renderer.metrics();
         // The notice and a keycap's popup cover the terminal beneath them.
-        if (!self.status_for(unshifted).is_empty()
-            && state
-                .renderer
-                .notice_rect(workspace.as_ref())
-                .contains(x, y))
+        if (!self.status_for(unshifted, identity).is_empty()
+            && state.renderer.notice_rect(workspace).contains(x, y))
             || self.hint_popup_under(x, y).is_some()
         {
             return None;
@@ -5325,11 +5437,11 @@ impl Application {
     }
 
     /// Re-derives the hovered target from the visible scene, returning whether it changed.
-    fn hover_link(&mut self, unshifted: bool) -> bool {
+    fn hover_link(&mut self, unshifted: bool, workspace: Option<&WorkspaceScene>) -> bool {
         if matches!(self.links.pressed, Some(LinkPress::Live(_))) {
             return false;
         }
-        let focus = self.pointer_link(unshifted);
+        let focus = self.pointer_link(unshifted, workspace);
         if self.links.focus == focus {
             return false;
         }
@@ -5338,17 +5450,17 @@ impl Application {
         true
     }
 
-    fn inspect_pointer_link(&mut self) {
-        if self.hover_link(self.links.unshifted) {
+    fn inspect_pointer_link(&mut self, workspace: Option<&WorkspaceScene>) {
+        if self.hover_link(self.links.unshifted, workspace) {
             self.refresh_client_view();
         }
     }
 
-    fn link_status(&self, unshifted: bool) -> Option<String> {
+    fn link_status(&self, link: Option<&Hyperlink<'_>>) -> Option<String> {
         if let Some(notice) = self.links.notice() {
             return Some(notice.to_owned());
         }
-        let link = self.visible_link(unshifted)?;
+        let link = link?;
         if link.uri.len() > MAX_LINK_BYTES {
             return Some(format!(
                 "Link target exceeds {MAX_LINK_BYTES} bytes; opening and copying are disabled."
@@ -5369,9 +5481,9 @@ impl Application {
             .model
             .scene()
             .is_some_and(Scene::has_selected_content);
-        let current = self.current_link().is_some();
-        let recognized =
-            link_copy_shortcut(key, modifiers, self.popup_entries(), selected, current);
+        let recognized = shortcut_is_ready(state, repeat)
+            && link_copy_shortcut(key, modifiers, self.popup_entries(), selected, true)
+            && self.current_link().is_some();
         if !self.input.consumes_shortcut(key, state, repeat, recognized) {
             return false;
         }
@@ -5390,9 +5502,13 @@ impl Application {
     }
 
     fn activate_accessible_link(&mut self, row: u16, column: u16, copy: bool) {
+        if !self.link_surface_available(self.links.unshifted) {
+            return;
+        }
+        let workspace = self.workspace_scene();
         let Some(uri) = self
-            .link_scene()
-            .and_then(|(scene, _)| scene.hyperlink_at(row, column, self.detect_local_hosts))
+            .link_scene(self.presentation_candidate(workspace.as_ref()))
+            .and_then(|scene| scene.hyperlink_at(row, column, self.detect_local_hosts))
             .map(|link| link.uri.into_owned())
         else {
             return;
@@ -5425,19 +5541,25 @@ impl Application {
         );
     }
 
-    fn handle_link_button(&mut self, state: ElementState, button: MouseButton) -> bool {
+    fn handle_link_button(
+        &mut self,
+        state: ElementState,
+        button: MouseButton,
+        workspace: Option<&WorkspaceScene>,
+    ) -> bool {
         let opens_link = native_pointer_shortcut(button, self.input.modifiers())
             .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::OpenLink);
         if button != MouseButton::Left {
             return false;
         }
+        let identity = self.presentation_candidate(workspace);
         if state == ElementState::Released
             && let Some(pressed) = self.links.pressed.take()
         {
-            let released = self.pointer_link(self.links.unshifted);
+            let released = self.pointer_link(self.links.unshifted, workspace);
             let activate = opens_link
                 && matches!(&pressed, LinkPress::Live(target)
-                    if released.as_ref() == Some(target) && self.presented(target));
+                    if released.as_ref() == Some(target) && self.presented(target, identity));
             self.links.focus = released;
             if activate {
                 self.activate_link(false);
@@ -5451,8 +5573,8 @@ impl Application {
             self.links.pressed = None;
             if opens_link
                 && let Some(focus) = self
-                    .pointer_link(self.links.unshifted)
-                    .filter(|focus| self.presented(focus))
+                    .pointer_link(self.links.unshifted, workspace)
+                    .filter(|focus| self.presented(focus, identity))
             {
                 self.links.focus = Some(focus.clone());
                 self.links.pressed = Some(LinkPress::Live(focus));
@@ -5488,15 +5610,19 @@ impl Application {
             ));
         }
         self.measure_dialog_texts();
+        let workspace = self.workspace_scene();
+        let candidate = self.presentation_candidate(workspace.as_ref());
         if !self.link_surface_available(self.links.unshifted) {
             self.links.pressed = None;
         }
-        if self.links.focus.is_some() && self.focused_link().is_none() {
+        if self.links.focus.is_some()
+            && self.visible_link(self.links.unshifted, candidate).is_none()
+        {
             self.links.focus = None;
         }
         if let Some(LinkPress::Live(target)) = &self.links.pressed
             && self
-                .visible_link_scene(self.links.unshifted)
+                .visible_link_scene(self.links.unshifted, candidate)
                 .and_then(|scene| {
                     target.find(scene, self.presentation.epoch, self.detect_local_hosts)
                 })
@@ -5504,9 +5630,8 @@ impl Application {
         {
             self.links.pressed = Some(LinkPress::Retired);
         }
-        let link_generation = self.link_scene().map(|(_, identity)| identity.generation);
-        let status = self.status();
-        let workspace = self.workspace_scene();
+        let link_generation = self.link_scene(candidate).map(|_| candidate.generation);
+        let status = self.status_for(self.links.unshifted, candidate);
         // Wake when a visible row's age next changes its label; every change to the rows or
         // their visibility refreshes the view. Ages are not part of the presented content's
         // identity, so a refresh at or past the deadline marks the content changed.
@@ -5528,7 +5653,7 @@ impl Application {
         let scrollback_label = self.scrollback_label(workspace.as_ref());
         let scrollback_rect = self.scrollback_rect(workspace.as_ref());
         let workspace_focus = self.workspace_focus;
-        let ime_allowed = dialog.is_none()
+        let ime_allowed = !self.dialog_open()
             && ime_allowed(
                 self.window_focused,
                 workspace_focus,
@@ -5545,22 +5670,25 @@ impl Application {
                 .map(|scene| scene.title.as_str()),
             self.render_notice.as_deref(),
         ));
-        if let Some(scene) = self.terminal.model.scene()
-            && let Some(cursor) = scene.cursor
-        {
-            let metrics = state.renderer.metrics();
-            let origin = workspace.as_ref().map_or((0.0, 0.0), |workspace| {
-                (workspace.terminal.left, workspace.terminal.top)
+        let caret = self
+            .terminal
+            .model
+            .scene()
+            .and_then(|scene| scene.cursor)
+            .map(|cursor| {
+                let metrics = state.renderer.metrics();
+                let origin = workspace.as_ref().map_or((0.0, 0.0), |workspace| {
+                    (workspace.terminal.left, workspace.terminal.top)
+                });
+                let left =
+                    origin.0 + metrics.padding + f32::from(cursor.leading_column()) * metrics.width;
+                let top = origin.1 + metrics.padding + f32::from(cursor.row) * metrics.height;
+                (
+                    PhysicalPosition::new(f64::from(left), f64::from(top)),
+                    PhysicalSize::new(f64::from(metrics.width * 2.0), f64::from(metrics.height)),
+                )
             });
-            let left =
-                origin.0 + metrics.padding + f32::from(cursor.leading_column()) * metrics.width;
-            let top = origin.1 + metrics.padding + f32::from(cursor.row) * metrics.height;
-            state.native.set_ime_cursor_area(
-                PhysicalPosition::new(f64::from(left), f64::from(top)),
-                PhysicalSize::new(f64::from(metrics.width * 2.0), f64::from(metrics.height)),
-            );
-        }
-        state.native.set_ime_allowed(ime_allowed);
+        state.native.sync_ime(ime_allowed, caret);
         state.native.set_cursor(pointer_icon);
         state.accessibility.update(
             state.native.adapter(),
@@ -5833,26 +5961,32 @@ impl Application {
         self.send(ClientMessage::Resize(size));
     }
 
+    #[cfg(all(test, target_os = "linux"))]
     fn status(&self) -> String {
-        self.status_for(self.links.unshifted)
+        let workspace = self.workspace_scene();
+        self.status_for(
+            self.links.unshifted,
+            self.presentation_candidate(workspace.as_ref()),
+        )
     }
 
-    fn status_for(&self, unshifted: bool) -> String {
+    fn status_for(&self, unshifted: bool, identity: PresentationIdentity) -> String {
         if let Some(notice) = &self.render_notice {
             return notice.clone();
         }
         let links_available =
             self.terminal.model.is_attached() && !self.terminal.model.awaiting_current_frame();
+        let link = self.visible_link(unshifted, identity);
         // The newer of a link result and a workspace notice shows. With no result, a
         // hovered link's hint outranks the workspace notice, which returns when it leaves.
         let link_first = match &self.links.notice {
             Some(notice) => notice.outranks(self.workspace_model.notice_serial()),
-            None => self.visible_link(unshifted).is_some(),
+            None => link.is_some(),
         };
         if links_available
             && link_first
             && self.terminal.model.notice().is_none()
-            && let Some(status) = self.link_status(unshifted)
+            && let Some(status) = self.link_status(link.as_ref())
         {
             return status;
         }
@@ -5865,7 +5999,7 @@ impl Application {
         ) {
             return notice.to_owned();
         }
-        if links_available && let Some(status) = self.link_status(unshifted) {
+        if links_available && let Some(status) = self.link_status(link.as_ref()) {
             return status;
         }
         if self.initial_scale_pending {
@@ -5936,17 +6070,6 @@ impl Application {
             )
         });
         let unshifted = scroll_offset == 0.0;
-        // The frame drawn now carries its own hover, so output does not blink the highlight.
-        let hover_changed = self.hover_link(unshifted);
-        let shown = self.visible_link(unshifted).and(self.links.focus.clone());
-        let owned_status;
-        let status = if let Some(notice) = self.render_notice.as_deref() {
-            notice
-        } else {
-            owned_status = self.status_for(unshifted);
-            owned_status.as_str()
-        };
-        let preedit = self.input.preedit();
         let scene_started = crate::frame_time();
         let mut workspace = self.workspace_scene();
         if let Some(workspace) = &mut workspace {
@@ -5956,8 +6079,21 @@ impl Application {
         }
         let dialog = self.dialog_scene();
         let scene_ns = crate::frame_elapsed(scene_started);
-        let workspace_focus = self.workspace_focus;
         let candidate = self.presentation_candidate(workspace.as_ref());
+        // The frame drawn now carries its own hover, so output does not blink the highlight.
+        let hover_changed = self.hover_link(unshifted, workspace.as_ref());
+        let shown = self
+            .visible_link(unshifted, candidate)
+            .and(self.links.focus.clone());
+        let owned_status;
+        let status = if let Some(notice) = self.render_notice.as_deref() {
+            notice
+        } else {
+            owned_status = self.status_for(unshifted, candidate);
+            owned_status.as_str()
+        };
+        let preedit = self.input.preedit();
+        let workspace_focus = self.workspace_focus;
         let kinetic_active = self.terminal.terminal_scroll.velocity != 0.0;
         let link_generation = (candidate.revision.is_some()
             && self.link_surface_available(unshifted))
@@ -6076,6 +6212,7 @@ impl Application {
             candidate.generation,
         ) {
             Ok(outcome @ PresentOutcome::Presented(_)) => {
+                state.native.ime_presented();
                 if scene_started.is_some() {
                     let revision = self.terminal.model.scene().map(|scene| scene.revision);
                     let receive_ns = revision.and_then(|revision| {
@@ -6193,7 +6330,7 @@ impl Application {
                     ),
                 );
             }
-            self.inspect_pointer_link();
+            self.inspect_pointer_link(workspace.as_ref());
         }
     }
 }
@@ -6291,26 +6428,6 @@ impl Application {
             self.pending_pane = None;
         }
         PendingClose::on_window(&mut self.pending_close, &event);
-        let workspace = self.workspace_scene();
-        let workspace_focus = self.workspace_focus;
-        let dialog_open = self.dialog_open();
-        let outside_viewer = matches!(
-            event,
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                ..
-            }
-        ) && self.pointer_outside_viewer();
-        let window_menu_scene = self.window_menu.open.then(|| self.dialog_scene()).flatten();
-        let outside_menu = window_menu_scene.as_ref().is_some_and(|dialog| {
-            !dialog
-                .bounds
-                .contains(self.cursor.x as f32, self.cursor.y as f32)
-        });
-        let candidate = self.presentation_candidate(workspace.as_ref());
-        let presentation_current = self.presentation.has_presented_geometry();
-        let presented_revision = self.presentation.presented_revision();
-        let scrollback_rect = self.scrollback_rect(workspace.as_ref());
         let Some(state) = &mut self.window else {
             return;
         };
@@ -6318,7 +6435,17 @@ impl Application {
             return;
         }
         state.native.process_event(&event);
+        let workspace_focus = self.workspace_focus;
+        let dialog_open = self.dialog_open();
+        let presentation_current = self.presentation.has_presented_geometry();
+        let presented_revision = self.presentation.presented_revision();
         if let WindowEvent::MouseInput { state, button, .. } = &event {
+            let window_menu_scene = self.window_menu.open.then(|| self.dialog_scene()).flatten();
+            let outside_menu = window_menu_scene.as_ref().is_some_and(|dialog| {
+                !dialog
+                    .bounds
+                    .contains(self.cursor.x as f32, self.cursor.y as f32)
+            });
             let target = window_menu_scene
                 .as_ref()
                 .filter(|_| presentation_current)
@@ -6347,6 +6474,8 @@ impl Application {
                     .terminal_scroll
                     .cancel(&mut self.terminal.pending_viewport);
                 state.renderer.resize(size, state.scale_factor);
+                #[cfg(target_os = "linux")]
+                state.native.ime_resized(state.scale_factor);
                 self.cancel_native_pointer_sequence();
                 self.reveal_workspace_selection();
                 if self.attention_inbox.open {
@@ -6386,7 +6515,12 @@ impl Application {
                 self.cancel_terminal_scroll();
                 self.input.set_modifiers(modifiers.state());
                 if !dialog_open {
-                    self.hover_link(self.links.unshifted);
+                    let workspace = (self.links.pointer_inside
+                        && !self.input.pointer_busy()
+                        && self.link_surface_available(self.links.unshifted))
+                    .then(|| self.workspace_scene())
+                    .flatten();
+                    self.hover_link(self.links.unshifted, workspace.as_ref());
                     self.refresh_client_view();
                 }
             }
@@ -6439,20 +6573,29 @@ impl Application {
                 }
             }
             WindowEvent::Ime(event) => {
-                self.cancel_terminal_scroll();
                 let allowed = !dialog_open
                     && ime_allowed(
                         self.window_focused,
                         workspace_focus,
                         self.terminal.model.is_attached(),
                     );
-                if ime_reaches_terminal(allowed, &event)
-                    && let Some(message) =
-                        native_ime_message(&mut self.input, &mut self.terminal.model, event)
-                {
+                if allowed && matches!(event, Ime::Enabled) {
+                    state.native.ime_enabled();
+                }
+                if !ime_reaches_terminal(allowed, &event) {
+                    return;
+                }
+                let (message, changed) =
+                    native_ime_message(&mut self.input, &mut self.terminal.model, event);
+                if changed || message.is_some() {
+                    self.cancel_terminal_scroll();
+                }
+                if let Some(message) = message {
                     self.send(message);
                 }
-                self.refresh_client_view();
+                if changed {
+                    self.refresh_client_view();
+                }
             }
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
@@ -6478,11 +6621,12 @@ impl Application {
                     self.cursor = position;
                     self.links.pointer_inside = true;
                     if self.window_menu.open {
-                        let action = window_menu_scene.as_ref().and_then(|dialog| {
+                        let action = self.dialog_scene().and_then(|dialog| {
                             dialog
                                 .menu_target_at(position.x as f32, position.y as f32)
                                 .cloned()
                         });
+                        let state = self.window.as_ref().expect("native event has a window");
                         state.native.set_cursor(if action.is_some() {
                             CursorIcon::Pointer
                         } else {
@@ -6497,6 +6641,9 @@ impl Application {
                     }
                     return;
                 }
+                let workspace = self.workspace_scene();
+                let scrollback_rect = self.scrollback_rect(workspace.as_ref());
+                let state = self.window.as_ref().expect("native event has a window");
                 let header_at = |position: PhysicalPosition<f64>| {
                     workspace.as_ref().and_then(|scene| {
                         match scene.hit_test(position.x as f32, position.y as f32) {
@@ -6583,7 +6730,7 @@ impl Application {
                 if !self.input.is_selecting() {
                     self.terminal.selection_scroll.cancel();
                 }
-                self.inspect_pointer_link();
+                self.inspect_pointer_link(workspace.as_ref());
                 if was_scrollback != over_scrollback {
                     self.refresh_client_view();
                 }
@@ -6605,8 +6752,14 @@ impl Application {
                 if button == MouseButton::Left {
                     self.terminal.selection_scroll.cancel();
                 }
+                let outside_viewer =
+                    button_state == ElementState::Pressed && self.pointer_outside_viewer();
                 if button_state == ElementState::Pressed && self.hint_popup.dismiss() {
-                    state.native.request_redraw();
+                    self.window
+                        .as_ref()
+                        .expect("native event has a window")
+                        .native
+                        .request_redraw();
                 }
                 match viewer_button(
                     &mut self.shortcut_viewer.dismissal,
@@ -6642,6 +6795,10 @@ impl Application {
                     }
                     return;
                 }
+                let workspace = self.workspace_scene();
+                let candidate = self.presentation_candidate(workspace.as_ref());
+                let scrollback_rect = self.scrollback_rect(workspace.as_ref());
+                let state = self.window.as_mut().expect("native event has a window");
                 if button_state == ElementState::Pressed {
                     self.terminal
                         .terminal_scroll
@@ -6689,7 +6846,7 @@ impl Application {
                     self.refresh_client_view();
                     return;
                 }
-                if self.handle_link_button(button_state, button) {
+                if self.handle_link_button(button_state, button, workspace.as_ref()) {
                     return;
                 }
                 if button_state == ElementState::Pressed {
@@ -6874,6 +7031,8 @@ impl Application {
                 self.links.pressed = None;
                 self.header_press = None;
                 self.terminal.scrollback_press = None;
+                let workspace = self.workspace_scene();
+                let state = self.window.as_mut().expect("native event has a window");
                 let metrics = state.renderer.metrics();
                 let hit = workspace.as_ref().and_then(|workspace| {
                     workspace.hit_test(self.cursor.x as f32, self.cursor.y as f32)
@@ -7616,15 +7775,19 @@ fn native_ime_message(
     input: &mut InputState,
     model: &mut SessionModel,
     event: Ime,
-) -> Option<ClientMessage> {
+) -> (Option<ClientMessage>, bool) {
+    let composition_changed = match &event {
+        Ime::Enabled => false,
+        Ime::Disabled | Ime::Commit(_) => !input.preedit().is_empty(),
+        Ime::Preedit(text, _) => input.preedit() != text,
+    };
     match input.ime(event) {
-        Ok(message) => message,
+        Ok(message) => (message, composition_changed),
         Err(detail) => {
-            model.set_venus_notice(
-                LocalNoticeSource::Input,
-                format!("Venus could not encode input: {detail}"),
-            );
-            None
+            let notice = format!("Venus could not encode input: {detail}");
+            let changed = !model.is_terminal() && model.notice() != Some(notice.as_str());
+            model.set_venus_notice(LocalNoticeSource::Input, notice);
+            (None, composition_changed || changed)
         }
     }
 }

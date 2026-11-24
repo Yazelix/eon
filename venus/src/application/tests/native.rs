@@ -751,6 +751,45 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 return;
             }
             let app = &mut self.app;
+            let pending_redraw = std::mem::take(&mut app.native_requests.redraw);
+            let focused = std::mem::replace(&mut app.window_focused, true);
+            assert!(
+                app.workspace_focus == WorkspaceFocus::Terminal
+                    && app.terminal.model.is_attached()
+                    && !app.dialog_open()
+            );
+            app.handle_window_event(id, WindowEvent::Ime(Ime::Preedit(String::new(), None)));
+            assert!(
+                !app.native_requests.redraw,
+                "unchanged IME preedit refreshed the view"
+            );
+            app.handle_window_event(id, WindowEvent::Ime(Ime::Enabled));
+            let Some(WindowState {
+                native: NativeWindow::Winit { ime, .. },
+                ..
+            }) = &app.window
+            else {
+                panic!("expected a native Wayland window");
+            };
+            assert!(ime.ready, "IME must be active before opening the menu");
+            app.window_menu.open = true;
+            assert!(app.dialog_open() && app.dialog_scene().is_none());
+            app.refresh_client_view();
+            let Some(WindowState {
+                native: NativeWindow::Winit { ime, .. },
+                ..
+            }) = &app.window
+            else {
+                panic!("expected a native Wayland window");
+            };
+            assert!(
+                !ime.ready,
+                "an open menu suppresses IME even without a drawable scene"
+            );
+            app.window_menu.open = false;
+            app.window_focused = focused;
+            app.refresh_client_view();
+            app.native_requests.redraw = pending_redraw;
             let device_id = DeviceId::dummy();
             let scene = app.workspace_scene().unwrap();
             let terminal = PhysicalPosition::new(
@@ -1016,13 +1055,17 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             );
             app.input
                 .set_modifiers(winit::keyboard::ModifiersState::CONTROL);
-            app.inspect_pointer_link();
+            app.inspect_pointer_link(app.workspace_scene().as_ref());
             assert!(
                 app.focused_link().is_some() && app.current_link().is_none(),
                 "unpresented target is inert"
             );
             assert!(
-                !app.handle_link_button(ElementState::Pressed, MouseButton::Left),
+                !app.handle_link_button(
+                    ElementState::Pressed,
+                    MouseButton::Left,
+                    app.workspace_scene().as_ref()
+                ),
                 "an unpresented target cannot capture a press"
             );
             let highlighted =
@@ -1045,7 +1088,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             let kept = "file:///kept-across-output";
             app.handle_transport(linked_frame(7, kept));
             app.render();
-            assert!(app.handle_link_button(ElementState::Pressed, MouseButton::Left));
+            assert!(app.handle_link_button(
+                ElementState::Pressed,
+                MouseButton::Left,
+                app.workspace_scene().as_ref()
+            ));
             for revision in 8..11 {
                 app.handle_transport(linked_frame(revision, kept));
                 assert!(app.status().contains(kept), "output must not hide the hint");
@@ -1056,7 +1103,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                     "output must not blink the hover"
                 );
             }
-            assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
+            assert!(app.handle_link_button(
+                ElementState::Released,
+                MouseButton::Left,
+                app.workspace_scene().as_ref()
+            ));
             assert_eq!(
                 app.links.notice(),
                 Some("Only HTTP and HTTPS links can be opened. Copy other targets explicitly."),
@@ -1115,7 +1166,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 app.links.notice.is_none(),
                 "a success clears at its deadline"
             );
-            app.inspect_pointer_link();
+            app.inspect_pointer_link(app.workspace_scene().as_ref());
             // Metadata repaints bar and sidebar controls, not the terminal link beneath a
             // still pointer. Exercise pane and popup with the sidebar both visible and hidden.
             let original_snapshot = app.workspace_model.snapshot().unwrap().clone();
@@ -1182,7 +1233,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 app.links.focus = None;
                 assert_eq!(app.pointer_icon(false, None), CursorIcon::Default);
                 app.links.focus = focus.clone();
-                assert!(app.handle_link_button(ElementState::Pressed, MouseButton::Left));
+                assert!(app.handle_link_button(
+                    ElementState::Pressed,
+                    MouseButton::Left,
+                    app.workspace_scene().as_ref()
+                ));
                 for progress in [1, 2, 3] {
                     snapshot.tabs[0].columns[0].panes[0].attention = Some(workspace::Attention {
                         state: workspace::AttentionState::Working,
@@ -1246,7 +1301,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                     assert_eq!(highlighted(app), Some((0, 0)));
                 }
                 app.links.notice = None;
-                assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
+                assert!(app.handle_link_button(
+                    ElementState::Released,
+                    MouseButton::Left,
+                    app.workspace_scene().as_ref()
+                ));
                 assert_eq!(
                     app.links.notice(),
                     Some(refused),
@@ -1262,7 +1321,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             // A target replaced by output retires its press for good, even
             // when it returns before the next frame.
             let press = |app: &mut Application, state| {
-                assert!(app.handle_link_button(state, MouseButton::Left));
+                assert!(app.handle_link_button(
+                    state,
+                    MouseButton::Left,
+                    app.workspace_scene().as_ref()
+                ));
             };
             press(app, ElementState::Pressed);
             app.handle_transport(linked_frame(11, "file:///replaced"));
@@ -1305,7 +1368,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             app.input
                 .set_modifiers(winit::keyboard::ModifiersState::empty());
             app.links.pressed = link.clone();
-            assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
+            assert!(app.handle_link_button(
+                ElementState::Released,
+                MouseButton::Left,
+                app.workspace_scene().as_ref()
+            ));
             assert!(
                 app.links.notice.is_none(),
                 "a link release without Ctrl must not activate its target"
@@ -1326,7 +1393,11 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             );
             app.links.pressed = link.clone();
             app.cursor = PhysicalPosition::new(0.0, 0.0);
-            assert!(!app.handle_link_button(ElementState::Pressed, MouseButton::Left));
+            assert!(!app.handle_link_button(
+                ElementState::Pressed,
+                MouseButton::Left,
+                app.workspace_scene().as_ref()
+            ));
             assert!(
                 app.links.pressed.is_none(),
                 "a fresh ordinary press must retire a missed link release"
@@ -1766,7 +1837,10 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             app.set_orbit_attachment(Some(b"replacement".to_vec()), false);
             assert!(app.status().contains("selected Eon pane is offline"));
             assert_eq!(app.presented_revision(), None);
-            assert!(app.pointer_link(app.links.unshifted).is_none());
+            assert!(
+                app.pointer_link(app.links.unshifted, app.workspace_scene().as_ref())
+                    .is_none()
+            );
             check_sidebar_wheel_bursts(app, event_loop, id);
             let mut empty = app.workspace_model.snapshot().unwrap().clone();
             empty.active_tab = empty.tabs[0].id.clone();
@@ -2551,14 +2625,105 @@ fn ime_requires_current_attached_terminal_but_always_cleans_up() {
 }
 
 #[test]
+fn native_ime_refreshes_only_for_changed_composition_or_notice() {
+    let mut input = InputState::default();
+    let mut model = SessionModel::new();
+    let mut apply = |event| native_ime_message(&mut input, &mut model, event);
+    assert_eq!(apply(Ime::Enabled), (None, false));
+    assert_eq!(apply(Ime::Preedit(String::new(), None)), (None, false));
+    assert_eq!(apply(Ime::Preedit("界".into(), None)), (None, true));
+    assert_eq!(
+        apply(Ime::Preedit("界".into(), Some((0, 3)))),
+        (None, false)
+    );
+    assert_eq!(apply(Ime::Preedit(String::new(), None)), (None, true));
+    assert_eq!(apply(Ime::Preedit(String::new(), None)), (None, false));
+    assert_eq!(apply(Ime::Commit(String::new())), (None, false));
+    assert_eq!(apply(Ime::Preedit("界".into(), None)), (None, true));
+    assert!(matches!(
+        apply(Ime::Commit("界".into())),
+        (Some(ClientMessage::Key(_)), true)
+    ));
+    assert_eq!(apply(Ime::Disabled), (None, false));
+    assert_eq!(apply(Ime::Preedit("界".into(), None)), (None, true));
+    assert_eq!(apply(Ime::Disabled), (None, true));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn wayland_ime_publishes_latest_rectangle_on_present_and_reentry() {
+    let mut ime = WaylandIme::new(1.0);
+    let physical = |scale| {
+        (
+            PhysicalPosition::new(20.0 * scale, 40.0 * scale),
+            PhysicalSize::new(12.0 * scale, 8.0 * scale),
+        )
+    };
+    let logical = (LogicalPosition::new(20, 40), LogicalSize::new(12, 8));
+
+    ime.update(true, Some(physical(1.0)));
+    assert_eq!(ime.presented(), None);
+    assert!(ime.enabled());
+    assert_eq!(ime.presented(), Some(logical));
+    ime.update(true, Some(physical(1.0)));
+    assert_eq!(ime.presented(), None);
+    // Native leave alone leaves the eligible caret available for a later enter.
+    assert!(ime.enabled());
+    assert_eq!(ime.presented(), Some(logical));
+    ime.update(true, None);
+    assert_eq!(ime.presented(), None);
+    ime.update(true, Some(physical(1.0)));
+    assert_eq!(ime.presented(), Some(logical));
+
+    ime.scale_factor = 2.0;
+    ime.update(true, Some(physical(2.0)));
+    assert_eq!(ime.presented(), None);
+    for x in [46.0, 48.0, 44.0] {
+        ime.update(
+            true,
+            Some((PhysicalPosition::new(x, 80.0), physical(2.0).1)),
+        );
+    }
+    assert_eq!(
+        ime.presented(),
+        Some((LogicalPosition::new(22, 40), logical.1))
+    );
+    assert_eq!(ime.presented(), None);
+    ime.update(false, Some(physical(2.0)));
+    assert_eq!(ime.presented(), None);
+    ime.update(true, Some(physical(2.0)));
+    assert_eq!(ime.presented(), None);
+    assert!(ime.enabled());
+    assert_eq!(ime.presented(), Some(logical));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn wayland_ime_matches_winit_physical_rounding_at_fractional_scale() {
+    let mut ime = WaylandIme::new(1.2);
+    ime.update(
+        true,
+        Some((
+            PhysicalPosition::new(12.55, 24.0),
+            PhysicalSize::new(12.55, 12.0),
+        )),
+    );
+    assert!(ime.enabled());
+    assert_eq!(
+        ime.presented(),
+        Some((LogicalPosition::new(11, 20), LogicalSize::new(11, 10)))
+    );
+}
+
+#[test]
 fn rejected_native_ime_commit_uses_the_input_notice_owner() {
     let mut input = InputState::default();
     let mut model = SessionModel::new();
     let rejected = "x".repeat(session::MAX_KEY_TEXT_BYTES + 1);
 
     assert_eq!(
-        native_ime_message(&mut input, &mut model, Ime::Commit(rejected)),
-        None
+        native_ime_message(&mut input, &mut model, Ime::Commit(rejected.clone())),
+        (None, true)
     );
     assert_eq!(
         model.notice(),
@@ -2566,10 +2731,14 @@ fn rejected_native_ime_commit_uses_the_input_notice_owner() {
             "Venus could not encode input: native input method commit is not accepted semantic key text"
         )
     );
+    assert_eq!(
+        native_ime_message(&mut input, &mut model, Ime::Commit(rejected)),
+        (None, false)
+    );
 
     assert!(matches!(
         native_ime_message(&mut input, &mut model, Ime::Commit("界".into())),
-        Some(ClientMessage::Key(_))
+        (Some(ClientMessage::Key(_)), false)
     ));
     assert!(model.clear_venus_notice(LocalNoticeSource::Input));
     assert_eq!(model.notice(), None);
