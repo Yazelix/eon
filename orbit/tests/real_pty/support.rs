@@ -1,4 +1,4 @@
-//! The ORBS v14 client and server harness the real-PTY checks share, on the
+//! The ORBS v15 client and server harness the real-PTY checks share, on the
 //! canonical `orbit-protocol` codec.
 
 use rustix::process::{Pid, Signal};
@@ -294,7 +294,8 @@ pub fn position(x: f32, y: f32) -> SelectionPosition {
 /// An upward selection tick with no host gesture, which Bend answers with
 /// Failure(InvalidInput) without moving anything or ending the attachment.
 pub fn idle_tick() -> ClientMessage {
-    ClientMessage::Selection(SelectionAction::AutoscrollUp {
+    ClientMessage::Selection(SelectionAction::Autoscroll {
+        direction: VerticalDirection::Up,
         position: position(5.0, 9.0),
     })
 }
@@ -536,7 +537,7 @@ impl Peer {
         }
     }
 
-    /// Reads one whole ORBS v14 message.
+    /// Reads one whole ORBS v15 message.
     pub fn receive(&mut self) -> ServerMessage {
         self.receive_within()
             .expect("timed out waiting for a message")

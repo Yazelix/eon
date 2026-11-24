@@ -15,6 +15,8 @@ installation, and proven contract changes.
 - Use `eon files reveal PATH` to enter a directory or reveal a file in
   the tab's Files popup. The Helix recipe binds Alt+R to reveal the current
   buffer (`eon-b3i7g`, EONW v50).
+- Hold a drag selection at or below a pane's bottom row while scrolled back
+  to keep selecting toward live output (`eon-fojjj`).
 
 - The private in-place Update test path waits for helper and observer work to
   settle and refuses unexpected inheritable descriptors. After Update, local

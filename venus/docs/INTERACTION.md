@@ -329,9 +329,10 @@ select words, triple-click to select space/tab-delimited spans including
 punctuation, or click four or more times to select logical lines. Orbit's native
 wide-character spacer behavior can truncate a span after a wide glyph. Hold a
 drag in or above the top visible row to extend the selection upward through
-history. Releasing writes Orbit's exact bounded text to both the ordinary
-Wayland clipboard and primary selection; Ctrl+Shift+C remains an explicit
-ordinary-clipboard copy.
+history. While scrolled back, hold a drag at or below the bottom row to extend
+it toward live output. Releasing writes Orbit's exact bounded text to both the
+ordinary Wayland clipboard and primary selection; Ctrl+Shift+C remains an
+explicit ordinary-clipboard copy.
 Press Ctrl+Shift+V or the native Paste key to read the ordinary clipboard once.
 Orbit applies normal or bracketed paste from its authoritative terminal mode.
 Terminal programs can also request bounded text writes through Orbit. On Linux,

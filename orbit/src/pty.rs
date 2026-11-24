@@ -542,15 +542,15 @@ impl Orbit {
             .ok()
     }
 
-    /// Whether an upward selection tick from this position may run on the
-    /// held gesture: only from the top row, while its anchor is valid (fact
-    /// Tick).
-    pub(crate) fn tick_state(&self, position: session::SelectionPosition) -> io::Result<TickState> {
+    /// Whether a tick has a valid edge position and tracked anchor.
+    pub(crate) fn tick_state(
+        &self,
+        direction: VerticalDirection,
+        position: session::SelectionPosition,
+    ) -> io::Result<TickState> {
         Ok(
-            if crate::pointer::viewport_point(position, self.surface)
-                .is_none_or(|point| point.y != 0)
-            {
-                TickState::NotTopRow
+            if crate::pointer::selection_tick_point(direction, position, self.surface).is_none() {
+                TickState::WrongEdge
             } else if !self.pointer.anchored(&self.terminal)? {
                 TickState::AnchorLost
             } else {
@@ -559,12 +559,11 @@ impl Orbit {
         )
     }
 
-    /// Carries out one upward selection tick: the viewport and the tracked
-    /// selection move at most one row, and one scroll outcome carries the
-    /// frame at `revision` and the next window up, with whether a selection is
-    /// presented after it. None if the gesture failed, which clears it.
+    /// Carries out one selection tick and returns the scroll outcome and
+    /// whether a selection is presented. A failed gesture is cleared.
     pub(crate) fn tick(
         &mut self,
+        direction: VerticalDirection,
         position: session::SelectionPosition,
         revision: u64,
     ) -> io::Result<Option<(ServerMessage, bool)>> {
@@ -575,18 +574,25 @@ impl Orbit {
                 .map_err(|_| errno(libc::EIO))
         };
         let before = offset(&self.terminal)?;
-        let Ok(presented) = self.pointer.tick(&self.terminal, position, self.surface) else {
+        let Ok(presented) = self
+            .pointer
+            .tick(&self.terminal, direction, position, self.surface)
+        else {
             return Ok(None);
+        };
+        let requested_rows = match direction {
+            VerticalDirection::Up => -1,
+            VerticalDirection::Down => 1,
         };
         let applied_rows = i16::try_from(i128::from(offset(&self.terminal)?) - i128::from(before))
             .ok()
-            .filter(|rows| matches!(rows, -1..=0))
+            .filter(|&rows| rows == 0 || rows == requested_rows)
             .ok_or_else(|| errno(libc::EIO))?;
         let frame = self.frame(revision)?;
-        let next = viewport_preview(&self.terminal, &self.extractor, VerticalDirection::Up)?;
+        let next = viewport_preview(&self.terminal, &self.extractor, direction)?;
         Ok(Some((
             ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
-                requested_rows: -1,
+                requested_rows,
                 applied_rows,
                 frame: Box::new(frame),
                 next,

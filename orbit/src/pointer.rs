@@ -13,7 +13,9 @@ use libghostty_vt::{
     },
     terminal::{Point, PointCoordinate},
 };
-use orbit_protocol::session::{self, SelectionAction, SelectionPosition, SurfaceSize};
+use orbit_protocol::session::{
+    self, SelectionAction, SelectionPosition, SurfaceSize, VerticalDirection,
+};
 use std::{io, time::Duration};
 
 /// The click repetition interval.
@@ -191,18 +193,16 @@ impl Pointer {
         }
     }
 
-    /// Extends the held host gesture one row toward older history from a
-    /// top-row position: a drag to the top edge
-    /// enters upward autoscroll, and one autoscroll tick moves the viewport
-    /// and the tracked selection. Reports whether a selection is presented
-    /// after it; the gesture and selection are cleared if it fails.
+    /// Moves the viewport and extends the held gesture in the requested
+    /// direction. Returns whether it presents a selection after the tick.
     pub(crate) fn tick(
         &mut self,
         terminal: &Terminal<'static, 'static>,
+        direction: VerticalDirection,
         position: SelectionPosition,
         size: SurfaceSize,
     ) -> Result<bool, PhaseFailed> {
-        let ticked = self.apply_tick(terminal, position, size);
+        let ticked = self.apply_tick(terminal, direction, position, size);
         if ticked.is_err() {
             let _ = self.clear(terminal);
         }
@@ -212,12 +212,11 @@ impl Pointer {
     fn apply_tick(
         &mut self,
         terminal: &Terminal<'static, 'static>,
+        direction: VerticalDirection,
         position: SelectionPosition,
         size: SurfaceSize,
     ) -> Result<bool, PhaseFailed> {
-        let point = viewport_point(position, size)
-            .filter(|point| point.y == 0)
-            .ok_or(PhaseFailed)?;
+        let point = selection_tick_point(direction, position, size).ok_or(PhaseFailed)?;
         let gestures = self.gestures.as_mut().ok_or(PhaseFailed)?;
         let grid_ref = terminal
             .grid_ref(Point::Viewport(point))
@@ -229,19 +228,24 @@ impl Pointer {
             (&mut gestures.drag, &mut gestures.autoscroll)
         };
         let x = f64::from(position.x);
-        drag.set_position(x, 0.0)
+        // libghostty activates at the surface edge, beyond any grid padding.
+        let (y, expected) = match direction {
+            VerticalDirection::Up => (0.0, Autoscroll::Up),
+            VerticalDirection::Down => (f64::from(size.screen_height) + 1.0, Autoscroll::Down),
+        };
+        drag.set_position(x, y)
             .and_then(|drag| drag.apply(&mut gestures.gesture, terminal, grid_ref, geometry(size)))
             .map_err(|_| PhaseFailed)?;
         if gestures
             .gesture
             .autoscroll(terminal)
             .map_err(|_| PhaseFailed)?
-            != Autoscroll::Up
+            != expected
         {
             return Err(PhaseFailed);
         }
         let selected = autoscroll
-            .set_position(x, 0.0)
+            .set_position(x, y)
             .and_then(|autoscroll| {
                 autoscroll.apply(&mut gestures.gesture, terminal, point, geometry(size))
             })
@@ -305,6 +309,19 @@ fn geometry(size: SurfaceSize) -> Geometry {
         padding_left: size.padding_left,
         screen_height: size.screen_height,
     }
+}
+
+pub(crate) fn selection_tick_point(
+    direction: VerticalDirection,
+    position: SelectionPosition,
+    size: SurfaceSize,
+) -> Option<PointCoordinate> {
+    let point = viewport_point(position, size)?;
+    let row = match direction {
+        VerticalDirection::Up => 0,
+        VerticalDirection::Down => u32::from(size.rows) - 1,
+    };
+    (point.y == row).then_some(point)
 }
 
 /// The viewport cell under a surface position, or None outside the grid.
@@ -587,62 +604,131 @@ mod tests {
         assert_eq!(pointer.copied, "alpha beta\nsecond");
     }
 
-    /// Upward ticks from mid-row extend a held cell, span or logical-line
-    /// gesture at its own granularity through more than one viewport of
-    /// history to the oldest row, and release copies the exact Unicode text,
-    /// the press's span or line included (ORB-C8).
     #[test]
     fn upward_ticks_extend_cells_spans_and_lines_with_unicode_copy() {
+        assert_tick_copy(VerticalDirection::Up);
+    }
+
+    #[test]
+    fn downward_tick_extends_a_held_selection() {
+        assert_tick_copy(VerticalDirection::Down);
+    }
+
+    fn padded_size(rows: u16) -> SurfaceSize {
+        let size = size(12, rows);
+        SurfaceSize {
+            screen_height: size.screen_height + 10,
+            padding_top: 3,
+            padding_bottom: 7,
+            ..size
+        }
+    }
+
+    fn assert_tick_copy(direction: VerticalDirection) {
+        use libghostty_vt::terminal::ScrollViewport;
         let lines: Vec<_> = (0..16).map(|row| format!("L{row:02}:part 界")).collect();
-        for (clicks, oldest, press_end) in [
-            (1, "art 界", None),
-            (3, "L00:part 界", Some("L14:part")),
-            (4, "L00:part 界", Some("L14:part 界")),
-        ] {
+        let up = direction == VerticalDirection::Up;
+        let (mut press, mut edge) = if up {
+            (at(0, 2), at(5, 0))
+        } else {
+            (
+                at(1, 1),
+                SelectionPosition {
+                    x: 97.0,
+                    ..at(9, 3)
+                },
+            )
+        };
+        let size = padded_size(4);
+        press.y += size.padding_top as f32;
+        edge.y += size.padding_top as f32;
+        for clicks in [1, 3, 4] {
             let mut terminal = terminal(12, 4);
-            let size = size(12, 4);
             terminal.vt_write(lines.join("\r\n").as_bytes());
+            if !up {
+                terminal.scroll_viewport(ScrollViewport::Top);
+            }
             let mut pointer = Pointer::default();
             let modifiers = session::Modifiers::empty();
             for click in 1..=clicks {
                 let begin = SelectionAction::Begin {
                     frame_revision: 0,
-                    position: at(0, 2),
+                    position: press,
                     time_ns: click * 100_000_000,
                     modifiers,
                 };
                 pointer.host_phase(begin, &terminal, size).unwrap();
                 if click < clicks {
                     let finish = SelectionAction::Finish {
-                        position: at(0, 2),
+                        position: press,
                         modifiers,
                     };
                     pointer.host_phase(finish, &terminal, size).unwrap();
                 }
             }
             let update = SelectionAction::Update {
-                position: at(5, 0),
+                position: edge,
                 modifiers,
             };
             pointer.host_phase(update, &terminal, size).unwrap();
-            let mut moved = 0;
-            while terminal.scrollbar().unwrap().offset > 0 {
-                let offset = terminal.scrollbar().unwrap().offset;
-                assert!(pointer.tick(&terminal, at(5, 0), size).unwrap());
-                assert_eq!(terminal.scrollbar().unwrap().offset, offset - 1);
-                moved += 1;
+            for moved in 1..=13 {
+                assert!(pointer.tick(&terminal, direction, edge, size).unwrap());
+                let expected = if up {
+                    12_u64.saturating_sub(moved)
+                } else {
+                    moved.min(12)
+                };
+                assert_eq!(terminal.scrollbar().unwrap().offset, expected);
             }
-            assert_eq!(moved, 12, "{clicks} clicks");
             let finish = SelectionAction::Finish {
-                position: at(5, 0),
+                position: edge,
                 modifiers,
             };
             assert!(pointer.host_phase(finish, &terminal, size).unwrap());
-            let mut expected = format!("{oldest}\n{}", lines[1..14].join("\n"));
-            if let Some(end) = press_end {
-                expected = format!("{expected}\n{end}");
-            }
-            assert_eq!(pointer.copied, expected, "{clicks} clicks");
+            let expected = if up {
+                let first = if clicks == 1 { "art 界" } else { &lines[0] };
+                let mut expected = format!("{first}\n{}", lines[1..14].join("\n"));
+                match clicks {
+                    3 => expected.push_str("\nL14:part"),
+                    4 => expected.push_str("\nL14:part 界"),
+                    _ => {}
+                }
+                expected
+            } else {
+                let first = if clicks == 1 {
+                    &lines[1][1..]
+                } else {
+                    &lines[1]
+                };
+                format!("{first}\n{}", lines[2..].join("\n"))
+            };
+            assert_eq!(pointer.copied, expected, "{direction:?}, {clicks} clicks");
+        }
+    }
+
+    #[test]
+    fn a_single_row_can_tick_in_both_directions() {
+        let mut terminal = terminal(12, 1);
+        let size = padded_size(1);
+        terminal.vt_write(b"old\r\nlive");
+        let position = SelectionPosition { x: 5.0, y: 12.0 };
+        let mut pointer = Pointer::default();
+        pointer
+            .host_phase(
+                SelectionAction::Begin {
+                    frame_revision: 0,
+                    position,
+                    time_ns: 0,
+                    modifiers: session::Modifiers::empty(),
+                },
+                &terminal,
+                size,
+            )
+            .unwrap();
+
+        for (direction, offset) in [(VerticalDirection::Up, 0), (VerticalDirection::Down, 1)] {
+            pointer.tick(&terminal, direction, position, size).unwrap();
+            assert_eq!(terminal.scrollbar().unwrap().offset, offset);
         }
     }
 

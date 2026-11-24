@@ -7147,7 +7147,7 @@ def fits_output(
                                                                   {==}
                                                                 case False{}:
                                                                   {==}
-                case Session.TickRequest{tx, ty}:
+                case Session.TickRequest{pending_direction, tx, ty}:
                   match pointer:
                     case Session.Pointer{route, lit, copied}:
                       match route:
@@ -10213,7 +10213,7 @@ def fits_output(
                                                           {==}
                                                         case False{}:
                                                           {==}
-                case Session.TickRequest{tx, ty}:
+                case Session.TickRequest{pending_direction, tx, ty}:
                   match pointer:
                     case Session.Pointer{route, lit, copied}:
                       match route:
@@ -11545,7 +11545,7 @@ def fits_pty_closed(
                                   {==}
                                 case False{}:
                                   {==}
-                case Session.TickRequest{tx, ty}:
+                case Session.TickRequest{pending_direction, tx, ty}:
                   match pointer:
                     case Session.Pointer{route, lit, copied}:
                       match route:
@@ -12099,7 +12099,7 @@ def fits_pty_closed(
                                   {==}
                                 case False{}:
                                   {==}
-                case Session.TickRequest{tx, ty}:
+                case Session.TickRequest{pending_direction, tx, ty}:
                   match pointer:
                     case Session.Pointer{route, lit, copied}:
                       match route:
@@ -12827,7 +12827,7 @@ def fits_peer(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -13301,7 +13301,7 @@ def fits_peer(
                                                   {==}
                                                 case False{}:
                                                   {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -14161,7 +14161,7 @@ def fits_applied(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -14635,7 +14635,7 @@ def fits_applied(
                                                   {==}
                                                 case False{}:
                                                   {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -15709,7 +15709,7 @@ def fits_applied(
                                                           {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -16615,7 +16615,7 @@ def fits_applied(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -17653,7 +17653,7 @@ def fits_expired(
                                   {==}
                                 case False{}:
                                   {==}
-                case Session.TickRequest{tx, ty}:
+                case Session.TickRequest{pending_direction, tx, ty}:
                   match pointer:
                     case Session.Pointer{route, lit, copied}:
                       match route:
@@ -18127,7 +18127,7 @@ def fits_expired(
                                   {==}
                                 case False{}:
                                   {==}
-                case Session.TickRequest{tx, ty}:
+                case Session.TickRequest{pending_direction, tx, ty}:
                   match pointer:
                     case Session.Pointer{route, lit, copied}:
                       match route:
@@ -20883,7 +20883,7 @@ def fits_selection(
                                       {==}
                                     case False{}:
                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -23169,7 +23169,7 @@ def fits_selection(
                                       {==}
                                     case False{}:
                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -24693,7 +24693,7 @@ def fits_selection(
                                                           {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -25599,7 +25599,7 @@ def fits_selection(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -26431,7 +26431,7 @@ def fits_selected(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -26905,7 +26905,7 @@ def fits_selected(
                                                   {==}
                                                 case False{}:
                                                   {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -27723,7 +27723,7 @@ def fits_selected(
                                                           {==}
                                                         case False{}:
                                                           {==}
-                        case Session.TickRequest{tx, ty}:
+                        case Session.TickRequest{pending_direction, tx, ty}:
                           match pointer:
                             case Session.Pointer{route, lit, copied}:
                               match route:
@@ -28197,7 +28197,7 @@ def fits_selected(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                        case Session.TickRequest{tx, ty}:
+                        case Session.TickRequest{pending_direction, tx, ty}:
                           match pointer:
                             case Session.Pointer{route, lit, copied}:
                               match route:
@@ -29013,7 +29013,7 @@ def fits_selected(
                                                           {==}
                                                         case False{}:
                                                           {==}
-                        case Session.TickRequest{tx, ty}:
+                        case Session.TickRequest{pending_direction, tx, ty}:
                           match pointer:
                             case Session.Pointer{route, lit, copied}:
                               match route:
@@ -29487,7 +29487,7 @@ def fits_selected(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                        case Session.TickRequest{tx, ty}:
+                        case Session.TickRequest{pending_direction, tx, ty}:
                           match pointer:
                             case Session.Pointer{route, lit, copied}:
                               match route:
@@ -30321,7 +30321,7 @@ def fits_selected(
                                                       {==}
                                                     case False{}:
                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -30795,7 +30795,7 @@ def fits_selected(
                                                   {==}
                                                 case False{}:
                                                   {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -31005,9 +31005,9 @@ def fits_selected(
           {==}
 
 def fits_tick(
-  tstate: Boundary.TickState, fx: U32, fy: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
+  tstate: Boundary.TickState, tdirection: Boundary.Direction, fx: U32, fy: U32, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
 ) ->
-  {Laws.check(Laws.phase(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, fx, fy}, Laws.moves(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.check(Laws.phase(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, fx, fy}, Laws.moves(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.phase(Laws.after(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Phase}:
+  {Laws.check(Laws.phase(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, tdirection, fx, fy}, Laws.moves(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, tdirection, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, tdirection, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.check(Laws.phase(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.Tick{tstate, tdirection, fx, fy}, Laws.moves(Laws.decided(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, tdirection, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, tdirection, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.phase(Laws.after(Session.begun(Session.fact_advanced(Boundary.Tick{tstate, tdirection, fx, fy}, was, revision), held, Nil{}, tracker, Session.anchored(unanchored, Boundary.Tick{tstate, tdirection, fx, fy}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Phase}:
   match tstate:
     case Boundary.TickStateFits{}:
       match life:
@@ -31163,7 +31163,7 @@ def fits_tick(
                           {==}
         case Orbit.Stopped{pid}:
           {==}
-    case Boundary.TickStateNotTopRow{}:
+    case Boundary.TickStateWrongEdge{}:
       match life:
         case Orbit.Detached{pid}:
           {==}
@@ -44335,7 +44335,7 @@ def fits_child_exited(
                                                                       {==}
                                                                     case False{}:
                                                                       {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -48745,7 +48745,7 @@ def fits_child_exited(
                                                               {==}
                                                             case False{}:
                                                               {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -52009,7 +52009,7 @@ def fits_child_exited(
                                           {==}
                                         case False{}:
                                           {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -53695,7 +53695,7 @@ def fits_child_exited(
                                           {==}
                                         case False{}:
                                           {==}
-                    case Session.TickRequest{tx, ty}:
+                    case Session.TickRequest{pending_direction, tx, ty}:
                       match pointer:
                         case Session.Pointer{route, lit, copied}:
                           match route:
@@ -56073,7 +56073,7 @@ def fits_resources(
                                                                   {==}
                                                                 case False{}:
                                                                   {==}
-                            case Session.TickRequest{tx, ty}:
+                            case Session.TickRequest{pending_direction, tx, ty}:
                               match pointer:
                                 case Session.Pointer{route, lit, copied}:
                                   match route:
@@ -57027,7 +57027,7 @@ def fits_resources(
                                                               {==}
                                                             case False{}:
                                                               {==}
-                            case Session.TickRequest{tx, ty}:
+                            case Session.TickRequest{pending_direction, tx, ty}:
                               match pointer:
                                 case Session.Pointer{route, lit, copied}:
                                   match route:
@@ -58659,7 +58659,7 @@ def fits_resources(
                                                                   {==}
                                                                 case False{}:
                                                                   {==}
-                            case Session.TickRequest{tx, ty}:
+                            case Session.TickRequest{pending_direction, tx, ty}:
                               match pointer:
                                 case Session.Pointer{route, lit, copied}:
                                   match route:
@@ -59613,7 +59613,7 @@ def fits_resources(
                                                               {==}
                                                             case False{}:
                                                               {==}
-                            case Session.TickRequest{tx, ty}:
+                            case Session.TickRequest{pending_direction, tx, ty}:
                               match pointer:
                                 case Session.Pointer{route, lit, copied}:
                                   match route:
@@ -61245,7 +61245,7 @@ def fits_resources(
                                                               {==}
                                                             case False{}:
                                                               {==}
-                        case Session.TickRequest{tx, ty}:
+                        case Session.TickRequest{pending_direction, tx, ty}:
                           match pointer:
                             case Session.Pointer{route, lit, copied}:
                               match route:
@@ -62199,7 +62199,7 @@ def fits_resources(
                                                           {==}
                                                         case False{}:
                                                           {==}
-                        case Session.TickRequest{tx, ty}:
+                        case Session.TickRequest{pending_direction, tx, ty}:
                           match pointer:
                             case Session.Pointer{route, lit, copied}:
                               match route:
@@ -62688,9 +62688,9 @@ def step_fits(state: Session.State, flags: Boundary.Flags, fact: Boundary.Fact) 
                       fits_selected(
                         outcome, presented, life, observer, waiting, pointer, written, explicit, manage, tracker, revision, was, Session.future_of(Boundary.Selected{outcome, presented}, revision), held, unanchored, clipboard_overflow, clipboard, routed, room, frame_room, alternate, above_live, tracking, shift, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh
                       )
-                    case Boundary.Tick{+tstate, +fx, +fy}:
+                    case Boundary.Tick{+tstate, +tdirection, +fx, +fy}:
                       fits_tick(
-                        tstate, fx, fy, life, observer, waiting, pointer, written, explicit, manage, tracker, revision, was, Session.future_of(Boundary.Tick{tstate, fx, fy}, revision), held, unanchored, clipboard_overflow, clipboard, routed, room, frame_room, alternate, above_live, tracking, shift, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh
+                        tstate, tdirection, fx, fy, life, observer, waiting, pointer, written, explicit, manage, tracker, revision, was, Session.future_of(Boundary.Tick{tstate, tdirection, fx, fy}, revision), held, unanchored, clipboard_overflow, clipboard, routed, room, frame_room, alternate, above_live, tracking, shift, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh
                       )
                     case Boundary.Management{+event}:
                       fits_management(

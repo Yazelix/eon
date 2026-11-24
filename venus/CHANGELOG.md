@@ -4,6 +4,9 @@
 
 - Consume canonical EONW v50 for workspaces that support
   `eon files reveal` (`eon-b3i7g`).
+- VEN-C7: Hold a drag selection at or below the bottom visible row to
+  extend it toward live output. ORBS v15 supplies each tick's frame before
+  Venus continues. Ticks stop at live or on release (`eon-fojjj`).
 
 - Consume EONW v49 input-lock state and the resolved toggle. While locked,
   send other keys through ordinary focused terminal input, suppress their

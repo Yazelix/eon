@@ -1217,8 +1217,10 @@ Two clicks select a word, three select a
 space/tab-delimited span, and four or more select the logical line across soft
 wraps. Dragging extends that granularity; a delayed single click returns to
 cell selection. Hold a drag in or above the pane's top row to keep extending
-the selection into history. Release copies to both Wayland clipboard destinations, and
-Ctrl+Shift+C copies the frozen selection even after output changes.
+the selection into older history. While scrolled back, hold a drag at or below
+the bottom row to extend it toward live output. Release copies to both Wayland
+clipboard destinations, and Ctrl+Shift+C copies the frozen selection even after
+output changes.
 
 ## CLI commands
 

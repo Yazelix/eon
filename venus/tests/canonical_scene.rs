@@ -161,6 +161,7 @@ fn scrollback_label_follows_only_current_authoritative_frames()
         };
         apply_wire(&mut model, ServerMessage::Frame(Box::new(next)))?;
         assert_eq!(model.scrollback_label().as_deref(), expected);
+        assert_eq!(model.rows_from_live(), Some(distance));
     }
     let mut held = frame(8, Screen::Primary);
     held.scroll_position = orbit_protocol::ScrollPosition {
@@ -188,6 +189,7 @@ fn scrollback_label_follows_only_current_authoritative_frames()
         ServerMessage::ScrollOutcome(ScrollOutcome::TerminalOwned { requested_rows: -3 }),
     )?;
     assert_eq!(model.scrollback_label(), None);
+    assert_eq!(model.rows_from_live(), Some(12));
     model.clear_viewport_preview();
     assert_eq!(
         model.scrollback_label(),
@@ -212,6 +214,7 @@ fn scrollback_label_follows_only_current_authoritative_frames()
     model.prepare_reconnect();
     assert!(model.scene().is_some(), "recovery retains old pixels");
     assert_eq!(model.scrollback_label(), None);
+    assert_eq!(model.rows_from_live(), None);
     apply_wire(&mut model, ServerMessage::Attached)?;
     assert_eq!(model.scrollback_label(), None);
     apply_wire(&mut model, ServerMessage::Frame(Box::new(held)))?;
@@ -221,6 +224,7 @@ fn scrollback_label_follows_only_current_authoritative_frames()
         ServerMessage::Frame(Box::new(frame(10, Screen::Alternate))),
     )?;
     assert_eq!(model.scrollback_label(), None);
+    assert_eq!(model.rows_from_live(), Some(0));
     assert_eq!(SessionModel::new().scrollback_label(), None);
     Ok(())
 }

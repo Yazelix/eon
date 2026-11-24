@@ -18,7 +18,9 @@ fn first_message(path: &Path, data: &[u8]) -> Peer {
 /// Bad first messages end only their peer.
 fn refusals(path: &Path) {
     // An unsupported version is dropped silently.
-    first_message(path, &with_version(&ClientMessage::Hello, VERSION + 1)).expect_closed();
+    for version in [14, VERSION + 1] {
+        first_message(path, &with_version(&ClientMessage::Hello, version)).expect_closed();
+    }
     let mut magic = encode(&ClientMessage::Hello);
     magic[..4].copy_from_slice(b"ORBX");
     let mut peer = first_message(path, &magic);

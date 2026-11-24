@@ -1,6 +1,6 @@
 use orbit_protocol::session::{
     ClientMessage, FocusEvent, KeyAction, KeyEvent, Modifiers, MouseAction, MouseButton,
-    MouseEvent, PhysicalKey, SelectionAction, SelectionPosition, SurfaceSize,
+    MouseEvent, PhysicalKey, SelectionAction, SelectionPosition, SurfaceSize, VerticalDirection,
 };
 use winit::{
     event::{
@@ -493,14 +493,27 @@ impl InputState {
     }
 
     #[must_use]
-    pub fn selection_at_top(&self, size: SurfaceSize) -> Option<SelectionPosition> {
+    pub fn selection_edge(
+        &self,
+        size: SurfaceSize,
+        above_live: bool,
+    ) -> Option<(VerticalDirection, SelectionPosition)> {
         if !self.is_selecting() {
             return None;
         }
-        // VEN-C7: a pointer in or above the top row, including one held
-        // outside the pane or window, ticks from the clamped top-row position.
         let position = selection_position(self.cursor, size, true)?;
-        (self.cursor.1 < size.padding_top as f32 + size.cell_height as f32).then_some(position)
+        let top = size.padding_top as f32;
+        let height = size.cell_height as f32;
+        let y = self.cursor.1;
+        // Up keeps precedence when the visible edges share a row.
+        let direction = if y < top + height {
+            VerticalDirection::Up
+        } else if above_live && y >= top + height * f32::from(size.rows - 1) {
+            VerticalDirection::Down
+        } else {
+            return None;
+        };
+        Some((direction, position))
     }
 
     #[must_use]
@@ -1826,7 +1839,12 @@ mod tests {
             padding_right: 5,
         };
         input.move_pointer(16.0, 46.0).unwrap();
-        assert!(input.selection_at_top(size).is_none());
+        assert!(
+            input
+                .selection_edge(size, false)
+                .map(|(_, position)| position)
+                .is_none()
+        );
         let begin = input
             .selection_button(
                 ElementState::Pressed,
@@ -1838,31 +1856,46 @@ mod tests {
             .unwrap();
         input.commit_selection(&begin);
 
-        for (x, y, expected) in [
-            (16.0, 6.0, (16.0, 6.0)),
-            (16.0, 2.0, (16.0, 5.0)),
-            (16.0, -15.0, (16.0, 5.0)),
-            (16.0, -100.0, (16.0, 5.0)),
-            (-30.0, 10.0, (5.0, 10.0)),
-            (900.0, -5000.0, (44.5, 5.0)),
+        use VerticalDirection::{Down, Up};
+        for (edge, x, y, clamped_x, clamped_y) in [
+            (Up, 16.0, 6.0, 16.0, 6.0),
+            (Up, 16.0, 2.0, 16.0, 5.0),
+            (Up, 16.0, -15.0, 16.0, 5.0),
+            (Up, 16.0, -100.0, 16.0, 5.0),
+            (Up, -30.0, 10.0, 5.0, 10.0),
+            (Up, 900.0, -5000.0, 44.5, 5.0),
+            (Down, -30.0, 45.0, 5.0, 45.0),
+            (Down, 900.0, 5000.0, 44.5, 64.5),
         ] {
             input.move_pointer(x, y).unwrap();
             assert_eq!(
-                input.selection_at_top(size),
-                Some(SelectionPosition {
-                    x: expected.0,
-                    y: expected.1,
-                }),
+                input.selection_edge(size, true),
+                Some((
+                    edge,
+                    SelectionPosition {
+                        x: clamped_x,
+                        y: clamped_y
+                    }
+                )),
                 "pointer at ({x}, {y})"
             );
+            if edge == Down {
+                assert!(input.selection_edge(size, false).is_none());
+            }
         }
-        for (x, y) in [(16.0, 25.0), (16.0, 46.0), (900.0, 5000.0)] {
-            input.move_pointer(x, y).unwrap();
-            assert!(
-                input.selection_at_top(size).is_none(),
-                "pointer at ({x}, {y})"
-            );
+        for y in [25.0, 44.5] {
+            input.move_pointer(16.0, y).unwrap();
+            assert!(input.selection_edge(size, true).is_none());
         }
+        let one_row = SurfaceSize {
+            rows: 1,
+            screen_height: 30,
+            ..size
+        };
+        input.move_pointer(16.0, 24.5).unwrap();
+        assert_eq!(input.selection_edge(one_row, true).unwrap().0, Up);
+        input.move_pointer(16.0, 25.0).unwrap();
+        assert_eq!(input.selection_edge(one_row, true).unwrap().0, Down);
     }
 
     #[test]
@@ -1934,16 +1967,6 @@ mod tests {
         input.move_pointer(-1.0, -1.0).unwrap();
         let update = input.selection_motion(size).unwrap();
         assert_eq!(update, expected_update(5.0, 5.0));
-        assert_eq!(
-            input.selection_at_top(size),
-            Some(SelectionPosition { x: 5.0, y: 5.0 })
-        );
-
-        input.move_pointer(16.0, 6.0).unwrap();
-        assert_eq!(
-            input.selection_at_top(size),
-            Some(SelectionPosition { x: 16.0, y: 6.0 })
-        );
 
         input.move_pointer(36.0, 46.0).unwrap();
         let update = input.selection_motion(size).unwrap();

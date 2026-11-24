@@ -134,8 +134,13 @@ fn every_client_message_round_trips() {
             position: SelectionPosition { x: 67.5, y: 144.25 },
             modifiers: Modifiers::ALT,
         }),
-        ClientMessage::Selection(SelectionAction::AutoscrollUp {
+        ClientMessage::Selection(SelectionAction::Autoscroll {
+            direction: VerticalDirection::Up,
             position: SelectionPosition { x: 12.5, y: 0.25 },
+        }),
+        ClientMessage::Selection(SelectionAction::Autoscroll {
+            direction: VerticalDirection::Down,
+            position: SelectionPosition { x: 12.5, y: 82.25 },
         }),
         ClientMessage::Selection(SelectionAction::Cancel),
         ClientMessage::Selection(SelectionAction::Copy),
@@ -906,8 +911,25 @@ fn malformed_typed_payloads_are_rejected() {
         Err(Error::InvalidCoordinates)
     );
 
+    let mut tick = encode_client_message(&ClientMessage::Selection(SelectionAction::Autoscroll {
+        direction: VerticalDirection::Down,
+        position: SelectionPosition { x: 10.0, y: 40.0 },
+    }))
+    .unwrap();
+    assert_eq!(tick.len(), HEADER_BYTES + 10);
+    assert_eq!(&tick[HEADER_BYTES..HEADER_BYTES + 2], &[5, 1]);
+    tick[HEADER_BYTES + 1] = 2;
     assert_eq!(
-        encode_client_message(&ClientMessage::Selection(SelectionAction::AutoscrollUp {
+        decode_client_message(&tick),
+        Err(Error::InvalidTag {
+            field: "vertical direction",
+            value: 2,
+        })
+    );
+
+    assert_eq!(
+        encode_client_message(&ClientMessage::Selection(SelectionAction::Autoscroll {
+            direction: VerticalDirection::Up,
             position: SelectionPosition {
                 x: f32::NAN,
                 y: 0.0,

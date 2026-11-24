@@ -711,19 +711,24 @@ impl SessionModel {
         std::mem::take(&mut self.scene_build_ns)
     }
 
-    /// Position of the accepted viewport, never extrapolated from a preview.
+    /// Distance from live in the accepted viewport, independent of preview routing.
     #[must_use]
-    pub fn scrollback_label(&self) -> Option<String> {
-        if !self.is_attached()
-            || self.awaiting_current_frame
-            || matches!(
-                self.scroll_preview,
-                Some(ScenePreview::TerminalOwned { .. })
-            )
-        {
+    pub fn rows_from_live(&self) -> Option<u64> {
+        if !self.is_attached() || self.awaiting_current_frame {
             return None;
         }
-        let rows = self.reducer.current()?.scroll_position.rows_from_live;
+        Some(self.reducer.current()?.scroll_position.rows_from_live)
+    }
+
+    #[must_use]
+    pub fn scrollback_label(&self) -> Option<String> {
+        if matches!(
+            self.scroll_preview,
+            Some(ScenePreview::TerminalOwned { .. })
+        ) {
+            return None;
+        }
+        let rows = self.rows_from_live()?;
         (rows > 0).then(|| format!("↓ {rows} row{}", if rows == 1 { "" } else { "s" }))
     }
 

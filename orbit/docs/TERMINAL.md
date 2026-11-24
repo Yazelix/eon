@@ -35,7 +35,8 @@ cells. Extraction failure does not publish an estimated position.
 | ORBS v12 | `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` | Return to live output. |
 | ORBS v13 | `b6cecf8f2ee35570b41cfdc578b095889d917fe2` | One upward host-selection tick with an applied distance and complete frame. |
 
-Wire versions are exact and have no adapter. Venus and Eon consume ORBS v14 from
+ORBS v15 adds the direction to the tick and supports both edges. Wire versions
+are exact and have no adapter. Venus, Eon Runtime and Eon consume ORBS v15 from
 the in-tree `orbit-protocol` crate. The [contract index](CONTRACTS.md) records
 the current proofs and gaps. Eonova
 remains an independent product line outside Eon's component graph.

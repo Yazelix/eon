@@ -710,7 +710,7 @@ crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
 live session and popup state, Session mappings, and provider quota collection
 and normalization. Venus consumes
-the in-tree `orbit-protocol` 0.1.0 crate with ORBF v3 and ORBS v14. One reducer turns complete canonical
+the in-tree `orbit-protocol` 0.1.0 crate with ORBF v3 and ORBS v15. One reducer turns complete canonical
 frames into immutable scene data used by drawing and accessibility. The native
 host owns the local socket, window, input mapping, and redraw lifecycle; it owns
 no terminal state.

@@ -154,9 +154,9 @@ impl Reason {
                 InvalidInput,
                 "selection autoscroll requires an active primary-screen host gesture",
             ),
-            Self::TickNotTopRow => (
+            Self::TickWrongEdge => (
                 InvalidInput,
-                "selection autoscroll position must be in the top row",
+                "selection autoscroll position must be in the row for its direction",
             ),
             Self::AnchorLost => (InvalidInput, "selection anchor is no longer valid"),
             Self::TickNoRoom => (
@@ -1154,7 +1154,7 @@ impl Host {
 
     /// A pointer phase becomes Bend's to decide, with every fact either route
     /// needs: the terminal's mouse tracking and Shift for the route, and
-    /// whether each route's answer fits. An upward tick is a vertical request
+    /// whether each route's answer fits. A selection tick is a vertical request
     /// of its own.
     fn selection_fact(&mut self, action: SelectionAction) -> io::Result<Option<Fact>> {
         let kind = match action {
@@ -1163,8 +1163,11 @@ impl Host {
             SelectionAction::Finish { .. } => SelectionKind::Finish,
             SelectionAction::Cancel => SelectionKind::Cancel,
             SelectionAction::Copy => SelectionKind::Copy,
-            SelectionAction::AutoscrollUp { position } => {
-                return self.tick_fact(position).map(Some);
+            SelectionAction::Autoscroll {
+                direction,
+                position,
+            } => {
+                return self.tick_fact(direction, position).map(Some);
             }
         };
         let orbit = &self.orbit;
@@ -1218,10 +1221,15 @@ impl Host {
         Ok(Some(Fact::Selection { kind, revision }))
     }
 
-    /// An upward selection tick, with whether it may run.
-    fn tick_fact(&mut self, position: SelectionPosition) -> io::Result<Fact> {
+    /// A selection tick, with whether it may run.
+    fn tick_fact(
+        &mut self,
+        direction: VerticalDirection,
+        position: SelectionPosition,
+    ) -> io::Result<Fact> {
         Ok(Fact::Tick {
-            state: self.orbit.tick_state(position)?,
+            state: self.orbit.tick_state(direction, position)?,
+            direction: direction.into(),
             x: position.x.to_bits(),
             y: position.y.to_bits(),
         })
@@ -1387,11 +1395,15 @@ impl Host {
         }
     }
 
-    /// Carries out Bend's answer to an upward selection tick from this
-    /// position (fact Tick), whose frame is at `revision`.
-    fn send_tick(&mut self, position: SelectionPosition, revision: u64) -> io::Result<()> {
+    /// Carries out Bend's selection tick, with its frame at `revision`.
+    fn send_tick(
+        &mut self,
+        direction: VerticalDirection,
+        position: SelectionPosition,
+        revision: u64,
+    ) -> io::Result<()> {
         self.client.as_ref().ok_or_else(protocol)?;
-        let fact = match self.orbit.tick(position, revision)? {
+        let fact = match self.orbit.tick(direction, position, revision)? {
             Some((outcome, presented)) => {
                 self.send(|_| Ok(outcome))?;
                 Fact::Selected {
@@ -1535,11 +1547,14 @@ impl Host {
                     let outcome = self.orbit.return_to_live(revision)?;
                     self.send(|_| Ok(outcome))?
                 }
-                Decision::TickAnswer { x, y, revision } => {
-                    self.send_tick(position(x, y), revision)?
-                }
-                Decision::Retick { x, y } => {
-                    let fact = self.tick_fact(position(x, y))?;
+                Decision::TickAnswer {
+                    direction,
+                    x,
+                    y,
+                    revision,
+                } => self.send_tick(direction.into(), position(x, y), revision)?,
+                Decision::Retick { direction, x, y } => {
+                    let fact = self.tick_fact(direction.into(), position(x, y))?;
                     self.queued.push_front(fact);
                 }
                 Decision::RefuseRequest => {
@@ -2254,7 +2269,8 @@ mod tests {
                 presented: true,
             },
             Fact::Tick {
-                state: TickState::NotTopRow,
+                state: TickState::WrongEdge,
+                direction: Direction::Down,
                 x: u32::MAX,
                 y: u32::MAX,
             },

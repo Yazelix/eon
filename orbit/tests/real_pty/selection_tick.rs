@@ -1,16 +1,16 @@
 use crate::support::*;
 use orbit_protocol::session::{
-    ClientMessage, ClipboardLocation, FailureCode, Modifiers, ScrollOutcome, SelectionAction,
-    SelectionPosition, ServerMessage,
+    ClientMessage, ClipboardLocation, FailureCode, Modifiers, PreviewOutcome, ScrollOutcome,
+    SelectionAction, SelectionPosition, ServerMessage, VerticalDirection,
 };
-use std::time::Instant;
+use std::{fs, path::Path, time::Instant};
 
-fn begin(frame_revision: u64, position: SelectionPosition) -> ClientMessage {
+fn begin(frame_revision: u64, position: SelectionPosition, modifiers: Modifiers) -> ClientMessage {
     ClientMessage::Selection(SelectionAction::Begin {
         frame_revision,
         position,
-        time_ns: 1_000_000_000,
-        modifiers: Modifiers::empty(),
+        time_ns: frame_revision * 1_000_000_000,
+        modifiers,
     })
 }
 
@@ -21,12 +21,19 @@ fn finish(position: SelectionPosition) -> ClientMessage {
     })
 }
 
-fn tick(position: SelectionPosition) -> ClientMessage {
-    ClientMessage::Selection(SelectionAction::AutoscrollUp { position })
+fn tick(direction: VerticalDirection, position: SelectionPosition) -> ClientMessage {
+    ClientMessage::Selection(SelectionAction::Autoscroll {
+        direction,
+        position,
+    })
 }
 
 /// Column 0 of the top row.
 const TOP: SelectionPosition = SelectionPosition { x: 5.0, y: 9.0 };
+const BOTTOM: SelectionPosition = SelectionPosition {
+    x: 89.0,
+    y: 23.0 * 18.0 + 9.0,
+};
 
 fn finished(client: &mut Peer) -> u64 {
     match client.receive() {
@@ -42,15 +49,37 @@ fn outcome(client: &mut Peer) -> (i16, i16) {
             ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
                 requested_rows,
                 applied_rows,
-                ..
-            }) => return (requested_rows, applied_rows),
+                frame,
+                next,
+            }) => {
+                if requested_rows == 1 && applied_rows == 0 {
+                    assert_eq!(frame.scroll_position.rows_from_live, 0);
+                    assert!(
+                        matches!(next, PreviewOutcome::Viewport { edge_reached: true, rows, .. } if rows.is_empty())
+                    );
+                }
+                return (requested_rows, applied_rows);
+            }
             ServerMessage::Frame(_) => {}
             other => panic!("expected a scroll outcome, received {}", brief(&other)),
         }
     }
 }
 
+fn wait_for(path: &Path) {
+    let deadline = Instant::now() + seconds(10.0);
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the child never opened its update"
+        );
+        sleep(0.02);
+    }
+}
+
 pub fn run() {
+    use VerticalDirection::{Down, Up};
+
     let directory = TempDir::new();
     let gate = Gate::new(&directory, "tick-gate");
     let held = directory.join("held");
@@ -58,36 +87,30 @@ pub fn run() {
     let mut server = Server::start(
         &directory,
         &shell,
-        &[
-            ("ORBIT_TICK_GATE", gate.path()),
-            ("ORBIT_HELD_FILE", &held),
-        ],
+        &[("ORBIT_TICK_GATE", gate.path()), ("ORBIT_HELD_FILE", &held)],
     );
     let mut client = Peer::attach(&server.path, 4.0);
     let revision = client.frame_titled("TICK READY").revision;
 
     // A tick needs a held host gesture and a top-row position.
-    client.send(&tick(TOP));
+    client.send(&tick(Up, TOP));
     client.failure(FailureCode::InvalidInput);
-    client.send(&begin(revision, position(1.0, 5.0 * 18.0 + 9.0))); // Row 5: "line 43".
+    client.send(&begin(
+        revision,
+        position(1.0, 5.0 * 18.0 + 9.0),
+        Modifiers::empty(),
+    )); // Row 5: "line 43".
     client.expect(ServerMessage::Accepted);
     client.frame();
-    client.send(&tick(position(5.0, 3.0 * 18.0 + 9.0)));
+    client.send(&tick(Up, position(5.0, 3.0 * 18.0 + 9.0)));
     client.failure(FailureCode::InvalidInput);
 
     // During a synchronized update one tick waits and a second fails.
     gate.release();
-    let deadline = Instant::now() + seconds(10.0);
-    while !held.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "the child never opened its update"
-        );
-        sleep(0.02);
-    }
-    client.send(&tick(TOP));
+    wait_for(&held);
+    client.send(&tick(Up, TOP));
     client.quiet(0.3, "a tick moved during a synchronized update");
-    client.send(&tick(TOP));
+    client.send(&tick(Up, TOP));
     client.failure(FailureCode::InvalidInput);
     gate.release();
     let mut moved = vec![outcome(&mut client)];
@@ -95,10 +118,13 @@ pub fn run() {
     // Ticks extend the same selection through more than one viewport of
     // history and stop at the oldest row.
     for _ in 0..40 {
-        client.send(&tick(TOP));
+        client.send(&tick(Up, TOP));
         moved.push(outcome(&mut client));
     }
-    assert!(moved.iter().all(|&(requested, _)| requested == -1), "{moved:?}");
+    assert!(
+        moved.iter().all(|&(requested, _)| requested == -1),
+        "{moved:?}"
+    );
     let applied: Vec<i16> = moved.iter().map(|&(_, rows)| rows).collect();
     let mut expected = vec![-1; 37];
     expected.extend([0; 4]);
@@ -127,7 +153,11 @@ pub fn run() {
     assert_eq!((applied, moved.scroll_position.rows_from_live), (35, 2));
     assert!(!selected(&moved));
     let row = 10.0 * 18.0 + 9.0; // "line 46", still in view at live.
-    client.send(&begin(moved.revision, position(1.0, row)));
+    client.send(&begin(
+        moved.revision,
+        position(1.0, row),
+        Modifiers::empty(),
+    ));
     client.expect(ServerMessage::Accepted);
     client.frame();
     client.send(&finish(position(39.0, row)));
@@ -145,6 +175,63 @@ pub fn run() {
     );
     assert!(!selected(&live));
 
+    // The downward tick retains its requested direction across synchronized
+    // output and stops at the live edge. Mouse routing stays Orbit-owned.
+    client.send(&scroll(live.revision, -35));
+    let (_, applied, _) = client.scroll_outcome();
+    assert_eq!(applied, -35);
+    client.send(&tick(Down, BOTTOM));
+    client.failure(FailureCode::InvalidInput);
+    gate.release();
+    let tracking = client.frame_titled("TICK TRACKING");
+    let press = position(1.0, 27.0);
+    client.send(&begin(tracking.revision, press, Modifiers::empty()));
+    client.expect(ServerMessage::Accepted);
+    client.send(&tick(Down, BOTTOM));
+    client.failure(FailureCode::InvalidInput);
+    client.send(&finish(press));
+    finished(&mut client);
+    let tracked = client.frame_titled("TICK MOUSE READ");
+    assert_eq!(tracked.scroll_position.rows_from_live, 35);
+    assert_eq!(
+        fs::read(held.with_extension("mouse")).unwrap(),
+        b"\x1b[<0;1;2M\x1b[<0;1;2m"
+    );
+
+    client.send(&begin(tracked.revision, press, Modifiers::SHIFT));
+    client.expect(ServerMessage::Accepted);
+    client.frame();
+    client.send(&tick(Down, TOP));
+    client.failure(FailureCode::InvalidInput);
+    gate.release();
+    wait_for(&held.with_extension("down"));
+    client.send(&tick(Down, BOTTOM));
+    client.quiet(0.3, "downward tick advanced during synchronized output");
+    gate.release();
+    assert_eq!(outcome(&mut client), (1, 1));
+    for _ in 1..35 {
+        client.send(&tick(Down, BOTTOM));
+        assert_eq!(outcome(&mut client), (1, 1));
+    }
+    client.send(&tick(Down, BOTTOM));
+    assert_eq!(outcome(&mut client), (1, 0));
+    client.send(&finish(BOTTOM));
+    let named = finished(&mut client);
+    assert_eq!(client.frame().revision, named);
+    let mut lines: Vec<String> = (4..=60).map(|n| format!("line {n:02}")).collect();
+    lines.push("live end".into());
+    client.expect(ServerMessage::CopiedText {
+        location: ClipboardLocation::Selection,
+        text: lines.join("\n"),
+    });
+
+    gate.release();
+    let alternate = client.frame_titled("TICK ALTERNATE");
+    client.send(&begin(alternate.revision, press, Modifiers::SHIFT));
+    client.expect(ServerMessage::Accepted);
+    client.frame();
+    client.send(&tick(Down, BOTTOM));
+    client.failure(FailureCode::InvalidInput);
     gate.release();
     client.exited(6);
     drop(client);

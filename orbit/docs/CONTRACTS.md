@@ -8,7 +8,7 @@ system must preserve.
 Orbit builds `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from the
 upstream `Uzaaft/libghostty-rs` commit that [`CRATES.md`](CRATES.md) records. The
 native build explicitly passes `-Dcpu=baseline` by default, building Ghostty
-as pinned in [`CRATES.md`](CRATES.md), with ORBF v3 / ORBS v14. This
+as pinned in [`CRATES.md`](CRATES.md), with ORBF v3 / ORBS v15. This
 preserves the headless terminal contract checks; it does not establish
 older-CPU compatibility for a published cache artifact.
 
@@ -39,12 +39,12 @@ partial frame. The 100,000-cell bound and the 4 MiB frame budget for the
 header, rows, cells and links remain; ORBF v3's graphics block lies outside
 that budget under its own bound (ORB-C16).
 
-ORBS v7 through v14 are explicitly breaking, exact-version boundaries with no
-compatibility window or adapter; each replaced its predecessor. Orbit's
-real-PTY checks and lifecycle tests, Venus and Eon consume the canonical crate
-in this repository. Each contract below states the current ORBF v3 in ORBS v14
-behavior, including ORB-C16, whose values ORBF v3 and ORBS v14 carry. Its
-PTY pixel size rule needs no wire change.
+ORBS v7 through v15 are breaking, exact-version boundaries with no
+compatibility window or adapter. Orbit's real-PTY and lifecycle tests, Venus,
+Eon Runtime and Eon consume the canonical crate in this repository.
+ORBS v15 carries ORBF v3, including ORB-C16's graphics, and adds a direction
+to the host-selection tick (ORB-C8 and ORB-C9). ORB-C16's PTY pixel size
+rule keeps its wire representation.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -175,7 +175,7 @@ PTY pixel size rule needs no wire change.
   canonical `orbit-protocol` ORBS v7; the named process comes from management
   v5 (ORB-C13), and the peer process ID and start identity come from Orbit's
   isolated Linux and Darwin peer-credential and process-start mechanics.
-- **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v14; Venus
+- **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v15; Venus
   and Eon consume it in this repository.
 - **Boundary:** Visible text over ORBS, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
@@ -249,7 +249,7 @@ PTY pixel size rule needs no wire change.
 - **Owner:** Orbit's Bend session policy, which decides each publication and
   its revision, and its Rust host's frame extraction and socket transport, with
   canonical session and complete-frame codecs.
-- **Consumes:** Canonical ORBF v3 in ORBS v14; Venus and Eon consume it in this
+- **Consumes:** Canonical ORBF v3 in ORBS v15; Venus and Eon consume it in this
   repository.
 - **Boundary:** Native presentation quality remains Venus-owned.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
@@ -322,7 +322,7 @@ PTY pixel size rule needs no wire change.
 - **Owner:** Canonical platform-neutral `orbit-protocol` values, Orbit's Bend
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
-- **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14,
+- **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v15,
   and management v9 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
   Lease input carries no text-producing keys other than Enter, and no
@@ -393,7 +393,7 @@ PTY pixel size rule needs no wire change.
     no link, and the terminal keeps running.
 - **Owner:** Orbit's authoritative extraction and synchronized publication with
   canonical `orbit-protocol` values and codecs.
-- **Consumes:** Canonical ORBF v3 in ORBS v14; Venus and Eon consume it in this
+- **Consumes:** Canonical ORBF v3 in ORBS v15; Venus and Eon consume it in this
   repository.
 - **Boundary:** A frame states `kitty_graphics` true exactly when it carries
   ORB-C16's graphics state; one that does not, such as every ORBF v2 frame,
@@ -483,8 +483,8 @@ PTY pixel size rule needs no wire change.
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented, or requests an absolute return to
-  live output, or ticks an active host selection at the top row; PTY output may
-  advance Orbit before the request is handled.
+  live output, or ticks an active host selection at the top or bottom row;
+  PTY output may advance Orbit before the request is handled.
 - **Result:**
   - Each Session configures libghostty with a 16 MiB primary-history byte budget;
     retained rows are content-dependent and the active viewport may exceed it.
@@ -507,10 +507,13 @@ PTY pixel size rule needs no wire change.
   - An explicit return-to-live action moves any retained primary viewport to
     zero in one authoritative complete frame without sending PTY input. It
     clears host selection and does not require a client-side row counter.
-  - During an active primary-screen host selection, one ORBS v14 upward tick
-    advances at most one row toward older retained history and returns its
-    applied distance, complete frame, and next bounded preview without clearing
-    the tracked gesture. Zero applied rows reports the oldest edge.
+  - During an active primary-screen host selection, one ORBS v15 selection
+    tick moves at most one row in its requested direction. Up from the top
+    row moves toward older retained history. Down from the bottom row moves
+    toward live output. Orbit returns the signed requested and applied
+    distance, one complete frame, and the next bounded preview in that
+    direction, preserving the tracked gesture. Zero applied rows reports
+    the oldest edge for up or the live edge for down.
   - A successful semantic key that emits PTY bytes returns primary history to
     the live area; detach does not transfer, reconstruct, or reset viewport
     ownership.
@@ -524,20 +527,20 @@ PTY pixel size rule needs no wire change.
   - Return-to-live rejects terminal-owned or alternate-screen routing; under
     synchronized output it waits for the existing release/watchdog boundary,
     and full client output pressure fails before viewport mutation.
-  - An upward selection tick rejects absent or terminal-routed gestures,
-    positions outside the top row, and alternate-screen state without PTY input
-    or viewport mutation. Synchronized output holds at most one unresolved tick;
-    bounded output pressure fails before movement.
+  - A selection tick rejects absent or terminal-routed gestures, positions
+    outside the row for its direction, and alternate-screen state without PTY
+    input or viewport mutation. Synchronized output holds at most one unresolved
+    tick, and bounded output pressure fails before movement.
 - **Owner:** Orbit's Bend vertical policy and its Rust host's synchronized
   output handling, with libghostty's native viewport, byte-budgeted history,
   one canonical row extractor, and bounded output queue.
-- **Consumes:** Canonical ORBF v3 in accepted ORBS v14; Venus and Eon consume
+- **Consumes:** Canonical ORBF v3 in accepted ORBS v15; Venus and Eon consume
   it in this repository.
-- **Boundary:** Arbitrary line-count guarantees, gesture cadence, downward
-  selection autoscroll, velocity, kinetic effects, graphics, and restart
-  persistence are excluded; physical wheels retain their existing typed
-  terminal-routed or one-row behavior. This does not accept Eonova, or any
-  ORBS v14 client on Apple Silicon (Venus or Eon); ORB-C14 covers Orbit's own
+- **Boundary:** Arbitrary line-count guarantees, gesture cadence, velocity,
+  kinetic effects, graphics, and restart persistence are excluded. Physical
+  wheels retain their typed terminal-routed or one-row behavior. This does
+  not accept Eonova, or any
+  ORBS v15 client on Apple Silicon (Venus or Eon); ORB-C14 covers Orbit's own
   native behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.3` commit
   for scroll position, selection clearing and granular ticks
@@ -582,11 +585,12 @@ PTY pixel size rule needs no wire change.
 ## ORB-C9 — Authoritative bounded selection and copy
 
 - **Status:** Partially proved
-- **Consumer:** One healthy exact-version ORBS v14 attachment for upward ticks.
+- **Consumer:** One healthy exact-version ORBS v15 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
-  left-pointer sequence; a held host gesture may tick upward with a top-row
-  surface position. Pointer phases carry current modifiers; Begin names a frame
-  the client presented and a monotonic press timestamp.
+  left-pointer sequence. A held host gesture may tick upward with a top-row
+  surface position or downward with a bottom-row surface position. Pointer
+  phases carry current modifiers. Begin names a frame the client presented
+  and a monotonic press timestamp.
 - **Result:**
   - Orbit chooses host selection when authoritative terminal mouse tracking is
     absent or Shift is present, and keeps that route through Finish or Cancel.
@@ -621,9 +625,10 @@ PTY pixel size rule needs no wire change.
     no valid tracked gesture anchor, including on a different active screen,
     clears the active host selection and resets gesture state; read-only preview
     does not.
-  - An explicit upward tick while the host gesture is held extends that same
-    libghostty-tracked selection into the newly visible top row, including
-    across multiple viewports, and release freezes the resulting exact text.
+  - An explicit tick while the host gesture is held extends that same
+    libghostty-tracked selection into the newly visible top or bottom row in
+    its requested direction (ORB-C8), including across multiple viewports.
+    Release freezes the resulting exact text.
   - An ordered client cancel resets an abandoned gesture and clears its partial
     selected presentation without producing copied text.
   - A newer valid press replaces prior selected presentation and frozen text;
@@ -641,17 +646,18 @@ PTY pixel size rule needs no wire change.
     PTY processing or cleanup.
   - A partially written frame remains ordered and completes before a newer
     selection frame.
-  - An upward tick with no valid host gesture or top-row position fails without
-    movement or PTY input; an invalidated tracked anchor cancels the gesture.
+  - A tick with no valid host gesture or a position outside the row for its
+    direction fails without movement or PTY input. An invalidated tracked
+    anchor cancels the gesture.
 - **Owner:** Orbit's Bend selection policy and its Rust host's pointer
   mechanism, with authoritative mouse modes, libghostty current-viewport
-  gesture selection, and canonical ORBS v14. Venus owns native event delivery
+  gesture selection, and canonical ORBS v15. Venus owns native event delivery
   and clipboard effects.
-- **Consumes:** Accepted ORBS v14 and ORB-C7 bounded-pressure behavior; Venus
+- **Consumes:** Accepted ORBS v15 and ORB-C7 bounded-pressure behavior; Venus
   and Eon consume it in this repository.
 - **Boundary:** Configurable word separators or click thresholds, block selection,
-  downward autoscroll, cadence, semantic command-output selection, search,
-  graphics, and restart persistence are excluded.
+  cadence, semantic command-output selection, search, graphics, and restart
+  persistence are excluded.
   Spans retain native word-selection limits: a wide-character trailing spacer
   can stop the selected span (`a;界,é` selects `a;界`). This inherited
   libghostty limitation is outside the click-ladder correction.
@@ -1534,9 +1540,9 @@ PTY pixel size rule needs no wire change.
   - the Kitty graphics protocol as specified at `kovidgoyal/kitty`
     `b2cb871254fbdac19a085188813c8dfb258b95cd`,
     `docs/graphics-protocol.rst`.
-  - The wire is ORBF v3 in ORBS v14, a breaking, exact-version revision with
-    no adapter or compatibility window. Venus, Eon Runtime and Eon consume it
-    in this repository. Orbit lands first, then Venus, in one Eon build.
+  - The graphics wire entered with ORBF v3 in ORBS v14 and is carried in
+    exact-version ORBS v15. Venus, Eon Runtime and Eon consume it in this
+    repository.
 - **Boundary:**
   - Static images only. Orbit does not drive libghostty's animation tick, so
     an animated image shows whichever frame libghostty holds as current;

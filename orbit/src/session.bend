@@ -21,7 +21,7 @@ type Request is Data:
   PreviewRequest{direction: Boundary.Direction}
   ScrollRequest{rows: U32}
   LiveRequest{}
-  TickRequest{x: U32, y: U32}
+  TickRequest{direction: Boundary.Direction, x: U32, y: U32}
 
 # The vertical request slot of ORB-C8: clear, or one request waiting for a
 # synchronized update to end.
@@ -159,17 +159,19 @@ def live_answer(owned: Bool, room: Bool) -> Boundary.Decisions():
 def owned(+flags: Boundary.Flags) -> Bool:
   Bool.or(Boundary.routed(flags), Boundary.alternate(flags))
 
-# An upward selection tick fails with Failure(Terminal) before anything moves
+# A selection tick fails with Failure(Terminal) before anything moves
 # when the client's queue could not take a whole scroll outcome (ORB-C9). A
 # tick that waited is checked again, since its gesture may have ended.
-def tick_answer(room: Bool, stored: Bool, x: U32, y: U32) -> Boundary.Decisions():
+def tick_answer(
+  room: Bool, stored: Bool, direction: Boundary.Direction, x: U32, y: U32
+) -> Boundary.Decisions():
   match room:
     case True{}:
       match stored:
         case True{}:
-          [Boundary.Retick{x, y}]
+          [Boundary.Retick{direction, x, y}]
         case False{}:
-          [Boundary.TickAnswer{x, y, unstamped()}]
+          [Boundary.TickAnswer{direction, x, y, unstamped()}]
     case False{}:
       reject(Boundary.ReasonTickNoRoom{})
 
@@ -183,8 +185,8 @@ def answered(request: Request, stored: Bool, +flags: Boundary.Flags) -> Boundary
       scroll_answer(Boundary.routed(flags), Boundary.room(flags), rows)
     case LiveRequest{}:
       live_answer(owned(flags), Boundary.frame_room(flags))
-    case TickRequest{x, y}:
-      tick_answer(Boundary.room(flags), stored, x, y)
+    case TickRequest{direction, x, y}:
+      tick_answer(Boundary.room(flags), stored, direction, x, y)
 
 # What the policy treats as routed: for a return to live, any terminal-owned
 # scrolling, which fails at once; a tick is never routed.
@@ -192,7 +194,7 @@ def routing(request: Request, +flags: Boundary.Flags) -> Bool:
   match request:
     case LiveRequest{}:
       owned(flags)
-    case TickRequest{x, y}:
+    case TickRequest{direction, x, y}:
       False{}
     case _:
       Boundary.routed(flags)
@@ -964,7 +966,7 @@ def host_selected(
         }
       )
 
-# An upward selection tick runs only for a held host gesture on the primary
+# A selection tick runs only for a held host gesture on the primary
 # screen.
 def holds_gesture(route: Selection.Route, alternate: Bool) -> Bool:
   match route:
@@ -973,11 +975,11 @@ def holds_gesture(route: Selection.Route, alternate: Bool) -> Bool:
     case _:
       False{}
 
-# A held tick runs only from the top row while its anchor is valid; a lost
-# anchor ends the sequence. Otherwise it is a vertical request like a scroll,
-# deferred while a synchronized update is open (ORB-C9).
+# A held tick needs a valid anchor and a position in its direction's edge
+# row. A lost anchor ends the sequence. Synchronized output defers the tick
+# like other vertical requests (ORB-C9).
 def tick_held(
-  held: Bool, state: Boundary.TickState, x: U32, y: U32, flags: Boundary.Flags,
+  held: Bool, state: Boundary.TickState, direction: Boundary.Direction, x: U32, y: U32, flags: Boundary.Flags,
   session: Session
 ) -> Next():
   match held:
@@ -986,21 +988,21 @@ def tick_held(
     case True{}:
       match state:
         case Boundary.TickStateFits{}:
-          vertical(TickRequest{x, y}, False{}, flags, session)
-        case Boundary.TickStateNotTopRow{}:
-          (session, reject(Boundary.ReasonTickNotTopRow{}))
+          vertical(TickRequest{direction, x, y}, False{}, flags, session)
+        case Boundary.TickStateWrongEdge{}:
+          (session, reject(Boundary.ReasonTickWrongEdge{}))
         case Boundary.TickStateAnchorLost{}:
           followed(end_sequence(session), reject(Boundary.ReasonAnchorLost{}))
 
 def ticked(
-  state: Boundary.TickState, x: U32, y: U32, +flags: Boundary.Flags, session: Session
+  state: Boundary.TickState, direction: Boundary.Direction, x: U32, y: U32, +flags: Boundary.Flags, session: Session
 ) -> Next():
   match session:
     case Session{life, written, observer, explicit, waiting, pointer, manage}:
       match pointer:
         case Pointer{+route, presented, copied}:
           tick_held(
-            holds_gesture(route, Boundary.alternate(flags)), state, x, y, flags,
+            holds_gesture(route, Boundary.alternate(flags)), state, direction, x, y, flags,
             Session{
               life, written, observer, explicit, waiting, Pointer{route, presented, copied}, manage
             }
@@ -1231,8 +1233,8 @@ def decide(
       pointer(kind, future, flags, session)
     case Boundary.Selected{outcome, presented}:
       host_selected(outcome, presented, flags, session)
-    case Boundary.Tick{state, x, y}:
-      ticked(state, x, y, flags, session)
+    case Boundary.Tick{state, direction, x, y}:
+      ticked(state, direction, x, y, flags, session)
     case Boundary.Management{event}:
       management_event(event, flags, session)
     case Boundary.ProgramStatus{foreground}:
@@ -1403,8 +1405,8 @@ def presented_at(decision: Boundary.Decision, +revision: Revision.Revision) -> B
     # (ORB-C17).
     case Boundary.ManageRead{old}:
       Boundary.ManageRead{revision}
-    case Boundary.TickAnswer{x, y, old}:
-      Boundary.TickAnswer{x, y, Revision.next(revision)}
+    case Boundary.TickAnswer{direction, x, y, old}:
+      Boundary.TickAnswer{direction, x, y, Revision.next(revision)}
     case other:
       other
 

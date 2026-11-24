@@ -16,7 +16,7 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 14;
+pub const VERSION: u16 = 15;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder: a scroll outcome's
@@ -695,8 +695,11 @@ pub enum SelectionAction {
         position: SelectionPosition,
         modifiers: Modifiers,
     },
-    /// Advance one row toward older history while extending the active host selection.
-    AutoscrollUp { position: SelectionPosition },
+    /// Extend the active host selection by up to one row in this direction.
+    Autoscroll {
+        direction: VerticalDirection,
+        position: SelectionPosition,
+    },
     /// Cancel active gesture state and selected presentation.
     Cancel,
     /// Request the last successfully frozen plain text.

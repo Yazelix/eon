@@ -1419,6 +1419,10 @@ impl RefusalResync {
 }
 
 impl TerminalView {
+    fn scrolled_back(&self) -> bool {
+        self.model.rows_from_live().is_some_and(|rows| rows > 0)
+    }
+
     fn new(orbit_socket: Option<PathBuf>) -> Self {
         Self {
             orbit_socket,
@@ -1914,7 +1918,10 @@ impl Application {
     }
 
     fn drive_terminal_scroll(&mut self) {
-        if self.terminal.pending_viewport == Some(PendingViewportRequest::SelectionTick) {
+        if matches!(
+            self.terminal.pending_viewport,
+            Some(PendingViewportRequest::SelectionTick(_))
+        ) {
             return;
         }
         let Some(frame_revision) = self.terminal.model.scene().map(|scene| scene.revision) else {
@@ -1992,8 +1999,11 @@ impl Application {
         })
         .flatten()
         .filter(|size| self.terminal.last_resize == Some(*size))
-        .and_then(|size| self.input.selection_at_top(size));
-        let Some(position) = position else {
+        .and_then(|size| {
+            self.input
+                .selection_edge(size, self.terminal.scrolled_back())
+        });
+        let Some((direction, position)) = position else {
             self.terminal.selection_scroll.next = None;
             return;
         };
@@ -2001,11 +2011,12 @@ impl Application {
             .terminal
             .selection_scroll
             .take_due(now, self.terminal.pending_viewport)
-            && !self.send(ClientMessage::Selection(SelectionAction::AutoscrollUp {
+            && !self.send(ClientMessage::Selection(SelectionAction::Autoscroll {
+                direction,
                 position,
             }))
         {
-            self.terminal.selection_scroll.fail();
+            self.terminal.selection_scroll.fail(direction, now);
         }
     }
 
@@ -4978,9 +4989,11 @@ impl Application {
                     ServerMessage::ScrollOutcome(ScrollOutcome::TerminalOwned { .. })
                 );
                 let server_failure = matches!(&message, ServerMessage::Failure(_));
-                let selection_scroll_failure = server_failure
-                    && self.terminal.pending_viewport
-                        == Some(PendingViewportRequest::SelectionTick);
+                let selection_tick_pending = matches!(
+                    self.terminal.pending_viewport,
+                    Some(PendingViewportRequest::SelectionTick(_))
+                );
+                let selection_scroll_failure = server_failure && selection_tick_pending;
                 let expected_selection_rejection = selection_scroll_failure
                     && matches!(&message, ServerMessage::Failure(failure) if failure.code == FailureCode::InvalidInput);
                 let plain_frame = matches!(&message, ServerMessage::Frame(_));
@@ -5004,23 +5017,19 @@ impl Application {
                     .window
                     .as_ref()
                     .map_or(0.0, |state| f64::from(state.renderer.metrics().height));
-                let batch_accepted = if self.terminal.pending_viewport
-                    == Some(PendingViewportRequest::SelectionTick)
-                {
+                let batch_accepted = if selection_tick_pending {
                     match &message {
                         ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
                             requested_rows,
                             applied_rows,
                             frame,
                             ..
-                        }) => {
-                            *requested_rows == -1
-                                && self.terminal.selection_scroll.accept(
-                                    &mut self.terminal.pending_viewport,
-                                    *applied_rows,
-                                    frame.revision,
-                                )
-                        }
+                        }) => self.terminal.selection_scroll.accept(
+                            &mut self.terminal.pending_viewport,
+                            *requested_rows,
+                            *applied_rows,
+                            frame.revision,
+                        ),
                         ServerMessage::ScrollOutcome(ScrollOutcome::TerminalOwned { .. }) => false,
                         _ => true,
                     }
@@ -5037,7 +5046,7 @@ impl Application {
                 let result = if !batch_accepted {
                     Err(ModelError::UnexpectedMessage)
                 } else if expected_selection_rejection {
-                    // ORBS v14 rejects terminal-routed synthetic ticks as invalid input.
+                    // Orbit rejects terminal-routed synthetic ticks as invalid input.
                     self.terminal.model.clear_viewport_preview();
                     Ok(None)
                 } else {
@@ -5064,6 +5073,7 @@ impl Application {
                             &mut self.terminal.terminal_scroll,
                             &mut self.terminal.selection_scroll,
                             expected_selection_rejection,
+                            Instant::now(),
                         );
                     } else if let Some(direction) = preview_response {
                         self.terminal.terminal_scroll.preview_arrived(direction);
@@ -5563,8 +5573,8 @@ impl Application {
                 rows: *rows,
                 cancelled: false,
             }),
-            ClientMessage::Selection(SelectionAction::AutoscrollUp { .. }) => {
-                Some(PendingViewportRequest::SelectionTick)
+            ClientMessage::Selection(SelectionAction::Autoscroll { direction, .. }) => {
+                Some(PendingViewportRequest::SelectionTick(*direction))
             }
             _ => None,
         };
@@ -6079,10 +6089,12 @@ impl Application {
                     || state.renderer.presented_scrollback_rect() != prior_scrollback_target;
                 self.presentation.publish(candidate);
                 if let Some(revision) = candidate.revision {
+                    let above_live = self.terminal.scrolled_back();
                     self.terminal.selection_scroll.presented(
                         revision,
                         Instant::now(),
                         self.terminal.pending_viewport,
+                        above_live,
                     );
                 }
                 self.links.unshifted = unshifted;
@@ -6508,11 +6520,7 @@ impl Application {
                 self.cursor = position;
                 self.links.pointer_inside = true;
                 if over_scrollback {
-                    self.terminal.selection_scroll.edge(
-                        false,
-                        Instant::now(),
-                        self.terminal.pending_viewport,
-                    );
+                    self.terminal.selection_scroll.cancel();
                     self.links.focus = None;
                     if was_scrollback != over_scrollback {
                         self.refresh_client_view();
@@ -6523,11 +6531,7 @@ impl Application {
                     || self.header_press.is_some()
                     || self.terminal.scrollback_press.is_some()
                 {
-                    self.terminal.selection_scroll.edge(
-                        false,
-                        Instant::now(),
-                        self.terminal.pending_viewport,
-                    );
+                    self.terminal.selection_scroll.cancel();
                     if was_scrollback != over_scrollback {
                         self.refresh_client_view();
                     }
@@ -6541,8 +6545,11 @@ impl Application {
                         self.send_or_defer_selection(message, presentation_current);
                     }
                     self.terminal.selection_scroll.edge(
-                        size.and_then(|size| self.input.selection_at_top(size))
-                            .is_some(),
+                        size.and_then(|size| {
+                            self.input
+                                .selection_edge(size, self.terminal.scrolled_back())
+                        })
+                        .map(|(direction, _)| direction),
                         Instant::now(),
                         self.terminal.pending_viewport,
                     );
@@ -6558,11 +6565,7 @@ impl Application {
                     self.send(message);
                 }
                 if !self.input.is_selecting() {
-                    self.terminal.selection_scroll.edge(
-                        false,
-                        Instant::now(),
-                        self.terminal.pending_viewport,
-                    );
+                    self.terminal.selection_scroll.cancel();
                 }
                 self.inspect_pointer_link();
                 if was_scrollback != over_scrollback {

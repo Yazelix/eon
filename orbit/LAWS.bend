@@ -480,7 +480,7 @@ def live(
       from_client(moves, client, observer)
     case Boundary.Selected{outcome, presented}:
       from_client(moves, client, observer)
-    case Boundary.Tick{state, x, y}:
+    case Boundary.Tick{state, direction, x, y}:
       from_client(moves, client, observer)
     # Output may end an attachment whose clipboard writes overflowed.
     case Boundary.Output{foreground, marks}:
@@ -554,7 +554,7 @@ def stopping(fact: Boundary.Fact, moves: List<&2, Move>) -> Phase:
       reaping(moves)
     case Boundary.ObserverGone{loss}:
       only(moves, Unobserved{}, Stopping{})
-    case Boundary.Tick{state, x, y}:
+    case Boundary.Tick{state, direction, x, y}:
       quiet(moves, Stopping{})
     case Boundary.Selected{outcome, presented}:
       quiet(moves, Stopping{})
@@ -737,9 +737,9 @@ def act(decision: Boundary.Decision, rest: List<&2, Act>) -> List<&2, Act>:
       committed(routed, WheelRouted{}) <> rest
     case Boundary.PreviewAnswer{direction, routed, revision}:
       Answered{} <> rest
-    case Boundary.TickAnswer{x, y, revision}:
+    case Boundary.TickAnswer{direction, x, y, revision}:
       Answered{} <> rest
-    case Boundary.Retick{x, y}:
+    case Boundary.Retick{direction, x, y}:
       Answered{} <> rest
     case Boundary.Reject{reason}:
       reason_act(reason) <> rest
@@ -1094,7 +1094,7 @@ def holds_gesture(route: Selection.Route, alternate: Bool) -> Bool:
     case _:
       False{}
 
-# ORB-C9: an upward tick runs only for a held host gesture on the primary
+# ORB-C9: a selection tick runs only for a held host gesture on the primary
 # screen and from the top row, as a vertical request that is never routed; a
 # lost anchor ends the sequence.
 def tick_with(
@@ -1108,7 +1108,7 @@ def tick_with(
       match state:
         case Boundary.TickStateFits{}:
           request(TickPending{}, False{}, flags, acts, client, waiting, route, copied, revision)
-        case Boundary.TickStateNotTopRow{}:
+        case Boundary.TickStateWrongEdge{}:
           led(Refusal{}, acts, flags, client, waiting, route, copied, revision)
         case Boundary.TickStateAnchorLost{}:
           plain(acts, flags, False{}, client, waiting, Selection.Idle{}, copied, revision)
@@ -1418,7 +1418,7 @@ def by_fact(
       client_only(
         client, host_outcome(outcome, presented, flags, acts, client, waiting, route, copied, revision)
       )
-    case Boundary.Tick{state, x, y}:
+    case Boundary.Tick{state, direction, x, y}:
       client_only(client, tick(state, flags, acts, client, waiting, route, copied, revision))
     # ORB-C16: a resource whose last chunk was written publishes as output
     # does.
@@ -1533,7 +1533,7 @@ def ended_view(fact: Boundary.Fact) -> View:
       Ending{}
     case Boundary.ObserverGone{loss}:
       Ending{}
-    case Boundary.Tick{state, x, y}:
+    case Boundary.Tick{state, direction, x, y}:
       Ending{}
     case Boundary.Selected{outcome, presented}:
       Ending{}
@@ -1567,7 +1567,7 @@ def pending(waiting: Session.Waiting) -> Pending:
           ScrollPending{}
         case Session.LiveRequest{}:
           LivePending{}
-        case Session.TickRequest{x, y}:
+        case Session.TickRequest{direction, x, y}:
           TickPending{}
 
 def viewed(
@@ -1798,7 +1798,7 @@ def ceased(fact: Boundary.Fact) -> Lease:
       Ceased{}
     case Boundary.ObserverGone{loss}:
       Ceased{}
-    case Boundary.Tick{state, x, y}:
+    case Boundary.Tick{state, direction, x, y}:
       Ceased{}
     case Boundary.Selected{outcome, presented}:
       Ceased{}

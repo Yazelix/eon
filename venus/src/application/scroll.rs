@@ -55,7 +55,7 @@ const PREVIEW_ANSWER_GRACE: Duration = Duration::from_millis(50);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PendingViewportRequest {
     Scroll { rows: i16, cancelled: bool },
-    SelectionTick,
+    SelectionTick(VerticalDirection),
 }
 
 #[derive(Debug, Default)]
@@ -388,7 +388,7 @@ impl TerminalScroll {
 
 #[derive(Debug, Default)]
 pub(super) struct SelectionAutoscroll {
-    edge: bool,
+    edge: Option<VerticalDirection>,
     pub(super) next: Option<Instant>,
     awaiting_frame: Option<u64>,
     stopped: bool,
@@ -397,25 +397,22 @@ pub(super) struct SelectionAutoscroll {
 impl SelectionAutoscroll {
     pub(super) fn edge(
         &mut self,
-        at_top: bool,
+        direction: Option<VerticalDirection>,
         now: Instant,
         pending: Option<PendingViewportRequest>,
     ) {
-        if !at_top {
-            self.cancel();
-            return;
-        }
-        if !self.edge {
-            self.edge = true;
+        if self.edge != direction {
+            self.edge = direction;
+            self.next = None;
             self.stopped = false;
         }
         self.schedule(now, pending);
     }
 
     fn schedule(&mut self, now: Instant, pending: Option<PendingViewportRequest>) {
-        if self.edge
+        if self.edge.is_some()
             && !self.stopped
-            && pending != Some(PendingViewportRequest::SelectionTick)
+            && !matches!(pending, Some(PendingViewportRequest::SelectionTick(_)))
             && self.awaiting_frame.is_none()
             && self.next.is_none()
         {
@@ -438,19 +435,24 @@ impl SelectionAutoscroll {
     pub(super) fn accept(
         &mut self,
         pending: &mut Option<PendingViewportRequest>,
+        requested_rows: i16,
         applied_rows: i16,
         frame_revision: u64,
     ) -> bool {
-        if *pending != Some(PendingViewportRequest::SelectionTick)
-            || !matches!(applied_rows, -1..=0)
-        {
+        let Some(PendingViewportRequest::SelectionTick(direction)) = *pending else {
+            return false;
+        };
+        let expected_rows = match direction {
+            VerticalDirection::Up => -1,
+            VerticalDirection::Down => 1,
+        };
+        if requested_rows != expected_rows || (applied_rows != 0 && applied_rows != expected_rows) {
             return false;
         }
         *pending = None;
-        if applied_rows == 0 {
+        self.awaiting_frame = Some(frame_revision);
+        if applied_rows == 0 && self.edge == Some(direction) {
             self.stopped = true;
-        } else {
-            self.awaiting_frame = Some(frame_revision);
         }
         true
     }
@@ -460,7 +462,11 @@ impl SelectionAutoscroll {
         revision: u64,
         now: Instant,
         pending: Option<PendingViewportRequest>,
+        above_live: bool,
     ) {
+        if !above_live && self.edge == Some(VerticalDirection::Down) {
+            self.cancel();
+        }
         if self
             .awaiting_frame
             .is_some_and(|required| revision >= required)
@@ -470,18 +476,19 @@ impl SelectionAutoscroll {
         self.schedule(now, pending);
     }
 
-    pub(super) fn fail(&mut self) {
-        self.next = None;
-        self.awaiting_frame = None;
-        self.stopped = true;
+    pub(super) fn fail(&mut self, direction: VerticalDirection, now: Instant) {
+        if self.edge == Some(direction) {
+            self.next = None;
+            self.stopped = true;
+        }
+        self.schedule(now, None);
     }
 
     pub(super) fn cancel(&mut self) {
-        self.edge = false;
+        self.edge = None;
         self.next = None;
-        self.awaiting_frame = None;
         self.stopped = false;
-        // A sent tick still needs its ordered response after release.
+        // An already sent tick still requires its response and presentation.
     }
 
     pub(super) fn reset(&mut self) {
@@ -494,12 +501,13 @@ pub(super) fn finish_scroll_failure(
     terminal_scroll: &mut TerminalScroll,
     selection_scroll: &mut SelectionAutoscroll,
     expected_selection_rejection: bool,
+    now: Instant,
 ) {
     if !expected_selection_rejection {
         terminal_scroll.reset();
     }
-    if pending.take() == Some(PendingViewportRequest::SelectionTick) {
-        selection_scroll.fail();
+    if let Some(PendingViewportRequest::SelectionTick(direction)) = pending.take() {
+        selection_scroll.fail(direction, now);
     }
 }
 
@@ -881,6 +889,7 @@ mod tests {
             &mut scroll,
             &mut SelectionAutoscroll::default(),
             false,
+            start,
         );
         scroll.push_pixels(20.0, TouchPhase::Moved, start, 20.0);
         assert!(scroll.next_request(None, 19, None, 20.0, None).is_some());
@@ -973,50 +982,88 @@ mod tests {
 
     #[test]
     fn held_top_edge_waits_for_each_authoritative_frame_and_stops() {
+        assert_tick_presentation(VerticalDirection::Up, -1);
+    }
+
+    #[test]
+    fn bottom_edge_waits_for_presentation_and_stops_when_live() {
+        assert_tick_presentation(VerticalDirection::Down, 1);
+    }
+
+    fn assert_tick_presentation(direction: VerticalDirection, rows: i16) {
         let start = Instant::now();
-        let mut pending = None;
+        let due = start + SELECTION_SCROLL_INTERVAL;
+        let tick = Some(PendingViewportRequest::SelectionTick(direction));
         let mut scroll = SelectionAutoscroll::default();
-        scroll.edge(true, start, pending);
-        pending = Some(PendingViewportRequest::Scroll {
-            rows: -1,
+        scroll.edge(Some(direction), start, None);
+        let mut pending = Some(PendingViewportRequest::Scroll {
+            rows,
             cancelled: false,
         });
-        assert!(!scroll.take_due(start + SELECTION_SCROLL_INTERVAL, pending));
-        assert!(!scroll.accept(&mut pending, -1, 6));
-        assert!(TerminalScroll::default().accept_batch(&mut pending, -1, -1, 20.0));
+        assert!(!scroll.take_due(due, pending));
+        assert!(!scroll.accept(&mut pending, rows, rows, 6));
+        assert!(TerminalScroll::default().accept_batch(&mut pending, rows, rows, 20.0));
         assert!(!scroll.take_due(start, pending));
-        assert!(scroll.take_due(start + SELECTION_SCROLL_INTERVAL, pending));
-        pending = Some(PendingViewportRequest::SelectionTick);
-        assert!(!scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 2, pending));
-        assert!(scroll.accept(&mut pending, -1, 7));
-        assert!(!scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 3, pending));
-        scroll.presented(6, start + SELECTION_SCROLL_INTERVAL * 3, pending);
+        assert!(scroll.take_due(due, pending));
+        pending = tick;
+        assert!(!scroll.take_due(due, pending));
+        assert!(!scroll.accept(&mut pending, -rows, 0, 7));
+        assert!(!scroll.accept(&mut pending, rows, -rows, 7));
+        assert!(scroll.accept(&mut pending, rows, rows, 7));
+        scroll.presented(6, due, pending, true);
         assert!(scroll.next.is_none());
-        scroll.presented(7, start + SELECTION_SCROLL_INTERVAL * 3, pending);
-        assert!(scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 4, pending));
-        pending = Some(PendingViewportRequest::SelectionTick);
-        assert!(scroll.accept(&mut pending, 0, 8));
-        scroll.presented(8, start + SELECTION_SCROLL_INTERVAL * 4, pending);
-        assert!(!scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 5, pending));
-        scroll.edge(false, start + SELECTION_SCROLL_INTERVAL * 5, pending);
-        scroll.edge(true, start + SELECTION_SCROLL_INTERVAL * 5, pending);
-        assert!(scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 6, pending));
-        pending = Some(PendingViewportRequest::SelectionTick);
+        scroll.presented(7, due, pending, true);
+        assert!(scroll.take_due(due + SELECTION_SCROLL_INTERVAL, pending));
+
+        pending = tick;
+        let at_live = direction == VerticalDirection::Down;
+        let last_applied = if at_live { rows } else { 0 };
+        assert!(scroll.accept(&mut pending, rows, last_applied, 8));
+        scroll.presented(8, due, pending, !at_live);
+        assert!(scroll.next.is_none());
+
+        scroll.edge(None, start, pending);
+        scroll.edge(Some(direction), start, pending);
+        assert!(scroll.take_due(due, pending));
+        pending = tick;
         scroll.cancel();
-        assert!(scroll.accept(&mut pending, -1, 9));
-        scroll.presented(9, start + SELECTION_SCROLL_INTERVAL * 6, pending);
-        assert!(!scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 7, pending));
-        scroll.edge(true, start + SELECTION_SCROLL_INTERVAL * 7, pending);
-        assert!(scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 8, pending));
-        pending = Some(PendingViewportRequest::SelectionTick);
-        finish_scroll_failure(
-            &mut pending,
-            &mut TerminalScroll::default(),
-            &mut scroll,
-            true,
-        );
-        scroll.presented(10, start + SELECTION_SCROLL_INTERVAL * 8, pending);
-        assert!(!scroll.take_due(start + SELECTION_SCROLL_INTERVAL * 9, pending));
+        assert!(scroll.accept(&mut pending, rows, rows, 9));
+        scroll.presented(9, due, pending, true);
+        assert!(scroll.next.is_none());
+
+        scroll.edge(Some(direction), start, None);
+        assert!(scroll.take_due(due, None));
+        scroll.fail(direction, due);
+        scroll.presented(10, due, None, true);
+        assert!(scroll.next.is_none());
+    }
+
+    #[test]
+    fn a_reply_from_the_previous_edge_does_not_stop_the_new_edge() {
+        use VerticalDirection::{Down, Up};
+        let start = Instant::now();
+        let due = start + SELECTION_SCROLL_INTERVAL;
+        for rejected in [false, true] {
+            let mut scroll = SelectionAutoscroll::default();
+            scroll.edge(Some(Down), start, None);
+            assert!(scroll.take_due(due, None));
+            let mut pending = Some(PendingViewportRequest::SelectionTick(Down));
+            scroll.edge(Some(Up), due, pending);
+            if rejected {
+                finish_scroll_failure(
+                    &mut pending,
+                    &mut TerminalScroll::default(),
+                    &mut scroll,
+                    true,
+                    due,
+                );
+            } else {
+                assert!(scroll.accept(&mut pending, 1, 0, 9));
+                assert_eq!(scroll.next, None);
+                scroll.presented(9, due, pending, false);
+            }
+            assert!(scroll.take_due(due + SELECTION_SCROLL_INTERVAL, pending));
+        }
     }
 
     #[test]
@@ -1025,18 +1072,18 @@ mod tests {
         let mut request = None;
         let mut wheel = TerminalScroll::default();
         let mut selection = SelectionAutoscroll::default();
-        selection.edge(true, start, request);
+        selection.edge(Some(VerticalDirection::Up), start, request);
         assert!(selection.take_due(start + SELECTION_SCROLL_INTERVAL, request));
-        request = Some(PendingViewportRequest::SelectionTick);
+        request = Some(PendingViewportRequest::SelectionTick(VerticalDirection::Up));
         selection.cancel();
         wheel.push_lines(1.0, 20.0);
         let pending = wheel.pixels;
 
-        finish_scroll_failure(&mut request, &mut wheel, &mut selection, true);
+        finish_scroll_failure(&mut request, &mut wheel, &mut selection, true, start);
         assert_eq!(wheel.pixels, pending);
         assert_eq!(request, None);
 
-        finish_scroll_failure(&mut request, &mut wheel, &mut selection, false);
+        finish_scroll_failure(&mut request, &mut wheel, &mut selection, false, start);
         assert_eq!(wheel.pixels, 0.0);
     }
 }

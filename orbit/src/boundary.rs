@@ -73,7 +73,7 @@ pub(crate) enum SelectionKind {
     Copy = 4,
 }
 
-/// How the host selection phase or upward tick Bend asked for went.
+/// How the host selection phase or selection tick Bend asked for went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Selected {
     /// Applied a drag.
@@ -85,17 +85,17 @@ pub(crate) enum Selected {
     Failed = 2,
     /// Applied a press, which began a host sequence.
     Began = 3,
-    /// Applied an upward selection tick.
+    /// Applied an selection tick.
     Ticked = 4,
 }
 
-/// Whether an upward selection tick may run on the held gesture; Bend checks
+/// Whether an selection tick may run on the held gesture; Bend checks
 /// that a host sequence is held on the primary screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TickState {
     Fits = 0,
-    /// The position is not in the top row.
-    NotTopRow = 2,
+    /// The position is outside the row for the requested direction.
+    WrongEdge = 2,
     /// The gesture's anchor is gone.
     AnchorLost = 3,
 }
@@ -180,12 +180,12 @@ pub(crate) enum Reason {
     PointerNoRoom = 15,
     /// The host selection phase failed.
     SelectionFailed = 16,
-    /// An upward selection tick without a held host gesture on the primary
+    /// A selection tick without a held host gesture on the primary
     /// screen.
     TickNoGesture = 17,
-    /// An upward selection tick outside the top row.
-    TickNotTopRow = 18,
-    /// An upward selection tick whose gesture lost its anchor.
+    /// A selection tick outside the row for the requested direction.
+    TickWrongEdge = 18,
+    /// A selection tick whose gesture lost its anchor.
     AnchorLost = 19,
     /// The client's queue cannot take a selection tick's whole scroll outcome
     /// (ORB-C9).
@@ -320,12 +320,17 @@ pub(crate) enum Fact {
     /// A pointer request. A press names the frame it was made on, at `revision`,
     /// which may be ahead of authority; other kinds carry 0.
     Selection { kind: SelectionKind, revision: u64 },
-    /// The host selection phase or upward tick Bend asked for went this way, and
+    /// The host selection phase or selection tick Bend asked for went this way, and
     /// whether libghostty presents a host selection after it.
     Selected { outcome: Selected, presented: bool },
-    /// An upward selection tick from the position whose F32 coordinates have the
+    /// A selection tick from the position whose F32 coordinates have the
     /// bits `x` and `y`.
-    Tick { state: TickState, x: u32, y: u32 },
+    Tick {
+        state: TickState,
+        direction: Direction,
+        x: u32,
+        y: u32,
+    },
     /// A management event (ORB-C13).
     Management(ManagementEvent),
     /// The direct child exited and was reaped, which the host checks every turn and
@@ -404,7 +409,14 @@ impl Fact {
             Self::Selected { outcome, presented } => {
                 format!("19 {word} {} {}\n", outcome as u32, u32::from(presented))
             }
-            Self::Tick { state, x, y } => format!("20 {word} {} {x} {y}\n", state as u32),
+            Self::Tick {
+                state,
+                direction,
+                x,
+                y,
+            } => {
+                format!("20 {word} {} {} {x} {y}\n", state as u32, direction as u32)
+            }
             Self::Management(event) => format!("21 {word} {}\n", event as u32),
             Self::ChildExited { drained } => format!("22 {word} {}\n", u32::from(drained)),
             Self::Crowded => format!("23 {word}\n"),
@@ -440,7 +452,7 @@ fn halves(revision: u64) -> String {
 
 /// The line the worker writes before its first answer, naming the schema
 /// it was generated from; the host refuses a worker that names another.
-pub(crate) const SCHEMA: &str = "schema da609153e1a3aebd";
+pub(crate) const SCHEMA: &str = "schema c01ccae6d3b0aa9f";
 
 /// The line that ends each of the worker's answers.
 pub(crate) const END: &str = "end";
@@ -569,14 +581,23 @@ pub(crate) enum Decision {
     /// An `explicit` finish, of a stop through the lease, closes the client without
     /// Exited, writes the explicit tombstone, answers the lease Stopped, and exits 0.
     Finish { status: u32, explicit: bool },
-    /// Moves the viewport and the selection one row up from the tick's position, as
+    /// Moves the viewport and selection up to one row in the tick's direction, as
     /// in fact Tick, sends one ScrollOutcome with the frame at `revision` and
     /// reports Selected Ticked; a gesture that fails is cleared and reported as
     /// Selected Failed, and sends nothing.
-    TickAnswer { x: u32, y: u32, revision: u64 },
-    /// Reports the tick at this position again as fact Tick, since its gesture may
+    TickAnswer {
+        direction: Direction,
+        x: u32,
+        y: u32,
+        revision: u64,
+    },
+    /// Reports the tick at this position and direction as fact Tick, since its gesture may
     /// have ended while it waited.
-    Retick { x: u32, y: u32 },
+    Retick {
+        direction: Direction,
+        x: u32,
+        y: u32,
+    },
     /// Captures the terminal's clipboard writes from the next PTY turn on when
     /// `on`, and refuses them otherwise (ORB-C11).
     Capture { on: bool },
@@ -667,7 +688,7 @@ impl Reason {
             15 => Self::PointerNoRoom,
             16 => Self::SelectionFailed,
             17 => Self::TickNoGesture,
-            18 => Self::TickNotTopRow,
+            18 => Self::TickWrongEdge,
             19 => Self::AnchorLost,
             20 => Self::TickNoRoom,
             21 => Self::RoleRepeated,
@@ -754,11 +775,13 @@ impl Decision {
                 explicit: flag(&mut words)?,
             },
             37 => Self::TickAnswer {
+                direction: Direction::decode(&mut words)?,
                 x: number(&mut words)?,
                 y: number(&mut words)?,
                 revision: revision(&mut words)?,
             },
             38 => Self::Retick {
+                direction: Direction::decode(&mut words)?,
                 x: number(&mut words)?,
                 y: number(&mut words)?,
             },

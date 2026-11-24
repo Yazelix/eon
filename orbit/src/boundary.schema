@@ -129,7 +129,7 @@ enum SelectionKind
   3 Cancel
   4 Copy
 
-# How the host selection phase or upward tick Bend asked for went.
+# How the host selection phase or selection tick Bend asked for went.
 enum Selected
   # Applied a drag.
   0 Applied
@@ -140,15 +140,15 @@ enum Selected
   2 Failed
   # Applied a press, which began a host sequence.
   3 Began
-  # Applied an upward selection tick.
+  # Applied an selection tick.
   4 Ticked
 
-# Whether an upward selection tick may run on the held gesture; Bend checks
+# Whether an selection tick may run on the held gesture; Bend checks
 # that a host sequence is held on the primary screen.
 enum TickState
   0 Fits
-  # The position is not in the top row.
-  2 NotTopRow
+  # The position is outside the row for the requested direction.
+  2 WrongEdge
   # The gesture's anchor is gone.
   3 AnchorLost
 
@@ -239,12 +239,12 @@ fact 17 Wheel input:WheelInput
 # A pointer request. A press names the frame it was made on, at `revision`,
 # which may be ahead of authority; other kinds carry 0.
 fact 18 Selection kind:SelectionKind revision:revision
-# The host selection phase or upward tick Bend asked for went this way, and
+# The host selection phase or selection tick Bend asked for went this way, and
 # whether libghostty presents a host selection after it.
 fact 19 Selected outcome:Selected presented:bool
-# An upward selection tick from the position whose F32 coordinates have the
+# A selection tick from the position whose F32 coordinates have the
 # bits `x` and `y`.
-fact 20 Tick state:TickState x:u32 y:u32
+fact 20 Tick state:TickState direction:Direction x:u32 y:u32
 # A management event (ORB-C13).
 fact 21 Management event:ManagementEvent
 # The direct child exited and was reaped, which the host checks every turn and
@@ -320,12 +320,12 @@ enum Reason
   15 PointerNoRoom
   # The host selection phase failed.
   16 SelectionFailed
-  # An upward selection tick without a held host gesture on the primary
+  # A selection tick without a held host gesture on the primary
   # screen.
   17 TickNoGesture
-  # An upward selection tick outside the top row.
-  18 TickNotTopRow
-  # An upward selection tick whose gesture lost its anchor.
+  # A selection tick outside the row for the requested direction.
+  18 TickWrongEdge
+  # A selection tick whose gesture lost its anchor.
   19 AnchorLost
   # The client's queue cannot take a selection tick's whole scroll outcome
   # (ORB-C9).
@@ -444,14 +444,14 @@ decision 35 Reap
 # An `explicit` finish, of a stop through the lease, closes the client without
 # Exited, writes the explicit tombstone, answers the lease Stopped, and exits 0.
 decision 36 Finish status:u32 explicit:bool
-# Moves the viewport and the selection one row up from the tick's position, as
+# Moves the viewport and selection up to one row in the tick's direction, as
 # in fact Tick, sends one ScrollOutcome with the frame at `revision` and
 # reports Selected Ticked; a gesture that fails is cleared and reported as
 # Selected Failed, and sends nothing.
-decision 37 TickAnswer x:u32 y:u32 revision:revision
-# Reports the tick at this position again as fact Tick, since its gesture may
+decision 37 TickAnswer direction:Direction x:u32 y:u32 revision:revision
+# Reports the tick at this position and direction as fact Tick, since its gesture may
 # have ended while it waited.
-decision 38 Retick x:u32 y:u32
+decision 38 Retick direction:Direction x:u32 y:u32
 # Captures the terminal's clipboard writes from the next PTY turn on when
 # `on`, and refuses them otherwise (ORB-C11).
 decision 39 Capture on:bool

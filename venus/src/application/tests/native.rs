@@ -1382,7 +1382,8 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 .scrollback_rect(app.workspace_scene().as_ref())
                 .expect("the presented scrollback pill is actionable");
             assert!(
-                app.send(ClientMessage::Selection(SelectionAction::AutoscrollUp {
+                app.send(ClientMessage::Selection(SelectionAction::Autoscroll {
+                    direction: session::VerticalDirection::Up,
                     position: session::SelectionPosition { x: 1.0, y: 1.0 },
                 }))
             );
@@ -1392,7 +1393,9 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             }));
             assert_eq!(
                 app.terminal.pending_viewport,
-                Some(PendingViewportRequest::SelectionTick)
+                Some(PendingViewportRequest::SelectionTick(
+                    session::VerticalDirection::Up
+                ))
             );
             app.window_event(
                 event_loop,
@@ -1485,7 +1488,8 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 rows: -1
             }));
             assert!(
-                !app.send(ClientMessage::Selection(SelectionAction::AutoscrollUp {
+                !app.send(ClientMessage::Selection(SelectionAction::Autoscroll {
+                    direction: session::VerticalDirection::Up,
                     position: session::SelectionPosition { x: 1.0, y: 1.0 },
                 }))
             );
@@ -1508,7 +1512,8 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 rows: -1
             }));
             assert!(
-                !app.send(ClientMessage::Selection(SelectionAction::AutoscrollUp {
+                !app.send(ClientMessage::Selection(SelectionAction::Autoscroll {
+                    direction: session::VerticalDirection::Up,
                     position: session::SelectionPosition { x: 1.0, y: 1.0 },
                 }))
             );
@@ -1551,7 +1556,8 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                     frame_revision: 17,
                     rows: -1,
                 },
-                ClientMessage::Selection(SelectionAction::AutoscrollUp {
+                ClientMessage::Selection(SelectionAction::Autoscroll {
+                    direction: session::VerticalDirection::Up,
                     position: session::SelectionPosition { x: 1.0, y: 1.0 },
                 }),
             ];

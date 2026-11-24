@@ -1590,18 +1590,16 @@ including into history; output that newly enables mouse tracking, or leaves
 no valid anchor, clears them, which Rust reports and Bend decides, and a later
 phase of that sequence fails.
 
-While a host sequence is held on the primary screen, `Selection(AutoscrollUp)`
-from a top-row position extends the same tracked selection one row into
-history: a drag to the top edge enters libghostty's
-upward autoscroll, one autoscroll tick moves the viewport and the selection,
-authority advances once, and one `ScrollOutcome` carries the applied rows, 0
-at the oldest row, the frame and the next window up. A tick without such a
-gesture or away from the top row fails with `Failure(InvalidInput)`, and one
-whose anchor is gone also ends the sequence. Otherwise Bend treats it as a
-vertical request of the proved policy: it fails with `Failure(Terminal)` when
-the client's queue cannot take a whole scroll outcome, and waits while a
-synchronized update is open, where a second request fails; a waiting tick is
-decided again once the update ends, since its gesture may have ended.
+While a host sequence is held on the primary screen, a selection tick from
+the top or bottom row extends the same tracked selection up into older
+history or down toward live output. Each tick advances authority once. Its
+`ScrollOutcome` carries the signed movement, the frame and the next window
+in the same direction. Zero applied rows marks the oldest or live edge.
+A tick without a host gesture, on the alternate screen or outside the
+requested edge row fails with `Failure(InvalidInput)`. A lost anchor also
+ends the sequence. Bend rejects the tick with `Failure(Terminal)` when the
+client's queue lacks room for the whole outcome. A tick held through
+synchronized output is checked again before it runs, preserving its direction.
 
 [LAWS.bend](../LAWS.bend) states, and [PROOF.bend](../PROOF.bend) proves, that over
 any list of pointer requests and resets, from any route, the answers satisfy
@@ -1657,9 +1655,13 @@ made it fail.
 `upward_ticks_extend_cells_spans_and_lines_with_unicode_copy` ticks a held
 cell, span and line gesture from mid-row through more than one viewport to the
 oldest row and copies the exact text with its wide characters (ORB-C8); not
-recognizing the span made it fail. Giving the ticks themselves native events
-instead of span events did not, since libghostty appears to keep the span its
-press chose.
+recognizing the span made it fail. `downward_tick_extends_a_held_selection`
+covers the same granularities and exact Unicode copy while moving toward live.
+Both use padded surfaces and verify zero movement at their edge.
+`a_single_row_can_tick_in_both_directions` verifies both explicit directions
+when they share one viewport row. The real-PTY selection tick check also
+exercises deferred downward movement with Shift, normal mouse routing,
+alternate-screen rejection, and an empty preview at the live edge.
 
 ## Scrolling and selection law
 
@@ -1675,7 +1677,7 @@ copies, attachment and the start of a stop among `step`'s decisions. The law
 says that over any list of facts with their flags, from any session state,
 `step`'s decisions never break the automaton:
 
-- A preview, a scroll, a return to live, or an upward tick that fits gets the
+- A preview, a scroll, a return to live, or a selection tick that fits gets the
   proved vertical policy's answer, which the vertical audit checks against the
   slot; a deferred request is answered nothing and takes the slot.
 - No `Frame` is published while a synchronized update is held, until

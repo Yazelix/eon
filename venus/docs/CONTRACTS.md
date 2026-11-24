@@ -4,7 +4,7 @@ This is the canonical current state of Venus behavior, ownership, proof, and
 remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
-`VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
+`VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v15 through the
 in-tree `orbit-protocol` crate and canonical EONW v50 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
@@ -514,8 +514,9 @@ re-proved when that platform or feature is next touched.
   observed natively under `VEN-C16`.
 - **Consumer:** One presented Venus terminal surface.
 - **Trigger:** Native wheel or touchpad movement, one left-pointer sequence
-  including a held drag in or above the top visible row, explicit copy, or
-  activation of the visible scrollback pill.
+  including a held drag in or above the top visible row or in or below the
+  bottom visible row, explicit copy, or activation of the visible scrollback
+  pill.
 - **Result:**
   - While away from live output, Venus displays `↓ N rows` (`↓ 1 row` for one)
     from the accepted frame's authoritative wrapped display-row distance. Live
@@ -567,8 +568,17 @@ re-proved when that platform or feature is next touched.
     Venus sends one upward selection tick at a time, with the pointer's column
     clamped to the pane and its row clamped to the top row. Orbit moves at
     most one history row per tick and extends the same gesture; Venus waits
-    for the accepted frame before the next tick and stops at the oldest edge
-    or on release.
+    for the accepted frame to be presented before the next tick and stops
+    at the oldest edge or on release.
+  - While a held host selection's pointer is in or below the bottom visible
+    row and the presented viewport is above live output, Venus sends one
+    downward selection tick at a time. Venus clamps the pointer's column to
+    the pane and its row to the bottom row. Orbit moves at most one row
+    toward live output and extends the same gesture. Venus waits for the
+    accepted frame to be presented before the next tick. Downward ticks stop
+    at the live edge or on release. A viewport at the live bottom does not
+    start downward ticks. When the viewport has one row, that row retains
+    its upward behavior and downward ticks start below it.
   - Pointer phases and explicit copy that arrive before Orbit completes the
     preceding sequence retain their order. Venus resumes them only after
     presenting the authoritative completion revision reported by Orbit.
@@ -590,8 +600,9 @@ re-proved when that platform or feature is next touched.
   gesture cancellation, and clipboard effects; Orbit alone owns history,
   viewport movement, routing, cells, revisions, selection, and copied text.
 - **Consumes:** Orbit `ORB-C4`, `ORB-C5`, `ORB-C6`, `ORB-C8`, and `ORB-C9`
-  through canonical ORBF v2 / ORBS v13; the workspace's patched winit 0.30.13,
-  wgpu 30.0.0, and glyphon 0.12.0.
+  through canonical ORBF v3 / ORBS v15, with selection ticks in both
+  directions in ORBS v15. Venus also consumes the workspace's patched winit
+  0.30.13, wgpu 30.0.0, and glyphon 0.12.0.
 - **Boundary:** Client-owned history caches, bounce, device/source heuristics,
   public physics tuning, presentation feedback, unreleased winit, GPU-layer
   translation, and additional platform support are outside this contract.

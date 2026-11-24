@@ -92,6 +92,7 @@ const FACTS: [(&str, &[(&str, &str)]); 29] = [
         "Tick",
         &[
             ("tstate", "Boundary.TickState"),
+            ("tdirection", "Boundary.Direction"),
             ("fx", "U32"),
             ("fy", "U32"),
         ],
@@ -214,7 +215,7 @@ fn enums() -> HashMap<String, Vec<Case>> {
                 "Session.PreviewRequest{direction}",
                 "Session.ScrollRequest{rows}",
                 "Session.LiveRequest{}",
-                "Session.TickRequest{tx, ty}",
+                "Session.TickRequest{pending_direction, tx, ty}",
             ],
             &|c| c.into(),
         ),
@@ -268,7 +269,7 @@ fn enums() -> HashMap<String, Vec<Case>> {
             "Selected",
             &["Applied", "Finished", "Failed", "Began", "Ticked"],
         ),
-        ("TickState", &["Fits", "NotTopRow", "AnchorLost"]),
+        ("TickState", &["Fits", "WrongEdge", "AnchorLost"]),
         (
             "ManagementEvent",
             &[

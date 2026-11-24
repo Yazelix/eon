@@ -64,7 +64,7 @@ type SelectionKind is Data:
   SelectionKindCancel{}
   SelectionKindCopy{}
 
-# How the host selection phase or upward tick Bend asked for went.
+# How the host selection phase or selection tick Bend asked for went.
 type Selected is Data:
   # Applied a drag.
   SelectedApplied{}
@@ -75,15 +75,15 @@ type Selected is Data:
   SelectedFailed{}
   # Applied a press, which began a host sequence.
   SelectedBegan{}
-  # Applied an upward selection tick.
+  # Applied an selection tick.
   SelectedTicked{}
 
-# Whether an upward selection tick may run on the held gesture; Bend checks
+# Whether an selection tick may run on the held gesture; Bend checks
 # that a host sequence is held on the primary screen.
 type TickState is Data:
   TickStateFits{}
-  # The position is not in the top row.
-  TickStateNotTopRow{}
+  # The position is outside the row for the requested direction.
+  TickStateWrongEdge{}
   # The gesture's anchor is gone.
   TickStateAnchorLost{}
 
@@ -162,12 +162,12 @@ type Reason is Data:
   ReasonPointerNoRoom{}
   # The host selection phase failed.
   ReasonSelectionFailed{}
-  # An upward selection tick without a held host gesture on the primary
+  # A selection tick without a held host gesture on the primary
   # screen.
   ReasonTickNoGesture{}
-  # An upward selection tick outside the top row.
-  ReasonTickNotTopRow{}
-  # An upward selection tick whose gesture lost its anchor.
+  # A selection tick outside the row for the requested direction.
+  ReasonTickWrongEdge{}
+  # A selection tick whose gesture lost its anchor.
   ReasonAnchorLost{}
   # The client's queue cannot take a selection tick's whole scroll outcome
   # (ORB-C9).
@@ -235,12 +235,12 @@ type Fact is Data:
   # A pointer request. A press names the frame it was made on, at `revision`,
   # which may be ahead of authority; other kinds carry 0.
   Selection{kind: SelectionKind, revision: Revision.Revision}
-  # The host selection phase or upward tick Bend asked for went this way, and
+  # The host selection phase or selection tick Bend asked for went this way, and
   # whether libghostty presents a host selection after it.
   Selected{outcome: Selected, presented: Bool}
-  # An upward selection tick from the position whose F32 coordinates have the
+  # A selection tick from the position whose F32 coordinates have the
   # bits `x` and `y`.
-  Tick{state: TickState, x: U32, y: U32}
+  Tick{state: TickState, direction: Direction, x: U32, y: U32}
   # A management event (ORB-C13).
   Management{event: ManagementEvent}
   # The direct child exited and was reaped, which the host checks every turn and
@@ -504,7 +504,7 @@ def decode_tick_state(arg: U32) -> Maybe<&2, TickState>:
     case 0:
       Some{TickStateFits{}}
     case 2:
-      Some{TickStateNotTopRow{}}
+      Some{TickStateWrongEdge{}}
     case 3:
       Some{TickStateAnchorLost{}}
     case _:
@@ -727,13 +727,15 @@ def fact_selected(args: List<&2, String>) -> Maybe<&2, Fact>:
 
 def fact_tick(args: List<&2, String>) -> Maybe<&2, Fact>:
   match args:
-    case Con{a0, Con{a1, Con{a2, Nil{}}}}:
+    case Con{a0, Con{a1, Con{a2, Con{a3, Nil{}}}}}:
       do Maybe<&2, Fact>:
         state_word : U32 <- U32.read(a0)
         state : TickState <- decode_tick_state(state_word)
-        x : U32 <- U32.read(a1)
-        y : U32 <- U32.read(a2)
-        return Tick{state, x, y}
+        direction_word : U32 <- U32.read(a1)
+        direction : Direction <- decode_direction(direction_word)
+        x : U32 <- U32.read(a2)
+        y : U32 <- U32.read(a3)
+        return Tick{state, direction, x, y}
     case _:
       None{}
 
@@ -1026,14 +1028,14 @@ type Decision is Data:
   # An `explicit` finish, of a stop through the lease, closes the client without
   # Exited, writes the explicit tombstone, answers the lease Stopped, and exits 0.
   Finish{status: U32, explicit: Bool}
-  # Moves the viewport and the selection one row up from the tick's position, as
+  # Moves the viewport and selection up to one row in the tick's direction, as
   # in fact Tick, sends one ScrollOutcome with the frame at `revision` and
   # reports Selected Ticked; a gesture that fails is cleared and reported as
   # Selected Failed, and sends nothing.
-  TickAnswer{x: U32, y: U32, revision: Revision.Revision}
-  # Reports the tick at this position again as fact Tick, since its gesture may
+  TickAnswer{direction: Direction, x: U32, y: U32, revision: Revision.Revision}
+  # Reports the tick at this position and direction as fact Tick, since its gesture may
   # have ended while it waited.
-  Retick{x: U32, y: U32}
+  Retick{direction: Direction, x: U32, y: U32}
   # Captures the terminal's clipboard writes from the next PTY turn on when
   # `on`, and refuses them otherwise (ORB-C11).
   Capture{on: Bool}
@@ -1130,7 +1132,7 @@ def encode_reason(value: Reason) -> String:
       "16"
     case ReasonTickNoGesture{}:
       "17"
-    case ReasonTickNotTopRow{}:
+    case ReasonTickWrongEdge{}:
       "18"
     case ReasonAnchorLost{}:
       "19"
@@ -1219,10 +1221,10 @@ def encode_decision(decision: Decision) -> String:
       "35" ++ "\n"
     case Finish{status, explicit}:
       "36" ++ " " ++ U32.show(status) ++ " " ++ encode_bool(explicit) ++ "\n"
-    case TickAnswer{x, y, revision}:
-      "37" ++ " " ++ U32.show(x) ++ " " ++ U32.show(y) ++ " " ++ encode_revision(revision) ++ "\n"
-    case Retick{x, y}:
-      "38" ++ " " ++ U32.show(x) ++ " " ++ U32.show(y) ++ "\n"
+    case TickAnswer{direction, x, y, revision}:
+      "37" ++ " " ++ encode_direction(direction) ++ " " ++ U32.show(x) ++ " " ++ U32.show(y) ++ " " ++ encode_revision(revision) ++ "\n"
+    case Retick{direction, x, y}:
+      "38" ++ " " ++ encode_direction(direction) ++ " " ++ U32.show(x) ++ " " ++ U32.show(y) ++ "\n"
     case Capture{on}:
       "39" ++ " " ++ encode_bool(on) ++ "\n"
     case StatusLifetime{edge, marks}:
@@ -1257,4 +1259,4 @@ def encode(decisions: Decisions()) -> String:
 # The line the worker writes before its first answer, naming the schema it
 # was generated from; the host refuses a worker that names another.
 def schema() -> String:
-  "schema da609153e1a3aebd\n"
+  "schema c01ccae6d3b0aa9f\n"

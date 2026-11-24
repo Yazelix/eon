@@ -41,7 +41,7 @@
     ],
     "required_interfaces": [
       { "component": "orbit", "interface": "ORBF", "version": 3 },
-      { "component": "orbit", "interface": "ORBS", "version": 14 },
+      { "component": "orbit", "interface": "ORBS", "version": 15 },
       { "component": "eon-workspace-protocol", "interface": "EONW", "version": 50 }
     ]
   },
@@ -93,7 +93,7 @@
       ],
       "interfaces": [
         { "id": "ORBF", "version": 3, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" },
-        { "id": "ORBS", "version": 14, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" }
+        { "id": "ORBS", "version": 15, "proof": "9654f9ecd3259bef8352ec8d06df437f504c06f5" }
       ],
       "requires": []
     },
@@ -133,7 +133,7 @@
           "component": "orbit",
           "interfaces": [
             { "id": "ORBF", "version": 3, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" },
-            { "id": "ORBS", "version": 14, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" }
+            { "id": "ORBS", "version": 15, "proof": "9654f9ecd3259bef8352ec8d06df437f504c06f5" }
           ]
         },
         {
@@ -368,7 +368,7 @@
         {
           "component": "orbit",
           "interfaces": [
-            { "id": "ORBS", "version": 14, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" }
+            { "id": "ORBS", "version": 15, "proof": "9654f9ecd3259bef8352ec8d06df437f504c06f5" }
           ]
         }
       ]
